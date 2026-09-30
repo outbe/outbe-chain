@@ -253,8 +253,6 @@ fn outer_reducer_covers_creation_advance_capacity_and_ready_outcomes() {
 
     let ready = projection(WwdStatus::Ready);
     for (disposition, target) in [
-        (ReadyDisposition::ZeroDayLimit, WwdStatus::Failed),
-        (ReadyDisposition::UnknownDayType, WwdStatus::Failed),
         (ReadyDisposition::EmptyTributeDay, WwdStatus::Completed),
         (ReadyDisposition::ZeroGratisAllocation, WwdStatus::Completed),
         (ReadyDisposition::PrepareOcomp, WwdStatus::Ready),
@@ -302,8 +300,6 @@ fn outer_wwd_state_event_matrix_is_exhaustive() {
             retained_count: 0,
             admission_available: true,
         },
-        OuterWwdEvent::ProcessReady(ReadyDisposition::ZeroDayLimit),
-        OuterWwdEvent::ProcessReady(ReadyDisposition::UnknownDayType),
         OuterWwdEvent::ProcessReady(ReadyDisposition::EmptyTributeDay),
         OuterWwdEvent::ProcessReady(ReadyDisposition::ZeroGratisAllocation),
         OuterWwdEvent::ProcessReady(ReadyDisposition::PrepareOcomp),
@@ -393,9 +389,6 @@ fn expected_transition_at_process_time(
         },
         OuterWwdEvent::ProcessReady(disposition) if status == WwdStatus::Ready => {
             let target = match disposition {
-                ReadyDisposition::ZeroDayLimit | ReadyDisposition::UnknownDayType => {
-                    WwdStatus::Failed
-                }
                 ReadyDisposition::EmptyTributeDay | ReadyDisposition::ZeroGratisAllocation => {
                     WwdStatus::Completed
                 }

@@ -45,8 +45,6 @@ pub(crate) enum WwdTransitionPlan {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) enum ReadyDisposition {
-    ZeroDayLimit,
-    UnknownDayType,
     EmptyTributeDay,
     ZeroGratisAllocation,
     PrepareOcomp,
@@ -206,9 +204,6 @@ pub(crate) fn reduce_outer_wwd(
         }
         OuterWwdEvent::ProcessReady(disposition) if current.status == WwdStatus::Ready => {
             let target = match disposition {
-                ReadyDisposition::ZeroDayLimit | ReadyDisposition::UnknownDayType => {
-                    WwdStatus::Failed
-                }
                 ReadyDisposition::EmptyTributeDay | ReadyDisposition::ZeroGratisAllocation => {
                     WwdStatus::Completed
                 }

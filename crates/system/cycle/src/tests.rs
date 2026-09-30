@@ -1559,8 +1559,15 @@ fn hourly_protocol_cycle_applies_exact_capacity_forfeiture_to_the_new_due_candid
     });
 
     storage.enter(|handle| {
-        outbe_metadosis::test_support::seed_ready_worldwide_days_for_capacity(handle, &retained)
-            .unwrap();
+        outbe_metadosis::test_support::seed_ready_worldwide_days_for_capacity(
+            handle.clone(),
+            &retained,
+        )
+        .unwrap();
+        let mut tribute = outbe_tribute::TributeContract::new(handle);
+        for day in &retained {
+            tribute.seal_day(*day).unwrap();
+        }
     });
 
     let mut next_block = 2_u64;

@@ -1,21 +1,11 @@
 use super::*;
+use crate::tests::capacity::begin_fixed_partition_scope;
+use outbe_compressed_entities::RetirementOutcome;
 
-fn issue_one_tribute_and_run_metadosis(
-    storage: &StorageHandle,
-    wwd: outbe_primitives::time::WorldwideDay,
-    nominal: U256,
-    block_number: u64,
-    timestamp: u64,
-) {
-    let owner = address!("7400000000000000000000000000000000000074");
-    let ctx = BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(block_number, timestamp, CHAIN_ID),
-        storage.clone(),
-    );
-    with_active_scope(storage.clone(), |scope, parent| {
-        issue_one_tribute_in_scope(storage, scope, parent, owner, wwd, nominal);
-        crate::commands::start_metadosis(&ctx, scope, parent).unwrap();
-    });
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReadyOutcome {
+    Completed,
+    Forfeited,
 }
 
 fn seed_local_terminal_fixture(
@@ -58,6 +48,75 @@ fn seed_local_terminal_fixture(
     })
 }
 
+fn seal_fresh_tribute_day(storage: &StorageHandle, wwd: outbe_primitives::time::WorldwideDay) {
+    let mut tribute = TributeContract::new(storage.clone());
+    tribute.initialize_fresh_ocomp_profile().unwrap();
+    tribute.seal_day(wwd).unwrap();
+}
+
+fn begin_ready_scope(
+    provider: &mut HashMapStorageProvider,
+    outcome: ReadyOutcome,
+) -> (ExecutionScope, TestParent) {
+    match outcome {
+        ReadyOutcome::Completed => begin_persistent_active_scope(provider),
+        ReadyOutcome::Forfeited => (begin_fixed_partition_scope(provider).0, TestParent::empty()),
+    }
+}
+
+fn end_ready_scope(
+    provider: &mut HashMapStorageProvider,
+    scope: &ExecutionScope,
+    outcome: ReadyOutcome,
+) {
+    // The fixed partition tree cannot seal a block.
+    if outcome == ReadyOutcome::Completed {
+        end_persistent_active_scope(provider, scope);
+    }
+}
+
+fn assert_ready_outcome(
+    provider: &mut HashMapStorageProvider,
+    wwd: outbe_primitives::time::WorldwideDay,
+    outcome: ReadyOutcome,
+    expected_promis: U256,
+) {
+    match outcome {
+        ReadyOutcome::Completed => assert_local_terminal_completed(provider, wwd, expected_promis),
+        ReadyOutcome::Forfeited => assert_ready_day_forfeited(provider, wwd, expected_promis),
+    }
+}
+
+fn assert_ready_day_forfeited(
+    provider: &mut HashMapStorageProvider,
+    wwd: outbe_primitives::time::WorldwideDay,
+    day_limit: U256,
+) {
+    assert_local_terminal_outcome(provider, wwd, status::FAILED, day_limit);
+    StorageHandle::enter(provider, |storage| {
+        let receipt = MetadosisContract::new(storage.clone())
+            .read_metadosis_failure_receipt(wwd, day_limit)
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.value_routed, day_limit);
+        assert_eq!(receipt.carry_over_after, day_limit);
+        assert_eq!(receipt.retirement, RetirementOutcome::Requested);
+        assert_no_ocomp_job(&storage, wwd);
+        let tribute = TributeContract::new(storage);
+        assert_eq!(tribute.total_supply().unwrap(), 0);
+        let totals = tribute.get_day_totals(wwd).unwrap();
+        assert_eq!(totals.tribute_count, 0);
+        assert_eq!(totals.tribute_nominal_amount, U256::ZERO);
+        assert_eq!(
+            tribute
+                .pre_admission_projection(wwd)
+                .unwrap()
+                .source_generation,
+            1
+        );
+    });
+}
+
 fn assert_local_terminal_completed(
     provider: &mut HashMapStorageProvider,
     wwd: outbe_primitives::time::WorldwideDay,
@@ -92,7 +151,7 @@ fn exercise_local_terminal_fault_matrix(
     day_limit: U256,
     tribute_count: u32,
     tribute_nominal: U256,
-    expected_status: u8,
+    outcome: ReadyOutcome,
     expected_promis: U256,
 ) {
     let block_number = 2;
@@ -106,7 +165,7 @@ fn exercise_local_terminal_fault_matrix(
         tribute_count,
         tribute_nominal,
     );
-    let (probe_scope, probe_parent) = begin_persistent_active_scope(&mut probe);
+    let (probe_scope, probe_parent) = begin_ready_scope(&mut probe, outcome);
     let ce_before_probe = probe_scope.ce_work_checkpoint().unwrap();
     probe.fail_after_mutation_at(usize::MAX);
     run_start_command(
@@ -122,13 +181,15 @@ fn exercise_local_terminal_fault_matrix(
         mutation_count >= 7,
         "local terminal command must include transition, domain effects, retirement and events"
     );
-    assert_eq!(probe_scope.ce_work_checkpoint().unwrap(), ce_before_probe);
-    assert_local_terminal_outcome(&mut probe, wwd, expected_status, expected_promis);
+    if outcome == ReadyOutcome::Completed {
+        assert_eq!(probe_scope.ce_work_checkpoint().unwrap(), ce_before_probe);
+    }
+    assert_ready_outcome(&mut probe, wwd, outcome, expected_promis);
     let clean_storage = probe.storage.clone();
     let clean_events = probe.events.clone();
     let clean_ordered_events = probe.get_ordered_events().to_vec();
     let clean_ce_work = probe_scope.ce_work_checkpoint().unwrap();
-    end_persistent_active_scope(&mut probe, &probe_scope);
+    end_ready_scope(&mut probe, &probe_scope, outcome);
 
     for operation in 0..mutation_count {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
@@ -140,7 +201,7 @@ fn exercise_local_terminal_fault_matrix(
             tribute_count,
             tribute_nominal,
         );
-        let (scope, parent) = begin_persistent_active_scope(&mut provider);
+        let (scope, parent) = begin_ready_scope(&mut provider, outcome);
         let storage_before = provider.storage.clone();
         let events_before = provider.events.clone();
         let ordered_before = provider.get_ordered_events().to_vec();
@@ -166,7 +227,7 @@ fn exercise_local_terminal_fault_matrix(
         );
 
         run_start_command(&mut provider, &scope, &parent, block_number, scheduled).unwrap();
-        assert_local_terminal_outcome(&mut provider, wwd, expected_status, expected_promis);
+        assert_ready_outcome(&mut provider, wwd, outcome, expected_promis);
         assert_eq!(
             provider.storage, clean_storage,
             "local terminal retry storage diverged at {operation}"
@@ -185,7 +246,7 @@ fn exercise_local_terminal_fault_matrix(
             clean_ce_work,
             "local terminal retry CE work diverged at {operation}"
         );
-        end_persistent_active_scope(&mut provider, &scope);
+        end_ready_scope(&mut provider, &scope, outcome);
     }
 }
 
@@ -197,7 +258,7 @@ fn empty_tribute_day_command_rolls_back_every_mutation_and_ce_work_then_retries(
         U256::from(777),
         0,
         U256::ZERO,
-        status::COMPLETED,
+        ReadyOutcome::Completed,
         U256::from(777),
     );
 }
@@ -210,7 +271,7 @@ fn zero_gratis_command_rolls_back_every_mutation_and_ce_work_then_retries() {
         U256::from(2),
         1,
         U256::from(1_000),
-        status::COMPLETED,
+        ReadyOutcome::Completed,
         U256::from(2),
     );
 }
@@ -223,7 +284,7 @@ fn zero_day_limit_rolls_back_every_mutation_and_retries_exactly() {
         U256::ZERO,
         1,
         U256::from(1_000),
-        status::FAILED,
+        ReadyOutcome::Forfeited,
         U256::ZERO,
     );
 }
@@ -236,7 +297,7 @@ fn unknown_day_type_rolls_back_every_mutation_and_retries_exactly() {
         U256::from(777),
         1,
         U256::from(1_000),
-        status::FAILED,
+        ReadyOutcome::Forfeited,
         U256::from(777),
     );
 }
@@ -249,7 +310,7 @@ fn green_empty_tribute_day_rolls_back_every_mutation_and_retries_exactly() {
         U256::from(777),
         0,
         U256::ZERO,
-        status::COMPLETED,
+        ReadyOutcome::Completed,
         U256::from(777),
     );
 }
@@ -262,7 +323,7 @@ fn green_zero_gratis_rolls_back_every_mutation_and_retries_exactly() {
         U256::from(2),
         1,
         U256::ONE,
-        status::COMPLETED,
+        ReadyOutcome::Completed,
         U256::ONE,
     );
 }
@@ -406,11 +467,16 @@ fn test_ready_processing_missing_limit_fails_like_source() {
         metadosis
             .fixture_set_wwd_status(wwd, WwdStatus::Waiting)
             .unwrap();
+        seal_fresh_tribute_day(&storage, wwd);
 
         run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
 
         let metadosis = MetadosisContract::new(storage);
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FAILED);
+        assert!(metadosis
+            .read_metadosis_failure_receipt(wwd, U256::ZERO)
+            .unwrap()
+            .is_some());
     });
 }
 
@@ -441,11 +507,16 @@ fn test_ready_processing_unknown_day_type_fails_and_returns_limit_to_promis() {
             .fixture_set_wwd_status(wwd, WwdStatus::Waiting)
             .unwrap();
         metadosis.set_metadosis_limit(wwd, day_limit).unwrap();
+        seal_fresh_tribute_day(&storage, wwd);
 
         run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
 
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FAILED);
+        assert!(metadosis
+            .read_metadosis_failure_receipt(wwd, day_limit)
+            .unwrap()
+            .is_some());
 
         let promis = PromisLimitContract::new(storage);
         assert_eq!(promis.get_total_unallocated().unwrap(), day_limit);
@@ -479,11 +550,16 @@ fn test_ready_processing_zero_limit_fails() {
             .fixture_set_wwd_status(wwd, WwdStatus::Waiting)
             .unwrap();
         metadosis.set_metadosis_limit(wwd, U256::ZERO).unwrap();
+        seal_fresh_tribute_day(&storage, wwd);
 
         run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
 
         let metadosis = MetadosisContract::new(storage);
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FAILED);
+        assert!(metadosis
+            .read_metadosis_failure_receipt(wwd, U256::ZERO)
+            .unwrap()
+            .is_some());
     });
 }
 
@@ -619,48 +695,54 @@ fn green_empty_day_briefs_nothing_however_large_the_limit() {
     });
 }
 
-#[test]
-fn active_ocomp_profile_preserves_the_populated_zero_limit_branch() {
-    with_storage(|storage| {
-        let wwd = outbe_primitives::time::WorldwideDay::new(2026_0314);
-        let nominal = U256::from(1_000);
-        let scheduled = create_waiting_day(&storage, wwd, day_type::GREEN, U256::ZERO);
-        arm_genesis_ocomp(&storage, CHAIN_ID);
+fn assert_populated_ready_day_fails_and_forfeits(
+    wwd: outbe_primitives::time::WorldwideDay,
+    dtype: u8,
+    day_limit: U256,
+) {
+    let nominal = U256::from(1_000);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let scheduled = seed_local_terminal_fixture(&mut provider, wwd, dtype, day_limit, 1, nominal);
+    let (scope, tree) = begin_fixed_partition_scope(&mut provider);
 
-        issue_one_tribute_and_run_metadosis(
-            &storage,
-            wwd,
-            nominal,
-            2,
-            scheduled + SECONDS_PER_HOUR,
+    run_start_command(&mut provider, &scope, &TestParent::empty(), 2, scheduled).unwrap();
+
+    assert_ready_day_forfeited(&mut provider, wwd, day_limit);
+    StorageHandle::enter(&mut provider, |storage| {
+        assert_eq!(
+            TributeContract::new(storage.clone())
+                .pre_admission_projection(wwd)
+                .unwrap()
+                .sealed_collection_root,
+            tree.partition_root
         );
-
-        let metadosis = MetadosisContract::new(storage.clone());
-        assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FAILED);
-        assert!(!metadosis.active_wwd.read_all().unwrap().contains(&wwd));
-        assert!(metadosis.closed_wwd.read_all().unwrap().contains(&wwd));
-        assert_no_ocomp_job(&storage, wwd);
-
-        let series = wwd;
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
-            desis.auction_stage.read(&series).unwrap(),
+            desis.auction_stage.read(&wwd).unwrap(),
             outbe_desis::schema::AuctionStage::None as u8
         );
-        assert_eq!(desis.clearing_initiated.read(&series).unwrap(), 0);
-        assert_eq!(
-            PromisLimitContract::new(storage.clone())
-                .get_total_unallocated()
-                .unwrap(),
-            U256::ZERO
-        );
-        assert_eq!(NodContract::new(storage.clone()).total_supply().unwrap(), 0);
-        let tribute = TributeContract::new(storage);
-        assert_eq!(tribute.total_supply().unwrap(), 1);
-        let totals = tribute.get_day_totals(wwd).unwrap();
-        assert_eq!(totals.tribute_count, 1);
-        assert_eq!(totals.tribute_nominal_amount, nominal);
+        assert_eq!(desis.clearing_initiated.read(&wwd).unwrap(), 0);
+        assert_eq!(NodContract::new(storage).total_supply().unwrap(), 0);
     });
+    let executed = provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|event| IMetadosis::MetadosisExecuted::decode_log(event).ok())
+        .map(|event| event.data)
+        .collect::<Vec<_>>();
+    assert_eq!(executed.len(), 1);
+    assert_eq!(executed[0].status, "FAILED");
+    assert_eq!(executed[0].tributeTotals, nominal);
+    assert_eq!(executed[0].dayMetadosisLimitRemainder, day_limit);
+}
+
+#[test]
+fn active_ocomp_profile_fails_the_populated_zero_limit_day_and_forfeits_its_partition() {
+    assert_populated_ready_day_fails_and_forfeits(
+        outbe_primitives::time::WorldwideDay::new(2026_0314),
+        day_type::GREEN,
+        U256::ZERO,
+    );
 }
 
 #[test]
@@ -717,48 +799,12 @@ fn active_ocomp_profile_preserves_the_populated_zero_lysis_limit_branch() {
 }
 
 #[test]
-fn active_ocomp_profile_preserves_the_populated_unknown_day_branch() {
-    with_storage(|storage| {
-        let wwd = outbe_primitives::time::WorldwideDay::new(2026_0315);
-        let nominal = U256::from(1_000);
-        let day_limit = U256::from(333);
-        let scheduled = create_waiting_day(&storage, wwd, day_type::UNKNOWN, day_limit);
-        arm_genesis_ocomp(&storage, CHAIN_ID);
-
-        issue_one_tribute_and_run_metadosis(
-            &storage,
-            wwd,
-            nominal,
-            2,
-            scheduled + SECONDS_PER_HOUR,
-        );
-
-        let metadosis = MetadosisContract::new(storage.clone());
-        assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FAILED);
-        assert!(!metadosis.active_wwd.read_all().unwrap().contains(&wwd));
-        assert!(metadosis.closed_wwd.read_all().unwrap().contains(&wwd));
-        assert_no_ocomp_job(&storage, wwd);
-
-        let series = wwd;
-        let desis = storage.contract::<outbe_desis::schema::DesisContract>();
-        assert_eq!(
-            desis.auction_stage.read(&series).unwrap(),
-            outbe_desis::schema::AuctionStage::None as u8
-        );
-        assert_eq!(desis.clearing_initiated.read(&series).unwrap(), 0);
-        assert_eq!(
-            PromisLimitContract::new(storage.clone())
-                .get_total_unallocated()
-                .unwrap(),
-            day_limit
-        );
-        assert_eq!(NodContract::new(storage.clone()).total_supply().unwrap(), 0);
-        let tribute = TributeContract::new(storage);
-        assert_eq!(tribute.total_supply().unwrap(), 1);
-        let totals = tribute.get_day_totals(wwd).unwrap();
-        assert_eq!(totals.tribute_count, 1);
-        assert_eq!(totals.tribute_nominal_amount, nominal);
-    });
+fn active_ocomp_profile_fails_the_populated_unknown_day_and_forfeits_its_partition() {
+    assert_populated_ready_day_fails_and_forfeits(
+        outbe_primitives::time::WorldwideDay::new(2026_0315),
+        day_type::UNKNOWN,
+        U256::from(333),
+    );
 }
 
 #[test]
@@ -844,6 +890,7 @@ fn zero_limit_green_day_dispatches_no_brief() {
             .scheduled_process_time()
             .read()
             .unwrap();
+        seal_fresh_tribute_day(&storage, wwd);
 
         run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
 

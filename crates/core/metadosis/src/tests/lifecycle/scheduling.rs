@@ -289,6 +289,7 @@ fn test_normal_lifecycle_never_leaves_ready_day_type_unknown() {
         metadosis.add_active_wwd(wwd).unwrap();
 
         let mut tribute = TributeContract::new(storage.clone());
+        tribute.initialize_fresh_ocomp_profile().unwrap();
         tribute.seal_day(wwd).unwrap();
 
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
