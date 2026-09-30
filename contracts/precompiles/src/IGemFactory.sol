@@ -101,7 +101,7 @@ interface IGemFactory {
         uint32 callThreshold,
         uint32 callNoticePeriod,
         uint256 positionId,
-        bytes32 bucketKey
+        bytes32 indexed bucketKey
     );
     /// @notice A merchant sent Intex units into a new position.
     event GemPositionIssued(

@@ -180,7 +180,7 @@ impl GemContract<'_> {
     }
 
     pub(crate) fn push_called(&mut self, gem_id: U256, deadline: u64) -> Result<()> {
-        self.place_in_expiry_bucket(gem_id, Self::deadline_bucket(deadline))?;
+        self.place_in_expiry_hour(gem_id, Self::deadline_hour(deadline))?;
         self.called_deadline.write(&gem_id, deadline)
     }
 
@@ -200,10 +200,10 @@ impl GemContract<'_> {
         let Some(deadline) = deadline else {
             return Ok(false);
         };
-        let day = Self::deadline_bucket(deadline).max(Self::deadline_bucket(now) + 1);
-        self.place_in_expiry_bucket(entry, day)?;
+        let day = Self::deadline_hour(deadline).max(Self::deadline_hour(now) + 1);
+        self.place_in_expiry_hour(entry, day)?;
         self.called_deadline.write(&entry, deadline)?;
-        let retry_at = Self::bucket_end(day);
+        let retry_at = Self::hour_end(day);
         match bucket {
             Some(bucket) => self.emit(IGem::GemBucketExpiryDeferred {
                 bucketKey: bucket,
@@ -217,10 +217,10 @@ impl GemContract<'_> {
         Ok(true)
     }
 
-    fn place_in_expiry_bucket(&mut self, gem_id: U256, day: u32) -> Result<()> {
+    fn place_in_expiry_hour(&mut self, gem_id: U256, day: u32) -> Result<()> {
         let slot = self.expiry_bucket_len.read(&day)?;
         self.expiry_bucket_at
-            .write(&Self::bucket_slot_key(day, slot), gem_id)?;
+            .write(&Self::hour_slot_key(day, slot), gem_id)?;
         self.expiry_bucket_len.write(&day, slot.saturating_add(1))?;
         self.called_bucket_slot
             .write(&gem_id, Self::packed_slot(day, slot))?;
@@ -247,7 +247,7 @@ impl GemContract<'_> {
 
     /// Free one bucket slot, retiring the bucket once nothing waits in it.
     pub(crate) fn release_expiry_slot(&mut self, day: u32, slot: u32, gem_id: U256) -> Result<()> {
-        let slot_key = Self::bucket_slot_key(day, slot);
+        let slot_key = Self::hour_slot_key(day, slot);
         if self.expiry_bucket_at.read(&slot_key)? != gem_id {
             return Ok(());
         }
@@ -270,11 +270,11 @@ impl GemContract<'_> {
     }
 
     /// Hour since the epoch a deadline falls in: plain UTC, not a WorldwideDay.
-    pub(crate) const fn deadline_bucket(deadline: u64) -> u32 {
+    pub(crate) const fn deadline_hour(deadline: u64) -> u32 {
         (deadline / 3_600) as u32
     }
 
-    pub(crate) const fn bucket_end(day: u32) -> u64 {
+    pub(crate) const fn hour_end(day: u32) -> u64 {
         (day as u64 + 1) * 3_600
     }
 
@@ -286,7 +286,7 @@ impl GemContract<'_> {
         ((packed >> 32) as u32, (packed & 0xffff_ffff) as u32)
     }
 
-    pub(crate) fn bucket_slot_key(day: u32, slot: u32) -> B256 {
+    pub(crate) fn hour_slot_key(day: u32, slot: u32) -> B256 {
         let mut buf = [0u8; 8];
         buf[0..4].copy_from_slice(&day.to_be_bytes());
         buf[4..8].copy_from_slice(&slot.to_be_bytes());
@@ -296,19 +296,19 @@ impl GemContract<'_> {
     pub(crate) fn expiry_slot(&self, day: u32, slot: u32) -> Result<Option<U256>> {
         let id = self
             .expiry_bucket_at
-            .read(&Self::bucket_slot_key(day, slot))?;
+            .read(&Self::hour_slot_key(day, slot))?;
         Ok((!id.is_zero()).then_some(id))
     }
 
     /// Retire a bucket the sweep has finished: a Called gem still in it moves on, a
     /// stale entry goes. Returns how many were deferred and dropped.
-    pub(crate) fn force_retire_bucket(&mut self, day: u32, now: u64) -> Result<(u32, u32)> {
+    pub(crate) fn force_retire_hour(&mut self, day: u32, now: u64) -> Result<(u32, u32)> {
         let len = self.expiry_bucket_len.read(&day)?;
         let (mut deferred, mut dropped) = (0u32, 0u32);
         for slot in 0..len {
             let gem_id = self
                 .expiry_bucket_at
-                .read(&Self::bucket_slot_key(day, slot))?;
+                .read(&Self::hour_slot_key(day, slot))?;
             if gem_id.is_zero() {
                 continue;
             }
@@ -335,9 +335,18 @@ impl GemContract<'_> {
     fn compact_owner_index(&mut self, owner: Address, gem_id: U256) -> Result<()> {
         let count = self.owner_gem_counts.read(&owner)?;
         let last = count.checked_sub(1).ok_or(GemError::GemNotFound)?;
-        let idx = match self.owner_gem_position.read(&gem_id)?.checked_sub(1) {
-            Some(idx) => idx,
-            None => self.find_in_owner_index(owner, gem_id, count)?,
+        let stored = self.owner_gem_position.read(&gem_id)?.checked_sub(1);
+        let idx = match stored {
+            Some(idx)
+                if idx < count
+                    && self
+                        .owner_gem_ids
+                        .read(&Self::owner_index_key(owner, idx))?
+                        == gem_id =>
+            {
+                idx
+            }
+            _ => self.find_in_owner_index(owner, gem_id, count)?,
         };
         let last_key = Self::owner_index_key(owner, last);
         if idx != last {

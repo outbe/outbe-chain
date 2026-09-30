@@ -62,6 +62,10 @@ fn breached_enough(window: &[(u32, Option<U256>)], terms: &BucketTerms) -> bool 
     // Both terms are stored in seconds; the daily scan needs day counts.
     let window_days = terms.call_window / 86_400;
     let threshold_days = terms.call_threshold / 86_400;
+    // Zero days means no terms, not a breach on every day.
+    if threshold_days == 0 || threshold_days > window_days {
+        return false;
+    }
     let mut breaches: u32 = 0;
     for (day, vwap) in window.iter().take(window_days as usize) {
         if *day < terms.start_day {

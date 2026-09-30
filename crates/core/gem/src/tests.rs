@@ -839,13 +839,13 @@ fn an_entry_the_sweep_cannot_retire_does_not_hold_up_its_bucket() {
         let deadline = T_NOW + 7 * 86_400;
         gem.push_called(ghost, deadline).unwrap();
         call_gem(storage, live, T_NOW);
-        let day = GemContract::deadline_bucket(deadline);
+        let day = GemContract::deadline_hour(deadline);
         let load = api::get_gem(storage, live)
             .unwrap()
             .unwrap()
             .promis_load_minor;
 
-        let ctx = block_ctx_at(storage, GemContract::bucket_end(day));
+        let ctx = block_ctx_at(storage, GemContract::hour_end(day));
         <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
             .unwrap();
 
@@ -868,7 +868,7 @@ fn a_due_entry_that_cannot_burn_credits_nothing() {
 
         let ctx = block_ctx_at(
             storage,
-            GemContract::bucket_end(GemContract::deadline_bucket(T_NOW)),
+            GemContract::hour_end(GemContract::deadline_hour(T_NOW)),
         );
         <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
             .unwrap();
@@ -1211,18 +1211,18 @@ fn a_bucket_that_outlives_its_hour_is_retired_rather_than_left_in_front() {
         let gem = GemContract::new(storage.clone());
         call_gem(storage, gem_id, T_NOW);
         let deadline = T_NOW + 7 * 86_400;
-        let bucket = GemContract::deadline_bucket(deadline);
+        let bucket = GemContract::deadline_hour(deadline);
 
         let entry = crate::buckets::bucket_entry(bucket_of(storage, gem_id));
         gem.called_deadline
             .write(&entry, deadline + 400 * 86_400)
             .unwrap();
 
-        let ctx = block_ctx_at(storage, GemContract::bucket_end(bucket));
+        let ctx = block_ctx_at(storage, GemContract::hour_end(bucket));
         <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
             .unwrap();
 
-        let retry = GemContract::deadline_bucket(GemContract::bucket_end(bucket)) + 1;
+        let retry = GemContract::deadline_hour(GemContract::hour_end(bucket)) + 1;
         assert_eq!(
             gem.first_expiry_day().unwrap(),
             Some(retry),
@@ -1234,7 +1234,7 @@ fn a_bucket_that_outlives_its_hour_is_retired_rather_than_left_in_front() {
             "and its called bucket waits at its own deadline again"
         );
 
-        let ctx = block_ctx_at(storage, GemContract::bucket_end(retry));
+        let ctx = block_ctx_at(storage, GemContract::hour_end(retry));
         <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
             .unwrap();
         assert!(api::get_gem(storage, gem_id).unwrap().is_none());
@@ -1265,18 +1265,18 @@ fn forfeit_fails_once(call: fn(&StorageHandle, U256, u64)) -> (HashMapStoragePro
             .unwrap()
             .promis_load_minor;
         call(&storage, gem_id, T_NOW);
-        let hour = GemContract::deadline_bucket(T_NOW + 7 * 86_400);
+        let hour = GemContract::deadline_hour(T_NOW + 7 * 86_400);
         // The credit overflows, so the forfeit reverts as a whole.
         outbe_promislimit::PromisLimitContract::new(storage.clone())
             .set_total_unallocated(U256::MAX)
             .unwrap();
 
-        let now = GemContract::bucket_end(hour);
+        let now = GemContract::hour_end(hour);
         let ctx = block_ctx_at(&storage, now);
         <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
             .unwrap();
 
-        let retry = GemContract::deadline_bucket(now) + 1;
+        let retry = GemContract::deadline_hour(now) + 1;
         assert_eq!(gem_state(&storage, gem_id), GemState::Called as u8);
         assert_eq!(
             GemContract::new(storage.clone())
@@ -1291,7 +1291,7 @@ fn forfeit_fails_once(call: fn(&StorageHandle, U256, u64)) -> (HashMapStoragePro
         outbe_promislimit::PromisLimitContract::new(storage.clone())
             .set_total_unallocated(U256::ZERO)
             .unwrap();
-        let ctx = block_ctx_at(&storage, GemContract::bucket_end(retry));
+        let ctx = block_ctx_at(&storage, GemContract::hour_end(retry));
         <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
             .unwrap();
 
@@ -1301,25 +1301,140 @@ fn forfeit_fails_once(call: fn(&StorageHandle, U256, u64)) -> (HashMapStoragePro
     (provider, gem_id)
 }
 
-/// A called bucket whose forfeit fails is not lost: it moves to the next hour, then burns.
+/// A bucket member whose forfeit fails is not lost: it moves to the next hour on its
+/// own, then burns.
 #[test]
-fn a_called_bucket_whose_forfeit_fails_is_deferred_and_burned_later() {
+fn a_bucket_member_whose_forfeit_fails_is_queued_on_its_own_and_burned_later() {
     use alloy_sol_types::SolEvent;
 
-    let (provider, _) = forfeit_fails_once(call_gem);
+    let (provider, gem_id) = forfeit_fails_once(call_gem);
     let events = provider.get_events(outbe_primitives::addresses::GEM_ADDRESS);
-    let called: Vec<_> = events
+    let deferred: Vec<U256> = events
         .iter()
-        .filter_map(|log| IGem::GemBucketCalled::decode_log_data(log).ok())
-        .map(|event| event.bucketKey)
+        .filter_map(|log| IGem::GemExpiryDeferred::decode_log_data(log).ok())
+        .map(|event| event.gemId)
         .collect();
-    let deferred: Vec<_> = events
+    assert_eq!(deferred, vec![gem_id]);
+    assert!(!events
+        .iter()
+        .any(|log| IGem::GemBucketExpiryDeferred::decode_log_data(log).is_ok()));
+}
+
+/// Unix time of the first block past the deadline of a bucket called at `T_NOW`.
+fn first_due_block(storage: &StorageHandle, gem_id: U256) -> u64 {
+    let notice = api::get_gem(storage, gem_id)
+        .unwrap()
+        .unwrap()
+        .call_notice_period_seconds;
+    GemContract::hour_end(GemContract::deadline_hour(T_NOW + u64::from(notice)))
+}
+
+fn begin_block_at(storage: &StorageHandle, ts: u64) {
+    <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(
+        &block_ctx_at(storage, ts),
+    )
+    .unwrap();
+}
+
+/// One member that cannot burn leaves its bucket; the others burn on time.
+#[test]
+fn a_member_that_cannot_burn_does_not_hold_back_its_bucket() {
+    with_storage(|storage| {
+        let gems = alice_gems(storage, &[1, 1_000]);
+        call_gem(storage, gems[0], T_NOW);
+        let now = first_due_block(storage, gems[0]);
+        // Room for the small load's credit only.
+        let mut limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
+        limit
+            .set_total_unallocated(U256::MAX - U256::from(500u64))
+            .unwrap();
+
+        // The failing member sits on top, where the sweep starts.
+        begin_block_at(storage, now);
+        assert!(api::get_gem(storage, gems[0]).unwrap().is_none(), "burned");
+        assert_eq!(gem_state(storage, gems[1]), GemState::Called as u8);
+        assert!(bucket_of(storage, gems[1]).is_zero(), "queued on its own");
+
+        limit.set_total_unallocated(U256::ZERO).unwrap();
+        begin_block_at(
+            storage,
+            GemContract::hour_end(GemContract::deadline_hour(now) + 1),
+        );
+        assert!(api::get_gem(storage, gems[1]).unwrap().is_none());
+        assert_eq!(unallocated(storage), U256::from(1_000u64));
+    });
+}
+
+/// A broken bucket index reverts, so the sweep defers the bucket instead of failing
+/// every block.
+#[test]
+fn a_broken_bucket_index_defers_the_bucket_and_keeps_blocks_going() {
+    use alloy_sol_types::SolEvent;
+
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(T_NOW));
+    let bucket = StorageHandle::enter(&mut provider, |storage| {
+        let gems = alice_gems(&storage, &[1, 2]);
+        call_gem(&storage, gems[0], T_NOW);
+        GemContract::new(storage.clone())
+            .bucket_gem_index
+            .write(&gems[1], 7)
+            .unwrap();
+        begin_block_at(&storage, first_due_block(&storage, gems[0]));
+        assert_eq!(gem_state(&storage, gems[1]), GemState::Called as u8);
+        bucket_of(&storage, gems[0])
+    });
+    let deferred: Vec<_> = provider
+        .get_events(outbe_primitives::addresses::GEM_ADDRESS)
         .iter()
         .filter_map(|log| IGem::GemBucketExpiryDeferred::decode_log_data(log).ok())
         .map(|event| event.bucketKey)
         .collect();
-    assert_eq!(called.len(), 1);
-    assert_eq!(deferred, called);
+    assert_eq!(deferred, vec![bucket]);
+}
+
+/// Gem ids carry no order, so a slice refreshes the whole range once, however many
+/// buckets it called.
+#[test]
+fn a_call_slice_refreshes_all_metadata_once() {
+    use alloy_sol_types::SolEvent;
+
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(T_NOW));
+    StorageHandle::enter(&mut provider, |storage| {
+        GemContract::new(storage.clone())
+            .config_profile
+            .write(crate::config::PROFILE_PROD)
+            .unwrap();
+        let pair = seed_currency(&storage, 840, Some(U256::from(600_000u64)));
+        for nonce in 0..3 {
+            callable_gem_of(
+                &storage,
+                840,
+                nonce,
+                T_NOW - 100 * 86_400,
+                U256::from(100_000u64),
+            );
+        }
+        let day = previous_date_key(timestamp_to_date_key(T_NOW));
+        priced_window(&storage, pair, day, U256::from(300_000u64));
+        assert_eq!(
+            crate::hooks::scan_and_call(&block_ctx_at(&storage, T_NOW)).unwrap(),
+            3
+        );
+    });
+    let events = provider.get_events(outbe_primitives::addresses::GEM_ADDRESS);
+    let batches: Vec<(U256, U256)> = events
+        .iter()
+        .filter_map(|log| IGem::BatchMetadataUpdate::decode_log_data(log).ok())
+        .map(|event| (event._fromTokenId, event._toTokenId))
+        .collect();
+    assert_eq!(batches, vec![(U256::ZERO, U256::MAX)]);
+    let called = events
+        .iter()
+        .filter(|log| IGem::GemBucketCalled::decode_log_data(log).is_ok())
+        .count();
+    assert_eq!(called, 3);
 }
 
 /// A gem called before buckets still drains through the queue, deferral included.
@@ -1351,7 +1466,7 @@ fn a_called_bucket_wider_than_the_budget_burns_over_several_blocks() {
             .unwrap()
             .unwrap()
             .call_notice_period_seconds;
-        let now = GemContract::bucket_end(GemContract::deadline_bucket(T_NOW + u64::from(notice)));
+        let now = GemContract::hour_end(GemContract::deadline_hour(T_NOW + u64::from(notice)));
         let begin = |ts: u64| {
             <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(
                 &block_ctx_at(storage, ts),
@@ -1411,7 +1526,7 @@ fn a_storage_fault_in_a_forfeit_fails_the_block() {
     let (gem_id, now) = StorageHandle::enter(&mut provider, |storage| {
         let gem_id = mature_gem(&storage);
         call_gem(&storage, gem_id, T_NOW);
-        let now = GemContract::bucket_end(GemContract::deadline_bucket(T_NOW + 7 * 86_400));
+        let now = GemContract::hour_end(GemContract::deadline_hour(T_NOW + 7 * 86_400));
         (gem_id, now)
     });
 
@@ -1437,7 +1552,7 @@ fn leaving_called_frees_the_expiry_slot() {
         let gem_id = mature_gem(storage);
         let mut gem = GemContract::new(storage.clone());
         call_gem(storage, gem_id, T_NOW);
-        let bucket = GemContract::deadline_bucket(T_NOW + 7 * 86_400);
+        let bucket = GemContract::deadline_hour(T_NOW + 7 * 86_400);
         assert_eq!(gem.expiry_bucket_live.read(&bucket).unwrap(), 1);
 
         gem.set_state(gem_id, GemState::Settled).unwrap();
@@ -1748,14 +1863,8 @@ fn metadata_update_marks_each_lifecycle_transition() {
         gem_id
     });
 
-    let events = provider.get_events(outbe_primitives::addresses::GEM_ADDRESS);
-    let batches: Vec<(U256, U256)> = events
-        .iter()
-        .filter_map(|log| IGem::BatchMetadataUpdate::decode_log_data(log).ok())
-        .map(|event| (event._fromTokenId, event._toTokenId))
-        .collect();
-    assert_eq!(batches, vec![(U256::ZERO, U256::MAX)], "the bucket call");
-    let updates: Vec<U256> = events
+    let updates: Vec<U256> = provider
+        .get_events(outbe_primitives::addresses::GEM_ADDRESS)
         .iter()
         .filter_map(|log| IGem::MetadataUpdate::decode_log_data(log).ok())
         .map(|event| event._tokenId)

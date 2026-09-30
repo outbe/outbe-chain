@@ -11,7 +11,7 @@ use outbe_primitives::{
 
 use crate::buckets::BucketBins;
 use crate::constants::{CALL_SWEEP, MAX_BUCKET_VISITS_PER_BLOCK, MAX_EXPIRY_STEPS_PER_BLOCK};
-use crate::precompile::IGem::{CallScanSkipped, SweepDaySkipped};
+use crate::precompile::IGem::{BatchMetadataUpdate, CallScanSkipped, SweepDaySkipped};
 use crate::schema::GemContract;
 
 pub struct GemLifecycle;
@@ -113,6 +113,18 @@ fn start_call_sweep(ctx: &BlockRuntimeContext, gem: &GemContract, days: SweepDay
 /// Advance an open sweep by one slice, pinned to the day it opened on so blocks
 /// of it decide against the same prices. Returns how many buckets were called.
 pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
+    let called = call_slice(ctx)?;
+    // Gem ids carry no order, so a call can only refresh the whole range.
+    if called != 0 {
+        GemContract::new(ctx.storage.clone()).emit(BatchMetadataUpdate {
+            _fromTokenId: U256::ZERO,
+            _toTokenId: U256::MAX,
+        })?;
+    }
+    Ok(called)
+}
+
+fn call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     let mut gem = GemContract::new(ctx.storage.clone());
     let pinned_day = gem.call_sweep_day.read()?;
     if pinned_day == 0 {
@@ -242,6 +254,7 @@ pub(crate) fn call_currency(
             {
                 Ok(true) => called = called.saturating_add(1),
                 Ok(false) => {}
+                Err(error) if is_node_local(&error) => return Err(error),
                 Err(error) => {
                     tracing::warn!(target: "outbe::gem", %bucket, error = ?error, "call scan: skipping bucket");
                 }
@@ -276,8 +289,8 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
         let Some(day) = gem.first_expiry_day()? else {
             break;
         };
-        // A deadline lies inside its own bucket, so an open one holds nobody due.
-        if now < GemContract::bucket_end(day) {
+        // A deadline lies inside its own hour, so an open one holds nobody due.
+        if now < GemContract::hour_end(day) {
             break;
         }
         let len = gem.expiry_bucket_len.read(&day)?;
@@ -303,6 +316,9 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
                     break;
                 }
                 slot += 1;
+                if gem.expiry_bucket_live.read(&day)? == 0 {
+                    break;
+                }
                 continue;
             }
             budget -= 1;
@@ -315,13 +331,21 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
                         tracing::warn!(target: "outbe::gem", %entry, "expiry sweep: queued gem is not Called");
                     }
                 }
-                Err(error) if is_deterministic(&error) => {
+                Err(error) if is_node_local(&error) => return Err(error),
+                Err(error) => {
                     let deferred = gem.requeue_or_drop(entry, now)?;
                     tracing::warn!(target: "outbe::gem", %entry, deferred, error = ?error, "expiry sweep: forfeit failed");
                 }
-                Err(error) => return Err(error),
             }
             slot += 1;
+            if gem.expiry_bucket_live.read(&day)? == 0 {
+                break;
+            }
+        }
+
+        // The last live entry left and retired the hour, cursor included.
+        if gem.expiry_bucket_live.read(&day)? == 0 {
+            continue;
         }
 
         if slot < len {
@@ -333,8 +357,8 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
         gem.expiry_cursor.write(0)?;
         // Anything left broke the invariant above; retiring it keeps the tree moving.
         if gem.expiry_bucket_live.read(&day)? != 0 {
-            let (deferred, dropped) = gem.force_retire_bucket(day, now)?;
-            tracing::warn!(target: "outbe::gem", day, deferred, dropped, "expiry sweep: bucket outlived its hour, retiring it");
+            let (deferred, dropped) = gem.force_retire_hour(day, now)?;
+            tracing::warn!(target: "outbe::gem", day, deferred, dropped, "expiry sweep: hour outlived itself, retiring it");
         }
     }
     Ok(burned)
@@ -369,21 +393,35 @@ fn forfeit_bucket(
                 continue;
             }
             Ok(false) => None,
-            Err(error) if is_deterministic(&error) => Some(error),
-            Err(error) => return Err(error),
+            Err(error) if is_node_local(&error) => return Err(error),
+            Err(error) => Some(error),
         };
-        gem.requeue_or_drop(entry, now)?;
-        tracing::warn!(target: "outbe::gem", %bucket, %gem_id, error = ?error, "expiry sweep: bucket member not forfeited, bucket deferred");
-        return Ok(true);
+        match ctx
+            .storage
+            .with_checkpoint(|| gem.detach_called_member(gem_id, now))
+        {
+            Ok(()) => {
+                tracing::warn!(target: "outbe::gem", %bucket, %gem_id, error = ?error, "expiry sweep: bucket member not forfeited, queued on its own");
+            }
+            Err(detach) if is_node_local(&detach) => return Err(detach),
+            Err(detach) => {
+                gem.requeue_or_drop(entry, now)?;
+                tracing::warn!(target: "outbe::gem", %bucket, %gem_id, error = ?error, detach = ?detach, "expiry sweep: bucket member not forfeited, bucket deferred");
+                return Ok(true);
+            }
+        }
     }
 }
 
-/// A revert belongs to the block's outcome; any other error is this node's own fault and
-/// must fail the block rather than turn into a state change only this node makes.
-fn is_deterministic(error: &PrecompileError) -> bool {
+/// A failure of this node's own storage or readers must fail the block rather than turn
+/// into a state change only this node makes; any other error is the same on every node.
+fn is_node_local(error: &PrecompileError) -> bool {
     matches!(
         error,
-        PrecompileError::Revert(_) | PrecompileError::RevertBytes(_)
+        PrecompileError::Storage(_)
+            | PrecompileError::BodyReadUnavailable(_)
+            | PrecompileError::BodyReadRequestDeadline
+            | PrecompileError::TreeUnavailable(_)
     )
 }
 

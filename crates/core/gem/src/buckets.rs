@@ -5,7 +5,7 @@ use outbe_primitives::time::first_full_day;
 
 use crate::errors::GemError;
 use crate::precompile::IGem;
-use crate::schema::{GemContract, GemData};
+use crate::schema::{GemContract, GemData, GemState};
 
 /// Everything a call decision reads off a gem. Gems that share it breach on the same
 /// days, so one decision covers them all.
@@ -56,9 +56,9 @@ impl GemContract<'_> {
         if index == 0 {
             self.seal_bucket(bucket, &terms)?;
         }
-        let next = index.checked_add(1).ok_or_else(|| {
-            PrecompileError::Fatal(format!("gem bucket {bucket} member index overflow"))
-        })?;
+        let next = index
+            .checked_add(1)
+            .ok_or_else(|| corrupt(format!("gem bucket {bucket} member index overflow")))?;
         self.bucket_gems
             .write(&Self::bucket_member_key(bucket, index), item.gem_id)?;
         self.bucket_gem_index.write(&item.gem_id, index)?;
@@ -145,11 +145,24 @@ impl GemContract<'_> {
             bucketKey: bucket,
             calledAt: now,
             settlementDeadline: deadline,
-        })?;
-        self.emit(IGem::BatchMetadataUpdate {
-            _fromTokenId: U256::ZERO,
-            _toTokenId: U256::MAX,
         })
+    }
+
+    /// Take a member out of its called bucket and queue it on its own, as a Called gem,
+    /// no earlier than the next hour: one gem that cannot burn must not hold back the rest.
+    pub(crate) fn detach_called_member(&mut self, gem_id: U256, now: u64) -> Result<()> {
+        let bucket = self.gem_bucket.read(&gem_id)?;
+        let called_at = self.bucket_called_at.read(&bucket)?;
+        if called_at == 0 {
+            return Err(GemError::InvalidState.into());
+        }
+        let mut item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
+        self.leave_bucket(gem_id)?;
+        item.state = GemState::Called as u8;
+        item.called_at = called_at;
+        self.gem_items.update(&item)?;
+        self.requeue_or_drop(gem_id, now)?;
+        Ok(())
     }
 
     /// The called bucket an expiry-queue entry stands for; `None` for a gem id.
@@ -232,8 +245,10 @@ pub(crate) fn bucket_entry(bucket: B256) -> U256 {
     U256::from_be_bytes(bucket.0)
 }
 
+/// A broken on-chain index is the same on every node, so it reverts: the sweep then
+/// defers the entry instead of failing every block.
 fn corrupt(message: String) -> PrecompileError {
-    PrecompileError::BodyReadCorruption(message)
+    PrecompileError::Revert(message)
 }
 
 /// The uncalled buckets of one reference currency, by call price.
