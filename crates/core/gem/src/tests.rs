@@ -228,6 +228,14 @@ fn bucket_of(storage: &StorageHandle, gem_id: U256) -> alloy_primitives::B256 {
         .unwrap()
 }
 
+/// Calls the gem's whole bucket at `at`.
+fn call_gem(storage: &StorageHandle, gem_id: U256, at: u64) {
+    let mut gem = GemContract::new(storage.clone());
+    let bucket = gem.gem_bucket.read(&gem_id).unwrap();
+    let terms = gem.read_bucket_terms(bucket).unwrap();
+    gem.mark_bucket_called(bucket, &terms, at).unwrap();
+}
+
 /// Gems share a bucket only when every term of the call decision matches.
 #[test]
 fn a_bucket_holds_the_gems_whose_call_terms_all_match() {
@@ -366,64 +374,6 @@ fn is_qualified_dispatch() {
     });
 }
 
-#[test]
-fn add_gem_enrolls_issued_in_call_bin() {
-    with_storage(|storage| {
-        let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
-        let gem = GemContract::new(storage.clone());
-        let bin = GemContract::price_to_bin(sample_params(ALICE).call_price_minor).unwrap();
-        assert_eq!(
-            gem.call_bin_count
-                .read(&GemContract::scoped(840, bin))
-                .unwrap(),
-            1
-        );
-        assert_eq!(
-            gem.call_bin_gems
-                .read(&GemContract::bin_index_key(840, bin, 0))
-                .unwrap(),
-            gem_id
-        );
-        assert!(tree_math::contains(&crate::state::CallBins(&gem, 840), bin).unwrap());
-    });
-}
-
-#[test]
-fn settling_an_issued_gem_takes_it_out_of_the_call_bin() {
-    with_storage(|storage| {
-        let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
-        api::set_state(storage, gem_id, GemState::Settled).unwrap();
-        let gem = GemContract::new(storage.clone());
-        let bin = GemContract::price_to_bin(sample_params(ALICE).call_price_minor).unwrap();
-        assert_eq!(
-            gem.call_bin_count
-                .read(&GemContract::scoped(840, bin))
-                .unwrap(),
-            0
-        );
-        assert!(!tree_math::contains(&crate::state::CallBins(&gem, 840), bin).unwrap());
-    });
-}
-
-#[test]
-fn removing_a_gem_its_bin_does_not_hold_is_a_no_op() {
-    with_storage(|storage| {
-        let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
-        let call_price = sample_params(ALICE).call_price_minor;
-        let mut gem = GemContract::new(storage.clone());
-        gem.remove_call_bin(U256::from(0xdeadu64), call_price, 840)
-            .unwrap();
-        gem.remove_call_bin(gem_id, call_price, EUR).unwrap();
-        let bin = GemContract::price_to_bin(call_price).unwrap();
-        assert_eq!(
-            gem.call_bin_gems
-                .read(&GemContract::bin_index_key(840, bin, 0))
-                .unwrap(),
-            gem_id
-        );
-    });
-}
-
 /// A zero floor still needs one finalized day; any positive price then clears it.
 #[test]
 fn a_gem_without_a_floor_qualifies_on_its_first_closed_day() {
@@ -437,7 +387,7 @@ fn a_gem_without_a_floor_qualifies_on_its_first_closed_day() {
         assert!(is_qualified(storage, gem_id));
         let gem = GemContract::new(storage.clone());
         let bin = GemContract::price_to_bin(p.call_price_minor).unwrap();
-        assert!(tree_math::contains(&crate::state::CallBins(&gem, 840), bin).unwrap());
+        assert!(tree_math::contains(&crate::buckets::BucketBins(&gem, 840), bin).unwrap());
     });
 }
 
@@ -817,7 +767,7 @@ fn a_finished_sweep_closes_itself_and_idle_blocks_do_nothing() {
         // A gem that breaches just as hard is left alone: no sweep is open.
         let mut second = sample_params(BOB);
         second.issued_at = T_NOW - 100 * 86_400;
-        second.call_price_minor = U256::from(100_000u64);
+        second.call_price_minor = U256::from(100_001u64);
         let second_id = api::add_gem(storage, second).unwrap();
         assert_eq!(crate::hooks::run_call_slice(&ctx).unwrap(), 0);
         assert_eq!(
@@ -827,57 +777,53 @@ fn a_finished_sweep_closes_itself_and_idle_blocks_do_nothing() {
     });
 }
 
-/// A bin left half-visited would be stepped over by the cursor.
+/// A bin holding more buckets than the budget resumes inside itself on the next slice.
 #[test]
-fn a_bin_wider_than_the_budget_is_not_left_half_called() {
+fn a_bin_wider_than_the_budget_resumes_inside_it() {
     with_storage(|storage| {
         let mut ids = Vec::new();
-        for owner in [ALICE, BOB] {
+        for (owner, price) in [(ALICE, 100_000u64), (BOB, 100_001)] {
             let mut params = sample_params(owner);
             params.issued_at = T_NOW - 100 * 86_400;
-            params.call_price_minor = U256::from(100_000u64);
-            let id = api::add_gem(storage, params).unwrap();
-            ids.push(id);
+            params.call_price_minor = U256::from(price);
+            ids.push(api::add_gem(storage, params).unwrap());
         }
-
-        let pair = seed_currency(storage, 840, Some(U256::from(600_000u64)));
-        let oracle = OracleContract::new(storage.clone());
-        let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
-        let mut day = last_closed_day;
-        for _ in 0..(crate::constants::CALL_WINDOW / 86_400) {
-            oracle
-                .record_utc_day_vwap(day, pair, U256::from(300_000u64))
-                .unwrap();
-            day = previous_date_key(day);
-        }
-        oracle
-            .utc_day_vwap_last_finalized
-            .write(last_closed_day)
-            .unwrap();
+        let bin = GemContract::price_to_bin(U256::from(100_000u64)).unwrap();
+        assert_eq!(
+            GemContract::price_to_bin(U256::from(100_001u64)).unwrap(),
+            bin
+        );
 
         let ctx = block_ctx(storage);
-        let mut budget = 1u32;
+        let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
         let window = vec![
             (last_closed_day, Some(U256::from(300_000u64)));
             (crate::constants::CALL_WINDOW / 86_400) as usize
         ];
-        assert_eq!(
+        let walk = |budget: u32| {
+            let mut budget = budget;
             crate::hooks::call_currency(
                 &ctx,
                 840,
                 &window,
                 outbe_primitives::math::constants::MAX_BIN_ID,
-                &mut budget
+                &mut budget,
             )
-            .unwrap(),
-            (2, false)
+            .unwrap()
+        };
+        assert_eq!(walk(1), (1, false));
+        assert_eq!(gem_state(storage, ids[1]), GemState::Called as u8);
+        assert_eq!(gem_state(storage, ids[0]), GemState::Issued as u8);
+        assert_eq!(
+            GemContract::new(storage.clone())
+                .bucket_scan_cursor
+                .read(&840)
+                .unwrap(),
+            (u64::from(bin) << 32) | 1
         );
-        for id in ids {
-            assert_eq!(
-                api::get_gem(storage, id).unwrap().unwrap().state,
-                GemState::Called as u8
-            );
-        }
+
+        assert_eq!(walk(8), (1, true));
+        assert_eq!(gem_state(storage, ids[0]), GemState::Called as u8);
     });
 }
 
@@ -892,7 +838,7 @@ fn an_entry_the_sweep_cannot_retire_does_not_hold_up_its_bucket() {
         let ghost = U256::from(0xdeadu64);
         let deadline = T_NOW + 7 * 86_400;
         gem.push_called(ghost, deadline).unwrap();
-        gem.mark_called(live, T_NOW).unwrap();
+        call_gem(storage, live, T_NOW);
         let day = GemContract::deadline_bucket(deadline);
         let load = api::get_gem(storage, live)
             .unwrap()
@@ -940,7 +886,7 @@ fn forfeiting_a_gem_returns_its_load_to_the_pool() {
             .unwrap()
             .promis_load_minor;
         let mut gem = GemContract::new(storage.clone());
-        gem.mark_called(gem_id, T_NOW).unwrap();
+        call_gem(storage, gem_id, T_NOW);
 
         assert!(!gem.forfeit(gem_id, T_NOW + 6 * 86_400).unwrap());
         assert_eq!(unallocated(storage), U256::ZERO);
@@ -955,13 +901,15 @@ fn forfeiting_a_gem_returns_its_load_to_the_pool() {
 fn a_settled_gem_is_never_forfeited() {
     with_storage(|storage| {
         let gem_id = mature_gem(storage);
+        let bucket = bucket_of(storage, gem_id);
         let mut gem = GemContract::new(storage.clone());
-        gem.mark_called(gem_id, T_NOW).unwrap();
+        call_gem(storage, gem_id, T_NOW);
         gem.set_state(gem_id, GemState::Settled).unwrap();
 
         assert!(!gem.forfeit(gem_id, T_NOW + 7 * 86_400 + 1).unwrap());
         assert_eq!(unallocated(storage), U256::ZERO);
-        assert_eq!(gem.called_bucket_slot.read(&gem_id).unwrap(), 0);
+        let entry = crate::buckets::bucket_entry(bucket);
+        assert_eq!(gem.called_bucket_slot.read(&entry).unwrap(), 0);
     });
 }
 
@@ -1004,7 +952,7 @@ fn a_gem_above_the_window_is_not_visited_but_still_expires() {
         );
 
         let mut gem = GemContract::new(storage.clone());
-        gem.mark_called(gem_id, T_NOW).unwrap();
+        call_gem(storage, gem_id, T_NOW);
         assert!(gem.forfeit(gem_id, T_NOW + 7 * 86_400 + 1).unwrap());
         assert!(api::get_gem(storage, gem_id).unwrap().is_none());
     });
@@ -1022,7 +970,9 @@ fn call_then_forfeit_lifecycle() {
         let window = breach_window(T_NOW, threshold + U256::from(1u64), breach_days);
 
         let mut gem = GemContract::new(storage.clone());
-        assert!(gem.trigger_call(&window, gem_id, T_NOW).unwrap());
+        assert!(gem
+            .trigger_bucket_call(&window, bucket_of(storage, gem_id), T_NOW)
+            .unwrap());
         let item = api::get_gem(storage, gem_id).unwrap().unwrap();
         assert_eq!(item.state, GemState::Called as u8);
         assert_eq!(item.called_at, T_NOW);
@@ -1113,7 +1063,8 @@ fn the_issue_day_counts_only_for_a_gem_issued_at_midnight() {
 
             let mut gem = GemContract::new(storage.clone());
             assert_eq!(
-                gem.trigger_call(&window, gem_id, T_NOW).unwrap(),
+                gem.trigger_bucket_call(&window, bucket_of(storage, gem_id), T_NOW)
+                    .unwrap(),
                 expected,
                 "issued at {issued_at}"
             );
@@ -1134,7 +1085,9 @@ fn call_skips_below_threshold() {
         let window = breach_window(T_NOW, threshold + U256::from(1u64), breach_days);
 
         let mut gem = GemContract::new(storage.clone());
-        assert!(!gem.trigger_call(&window, gem_id, T_NOW).unwrap());
+        assert!(!gem
+            .trigger_bucket_call(&window, bucket_of(storage, gem_id), T_NOW)
+            .unwrap());
         assert_eq!(
             api::get_gem(storage, gem_id).unwrap().unwrap().state,
             GemState::Issued as u8
@@ -1255,13 +1208,14 @@ fn config_profile_slot_matches_seeder_layout() {
 fn a_bucket_that_outlives_its_hour_is_retired_rather_than_left_in_front() {
     with_storage(|storage| {
         let gem_id = mature_gem(storage);
-        let mut gem = GemContract::new(storage.clone());
-        gem.mark_called(gem_id, T_NOW).unwrap();
+        let gem = GemContract::new(storage.clone());
+        call_gem(storage, gem_id, T_NOW);
         let deadline = T_NOW + 7 * 86_400;
         let bucket = GemContract::deadline_bucket(deadline);
 
+        let entry = crate::buckets::bucket_entry(bucket_of(storage, gem_id));
         gem.called_deadline
-            .write(&gem_id, deadline + 400 * 86_400)
+            .write(&entry, deadline + 400 * 86_400)
             .unwrap();
 
         let ctx = block_ctx_at(storage, GemContract::bucket_end(bucket));
@@ -1275,9 +1229,9 @@ fn a_bucket_that_outlives_its_hour_is_retired_rather_than_left_in_front() {
             "the bucket leaves the tree instead of blocking every later one"
         );
         assert_eq!(
-            gem.called_deadline.read(&gem_id).unwrap(),
+            gem.called_deadline.read(&entry).unwrap(),
             deadline,
-            "and its Called gem waits at its own deadline again"
+            "and its called bucket waits at its own deadline again"
         );
 
         let ctx = block_ctx_at(storage, GemContract::bucket_end(retry));
@@ -1287,11 +1241,21 @@ fn a_bucket_that_outlives_its_hour_is_retired_rather_than_left_in_front() {
     });
 }
 
-/// A Called gem whose forfeit fails is not lost: it moves to the next hour, then burns.
-#[test]
-fn a_called_gem_whose_forfeit_fails_is_deferred_and_burned_later() {
-    use alloy_sol_types::SolEvent;
+/// Calls a gem the way it was called before buckets: on its own record, queued by id.
+fn call_before_buckets(storage: &StorageHandle, gem_id: U256, at: u64) {
+    let mut gem = GemContract::new(storage.clone());
+    gem.leave_bucket(gem_id).unwrap();
+    let mut item = gem.gem_items.get(gem_id).unwrap().unwrap();
+    item.state = GemState::Called as u8;
+    item.called_at = at;
+    gem.gem_items.update(&item).unwrap();
+    gem.push_called(gem_id, at + u64::from(item.call_notice_period_seconds))
+        .unwrap();
+}
 
+/// Arms a mature gem with `call`, fails its first forfeit, and checks it moved to the
+/// next hour and burned there with its credit. Returns the provider for its events.
+fn forfeit_fails_once(call: fn(&StorageHandle, U256, u64)) -> (HashMapStorageProvider, U256) {
     let mut provider = HashMapStorageProvider::new(1);
     provider.set_timestamp(U256::from(T_NOW));
     let (gem_id, load, retry) = StorageHandle::enter(&mut provider, |storage| {
@@ -1300,32 +1264,28 @@ fn a_called_gem_whose_forfeit_fails_is_deferred_and_burned_later() {
             .unwrap()
             .unwrap()
             .promis_load_minor;
-        let mut gem = GemContract::new(storage.clone());
-        gem.mark_called(gem_id, T_NOW).unwrap();
-        let bucket = GemContract::deadline_bucket(T_NOW + 7 * 86_400);
+        call(&storage, gem_id, T_NOW);
+        let hour = GemContract::deadline_bucket(T_NOW + 7 * 86_400);
         // The credit overflows, so the forfeit reverts as a whole.
         outbe_promislimit::PromisLimitContract::new(storage.clone())
             .set_total_unallocated(U256::MAX)
             .unwrap();
 
-        let now = GemContract::bucket_end(bucket);
+        let now = GemContract::bucket_end(hour);
         let ctx = block_ctx_at(&storage, now);
         <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
             .unwrap();
 
         let retry = GemContract::deadline_bucket(now) + 1;
         assert_eq!(gem_state(&storage, gem_id), GemState::Called as u8);
-        assert_eq!(gem.first_expiry_day().unwrap(), Some(retry));
+        assert_eq!(
+            GemContract::new(storage.clone())
+                .first_expiry_day()
+                .unwrap(),
+            Some(retry)
+        );
         (gem_id, load, retry)
     });
-
-    let deferred: Vec<U256> = provider
-        .get_events(outbe_primitives::addresses::GEM_ADDRESS)
-        .iter()
-        .filter_map(|log| IGem::GemExpiryDeferred::decode_log_data(log).ok())
-        .map(|event| event.gemId)
-        .collect();
-    assert_eq!(deferred, vec![gem_id]);
 
     StorageHandle::enter(&mut provider, |storage| {
         outbe_promislimit::PromisLimitContract::new(storage.clone())
@@ -1338,6 +1298,109 @@ fn a_called_gem_whose_forfeit_fails_is_deferred_and_burned_later() {
         assert!(api::get_gem(&storage, gem_id).unwrap().is_none());
         assert_eq!(unallocated(&storage), load);
     });
+    (provider, gem_id)
+}
+
+/// A called bucket whose forfeit fails is not lost: it moves to the next hour, then burns.
+#[test]
+fn a_called_bucket_whose_forfeit_fails_is_deferred_and_burned_later() {
+    use alloy_sol_types::SolEvent;
+
+    let (provider, _) = forfeit_fails_once(call_gem);
+    let events = provider.get_events(outbe_primitives::addresses::GEM_ADDRESS);
+    let called: Vec<_> = events
+        .iter()
+        .filter_map(|log| IGem::GemBucketCalled::decode_log_data(log).ok())
+        .map(|event| event.bucketKey)
+        .collect();
+    let deferred: Vec<_> = events
+        .iter()
+        .filter_map(|log| IGem::GemBucketExpiryDeferred::decode_log_data(log).ok())
+        .map(|event| event.bucketKey)
+        .collect();
+    assert_eq!(called.len(), 1);
+    assert_eq!(deferred, called);
+}
+
+/// A gem called before buckets still drains through the queue, deferral included.
+#[test]
+fn a_gem_called_before_buckets_is_deferred_and_burned_later() {
+    use alloy_sol_types::SolEvent;
+
+    let (provider, gem_id) = forfeit_fails_once(call_before_buckets);
+    let deferred: Vec<U256> = provider
+        .get_events(outbe_primitives::addresses::GEM_ADDRESS)
+        .iter()
+        .filter_map(|log| IGem::GemExpiryDeferred::decode_log_data(log).ok())
+        .map(|event| event.gemId)
+        .collect();
+    assert_eq!(deferred, vec![gem_id]);
+}
+
+/// A called bucket wider than one block's budget burns over several blocks, then
+/// leaves the queue.
+#[test]
+fn a_called_bucket_wider_than_the_budget_burns_over_several_blocks() {
+    with_storage(|storage| {
+        let loads: Vec<u64> = (0..=u64::from(crate::constants::MAX_EXPIRY_STEPS_PER_BLOCK))
+            .map(|n| 1_000 + n)
+            .collect();
+        let gems = alice_gems(storage, &loads);
+        call_gem(storage, gems[0], T_NOW);
+        let notice = api::get_gem(storage, gems[0])
+            .unwrap()
+            .unwrap()
+            .call_notice_period_seconds;
+        let now = GemContract::bucket_end(GemContract::deadline_bucket(T_NOW + u64::from(notice)));
+        let begin = |ts: u64| {
+            <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(
+                &block_ctx_at(storage, ts),
+            )
+            .unwrap()
+        };
+        let live = || {
+            gems.iter()
+                .filter(|id| api::get_gem(storage, **id).unwrap().is_some())
+                .count()
+        };
+
+        begin(now);
+        assert_eq!(live(), 1, "one block burns its budget");
+        begin(now + 1);
+        assert_eq!(live(), 0);
+        assert_eq!(
+            GemContract::new(storage.clone())
+                .first_expiry_day()
+                .unwrap(),
+            None
+        );
+        assert_eq!(unallocated(storage), U256::from(loads.iter().sum::<u64>()));
+    });
+}
+
+/// Settling one gem of a called bucket keeps its call stamp and leaves the rest called.
+#[test]
+fn settling_one_gem_of_a_called_bucket_leaves_the_rest_called() {
+    with_storage(|storage| {
+        let gems = alice_gems(storage, &[1, 2]);
+        call_gem(storage, gems[0], T_NOW);
+        assert_eq!(gem_state(storage, gems[1]), GemState::Called as u8);
+
+        api::set_state(storage, gems[0], GemState::Settled).unwrap();
+        let settled = api::get_gem(storage, gems[0]).unwrap().unwrap();
+        assert_eq!(settled.state, GemState::Settled as u8);
+        assert_eq!(settled.called_at, T_NOW);
+        assert_eq!(gem_state(storage, gems[1]), GemState::Called as u8);
+        let entry = crate::buckets::bucket_entry(bucket_of(storage, gems[1]));
+        assert_ne!(
+            GemContract::new(storage.clone())
+                .called_bucket_slot
+                .read(&entry)
+                .unwrap(),
+            0,
+            "the bucket still waits for its deadline"
+        );
+    });
 }
 
 /// A storage fault is this node's own: it fails the block instead of moving the gem.
@@ -1347,9 +1410,7 @@ fn a_storage_fault_in_a_forfeit_fails_the_block() {
     provider.set_timestamp(U256::from(T_NOW));
     let (gem_id, now) = StorageHandle::enter(&mut provider, |storage| {
         let gem_id = mature_gem(&storage);
-        GemContract::new(storage.clone())
-            .mark_called(gem_id, T_NOW)
-            .unwrap();
+        call_gem(&storage, gem_id, T_NOW);
         let now = GemContract::bucket_end(GemContract::deadline_bucket(T_NOW + 7 * 86_400));
         (gem_id, now)
     });
@@ -1375,7 +1436,7 @@ fn leaving_called_frees_the_expiry_slot() {
     with_storage(|storage| {
         let gem_id = mature_gem(storage);
         let mut gem = GemContract::new(storage.clone());
-        gem.mark_called(gem_id, T_NOW).unwrap();
+        call_gem(storage, gem_id, T_NOW);
         let bucket = GemContract::deadline_bucket(T_NOW + 7 * 86_400);
         assert_eq!(gem.expiry_bucket_live.read(&bucket).unwrap(), 1);
 
@@ -1423,7 +1484,8 @@ fn callable_gem_of(
     p.promis_load_minor = U256::from(1_000_000 + u64::from(iso) * 1_000 + nonce);
     p.reference_currency = iso;
     p.issued_at = issued_at;
-    p.call_price_minor = call_price;
+    // Its own price, so each gem opens its own bucket.
+    p.call_price_minor = call_price + U256::from(nonce);
     api::add_gem(storage, p).unwrap()
 }
 
@@ -1452,7 +1514,7 @@ fn a_trigger_during_a_running_call_sweep_queues_its_day() {
         let pair = seed_currency(storage, 840, Some(U256::from(600_000u64)));
         let issued_at = T_NOW - 100 * 86_400;
         // A bin that spends the whole budget, and one gem priced above it.
-        for nonce in 0..u64::from(crate::constants::MAX_GEM_CALLS_PER_BLOCK) {
+        for nonce in 0..u64::from(crate::constants::MAX_BUCKET_VISITS_PER_BLOCK) {
             callable_gem_of(storage, 840, nonce, issued_at, U256::from(100_000u64));
         }
         let above = callable_gem_of(storage, 840, 999, issued_at, U256::from(200_000u64));
@@ -1460,7 +1522,7 @@ fn a_trigger_during_a_running_call_sweep_queues_its_day() {
         let day = previous_date_key(timestamp_to_date_key(T_NOW));
         priced_window(storage, pair, day, U256::from(300_000u64));
         crate::hooks::scan_and_call(&block_ctx_at(storage, T_NOW)).unwrap();
-        let cursor = gem.call_scan_cursor.read(&840).unwrap();
+        let cursor = gem.bucket_scan_cursor.read(&840).unwrap();
         assert_ne!(cursor, 0, "the first slice gave out inside the range");
 
         let next_ts = T_NOW + 86_400;
@@ -1471,7 +1533,7 @@ fn a_trigger_during_a_running_call_sweep_queues_its_day() {
         assert_eq!(gem.call_sweep_day.read().unwrap(), day);
         assert_eq!(gem.call_pending_day.read().unwrap(), next_day);
         assert_eq!(
-            gem.call_scan_cursor.read(&840).unwrap(),
+            gem.bucket_scan_cursor.read(&840).unwrap(),
             cursor,
             "the walk in flight was not restarted"
         );
@@ -1501,7 +1563,7 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
             .write(crate::config::PROFILE_PROD)
             .unwrap();
         let pair = seed_currency(&storage, 840, Some(U256::from(600_000u64)));
-        for nonce in 0..=u64::from(crate::constants::MAX_GEM_CALLS_PER_BLOCK) {
+        for nonce in 0..=u64::from(crate::constants::MAX_BUCKET_VISITS_PER_BLOCK) {
             callable_gem_of(
                 &storage,
                 840,
@@ -1550,7 +1612,7 @@ fn a_call_sweep_over_several_currencies_always_ends() {
             let pair = seed_currency(storage, iso, Some(U256::from(600_000u64)));
             priced_window(storage, pair, day, U256::from(300_000u64));
             // Issued five days ago: every gem is visited, decided and left where it is.
-            for nonce in 0..=u64::from(crate::constants::MAX_GEM_CALLS_PER_BLOCK) {
+            for nonce in 0..=u64::from(crate::constants::MAX_BUCKET_VISITS_PER_BLOCK) {
                 callable_gem_of(
                     storage,
                     iso,
@@ -1680,25 +1742,25 @@ fn metadata_update_marks_each_lifecycle_transition() {
     provider.set_timestamp(U256::from(T_NOW));
     let gem_id = StorageHandle::enter(&mut provider, |storage| {
         let gem_id = api::add_gem(&storage, sample_params(ALICE)).unwrap();
-        GemContract::new(storage.clone())
-            .mark_called(gem_id, T_NOW)
-            .unwrap();
+        call_gem(&storage, gem_id, T_NOW);
         api::set_state(&storage, gem_id, GemState::Settled).unwrap();
         api::burn(&storage, gem_id).unwrap();
         gem_id
     });
 
-    let updates: Vec<U256> = provider
-        .get_events(outbe_primitives::addresses::GEM_ADDRESS)
+    let events = provider.get_events(outbe_primitives::addresses::GEM_ADDRESS);
+    let batches: Vec<(U256, U256)> = events
+        .iter()
+        .filter_map(|log| IGem::BatchMetadataUpdate::decode_log_data(log).ok())
+        .map(|event| (event._fromTokenId, event._toTokenId))
+        .collect();
+    assert_eq!(batches, vec![(U256::ZERO, U256::MAX)], "the bucket call");
+    let updates: Vec<U256> = events
         .iter()
         .filter_map(|log| IGem::MetadataUpdate::decode_log_data(log).ok())
         .map(|event| event._tokenId)
         .collect();
-    assert_eq!(
-        updates,
-        vec![gem_id; 2],
-        "called and settled; qualifying writes nothing"
-    );
+    assert_eq!(updates, vec![gem_id], "settled; qualifying writes nothing");
 }
 
 #[test]
@@ -1881,9 +1943,7 @@ fn token_uri_stays_called_past_the_call_deadline() {
     provider.set_timestamp(U256::from(T_NOW));
     let (gem_id, deadline) = StorageHandle::enter(&mut provider, |storage| {
         let gem_id = api::add_gem(&storage, sample_params(ALICE)).unwrap();
-        GemContract::new(storage.clone())
-            .mark_called(gem_id, T_NOW)
-            .unwrap();
+        call_gem(&storage, gem_id, T_NOW);
         let item = api::get_gem(&storage, gem_id).unwrap().unwrap();
         (gem_id, T_NOW + u64::from(item.call_notice_period_seconds))
     });

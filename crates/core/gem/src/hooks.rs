@@ -1,4 +1,4 @@
-use alloy_primitives::U256;
+use alloy_primitives::{B256, U256};
 use outbe_oracle::{api::get_all_reference_currencies, schema::OracleContract};
 use outbe_primitives::{
     address_pair::AddressPair,
@@ -9,10 +9,10 @@ use outbe_primitives::{
     time::{previous_date_key, timestamp_to_date_key},
 };
 
-use crate::constants::{CALL_SWEEP, MAX_EXPIRY_STEPS_PER_BLOCK, MAX_GEM_CALLS_PER_BLOCK};
+use crate::buckets::BucketBins;
+use crate::constants::{CALL_SWEEP, MAX_BUCKET_VISITS_PER_BLOCK, MAX_EXPIRY_STEPS_PER_BLOCK};
 use crate::precompile::IGem::{CallScanSkipped, SweepDaySkipped};
 use crate::schema::GemContract;
-use crate::state::CallBins;
 
 pub struct GemLifecycle;
 
@@ -105,13 +105,13 @@ fn start_call_sweep(ctx: &BlockRuntimeContext, gem: &GemContract, days: SweepDay
     gem.call_pending_day.write(days.pending)?;
     gem.call_currency_cursor.write(0)?;
     for iso_code in get_all_reference_currencies(ctx)? {
-        gem.call_scan_cursor.write(&iso_code, 0)?;
+        gem.bucket_scan_cursor.write(&iso_code, 0)?;
     }
     Ok(())
 }
 
 /// Advance an open sweep by one slice, pinned to the day it opened on so blocks
-/// of it decide against the same prices. Returns how many gems were called.
+/// of it decide against the same prices. Returns how many buckets were called.
 pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     let mut gem = GemContract::new(ctx.storage.clone());
     let pinned_day = gem.call_sweep_day.read()?;
@@ -123,7 +123,7 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     let start = currency_position(&currencies, gem.call_currency_cursor.read()?);
     let live_window = crate::config::read_from(&gem, ctx.block.chain_id)?.call_window_seconds;
 
-    let mut budget = MAX_GEM_CALLS_PER_BLOCK;
+    let mut budget = MAX_BUCKET_VISITS_PER_BLOCK;
     let mut windows: Vec<(u16, VwapWindow)> = Vec::new();
     let mut called: u32 = 0;
     // One pass down the list: a currency closed behind the cursor is never walked
@@ -139,9 +139,10 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         }
         // Peek the trie before pricing the currency: a drained one costs three
         // reads here instead of a whole VWAP window.
-        let cursor = gem.call_scan_cursor.read(&iso_code)?;
-        if tree_math::find_first_left_inclusive(&CallBins(&gem, iso_code), cursor)?.is_none() {
-            gem.call_scan_cursor.write(&iso_code, 0)?;
+        let (cursor_bin, _) = unpack_cursor(gem.bucket_scan_cursor.read(&iso_code)?);
+        if tree_math::find_first_left_inclusive(&BucketBins(&gem, iso_code), cursor_bin)?.is_none()
+        {
+            gem.bucket_scan_cursor.write(&iso_code, 0)?;
             continue;
         }
         let index = window_for(
@@ -191,8 +192,11 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     Ok(called)
 }
 
-/// Walk one currency's call-price bins up to `ceiling`, resuming where it gave out.
+/// Walk one currency's bucket bins up to `ceiling`, resuming where it gave out.
 /// Returns the calls made and whether the eligible range was walked to the end.
+///
+/// Each bin is walked from the top, so a call's swap-pop only moves a bucket already
+/// visited, and a bin wider than the budget resumes inside itself.
 pub(crate) fn call_currency(
     ctx: &BlockRuntimeContext,
     iso_code: u16,
@@ -202,49 +206,63 @@ pub(crate) fn call_currency(
 ) -> Result<(u32, bool)> {
     let mut gem = GemContract::new(ctx.storage.clone());
     let now = ctx.block.timestamp;
+    let (mut from_bin, mut remaining) = unpack_cursor(gem.bucket_scan_cursor.read(&iso_code)?);
     let mut called: u32 = 0;
-    let mut cursor = gem.call_scan_cursor.read(&iso_code)?;
-    let mut finished = false;
     loop {
-        if *budget == 0 {
-            gem.call_scan_cursor.write(&iso_code, cursor)?;
-            break;
-        }
-        let next = match tree_math::find_first_left_inclusive(&CallBins(&gem, iso_code), cursor)? {
+        let bin = match tree_math::find_first_left_inclusive(&BucketBins(&gem, iso_code), from_bin)?
+        {
             Some(bin) if bin <= ceiling => bin,
             _ => {
-                gem.call_scan_cursor.write(&iso_code, 0)?;
-                finished = true;
-                break;
+                gem.bucket_scan_cursor.write(&iso_code, 0)?;
+                return Ok((called, true));
             }
         };
-
-        // Snapshot the bin: calling a gem removes it and shifts the rest. Whole
-        // bins go at once, so the cursor never advances past a gem it skipped.
-        for gem_id in gem.call_bin_gems_at(iso_code, next)? {
-            *budget = budget.saturating_sub(1);
+        let count = gem
+            .bucket_bin_count
+            .read(&GemContract::scoped(iso_code, bin))?;
+        remaining = if bin == from_bin && remaining != 0 {
+            remaining.min(count)
+        } else {
+            count
+        };
+        while remaining > 0 {
+            if *budget == 0 {
+                gem.bucket_scan_cursor
+                    .write(&iso_code, pack_cursor(bin, remaining))?;
+                return Ok((called, false));
+            }
+            *budget -= 1;
+            remaining -= 1;
+            let bucket = gem
+                .bucket_bin_at
+                .read(&GemContract::bin_index_key(iso_code, bin, remaining))?;
             match ctx
                 .storage
-                .with_checkpoint(|| gem.trigger_call(window, gem_id, now))
+                .with_checkpoint(|| gem.trigger_bucket_call(window, bucket, now))
             {
                 Ok(true) => called = called.saturating_add(1),
                 Ok(false) => {}
                 Err(error) => {
-                    tracing::warn!(target: "outbe::gem", %gem_id, error = ?error, "call scan: skipping gem");
+                    tracing::warn!(target: "outbe::gem", %bucket, error = ?error, "call scan: skipping bucket");
                 }
             }
         }
-
-        cursor = match next.checked_add(1) {
-            Some(c) if c <= MAX_BIN_ID => c,
+        from_bin = match bin.checked_add(1) {
+            Some(next) if next <= MAX_BIN_ID => next,
             _ => {
-                gem.call_scan_cursor.write(&iso_code, 0)?;
-                finished = true;
-                break;
+                gem.bucket_scan_cursor.write(&iso_code, 0)?;
+                return Ok((called, true));
             }
         };
     }
-    Ok((called, finished))
+}
+
+const fn pack_cursor(bin: u32, remaining: u32) -> u64 {
+    ((bin as u64) << 32) | remaining as u64
+}
+
+const fn unpack_cursor(packed: u64) -> (u32, u32) {
+    ((packed >> 32) as u32, packed as u32)
 }
 
 /// Forfeit-burn the gems whose notice period closed; a head not due ends the pass.
@@ -269,31 +287,37 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
         };
 
         let mut slot = resume;
-        while slot < len {
-            if budget == 0 {
-                break;
-            }
-            budget -= 1;
-            let Some(gem_id) = gem.expiry_slot(day, slot)? else {
+        while slot < len && budget > 0 {
+            let Some(entry) = gem.expiry_slot(day, slot)? else {
+                budget -= 1;
                 slot += 1;
                 continue;
             };
-            if now <= gem.called_deadline.read(&gem_id)? {
+            if now <= gem.called_deadline.read(&entry)? {
+                budget -= 1;
                 slot += 1;
                 continue;
             }
+            if let Some(bucket) = gem.called_bucket(entry)? {
+                if !forfeit_bucket(ctx, &mut gem, bucket, now, &mut budget, &mut burned)? {
+                    break;
+                }
+                slot += 1;
+                continue;
+            }
+            budget -= 1;
             // Out of this bucket either way, so an entry that does not burn cannot hold the day
             // back; a Called gem among them is retried later rather than lost.
-            match ctx.storage.with_checkpoint(|| gem.forfeit(gem_id, now)) {
+            match ctx.storage.with_checkpoint(|| gem.forfeit(entry, now)) {
                 Ok(true) => burned = burned.saturating_add(1),
                 Ok(false) => {
-                    if !gem.requeue_or_drop(gem_id, now)? {
-                        tracing::warn!(target: "outbe::gem", %gem_id, "expiry sweep: queued gem is not Called");
+                    if !gem.requeue_or_drop(entry, now)? {
+                        tracing::warn!(target: "outbe::gem", %entry, "expiry sweep: queued gem is not Called");
                     }
                 }
                 Err(error) if is_deterministic(&error) => {
-                    let deferred = gem.requeue_or_drop(gem_id, now)?;
-                    tracing::warn!(target: "outbe::gem", %gem_id, deferred, error = ?error, "expiry sweep: forfeit failed");
+                    let deferred = gem.requeue_or_drop(entry, now)?;
+                    tracing::warn!(target: "outbe::gem", %entry, deferred, error = ?error, "expiry sweep: forfeit failed");
                 }
                 Err(error) => return Err(error),
             }
@@ -314,6 +338,44 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
         }
     }
     Ok(burned)
+}
+
+/// Burn a due bucket's gems from its last member down, one budget step each. Returns
+/// whether the bucket left its slot: emptied, or moved on after a gem failed to burn.
+fn forfeit_bucket(
+    ctx: &BlockRuntimeContext,
+    gem: &mut GemContract<'_>,
+    bucket: B256,
+    now: u64,
+    budget: &mut u32,
+    burned: &mut u32,
+) -> Result<bool> {
+    let entry = crate::buckets::bucket_entry(bucket);
+    loop {
+        let count = gem.bucket_gem_count.read(&bucket)?;
+        if count == 0 {
+            return Ok(true);
+        }
+        if *budget == 0 {
+            return Ok(false);
+        }
+        *budget -= 1;
+        let gem_id = gem
+            .bucket_gems
+            .read(&GemContract::bucket_member_key(bucket, count - 1))?;
+        let error = match ctx.storage.with_checkpoint(|| gem.forfeit(gem_id, now)) {
+            Ok(true) => {
+                *burned = burned.saturating_add(1);
+                continue;
+            }
+            Ok(false) => None,
+            Err(error) if is_deterministic(&error) => Some(error),
+            Err(error) => return Err(error),
+        };
+        gem.requeue_or_drop(entry, now)?;
+        tracing::warn!(target: "outbe::gem", %bucket, %gem_id, error = ?error, "expiry sweep: bucket member not forfeited, bucket deferred");
+        return Ok(true);
+    }
 }
 
 /// A revert belongs to the block's outcome; any other error is this node's own fault and

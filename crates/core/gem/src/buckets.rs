@@ -3,6 +3,8 @@ use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::math::tree_math::{self, BinTreeStorage};
 use outbe_primitives::time::first_full_day;
 
+use crate::errors::GemError;
+use crate::precompile::IGem;
 use crate::schema::{GemContract, GemData};
 
 /// Everything a call decision reads off a gem. Gems that share it breach on the same
@@ -46,6 +48,10 @@ impl GemContract<'_> {
     pub(crate) fn join_bucket(&mut self, item: &GemData) -> Result<B256> {
         let terms = BucketTerms::of(item);
         let bucket = terms.key();
+        // Unreachable outside test hooks: a bucket is called days after its start day.
+        if self.bucket_called_at.read(&bucket)? != 0 {
+            return Err(GemError::InvalidState.into());
+        }
         let index = self.bucket_gem_count.read(&bucket)?;
         if index == 0 {
             self.seal_bucket(bucket, &terms)?;
@@ -123,9 +129,45 @@ impl GemContract<'_> {
         self.insert_bucket_bin(bucket, terms)
     }
 
+    /// `Issued -> Called` for every member at once: the bucket leaves the trie for the
+    /// expiry queue, where it waits as one entry.
+    pub(crate) fn mark_bucket_called(
+        &mut self,
+        bucket: B256,
+        terms: &BucketTerms,
+        now: u64,
+    ) -> Result<()> {
+        self.remove_bucket_bin(bucket, terms)?;
+        self.bucket_called_at.write(&bucket, now)?;
+        let deadline = now + u64::from(terms.call_notice_period);
+        self.push_called(bucket_entry(bucket), deadline)?;
+        self.emit(IGem::GemBucketCalled {
+            bucketKey: bucket,
+            calledAt: now,
+            settlementDeadline: deadline,
+        })?;
+        self.emit(IGem::BatchMetadataUpdate {
+            _fromTokenId: U256::ZERO,
+            _toTokenId: U256::MAX,
+        })
+    }
+
+    /// The called bucket an expiry-queue entry stands for; `None` for a gem id.
+    pub(crate) fn called_bucket(&self, entry: U256) -> Result<Option<B256>> {
+        let bucket = B256::from(entry.to_be_bytes::<32>());
+        Ok((self.bucket_called_at.read(&bucket)? != 0).then_some(bucket))
+    }
+
+    /// Settlement deadline of a called bucket.
+    pub(crate) fn bucket_deadline(&self, bucket: B256) -> Result<u64> {
+        Ok(self.bucket_called_at.read(&bucket)?
+            + u64::from(self.bucket_call_notice_period.read(&bucket)?))
+    }
+
     fn close_bucket(&mut self, bucket: B256) -> Result<()> {
         let terms = self.read_bucket_terms(bucket)?;
         self.remove_bucket_bin(bucket, &terms)?;
+        self.remove_called(bucket_entry(bucket))?;
         self.bucket_start_day.clear(&bucket)?;
         self.bucket_currency.clear(&bucket)?;
         self.bucket_call_price.clear(&bucket)?;
@@ -183,6 +225,11 @@ impl GemContract<'_> {
         buf[32..36].copy_from_slice(&index.to_be_bytes());
         keccak256(buf)
     }
+}
+
+/// A called bucket's entry in the expiry queue, which otherwise holds gem ids.
+pub(crate) fn bucket_entry(bucket: B256) -> U256 {
+    U256::from_be_bytes(bucket.0)
 }
 
 fn corrupt(message: String) -> PrecompileError {

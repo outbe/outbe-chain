@@ -117,7 +117,7 @@ pub struct GemContract {
     #[attribute(order = 5)]
     pub gem_index: outbe_primitives::storage::dsl::Map<U256, u32>,
 
-    // --- Call-price bin index, one trie per reference currency; a gem enters it at issuance.
+    // --- Retired per-gem call-price bins, superseded by the bucket bins; kept for the layout.
     #[attribute(order = 11)]
     pub call_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
 
@@ -133,21 +133,23 @@ pub struct GemContract {
     #[attribute(order = 15)]
     pub call_bin_gems: outbe_primitives::storage::dsl::Map<B256, U256>,
 
+    /// Currency the unfinished call sweep resumes at.
     #[attribute(order = 16)]
     pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
 
     #[attribute(order = 17)]
     pub call_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    // --- Called gems, bucketed by the hour their notice period closes in. Calling is
-    // driven by price and expiry only by time, so the two stages stay separate.
+    // --- Called buckets, and gems called before buckets, queued by the hour their notice
+    // period closes in. Calling is driven by price and expiry only by time, so the two
+    // stages stay separate.
     #[attribute(order = 20)]
     pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 21)]
     pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 22)]
     pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
-    /// Gem id -> `(bucket << 32) | slot`; 0 = not queued.
+    /// Queue entry -> `(hour << 32) | slot`; 0 = not queued.
     #[attribute(order = 23)]
     pub called_bucket_slot: outbe_primitives::storage::dsl::Map<U256, u64>,
     /// Held off the record so the head check costs no record load.
@@ -173,7 +175,8 @@ pub struct GemContract {
     pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 29)]
     pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// `keccak256(bucket_be32 ++ slot_be32)` -> gem id.
+    /// `keccak256(hour_be32 ++ slot_be32)` -> queue entry: a called bucket's key, or a
+    /// gem id.
     #[attribute(order = 30)]
     pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, U256>,
     #[attribute(order = 31)]
