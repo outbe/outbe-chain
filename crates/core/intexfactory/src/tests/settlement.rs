@@ -329,7 +329,7 @@ fn settle_bound(
         );
         (
             proof,
-            outbe_paynote::PayNoteSuit::field_to_b256(&nullifier).unwrap(),
+            outbe_protocol::codec::field_to_b256(&nullifier).unwrap(),
         )
     } else {
         let fixture = outbe_paynote::test_support::note_and_spend_proof(
@@ -342,7 +342,7 @@ fn settle_bound(
         outbe_paynote::test_support::seed_pool(&mut storage, CHAIN_ID, &[fixture.commitment]);
         (
             fixture.proof,
-            outbe_paynote::PayNoteSuit::field_to_b256(&fixture.public.nullifier).unwrap(),
+            outbe_protocol::codec::field_to_b256(&fixture.public.nullifier).unwrap(),
         )
     };
 

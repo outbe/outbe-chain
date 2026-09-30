@@ -42,20 +42,6 @@ pub mod test_support;
 pub use api::PayNoteClaim;
 pub use schema::PayNoteContract;
 
-/// BN254 field words for PayNote. The circuits crate exposes the same
-/// conversions as free functions.
-pub struct PayNoteSuit;
-
-impl PayNoteSuit {
-    pub fn field_to_b256(value: &Field) -> Result<alloy_primitives::B256, outbe_protocol::Error> {
-        outbe_protocol::codec::field_to_b256(value)
-    }
-
-    pub fn field_from_b256(value: &alloy_primitives::B256) -> Result<Field, outbe_protocol::Error> {
-        outbe_protocol::codec::field_from_b256(value)
-    }
-}
-
 /// In-memory commitment tree for PayNote clients.
 pub use outbe_zk_canonical::paynote::Tree as PayNoteTree;
 

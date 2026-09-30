@@ -19,13 +19,13 @@ use outbe_paynote::{
     client::{new_tree, witness},
     hash::{change_key, note_commitment, note_nullifier, note_sn},
     precompile::IPayNote,
-    PayNoteSuit, PayNoteTree,
+    PayNoteTree,
 };
 use outbe_primitives::addresses::{
     GEM_FACTORY_ADDRESS, INTEX_FACTORY_ADDRESS, NOD_FACTORY_ADDRESS, PAYNOTE_ADDRESS,
 };
 use outbe_protocol::{
-    codec::FieldElement,
+    codec::{field_to_b256, FieldElement},
     protocol::zk::{Circuit, CircuitId, ProofGenerator},
 };
 use outbe_zk_backend::barretenberg::{verify_circuit, Barretenberg};
@@ -319,8 +319,7 @@ impl Note {
         ensure!(key != Field::from(0), "spend key must be non-zero");
         let serial = note_sn(key)?;
         ensure!(serial != Field::from(0), "note serial must be non-zero");
-        let commitment =
-            PayNoteSuit::field_to_b256(&note_commitment(chain_id, serial, asset, amount)?)?;
+        let commitment = field_to_b256(&note_commitment(chain_id, serial, asset, amount)?)?;
         ensure!(commitment != B256::ZERO, "commitment must be non-zero");
         Ok(Self {
             version: 1,
@@ -328,7 +327,7 @@ impl Note {
             pool: PAYNOTE_ADDRESS,
             asset,
             amount,
-            spend_key: PayNoteSuit::field_to_b256(&key)?,
+            spend_key: field_to_b256(&key)?,
             commitment,
         })
     }
@@ -366,7 +365,7 @@ impl Note {
     }
 
     fn nullifier(&self) -> Result<B256> {
-        Ok(PayNoteSuit::field_to_b256(&note_nullifier(
+        Ok(field_to_b256(&note_nullifier(
             self.commitment.to_field()?,
             self.key()?,
         )?)?)
@@ -573,7 +572,7 @@ async fn deposit(
             IPayNote::depositCall {
                 asset: note.asset,
                 amount: note.amount,
-                noteSn: PayNoteSuit::field_to_b256(&note_sn(note.key()?)?)?,
+                noteSn: field_to_b256(&note_sn(note.key()?)?)?,
             }
             .abi_encode(),
         )
@@ -669,7 +668,7 @@ async fn read_tree(client: &impl Rpc, chain_id: u64) -> Result<PayNoteTree> {
             );
             tree.append(event.commitment.to_field()?)?;
             ensure!(
-                PayNoteSuit::field_to_b256(&tree.root())? == event.rootAfter,
+                field_to_b256(&tree.root())? == event.rootAfter,
                 "NewNote history root mismatch"
             );
         }
@@ -701,8 +700,7 @@ async fn read_tree(client: &impl Rpc, chain_id: u64) -> Result<PayNoteTree> {
             .await?,
     )?;
     ensure!(
-        count == u64::try_from(tree.leaves().len())?
-            && root == PayNoteSuit::field_to_b256(&tree.root())?,
+        count == u64::try_from(tree.leaves().len())? && root == field_to_b256(&tree.root())?,
         "NewNote history does not match chain snapshot"
     );
     Ok(tree)
@@ -735,7 +733,7 @@ fn prove(
     let (leaf_index, auth_path) = witness(tree, note.commitment.to_field()?)?;
     let public = PublicInputs {
         chain_id: note.chain_id,
-        root: PayNoteSuit::field_to_b256(&tree.root())?,
+        root: field_to_b256(&tree.root())?,
         nullifier: note.nullifier()?,
         asset: note.asset,
         context,
@@ -749,7 +747,7 @@ fn prove(
         auth_path: auth_path.map(|_| B256::ZERO),
     };
     for (word, field) in witness.auth_path.iter_mut().zip(auth_path) {
-        *word = PayNoteSuit::field_to_b256(&field)?;
+        *word = field_to_b256(&field)?;
     }
     let circuit_public = public.try_into()?;
     let proof = ProofGenerator::<Paynote>::generate(
@@ -762,7 +760,7 @@ fn prove(
     let mut combined = Vec::new();
     combined.extend_from_slice(&u32::try_from(fields.len())?.to_be_bytes());
     for value in fields {
-        combined.extend_from_slice(PayNoteSuit::field_to_b256(&value)?.as_slice());
+        combined.extend_from_slice(field_to_b256(&value)?.as_slice());
     }
     for value in proof.proof {
         combined.extend_from_slice(&value);

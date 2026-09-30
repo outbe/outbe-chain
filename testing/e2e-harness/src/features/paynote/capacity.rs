@@ -9,9 +9,7 @@ use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use cucumber::then;
 use serde_json::Value;
 
-use super::{
-    gem_context, new_tree, note_nullifier, prove_full_spend, read_tree, Note, PayNoteSuit,
-};
+use super::{gem_context, new_tree, note_nullifier, prove_full_spend, read_tree, Note};
 use crate::features::gem_lifecycle::IGemTestArming;
 use crate::features::settlement::{assert_mined_success, assert_receipt_event, fund_and_approve};
 use crate::internal::{addresses, eth};
@@ -19,6 +17,7 @@ use crate::world::forge::DEPLOYER_KEY;
 use crate::world::settlement_currency::USD_ISO;
 use crate::world::test_issuance::{self, ITestToken, SeriesSpec};
 use crate::world::{venue_probes, World};
+use outbe_protocol::codec::field_to_b256;
 
 // Counts are bounded fixture sizes, not economic amounts.
 const GEMS_PER_POSITION: u32 = 25;
@@ -660,7 +659,7 @@ fn prepared<C: SolCall>(to: Address, call: &C) -> eth::PreparedCall {
 }
 
 fn word(field: &outbe_paynote::Field) -> B256 {
-    PayNoteSuit::field_to_b256(field).expect("canonical field")
+    field_to_b256(field).expect("canonical field")
 }
 
 fn head(url: &str) -> u64 {

@@ -81,13 +81,12 @@ pub fn merge_witness(
     output_spend_key: B256,
 ) -> Result<(PublicInputs, Witness), PayNoteError> {
     use crate::hash::{note_commitment, note_nullifier, note_sn};
-    use crate::PayNoteSuit;
+    use outbe_protocol::codec::{field_from_b256, field_to_b256};
     let invalid = |message: &str| PayNoteError::InvalidInput(message.into());
     let field = |word: &B256| {
-        PayNoteSuit::field_from_b256(word)
-            .map_err(|_| invalid("spend key is not a canonical field"))
+        field_from_b256(word).map_err(|_| invalid("spend key is not a canonical field"))
     };
-    let word = |value: &Field| PayNoteSuit::field_to_b256(value).map_err(|_| PayNoteError::Hash);
+    let word = |value: &Field| field_to_b256(value).map_err(|_| PayNoteError::Hash);
     if !(2..=MAX_MERGE_INPUTS).contains(&inputs.len()) || asset.is_zero() {
         return Err(invalid("merge requires 2..4 inputs and a nonzero asset"));
     }

@@ -7,7 +7,7 @@
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_protocol::codec::u256_limbs_be;
+use outbe_protocol::codec::{field_from_b256, field_to_b256, u256_limbs_be};
 use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
 use outbe_protocol::FieldElement as _;
 use outbe_zk_backend::barretenberg::Barretenberg;
@@ -17,7 +17,7 @@ use crate::hash::{change_key, empty_subtrees, note_commitment, note_nullifier, n
 use crate::runtime;
 use crate::schema::{PayNoteContract, PAYNOTE_ROOT_WINDOW, PAYNOTE_TREE_DEPTH};
 use crate::Field;
-use crate::{PayNoteSuit, PayNoteTree};
+use crate::PayNoteTree;
 
 /// Everything the pool and the prover need about one note.
 pub struct Note {
@@ -95,7 +95,7 @@ fn prove_spend(
         root: tree.root(),
         nullifier: n.nullifier,
         asset: n.asset.to_field().unwrap(),
-        context: PayNoteSuit::field_from_b256(&context).expect("canonical settlement context"),
+        context: field_from_b256(&context).expect("canonical settlement context"),
         spend_amount: u256_limbs_be(&spend_amount.to_be_bytes::<32>()),
         change_commitment: change_note(chain_id, n, spend_amount)
             .map_or(Field::from(0u64), |change| change.commitment),
@@ -121,7 +121,7 @@ pub fn combined_from(public: &PublicInputs, proof_words: &[Vec<u8>]) -> Vec<u8> 
     let mut combined = Vec::with_capacity(4 + 32 * (fields.len() + proof_words.len()));
     combined.extend_from_slice(&(fields.len() as u32).to_be_bytes());
     for f in fields {
-        combined.extend_from_slice(PayNoteSuit::field_to_b256(&f).unwrap().as_slice());
+        combined.extend_from_slice(field_to_b256(&f).unwrap().as_slice());
     }
     for word in proof_words {
         combined.extend_from_slice(word);
@@ -134,19 +134,19 @@ pub fn merge_proof(chain_id: u64, tree: &PayNoteTree, inputs: &[&Note], output: 
     use outbe_zk_canonical::paynote_merge::{encode_combined_proof, PaynoteMerge};
     let private = inputs
         .iter()
-        .map(|note| (note.amount, PayNoteSuit::field_to_b256(&note.key).unwrap()))
+        .map(|note| (note.amount, field_to_b256(&note.key).unwrap()))
         .collect::<Vec<_>>();
     let (public, witness) = crate::client::merge_witness(
         tree,
         chain_id,
         output.asset,
         &private,
-        PayNoteSuit::field_to_b256(&output.key).unwrap(),
+        field_to_b256(&output.key).unwrap(),
     )
     .unwrap();
     assert_eq!(
         public.output_commitment,
-        PayNoteSuit::field_to_b256(&output.commitment).unwrap()
+        field_to_b256(&output.commitment).unwrap()
     );
     let public = public.try_into().unwrap();
     let proof = ProofGenerator::<PaynoteMerge>::generate(
@@ -165,7 +165,7 @@ pub fn seed_pool(provider: &mut HashMapStorageProvider, chain_id: u64, leaves: &
     provider.enter(|storage| {
         let paynote: PayNoteContract<'_> = storage.contract();
         let zeros = empty_subtrees(chain_id, PAYNOTE_TREE_DEPTH).unwrap();
-        let empty_root = PayNoteSuit::field_to_b256(&zeros[PAYNOTE_TREE_DEPTH]).unwrap();
+        let empty_root = field_to_b256(&zeros[PAYNOTE_TREE_DEPTH]).unwrap();
         paynote.current_root.write(empty_root).unwrap();
         paynote.recent_roots.setup(PAYNOTE_ROOT_WINDOW).unwrap();
         paynote.recent_roots.push(empty_root).unwrap();
@@ -173,7 +173,7 @@ pub fn seed_pool(provider: &mut HashMapStorageProvider, chain_id: u64, leaves: &
             runtime::append(&paynote, &zeros, *leaf).unwrap();
             paynote
                 .commitments
-                .write(&PayNoteSuit::field_to_b256(leaf).unwrap(), true)
+                .write(&field_to_b256(leaf).unwrap(), true)
                 .unwrap();
         }
     });

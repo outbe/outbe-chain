@@ -17,9 +17,8 @@ use outbe_paynote::client::{new_tree, witness};
 use outbe_paynote::hash::{note_commitment, note_nullifier, note_sn};
 use outbe_paynote::test_support::combined_from;
 use outbe_paynote::Field;
-use outbe_paynote::PayNoteSuit;
 use outbe_paynote::PayNoteTree;
-use outbe_protocol::codec::u256_limbs_be;
+use outbe_protocol::codec::{field_from_b256, field_to_b256, u256_limbs_be};
 use outbe_protocol::protocol::zk::ProofGenerator;
 use outbe_protocol::FieldElement as _;
 use outbe_zk_backend::barretenberg::Barretenberg;
@@ -64,7 +63,7 @@ impl Note {
 
     /// The `noteSn` argument `IPayNote.deposit` takes.
     pub(crate) fn serial_word(&self) -> B256 {
-        PayNoteSuit::field_to_b256(&self.serial).unwrap()
+        field_to_b256(&self.serial).unwrap()
     }
 }
 
@@ -185,7 +184,7 @@ fn prove_full_spend(note: &Note, context: B256, tree: &PayNoteTree) -> Vec<u8> {
         root: tree.root(),
         nullifier: note_nullifier(note.commitment, note.spend_key).expect("note nullifier"),
         asset: note.asset.to_field().unwrap(),
-        context: PayNoteSuit::field_from_b256(&context).expect("canonical settlement context"),
+        context: field_from_b256(&context).expect("canonical settlement context"),
         spend_amount: u256_limbs_be(&note.amount.to_be_bytes::<32>()),
         // A full spend leaves no change; the circuit requires the zero
         // sentinel rather than a note for nothing.
@@ -241,7 +240,7 @@ fn decode_new_note(log: &serde_json::Value) -> Option<(u32, Field)> {
         .ok()?
         .try_into()
         .ok()?;
-    let commitment = PayNoteSuit::field_from_b256(&B256::from(commitment_bytes)).ok()?;
+    let commitment = field_from_b256(&B256::from(commitment_bytes)).ok()?;
 
     let data = hex::decode(log.get("data")?.as_str()?.trim_start_matches("0x")).ok()?;
     if data.len() != 3 * 32 {

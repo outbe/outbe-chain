@@ -31,7 +31,9 @@ use crate::schema::{
 };
 use crate::Field;
 
-use crate::{PayNoteSuit, PayNoteTree};
+use outbe_protocol::codec::field_to_b256;
+
+use crate::PayNoteTree;
 
 const CHAIN_ID: u64 = 31_337;
 const OTHER_CHAIN_ID: u64 = 19_280_501;
@@ -46,7 +48,7 @@ fn statement() -> B256 {
 const WBTC: Address = Address::new([0x44; 20]);
 
 fn b256(field: Field) -> B256 {
-    PayNoteSuit::field_to_b256(&field).unwrap()
+    field_to_b256(&field).unwrap()
 }
 
 fn assert_revert<T: std::fmt::Debug>(result: Result<T, PrecompileError>, expected: &str) {

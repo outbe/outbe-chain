@@ -5,6 +5,7 @@ use crate::rpc::mock::{
 };
 use outbe_paynote::{schema::PayNoteContract, test_support::seed_pool};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+use outbe_protocol::codec::field_to_b256;
 use std::collections::HashMap;
 
 pub(super) const KEY: &str = "0000000000000000000000000000000000000000000000000000000000000001";
@@ -36,7 +37,7 @@ pub(super) fn event(note: &Note, index: u32, root: Field, amount: U256) -> Value
     let log = IPayNote::NewNote {
         commitment: note.commitment,
         leafIndex: index,
-        rootAfter: PayNoteSuit::field_to_b256(&root).unwrap(),
+        rootAfter: field_to_b256(&root).unwrap(),
         asset: note.asset,
         noteAmount: amount,
     }
@@ -119,7 +120,7 @@ fn deposit_data(note: &Note) -> Vec<u8> {
     IPayNote::depositCall {
         asset: note.asset,
         amount: note.amount,
-        noteSn: PayNoteSuit::field_to_b256(&note_sn(note.key().unwrap()).unwrap()).unwrap(),
+        noteSn: field_to_b256(&note_sn(note.key().unwrap()).unwrap()).unwrap(),
     }
     .abi_encode()
 }
@@ -363,7 +364,7 @@ pub(super) fn tree_rpc_quoted(tree: &PayNoteTree, logs: Vec<Value>, payable: U25
             ),
             (
                 (PAYNOTE_ADDRESS, IPayNote::currentRootCall::SELECTOR),
-                PayNoteSuit::field_to_b256(&tree.root()).unwrap().to_vec(),
+                field_to_b256(&tree.root()).unwrap().to_vec(),
             ),
             (
                 (PAYNOTE_ADDRESS, IPayNote::isSpentCall::SELECTOR),
@@ -470,7 +471,7 @@ async fn expired_proof_does_not_publish_artifacts_or_change_state() {
         ),
         (
             (PAYNOTE_ADDRESS, IPayNote::currentRootCall::SELECTOR),
-            PayNoteSuit::field_to_b256(&tree.root()).unwrap().to_vec(),
+            field_to_b256(&tree.root()).unwrap().to_vec(),
         ),
         (
             (PAYNOTE_ADDRESS, IPayNote::isSpentCall::SELECTOR),
@@ -564,7 +565,7 @@ async fn deposited_note_partial_spend_and_saved_change_consume_real_proofs() {
     let change_log = json!({ "address": change_log.address, "topics": change_log.data.topics(), "data": change_log.data.data });
     assert_eq!(
         decode_note(&change_log).unwrap().rootAfter,
-        PayNoteSuit::field_to_b256(&tree.root()).unwrap()
+        field_to_b256(&tree.root()).unwrap()
     );
     let output = spend_proof(
         &tree_rpc_quoted(&tree, vec![origin_log, change_log], change.amount),

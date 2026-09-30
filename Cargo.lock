@@ -8991,6 +8991,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-promisfactory",
  "outbe-promislimit",
+ "outbe-protocol",
  "outbe-vaultrouter",
  "ring",
  "serde_json",
