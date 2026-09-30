@@ -882,3 +882,201 @@ fn zero_limit_green_day_dispatches_no_brief() {
         assert_eq!(desis.clearing_initiated.read(&series).unwrap(), 0);
     });
 }
+
+struct PersistentTree {
+    directory: std::path::PathBuf,
+    service: outbe_compressed_entities::CompressedTreeService,
+}
+
+impl PersistentTree {
+    fn open(name: &str) -> Self {
+        use outbe_compressed_entities::{
+            CandidateCacheLimits, CeMdbx, CeTopologyV1, CompressedTreeService, EnvironmentIdentity,
+            FinalizedMarker, ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
+        };
+        let directory =
+            std::env::temp_dir().join(format!("outbe-metadosis-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let db = CeMdbx::open(
+            &directory,
+            EnvironmentIdentity {
+                local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
+                chain_id: CHAIN_ID,
+                genesis_hash: B256::ZERO,
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                topology: CeTopologyV1.encode(),
+                tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
+                vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
+            },
+            FinalizedMarker {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                height: 0,
+                block_hash: B256::ZERO,
+                parent_block_hash: B256::ZERO,
+                parent_root: B256::ZERO,
+                new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
+            },
+        )
+        .unwrap();
+        let service = CompressedTreeService::new(
+            db,
+            CandidateCacheLimits {
+                max_candidates: 4,
+                max_encoded_bytes: 1_000_000,
+            },
+        )
+        .unwrap();
+        Self { directory, service }
+    }
+
+    fn scope_at(&self, block_number: u64, block_hash: B256, root: B256) -> ExecutionScope {
+        let parent = self
+            .service
+            .open_parent(outbe_compressed_entities::ExactParentIdentity {
+                commitment_scheme_version: outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME,
+                block_number,
+                block_hash,
+                root,
+            })
+            .unwrap();
+        ExecutionScope::with_parent_tree(
+            parent,
+            outbe_compressed_entities::CeWorkConfig::new(0, 0, u64::MAX),
+        )
+    }
+
+    fn finalize(&self, block_number: u64, output: outbe_compressed_entities::SealOutput) -> B256 {
+        let block_hash = B256::repeat_byte(u8::try_from(block_number).unwrap());
+        self.service
+            .publish_candidate(block_hash, output.staged_tree_batch)
+            .unwrap();
+        self.service
+            .apply_finalized(block_number, block_hash, output.new_root)
+            .unwrap();
+        block_hash
+    }
+}
+
+impl Drop for PersistentTree {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.directory);
+    }
+}
+
+/// Mints one real Tribute in a sealed block, then settles the READY day in the
+/// next block through the end-of-block seal.
+fn settle_minted_ready_day_through_the_seal(
+    name: &str,
+    wwd: outbe_primitives::time::WorldwideDay,
+    dtype: u8,
+    day_limit: U256,
+    nominal: U256,
+) -> HashMapStorageProvider {
+    let tree = PersistentTree::open(name);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let parent = TestParent::empty();
+    let genesis_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+    let mint_scope = tree.scope_at(0, B256::ZERO, genesis_root);
+    provider.set_block_number(1);
+    let (scheduled, minted) = StorageHandle::enter(&mut provider, |storage| {
+        arm_genesis_ocomp(&storage, CHAIN_ID);
+        let scheduled = create_waiting_day(&storage, wwd, dtype, day_limit);
+        super::arm_reference_price(&storage, scheduled);
+        storage
+            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
+            .unwrap();
+        storage
+            .sstore(
+                COMPRESSED_ENTITIES_ADDRESS,
+                U256::from(1),
+                U256::from_be_slice(genesis_root.as_slice()),
+            )
+            .unwrap();
+        begin_block(storage.clone(), &mint_scope).unwrap();
+        issue_one_tribute_in_scope(
+            &storage,
+            &mint_scope,
+            &parent,
+            address!("7400000000000000000000000000000000000074"),
+            wwd,
+            nominal,
+        );
+        (scheduled, end_block(storage, &mint_scope).unwrap())
+    });
+    let minted_root = minted.new_root;
+    let minted_hash = tree.finalize(1, minted);
+
+    let settle_scope = tree.scope_at(1, minted_hash, minted_root);
+    provider.set_block_number(2);
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage, &settle_scope).unwrap();
+    });
+    assert!(settle_scope
+        .authenticated_partition_root(outbe_compressed_entities::PartitionRef::TributeWwd(wwd))
+        .unwrap()
+        .is_some());
+    run_start_command(&mut provider, &settle_scope, &parent, 2, scheduled).unwrap();
+    let settled = StorageHandle::enter(&mut provider, |storage| {
+        end_block(storage, &settle_scope).unwrap()
+    });
+    let settled_root = settled.new_root;
+    let settled_hash = tree.finalize(2, settled);
+
+    let retired = tree
+        .service
+        .open_parent(outbe_compressed_entities::ExactParentIdentity {
+            commitment_scheme_version: outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME,
+            block_number: 2,
+            block_hash: settled_hash,
+            root: settled_root,
+        })
+        .unwrap();
+    assert!(!retired
+        .partition_present_verified(
+            outbe_compressed_entities::PartitionRef::TributeWwd(wwd),
+            settled_root
+        )
+        .unwrap());
+    assert_tribute_partition_forfeited(&mut provider, wwd);
+    provider
+}
+
+#[test]
+fn minted_zero_limit_ready_day_fails_and_retires_its_partition_through_the_seal() {
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0316);
+    let mut provider = settle_minted_ready_day_through_the_seal(
+        "zero-limit",
+        wwd,
+        day_type::GREEN,
+        U256::ZERO,
+        U256::from(1_000),
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        let metadosis = MetadosisContract::new(storage);
+        assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FAILED);
+        let receipt = metadosis
+            .read_metadosis_failure_receipt(wwd, U256::ZERO)
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.retirement, RetirementOutcome::Requested);
+    });
+}
+
+#[test]
+fn minted_zero_gratis_day_completes_and_retires_its_partition_through_the_seal() {
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0317);
+    let mut provider = settle_minted_ready_day_through_the_seal(
+        "zero-gratis",
+        wwd,
+        day_type::RED,
+        U256::from(2),
+        U256::from(1_000),
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        assert_eq!(
+            MetadosisContract::new(storage).get_wwd_status(wwd).unwrap(),
+            status::COMPLETED
+        );
+    });
+}

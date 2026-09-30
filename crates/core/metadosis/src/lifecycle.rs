@@ -48,14 +48,27 @@ pub(crate) fn advance_active_worldwide_days(
                 block_time: ctx.block.timestamp,
                 retained_count,
                 admission_available: !admission_consumed,
-                // A day limit is formed only while its WWD's UTC day is open.
+                // Only settling a WWD's UTC day forms its limit, earlier in this same tick.
                 limit_final: block_utc_day > current.worldwide_day.value(),
             },
         )?;
         match transition.kind() {
             OuterWwdTransitionKind::Noop => {}
-            OuterWwdTransitionKind::MissedOffering => {
-                apply_missed_offering(&mut metadosis, ctx, scope, current, &transition)?;
+            OuterWwdTransitionKind::MissedOffering { preceding_edges } => {
+                let rate_resolution = apply_wwd_advance_edges(
+                    &mut metadosis,
+                    current.worldwide_day,
+                    preceding_edges,
+                    "missed offering resolved one WWD rate more than once",
+                )?;
+                apply_missed_offering(
+                    &mut metadosis,
+                    ctx,
+                    scope,
+                    current,
+                    &transition,
+                    rate_resolution,
+                )?;
             }
             OuterWwdTransitionKind::Advance(edges) => {
                 let rate_resolution = apply_wwd_advance_edges(
@@ -352,6 +365,7 @@ fn apply_missed_offering(
     scope: &ExecutionScope,
     current: &WwdProjection,
     transition: &OuterWwdTransition,
+    rate_resolution: Option<WwdRateResolution>,
 ) -> Result<()> {
     // A day limit is written only together with its formation, so an absent
     // formation must mean an untouched limit; anything else is real corruption.
@@ -393,11 +407,12 @@ fn apply_missed_offering(
             block_number: ctx.block.block_number,
         };
         metadosis.write_missed_offering_receipt(receipt)?;
-        commit_outer_transition(
+        commit_outer_transition_with_rate(
             metadosis,
             current.worldwide_day,
             transition,
             ctx.block.block_number,
+            rate_resolution,
         )?;
         metadosis.emit(IMetadosis::WorldwideDayMissedOffering {
             worldwideDay: current.worldwide_day.into(),

@@ -78,7 +78,9 @@ pub(crate) enum OuterWwdTransitionKind {
     Noop,
     Created,
     Advance(Vec<WwdAdvanceEdge>),
-    MissedOffering,
+    MissedOffering {
+        preceding_edges: Vec<WwdAdvanceEdge>,
+    },
     CapacityForfeiture {
         preceding_edges: Vec<WwdAdvanceEdge>,
     },
@@ -166,11 +168,19 @@ pub(crate) fn reduce_outer_wwd(
                     current.status,
                     OuterWwdTransitionKind::Noop,
                 ),
-                WwdTransitionPlan::MissedOffering => transition(
-                    Some(current.status),
-                    WwdStatus::Failed,
-                    OuterWwdTransitionKind::MissedOffering,
-                ),
+                WwdTransitionPlan::MissedOffering => {
+                    // The next WWD's day type reads this day's VWAP snapshot.
+                    let preceding_edges = if current.status == WwdStatus::Forming {
+                        vec![WwdAdvanceEdge::ResolveForming]
+                    } else {
+                        Vec::new()
+                    };
+                    transition(
+                        Some(current.status),
+                        WwdStatus::Failed,
+                        OuterWwdTransitionKind::MissedOffering { preceding_edges },
+                    )
+                }
                 WwdTransitionPlan::Advance(mut edges)
                     if edges.last() == Some(&WwdAdvanceEdge::BecomeReady)
                         && !admission_available =>

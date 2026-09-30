@@ -171,7 +171,12 @@ fn outer_reducer_covers_creation_advance_capacity_and_ready_outcomes() {
     .unwrap();
     assert_eq!(missed.target(), WwdStatus::Failed);
     assert_eq!(missed.membership_after(), WwdMembership::Closed);
-    assert_eq!(missed.kind(), &OuterWwdTransitionKind::MissedOffering);
+    assert_eq!(
+        missed.kind(),
+        &OuterWwdTransitionKind::MissedOffering {
+            preceding_edges: vec![WwdAdvanceEdge::ResolveForming],
+        }
+    );
 
     let waiting = projection(WwdStatus::Waiting);
     let forfeited = reduce_outer_wwd(
@@ -326,7 +331,12 @@ fn final_zero_limit_turns_every_opening_advance_into_missed_offering() {
         let missed = advance(status, U256::ZERO, block_time, true);
         assert_eq!(missed.target(), WwdStatus::Failed);
         assert_eq!(missed.membership_after(), WwdMembership::Closed);
-        assert_eq!(missed.kind(), &OuterWwdTransitionKind::MissedOffering);
+        assert_eq!(
+            missed.kind(),
+            &OuterWwdTransitionKind::MissedOffering {
+                preceding_edges: edges[..edges.len() - 1].to_vec(),
+            }
+        );
         for (limit, limit_final) in [(U256::ZERO, false), (U256::ONE, true)] {
             let opened = advance(status, limit, block_time, limit_final);
             assert_eq!(opened.target(), WwdStatus::Offering);
@@ -437,9 +447,18 @@ fn expected_transition_at_process_time(
     let (target, kind) = match event {
         OuterWwdEvent::CreateDay => (status, OuterWwdTransitionKind::Noop),
         OuterWwdEvent::AdvanceDue { .. } => match status {
-            WwdStatus::Forming | WwdStatus::LookbackDelay => {
-                (WwdStatus::Failed, OuterWwdTransitionKind::MissedOffering)
-            }
+            WwdStatus::Forming => (
+                WwdStatus::Failed,
+                OuterWwdTransitionKind::MissedOffering {
+                    preceding_edges: vec![WwdAdvanceEdge::ResolveForming],
+                },
+            ),
+            WwdStatus::LookbackDelay => (
+                WwdStatus::Failed,
+                OuterWwdTransitionKind::MissedOffering {
+                    preceding_edges: Vec::new(),
+                },
+            ),
             WwdStatus::Offering => (
                 WwdStatus::Ready,
                 OuterWwdTransitionKind::Advance(vec![

@@ -234,6 +234,126 @@ fn zero_limit_offering_opens_until_its_utc_day_closes() {
 }
 
 #[test]
+fn final_zero_limit_miss_from_forming_keeps_the_rate_for_the_next_day() {
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0302);
+    let next = outbe_primitives::time::WorldwideDay::new(2026_0303);
+    let forming = |day: outbe_primitives::time::WorldwideDay| {
+        (
+            day.start_timestamp(),
+            day.start_timestamp() + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR,
+        )
+    };
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    seed_unformed_missed_offering_day(&mut provider, wwd, U256::ZERO);
+    let lookback_end = StorageHandle::enter(&mut provider, |storage| {
+        outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
+            .unwrap();
+        let pair = outbe_oracle::api::DAY_TYPE_PAIR;
+        let mut oracle = OracleContract::new(storage.clone());
+        let previous = wwd.previous_date_key();
+        for (at, price) in [
+            (forming(previous).0 + SECONDS_PER_HOUR, 100u64),
+            (forming(wwd).0 + 30 * SECONDS_PER_HOUR, 110),
+            (forming(next).0 + 30 * SECONDS_PER_HOUR, 130),
+        ] {
+            oracle
+                .write_snapshot(at, &[(pair, U256::from(price), U256::ONE)])
+                .unwrap();
+        }
+        let (start, end) = forming(previous);
+        oracle
+            .store_worldwide_day_vwap_snapshot(previous, start, end)
+            .unwrap();
+        MetadosisContract::new(storage)
+            .worldwide_days
+            .entry(wwd)
+            .lookback_end()
+            .read()
+            .unwrap()
+    });
+    let (scope, _parent) = begin_persistent_active_scope(&mut provider);
+
+    run_advance_command(&mut provider, &scope, 2, lookback_end).unwrap();
+
+    assert_zero_limit_offering_missed(&mut provider, wwd, 2);
+    assert_eq!(
+        provider_status_events(&provider, wwd),
+        vec![
+            (status::FORMING, status::LOOKBACK_DELAY, 2),
+            (status::LOOKBACK_DELAY, status::FAILED, 2),
+        ]
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        assert_eq!(
+            outbe_oracle::api::day_type_pair_vwap(storage.clone(), wwd).unwrap(),
+            Some(U256::from(110u64))
+        );
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(metadosis.get_wwd_day_type(wwd).unwrap(), day_type::GREEN);
+        let mut metadosis = MetadosisContract::new(storage.clone());
+        metadosis
+            .create_worldwide_day(
+                next,
+                next.start_timestamp(),
+                LOOKBACK_DELAY_HOURS,
+                OFFERING_PERIOD_HOURS,
+            )
+            .unwrap();
+        metadosis.add_active_wwd(next).unwrap();
+        metadosis.set_metadosis_limit(next, U256::ONE).unwrap();
+        TributeContract::new(storage).seal_day(next).unwrap();
+    });
+
+    run_advance_command(&mut provider, &scope, 3, lookback_end + SECONDS_PER_HOUR).unwrap();
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let day = MetadosisContract::new(storage).worldwide_days.entry(next);
+        assert_eq!(day.previous_vwap().read().unwrap(), U256::from(110u64));
+        assert_eq!(day.day_type().read().unwrap(), day_type::GREEN);
+    });
+    end_persistent_active_scope(&mut provider, &scope);
+}
+
+#[test]
+fn limit_settled_earlier_in_the_opening_tick_opens_the_offering() {
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0903);
+    let settled_limit = U256::from(777);
+    let tick = wwd.to_timestamp_utc() + 24 * SECONDS_PER_HOUR + 60;
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    seed_zero_limit_lookback_day_opening_at(&mut provider, wwd, tick);
+    let (scope, _parent) = begin_persistent_active_scope(&mut provider);
+
+    provider.enable_metadosis_mutation_frame(
+        outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        // Cycle settles UTC day N at the first tick of N + 1, stamped at N's midnight.
+        let settlement = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(2, wwd.to_timestamp_utc(), CHAIN_ID),
+            storage,
+        );
+        crate::commands::apply_cycle_day_limit(&settlement, settled_limit).unwrap();
+    });
+    run_advance_command(&mut provider, &scope, 2, tick).unwrap();
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::OFFERING);
+        assert_eq!(
+            metadosis
+                .worldwide_days
+                .entry(wwd)
+                .metadosis_limit_amount()
+                .read()
+                .unwrap(),
+            settled_limit
+        );
+        assert!(!TributeContract::new(storage).is_day_sealed(wwd).unwrap());
+    });
+    end_persistent_active_scope(&mut provider, &scope);
+}
+
+#[test]
 fn malformed_missed_offering_receipt_is_fatal() {
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0801);
     with_contract(|metadosis| {
