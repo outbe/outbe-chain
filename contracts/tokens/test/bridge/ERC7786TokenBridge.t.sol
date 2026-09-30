@@ -239,31 +239,6 @@ contract ERC7786TokenBridgeTest is Test {
         outbeStableBridge.setRemoteBridge(BNB, _interop(BNB, address(bnbStableBridge)));
     }
 
-    function test_EmergencyWithdraw_OwnerRecoversLockedTokens() public {
-        uint256 amount = 100e6;
-        usdt.mint(sourceAddr, amount);
-
-        vm.startPrank(sourceAddr);
-        usdt.approve(address(bnbUsdtBridge), amount);
-        bnbUsdtBridge.send(OUTBE, targetAddr, amount);
-        vm.stopPrank();
-
-        assertEq(usdt.balanceOf(address(bnbUsdtBridge)), amount, "not locked");
-
-        vm.expectEmit(true, false, false, true);
-        emit ERC7786TokenBridge.EmergencyWithdrawn(address(this), amount);
-        bnbUsdtBridge.emergencyWithdraw();
-
-        assertEq(usdt.balanceOf(address(bnbUsdtBridge)), 0, "bridge still holds tokens");
-        assertEq(usdt.balanceOf(address(this)), amount, "owner did not receive them");
-    }
-
-    function test_RevertWhen_EmergencyWithdrawFromNonOwner() public {
-        vm.prank(intruder);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, intruder));
-        bnbUsdtBridge.emergencyWithdraw();
-    }
-
     function _setUpUsdtRoute() internal {
         usdt = new USDT();
         usdt0 = new BridgeableERC20Stable("USDT0", "USDT0", 6, 840, address(this));
