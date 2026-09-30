@@ -420,8 +420,15 @@ fn capacity_history(retained_before: usize, coverage: &mut Coverage) -> TestCase
 
     let retained = super::retained_days_before(victim, retained_before);
     StorageHandle::enter(&mut storage, |handle| {
-        outbe_metadosis::test_support::seed_ready_worldwide_days_for_capacity(handle, &retained)
-            .unwrap();
+        outbe_metadosis::test_support::seed_ready_worldwide_days_for_capacity(
+            handle.clone(),
+            &retained,
+        )
+        .unwrap();
+        let mut tribute = outbe_tribute::TributeContract::new(handle);
+        for day in &retained {
+            tribute.seal_day(*day).unwrap();
+        }
     });
 
     let mut next_block = 2_u64;
