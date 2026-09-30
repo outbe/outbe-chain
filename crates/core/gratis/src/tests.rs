@@ -408,10 +408,21 @@ fn pledge_validity_preserves_expired_cancellation_and_prevents_replay() {
             assert_eq!(api::balance_ct(storage.clone(), alice()).unwrap(), balance);
 
             if let Some(reason) = rejected {
-                assert!(result.unwrap_err().to_string().contains(reason));
+                let error = result.unwrap_err().to_string();
+                assert!(
+                    error.contains(reason),
+                    "now={now}, expected {reason:?}, got {error:?}"
+                );
                 assert_eq!(gratis.pledge_ticket_ct_of(note).unwrap(), ticket);
                 assert_eq!(view_pledged(storage.clone(), alice()), U256::ZERO);
-                // Cancellation remains possible even when the consume clock is invalid/expired.
+                // Enclave calls require a u64 block clock. Restore a representable clock
+                // after the overflow case before checking that the ticket can be cancelled.
+                if now > U256::from(u64::MAX) {
+                    storage
+                        .set_block_timestamp(U256::from(CREATED + 901))
+                        .unwrap();
+                }
+                // Cancellation remains possible after a rejected consume.
                 assert_eq!(
                     api::unpledge(
                         storage.clone(),

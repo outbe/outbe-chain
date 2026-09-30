@@ -42,7 +42,8 @@ pub mod test_support;
 pub use api::PayNoteClaim;
 pub use schema::PayNoteContract;
 
-/// Canonical big-endian BN254 words for PayNote proofs.
+/// BN254 field words for PayNote. The circuits crate exposes the same
+/// conversions as free functions.
 pub struct PayNoteSuit;
 
 impl PayNoteSuit {

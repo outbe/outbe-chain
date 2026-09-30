@@ -6,6 +6,9 @@ pub(in crate::lifecycle) type InnerTestProvider =
 pub(in crate::lifecycle) struct TestProvider {
     pub(in crate::lifecycle) inner: InnerTestProvider,
     pub(in crate::lifecycle) base_state: Arc<HashedAccountState>,
+    /// One storage slot whose reads fail, standing in for a node whose state
+    /// backend cannot serve that slot.
+    pub(in crate::lifecycle) unreadable_slot: Option<(Address, B256)>,
 }
 
 impl TestProvider {
@@ -180,6 +183,9 @@ impl StateProofProvider for TestProvider {
 
 impl StateProvider for TestProvider {
     fn storage(&self, account: Address, storage_key: B256) -> ProviderResult<Option<U256>> {
+        if self.unreadable_slot == Some((account, storage_key)) {
+            return Err(reth_provider::ProviderError::UnsupportedProvider);
+        }
         self.inner.storage(account, storage_key)
     }
 }
@@ -264,5 +270,6 @@ pub(in crate::lifecycle) fn mock_provider(
     TestProvider {
         inner,
         base_state: Arc::new(hashed_marker_state(storage)),
+        unreadable_slot: None,
     }
 }

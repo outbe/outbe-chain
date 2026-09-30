@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 
 use crate::{
     abi::{IOracle, IValidatorSet},
-    config::AccountConfig,
+    config::{AccountConfig, ChainConfig},
     journal::PendingVote,
 };
 
@@ -223,9 +223,8 @@ impl OracleClient {
         head: &Head,
         wallet: &EthereumWallet,
         signer: Address,
-        chain_id: u64,
+        chain: &ChainConfig,
         calldata: &[u8],
-        gasless: bool,
         replacement: Option<&PendingVote>,
     ) -> Result<PendingVote> {
         let nonce = self.nonce(head, signer).await?;
@@ -268,7 +267,7 @@ impl OracleClient {
                     .saturating_add(1),
             );
         }
-        let priority = if gasless {
+        let priority = if chain.gasless_oracle_votes {
             0
         } else {
             gas_price.max(replacement.map(|old| old.max_fee_per_gas).unwrap_or(0))
@@ -281,7 +280,7 @@ impl OracleClient {
             .nonce(nonce)
             .max_fee_per_gas(cap)
             .max_priority_fee_per_gas(priority);
-        tx.set_chain_id(chain_id);
+        tx.set_chain_id(chain.chain_id);
         let envelope = tx.build(wallet).await?;
         let raw = Bytes::from(envelope.encoded_2718());
         Ok(PendingVote {

@@ -186,6 +186,89 @@ mod kernel {
             limits,
         )
     }
+
+    pub(super) fn persisted_open_result_vote() -> super::PersistedOpenResultVote {
+        use crate::api::{verify_result_vote_carrier, ResultVoteCarrierAdmission};
+        use crate::fixture_kernel::{ActivationFixture, TEST_REQUEST_HEIGHT};
+        use crate::schema::MetadosisContract;
+        use outbe_ocomp_protocol::{
+            abi::encode_submit_lysis_result_calldata, state::RESULT_VOTE_MIN_FINALITY_DEPTH,
+        };
+        use outbe_primitives::storage::StorageHandle;
+
+        const MEMBER_INDEX: u8 = 2;
+        let open_height = TEST_REQUEST_HEIGHT + RESULT_VOTE_MIN_FINALITY_DEPTH;
+        let signer = Address::repeat_byte(0xB0 + MEMBER_INDEX);
+        let mut fixture = ActivationFixture::new(open_height, 1_700_000_000, true);
+        let vote = fixture.signed_result_vote(MEMBER_INDEX);
+        let valid_calldata = Bytes::from(
+            encode_submit_lysis_result_calldata(&vote, &fixture.limits)
+                .expect("canonical vote encodes"),
+        );
+        let admit = |provider: &mut outbe_primitives::storage::hashmap::HashMapStorageProvider,
+                     height| {
+            StorageHandle::enter(provider, |storage| {
+                verify_result_vote_carrier(
+                    storage,
+                    valid_calldata.as_ref(),
+                    signer,
+                    height,
+                    &fixture.limits,
+                )
+            })
+        };
+        assert!(
+            matches!(
+                admit(&mut fixture.provider, open_height),
+                ResultVoteCarrierAdmission::Valid { .. }
+            ),
+            "member {MEMBER_INDEX} must be authorized at the open height"
+        );
+        let due_height = StorageHandle::enter(&mut fixture.provider, |storage| {
+            MetadosisContract::new(storage)
+                .ocomp_job_record(fixture.intent_id, &fixture.limits)
+                .expect("persisted result-vote job is readable")
+                .expect("persisted result-vote job exists")
+                .finalized
+                .expect("persisted result-vote job is finalized")
+                .deadline_height
+        });
+        assert!(
+            matches!(
+                admit(&mut fixture.provider, due_height - 1),
+                ResultVoteCarrierAdmission::Valid { .. }
+            ),
+            "the vote must remain admissible immediately before the persisted deadline"
+        );
+        assert!(
+            matches!(
+                admit(&mut fixture.provider, due_height),
+                ResultVoteCarrierAdmission::DeadlineDueUnclosed { deadline_height }
+                    if deadline_height == due_height
+            ),
+            "the persisted deadline must be the first due height"
+        );
+        let mut tampered = vote;
+        tampered.signature_rs[63] ^= 0x01;
+        let tampered_calldata = Bytes::from(
+            encode_submit_lysis_result_calldata(&tampered, &fixture.limits)
+                .expect("a flipped signature byte keeps the canonical encoding"),
+        );
+        let slots = fixture
+            .provider
+            .storage
+            .iter()
+            .map(|((address, slot), value)| (*address, B256::from(slot.to_be_bytes()), *value))
+            .collect();
+        super::PersistedOpenResultVote {
+            slots,
+            signer,
+            open_height,
+            due_height,
+            valid_calldata,
+            tampered_calldata,
+        }
+    }
 }
 
 /// Named invariant violations supported by the activation scenario.
@@ -302,6 +385,29 @@ impl ResultVotingScenario {
     pub fn signed_vote(&self, validator_index: u8) -> ResultVoteV1 {
         kernel::signed_vote(&self.intent, &self.result, validator_index, &self.limits)
     }
+}
+
+/// Committed open-job state a Reth state provider can serve to the pool.
+///
+/// Heights are the verifier's own boundaries for this state: `open_height`
+/// is the first admissible inclusion, and `due_height` is the first height
+/// the still-open window reports as due.
+pub struct PersistedOpenResultVote {
+    pub slots: Vec<(Address, B256, U256)>,
+    pub signer: Address,
+    pub open_height: u64,
+    pub due_height: u64,
+    pub valid_calldata: Bytes,
+    pub tampered_calldata: Bytes,
+}
+
+/// Builds one authorized result vote against a persisted open job.
+///
+/// The next committee member has not voted. `tampered_calldata` is that vote
+/// with one signature byte flipped.
+#[must_use]
+pub fn persisted_open_result_vote() -> PersistedOpenResultVote {
+    kernel::persisted_open_result_vote()
 }
 
 /// Opaque q-forming activation scenario.

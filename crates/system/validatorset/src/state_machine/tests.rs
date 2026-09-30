@@ -291,6 +291,7 @@ fn pending_demotion_consumes_readiness() {
         joining,
         StakeProjection::new(U256::from(900), Some(40)),
         U256::from(1_000),
+        11,
     )
     .unwrap();
     let state =
@@ -298,6 +299,12 @@ fn pending_demotion_consumes_readiness() {
             .unwrap();
     assert!(!state.join_confirmed());
     assert!(!state.has_bls_share());
+    assert_eq!(
+        state
+            .history()
+            .and_then(ValidatorHistory::last_deactivated_at_height),
+        Some(11)
+    );
 }
 
 #[test]

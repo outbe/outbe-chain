@@ -2,6 +2,7 @@
 
 use alloy_primitives::U256;
 use outbe_compressed_entities::ExecutionScope;
+use outbe_primitives::error::PrecompileError;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 use outbe_promislimit::PromisLimitContract;
@@ -214,7 +215,17 @@ fn apply_wwd_advance_edge_effect(
 ) -> Result<Option<WwdRateResolution>> {
     match edge {
         WwdAdvanceEdge::ResolveForming => {
-            store_worldwide_day_vwap_snapshot(metadosis, wwd)?;
+            if let Err(err) = store_worldwide_day_vwap_snapshot(metadosis, wwd) {
+                if !is_vwap_overflow(&err) {
+                    return Err(err);
+                }
+                tracing::error!(
+                    target: "outbe::cycle",
+                    worldwide_day = %wwd,
+                    error = %err,
+                    "worldwide day VWAP calculation failed"
+                );
+            }
             Ok(Some(resolve_day_rate(metadosis, wwd)?))
         }
         WwdAdvanceEdge::OpenOffering => {
@@ -399,6 +410,10 @@ fn apply_missed_offering(
         Ok(())
     })();
     result
+}
+
+fn is_vwap_overflow(err: &PrecompileError) -> bool {
+    matches!(err, PrecompileError::Revert(message) if message.starts_with("VWAP overflow:"))
 }
 
 fn store_worldwide_day_vwap_snapshot(
