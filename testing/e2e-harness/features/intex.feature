@@ -55,10 +55,11 @@ Feature: Intex from auction to Promis
   # home. The four payments take both rails and both currencies; the MYR ones
   # price off a closed pricing window, so the committee steps past the next whole
   # hour once the series are issued. On this localnet that hour is midnight: the
-  # day closes on the controlled quote, and every seeded day repeats it, because a
-  # target chain records a day's price once. The other two are left to run out: one is
-  # settled in part and one never touched, so the sweep has to return the load of
-  # the unrealized units alone from one and the whole tirage from the other.
+  # committee closes the day on its own feed, and every seeded day repeats that
+  # close, because a target chain records a day's price once. The other two are
+  # left to run out: one is settled in part and one never touched, so the sweep
+  # has to return the load of the unrealized units alone from one and the whole
+  # tirage from the other.
   #
   # Time is seeded rather than lived through. A worldwide day sits in Forming
   # until its offering window closes, and stepping past that window on a day

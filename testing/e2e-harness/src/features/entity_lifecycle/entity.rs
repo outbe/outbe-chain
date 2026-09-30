@@ -5,7 +5,7 @@ use std::str::FromStr;
 use alloy_primitives::{Address, FixedBytes, U256};
 use cucumber::Parameter;
 
-use super::markets::{EUR_ISO, MYR_ISO};
+use super::markets::{coen_rate, EUR_ISO, MYR_ISO};
 use super::redeem::Mined;
 use crate::world::settlement_currency::USD_ISO;
 use crate::world::World;
@@ -124,6 +124,10 @@ impl Target {
 
 /// What an entity supplies to the phases every lifecycle shares.
 pub(crate) trait Lifecycle: Sync {
+    /// The COEN/USD rate every seeded closed day repeats: the controlled quote.
+    fn reference_rate(&self, _world: &World) -> U256 {
+        coen_rate(USD_ISO)
+    }
     /// The floor every entity of the scenario shares.
     fn floor(&self, world: &World) -> U256;
     /// The call price every entity of the scenario shares.

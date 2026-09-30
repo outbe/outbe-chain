@@ -17,7 +17,7 @@ use crate::features::entity_lifecycle::chain::{
     assert_single_event, finalized_checkpoint, head_time, poll_until,
 };
 use crate::features::entity_lifecycle::entity::{Item, Lifecycle, Phase, Rail, Target};
-use crate::features::entity_lifecycle::markets::{EUR_ISO, MYR_ISO};
+use crate::features::entity_lifecycle::markets::{coen_rate, EUR_ISO, MYR_ISO};
 use crate::features::entity_lifecycle::payment;
 use crate::features::entity_lifecycle::redeem::{self, mint_authorization, Ledger, Mined};
 use crate::world::forge::DEPLOYER_KEY;
@@ -367,6 +367,24 @@ fn target_rpc_url(world: &World) -> String {
 }
 
 impl Lifecycle for IntexLifecycle {
+    /// A target chain records a day's price once, so once the committee has closed
+    /// yesterday on its own feed, every seeded day repeats that close.
+    fn reference_rate(&self, world: &World) -> U256 {
+        use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
+        let yesterday = previous_date_key(timestamp_to_date_key(head_time(world)));
+        eth::read_call(
+            &world.rpc.url(world.validators.primary_port()),
+            outbe_primitives::addresses::ORACLE_ADDRESS,
+            &eth::IOracle::getUtcDayVwapCall {
+                base: Address::ZERO,
+                quote: outbe_primitives::asset_type::currency_address(USD_ISO),
+                utcDay: yesterday,
+            },
+        )
+        .filter(|vwap| !vwap.is_zero())
+        .unwrap_or_else(|| coen_rate(USD_ISO))
+    }
+
     fn floor(&self, world: &World) -> U256 {
         U256::from(prices(world, paid_series(world)[0]).1)
     }

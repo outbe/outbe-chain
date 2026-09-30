@@ -9,7 +9,7 @@ use cucumber::{then, when};
 
 use super::chain::poll_until;
 use super::entity::{Currency, Entity, Phase, Rail};
-use super::markets::{coen_rate, MYR_ISO};
+use super::markets::MYR_ISO;
 use super::{guards, payment, redeem};
 use crate::world::forge::DEPLOYER_KEY;
 use crate::world::settlement_currency::USD_ISO;
@@ -41,10 +41,11 @@ fn not_transferable(world: &mut World, entity: Entity) {
 /// repeats: a day already sent to a target chain can never take another price.
 #[when(expr = "the reference rate stands above the {entity} floor")]
 fn rate_above_floor(world: &mut World, entity: Entity) {
-    let rate = reference_rate();
+    let lifecycle = entity.lifecycle();
+    let rate = lifecycle.reference_rate(world);
     assert!(
-        rate > entity.lifecycle().floor(world),
-        "the controlled quote must clear the {entity:?} floor"
+        rate > lifecycle.floor(world),
+        "the reference rate {rate} must clear the {entity:?} floor"
     );
     seed_closed_days(world, 1, rate);
 }
@@ -109,10 +110,11 @@ fn payments_settle(world: &mut World) {
 
 #[when(expr = "the reference rate holds above the {entity} call price across the call window")]
 fn rate_above_call_price(world: &mut World, entity: Entity) {
-    let rate = reference_rate();
+    let lifecycle = entity.lifecycle();
+    let rate = lifecycle.reference_rate(world);
     assert!(
-        rate > entity.lifecycle().call_price(world),
-        "the controlled quote must clear the {entity:?} call price"
+        rate > lifecycle.call_price(world),
+        "the reference rate {rate} must clear the {entity:?} call price"
     );
     seed_closed_days(world, CALL_WINDOW_SEED_DAYS, rate);
 }
@@ -170,11 +172,6 @@ fn redeem_into_coen(world: &mut World) {
 fn native_coen_grows(world: &mut World) {
     let ledger = &world.state.entity_lifecycle;
     redeem::assert_redeemed(world, &ledger.mined, &ledger.redeemed);
-}
-
-/// COEN/USD on the controlled feed: the closed days the chain finalizes itself carry it too.
-fn reference_rate() -> U256 {
-    coen_rate(USD_ISO)
 }
 
 /// Seed the last `days` closed UTC days of COEN/USD, the reference every entity prices by.
