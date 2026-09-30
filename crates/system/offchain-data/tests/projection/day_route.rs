@@ -16,11 +16,13 @@ fn new_tribute_and_nod_land_in_their_day_databases() {
     let shared = Arc::new(databases.directory().open_shared().unwrap());
     let mut projection =
         OffchainDataProjection::open(config(5), shared.clone(), shared.clone()).unwrap();
-    projection.set_day_route(DayDatabaseRoute {
-        databases: databases.clone(),
-        durable_reader: shared.clone(),
-        durable_writer: shared.clone(),
-    });
+    projection
+        .set_day_route(DayDatabaseRoute {
+            databases: databases.clone(),
+            durable_reader: shared.clone(),
+            durable_writer: shared.clone(),
+        })
+        .unwrap();
 
     let owner = Address::repeat_byte(0x11);
     let tribute_id = poseidon_entity(owner, 7);

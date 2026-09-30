@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crate::{DayDirectory, RocksDbStorage, StorageError};
 
@@ -48,6 +49,16 @@ impl DayDatabases {
         )
     }
 
+    /// Drops the cached Tribute primary so its directory can be removed.
+    pub fn forget_tribute_day(&self, day: u32) -> Result<(), StorageError> {
+        forget_cached(&self.tribute, day)
+    }
+
+    /// Drops the cached Nod primary so its directory can be removed.
+    pub fn forget_nod_day(&self, day: u32) -> Result<(), StorageError> {
+        forget_cached(&self.nod, day)
+    }
+
     /// Opens the day's Nod database, creating it when absent.
     pub fn nod(&self, day: u32) -> Result<Arc<RocksDbStorage>, StorageError> {
         open_cached(&self.nod, day, || self.directory.open_nod_day(day))
@@ -77,6 +88,28 @@ fn present(
         return Ok(None);
     }
     open_cached(slots, day, open).map(Some)
+}
+
+fn forget_cached(
+    slots: &Mutex<HashMap<u32, Arc<RocksDbStorage>>>,
+    day: u32,
+) -> Result<(), StorageError> {
+    let removed = {
+        let mut slots = slots.lock().unwrap_or_else(|error| error.into_inner());
+        slots.remove(&day)
+    };
+    let Some(storage) = removed else {
+        return Ok(());
+    };
+    let waiter = storage.close_waiter();
+    drop(storage);
+    if waiter.wait_timeout(Duration::from_secs(5)) {
+        Ok(())
+    } else {
+        Err(StorageError::unavailable(std::io::Error::other(
+            "day database is still open",
+        )))
+    }
 }
 
 fn cached(

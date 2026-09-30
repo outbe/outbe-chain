@@ -94,9 +94,18 @@ impl PreparedOffchainDataProjection {
     /// Durable release capability backed by the exact storage owned by this projection.
     #[must_use]
     pub fn retained_tribute_writer(&self) -> Arc<RetainedTributeWriter> {
-        let reader = self.storage.reader.clone();
-        let writer = self.storage.writer.clone();
-        Arc::new(RetainedTributeWriter::new(reader, writer))
+        match self.projector.day_route() {
+            Some(route) => Arc::new(RetainedTributeWriter::with_days(
+                route.durable_reader.clone(),
+                route.durable_writer.clone(),
+                route.databases.clone(),
+            )),
+            None => {
+                let reader = self.storage.reader.clone();
+                let writer = self.storage.writer.clone();
+                Arc::new(RetainedTributeWriter::new(reader, writer))
+            }
+        }
     }
 
     /// Exact process-local fence shared by projection and retained-input GC.

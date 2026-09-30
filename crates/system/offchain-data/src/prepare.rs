@@ -15,7 +15,8 @@ use super::decode::{
 };
 use super::state::ProjectionSource;
 use super::{
-    FinalizedBlock, OffchainDataProjection, PreparedBlock, PreparedReceipt, ProjectionError,
+    DayRetirement, FinalizedBlock, OffchainDataProjection, PreparedBlock, PreparedReceipt,
+    ProjectionError,
 };
 
 impl OffchainDataProjection {
@@ -93,12 +94,14 @@ impl OffchainDataProjection {
                         bucket_ids.insert(key);
                     }
                 }
-                if let ProjectionEvent::TributePartitionRetired { worldwide_day } = event {
-                    super::retirement::collect_ids_for_retired_day(
-                        &tribute_reader,
-                        *worldwide_day,
-                        &mut tribute_ids,
-                    )?;
+                if self.day_route.is_none() {
+                    if let ProjectionEvent::TributePartitionRetired { worldwide_day } = event {
+                        super::retirement::collect_ids_for_retired_day(
+                            &tribute_reader,
+                            *worldwide_day,
+                            &mut tribute_ids,
+                        )?;
+                    }
                 }
             }
         }
@@ -119,6 +122,8 @@ impl OffchainDataProjection {
         }
 
         let mut prepared_receipts = Vec::new();
+        let mut day_retirements = Vec::new();
+        let mut retired_days = BTreeSet::new();
         let mut seen_tributes = BTreeSet::new();
         let mut seen_nods = BTreeSet::new();
         let mut seen_buckets = BTreeSet::new();
@@ -132,6 +137,11 @@ impl OffchainDataProjection {
                         stored_body,
                         previous_commitment,
                     } => {
+                        reject_tribute_after_retirement(
+                            self.day_route.is_some(),
+                            &retired_days,
+                            tribute_id,
+                        )?;
                         let old = tributes.current(tribute_id)?;
                         validate_tribute_transition(
                             tribute_id,
@@ -150,6 +160,11 @@ impl OffchainDataProjection {
                         tribute_id,
                         previous_commitment,
                     } => {
+                        reject_tribute_after_retirement(
+                            self.day_route.is_some(),
+                            &retired_days,
+                            tribute_id,
+                        )?;
                         let old = tributes.current(tribute_id)?;
                         validate_tribute_transition(
                             tribute_id,
@@ -179,14 +194,23 @@ impl OffchainDataProjection {
                                 });
                             }
                         }
-                        super::retirement::plan_retired_partition(
-                            &mut tributes,
-                            &retained_tribute_reader,
-                            &tribute_ids,
-                            worldwide_day,
-                            retention_pin,
-                            &mut batch,
-                        )?;
+                        if self.day_route.is_some() {
+                            record_day_retirement(
+                                &mut day_retirements,
+                                &mut retired_days,
+                                worldwide_day.value(),
+                                retention_pin,
+                            );
+                        } else {
+                            super::retirement::plan_retired_partition(
+                                &mut tributes,
+                                &retained_tribute_reader,
+                                &tribute_ids,
+                                worldwide_day,
+                                retention_pin,
+                                &mut batch,
+                            )?;
+                        }
                     }
                     ProjectionEvent::NodStored {
                         source,
@@ -274,7 +298,44 @@ impl OffchainDataProjection {
                 block_hash: block.hash,
             },
             receipts: prepared_receipts,
+            day_retirements,
         })
+    }
+}
+
+fn reject_tribute_after_retirement(
+    routed: bool,
+    retired_days: &BTreeSet<u32>,
+    tribute_id: WwdEntityId,
+) -> Result<(), ProjectionError> {
+    if routed && retired_days.contains(&tribute_id.worldwide_day().value()) {
+        return Err(ProjectionError::TributeStoredAfterDayRetirement { tribute_id });
+    }
+    Ok(())
+}
+
+fn record_day_retirement(
+    retirements: &mut Vec<DayRetirement>,
+    retired_days: &mut BTreeSet<u32>,
+    day: u32,
+    pin: Option<outbe_tribute::RetainedTributePin>,
+) {
+    retired_days.insert(day);
+    let action = match pin {
+        Some(pin) => DayRetirement::Retain {
+            day,
+            lease: pin.input_lease_id,
+        },
+        None => DayRetirement::Drop(day),
+    };
+    if let Some(existing) = retirements.iter_mut().find(|item| match item {
+        DayRetirement::Drop(recorded) | DayRetirement::Retain { day: recorded, .. } => {
+            *recorded == day
+        }
+    }) {
+        *existing = action;
+    } else {
+        retirements.push(action);
     }
 }
 

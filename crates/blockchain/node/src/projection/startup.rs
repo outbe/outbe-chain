@@ -93,7 +93,9 @@ pub(super) fn prepare_projection_attempt(
         )
         .migrate_legacy_keys()
         .map_err(|error| PrepareProjectionError::Projection(ProjectionError::from(error)))?;
-        projector.set_day_route(route);
+        projector
+            .set_day_route(route)
+            .map_err(PrepareProjectionError::Projection)?;
     }
     Ok((storage, overlay, projector))
 }

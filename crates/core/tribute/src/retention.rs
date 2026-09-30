@@ -6,6 +6,7 @@
 //! `InputLeaseId`, WWD, complete `WwdEntityId`, and CES1 body commitment.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use alloy_primitives::B256;
 use outbe_compressed_entities::{
@@ -14,12 +15,13 @@ use outbe_compressed_entities::{
 };
 use outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1;
 use outbe_offchain_storage::{
-    AtomicWriteBatch, AtomicWriteOperation, Key, ScanEntry, ScanRequest, StorageReaderHandle,
-    StorageWriterHandle, StoredValue, Value, MAX_SCAN_ENTRIES,
+    AtomicWriteBatch, AtomicWriteOperation, DayDatabases, Key, ScanEntry, ScanRequest,
+    StorageReader, StorageReaderHandle, StorageWriterHandle, StoredValue, Value, MAX_SCAN_ENTRIES,
 };
 use outbe_primitives::time::WorldwideDay;
 
 use crate::{
+    day_mark::{self, TributeDayMark},
     repository::{audit_error, namespace, primary_key, AuditEntries, TRIBUTES_NAMESPACE},
     TributeRepositoryError,
 };
@@ -81,12 +83,25 @@ pub trait RetainedTributeAuditVisitor {
 #[derive(Clone)]
 pub struct RetainedTributeReader {
     storage: StorageReaderHandle,
+    days: Option<Arc<DayDatabases>>,
 }
 
 impl RetainedTributeReader {
     #[must_use]
     pub fn new(storage: StorageReaderHandle) -> Self {
-        Self { storage }
+        Self {
+            storage,
+            days: None,
+        }
+    }
+
+    /// Reads a retained worldwide day from its own database.
+    #[must_use]
+    pub fn with_days(storage: StorageReaderHandle, days: Arc<DayDatabases>) -> Self {
+        Self {
+            storage,
+            days: Some(days),
+        }
     }
 
     /// Enumerates every retained primary and verifies the entire day index.
@@ -268,6 +283,12 @@ impl RetainedTributeReader {
             }
         }
 
+        if selected.is_none() && !current_mismatch {
+            if let Some(bytes) = retained_day_body(self, pin, tribute_id, expected_commitment)? {
+                selected = Some(bytes);
+            }
+        }
+
         match selected {
             Some(bytes) => StoredBody::decode(&bytes).map(Some).map_err(Into::into),
             None if current_mismatch => Err(TributeRepositoryError::RetainedCommitmentMismatch {
@@ -422,16 +443,91 @@ impl RetainedTributeWriter {
         }
     }
 
+    /// Releases a retained day directory, then any copied lease pages.
+    #[must_use]
+    pub fn with_days(
+        reader: StorageReaderHandle,
+        writer: StorageWriterHandle,
+        days: Arc<DayDatabases>,
+    ) -> Self {
+        Self {
+            reader: RetainedTributeReader::with_days(reader, days),
+            writer,
+        }
+    }
+
     /// Idempotently deletes one bounded page of one exact input lease's bodies
     /// and index. Returns `true` only after the final page has been deleted.
+    ///
+    /// A day kept as its own database is removed in this call, before the copied
+    /// page. Copied keys in the shared database keep their page loop.
     pub fn release_input_lease_page(
         &self,
         input_lease_id: B256,
     ) -> Result<bool, TributeRepositoryError> {
+        if let Some(days) = &self.reader.days {
+            release_retained_days(&self.reader.storage, &self.writer, days, input_lease_id)?;
+        }
         let (batch, complete) = self.reader.plan_release_input_lease_page(input_lease_id)?;
         self.writer.apply_atomic(&batch)?;
         Ok(complete)
     }
+}
+
+fn retained_day_body(
+    reader: &RetainedTributeReader,
+    pin: RetainedTributePin,
+    tribute_id: WwdEntityId,
+    expected_commitment: B256,
+) -> Result<Option<Vec<u8>>, TributeRepositoryError> {
+    let Some(days) = &reader.days else {
+        return Ok(None);
+    };
+    let Some(TributeDayMark::Retained(lease)) =
+        day_mark::read_tribute_day_mark(reader.storage.as_ref(), pin.worldwide_day.value())?
+    else {
+        return Ok(None);
+    };
+    if lease != pin.input_lease_id {
+        return Ok(None);
+    }
+    let Some(storage) = days.tribute_if_present(pin.worldwide_day.value())? else {
+        return Ok(None);
+    };
+    let Some(record) =
+        storage.get_record(namespace(TRIBUTES_NAMESPACE)?, &primary_key(tribute_id)?)?
+    else {
+        return Ok(None);
+    };
+    let commitment = commitment_for_stored_bytes(tribute_id, record.value.as_bytes())?;
+    if commitment != expected_commitment {
+        return Err(TributeRepositoryError::RetainedCommitmentMismatch {
+            job_id: pin.input_lease_id,
+            tribute_id,
+        });
+    }
+    Ok(Some(record.value.as_bytes().to_vec()))
+}
+
+fn release_retained_days(
+    storage: &StorageReaderHandle,
+    writer: &StorageWriterHandle,
+    days: &DayDatabases,
+    input_lease_id: B256,
+) -> Result<(), TributeRepositoryError> {
+    for (day, mark) in day_mark::list_tribute_day_marks(storage.as_ref())? {
+        let TributeDayMark::Retained(lease) = mark else {
+            continue;
+        };
+        if lease != input_lease_id {
+            continue;
+        }
+        day_mark::write_tribute_day_mark(writer.as_ref(), day, TributeDayMark::DropPending)?;
+        days.forget_tribute_day(day)?;
+        days.directory().drop_tribute_day(day)?;
+        day_mark::write_tribute_day_mark(writer.as_ref(), day, TributeDayMark::Retired)?;
+    }
+    Ok(())
 }
 
 fn ensure_pin_day(

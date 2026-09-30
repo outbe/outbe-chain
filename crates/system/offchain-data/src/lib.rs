@@ -5,6 +5,7 @@
 //! consumes only the shared off-chain storage capabilities.
 
 mod day_apply;
+mod day_lifecycle;
 mod decode;
 mod prepare;
 mod retirement;
@@ -93,6 +94,14 @@ impl PreparedReceipt {
 pub struct PreparedBlock {
     checkpoint: ProjectionCheckpoint,
     receipts: Vec<PreparedReceipt>,
+    day_retirements: Vec<DayRetirement>,
+}
+
+/// One Tribute worldwide day leaving the live projection in this block.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DayRetirement {
+    Drop(u32),
+    Retain { day: u32, lease: B256 },
 }
 
 impl PreparedBlock {
@@ -171,8 +180,12 @@ impl OffchainDataProjection {
     }
 
     /// Routes Tribute and Nod bodies into one database per worldwide day.
-    pub fn set_day_route(&mut self, route: DayDatabaseRoute) {
+    ///
+    /// A directory still present for a dropped or retired day is removed here.
+    pub fn set_day_route(&mut self, route: DayDatabaseRoute) -> Result<(), ProjectionError> {
+        day_lifecycle::sweep(&route)?;
         self.day_route = Some(route);
+        Ok(())
     }
 
     /// Day routing configured for this projector, when the node opened RocksDB.
@@ -233,10 +246,14 @@ impl OffchainDataProjection {
         for receipt in &prepared.receipts {
             block_batch.extend(receipt.batch.operations().iter().cloned());
         }
-        block_batch.extend(state_batch(&next_state)?.operations().iter().cloned());
+        let state = state_batch(&next_state)?;
         let block_batch = match &self.day_route {
-            Some(route) => day_apply::write_day_operations(&route.databases, block_batch)?,
+            Some(route) => {
+                let shared = day_apply::write_day_operations(&route.databases, block_batch)?;
+                day_lifecycle::finish_retirements(route, &prepared.day_retirements, shared, state)?
+            }
             None => {
+                block_batch.extend(state.operations().iter().cloned());
                 block_batch.validate()?;
                 block_batch
             }
@@ -257,6 +274,9 @@ impl OffchainDataProjection {
         &mut self,
         block: &FinalizedBlock,
     ) -> Result<ProjectionOutcome, ProjectionError> {
+        if let Some(route) = &self.day_route {
+            day_lifecycle::sweep(route)?;
+        }
         if let NextBlock::AlreadyApplied(checkpoint) =
             self.validate_next_block(block.number, block.hash)?
         {
@@ -388,4 +408,6 @@ pub enum ProjectionError {
         expected_previous: B256,
         actual: B256,
     },
+    #[error("tribute {tribute_id} changes after its worldwide day was retired in the same block")]
+    TributeStoredAfterDayRetirement { tribute_id: WwdEntityId },
 }
