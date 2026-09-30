@@ -1,7 +1,5 @@
-//! What a Gem supplies to the shared lifecycle: a merchant parks an Intex into a
-//! position and issues one Gem to each of five owners, leaving capacity unissued. Two
-//! Gems are paid while qualified, two inside the call notice, one is forfeited, and the
-//! position ends by returning what it never issued.
+//! What a Gem supplies to the shared lifecycle: a merchant parks an Intex into a position,
+//! issues one Gem to each of five owners, and the position returns what it never issued.
 
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -12,10 +10,9 @@ use cucumber::{then, when};
 use crate::features::entity_lifecycle::chain::{
     assert_single_event, finalized_checkpoint, head_time, poll_until,
 };
-use crate::features::entity_lifecycle::entity::{Item, Lifecycle, Phase, Target};
+use crate::features::entity_lifecycle::entity::{Item, Lifecycle, Phase, Target, Terms};
 use crate::features::entity_lifecycle::holders::{self, FORFEITED, HOLDERS, UNPAID_AT_CALL};
 use crate::features::entity_lifecycle::markets::MYR_ISO;
-use crate::features::entity_lifecycle::payment::assert_refused;
 use crate::features::entity_lifecycle::phases::CALL_WINDOW_SEED_DAYS;
 use crate::features::entity_lifecycle::redeem::{self, mint_authorization, Ledger, Mined};
 use crate::features::settlement::{assert_mined_success, find_mining_pow_nonce};
@@ -34,9 +31,9 @@ const PROMIS_LOAD_MINOR: u128 = 100_000;
 /// of the holding keeps the burn visible against what stays.
 const UNITS: u32 = 8;
 const PARKED_UNITS: u32 = 6;
-/// Load per issued Gem: five of them leave one unit's load unissued for the
-/// position's expiry to return.
-const GEM_LOAD_MINOR: u128 = 100_000;
+/// Load per issued Gem: five leave capacity unissued, and a load short of a whole unit
+/// leaves its cost a remainder to floor.
+const GEM_LOAD_MINOR: u128 = 100_003;
 /// USD (840) as the reference, spelled `U` in the series id.
 const REFERENCE_BYTE: u8 = b'U';
 /// `GemTypes::Merchant`.
@@ -83,7 +80,7 @@ fn issue_source_series(world: &mut World) {
         .state
         .origin_contracts
         .as_ref()
-        .expect("intex engine was deployed")
+        .expect("the Intex engine was deployed")
         .origin_router;
     let head = head_time(world);
     let day = outbe_primitives::time::worldwide_day_from_timestamp(head);
@@ -288,15 +285,18 @@ impl Lifecycle for GemLifecycle {
         read_gem(world, gem(world, 0)).callPrice
     }
 
-    fn terms(&self, world: &World, item: &Item) -> (U256, U256) {
+    fn terms(&self, world: &World, item: &Item) -> Terms {
         let Item::Gem(id) = item else {
             unreachable!("a Gem scenario pays only for Gems")
         };
         let data = read_gem(world, *id);
-        (data.entryPrice, data.promisLoad)
+        Terms {
+            entry_price: data.entryPrice,
+            load: data.promisLoad,
+        }
     }
 
-    fn assert_issued(&self, world: &mut World) {
+    fn assert_issued(&self, world: &World) {
         let position = read_position(world);
         assert_eq!(
             position.remainingCapacity,
@@ -376,10 +376,8 @@ impl Lifecycle for GemLifecycle {
         }
     }
 
-    /// Wait out the notice on the chain's own clock, then re-queue the Gem on a
-    /// deadline already behind a closed bucket. Only the wait for the rest of the
-    /// bucket's hour is skipped, which the sweep would otherwise impose on a DEV
-    /// notice measured in minutes.
+    /// Wait out the notice on the chain's clock, then re-queue the Gem behind a closed
+    /// expiry bucket, which saves only the rest of the bucket's hour.
     fn lapse_notice(&self, world: &mut World) {
         let url = world_url(world);
         let id = gem(world, FORFEITED);
@@ -410,7 +408,7 @@ impl Lifecycle for GemLifecycle {
         .expect("close the expiry bucket the Gem sits in");
     }
 
-    fn assert_forfeited(&self, world: &mut World) {
+    fn assert_forfeited(&self, world: &World) {
         let url = world_url(world);
         let id = gem(world, FORFEITED);
         poll_until(
@@ -430,7 +428,7 @@ impl Lifecycle for GemLifecycle {
         assert_expiry_returns(world, finalized_checkpoint(world).height, false);
     }
 
-    fn mine_paid(&self, world: &mut World) -> Vec<Mined> {
+    fn mine_paid(&self, world: &World) -> Vec<Mined> {
         let url = world_url(world);
         let load = U256::from(GEM_LOAD_MINOR);
         holders::paid()
@@ -458,6 +456,10 @@ impl Lifecycle for GemLifecycle {
                 )
                 .expect("submit Promis mining");
                 assert_mined_success(&outcome, "mine Promis from the paid Gem");
+                assert!(
+                    gem_count(&url, owner).is_zero(),
+                    "mining did not burn Gem {id}"
+                );
                 Mined {
                     owner,
                     owner_key: key,
@@ -467,21 +469,6 @@ impl Lifecycle for GemLifecycle {
                 }
             })
             .collect()
-    }
-
-    fn assert_soulbound(&self, world: &World) {
-        let owner = owner_address(0);
-        assert_refused(
-            world,
-            owner,
-            addresses::GEM_ADDR,
-            &eth::IGem::transferFromCall {
-                from: owner,
-                to: owner_address(1),
-                gemId: gem(world, 0),
-            },
-            outbe_gem::errors::GemError::NonTransferable,
-        );
     }
 }
 
@@ -637,7 +624,7 @@ fn intex_nft(world: &World) -> Address {
         .state
         .origin_contracts
         .as_ref()
-        .expect("intex engine was deployed")
+        .expect("the Intex engine was deployed")
         .intex_nft
 }
 

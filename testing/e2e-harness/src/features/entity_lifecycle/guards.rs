@@ -1,6 +1,5 @@
-//! The refusals that guard a lifecycle: paying too early or in the wrong terms, and
-//! mining what was not paid or is already gone. Each is read as the exact revert the
-//! product's own error type renders.
+//! The refusals that guard a lifecycle, each read as the exact revert text of the
+//! product's own error: paying early or on wrong terms, mining unpaid or twice, moving.
 
 use alloy_primitives::{Address, FixedBytes, B256, U256};
 use outbe_gemfactory::errors::GemFactoryError;
@@ -10,7 +9,7 @@ use outbe_nodfactory::errors::NodFactoryError;
 use super::entity::{Item, Target};
 use super::markets::{currency, EUR_ISO, MYR_ISO};
 use super::payment::{assert_mined_refusal, assert_refused, factory, quote, third_party_key};
-use crate::internal::eth;
+use crate::internal::{addresses, eth};
 use crate::world::settlement_currency::USD_ISO;
 use crate::world::World;
 
@@ -46,9 +45,8 @@ pub(crate) fn assert_unqualified_refused(world: &World, target: &Target) {
     }
 }
 
-/// A qualified holding still refuses an ERC20 payment naming a stale pricing
-/// snapshot, an asset in a currency it was never issued or referenced in, and a
-/// PayNote whose proof names somebody other than the payer it must name.
+/// A qualified holding refuses a stale pricing snapshot, an asset in a third currency,
+/// and a PayNote owned by somebody other than the one the proof must name.
 pub(crate) fn assert_payment_guards(world: &World, target: &Target) {
     let payer = third_party(world);
     let myr = currency(world, MYR_ISO).asset;
@@ -144,8 +142,8 @@ pub(crate) fn assert_payment_guards(world: &World, target: &Target) {
                 &erc20_nod(*id, eur, U256::ZERO),
                 NodFactoryError::SettlementCurrencyMismatch { iso_code: EUR_ISO },
             );
-            // A Nod settles its compressed body before the note is spent, which only a
-            // block executes: this refusal is read off a mined transaction.
+            // Nod settlement writes its compressed body first, which only a block executes,
+            // so the refusal is a mined revert; the owner's own note then pays this Nod.
             assert_mined_refusal(
                 world,
                 &target.owner_key,
@@ -213,22 +211,51 @@ pub(crate) fn assert_mined_unminable(world: &World, target: &Target) {
     }
 }
 
+/// Gems and Nods are soulbound: even their owner cannot move them.
+pub(crate) fn assert_soulbound(world: &World, target: &Target) {
+    let to = third_party(world);
+    match &target.item {
+        Item::Gem(id) => assert_refused(
+            world,
+            target.owner,
+            addresses::GEM_ADDR,
+            &eth::IGem::transferFromCall {
+                from: target.owner,
+                to,
+                gemId: *id,
+            },
+            outbe_gem::errors::GemError::NonTransferable,
+        ),
+        Item::Series { .. } => unreachable!("an issued Intex trades freely until it is called"),
+        Item::Nod(id) => assert_refused(
+            world,
+            target.owner,
+            addresses::NOD_ADDR,
+            &eth::INod::transferFromCall {
+                from: target.owner,
+                to,
+                nodId: *id,
+            },
+            outbe_nod::errors::NodError::NonTransferable,
+        ),
+    }
+}
+
 fn third_party(world: &World) -> Address {
     eth::address_of(&third_party_key(world)).expect("third-party payer address")
 }
 
-/// A real, unspent note for the holding's USD cost, deposited and proven by the
-/// third party rather than by whoever the settlement binds the proof to.
+/// A real, unspent note for the holding's exact MYR cost, owned by the third party.
 fn foreign_note(world: &World, target: &Target) -> Vec<u8> {
-    let usd = currency(world, USD_ISO).asset;
+    let myr = currency(world, MYR_ISO).asset;
     let key = third_party_key(world);
     crate::features::paynote::deposit_and_prove(
         world,
         world.validators.primary_port(),
         &key,
         third_party(world),
-        usd,
-        quote(world, target, usd).payable,
+        myr,
+        quote(world, target, myr).payable,
     )
 }
 

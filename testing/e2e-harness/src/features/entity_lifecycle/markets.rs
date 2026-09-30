@@ -21,8 +21,9 @@ alloy_sol_types::sol! {
 /// Malaysian ringgit: the issuance currency lifecycle entities carry beside USD, which
 /// no reference currency list includes.
 pub(crate) const MYR_ISO: u16 = 458;
-/// Ringgit per COEN on the controlled feed, at six decimals.
-pub(crate) const MYR_RATE_MINOR: u64 = 4_500_000;
+/// Ringgit per COEN on the controlled feed, at six decimals; not round, so a converted
+/// cost leaves a remainder to floor.
+pub(crate) const MYR_RATE_MINOR: u64 = 4_512_345;
 /// Euro: registered with its own vault, and foreign to the MYR-issued holdings.
 pub(crate) const EUR_ISO: u16 = 978;
 /// Scenarios with this tag price and settle in MYR as well as USD.
@@ -211,13 +212,18 @@ pub(crate) fn close_price_window(world: &mut World, currencies: &[u16]) {
     let target = head - head % 3_600 + 3_600 + WINDOW_CLOSE_MARGIN_SECS;
     let (_, _, _, pending) =
         crate::features::ocomp::restart_committee_at_logical_time(world, target);
-    let url = world.rpc.url(world.validators.primary_port());
+    let port = world.validators.primary_port();
+    let url = world.rpc.url(port);
     let mut price_ready = pending.is_none();
     poll_until(
         WINDOW_CLOSE_TIMEOUT,
         || format!("the closed pricing window never priced COEN in {currencies:?}"),
         || {
-            let time_ready = head_time(world) >= target;
+            // The committee has just restarted, so a head read may briefly fail.
+            let time_ready = world
+                .rpc
+                .latest_block_timestamp(port)
+                .is_some_and(|now| now >= target);
             price_ready = price_ready
                 || pending.as_ref().is_some_and(|pending| {
                     crate::features::price_oracle::observe_pending_publication(world, pending)

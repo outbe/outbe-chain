@@ -5,7 +5,7 @@ use std::str::FromStr;
 use alloy_primitives::{Address, FixedBytes, U256};
 use cucumber::Parameter;
 
-use super::markets::{coen_rate, EUR_ISO, MYR_ISO};
+use super::markets::MYR_ISO;
 use super::redeem::Mined;
 use crate::world::settlement_currency::USD_ISO;
 use crate::world::World;
@@ -14,7 +14,7 @@ use crate::world::World;
 #[param(name = "entity", regex = "Gem|Intex series|Nod")]
 pub(crate) enum Entity {
     Gem,
-    Series,
+    Intex,
     Nod,
 }
 
@@ -24,7 +24,7 @@ impl FromStr for Entity {
     fn from_str(name: &str) -> Result<Self, Self::Err> {
         match name {
             "Gem" => Ok(Self::Gem),
-            "Intex series" => Ok(Self::Series),
+            "Intex series" => Ok(Self::Intex),
             "Nod" => Ok(Self::Nod),
             other => Err(format!("unknown lifecycle entity {other:?}")),
         }
@@ -35,7 +35,7 @@ impl Entity {
     pub(crate) fn lifecycle(self) -> &'static dyn Lifecycle {
         match self {
             Self::Gem => &crate::features::gem_lifecycle::GemLifecycle,
-            Self::Series => &crate::features::intex_lifecycle::IntexLifecycle,
+            Self::Intex => &crate::features::intex_lifecycle::IntexLifecycle,
             Self::Nod => &crate::features::nod_lifecycle::NodLifecycle,
         }
     }
@@ -82,7 +82,7 @@ impl FromStr for Rail {
 
 /// A settlement currency, named by its ISO 4217 letters in the scenario text.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Parameter)]
-#[param(name = "currency", regex = "USD|MYR|EUR")]
+#[param(name = "currency", regex = "USD|MYR")]
 pub(crate) struct Currency(pub(crate) u16);
 
 impl FromStr for Currency {
@@ -92,7 +92,6 @@ impl FromStr for Currency {
         match name {
             "USD" => Ok(Self(USD_ISO)),
             "MYR" => Ok(Self(MYR_ISO)),
-            "EUR" => Ok(Self(EUR_ISO)),
             other => Err(format!("unknown settlement currency {other:?}")),
         }
     }
@@ -115,6 +114,13 @@ pub(crate) struct Target {
     pub(crate) issuance_currency: u16,
 }
 
+/// The entry price and load a payment for a holding is priced on.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Terms {
+    pub(crate) entry_price: U256,
+    pub(crate) load: U256,
+}
+
 impl Target {
     /// A holding pays in its reference currency, USD, or in the currency it was issued in.
     pub(crate) fn accepts(&self, currency: u16) -> bool {
@@ -124,17 +130,17 @@ impl Target {
 
 /// What an entity supplies to the phases every lifecycle shares.
 pub(crate) trait Lifecycle: Sync {
-    /// The COEN/USD rate every seeded closed day repeats: the controlled quote.
-    fn reference_rate(&self, _world: &World) -> U256 {
-        coen_rate(USD_ISO)
+    /// Yesterday's COEN/USD close a target chain already holds, which every seeded day repeats.
+    fn recorded_close(&self, _world: &World) -> Option<U256> {
+        None
     }
     /// The floor every entity of the scenario shares.
     fn floor(&self, world: &World) -> U256;
     /// The call price every entity of the scenario shares.
     fn call_price(&self, world: &World) -> U256;
-    /// The entry price and load a payment for `item` is priced on, as the holding records them.
-    fn terms(&self, world: &World, item: &Item) -> (U256, U256);
-    fn assert_issued(&self, world: &mut World);
+    /// The terms `item` is priced on, as the holding records them.
+    fn terms(&self, world: &World, item: &Item) -> Terms;
+    fn assert_issued(&self, world: &World);
     fn qualified(&self, world: &World) -> bool;
     /// The two holdings paid in `phase`, in the order the scenario names their payments.
     fn targets(&self, world: &World, phase: Phase) -> [Target; 2];
@@ -142,8 +148,7 @@ pub(crate) trait Lifecycle: Sync {
     fn called(&self, world: &World) -> bool;
     fn assert_paid_settled(&self, world: &World);
     fn lapse_notice(&self, world: &mut World);
-    fn assert_forfeited(&self, world: &mut World);
+    fn assert_forfeited(&self, world: &World);
     /// Mine every paid holding into its owner's balance, one record per owner.
-    fn mine_paid(&self, world: &mut World) -> Vec<Mined>;
-    fn assert_soulbound(&self, world: &World);
+    fn mine_paid(&self, world: &World) -> Vec<Mined>;
 }

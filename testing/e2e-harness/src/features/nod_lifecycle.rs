@@ -15,9 +15,8 @@ use outbe_nod::constants::{
 use crate::features::entity_lifecycle::chain::{
     assert_single_event, finalized_checkpoint, head_time, poll_until,
 };
-use crate::features::entity_lifecycle::entity::{Item, Lifecycle, Phase, Target};
+use crate::features::entity_lifecycle::entity::{Item, Lifecycle, Phase, Target, Terms};
 use crate::features::entity_lifecycle::holders::{self, FORFEITED, HOLDERS, UNPAID_AT_CALL};
-use crate::features::entity_lifecycle::payment::assert_refused;
 use crate::features::entity_lifecycle::redeem::{self, mint_authorization, Ledger, Mined};
 use crate::features::settlement::{assert_mined_success, find_mining_pow_nonce};
 use crate::internal::{addresses, eth};
@@ -44,7 +43,8 @@ alloy_sol_types::sol! {
 const HOLDER_SEED: u64 = 0x0e0d_0000;
 /// Low enough that the controlled COEN/USD quote clears even the call price.
 const ENTRY_PRICE_MINOR: u64 = 250_000;
-const GRATIS_LOAD_MINOR: u64 = 5_000_000;
+/// Not a whole unit, so the cost leaves a remainder to floor.
+const GRATIS_LOAD_MINOR: u64 = 5_000_003;
 /// `effectiveState` of `INod.NodData`.
 const ISSUED: u8 = 0;
 const QUALIFIED: u8 = 1;
@@ -107,15 +107,18 @@ impl Lifecycle for NodLifecycle {
         read_nod(world, nod(world, 0)).callPriceMinor
     }
 
-    fn terms(&self, world: &World, item: &Item) -> (U256, U256) {
+    fn terms(&self, world: &World, item: &Item) -> Terms {
         let Item::Nod(id) = item else {
             unreachable!("a Nod scenario pays only for Nods")
         };
         let data = read_nod(world, *id);
-        (data.entryPriceMinor, data.gratisLoadMinor)
+        Terms {
+            entry_price: data.entryPriceMinor,
+            load: data.gratisLoadMinor,
+        }
     }
 
-    fn assert_issued(&self, world: &mut World) {
+    fn assert_issued(&self, world: &World) {
         let entry = U256::from(ENTRY_PRICE_MINOR);
         let issuance_currency = world.state.issuance_market.expect("issuance market");
         let first = read_nod(world, nod(world, 0));
@@ -133,6 +136,10 @@ impl Lifecycle for NodLifecycle {
             );
             assert_eq!(data.entryPriceMinor, entry);
             assert_eq!(data.gratisLoadMinor, U256::from(GRATIS_LOAD_MINOR));
+            assert_eq!(
+                data.settlementCostMinor,
+                entry * U256::from(GRATIS_LOAD_MINOR) / U256::from(1_000_000)
+            );
             assert_eq!(
                 data.floorPriceMinor,
                 entry * U256::from(100 + FLOOR_RATE_PCT) / U256::from(100)
@@ -189,10 +196,13 @@ impl Lifecycle for NodLifecycle {
         let port = world.validators.primary_port();
         let url = world.rpc.url(port);
         let height = eth::block_number(&url).expect("head before the notice lapses");
-        let pool = world
-            .rpc
-            .promis_limit_total_unallocated_on(port)
-            .expect("unallocated pool before the forfeit");
+        let pool = eth::read_call_at(
+            &url,
+            addresses::PROMIS_LIMIT_ADDR,
+            &eth::IPromisLimit::totalUnallocatedCall {},
+            height,
+        )
+        .expect("unallocated pool before the forfeit");
         world.state.entity_lifecycle.pool_before_forfeit = Some((height, pool));
         // Seven days of notice have no DEV profile to shorten them: move the bucket's call
         // back so its deadline has just passed.
@@ -211,7 +221,7 @@ impl Lifecycle for NodLifecycle {
         assert_mined_success(&outcome, "close the Nod call notice");
     }
 
-    fn assert_forfeited(&self, world: &mut World) {
+    fn assert_forfeited(&self, world: &World) {
         let url = world.rpc.url(world.validators.primary_port());
         let owner = owner_address(FORFEITED);
         let id = nod(world, FORFEITED);
@@ -259,7 +269,7 @@ impl Lifecycle for NodLifecycle {
         );
     }
 
-    fn mine_paid(&self, world: &mut World) -> Vec<Mined> {
+    fn mine_paid(&self, world: &World) -> Vec<Mined> {
         let url = world.rpc.url(world.validators.primary_port());
         let load = U256::from(GRATIS_LOAD_MINOR);
         holders::paid()
@@ -296,21 +306,6 @@ impl Lifecycle for NodLifecycle {
                 }
             })
             .collect()
-    }
-
-    fn assert_soulbound(&self, world: &World) {
-        let owner = owner_address(0);
-        assert_refused(
-            world,
-            owner,
-            addresses::NOD_ADDR,
-            &eth::INod::transferFromCall {
-                from: owner,
-                to: owner_address(1),
-                nodId: nod(world, 0),
-            },
-            outbe_nod::errors::NodError::NonTransferable,
-        );
     }
 }
 

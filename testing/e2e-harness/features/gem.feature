@@ -13,8 +13,8 @@ Feature: Gem from a parked Intex to Promis and COEN
   # issues one Gem to each of five owners. Two are paid while qualified and two
   # inside the call notice, one on each rail and in each currency; the MYR
   # payments price off a closed pricing window, so the committee steps past the
-  # next whole hour before the position is parked. The fifth Gem is left to
-  # forfeit.
+  # next whole hour before the position is parked, whose validity the step would
+  # otherwise spend. The fifth Gem is left to forfeit.
   #
   # Time is seeded rather than lived through wherever the protocol allows it.
   # Qualification and the call count only days a Gem held in full, so the Gems
@@ -22,7 +22,7 @@ Feature: Gem from a parked Intex to Promis and COEN
   # Call Notice has to lapse before a forfeit, and a position has to outlive its
   # validity, both shortened by the DEV parameter profile this scenario runs
   # against.
-  @Gem-lifecycle @myr-issuance
+  @gem-lifecycle @myr-issuance
   Scenario: Five Gems from one position are paid on both rails in both currencies, one forfeits, and the paid ones end in COEN
     Given a fresh localnet with a 20-block voting window
     When the intex engine is deployed on the committee chain
@@ -45,11 +45,11 @@ Feature: Gem from a parked Intex to Promis and COEN
     When a qualified Gem is paid in USD by ERC20 and another in MYR by PayNote
     Then each payment settles exactly its quote into its currency's vault
     When the reference rate holds above the Gem call price across the call window
-    Then every unpaid Gem becomes Called while the paid ones stay Settled
+    Then every unpaid Gem becomes Called while what was paid stays Settled
     When a called Gem is paid in MYR by ERC20 and another in USD by PayNote
     Then each payment settles exactly its quote into its currency's vault
     When the call notice lapses on the unpaid Gem
-    Then the unpaid Gem is forfeited and its load returns to the unallocated pool
+    Then the unpaid Gem is forfeited and its unpaid load returns to the unallocated pool
     And every paid Gem stays Settled
     When the owners mine every paid Gem
     Then each paid load lands in its owner's balance

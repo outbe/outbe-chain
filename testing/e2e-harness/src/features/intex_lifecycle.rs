@@ -1,7 +1,5 @@
-//! What an Intex supplies to the shared lifecycle: four series of one day and reference
-//! currency, issued to one owner across the committee and a target chain. Two are paid
-//! in two parts, one while qualified and one inside the call notice; the other two run
-//! out, one after a partial payment and one untouched.
+//! What an Intex supplies to the shared lifecycle: four series of one day on two chains;
+//! two are paid in two parts each, one runs out after a partial payment, one untouched.
 
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -16,8 +14,8 @@ use cucumber::{then, when};
 use crate::features::entity_lifecycle::chain::{
     assert_single_event, finalized_checkpoint, head_time, poll_until,
 };
-use crate::features::entity_lifecycle::entity::{Item, Lifecycle, Phase, Rail, Target};
-use crate::features::entity_lifecycle::markets::{coen_rate, EUR_ISO, MYR_ISO};
+use crate::features::entity_lifecycle::entity::{Item, Lifecycle, Phase, Rail, Target, Terms};
+use crate::features::entity_lifecycle::markets::{EUR_ISO, MYR_ISO};
 use crate::features::entity_lifecycle::payment;
 use crate::features::entity_lifecycle::redeem::{self, mint_authorization, Ledger, Mined};
 use crate::world::forge::DEPLOYER_KEY;
@@ -38,12 +36,15 @@ sol! {
     }
 }
 
-/// Every series carries the same entry price, so their call prices share a bin and
-/// one sweep pass calls them together. Low enough that the controlled COEN/USD quote
-/// clears the call price.
+/// Shared by every series so one sweep pass calls them together, and low enough that the
+/// committee's close clears the call price.
 const ENTRY_PRICE_MINOR: u64 = 800_000;
-/// PROMIS-units per Intex unit, on the wire scale.
-const PROMIS_LOAD_MINOR: u128 = 100_000;
+/// PROMIS-units per Intex unit, on the wire scale; not a whole unit, so a cost leaves a
+/// remainder to floor.
+const PROMIS_LOAD_MINOR: u128 = 100_003;
+/// Issuance currencies of the two series left to run out.
+const GBP_ISO: u16 = 826;
+const JPY_ISO: u16 = 392;
 /// Units each series mints per chain. The holding is split so bringing units home
 /// is a real step rather than a formality.
 const COMMITTEE_UNITS: u32 = 4;
@@ -97,7 +98,7 @@ fn issue_four_series(world: &mut World) {
         .state
         .origin_contracts
         .as_ref()
-        .expect("intex engine was deployed")
+        .expect("the Intex engine was deployed")
         .origin_router;
 
     // The router addresses an issuance leg only to a chain the day was started on,
@@ -150,13 +151,13 @@ fn issue_four_series(world: &mut World) {
             // notice runs out.
             SeriesSpec {
                 issuance: *b"GBP",
-                issuance_currency: 826,
+                issuance_currency: GBP_ISO,
             },
             // Nobody touches this one at all, so the sweep forfeits its whole tirage
             // and the two together prove the subtraction rather than one case of it.
             SeriesSpec {
                 issuance: *b"JPY",
-                issuance_currency: 392,
+                issuance_currency: JPY_ISO,
             },
         ],
     )
@@ -345,7 +346,7 @@ fn intex_nft(world: &World) -> alloy_primitives::Address {
         .state
         .origin_contracts
         .as_ref()
-        .expect("intex engine was deployed")
+        .expect("the Intex engine was deployed")
         .intex_nft
 }
 
@@ -355,7 +356,7 @@ fn target_intex_nft(world: &World) -> alloy_primitives::Address {
         .state
         .target_contracts
         .as_ref()
-        .expect("intex venue was deployed on the target chain")
+        .expect("the Intex venue was deployed on the target chain")
         .intex_nft
 }
 
@@ -367,12 +368,12 @@ fn target_rpc_url(world: &World) -> String {
 }
 
 impl Lifecycle for IntexLifecycle {
-    /// A target chain records a day's price once, so once the committee has closed
-    /// yesterday on its own feed, every seeded day repeats that close.
-    fn reference_rate(&self, world: &World) -> U256 {
+    /// The pricing window closes at midnight on this localnet, so the committee has
+    /// closed yesterday on its own feed and sent that close to the target chain.
+    fn recorded_close(&self, world: &World) -> Option<U256> {
         use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
         let yesterday = previous_date_key(timestamp_to_date_key(head_time(world)));
-        eth::read_call(
+        let close = eth::read_call(
             &world.rpc.url(world.validators.primary_port()),
             outbe_primitives::addresses::ORACLE_ADDRESS,
             &eth::IOracle::getUtcDayVwapCall {
@@ -382,7 +383,8 @@ impl Lifecycle for IntexLifecycle {
             },
         )
         .filter(|vwap| !vwap.is_zero())
-        .unwrap_or_else(|| coen_rate(USD_ISO))
+        .unwrap_or_else(|| panic!("the committee has no COEN/USD close for {yesterday}"));
+        Some(close)
     }
 
     fn floor(&self, world: &World) -> U256 {
@@ -393,7 +395,7 @@ impl Lifecycle for IntexLifecycle {
         U256::from(prices(world, paid_series(world)[0]).2)
     }
 
-    fn terms(&self, world: &World, item: &Item) -> (U256, U256) {
+    fn terms(&self, world: &World, item: &Item) -> Terms {
         let Item::Series { id, units } = item else {
             unreachable!("an Intex scenario pays only for series")
         };
@@ -402,14 +404,14 @@ impl Lifecycle for IntexLifecycle {
             intex_nft(world),
             *id,
         )
-        .expect("series promis load");
-        (
-            U256::from(prices(world, *id).0),
-            U256::from(load) * U256::from(*units),
-        )
+        .expect("series Promis load");
+        Terms {
+            entry_price: U256::from(prices(world, *id).0),
+            load: U256::from(load) * U256::from(*units),
+        }
     }
 
-    fn assert_issued(&self, world: &mut World) {
+    fn assert_issued(&self, world: &World) {
         let url = world.rpc.url(world.validators.primary_port());
         let nft = intex_nft(world);
         let first = prices(world, paid_series(world)[0]);
@@ -485,10 +487,9 @@ impl Lifecycle for IntexLifecycle {
                 })
                 .sum();
             assert_eq!(
-                venue_probes::series_balances(&url, nft, series, owner())
-                    .map(|(_, settled)| settled),
-                Some(u64::from(paid)),
-                "series {series} does not hold exactly its paid units as settled"
+                venue_probes::series_balances(&url, nft, series, owner()),
+                Some((0, u64::from(paid))),
+                "series {series} does not hold exactly its paid units, all settled, at home"
             );
         }
     }
@@ -529,9 +530,8 @@ impl Lifecycle for IntexLifecycle {
         );
         wait_for_chain_time(world, port, deadline + EXPIRY_MARGIN_SECS);
 
-        // The notice above is waited out for real, but the sweep opens a bucket only once
-        // its hour has closed - so the group is re-queued on a deadline already behind a
-        // closed one rather than idling out the rest of the hour.
+        // The sweep opens an expiry bucket once its hour has closed: re-queue the group
+        // behind a closed one.
         test_issuance::close_call_notice(
             &url,
             DEPLOYER_KEY,
@@ -547,7 +547,7 @@ impl Lifecycle for IntexLifecycle {
 
     /// One series was settled in part and one was never touched, so the credit owed
     /// is the sum of what each still carries unrealized - never either tirage alone.
-    fn assert_forfeited(&self, world: &mut World) {
+    fn assert_forfeited(&self, world: &World) {
         let port = world.validators.primary_port();
         let url = world.rpc.url(port);
         let nft = intex_nft(world);
@@ -640,7 +640,7 @@ impl Lifecycle for IntexLifecycle {
     }
 
     /// The owner mines both paid series whole, into one Promis balance.
-    fn mine_paid(&self, world: &mut World) -> Vec<Mined> {
+    fn mine_paid(&self, world: &World) -> Vec<Mined> {
         let url = world.rpc.url(world.validators.primary_port());
         let nft = intex_nft(world);
         let owner = owner();
@@ -671,6 +671,11 @@ impl Lifecycle for IntexLifecycle {
                 (UNITS, 0),
                 "series {series} did not count its settled units as exercised"
             );
+            assert_eq!(
+                venue_probes::series_balances(&url, nft, series, owner),
+                Some((0, 0)),
+                "mining did not burn the settled units of {series}"
+            );
             amount += promis;
         }
         vec![Mined {
@@ -680,10 +685,6 @@ impl Lifecycle for IntexLifecycle {
             before,
             amount,
         }]
-    }
-
-    fn assert_soulbound(&self, _world: &World) {
-        unreachable!("an issued Intex trades freely until it is called")
     }
 }
 
@@ -708,18 +709,19 @@ fn settle_part_of_expiring(world: &mut World) {
         units: EXPIRING_SETTLED_UNITS,
     };
     let terms = IntexLifecycle.terms(world, &item);
-    payment::pay(
+    let paid = payment::pay(
         world,
         &Target {
             item,
             owner: owner(),
             owner_key: DEPLOYER_KEY.to_owned(),
-            issuance_currency: 826,
+            issuance_currency: GBP_ISO,
         },
         Rail::PayNote,
         USD_ISO,
         terms,
     );
+    payment::assert_payments_settled(world, &[paid]);
 }
 
 #[when("a relay carries messages between the two chains")]
@@ -731,7 +733,7 @@ fn start_relay(world: &mut World) {
             .state
             .origin_contracts
             .as_ref()
-            .expect("intex engine was deployed")
+            .expect("the Intex engine was deployed")
             .mailbox,
         domain: u32::try_from(world.rpc.chain_id(port).expect("committee chain id"))
             .expect("committee chain id fits a uint32"),
@@ -745,7 +747,7 @@ fn start_relay(world: &mut World) {
             .state
             .target_contracts
             .as_ref()
-            .expect("intex venue was deployed on the target chain")
+            .expect("the Intex venue was deployed on the target chain")
             .mailbox,
         domain: u32::try_from(world.target_chain.chain_id())
             .expect("target chain id fits a uint32"),
@@ -757,13 +759,13 @@ fn start_relay(world: &mut World) {
         .state
         .origin_contracts
         .as_ref()
-        .expect("intex engine was deployed")
+        .expect("the Intex engine was deployed")
         .nft_bridge;
     let target_bridge = world
         .state
         .target_contracts
         .as_ref()
-        .expect("intex venue was deployed on the target chain")
+        .expect("the Intex venue was deployed on the target chain")
         .nft_bridge;
     test_issuance::set_remote_messenger(
         &committee.url,
@@ -814,14 +816,14 @@ fn bridge_rest_home(world: &mut World) {
         .state
         .target_contracts
         .as_ref()
-        .expect("intex venue was deployed on the target chain")
+        .expect("the Intex venue was deployed on the target chain")
         .nft_bridge;
     let owner = crate::world::origin_venue::deployer_address();
     let home_chain = u32::try_from(world.rpc.chain_id(port).expect("committee chain id"))
         .expect("fits a uint32");
     let amount = TARGET_UNITS - TRADABLE_HOP_UNITS;
 
-    // A owner with more than one series moves them together, so this hop takes the
+    // An owner with more than one series moves them together, so this hop takes the
     // batch route the first one did not: one burn set here, one mint set at home.
     let tokens: Vec<(alloy_primitives::U256, u32)> = world
         .state
@@ -886,7 +888,7 @@ fn bring_home(world: &mut World, amount: u32) {
         .state
         .target_contracts
         .as_ref()
-        .expect("intex venue was deployed on the target chain")
+        .expect("the Intex venue was deployed on the target chain")
         .nft_bridge;
     let owner = crate::world::origin_venue::deployer_address();
     let home_chain = u32::try_from(world.rpc.chain_id(port).expect("committee chain id"))
@@ -938,7 +940,7 @@ fn unsettled_series_expired(world: &mut World) {
         .state
         .target_contracts
         .as_ref()
-        .expect("intex venue was deployed on the target chain")
+        .expect("the Intex venue was deployed on the target chain")
         .target_router;
 
     // Anvil does not mine while this step only reads. Advance its clock even when

@@ -57,8 +57,7 @@ pub(crate) fn verify_checkpoint(world: &World, checkpoint: FinalizedCheckpoint) 
 }
 
 /// Exactly one `expected` event from `address` in `from..=to`, matched on its first
-/// indexed topic and compared whole. Sweeps emit from system transactions, so the
-/// logs are the only receipt they leave.
+/// indexed topic and compared whole: sweeps leave no receipt but their logs.
 pub(crate) fn assert_single_event<E: SolEvent>(
     url: &str,
     address: Address,

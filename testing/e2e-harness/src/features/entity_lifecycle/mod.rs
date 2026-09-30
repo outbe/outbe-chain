@@ -1,6 +1,5 @@
-//! What the Gem, Intex and Nod lifecycle scenarios share: the markets they settle
-//! against, one step per phase they all go through, and the chain reads every phase
-//! is judged by. What an entity does differently sits behind [`entity::Lifecycle`].
+//! What the Gem, Intex and Nod lifecycle scenarios share: markets, one step per phase,
+//! and chain reads. What an entity does differently sits behind [`entity::Lifecycle`].
 
 pub(crate) mod chain;
 pub(crate) mod entity;

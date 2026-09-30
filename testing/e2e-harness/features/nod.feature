@@ -32,11 +32,11 @@ Feature: Nod from issuance to Gratis and COEN
     When a qualified Nod is paid in USD by ERC20 and another in MYR by PayNote
     Then each payment settles exactly its quote into its currency's vault
     When the reference rate holds above the Nod call price across the call window
-    Then every unpaid Nod becomes Called while the paid ones stay Settled
+    Then every unpaid Nod becomes Called while what was paid stays Settled
     When a called Nod is paid in MYR by ERC20 and another in USD by PayNote
     Then each payment settles exactly its quote into its currency's vault
     When the call notice lapses on the unpaid Nod
-    Then the unpaid Nod is forfeited and its load returns to the unallocated pool
+    Then the unpaid Nod is forfeited and its unpaid load returns to the unallocated pool
     And every paid Nod stays Settled
     When the owners mine every paid Nod
     Then each paid load lands in its owner's balance

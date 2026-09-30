@@ -100,13 +100,13 @@ Feature: Intex from auction to Promis
     When a qualified Intex series is paid in USD by ERC20 and another in MYR by PayNote
     Then each payment settles exactly its quote into its currency's vault
     When the reference rate holds above the Intex series call price across the call window
-    Then every unpaid Intex series becomes Called while the paid ones stay Settled
+    Then every unpaid Intex series becomes Called while what was paid stays Settled
     When the owner brings the remaining units home to their own address in one batch
     And a called Intex series is paid in MYR by ERC20 and another in USD by PayNote
     Then each payment settles exactly its quote into its currency's vault
     When the owner settles part of one series they let run out
     And the call notice lapses on the unpaid Intex series
-    Then the unpaid Intex series is forfeited and its load returns to the unallocated pool
+    Then the unpaid Intex series is forfeited and its unpaid load returns to the unallocated pool
     And the series left to run out read Expired on both chains
     And every paid Intex series stays Settled
     When the owners mine every paid Intex series

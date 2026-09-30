@@ -1,6 +1,5 @@
-//! The lifecycle phases every entity shares, each one step taking the entity as a
-//! parameter: qualification, payment on either rail and currency, the call, the
-//! forfeit, and the way from a paid holding to native COEN.
+//! The phases every lifecycle shares, one step each with the entity as a parameter:
+//! qualification, payment, the call, the forfeit, and mining into native COEN.
 
 use std::time::Duration;
 
@@ -9,7 +8,7 @@ use cucumber::{then, when};
 
 use super::chain::poll_until;
 use super::entity::{Currency, Entity, Phase, Rail};
-use super::markets::MYR_ISO;
+use super::markets::{coen_rate, MYR_ISO};
 use super::{guards, payment, redeem};
 use crate::world::forge::DEPLOYER_KEY;
 use crate::world::settlement_currency::USD_ISO;
@@ -34,17 +33,26 @@ fn unqualified_refused(world: &mut World, entity: Entity) {
 
 #[then(expr = "no {entity} can be transferred")]
 fn not_transferable(world: &mut World, entity: Entity) {
-    entity.lifecycle().assert_soulbound(world);
+    let [first, _] = entity.lifecycle().targets(world, Phase::Qualified);
+    guards::assert_soulbound(world, &first);
 }
 
-/// One closed day qualifies and cannot call, so it takes the rate every seeded day
-/// repeats: a day already sent to a target chain can never take another price.
+/// One closed day between floor and call price qualifies without calling; a close a
+/// target chain already holds is kept, since it records a day's price once.
 #[when(expr = "the reference rate stands above the {entity} floor")]
 fn rate_above_floor(world: &mut World, entity: Entity) {
     let lifecycle = entity.lifecycle();
-    let rate = lifecycle.reference_rate(world);
+    let floor = lifecycle.floor(world);
+    let rate = lifecycle.recorded_close(world).unwrap_or_else(|| {
+        let call_price = lifecycle.call_price(world);
+        assert!(
+            floor < call_price,
+            "the {entity:?} floor must sit below its call price"
+        );
+        (floor + call_price) / U256::from(2)
+    });
     assert!(
-        rate > lifecycle.floor(world),
+        rate > floor,
         "the reference rate {rate} must clear the {entity:?} floor"
     );
     seed_closed_days(world, 1, rate);
@@ -63,12 +71,14 @@ fn every_entity_qualifies(world: &mut World, entity: Entity) {
     expr = "a/an {entity} payment is refused for a stale snapshot, a foreign currency or another owner's note"
 )]
 fn payment_guards(world: &mut World, entity: Entity) {
-    let targets = entity.lifecycle().targets(world, Phase::Qualified);
-    let target = targets
-        .iter()
-        .find(|target| target.issuance_currency == MYR_ISO)
-        .expect("a qualified holding issued in MYR");
-    guards::assert_payment_guards(world, target);
+    // The holding the scenario next pays in MYR by PayNote, so that payment differs from
+    // the refused note only in whose it is.
+    let [_, target] = entity.lifecycle().targets(world, Phase::Qualified);
+    assert_eq!(
+        target.issuance_currency, MYR_ISO,
+        "the guarded holding is issued in MYR"
+    );
+    guards::assert_payment_guards(world, &target);
 }
 
 #[then(expr = "an unpaid {entity} cannot be mined")]
@@ -111,7 +121,9 @@ fn payments_settle(world: &mut World) {
 #[when(expr = "the reference rate holds above the {entity} call price across the call window")]
 fn rate_above_call_price(world: &mut World, entity: Entity) {
     let lifecycle = entity.lifecycle();
-    let rate = lifecycle.reference_rate(world);
+    let rate = lifecycle
+        .recorded_close(world)
+        .unwrap_or_else(|| coen_rate(USD_ISO));
     assert!(
         rate > lifecycle.call_price(world),
         "the reference rate {rate} must clear the {entity:?} call price"
@@ -119,7 +131,7 @@ fn rate_above_call_price(world: &mut World, entity: Entity) {
     seed_closed_days(world, CALL_WINDOW_SEED_DAYS, rate);
 }
 
-#[then(expr = "every unpaid {entity} becomes Called while the paid ones stay Settled")]
+#[then(expr = "every unpaid {entity} becomes Called while what was paid stays Settled")]
 fn unpaid_called(world: &mut World, entity: Entity) {
     let lifecycle = entity.lifecycle();
     poll_until(
@@ -135,7 +147,9 @@ fn notice_lapses(world: &mut World, entity: Entity) {
     entity.lifecycle().lapse_notice(world);
 }
 
-#[then(expr = "the unpaid {entity} is forfeited and its load returns to the unallocated pool")]
+#[then(
+    expr = "the unpaid {entity} is forfeited and its unpaid load returns to the unallocated pool"
+)]
 fn unpaid_forfeited(world: &mut World, entity: Entity) {
     entity.lifecycle().assert_forfeited(world);
 }

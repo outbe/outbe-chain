@@ -1,11 +1,10 @@
-//! Paying for a lifecycle holding on either rail, in any currency it accepts, and the
-//! refusals that guard the payment.
+//! Paying for a lifecycle holding on either rail, in any currency it accepts.
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
 
 use super::chain::{finalized_checkpoint, verify_checkpoint};
-use super::entity::{Item, Rail, Target};
+use super::entity::{Item, Rail, Target, Terms};
 use super::markets::{coen_rate, currency};
 use crate::features::settlement::{assert_mined_success, fund_and_approve};
 use crate::internal::{addresses, eth};
@@ -98,17 +97,9 @@ pub(crate) fn third_party_key(world: &World) -> String {
         .expect("validator-1 key pays as a third party")
 }
 
-/// Pay for `target` in `iso` on `rail`: ERC20 from a third party, PayNote from the owner,
-/// whose note the proof has to name. The quote must be what `terms` cost in `iso`, and
-/// the payment must credit the currency's vault by exactly the quote, which
-/// [`assert_payments_settled`] checks once finalized.
-pub(crate) fn pay(
-    world: &World,
-    target: &Target,
-    rail: Rail,
-    iso: u16,
-    terms: (U256, U256),
-) -> Payment {
+/// Pay for `target` in `iso` by ERC20 from a third party or by the owner's PayNote, at a
+/// quote that must be exactly what `terms` cost in `iso`.
+pub(crate) fn pay(world: &World, target: &Target, rail: Rail, iso: u16, terms: Terms) -> Payment {
     assert!(
         target.accepts(iso),
         "{:?} pays in USD or its issuance currency {}, not {iso}",
@@ -119,18 +110,17 @@ pub(crate) fn pay(
     let url = world.rpc.url(port);
     let vault = currency(world, iso);
     let before = eth::block_number(&url).expect("head before the payment");
-    let mut quoted = quote(world, target, vault.asset);
-    assert_eq!(
-        quoted.currency, iso,
-        "{:?} quoted the wrong settlement currency",
-        target.item
-    );
-    assert_eq!(
-        quoted.payable,
-        cost(terms, iso),
-        "{:?} quoted a cost its terms do not give in {iso}",
-        target.item
-    );
+    let checked_quote = || {
+        let quoted = quote(world, target, vault.asset);
+        assert_eq!(
+            (quoted.currency, quoted.payable),
+            (iso, cost(terms, iso)),
+            "{:?} quoted a currency or cost its terms do not give in {iso}",
+            target.item
+        );
+        quoted
+    };
+    let mut quoted = checked_quote();
 
     let outcome = match rail {
         Rail::Erc20 => {
@@ -151,7 +141,7 @@ pub(crate) fn pay(
                     break outcome;
                 }
                 // The pricing snapshot rolls over on the hour: quote again once.
-                let fresh = quote(world, target, vault.asset);
+                let fresh = checked_quote();
                 assert!(
                     !requoted && fresh.snapshot != quoted.snapshot,
                     "ERC20 payment for {:?} reverted: {}",
@@ -192,11 +182,12 @@ pub(crate) fn pay(
     }
 }
 
-/// Entry price times load at twelve decimals, at least one reference minor unit,
-/// converted through the controlled COEN quotes and floored once to six decimals.
-fn cost((entry, load): (U256, U256), iso: u16) -> U256 {
+/// Entry price times load, at least one reference minor unit, converted through the
+/// controlled COEN quotes and floored once to six decimals.
+fn cost(terms: Terms, iso: u16) -> U256 {
     let scale = U256::from(1_000_000);
-    (entry * load).max(scale) * coen_rate(iso) / (coen_rate(settlement_currency::USD_ISO) * scale)
+    (terms.entry_price * terms.load).max(scale) * coen_rate(iso)
+        / (coen_rate(settlement_currency::USD_ISO) * scale)
 }
 
 fn settle_erc20(
@@ -374,8 +365,7 @@ pub(crate) fn assert_payments_settled(world: &World, payments: &[Payment]) {
     verify_checkpoint(world, checkpoint);
 }
 
-/// The transaction is mined and reverts inside its gas limit, so a guard refused it
-/// rather than the gas running out.
+/// The transaction is mined and reverts with gas to spare: a guard refused it.
 pub(crate) fn assert_mined_refusal<C: SolCall>(world: &World, key: &str, to: Address, call: &C) {
     let url = world.rpc.url(world.validators.primary_port());
     let outcome = send(&url, key, to, call);
