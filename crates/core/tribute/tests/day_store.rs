@@ -1,13 +1,17 @@
 use std::sync::Arc;
 
-use alloy_primitives::{Address, U256};
-use outbe_compressed_entities::WwdEntityId;
+use alloy_primitives::{Address, B256, U256};
+use outbe_compressed_entities::{
+    body_commitment, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+};
 use outbe_offchain_storage::{
-    DayDatabases, Key, Namespace, RocksDbStorage, ScanRequest, StorageReader, StorageWriter, Value,
+    DayDatabases, Key, Namespace, RocksDbStorage, ScanRequest, StorageReader, StorageReaderHandle,
+    StorageWriter, Value,
 };
 use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::{
-    TributeData, TributePageRequest, TributeRepositoryReader, TributeRepositoryWriter,
+    write_tribute_day_mark, RetainedTributePin, RetainedTributeReader, TributeData, TributeDayMark,
+    TributePageRequest, TributeRepositoryReader, TributeRepositoryWriter,
 };
 
 struct Store {
@@ -149,4 +153,61 @@ fn legacy_keys_move_once_and_read_from_the_day() {
             .as_bytes(),
         b"reinserted"
     );
+}
+
+#[test]
+fn retained_reader_resolves_a_live_or_own_pinned_day_from_its_database() {
+    let store = open();
+    let tribute = body(Address::repeat_byte(0x33), 7);
+    routed_writer(&store).put(&tribute).unwrap();
+    let day: StorageReaderHandle = store.databases.tribute_if_present(7).unwrap().unwrap();
+    let stored = TributeRepositoryReader::new(day.clone())
+        .get_stored_body(tribute.tribute_id)
+        .unwrap()
+        .unwrap();
+    let commitment = B256::from(
+        *body_commitment(
+            ACTIVE_COMMITMENT_SCHEME,
+            BODY_SCHEMA_V1,
+            tribute.tribute_id,
+            stored.payload(),
+        )
+        .unwrap()
+        .as_bytes(),
+    );
+    let pin = RetainedTributePin {
+        input_lease_id: B256::repeat_byte(0x51),
+        worldwide_day: tribute.worldwide_day,
+    };
+    let readers = [
+        RetainedTributeReader::with_days(store.shared.clone(), store.databases.clone()),
+        RetainedTributeReader::with_day_reader(store.shared.clone(), tribute.worldwide_day, day),
+    ];
+    let resolve = |reader: &RetainedTributeReader| {
+        reader
+            .get_current_or_retained(pin, tribute.tribute_id, commitment)
+            .unwrap()
+    };
+
+    for reader in &readers {
+        assert_eq!(resolve(reader), Some(stored.clone()));
+    }
+    write_tribute_day_mark(
+        store.shared.as_ref(),
+        7,
+        TributeDayMark::Retained(pin.input_lease_id),
+    )
+    .unwrap();
+    for reader in &readers {
+        assert_eq!(resolve(reader), Some(stored.clone()));
+    }
+    write_tribute_day_mark(
+        store.shared.as_ref(),
+        7,
+        TributeDayMark::Retained(B256::repeat_byte(0x52)),
+    )
+    .unwrap();
+    for reader in &readers {
+        assert_eq!(resolve(reader), None);
+    }
 }

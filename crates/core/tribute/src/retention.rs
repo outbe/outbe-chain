@@ -16,7 +16,7 @@ use outbe_compressed_entities::{
 use outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1;
 use outbe_offchain_storage::{
     AtomicWriteBatch, AtomicWriteOperation, DayDatabases, Key, ScanEntry, ScanRequest,
-    StorageReader, StorageReaderHandle, StorageWriterHandle, StoredValue, Value, MAX_SCAN_ENTRIES,
+    StorageReaderHandle, StorageWriterHandle, StoredValue, Value, MAX_SCAN_ENTRIES,
 };
 use outbe_primitives::time::WorldwideDay;
 
@@ -83,7 +83,31 @@ pub trait RetainedTributeAuditVisitor {
 #[derive(Clone)]
 pub struct RetainedTributeReader {
     storage: StorageReaderHandle,
-    days: Option<Arc<DayDatabases>>,
+    days: Option<DaySource>,
+}
+
+#[derive(Clone)]
+enum DaySource {
+    Databases(Arc<DayDatabases>),
+    /// One day's database, opened read-only by a compute process.
+    Day {
+        day: u32,
+        reader: StorageReaderHandle,
+    },
+}
+
+impl DaySource {
+    fn tribute(&self, day: u32) -> Result<Option<StorageReaderHandle>, TributeRepositoryError> {
+        Ok(match self {
+            Self::Databases(databases) => databases
+                .tribute_if_present(day)?
+                .map(|database| database as StorageReaderHandle),
+            Self::Day {
+                day: opened,
+                reader,
+            } => (*opened == day).then(|| reader.clone()),
+        })
+    }
 }
 
 impl RetainedTributeReader {
@@ -95,12 +119,28 @@ impl RetainedTributeReader {
         }
     }
 
-    /// Reads a retained worldwide day from its own database.
+    /// Reads current and retained worldwide days from their own databases.
     #[must_use]
     pub fn with_days(storage: StorageReaderHandle, days: Arc<DayDatabases>) -> Self {
         Self {
             storage,
-            days: Some(days),
+            days: Some(DaySource::Databases(days)),
+        }
+    }
+
+    /// Reads `day` from its database, opened read-only next to `storage`.
+    #[must_use]
+    pub fn with_day_reader(
+        storage: StorageReaderHandle,
+        day: WorldwideDay,
+        reader: StorageReaderHandle,
+    ) -> Self {
+        Self {
+            storage,
+            days: Some(DaySource::Day {
+                day: day.value(),
+                reader,
+            }),
         }
     }
 
@@ -284,7 +324,7 @@ impl RetainedTributeReader {
         }
 
         if selected.is_none() && !current_mismatch {
-            if let Some(bytes) = retained_day_body(self, pin, tribute_id, expected_commitment)? {
+            if let Some(bytes) = day_database_body(self, pin, tribute_id, expected_commitment)? {
                 selected = Some(bytes);
             }
         }
@@ -432,6 +472,7 @@ fn retained_audit_record(
 pub struct RetainedTributeWriter {
     reader: RetainedTributeReader,
     writer: StorageWriterHandle,
+    days: Option<Arc<DayDatabases>>,
 }
 
 impl RetainedTributeWriter {
@@ -440,6 +481,7 @@ impl RetainedTributeWriter {
         Self {
             reader: RetainedTributeReader::new(reader),
             writer,
+            days: None,
         }
     }
 
@@ -451,8 +493,9 @@ impl RetainedTributeWriter {
         days: Arc<DayDatabases>,
     ) -> Self {
         Self {
-            reader: RetainedTributeReader::with_days(reader, days),
+            reader: RetainedTributeReader::with_days(reader, Arc::clone(&days)),
             writer,
+            days: Some(days),
         }
     }
 
@@ -465,7 +508,7 @@ impl RetainedTributeWriter {
         &self,
         input_lease_id: B256,
     ) -> Result<bool, TributeRepositoryError> {
-        if let Some(days) = &self.reader.days {
+        if let Some(days) = &self.days {
             release_retained_days(&self.reader.storage, &self.writer, days, input_lease_id)?;
         }
         let (batch, complete) = self.reader.plan_release_input_lease_page(input_lease_id)?;
@@ -474,7 +517,8 @@ impl RetainedTributeWriter {
     }
 }
 
-fn retained_day_body(
+/// A live day, or one retained for this pin, keeps its bodies in its own database.
+fn day_database_body(
     reader: &RetainedTributeReader,
     pin: RetainedTributePin,
     tribute_id: WwdEntityId,
@@ -483,15 +527,13 @@ fn retained_day_body(
     let Some(days) = &reader.days else {
         return Ok(None);
     };
-    let Some(TributeDayMark::Retained(lease)) =
-        day_mark::read_tribute_day_mark(reader.storage.as_ref(), pin.worldwide_day.value())?
-    else {
-        return Ok(None);
-    };
-    if lease != pin.input_lease_id {
-        return Ok(None);
+    let day = pin.worldwide_day.value();
+    match day_mark::read_tribute_day_mark(reader.storage.as_ref(), day)? {
+        None => {}
+        Some(TributeDayMark::Retained(lease)) if lease == pin.input_lease_id => {}
+        Some(_) => return Ok(None),
     }
-    let Some(storage) = days.tribute_if_present(pin.worldwide_day.value())? else {
+    let Some(storage) = days.tribute(day)? else {
         return Ok(None);
     };
     let Some(record) =
