@@ -183,7 +183,7 @@ impl MarketWorker {
             head,
             TickerPrice {
                 price,
-                volume: math::base_volume(raw, decimals.base)?,
+                volume: math::scale_fp18(raw, decimals.base)?,
             },
         ))
     }

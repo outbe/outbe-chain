@@ -1,18 +1,21 @@
-//! Chainlink Data Feeds provider.
+//! On-chain price feeds exposing Chainlink's `AggregatorV3Interface`: Chainlink
+//! Data Feeds, RedStone push feeds, and any other vendor using that ABI.
 //!
-//! Reads `AggregatorV3Interface` contracts over EVM JSON-RPC at the `latest`
-//! block. Rounds are signed by the Chainlink DON, so reorg protection adds
-//! nothing; freshness is enforced from the round's own `updatedAt`. Feeds
-//! carry no volume: the observation weighs one unit in the aggregator.
+//! Feeds are read with `eth_call` at the `latest` block. Vendors sign each
+//! round, so reorg protection adds nothing; freshness comes from the round's
+//! own `updatedAt`. Feeds carry no volume: the observation weighs one unit in
+//! the aggregator.
 
-use alloy_primitives::{aliases::U1024, Address, U256};
+use alloy_primitives::{Address, U256};
 use alloy_sol_types::sol;
 use async_trait::async_trait;
 use eyre::{ensure, eyre, Result};
 use serde::Deserialize;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
+use super::dex::math::scale_fp18;
 use super::evm_rpc::Rpc;
 use super::{checked_ticker, Provider, TickerPrice, VolumeInput};
 use crate::config::FeederConfig;
@@ -27,9 +30,16 @@ sol! {
     }
 }
 
+/// Longest documented heartbeat at Chainlink and RedStone is 24 hours; an
+/// hour of slack covers relayer and inclusion delay. A round older than this
+/// means the relayer stopped.
+pub(crate) const MAX_FEED_AGE_SECS: u64 = 90_000;
+const MAX_FUTURE_SECS: u64 = 60;
+
+/// One EVM network with the feeds read from it.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ChainlinkProviderConfig {
+pub(crate) struct AggregatorV3ProviderConfig {
     pub chain_id: u64,
     pub rpc_endpoint: String,
     pub feeds: Vec<FeedConfig>,
@@ -40,13 +50,12 @@ pub(crate) struct ChainlinkProviderConfig {
 pub(crate) struct FeedConfig {
     pub base: String,
     pub quote: String,
-    /// Proxy address from docs.chain.link; the aggregator behind it may rotate.
+    /// Proxy address from the vendor registry; the implementation behind it
+    /// may rotate.
     pub aggregator: Address,
-    /// Expected on-chain `description()`, e.g. `ETH / USD`, guarding against a
-    /// mistyped address.
+    /// Expected on-chain `description()`, e.g. `ETH / USD` (Chainlink) or
+    /// `RedStone Price Feed for ETH`, guarding against a mistyped address.
     pub description: String,
-    /// Maximum round age: the feed's documented heartbeat plus slack.
-    pub max_age_secs: u64,
 }
 
 impl FeedConfig {
@@ -55,81 +64,80 @@ impl FeedConfig {
     }
 }
 
-impl ChainlinkProviderConfig {
+impl AggregatorV3ProviderConfig {
     pub fn validate(&self) -> Result<()> {
-        ensure!(self.chain_id > 0, "chainlink chain_id must be positive");
+        ensure!(self.chain_id > 0, "aggregator_v3 chain_id must be positive");
         let url = reqwest::Url::parse(&self.rpc_endpoint)
-            .map_err(|_| eyre!("invalid chainlink RPC URL"))?;
+            .map_err(|_| eyre!("invalid aggregator_v3 RPC URL"))?;
         ensure!(
             matches!(url.scheme(), "http" | "https") && url.host_str().is_some(),
-            "chainlink RPC requires HTTP(S)"
+            "aggregator_v3 RPC requires HTTP(S)"
         );
-        ensure!(!self.feeds.is_empty(), "chainlink provider has no feeds");
-        let mut keys = BTreeSet::new();
-        let mut addresses = BTreeSet::new();
+        ensure!(
+            !self.feeds.is_empty(),
+            "aggregator_v3 provider has no feeds"
+        );
         for feed in &self.feeds {
             ensure!(
                 !feed.base.trim().is_empty() && !feed.quote.trim().is_empty(),
-                "chainlink feed has an empty market asset"
+                "aggregator_v3 feed has an empty market asset"
             );
             ensure!(
                 !feed.aggregator.is_zero(),
-                "chainlink feed {} has no aggregator address",
+                "aggregator_v3 feed {} has no aggregator address",
                 feed.key()
             );
             ensure!(
                 !feed.description.trim().is_empty(),
-                "chainlink feed {} has no description",
+                "aggregator_v3 feed {} has no description",
                 feed.key()
-            );
-            ensure!(
-                (1..=7 * 86_400).contains(&feed.max_age_secs),
-                "chainlink feed {} max_age_secs must be 1..=604800",
-                feed.key()
-            );
-            ensure!(
-                keys.insert(feed.key()),
-                "duplicate chainlink feed {}",
-                feed.key()
-            );
-            ensure!(
-                addresses.insert(feed.aggregator),
-                "chainlink aggregator {} configured more than once",
-                feed.aggregator
             );
         }
         Ok(())
     }
 }
 
-/// Cross-checks `chainlink` sources against the `[[chainlink_providers]]` section.
+/// Cross-checks `aggregator_v3` sources against `[[aggregator_v3_providers]]`.
 pub(crate) fn validate_config(config: &FeederConfig) -> Result<()> {
-    ensure!(
-        config.chainlink_providers.len() <= 1,
-        "at most one [[chainlink_providers]] entry is supported"
-    );
-    for chainlink in &config.chainlink_providers {
-        chainlink.validate()?;
+    let mut keys = BTreeSet::new();
+    let mut addresses = BTreeSet::new();
+    let mut chains = BTreeSet::new();
+    for network in &config.aggregator_v3_providers {
+        network.validate()?;
+        ensure!(
+            chains.insert(network.chain_id),
+            "duplicate aggregator_v3 chain_id {}",
+            network.chain_id
+        );
+        for feed in &network.feeds {
+            ensure!(
+                keys.insert(feed.key()),
+                "duplicate aggregator_v3 feed {}",
+                feed.key()
+            );
+            ensure!(
+                addresses.insert((network.chain_id, feed.aggregator)),
+                "aggregator_v3 contract {} configured more than once",
+                feed.aggregator
+            );
+        }
     }
     ensure!(
         !config
             .provider_endpoints
             .iter()
-            .any(|e| e.name == "chainlink"),
-        "configure chainlink RPC in chainlink_providers, not provider_endpoints"
+            .any(|e| e.name == "aggregator_v3"),
+        "configure aggregator_v3 RPC in aggregator_v3_providers, not provider_endpoints"
     );
     for pair in &config.currency_pairs {
-        for source in pair.sources.iter().filter(|s| s.provider == "chainlink") {
-            let chainlink = config
-                .chainlink_providers
-                .first()
-                .ok_or_else(|| eyre!("missing chainlink configuration"))?;
+        for source in pair
+            .sources
+            .iter()
+            .filter(|s| s.provider == "aggregator_v3")
+        {
             ensure!(
-                chainlink
-                    .feeds
-                    .iter()
-                    .any(|f| f.base == source.base && f.quote == source.quote),
-                "missing chainlink feed {}/{}",
+                keys.contains(&format!("{}/{}", source.base, source.quote)),
+                "missing aggregator_v3 feed {}/{}",
                 source.base,
                 source.quote
             );
@@ -138,102 +146,107 @@ pub(crate) fn validate_config(config: &FeederConfig) -> Result<()> {
     Ok(())
 }
 
-/// Verified once per feed: aggregator identity and scale.
-#[derive(Clone, Copy)]
-struct FeedMeta {
-    decimals: u8,
-}
-
-pub(crate) struct ChainlinkProvider {
+struct Network {
     rpc: Rpc,
     chain_id: u64,
-    feeds: HashMap<String, FeedConfig>,
-    meta: RwLock<HashMap<String, FeedMeta>>,
 }
 
-impl ChainlinkProvider {
-    pub fn new(config: &ChainlinkProviderConfig) -> Result<Self> {
-        config.validate()?;
+pub(crate) struct AggregatorV3Provider {
+    networks: Vec<Network>,
+    /// Feed key -> (network index, feed).
+    feeds: HashMap<String, (usize, FeedConfig)>,
+    /// Networks whose `eth_chainId` has been confirmed.
+    verified_chains: RwLock<HashSet<usize>>,
+    /// Feed key -> `decimals()`, cached after `description()` is verified.
+    decimals: RwLock<HashMap<String, u8>>,
+}
+
+impl AggregatorV3Provider {
+    pub fn new(networks: &[AggregatorV3ProviderConfig]) -> Result<Self> {
+        ensure!(
+            !networks.is_empty(),
+            "provider aggregator_v3 requires a [[aggregator_v3_providers]] entry"
+        );
+        let mut feeds = HashMap::new();
+        let mut rpcs = Vec::with_capacity(networks.len());
+        for (index, network) in networks.iter().enumerate() {
+            network.validate()?;
+            rpcs.push(Network {
+                rpc: Rpc::new(&network.rpc_endpoint)?,
+                chain_id: network.chain_id,
+            });
+            for feed in &network.feeds {
+                feeds.insert(feed.key(), (index, feed.clone()));
+            }
+        }
         Ok(Self {
-            rpc: Rpc::new(&config.rpc_endpoint)?,
-            chain_id: config.chain_id,
-            feeds: config
-                .feeds
-                .iter()
-                .map(|feed| (feed.key(), feed.clone()))
-                .collect(),
-            meta: RwLock::new(HashMap::new()),
+            networks: rpcs,
+            feeds,
+            verified_chains: RwLock::new(HashSet::new()),
+            decimals: RwLock::new(HashMap::new()),
         })
     }
 
-    async fn feed_meta(&self, feed: &FeedConfig) -> Result<FeedMeta> {
-        if let Some(meta) = self.meta.read().await.get(&feed.key()) {
-            return Ok(*meta);
+    async fn verify_chain(&self, index: usize) -> Result<()> {
+        if self.verified_chains.read().await.contains(&index) {
+            return Ok(());
         }
-        let description = self
-            .rpc
+        let network = &self.networks[index];
+        ensure!(
+            network.rpc.chain_id().await? == network.chain_id,
+            "aggregator_v3 RPC chain ID mismatch for chain {}",
+            network.chain_id
+        );
+        self.verified_chains.write().await.insert(index);
+        Ok(())
+    }
+
+    async fn feed_decimals(&self, rpc: &Rpc, feed: &FeedConfig) -> Result<u8> {
+        if let Some(decimals) = self.decimals.read().await.get(&feed.key()) {
+            return Ok(*decimals);
+        }
+        let description = rpc
             .call_latest(feed.aggregator, AggregatorV3::descriptionCall {})
             .await?;
         ensure!(
             description == feed.description,
-            "chainlink feed {} description is {description:?}, expected {:?}",
+            "feed {} description is {description:?}, expected {:?}",
             feed.key(),
             feed.description
         );
-        let decimals = self
-            .rpc
+        let decimals = rpc
             .call_latest(feed.aggregator, AggregatorV3::decimalsCall {})
             .await?;
-        ensure!(decimals <= 77, "unsupported chainlink decimals (>77)");
-        let meta = FeedMeta { decimals };
-        self.meta.write().await.insert(feed.key(), meta);
-        Ok(meta)
+        ensure!(decimals <= 77, "unsupported feed decimals (>77)");
+        self.decimals.write().await.insert(feed.key(), decimals);
+        Ok(decimals)
     }
 
-    async fn read_feed(&self, feed: &FeedConfig, now: u64) -> Result<FixedValue> {
-        let meta = self.feed_meta(feed).await?;
-        let round = self
-            .rpc
+    async fn read_feed(&self, index: usize, feed: &FeedConfig, now: u64) -> Result<FixedValue> {
+        self.verify_chain(index).await?;
+        let rpc = &self.networks[index].rpc;
+        let decimals = self.feed_decimals(rpc, feed).await?;
+        let round = rpc
             .call_latest(feed.aggregator, AggregatorV3::latestRoundDataCall {})
             .await?;
+        ensure!(round.answer.is_positive(), "feed answer is not positive");
         ensure!(
-            round.answer.is_positive(),
-            "chainlink answer is not positive"
+            round.updatedAt <= U256::from(now.saturating_add(MAX_FUTURE_SECS)),
+            "feed updatedAt is in the future"
         );
+        let age = U256::from(now).saturating_sub(round.updatedAt);
         ensure!(
-            round.answeredInRound >= round.roundId,
-            "chainlink round is not yet answered"
+            age <= U256::from(MAX_FEED_AGE_SECS),
+            "feed round is stale ({age} s > {MAX_FEED_AGE_SECS} s)"
         );
-        let updated = round.updatedAt;
-        ensure!(
-            updated <= U256::from(now.saturating_add(60)),
-            "chainlink round updatedAt is in the future"
-        );
-        let age = U256::from(now).saturating_sub(updated);
-        ensure!(
-            age <= U256::from(feed.max_age_secs),
-            "chainlink round is stale ({age} s > {} s)",
-            feed.max_age_secs
-        );
-        price_fp18(round.answer.into_raw(), meta.decimals)
+        scale_fp18(round.answer.into_raw(), decimals)
     }
-}
-
-fn price_fp18(answer: U256, decimals: u8) -> Result<FixedValue> {
-    let scaled = U1024::from(answer) * U1024::from(10u64).pow(U1024::from(18u32))
-        / U1024::from(10u64).pow(U1024::from(u32::from(decimals)));
-    ensure!(
-        scaled <= U1024::from(U256::MAX),
-        "chainlink price outside FP18 range"
-    );
-    // Range check above proves the narrowing preserves the value.
-    Ok(FixedValue::from_raw(scaled.wrapping_to::<U256>()))
 }
 
 #[async_trait]
-impl Provider for ChainlinkProvider {
+impl Provider for AggregatorV3Provider {
     fn name(&self) -> &str {
-        "chainlink"
+        "aggregator_v3"
     }
 
     async fn get_ticker_prices(
@@ -241,31 +254,22 @@ impl Provider for ChainlinkProvider {
         pairs: &[(String, String)],
     ) -> Result<HashMap<String, TickerPrice>> {
         let mut tickers = HashMap::new();
-        let requested = pairs
-            .iter()
-            .filter_map(|(base, quote)| self.feeds.get(&format!("{base}/{quote}")))
-            .collect::<Vec<_>>();
-        if requested.is_empty() {
-            return Ok(tickers);
-        }
-        ensure!(
-            self.rpc.chain_id().await? == self.chain_id,
-            "chainlink RPC chain ID mismatch"
-        );
-        // Round age is judged against chain time, not the feeder's wall clock.
-        let now = self.rpc.block("latest").await?.timestamp;
-        for feed in requested {
-            let key = feed.key();
-            match self.read_feed(feed, now).await {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        for (base, quote) in pairs {
+            let key = format!("{base}/{quote}");
+            let Some((index, feed)) = self.feeds.get(&key) else {
+                continue;
+            };
+            match self.read_feed(*index, feed, now).await {
                 Ok(price) => {
                     if let Some(ticker) =
-                        checked_ticker("chainlink", &key, Some(price), VolumeInput::Unavailable)
+                        checked_ticker("aggregator_v3", &key, Some(price), VolumeInput::Unavailable)
                     {
                         tickers.insert(key, ticker);
                     }
                 }
                 Err(error) => {
-                    tracing::warn!(provider = "chainlink", feed = %key, error = %error, "chainlink feed skipped");
+                    tracing::warn!(provider = "aggregator_v3", feed = %key, error = %error, "feed skipped");
                 }
             }
         }
@@ -286,17 +290,22 @@ mod tests {
     };
 
     const AGGREGATOR: Address = address!("0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419");
-    const NOW: u64 = 1_800_000_000;
+
+    fn now() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
 
     #[derive(Default)]
     struct Fixture {
         wrong_chain: AtomicBool,
         wrong_description: AtomicBool,
         negative: AtomicBool,
-        unanswered: AtomicBool,
-        /// Seconds between the round's updatedAt and chain time.
-        age: AtomicI64,
         fail_round: AtomicBool,
+        /// Seconds between the round's updatedAt and wall-clock time.
+        age: AtomicI64,
     }
 
     impl Fixture {
@@ -311,10 +320,6 @@ mod tests {
                 } else {
                     "0x1"
                 }),
-                "eth_getBlockByNumber" => {
-                    assert_eq!(params[0], "latest");
-                    json!({"number":"0x10", "hash":alloy_primitives::B256::repeat_byte(1), "timestamp":format!("0x{NOW:x}")})
-                }
                 "eth_call" => {
                     assert_eq!(params[1], "latest");
                     assert_eq!(params[0]["to"], json!(AGGREGATOR));
@@ -337,18 +342,13 @@ mod tests {
                         } else {
                             I256::try_from(250_000_000_000i64).unwrap() // 2500.00000000
                         };
-                        let updated = (NOW as i64 - self.age.load(Ordering::Relaxed)) as u64;
-                        let (round, answered) = if self.unanswered.load(Ordering::Relaxed) {
-                            (10u128, 9u128)
-                        } else {
-                            (10u128, 10u128)
-                        };
+                        let updated = (now() as i64 - self.age.load(Ordering::Relaxed)) as u64;
                         (
-                            alloy_primitives::aliases::U80::from(round),
+                            alloy_primitives::aliases::U80::from(1u8),
                             answer,
                             U256::from(updated),
                             U256::from(updated),
-                            alloy_primitives::aliases::U80::from(answered),
+                            alloy_primitives::aliases::U80::from(1u8),
                         )
                             .abi_encode()
                     } else {
@@ -362,8 +362,8 @@ mod tests {
         }
     }
 
-    fn config(endpoint: &str) -> ChainlinkProviderConfig {
-        ChainlinkProviderConfig {
+    fn config(endpoint: &str) -> AggregatorV3ProviderConfig {
+        AggregatorV3ProviderConfig {
             chain_id: 1,
             rpc_endpoint: endpoint.to_owned(),
             feeds: vec![FeedConfig {
@@ -371,16 +371,15 @@ mod tests {
                 quote: "840".into(),
                 aggregator: AGGREGATOR,
                 description: "ETH / USD".into(),
-                max_age_secs: 3600,
             }],
         }
     }
 
-    async fn fresh_provider() -> (Arc<Fixture>, test_server::Server, ChainlinkProvider) {
+    async fn fresh_provider() -> (Arc<Fixture>, test_server::Server, AggregatorV3Provider) {
         let fixture = Arc::new(Fixture::default());
         let state = Arc::clone(&fixture);
         let server = test_server::start(Arc::new(move |request| state.response(request))).await;
-        let provider = ChainlinkProvider::new(&config(&server.endpoint)).unwrap();
+        let provider = AggregatorV3Provider::new(&[config(&server.endpoint)]).unwrap();
         (fixture, server, provider)
     }
 
@@ -406,7 +405,7 @@ mod tests {
     #[tokio::test]
     async fn invalid_rounds_are_skipped_and_metadata_is_verified() {
         let (fixture, _server, provider) = fresh_provider().await;
-        for flag in [&fixture.negative, &fixture.unanswered, &fixture.fail_round] {
+        for flag in [&fixture.negative, &fixture.fail_round] {
             flag.store(true, Ordering::Relaxed);
             assert!(provider
                 .get_ticker_prices(&eth_usd())
@@ -415,13 +414,14 @@ mod tests {
                 .is_empty());
             flag.store(false, Ordering::Relaxed);
         }
-        fixture.age.store(3601, Ordering::Relaxed);
+        let max_age = i64::try_from(MAX_FEED_AGE_SECS).unwrap();
+        fixture.age.store(max_age + 5, Ordering::Relaxed);
         assert!(provider
             .get_ticker_prices(&eth_usd())
             .await
             .unwrap()
             .is_empty());
-        fixture.age.store(3600, Ordering::Relaxed);
+        fixture.age.store(max_age - 5, Ordering::Relaxed);
         assert_eq!(
             provider.get_ticker_prices(&eth_usd()).await.unwrap().len(),
             1
@@ -434,12 +434,15 @@ mod tests {
             .is_empty());
         fixture.age.store(0, Ordering::Relaxed);
 
+        // Chain id is verified once per network, before any feed read.
+        let (fixture, _server, provider) = fresh_provider().await;
         fixture.wrong_chain.store(true, Ordering::Relaxed);
-        assert!(provider.get_ticker_prices(&eth_usd()).await.is_err());
-        fixture.wrong_chain.store(false, Ordering::Relaxed);
+        assert!(provider
+            .get_ticker_prices(&eth_usd())
+            .await
+            .unwrap()
+            .is_empty());
 
-        // Metadata is cached after the first successful read, so a wrong
-        // description only matters for a fresh provider.
         let (fixture, _server, provider) = fresh_provider().await;
         fixture.wrong_description.store(true, Ordering::Relaxed);
         assert!(provider
@@ -453,10 +456,7 @@ mod tests {
     fn config_validation_and_source_routing() {
         assert!(config("http://localhost:8545").validate().is_ok());
         let mut bad = config("http://localhost:8545");
-        bad.feeds[0].max_age_secs = 0;
-        assert!(bad.validate().is_err());
-        let mut bad = config("http://localhost:8545");
-        bad.feeds.push(bad.feeds[0].clone());
+        bad.feeds[0].description.clear();
         assert!(bad.validate().is_err());
         let mut bad = config("ws://localhost:8545");
         bad.feeds.clear();
@@ -476,7 +476,7 @@ mod tests {
             base = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
             quote = "840"
             [[currency_pairs.sources]]
-            provider = "chainlink"
+            provider = "aggregator_v3"
             base = "ETH"
             quote = "840"
         "#,
@@ -484,17 +484,29 @@ mod tests {
         .unwrap();
         assert!(
             feeder.validate().is_err(),
-            "source without chainlink_providers"
+            "source without aggregator_v3_providers"
         );
         feeder
-            .chainlink_providers
+            .aggregator_v3_providers
             .push(config("http://localhost:8545"));
         feeder.validate().unwrap();
-        feeder.chainlink_providers[0].feeds[0].quote = "USD".into();
+
+        // A second network may not repeat a chain id or a feed key.
+        feeder
+            .aggregator_v3_providers
+            .push(config("http://localhost:8546"));
+        assert!(feeder.validate().is_err(), "duplicate chain id");
+        feeder.aggregator_v3_providers[1].chain_id = 56;
+        assert!(feeder.validate().is_err(), "duplicate feed key");
+        feeder.aggregator_v3_providers[1].feeds[0].base = "BTC".into();
+        feeder.validate().unwrap();
+
+        feeder.aggregator_v3_providers[0].feeds[0].quote = "USD".into();
         assert!(feeder.validate().is_err(), "source without matching feed");
     }
 
-    /// Live mainnet read; run with `cargo test -p outbe-feeder live_mainnet -- --ignored`.
+    /// Live mainnet read of a Chainlink and a RedStone feed; run with
+    /// `cargo test -p outbe-feeder live_mainnet -- --ignored --nocapture`.
     #[tokio::test]
     #[ignore]
     async fn live_mainnet_feeds() {
@@ -504,12 +516,21 @@ mod tests {
             quote: "840".into(),
             aggregator: address!("0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6"),
             description: "USDC / USD".into(),
-            max_age_secs: 90_000,
         });
-        let provider = ChainlinkProvider::new(&cfg).unwrap();
-        let pairs = vec![("ETH".into(), "840".into()), ("USDC".into(), "840".into())];
+        cfg.feeds.push(FeedConfig {
+            base: "BTC".into(),
+            quote: "840".into(),
+            aggregator: address!("0xAB7f623fb2F6fea6601D4350FA0E2290663C28Fc"),
+            description: "RedStone Price Feed for BTC".into(),
+        });
+        let provider = AggregatorV3Provider::new(&[cfg]).unwrap();
+        let pairs = vec![
+            ("ETH".into(), "840".into()),
+            ("USDC".into(), "840".into()),
+            ("BTC".into(), "840".into()),
+        ];
         let tickers = provider.get_ticker_prices(&pairs).await.unwrap();
-        for key in ["ETH/840", "USDC/840"] {
+        for key in ["ETH/840", "USDC/840", "BTC/840"] {
             let price = tickers[key].price;
             eprintln!("{key}: {} FP18", price.raw());
             assert!(!price.is_zero());
@@ -520,18 +541,5 @@ mod tests {
             usdc.abs_diff(one) < one / U256::from(20u64),
             "USDC within 5% of 1"
         );
-    }
-
-    #[test]
-    fn price_scaling_covers_common_decimals() {
-        assert_eq!(
-            price_fp18(U256::from(250_000_000_000u64), 8).unwrap(),
-            FixedValue::parse("2500").unwrap()
-        );
-        assert_eq!(
-            price_fp18(U256::from(999_900_000_000_000_000u64), 18).unwrap(),
-            FixedValue::parse("0.9999").unwrap()
-        );
-        assert!(price_fp18(U256::MAX, 0).is_err());
     }
 }

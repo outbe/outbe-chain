@@ -89,7 +89,7 @@ threshold = "2.0"
 | `provider_endpoints[].rest` | only endpoint-backed providers | Provider REST base URL |
 | `provider_endpoints[].websocket` | no | Exchange market-stream endpoint override (`ws://`, `wss://`, or a host); omitted uses the exchange default |
 | `dex_providers` | only DEX sources | Explicit RPC, network and pool configuration; see [DEX providers](#dex-providers) |
-| `chainlink_providers` | only `chainlink` sources | RPC, network and aggregator feeds; see [Chainlink providers](#chainlink-providers) |
+| `aggregator_v3_providers` | only `aggregator_v3` sources | Per-network RPC and `AggregatorV3` feeds (Chainlink, RedStone push); see [AggregatorV3 providers](#aggregatorv3-providers) |
 | `deviation_thresholds[].base` | no | Asset to apply threshold to |
 | `deviation_thresholds[].threshold` | no | Max sigma deviation as an exact decimal string (default: `"2.0"`) |
 
@@ -101,7 +101,7 @@ At startup, the feeder validates:
 - `validator_address` is a valid 20-byte hex address
 - Each on-chain pair has at least 1 external source market
 - ISO markets use `COEN/ISO`; reverse `ISO/COEN` configuration is rejected
-- All provider names are known: `mock`, `mock_http`, `pyth`, `chainlink`, `binance`, `kraken`, `okx`, `gate`, `huobi`, `mexc`, `coinbase`, `uniswap`, `pancakeswap`
+- All provider names are known: `mock`, `mock_http`, `pyth`, `aggregator_v3`, `binance`, `kraken`, `okx`, `gate`, `huobi`, `mexc`, `coinbase`, `uniswap`, `pancakeswap`
 - WebSocket endpoints are only accepted for streaming exchange providers
 - Provider endpoint names are unique
 
@@ -120,7 +120,7 @@ volume-weighted mean rounded down.
 | `mock` | Working | Hardcoded COEN=1.0, ETH=2500.0 |
 | `mock_http` | Working | Configured REST endpoint compatible with the migrated Cosmos test price server |
 | `pyth` | Working | Pyth Hermes REST API for supported BTC/ETH feeds |
-| `chainlink` | Implemented | Chainlink `AggregatorV3` feeds read over EVM JSON-RPC at `latest` |
+| `aggregator_v3` | Implemented | On-chain `AggregatorV3Interface` feeds (Chainlink, RedStone push) read over EVM JSON-RPC at `latest` |
 | `binance` | Working | Binance WebSocket ticker/candle streams with REST bootstrap fallback |
 | `kraken` | Working | Kraken WebSocket ticker/candle streams with REST bootstrap fallback |
 | `okx` | Working | OKX WebSocket ticker/candle streams with REST bootstrap fallback |
@@ -139,41 +139,57 @@ protocol heartbeats, and reconnect with automatic resubscription. Until a
 stream has produced data for a configured pair, its existing REST adapter is
 used as bootstrap fallback.
 
-### Chainlink providers
+### AggregatorV3 providers
 
-`chainlink` reads Chainlink Data Feeds (`AggregatorV3Interface`) with `eth_call`
-against the `latest` block. Rounds are signed by the Chainlink network, so no
-finality wait applies; freshness comes from the round itself. Feeds report no
-volume, so the observation weighs one unit in the source mean.
+`aggregator_v3` reads any on-chain feed exposing Chainlink's
+`AggregatorV3Interface`: Chainlink Data Feeds, RedStone push feeds, and other
+vendors using that ABI. The vendor is identified by the feed's `description()`.
+Reads are `eth_call` against the `latest` block: rounds are signed by the
+vendor network, so no finality wait applies; freshness comes from the round's
+`updatedAt`. Feeds report no volume, so the observation weighs one unit in the
+source mean.
 
 ```toml
 [[currency_pairs.sources]]
-provider = "chainlink"
+provider = "aggregator_v3"
 base = "USDC"
 quote = "840"
 
-[[chainlink_providers]]
+[[currency_pairs.sources]]
+provider = "aggregator_v3"
+base = "BTC"
+quote = "840"
+
+[[aggregator_v3_providers]]
 chain_id = 1
 rpc_endpoint = "https://ethereum-rpc.example.invalid"
 
-[[chainlink_providers.feeds]]
+[[aggregator_v3_providers.feeds]]          # Chainlink
 base = "USDC"
 quote = "840"
 aggregator = "0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6"
 description = "USDC / USD"
-max_age_secs = 90000
+
+[[aggregator_v3_providers.feeds]]          # RedStone push
+base = "BTC"
+quote = "840"
+aggregator = "0xAB7f623fb2F6fea6601D4350FA0E2290663C28Fc"
+description = "RedStone Price Feed for BTC"
 ```
 
-One `[[chainlink_providers]]` section; every `chainlink` source needs a matching
-`feeds` entry by `base`/`quote`. Take `aggregator` (the proxy address) and the
-heartbeat from [docs.chain.link](https://docs.chain.link/data-feeds/price-feeds/addresses);
-`max_age_secs` should be the heartbeat plus slack. On first use the feeder reads
-`description()` and rejects a feed whose text differs from the configured one,
-then caches `decimals()`. Each vote reads `eth_chainId`, the latest block
-timestamp and `latestRoundData()` per feed. A round is skipped when `answer` is
-not positive, `answeredInRound < roundId`, `updatedAt` is in the future, or it
-is older than `max_age_secs` relative to chain time. Chainlink lists no COEN
-feed; use this provider for listed assets and for stablecoin/USD rates.
+One `[[aggregator_v3_providers]]` section per EVM network (`chain_id` unique);
+every `aggregator_v3` source needs a matching `feeds` entry by `base`/`quote`
+in some section, and feed keys are unique across sections. Take `aggregator`
+(the proxy address) and `description` from the vendor registry:
+[docs.chain.link](https://docs.chain.link/data-feeds/price-feeds/addresses) or
+[app.redstone.finance](https://app.redstone.finance/). On first use the feeder
+verifies `eth_chainId`, reads `description()` and rejects a feed whose text
+differs from the configured one, then caches `decimals()`. Each vote reads
+`latestRoundData()` per feed. A round is skipped when `answer` is not
+positive, `updatedAt` is in the future, or it is older than 25 hours: the
+longest documented heartbeat at either vendor is 24 hours, so a round older
+than that means the relayer stopped. Neither vendor lists a COEN feed today; a
+COEN push feed, once deployed, is configured here like any other.
 
 ### DEX providers
 

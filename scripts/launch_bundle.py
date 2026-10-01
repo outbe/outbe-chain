@@ -470,7 +470,8 @@ enabled = true
 bind_address = "127.0.0.1:{port_of(config, "feeder_health_port")}"
 
 # The feeder only accepts provider names from its built-in list (mock, pyth,
-# chainlink, binance, kraken, okx, gate, huobi, mexc, coinbase, mock_http); an
+# aggregator_v3, binance, kraken, okx, gate, huobi, mexc, coinbase,
+# mock_http, uniswap, pancakeswap); an
 # invented name is rejected at startup. `mock_http` uses the configured REST
 # endpoint; exchange providers use live WebSocket market streams.
 {provider_endpoint}

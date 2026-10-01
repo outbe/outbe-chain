@@ -550,7 +550,7 @@ mod tests {
             deviation_thresholds: vec![],
             provider_endpoints: vec![],
             dex_providers: vec![],
-            chainlink_providers: vec![],
+            aggregator_v3_providers: vec![],
             health: None,
         }
     }

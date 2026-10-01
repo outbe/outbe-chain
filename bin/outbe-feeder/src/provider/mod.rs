@@ -1,7 +1,7 @@
 //! Price provider trait and implementations.
 
+pub mod aggregator_v3;
 pub mod binance;
-pub mod chainlink;
 pub mod coinbase;
 pub(crate) mod dex;
 pub(crate) mod evm_rpc;
@@ -200,10 +200,8 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
                 Box::new(mock_http::MockHttpProvider::new(endpoint)?)
             }
             "pyth" => Box::new(pyth::PythProvider::new()?),
-            "chainlink" => Box::new(chainlink::ChainlinkProvider::new(
-                config.chainlink_providers.first().ok_or_else(|| {
-                    eyre!("provider chainlink requires a [[chainlink_providers]] entry")
-                })?,
+            "aggregator_v3" => Box::new(aggregator_v3::AggregatorV3Provider::new(
+                &config.aggregator_v3_providers,
             )?),
             "binance" => Box::new(binance::BinanceProvider::new()?),
             "kraken" => Box::new(kraken::KrakenProvider::new()?),

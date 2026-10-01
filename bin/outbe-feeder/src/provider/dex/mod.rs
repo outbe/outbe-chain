@@ -1,7 +1,7 @@
 //! Finalized pool spot prices and independent rolling base-token swap volumes.
 mod abi;
 mod config;
-mod math;
+pub(crate) mod math;
 mod pool;
 mod worker;
 

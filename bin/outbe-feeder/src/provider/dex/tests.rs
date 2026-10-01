@@ -37,14 +37,14 @@ fn raw_rate_orientation_decimals_and_limits() {
         fp("0.333333333333333333")
     );
     assert_eq!(
-        math::base_volume(U256::from(2_000_000u64), 6).unwrap(),
+        math::scale_fp18(U256::from(2_000_000u64), 6).unwrap(),
         fp("2")
     );
-    assert_eq!(math::base_volume(U256::ZERO, 18).unwrap(), fp("0"));
+    assert_eq!(math::scale_fp18(U256::ZERO, 18).unwrap(), fp("0"));
     assert!(math::rate(U512::ZERO, base, 18, 6).is_err());
     assert!(math::rate(quote, U512::ZERO, 18, 6).is_err());
     assert!(math::rate(U512::MAX, U512::ONE, 18, 6).is_err());
-    assert!(math::base_volume(U256::MAX, 0).is_err());
+    assert!(math::scale_fp18(U256::MAX, 0).is_err());
     assert!(math::rate(quote, base, 78, 6).is_err());
     // Largest uint160 square requires 320 bits, beyond U256.
     let sqrt = (U512::ONE << 160) - U512::ONE;
