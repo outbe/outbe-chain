@@ -233,15 +233,27 @@ impl OffchainDataProjection {
         &mut self,
         prepared: PreparedBlock,
     ) -> Result<(ProjectionOutcome, AtomicWriteBatch), ProjectionError> {
+        let writer = self.writer.clone();
+        self.apply_prepared_with(prepared, move |batch| {
+            writer.apply_atomic(&batch)?;
+            Ok(batch)
+        })
+        .map(|(outcome, batch)| (outcome, batch.unwrap_or_else(AtomicWriteBatch::new)))
+    }
+
+    /// Applies the exact prepared batch through an injected consumer, retaining its result.
+    /// The logical checkpoint advances only after that consumer succeeds.
+    pub fn apply_prepared_with<T>(
+        &mut self,
+        prepared: PreparedBlock,
+        apply: impl FnOnce(AtomicWriteBatch) -> Result<T, outbe_offchain_storage::StorageError>,
+    ) -> Result<(ProjectionOutcome, Option<T>), ProjectionError> {
         match self.validate_next_block(
             prepared.checkpoint.block_number,
             prepared.checkpoint.block_hash,
         )? {
             NextBlock::AlreadyApplied(checkpoint) => {
-                return Ok((
-                    ProjectionOutcome::AlreadyApplied(checkpoint),
-                    AtomicWriteBatch::new(),
-                ));
+                return Ok((ProjectionOutcome::AlreadyApplied(checkpoint), None));
             }
             NextBlock::Apply => {}
         }
@@ -279,14 +291,14 @@ impl OffchainDataProjection {
                 block_batch
             }
         };
-        self.writer.apply_atomic(&block_batch)?;
+        let applied = apply(block_batch)?;
         self.state = next_state;
         Ok((
             ProjectionOutcome::Applied {
                 checkpoint: prepared.checkpoint,
                 receipt_batches: prepared.receipts.len(),
             },
-            block_batch,
+            Some(applied),
         ))
     }
 

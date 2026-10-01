@@ -145,13 +145,9 @@ fn durable_ack_only_retires_overlay_mutations_through_its_generation() {
         Value::new(b"second".to_vec()).unwrap(),
     )]);
 
-    overlay.apply_atomic(&first_batch).unwrap();
-    let first_generation = overlay.current_generation();
-    overlay.apply_atomic(&second_batch).unwrap();
-    let second_generation = overlay.current_generation();
-
-    base.apply_atomic(&first_batch).unwrap();
-    overlay.acknowledge(first_generation);
+    let first = overlay.stage(first_batch).unwrap();
+    let second = overlay.stage(second_batch).unwrap();
+    first.persist(base.as_ref()).unwrap().acknowledge();
     assert_eq!(
         overlay
             .get(namespace.clone(), &key)
@@ -162,8 +158,7 @@ fn durable_ack_only_retires_overlay_mutations_through_its_generation() {
         "ACK of N must not remove the newer N+1 value"
     );
 
-    base.apply_atomic(&second_batch).unwrap();
-    overlay.acknowledge(second_generation);
+    second.persist(base.as_ref()).unwrap().acknowledge();
     base.put(
         namespace.clone(),
         &key,

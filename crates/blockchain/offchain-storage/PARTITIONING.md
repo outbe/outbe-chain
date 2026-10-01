@@ -41,6 +41,8 @@ inspection view; chain identity and canonical checkpoint validation precede repl
 Read-only sessions refuse an unfinished journal and never initialize missing partitions.
 Writer handles share ownership and remain inactive until validated activation; scoped bootstrap
 authority and acknowledged teardown are described in [SESSION_LIFECYCLE.md](SESSION_LIFECYCLE.md).
+Pending batches and durable acknowledgement are linked through the opaque handles described
+in [PENDING_WRITES.md](PENDING_WRITES.md); finality and deadline policy remain in the node.
 
 Tribute WWD retirement is a batch effect. Without a retention pin it does not enumerate bodies.
 RocksDB removes the selected directory; MongoDB clears only that scope's collections inside the

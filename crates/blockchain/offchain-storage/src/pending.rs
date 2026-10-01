@@ -1,4 +1,8 @@
+mod write;
+pub use write::{PendingDurableReceipt, PendingWrite};
+
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::Arc;
 
 use parking_lot::RwLock;
 
@@ -23,46 +27,50 @@ struct VersionedPendingRecord {
 #[derive(Default)]
 struct PendingState {
     generation: u64,
+    durable_order: VecDeque<u64>,
     records: BTreeMap<Namespace, BTreeMap<Key, VersionedPendingRecord>>,
     retired: BTreeMap<crate::StorageScope, u64>,
 }
 
-/// Process-local finalized mutations layered over the durable MongoDB projection.
-pub struct PendingOverlayStorage {
+struct PendingShared {
     base: StorageReaderHandle,
     state: RwLock<PendingState>,
+    commit_gate: parking_lot::Mutex<()>,
+}
+
+/// Process-local finalized mutations layered over the configured durable projection.
+pub struct PendingOverlayStorage {
+    shared: Arc<PendingShared>,
 }
 
 impl PendingOverlayStorage {
     #[must_use]
     pub fn new(base: StorageReaderHandle) -> Self {
         Self {
-            base,
-            state: RwLock::new(PendingState::default()),
+            shared: Arc::new(PendingShared {
+                base,
+                state: RwLock::new(PendingState::default()),
+                commit_gate: parking_lot::Mutex::new(()),
+            }),
         }
+    }
+
+    /// Applies the exact batch and captures its pending ownership in one operation.
+    pub fn stage(&self, batch: AtomicWriteBatch) -> Result<PendingWrite, StorageError> {
+        let generation = self.apply_batch(&batch)?;
+        Ok(PendingWrite {
+            shared: self.shared.clone(),
+            generation,
+            batch,
+        })
     }
 
     fn is_retired(&self, namespace: &Namespace, key: &Key) -> Result<bool, StorageError> {
-        if self.state.read().retired.is_empty() {
+        if self.shared.state.read().retired.is_empty() {
             return Ok(false);
         }
-        let scope = self.base.storage_scope(namespace, key)?;
-        Ok(scope.is_some_and(|scope| self.state.read().retired.contains_key(&scope)))
-    }
-    /// Returns the generation assigned to the latest applied pending batch.
-    #[must_use]
-    pub fn current_generation(&self) -> u64 {
-        self.state.read().generation
-    }
-
-    /// Retires mutations that are now covered by a durable MongoDB acknowledgement.
-    pub fn acknowledge(&self, generation: u64) {
-        let mut state = self.state.write();
-        state.retired.retain(|_, retired| *retired > generation);
-        state.records.retain(|_, records| {
-            records.retain(|_, record| record.generation > generation);
-            !records.is_empty()
-        });
+        let scope = self.shared.base.storage_scope(namespace, key)?;
+        Ok(scope.is_some_and(|scope| self.shared.state.read().retired.contains_key(&scope)))
     }
 }
 
@@ -72,7 +80,7 @@ impl StorageReader for PendingOverlayStorage {
         namespace: &Namespace,
         key: &Key,
     ) -> Result<Option<crate::StorageScope>, StorageError> {
-        self.base.storage_scope(namespace, key)
+        self.shared.base.storage_scope(namespace, key)
     }
 
     fn get_record(
@@ -84,6 +92,7 @@ impl StorageReader for PendingOverlayStorage {
             return Ok(None);
         }
         match self
+            .shared
             .state
             .read()
             .records
@@ -99,7 +108,7 @@ impl StorageReader for PendingOverlayStorage {
                 record: PendingRecord::Delete,
                 ..
             }) => Ok(None),
-            None => self.base.get_record(namespace, key),
+            None => self.shared.base.get_record(namespace, key),
         }
     }
 
@@ -123,6 +132,7 @@ impl StorageReader for PendingOverlayStorage {
         let requested_after = request.after().cloned();
         let limit = request.limit();
         let pending = self
+            .shared
             .state
             .read()
             .records
@@ -149,7 +159,7 @@ impl StorageReader for PendingOverlayStorage {
 
         loop {
             if base_entries.is_empty() && !base_exhausted {
-                let page = self.base.scan_prefix(
+                let page = self.shared.base.scan_prefix(
                     namespace.clone(),
                     ScanRequest::new(&prefix, base_after.as_ref(), MAX_SCAN_ENTRIES)?,
                 )?;
@@ -248,18 +258,19 @@ fn pending_scan_entry(key: &Key, record: &PendingRecord) -> Option<ScanEntry> {
     }
 }
 
-impl StorageWriter for PendingOverlayStorage {
-    fn apply_atomic(&self, batch: &AtomicWriteBatch) -> Result<(), StorageError> {
+impl PendingOverlayStorage {
+    fn apply_batch(&self, batch: &AtomicWriteBatch) -> Result<Option<u64>, StorageError> {
         batch.validate()?;
         if batch.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
-        let mut state = self.state.write();
+        let mut state = self.shared.state.write();
         let generation = state
             .generation
             .checked_add(1)
             .ok_or_else(|| StorageError::Corruption("pending generation overflow".to_owned()))?;
         state.generation = generation;
+        state.durable_order.push_back(generation);
         for scope in batch.retired_scopes() {
             state.retired.insert(scope.clone(), generation);
         }
@@ -297,6 +308,12 @@ impl StorageWriter for PendingOverlayStorage {
                 }
             }
         }
-        Ok(())
+        Ok(Some(generation))
+    }
+}
+
+impl StorageWriter for PendingOverlayStorage {
+    fn apply_atomic(&self, batch: &AtomicWriteBatch) -> Result<(), StorageError> {
+        self.apply_batch(batch).map(|_| ())
     }
 }

@@ -23,7 +23,7 @@ pub use partitioned::{
     PartitionRouting, PartitionStrategy, PartitionedBatch, PartitionedStorage, ReadLocation,
     SharedPartition, StorageScope, WorldwideDayPartition,
 };
-pub use pending::PendingOverlayStorage;
+pub use pending::{PendingDurableReceipt, PendingOverlayStorage, PendingWrite};
 pub use provider::{StorageProvider, StorageReadSource};
 pub use rocks::{RocksDbCloseWaiter, RocksDbReader, RocksDbStorage};
 pub use session::{

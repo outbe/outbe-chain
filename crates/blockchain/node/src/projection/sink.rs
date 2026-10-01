@@ -64,7 +64,7 @@ impl ProjectionRetentionFence {
     }
 }
 
-/// Deep sink for projecting an already-read finalized frame into durable Mongo state.
+/// Deep sink for projecting an already-read finalized frame into durable offchain state.
 ///
 /// The sink owns the logical overlay and the single-writer lease inherited from
 /// [`ReadyOffchainDataProjection`]. [`Self::project_frame`] does not return a new checkpoint until
@@ -313,11 +313,12 @@ impl FinalizedProjectionSink {
             .projector
             .prepare_block(&normalized)
             .wrap_err_with(|| format!("project finalized frame {}", identity.number))?;
-        let (projected, durable_batch) = self
-            .runtime
-            .projector
-            .apply_prepared_with_batch(prepared)
-            .wrap_err_with(|| format!("apply logical finalized frame {}", identity.number))?;
+        let (projected, durable_write) = DurableProjectionWrite::prepare(
+            &mut self.runtime.projector,
+            prepared,
+            overlay.as_deref(),
+        )
+        .wrap_err_with(|| format!("apply logical finalized frame {}", identity.number))?;
         let projected = match projected {
             ProjectionOutcome::Applied { checkpoint, .. } => checkpoint,
             ProjectionOutcome::AlreadyApplied(checkpoint) => {
@@ -337,18 +338,7 @@ impl FinalizedProjectionSink {
                 identity.hash
             );
         }
-        let overlay_ack = overlay
-            .as_ref()
-            .map(|overlay| (Arc::clone(overlay), overlay.current_generation()));
-        apply_durable_projection_write_before(
-            &self.runtime.writer,
-            &DurableProjectionWrite {
-                checkpoint: FinalizedTarget::new(projected.block_number, projected.block_hash),
-                batch: durable_batch,
-                overlay_ack,
-            },
-            deadline,
-        )?;
+        apply_durable_projection_write_before(&self.runtime.writer, &durable_write, deadline)?;
         self.durable_checkpoint = Some(projected);
         Ok(projected)
     }

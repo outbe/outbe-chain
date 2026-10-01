@@ -140,11 +140,10 @@ fn retirement_clears_only_one_scope_and_overlay_hides_it_before_acknowledgement(
         Value::new(vec![3]).unwrap(),
     )]);
     batch.retire_scope(StorageScope::numbered("entity", "wwd", 7).unwrap());
-    overlay.apply_atomic(&batch).unwrap();
+    let pending = overlay.stage(batch).unwrap();
     assert!(overlay.get(ns.clone(), &a).unwrap().is_none());
     assert!(storage.get(ns.clone(), &a).unwrap().is_some());
-    storage.apply_atomic(&batch).unwrap();
-    overlay.acknowledge(overlay.current_generation());
+    pending.persist(storage.as_ref()).unwrap().acknowledge();
     assert!(storage.get(ns.clone(), &a).unwrap().is_none());
     assert_eq!(storage.get(ns, &b).unwrap().unwrap().as_bytes(), &[8]);
 }

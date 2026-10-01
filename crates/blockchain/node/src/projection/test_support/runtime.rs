@@ -690,9 +690,9 @@ where
         let prepared = projector
             .prepare_block(&normalized)
             .wrap_err_with(|| format!("project finalized block {block_number}"))?;
-        let (projected, durable_batch) = projector
-            .apply_prepared_with_batch(prepared)
-            .wrap_err_with(|| format!("apply logical finalized block {block_number}"))?;
+        let (projected, durable_write) =
+            DurableProjectionWrite::prepare(projector, prepared, overlay.as_deref())
+                .wrap_err_with(|| format!("apply logical finalized block {block_number}"))?;
         let projected = match projected {
             ProjectionOutcome::Applied { checkpoint, .. }
             | ProjectionOutcome::AlreadyApplied(checkpoint) => checkpoint,
@@ -710,15 +710,8 @@ where
             projected.block_number,
             projected.block_hash,
         ));
-        let overlay_ack = overlay
-            .as_ref()
-            .map(|overlay| (Arc::clone(overlay), overlay.current_generation()));
         durable_write_tx
-            .send(DurableProjectionWrite {
-                checkpoint: FinalizedTarget::new(projected.block_number, projected.block_hash),
-                batch: durable_batch,
-                overlay_ack,
-            })
+            .send(durable_write)
             .map_err(|_| eyre::eyre!("durable offchain storage writer queue is closed"))?;
         logical_checkpoint_tx
             .send(FinalizedTarget::new(
