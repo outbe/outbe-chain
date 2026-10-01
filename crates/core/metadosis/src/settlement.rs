@@ -90,10 +90,6 @@ pub(crate) fn desis_limit(
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LocalTerminalOutcome {
-    ZeroDayLimit,
-    UnknownDayType {
-        day_limit: U256,
-    },
     EmptyTributeDay {
         day_type: WwdDayType,
         day_limit: U256,
@@ -115,25 +111,13 @@ pub(crate) fn process_ocomp_ready_candidate(
 ) -> Result<()> {
     let wwd = current.worldwide_day;
     let limit_amount = current.metadosis_limit_amount;
-    if limit_amount.is_zero() {
-        return process_local_terminal_outcome(
-            metadosis,
-            ctx,
-            scope,
-            current,
-            LocalTerminalOutcome::ZeroDayLimit,
-        );
-    }
     let day_type = current.day_type;
-    if day_type == WwdDayType::Unknown {
-        return process_local_terminal_outcome(
-            metadosis,
-            ctx,
+    if limit_amount.is_zero() || day_type == WwdDayType::Unknown {
+        return crate::terminal::fail_worldwide_day(
+            ctx.storage.clone(),
+            ctx.block.block_number,
             scope,
-            current,
-            LocalTerminalOutcome::UnknownDayType {
-                day_limit: limit_amount,
-            },
+            wwd,
         );
     }
 
@@ -193,28 +177,12 @@ fn process_local_terminal_outcome(
 ) -> Result<()> {
     let wwd = current.worldwide_day;
     let disposition = match outcome {
-        LocalTerminalOutcome::ZeroDayLimit => ReadyDisposition::ZeroDayLimit,
-        LocalTerminalOutcome::UnknownDayType { .. } => ReadyDisposition::UnknownDayType,
         LocalTerminalOutcome::EmptyTributeDay { .. } => ReadyDisposition::EmptyTributeDay,
         LocalTerminalOutcome::ZeroGratisAllocation { .. } => ReadyDisposition::ZeroGratisAllocation,
     };
     let transition = reduce_outer_wwd(Some(current), OuterWwdEvent::ProcessReady(disposition))?;
     let mut promis_limit = PromisLimitContract::new(ctx.storage.clone());
     match outcome {
-        LocalTerminalOutcome::ZeroDayLimit => {
-            commit_outer_transition(metadosis, wwd, &transition, ctx.block.block_number)?;
-            metadosis.emit(IMetadosis::MetadosisSkipped {
-                worldwideDay: wwd.into(),
-                reason: "day_metadosis_limit_is_zero".into(),
-                status: "SKIPPED".into(),
-                blockNumber: ctx.block.block_number,
-            })
-        }
-        LocalTerminalOutcome::UnknownDayType { day_limit } => {
-            commit_outer_transition(metadosis, wwd, &transition, ctx.block.block_number)?;
-            emit_failed_execution(metadosis, ctx, wwd, U256::ZERO, day_limit)?;
-            promis_limit.add_to_total_unallocated(day_limit)
-        }
         LocalTerminalOutcome::EmptyTributeDay {
             day_type,
             day_limit,
@@ -270,6 +238,8 @@ fn process_local_terminal_outcome(
                 })?;
             promis_limit.add_to_total_unallocated(returned)?;
             commit_outer_transition(metadosis, wwd, &transition, ctx.block.block_number)?;
+            // No Lysis allocation consumes these tributes, so the sealed partition is forfeited.
+            TributeContract::new(metadosis.storage.clone()).forfeit_sealed_partition(scope, wwd)?;
             metadosis.emit(IMetadosis::MetadosisExecuted {
                 worldwideDay: wwd.into(),
                 tributeTotals: tribute_nominal_total,
@@ -331,27 +301,6 @@ fn dispatch_brief(
             Ok(rejected_desis_limit_minor)
         }
     }
-}
-
-fn emit_failed_execution(
-    metadosis: &mut MetadosisContract,
-    ctx: &BlockRuntimeContext,
-    wwd: WorldwideDay,
-    tribute_totals: U256,
-    day_metadosis_limit_remainder: U256,
-) -> Result<()> {
-    metadosis.emit(IMetadosis::MetadosisExecuted {
-        worldwideDay: wwd.into(),
-        tributeTotals: tribute_totals,
-        dayGratisDemand: U256::ZERO,
-        dayGratisLimit: U256::ZERO,
-        lysisLimitMinor: U256::ZERO,
-        unusedLysisLimitMinor: U256::ZERO,
-        lysisAllocationMinor: U256::ZERO,
-        dayMetadosisLimitRemainder: day_metadosis_limit_remainder,
-        status: "FAILED".into(),
-        blockNumber: ctx.block.block_number,
-    })
 }
 
 fn wwd_state_label(dtype: WwdDayType) -> &'static str {

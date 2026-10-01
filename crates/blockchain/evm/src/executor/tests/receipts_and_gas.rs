@@ -659,6 +659,9 @@ fn capacity_forfeiture_cycle_tick_keeps_twenty_percent_block_headroom() {
                     &retained,
                 )
                 .unwrap();
+                for day in &retained {
+                    tribute.seal_day(*day).unwrap();
+                }
                 let victim_ctx = BlockRuntimeContext::new(
                     BlockContext::new(
                         1,

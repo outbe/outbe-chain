@@ -42,7 +42,7 @@ revm.workspace = true
 default = []
 test-utils = ["outbe-primitives/test-utils"]
 # Test-only issuance and call-notice hooks for e2e runs. Never enabled in a release build.
-e2e-test = []
+e2e-test = ["outbe-nod/e2e-test"]
 
 [package.metadata.cargo-machete]
 ignored = ["hex"]

@@ -65,11 +65,6 @@ sol! {
         ) external;
     }
 
-    interface IIntexSettlement {
-        function settleIntexWithPayNote(bytes14 seriesId, address intexOwner, uint256 amount, bytes payNoteProof) external;
-        function quoteSettlement(bytes14 seriesId, address paymentToken, uint256 amount) external view returns (uint16 settlementCurrency, uint256 payableUnits, uint256 snapshotId);
-    }
-
     struct ReferenceCurrencyPrice {
         uint16 isoCode;
         uint64 entryPriceMinor;
@@ -204,99 +199,6 @@ pub fn issue_series(
         "issueForTest",
     )?;
     Ok(ids)
-}
-
-/// Give `owner` enough of `asset` to settle with, and let the engine pull it.
-pub fn fund_settler(url: &str, asset: Address, owner_key: &str, amount: U256) -> Result<()> {
-    let signer: alloy_signer_local::PrivateKeySigner = owner_key
-        .parse()
-        .map_err(|error| eyre!("invalid owner key: {error}"))?;
-    let owner = alloy_signer::Signer::address(&signer);
-    send_checked(
-        url,
-        asset,
-        owner_key,
-        &ITestToken::mintCall { to: owner, amount },
-        "mint the settlement asset",
-    )?;
-    send_checked(
-        url,
-        asset,
-        owner_key,
-        &ITestToken::approveCall {
-            spender: crate::internal::addresses::PAYNOTE_ADDR,
-            amount,
-        },
-        "approve the note pool",
-    )?;
-    Ok(())
-}
-
-/// Quoted Intex settlement: payable minor units and the VWAP snapshot they use.
-pub struct IntexQuote {
-    pub payable_units: U256,
-    pub snapshot_id: U256,
-}
-
-/// What settling `units` of `series` costs, plus the snapshot that price uses.
-/// `None` when the series does not accept `payment_token`.
-pub fn quote_settlement(
-    url: &str,
-    series: FixedBytes<14>,
-    payment_token: Address,
-    units: u32,
-) -> Option<IntexQuote> {
-    eth::read_call(
-        url,
-        INTEX_FACTORY,
-        &IIntexSettlement::quoteSettlementCall {
-            seriesId: series,
-            paymentToken: payment_token,
-            amount: U256::from(units),
-        },
-    )
-    .map(|quote| IntexQuote {
-        payable_units: quote.payableUnits,
-        snapshot_id: quote.snapshotId,
-    })
-}
-
-/// What settling `units` of `series` costs in `payment_token`'s minor units.
-/// Reverts on a token the series does not accept, which is the check worth
-/// failing loudly.
-pub fn quote_cost(
-    url: &str,
-    series: FixedBytes<14>,
-    payment_token: Address,
-    units: u32,
-) -> Option<U256> {
-    quote_settlement(url, series, payment_token, units).map(|quote| quote.payable_units)
-}
-
-/// Settle `amount` units of `series` held by the caller. The proof carries the
-/// asset, so this takes no payment token.
-pub fn settle(
-    url: &str,
-    owner_key: &str,
-    series: FixedBytes<14>,
-    owner: Address,
-    amount: u32,
-    paynote_proof: &[u8],
-) -> Result<()> {
-    send_checked(
-        url,
-        INTEX_FACTORY,
-        owner_key,
-        &IIntexSettlement::settleIntexWithPayNoteCall {
-            seriesId: series,
-            intexOwner: owner,
-            amount: U256::from(amount),
-            payNoteProof: paynote_proof.to_vec().into(),
-        },
-        "settle",
-    )
-    .map_err(|error| eyre!("settle was refused: {error}"))?;
-    Ok(())
 }
 
 /// The SHA-256 preimage `validate_pow` rebuilds: the hex spelling of owner, amount,

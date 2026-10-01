@@ -99,14 +99,19 @@ pub(crate) fn bootstrap_localnet(world: &mut World, window: u64, tuning: &[(&str
     world.state.wwd = Some(crate::world::localnet::worldwide_day());
     // No pre-bootstrap reset: the scenario owns a fresh `scenario-<n>` dir and a
     // fresh block of ports, so there is nothing of its own to reclaim.
+    let profile = crate::world::localnet::BootstrapProfile::from_tuning(tuning)
+        .and_then(|profile| profile.with_governance_voting_window(window))
+        .expect("valid genesis governance voting window");
+    #[cfg(feature = "ocomp-integration")]
+    let profile = match crate::features::entity_lifecycle::markets::genesis_oracle_pairs(world) {
+        Some(pairs) => profile
+            .with_oracle_pairs(pairs)
+            .expect("valid lifecycle Oracle registry"),
+        None => profile,
+    };
     world
         .localnet
-        .bootstrap_with_profile(
-            committee_size,
-            &crate::world::localnet::BootstrapProfile::from_tuning(tuning)
-                .and_then(|profile| profile.with_governance_voting_window(window))
-                .expect("valid genesis governance voting window"),
-        )
+        .bootstrap_with_profile(committee_size, &profile)
         .expect("bootstrap localnet");
 }
 

@@ -41,7 +41,7 @@ sol! {
     }
 }
 
-/// Move a called gem onto `deadline`, and with it into that deadline's bucket.
+/// Move a called gem's queue entry, its bucket's or its own, onto `deadline`.
 #[cfg(feature = "e2e-test")]
 fn requeue_called_gem(
     storage: outbe_primitives::storage::StorageHandle,
@@ -49,11 +49,16 @@ fn requeue_called_gem(
     deadline: u64,
 ) -> Result<()> {
     let mut gem = GemContract::new(storage);
-    if gem.called_deadline.read(&gem_id)? == 0 {
+    let bucket = gem.gem_bucket.read(&gem_id)?;
+    let entry = match bucket.is_zero() {
+        true => gem_id,
+        false => crate::state::bucket_entry(bucket),
+    };
+    if gem.called_deadline.read(&entry)? == 0 {
         return Err(GemError::InvalidState.into());
     }
-    gem.remove_called(gem_id)?;
-    gem.push_called(gem_id, deadline)
+    gem.remove_called(entry)?;
+    gem.push_called(entry, deadline)
 }
 
 pub fn dispatch(
@@ -67,13 +72,18 @@ pub fn dispatch(
     if let Ok(call) =
         <IGemTestArming::backdateGemForTestCall as alloy_sol_types::SolCall>::abi_decode(data)
     {
-        let gem = GemContract::new(storage.clone());
+        let mut gem = GemContract::new(storage.clone());
         let mut item = gem
             .gem_items
             .get(call.gemId)?
             .ok_or(GemError::GemNotFound)?;
+        let bucketed = !gem.gem_bucket.read(&item.gem_id)?.is_zero();
+        gem.leave_bucket(item.gem_id)?;
         item.issued_at = call.issuedAt;
         gem.gem_items.update(&item)?;
+        if bucketed {
+            gem.join_bucket(&item)?;
+        }
         return Ok(Bytes::new());
     }
     #[cfg(feature = "e2e-test")]

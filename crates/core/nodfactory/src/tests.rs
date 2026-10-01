@@ -82,6 +82,11 @@ fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
             ),
         )
         .unwrap();
+    // These tests exercise the production call terms.
+    NodContract::new(storage.clone())
+        .config_profile
+        .write(outbe_nod::config::PROFILE_PROD)
+        .unwrap();
 }
 
 fn params(owner: Address) -> NodIssueParams {

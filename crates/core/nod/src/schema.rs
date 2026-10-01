@@ -379,6 +379,10 @@ pub struct NodContract {
     /// snapshot slots, because the OCOMP opening plan pins their dense indices.
     #[attribute(order = 72)]
     pub entry_price_source_day: Mapping<WorldwideDay, u32>,
+
+    /// Call-term profile selector seeded from genesis; see `crate::config`.
+    #[attribute(order = 73)]
+    pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
 }
 
 impl<'storage> NodContract<'storage> {

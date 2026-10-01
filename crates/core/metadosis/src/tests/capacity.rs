@@ -13,9 +13,9 @@ use std::sync::{
 };
 
 #[derive(Debug)]
-struct FixedPartitionTree {
+pub(super) struct FixedPartitionTree {
     parent_root: B256,
-    partition_root: B256,
+    pub(super) partition_root: B256,
     leaf_reads: AtomicUsize,
 }
 
@@ -231,7 +231,7 @@ fn begin_empty_scope(provider: &mut HashMapStorageProvider) -> ExecutionScope {
     scope
 }
 
-fn begin_fixed_partition_scope(
+pub(super) fn begin_fixed_partition_scope(
     provider: &mut HashMapStorageProvider,
 ) -> (ExecutionScope, Arc<FixedPartitionTree>) {
     let parent_root = outbe_compressed_entities::sealed_root(B256::repeat_byte(0x71)).unwrap();
@@ -620,6 +620,10 @@ fn start_metadosis_settles_one_ready_day_per_tick_oldest_first() {
         arm_genesis_ocomp(&storage, CHAIN_ID);
         let newer_time = seed_day(&storage, newer, status::READY, U256::ZERO);
         let older_time = seed_day(&storage, older, status::READY, U256::ZERO);
+        let mut tribute = TributeContract::new(storage.clone());
+        tribute.initialize_fresh_ocomp_profile().unwrap();
+        tribute.seal_day(newer).unwrap();
+        tribute.seal_day(older).unwrap();
         newer_time.max(older_time)
     });
     let scope = begin_empty_scope(&mut provider);
