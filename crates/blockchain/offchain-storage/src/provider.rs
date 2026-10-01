@@ -116,4 +116,27 @@ impl StorageReadSource {
             }
         }
     }
+
+    /// One Tribute day database, opened after `open_session` so it is no older than that
+    /// session's checkpoint. `None` when the backend has no day databases or the day has none.
+    pub fn open_tribute_day_session(
+        &self,
+        day: u32,
+    ) -> Result<Option<StorageReaderHandle>, StorageError> {
+        match &self.config.backend {
+            StorageBackend::MongoDb(_) => Ok(None),
+            StorageBackend::RocksDb(config) => {
+                let path = DayDirectory::open(&config.path)?.tribute_day_path(day);
+                if !path.join("CURRENT").is_file() {
+                    return Ok(None);
+                }
+                Ok(Some(Arc::new(RocksDbReader::open(
+                    &path,
+                    &config
+                        .secondary_path
+                        .join(format!("{}-tribute-day-{day}", self.reader_id)),
+                )?)))
+            }
+        }
+    }
 }
