@@ -494,6 +494,34 @@ mod tests {
         assert!(feeder.validate().is_err(), "source without matching feed");
     }
 
+    /// Live mainnet read; run with `cargo test -p outbe-feeder live_mainnet -- --ignored`.
+    #[tokio::test]
+    #[ignore]
+    async fn live_mainnet_feeds() {
+        let mut cfg = config("https://ethereum-rpc.publicnode.com");
+        cfg.feeds.push(FeedConfig {
+            base: "USDC".into(),
+            quote: "840".into(),
+            aggregator: address!("0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6"),
+            description: "USDC / USD".into(),
+            max_age_secs: 90_000,
+        });
+        let provider = ChainlinkProvider::new(&cfg).unwrap();
+        let pairs = vec![("ETH".into(), "840".into()), ("USDC".into(), "840".into())];
+        let tickers = provider.get_ticker_prices(&pairs).await.unwrap();
+        for key in ["ETH/840", "USDC/840"] {
+            let price = tickers[key].price;
+            eprintln!("{key}: {} FP18", price.raw());
+            assert!(!price.is_zero());
+        }
+        let usdc = tickers["USDC/840"].price.raw();
+        let one = FixedValue::parse("1").unwrap().raw();
+        assert!(
+            usdc.abs_diff(one) < one / U256::from(20u64),
+            "USDC within 5% of 1"
+        );
+    }
+
     #[test]
     fn price_scaling_covers_common_decimals() {
         assert_eq!(
