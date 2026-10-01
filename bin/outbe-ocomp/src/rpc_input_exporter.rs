@@ -196,8 +196,8 @@ impl RpcInputExporterV1 {
             genesis_hash: self.config.genesis_hash,
             start_block: self.config.storage.start_block,
         };
-        // Keep one caught-up secondary view for the checkpoint and the entire
-        // inventory. No read can refresh this session while it is being consumed.
+        // Keep caught-up secondary views of the shared database, then of the pinned
+        // Tribute day. Neither refreshes while it is being consumed.
         let storage = self
             .storage_source
             .open_session()
@@ -214,6 +214,14 @@ impl RpcInputExporterV1 {
                 .input_lease_id()
                 .map_err(|error| stage("derive Tribute retention pin", error))?,
             worldwide_day: WorldwideDay::new(finalized.intent.wwd),
+        };
+        let tribute_source = match self
+            .storage_source
+            .open_tribute_day_session(pin.worldwide_day.value())
+            .map_err(source_open_error)?
+        {
+            Some(day) => tribute_source.with_tribute_day(pin.worldwide_day, day),
+            None => tribute_source,
         };
 
         let checkpoint = expected_input.checkpoint.clone();

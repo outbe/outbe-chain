@@ -45,6 +45,19 @@ impl FinalizedTributeSource {
         })
     }
 
+    /// Reads `day`'s Tribute bodies from its own database; the checkpoint and the
+    /// retained namespaces stay in the shared one.
+    #[must_use]
+    pub fn with_tribute_day(
+        mut self,
+        day: outbe_primitives::time::WorldwideDay,
+        reader: StorageReaderHandle,
+    ) -> Self {
+        self.current = TributeRepositoryReader::new(reader.clone());
+        self.retained = RetainedTributeReader::with_day_reader(self.storage.clone(), day, reader);
+        self
+    }
+
     /// Reads projector progress through the same read-only storage capability
     /// used for body discovery.
     ///

@@ -24,8 +24,8 @@ use outbe_ocomp_protocol::{
     },
 };
 use outbe_offchain_storage::{
-    AtomicWriteBatch, MemoryStorage, StorageConfig, StorageProvider, StorageReaderHandle,
-    StorageWriterHandle,
+    AtomicWriteBatch, DayDatabases, MemoryStorage, StorageConfig, StorageProvider,
+    StorageReaderHandle, StorageWriterHandle,
 };
 use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::{
@@ -121,6 +121,64 @@ fn rocks_input() -> (Vec<AuthenticatedTributeRecord>, TributeStreamSummary) {
             .open_session()
             .unwrap(),
     )
+}
+
+/// The node's day layout: every body sits in its worldwide day's own database, and the
+/// exporter reads that day through a secondary opened after the shared one.
+fn rocks_day_input(
+    open_day: bool,
+) -> Result<(Vec<AuthenticatedTributeRecord>, TributeStreamSummary), String> {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("offchain-storage.toml");
+    std::fs::write(
+        &path,
+        "version=1\nbackend='rocksdb'\n[rocksdb]\npath='primary'\nsecondary_path='secondary'\n",
+    )
+    .unwrap();
+    let provider = StorageProvider::new(StorageConfig::load(&path).unwrap()).unwrap();
+    let storage = provider.open_writer().unwrap();
+    let databases = Arc::new(DayDatabases::open(root.path().join("primary")).unwrap());
+    let repository = TributeRepositoryWriter::with_days(
+        storage.reader.clone(),
+        storage.writer.clone(),
+        databases,
+    );
+    for index in 1..=11_u8 {
+        repository
+            .put(&TributeData {
+                tribute_id: WwdEntityId::from_day_and_digest(pin().worldwide_day, [index; 32]),
+                owner: Address::repeat_byte(index),
+                worldwide_day: pin().worldwide_day,
+                issuance_amount_minor: U256::from(1000),
+                issuance_currency: 840,
+                nominal_amount_minor: U256::from(700),
+                reference_currency: 840,
+                tribute_price_minor: U256::from(2),
+                exclude_from_intex_issuance: false,
+            })
+            .unwrap();
+    }
+    let exporter = StorageProvider::new(StorageConfig::load(&path).unwrap())
+        .unwrap()
+        .read_source("exporter-v1")
+        .unwrap();
+    let mut source = FinalizedTributeSource::new(exporter.open_session().unwrap(), 3).unwrap();
+    if open_day {
+        let day = exporter
+            .open_tribute_day_session(pin().worldwide_day.value())
+            .unwrap()
+            .expect("the pinned day has its own database");
+        source = source.with_tribute_day(pin().worldwide_day, day);
+    }
+    let mut stream = source
+        .reconstruction_stream(pin(), 11, U256::from(7700))
+        .unwrap();
+    let mut records = Vec::new();
+    while let Some(record) = stream.next_record().map_err(|error| error.to_string())? {
+        records.push(record);
+    }
+    let summary = stream.finish().map_err(|error| error.to_string())?;
+    Ok((records, summary))
 }
 
 // This checks actual CAS bytes, including manifest roots and chunk ordering. Chain
@@ -226,6 +284,16 @@ fn rocksdb_secondary_produces_identical_canonical_inputs_and_artifacts_to_memory
     let rocks = rocks_input();
     assert_eq!(artifact_bytes(&rocks.0), artifact_bytes(&expected.0));
     assert_eq!(rocks, expected);
+}
+
+#[test]
+fn rocksdb_day_database_streams_the_same_inputs_as_the_shared_layout() {
+    let memory = Arc::new(MemoryStorage::new());
+    populate(memory.clone(), memory.clone());
+    assert_eq!(rocks_day_input(true).unwrap(), collect(memory));
+    assert!(rocks_day_input(false)
+        .unwrap_err()
+        .contains("Tribute count mismatch: expected 11, got 0"));
 }
 
 #[test]
