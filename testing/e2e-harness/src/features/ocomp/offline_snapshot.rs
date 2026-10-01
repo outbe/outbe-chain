@@ -1700,7 +1700,7 @@ fn observe_stopped_native(
         LOCAL_STORAGE_SCHEMA_VERSION,
     };
     use outbe_offchain_data::{read_projection_state, ProjectionConfig};
-    use outbe_offchain_storage::{RocksDbReader, StorageBackend};
+    use outbe_offchain_storage::{DayDirectory, RocksDbReader, StorageBackend};
     use outbe_primitives::{projection::ProjectionCheckpoint, OutbeHeader, OutbePrimitives};
     use reth_ethereum::provider::db::{
         database::Database,
@@ -1810,7 +1810,10 @@ fn observe_stopped_native(
             genesis_hash,
             start_block: projection.start_block,
         },
-        Arc::new(RocksDbReader::open(&rocks.path, secondary.path())?),
+        Arc::new(RocksDbReader::open(
+            &DayDirectory::inspect(&rocks.path).shared_path(),
+            secondary.path(),
+        )?),
     )?
     .and_then(|state| state.checkpoint)
     .ok_or_else(|| eyre::eyre!("missing placed projection checkpoint"))?;
