@@ -220,7 +220,9 @@ impl RpcInputExporterV1 {
             .open_tribute_day_session(pin.worldwide_day.value())
             .map_err(source_open_error)?
         {
-            Some(day) => tribute_source.with_tribute_day(pin.worldwide_day, day),
+            Some(day) => tribute_source
+                .with_tribute_day(pin, day)
+                .map_err(|error| stage("read Tribute day mark", error))?,
             None => tribute_source,
         };
 

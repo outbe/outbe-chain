@@ -29,8 +29,8 @@ use outbe_offchain_storage::{
 };
 use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::{
-    RetainedTributePin, RetainedTributeReader, TributeData, TributeRepositoryReader,
-    TributeRepositoryWriter,
+    write_tribute_day_mark, RetainedTributePin, RetainedTributeReader, TributeData, TributeDayMark,
+    TributeRepositoryReader, TributeRepositoryWriter,
 };
 
 fn pin() -> RetainedTributePin {
@@ -126,7 +126,7 @@ fn rocks_input() -> (Vec<AuthenticatedTributeRecord>, TributeStreamSummary) {
 /// The node's day layout: every body sits in its worldwide day's own database, and the
 /// exporter reads that day through a secondary opened after the shared one.
 fn rocks_day_input(
-    open_day: bool,
+    mark: Option<TributeDayMark>,
 ) -> Result<(Vec<AuthenticatedTributeRecord>, TributeStreamSummary), String> {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("offchain-storage.toml");
@@ -158,18 +158,19 @@ fn rocks_day_input(
             })
             .unwrap();
     }
+    if let Some(mark) = mark {
+        write_tribute_day_mark(storage.writer.as_ref(), pin().worldwide_day.value(), mark).unwrap();
+    }
     let exporter = StorageProvider::new(StorageConfig::load(&path).unwrap())
         .unwrap()
         .read_source("exporter-v1")
         .unwrap();
-    let mut source = FinalizedTributeSource::new(exporter.open_session().unwrap(), 3).unwrap();
-    if open_day {
-        let day = exporter
-            .open_tribute_day_session(pin().worldwide_day.value())
-            .unwrap()
-            .expect("the pinned day has its own database");
-        source = source.with_tribute_day(pin().worldwide_day, day);
-    }
+    let source = FinalizedTributeSource::new(exporter.open_session().unwrap(), 3).unwrap();
+    let day = exporter
+        .open_tribute_day_session(pin().worldwide_day.value())
+        .unwrap()
+        .expect("the pinned day has its own database");
+    let source = source.with_tribute_day(pin(), day).unwrap();
     let mut stream = source
         .reconstruction_stream(pin(), 11, U256::from(7700))
         .unwrap();
@@ -290,8 +291,12 @@ fn rocksdb_secondary_produces_identical_canonical_inputs_and_artifacts_to_memory
 fn rocksdb_day_database_streams_the_same_inputs_as_the_shared_layout() {
     let memory = Arc::new(MemoryStorage::new());
     populate(memory.clone(), memory.clone());
-    assert_eq!(rocks_day_input(true).unwrap(), collect(memory));
-    assert!(rocks_day_input(false)
+    let expected = collect(memory);
+    assert_eq!(rocks_day_input(None).unwrap(), expected);
+    let own = TributeDayMark::Retained(pin().input_lease_id);
+    assert_eq!(rocks_day_input(Some(own)).unwrap(), expected);
+    let foreign = TributeDayMark::Retained(B256::repeat_byte(72));
+    assert!(rocks_day_input(Some(foreign))
         .unwrap_err()
         .contains("Tribute count mismatch: expected 11, got 0"));
 }

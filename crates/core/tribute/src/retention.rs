@@ -16,7 +16,7 @@ use outbe_compressed_entities::{
 use outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1;
 use outbe_offchain_storage::{
     AtomicWriteBatch, AtomicWriteOperation, DayDatabases, Key, ScanEntry, ScanRequest,
-    StorageReaderHandle, StorageWriterHandle, StoredValue, Value, MAX_SCAN_ENTRIES,
+    StorageReader, StorageReaderHandle, StorageWriterHandle, StoredValue, Value, MAX_SCAN_ENTRIES,
 };
 use outbe_primitives::time::WorldwideDay;
 
@@ -517,7 +517,20 @@ impl RetainedTributeWriter {
     }
 }
 
-/// A live day, or one retained for this pin, keeps its bodies in its own database.
+/// A Tribute day serves `pin` from its own database while it is live or retained for `pin`.
+pub fn day_database_serves(
+    storage: &dyn StorageReader,
+    pin: RetainedTributePin,
+) -> Result<bool, TributeRepositoryError> {
+    Ok(
+        match day_mark::read_tribute_day_mark(storage, pin.worldwide_day.value())? {
+            None => true,
+            Some(TributeDayMark::Retained(lease)) => lease == pin.input_lease_id,
+            Some(_) => false,
+        },
+    )
+}
+
 fn day_database_body(
     reader: &RetainedTributeReader,
     pin: RetainedTributePin,
@@ -527,13 +540,10 @@ fn day_database_body(
     let Some(days) = &reader.days else {
         return Ok(None);
     };
-    let day = pin.worldwide_day.value();
-    match day_mark::read_tribute_day_mark(reader.storage.as_ref(), day)? {
-        None => {}
-        Some(TributeDayMark::Retained(lease)) if lease == pin.input_lease_id => {}
-        Some(_) => return Ok(None),
+    if !day_database_serves(reader.storage.as_ref(), pin)? {
+        return Ok(None);
     }
-    let Some(storage) = days.tribute(day)? else {
+    let Some(storage) = days.tribute(pin.worldwide_day.value())? else {
         return Ok(None);
     };
     let Some(record) =

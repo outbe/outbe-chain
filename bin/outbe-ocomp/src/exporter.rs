@@ -16,8 +16,8 @@ use outbe_offchain_data::{
 };
 use outbe_offchain_storage::{StorageReaderHandle, MAX_SCAN_ENTRIES};
 use outbe_tribute::{
-    RetainedTributeCursor, RetainedTributePin, RetainedTributeReader, RetainedTributeRef,
-    TributeRepositoryError, TributeRepositoryReader,
+    day_database_serves, RetainedTributeCursor, RetainedTributePin, RetainedTributeReader,
+    RetainedTributeRef, TributeRepositoryError, TributeRepositoryReader,
 };
 use thiserror::Error;
 
@@ -45,17 +45,22 @@ impl FinalizedTributeSource {
         })
     }
 
-    /// Reads `day`'s Tribute bodies from its own database; the checkpoint and the
-    /// retained namespaces stay in the shared one.
-    #[must_use]
+    /// Reads `pin`'s day from its own database while that day serves `pin`; the
+    /// checkpoint and the retained namespaces stay in the shared one.
     pub fn with_tribute_day(
         mut self,
-        day: outbe_primitives::time::WorldwideDay,
+        pin: RetainedTributePin,
         reader: StorageReaderHandle,
-    ) -> Self {
-        self.current = TributeRepositoryReader::new(reader.clone());
-        self.retained = RetainedTributeReader::with_day_reader(self.storage.clone(), day, reader);
-        self
+    ) -> Result<Self, FinalizedTributeError> {
+        if day_database_serves(self.storage.as_ref(), pin)? {
+            self.current = TributeRepositoryReader::new(reader.clone());
+            self.retained = RetainedTributeReader::with_day_reader(
+                self.storage.clone(),
+                pin.worldwide_day,
+                reader,
+            );
+        }
+        Ok(self)
     }
 
     /// Reads projector progress through the same read-only storage capability
