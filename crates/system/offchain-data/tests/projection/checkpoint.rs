@@ -54,7 +54,7 @@ fn pre_ocomp_projection_schema_cannot_open_the_retained_namespace_layout() {
     assert!(matches!(
         OffchainDataProjection::open(config(7), storage.clone(), storage),
         Err(ProjectionError::ProjectionSchemaMismatch {
-            expected: 2,
+            expected: 3,
             actual: 1
         })
     ));

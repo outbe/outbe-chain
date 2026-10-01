@@ -566,7 +566,7 @@ pub(in crate::world::ocomp) fn configure_snapshot_exporter_projection(
     cfg: &Config,
     validator_index: usize,
 ) -> Result<()> {
-    crate::world::projection::rocksdb_config(cfg, validator_index)?;
+    crate::world::projection::storage_config(cfg, validator_index)?;
     command.env(
         "OUTBE_OCOMP_STORAGE_CONFIG",
         cfg.projection_storage_config(validator_index),

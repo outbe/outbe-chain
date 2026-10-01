@@ -25,20 +25,36 @@ pub const MAX_ATOMIC_BATCH_BYTES: usize = 64 * 1024 * 1024;
 
 /// A validated collection/keyspace identifier.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct Namespace(Box<str>);
+pub struct Namespace(Box<str>, Option<crate::StorageScope>);
 
 impl Namespace {
     /// Validates a code-defined namespace.
     pub fn new(value: impl Into<Box<str>>) -> Result<Self, StorageError> {
         let value = value.into();
         validate_namespace(&value)?;
-        Ok(Self(value))
+        Ok(Self(value, None))
     }
 
     /// Returns the exact backend namespace name.
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// Attaches a domain-selected route without changing the logical namespace.
+    #[must_use]
+    pub fn with_scope(mut self, scope: crate::StorageScope) -> Self {
+        self.1 = Some(scope);
+        self
+    }
+
+    #[must_use]
+    pub fn scope(&self) -> Option<&crate::StorageScope> {
+        self.1.as_ref()
+    }
+
+    pub(crate) fn logical(&self) -> Self {
+        Self(self.0.clone(), None)
     }
 }
 
@@ -276,6 +292,7 @@ impl AtomicWriteOperation {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AtomicWriteBatch {
     operations: Vec<AtomicWriteOperation>,
+    retired_scopes: Vec<crate::StorageScope>,
 }
 
 impl AtomicWriteBatch {
@@ -284,13 +301,17 @@ impl AtomicWriteBatch {
     pub const fn new() -> Self {
         Self {
             operations: Vec::new(),
+            retired_scopes: Vec::new(),
         }
     }
 
     /// Creates a batch from already validated mutations.
     #[must_use]
     pub const fn from_operations(operations: Vec<AtomicWriteOperation>) -> Self {
-        Self { operations }
+        Self {
+            operations,
+            retired_scopes: Vec::new(),
+        }
     }
 
     /// Appends one mutation, preserving caller order.
@@ -303,6 +324,15 @@ impl AtomicWriteBatch {
         self.operations.extend(operations);
     }
 
+    /// Retires a whole physical partition in the same durable commit.
+    pub fn retire_scope(&mut self, scope: crate::StorageScope) {
+        self.retired_scopes.push(scope);
+    }
+    #[must_use]
+    pub fn retired_scopes(&self) -> &[crate::StorageScope] {
+        &self.retired_scopes
+    }
+
     /// Returns mutations in their application order.
     #[must_use]
     pub fn operations(&self) -> &[AtomicWriteOperation] {
@@ -312,12 +342,20 @@ impl AtomicWriteBatch {
     /// Returns whether the batch has no mutations.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.operations.is_empty()
+        self.operations.is_empty() && self.retired_scopes.is_empty()
     }
 
     /// Validates operation-count and aggregate encoded-size bounds before writing.
     pub fn validate(&self) -> Result<(), StorageError> {
-        if self.operations.len() > MAX_ATOMIC_BATCH_OPERATIONS {
+        for scope in &self.retired_scopes {
+            scope.validate()?;
+        }
+        if self
+            .operations
+            .len()
+            .saturating_add(self.retired_scopes.len())
+            > MAX_ATOMIC_BATCH_OPERATIONS
+        {
             return Err(StorageError::invalid_argument(format!(
                 "atomic batch exceeds {MAX_ATOMIC_BATCH_OPERATIONS} operations"
             )));

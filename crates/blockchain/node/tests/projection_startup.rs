@@ -38,6 +38,7 @@ fn rocksdb_startup_reopens_durable_checkpoint_and_rejects_wrong_chain_or_hash() 
     {
         let storage = StorageProvider::new(config.storage.clone())
             .unwrap()
+            .with_partition_routing(outbe_offchain_data::entity_partition_routing().unwrap())
             .open_writer()
             .unwrap();
         let mut projection = OffchainDataProjection::open(
@@ -117,6 +118,13 @@ fn replica_set_passes_startup_and_persisted_identity_is_validated() {
         })
         .unwrap(),
     );
+    let storage = Arc::new(outbe_offchain_storage::PartitionedStorage::new(
+        Arc::new(
+            outbe_offchain_storage::partitioned::adapters::MongoPartitionDataSource::open(storage)
+                .unwrap(),
+        ),
+        outbe_offchain_data::entity_partition_routing().unwrap(),
+    ));
     let mut projector = OffchainDataProjection::open(
         ProjectionConfig {
             chain_id: first.chain_id,

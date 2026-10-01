@@ -6,8 +6,20 @@ use std::{fs, path::Path, sync::Arc};
 use alloy_primitives::B256;
 use outbe_node::projection::{prepare_offchain_data_projection, OffchainDataProjectionConfig};
 use outbe_offchain_data::{FinalizedBlock, OffchainDataProjection, ProjectionConfig};
-use outbe_offchain_storage::{RocksDbStorage, StorageBackend, StorageConfig};
+use outbe_offchain_storage::{PartitionedStorage, StorageBackend, StorageConfig};
 use outbe_primitives::projection::{ProjectionCheckpoint, ProjectionStatus};
+
+fn partition_fixture(root: &Path) -> Arc<PartitionedStorage> {
+    let source = Arc::new(
+        outbe_offchain_storage::partitioned::adapters::RocksPartitionDataSource::open(root)
+            .unwrap(),
+    );
+    source.complete_recovery().unwrap();
+    Arc::new(PartitionedStorage::new(
+        source,
+        outbe_offchain_data::entity_partition_routing().unwrap(),
+    ))
+}
 
 fn copy_stopped_directory(source: &Path, destination: &Path) {
     fs::create_dir_all(destination).unwrap();
@@ -33,7 +45,7 @@ fn copied_projection_uses_native_checkpoint_and_recipient_configuration_on_each_
     };
     let donor_storage = donor.path().join("projection");
     {
-        let storage = Arc::new(RocksDbStorage::open(&donor_storage).unwrap());
+        let storage = partition_fixture(&donor_storage);
         let mut projection =
             OffchainDataProjection::open(config, storage.clone(), storage).unwrap();
         for height in 1..=3 {
@@ -48,7 +60,7 @@ fn copied_projection_uses_native_checkpoint_and_recipient_configuration_on_each_
     }
     let recipient_storage = recipient.path().join("projection");
     copy_stopped_directory(&donor_storage, &recipient_storage);
-    assert!(recipient_storage.join("CURRENT").is_file());
+    assert!(recipient_storage.join("system/shared/CURRENT").is_file());
     donor.close().unwrap();
     assert!(!donor_storage.exists());
 
@@ -102,7 +114,7 @@ fn copied_projection_uses_native_checkpoint_and_recipient_configuration_on_each_
         assert_eq!(fs::read(&secret).unwrap(), own_key_bytes);
         assert!(!default_secret.exists());
         if height == 3 {
-            let storage = Arc::new(RocksDbStorage::open(&recipient_storage).unwrap());
+            let storage = partition_fixture(&recipient_storage);
             let mut projection =
                 OffchainDataProjection::open(config, storage.clone(), storage).unwrap();
             projection
@@ -482,7 +494,7 @@ mod copied_unequal_ce_projection {
                 .len()
                 > 0
         );
-        assert!(recipient.join("projection/CURRENT").is_file());
+        assert!(recipient.join("projection/system/shared/CURRENT").is_file());
     }
 
     fn assert_pair(root: &Path, headers: &[OutbeHeader], q: u64, p: u64) {

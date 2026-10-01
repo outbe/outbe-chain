@@ -144,6 +144,7 @@ pub struct OffchainDataProjection {
     state: ProjectionState,
     tribute_retention_selector: Option<Arc<dyn TributeRetentionSelector>>,
     day_route: Option<DayDatabaseRoute>,
+    partition_retirement: bool,
 }
 
 impl OffchainDataProjection {
@@ -176,7 +177,13 @@ impl OffchainDataProjection {
             state,
             tribute_retention_selector: None,
             day_route: None,
+            partition_retirement: false,
         })
+    }
+
+    /// Uses datasource-neutral physical partition retirement in finalized batches.
+    pub fn enable_partition_retirement(&mut self) {
+        self.partition_retirement = true;
     }
 
     /// Routes Tribute and Nod bodies into one database per worldwide day.
@@ -253,6 +260,20 @@ impl OffchainDataProjection {
                 day_lifecycle::finish_retirements(route, &prepared.day_retirements, shared, state)?
             }
             None => {
+                if self.partition_retirement {
+                    for retirement in &prepared.day_retirements {
+                        let (day, mark) = match retirement {
+                            DayRetirement::Drop(day) => {
+                                (*day, outbe_tribute::TributeDayMark::Retired)
+                            }
+                            DayRetirement::Retain { day, lease } => {
+                                (*day, outbe_tribute::TributeDayMark::Retained(*lease))
+                            }
+                        };
+                        block_batch.push(outbe_tribute::tribute_day_mark_operation(day, mark)?);
+                        block_batch.retire_scope(outbe_tribute::partitioning::day_scope(day)?);
+                    }
+                }
                 block_batch.extend(state.operations().iter().cloned());
                 block_batch.validate()?;
                 block_batch
@@ -410,4 +431,18 @@ pub enum ProjectionError {
     },
     #[error("tribute {tribute_id} changes after its worldwide day was retired in the same block")]
     TributeStoredAfterDayRetirement { tribute_id: WwdEntityId },
+}
+
+/// Composition of domain-owned entity routing, shared by node and exporters.
+pub fn entity_partition_routing() -> Result<
+    std::sync::Arc<dyn outbe_offchain_storage::PartitionRouting>,
+    outbe_offchain_storage::StorageError,
+> {
+    use outbe_offchain_storage::partitioned::routing::{RoutingRegistry, SharedRouting};
+    let mut registry = RoutingRegistry::new(std::sync::Arc::new(SharedRouting(
+        outbe_offchain_storage::StorageScope::shared("system")?,
+    )));
+    outbe_nod::partitioning::register(&mut registry)?;
+    outbe_tribute::partitioning::register(&mut registry)?;
+    Ok(std::sync::Arc::new(registry))
 }

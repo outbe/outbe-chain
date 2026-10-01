@@ -7,7 +7,7 @@ Feature: RocksDB storage through the complete OCOMP path
   # no equivalent here: disk I/O failure and full-disk faults are not exercised
   # by process restart and are separate operational fault coverage.
 
-  Scenario: RocksDB supports Tribute, OCOMP, FullNode proofs, and durable restart
+  Scenario: The configured datasource supports Tribute, OCOMP, FullNode proofs, and durable restart
     Given a fresh four-validator Metadosis capacity localnet at FORMING
     Then the fresh capacity day is created in FORMING by finalized block 1
     And the controlled COEN USD quote is finalized through the real price feeder

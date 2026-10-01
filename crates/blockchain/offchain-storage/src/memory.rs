@@ -19,6 +19,14 @@ impl MemoryStorage {
     pub fn new() -> Self {
         Self::default()
     }
+
+    pub(crate) fn namespace_names(&self) -> Vec<String> {
+        self.records
+            .read()
+            .keys()
+            .map(|namespace| namespace.as_str().to_owned())
+            .collect()
+    }
 }
 
 impl StorageReader for MemoryStorage {
@@ -30,7 +38,7 @@ impl StorageReader for MemoryStorage {
         Ok(self
             .records
             .read()
-            .get(&namespace)
+            .get(&namespace.logical())
             .and_then(|records| records.get(key))
             .cloned())
     }
@@ -41,7 +49,7 @@ impl StorageReader for MemoryStorage {
         keys: &[Key],
     ) -> Result<Vec<Option<StoredValue>>, StorageError> {
         let records = self.records.read();
-        let namespace_records = records.get(&namespace);
+        let namespace_records = records.get(&namespace.logical());
         Ok(keys
             .iter()
             .map(|key| {
@@ -59,7 +67,7 @@ impl StorageReader for MemoryStorage {
     ) -> Result<ScanPage, StorageError> {
         request.validate()?;
         let records = self.records.read();
-        let Some(records) = records.get(&namespace) else {
+        let Some(records) = records.get(&namespace.logical()) else {
             return Ok(ScanPage::default());
         };
 
@@ -121,7 +129,19 @@ impl StorageReader for MemoryStorage {
 
 impl StorageWriter for MemoryStorage {
     fn apply_atomic(&self, batch: &AtomicWriteBatch) -> Result<(), StorageError> {
+        self.apply_atomic_clearing(batch, &[])
+    }
+    fn apply_atomic_clearing(
+        &self,
+        batch: &AtomicWriteBatch,
+        namespaces: &[Namespace],
+    ) -> Result<(), StorageError> {
         batch.validate()?;
+        if !batch.retired_scopes().is_empty() {
+            return Err(StorageError::InvalidArgument(
+                "raw memory requires a partition adapter for scope retirement".into(),
+            ));
+        }
         let mut records = self.records.write();
         for operation in batch.operations() {
             match operation {
@@ -131,16 +151,19 @@ impl StorageWriter for MemoryStorage {
                     record,
                 } => {
                     records
-                        .entry(namespace.clone())
+                        .entry(namespace.logical())
                         .or_default()
                         .insert(key.clone(), record.clone());
                 }
                 AtomicWriteOperation::Delete { namespace, key } => {
-                    if let Some(namespace_records) = records.get_mut(namespace) {
+                    if let Some(namespace_records) = records.get_mut(&namespace.logical()) {
                         namespace_records.remove(key);
                     }
                 }
             }
+        }
+        for namespace in namespaces {
+            records.remove(&namespace.logical());
         }
         Ok(())
     }

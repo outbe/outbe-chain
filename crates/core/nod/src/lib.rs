@@ -6,6 +6,7 @@ pub mod errors;
 pub mod hooks;
 mod metadata;
 pub mod openings;
+pub mod partitioning;
 pub mod precompile;
 pub mod projection;
 mod repository;

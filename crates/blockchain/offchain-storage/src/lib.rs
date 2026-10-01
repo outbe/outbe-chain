@@ -5,6 +5,7 @@ mod day_databases;
 mod day_directory;
 mod memory;
 mod mongo;
+pub mod partitioned;
 mod pending;
 mod provider;
 mod rocks;
@@ -16,6 +17,11 @@ pub use day_databases::DayDatabases;
 pub use day_directory::DayDirectory;
 pub use memory::MemoryStorage;
 pub use mongo::{MongoStorage, MongoStorageConfig, MongoWriterLease};
+pub use partitioned::{
+    OwnerModuloPartition, PartitionContext, PartitionDataSource, PartitionId, PartitionReadSource,
+    PartitionRouting, PartitionStrategy, PartitionedBatch, PartitionedStorage, ReadLocation,
+    SharedPartition, StorageScope, WorldwideDayPartition,
+};
 pub use pending::PendingOverlayStorage;
 pub use provider::{OpenedStorage, StorageOwnershipGuard, StorageProvider, StorageReadSource};
 pub use rocks::{RocksDbCloseWaiter, RocksDbReader, RocksDbStorage};
@@ -37,6 +43,15 @@ pub trait StorageReader: Send + Sync {
         namespace: Namespace,
         key: &Key,
     ) -> Result<Option<StoredValue>, StorageError>;
+
+    /// Logical routing introspection for overlays; raw adapters may have no scope.
+    fn storage_scope(
+        &self,
+        namespace: &Namespace,
+        _key: &Key,
+    ) -> Result<Option<StorageScope>, StorageError> {
+        Ok(namespace.scope().cloned())
+    }
 
     /// Returns only the stored value, intentionally discarding metadata.
     fn get(&self, namespace: Namespace, key: &Key) -> Result<Option<Value>, StorageError> {
@@ -86,6 +101,20 @@ pub trait StorageWriter: Send + Sync {
         self.apply_atomic(&AtomicWriteBatch::from_operations(vec![
             AtomicWriteOperation::delete(namespace, key.clone()),
         ]))
+    }
+
+    /// Transactional collection adapters can remove whole keyspaces without row scans.
+    fn apply_atomic_clearing(
+        &self,
+        batch: &AtomicWriteBatch,
+        namespaces: &[Namespace],
+    ) -> Result<(), StorageError> {
+        if !namespaces.is_empty() {
+            return Err(StorageError::InvalidArgument(
+                "adapter cannot clear namespaces transactionally".into(),
+            ));
+        }
+        self.apply_atomic(batch)
     }
 
     /// Applies every ordered mutation atomically or leaves the adapter unchanged.

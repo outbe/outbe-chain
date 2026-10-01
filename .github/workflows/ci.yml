@@ -47,6 +47,12 @@ jobs:
       image: ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Verify changed Rust module decomposition
+        env:
+          CHANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 scripts/check-rust-file-size.py
       # No `rustup component add rustfmt` and no mise install: the image already
       # carries the pinned toolchain with rustfmt, and the mise tool set.
       - name: Verify vendored CKB SMT provenance and panic safety

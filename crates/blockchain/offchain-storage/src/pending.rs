@@ -24,6 +24,7 @@ struct VersionedPendingRecord {
 struct PendingState {
     generation: u64,
     records: BTreeMap<Namespace, BTreeMap<Key, VersionedPendingRecord>>,
+    retired: BTreeMap<crate::StorageScope, u64>,
 }
 
 /// Process-local finalized mutations layered over the durable MongoDB projection.
@@ -41,6 +42,13 @@ impl PendingOverlayStorage {
         }
     }
 
+    fn is_retired(&self, namespace: &Namespace, key: &Key) -> Result<bool, StorageError> {
+        if self.state.read().retired.is_empty() {
+            return Ok(false);
+        }
+        let scope = self.base.storage_scope(namespace, key)?;
+        Ok(scope.is_some_and(|scope| self.state.read().retired.contains_key(&scope)))
+    }
     /// Returns the generation assigned to the latest applied pending batch.
     #[must_use]
     pub fn current_generation(&self) -> u64 {
@@ -50,6 +58,7 @@ impl PendingOverlayStorage {
     /// Retires mutations that are now covered by a durable MongoDB acknowledgement.
     pub fn acknowledge(&self, generation: u64) {
         let mut state = self.state.write();
+        state.retired.retain(|_, retired| *retired > generation);
         state.records.retain(|_, records| {
             records.retain(|_, record| record.generation > generation);
             !records.is_empty()
@@ -58,16 +67,27 @@ impl PendingOverlayStorage {
 }
 
 impl StorageReader for PendingOverlayStorage {
+    fn storage_scope(
+        &self,
+        namespace: &Namespace,
+        key: &Key,
+    ) -> Result<Option<crate::StorageScope>, StorageError> {
+        self.base.storage_scope(namespace, key)
+    }
+
     fn get_record(
         &self,
         namespace: Namespace,
         key: &Key,
     ) -> Result<Option<StoredValue>, StorageError> {
+        if self.is_retired(&namespace, key)? {
+            return Ok(None);
+        }
         match self
             .state
             .read()
             .records
-            .get(&namespace)
+            .get(&namespace.logical())
             .and_then(|records| records.get(key))
             .cloned()
         {
@@ -106,7 +126,7 @@ impl StorageReader for PendingOverlayStorage {
             .state
             .read()
             .records
-            .get(&namespace)
+            .get(&namespace.logical())
             .map(|records| {
                 records
                     .iter()
@@ -177,6 +197,9 @@ impl StorageReader for PendingOverlayStorage {
             let Some(candidate) = candidate else {
                 continue;
             };
+            if self.is_retired(&namespace, &candidate.key)? {
+                continue;
+            }
             let candidate_bytes = candidate.value.as_bytes().len()
                 + candidate
                     .metadata
@@ -237,6 +260,9 @@ impl StorageWriter for PendingOverlayStorage {
             .checked_add(1)
             .ok_or_else(|| StorageError::Corruption("pending generation overflow".to_owned()))?;
         state.generation = generation;
+        for scope in batch.retired_scopes() {
+            state.retired.insert(scope.clone(), generation);
+        }
         for operation in batch.operations() {
             match operation {
                 AtomicWriteOperation::Put {
@@ -244,22 +270,30 @@ impl StorageWriter for PendingOverlayStorage {
                     key,
                     record,
                 } => {
-                    state.records.entry(namespace.clone()).or_default().insert(
-                        key.clone(),
-                        VersionedPendingRecord {
-                            generation,
-                            record: PendingRecord::Put(record.clone()),
-                        },
-                    );
+                    state
+                        .records
+                        .entry(namespace.logical())
+                        .or_default()
+                        .insert(
+                            key.clone(),
+                            VersionedPendingRecord {
+                                generation,
+                                record: PendingRecord::Put(record.clone()),
+                            },
+                        );
                 }
                 AtomicWriteOperation::Delete { namespace, key } => {
-                    state.records.entry(namespace.clone()).or_default().insert(
-                        key.clone(),
-                        VersionedPendingRecord {
-                            generation,
-                            record: PendingRecord::Delete,
-                        },
-                    );
+                    state
+                        .records
+                        .entry(namespace.logical())
+                        .or_default()
+                        .insert(
+                            key.clone(),
+                            VersionedPendingRecord {
+                                generation,
+                                record: PendingRecord::Delete,
+                            },
+                        );
                 }
             }
         }

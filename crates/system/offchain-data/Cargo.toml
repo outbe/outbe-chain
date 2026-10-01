@@ -19,6 +19,7 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 
 [dev-dependencies]
+mongodb.workspace = true
 tempfile.workspace = true
 
 [lints]
