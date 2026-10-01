@@ -134,7 +134,11 @@ impl RocksPartitionDataSource {
     }
     pub(super) fn clear_journal(&self) -> Result<(), StorageError> {
         let path = self.journal_path();
-        std::fs::remove_file(&path).map_err(StorageError::unavailable)?;
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(StorageError::unavailable(error)),
+        }
         File::open(path.parent().expect("journal parent"))
             .and_then(|file| file.sync_all())
             .map_err(StorageError::unavailable)

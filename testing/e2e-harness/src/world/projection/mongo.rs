@@ -177,6 +177,7 @@ mod tests {
                 let opened = StorageProvider::new(super::super::storage_config(&cfg, 0)?)?
                     .with_partition_routing(outbe_offchain_data::entity_partition_routing()?)
                     .open_writer()?;
+                opened.ownership.activate()?;
                 opened.writer.put(
                     Namespace::new("fixture")?,
                     &Key::new([1])?,
@@ -219,10 +220,14 @@ mod tests {
                 .with_partition_routing(outbe_offchain_data::entity_partition_routing().unwrap())
                 .open_writer()
                 .unwrap();
+            opened.ownership.activate().unwrap();
+            let completion = opened.ownership.completion();
             opened
                 .writer
                 .put(ns.clone(), &key, &Value::new([7]).unwrap())
                 .unwrap();
+            drop(opened);
+            completion.wait_timeout(Duration::from_secs(5)).unwrap();
         }
         stop(&cfg);
         super::super::ensure_node_config(&cfg, 0).unwrap();

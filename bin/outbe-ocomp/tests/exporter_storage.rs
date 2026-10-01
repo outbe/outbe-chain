@@ -111,7 +111,13 @@ fn rocks_input() -> (Vec<AuthenticatedTributeRecord>, TributeStreamSummary) {
         .with_partition_routing(outbe_offchain_data::entity_partition_routing().unwrap());
     {
         let storage = provider.open_writer().unwrap();
+        storage.ownership.activate().unwrap();
+        let completion = storage.ownership.completion();
         populate(storage.reader.clone(), storage.writer.clone());
+        drop(storage);
+        completion
+            .wait_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
     }
     // Node reopens its writer; the exporter independently loads the same TOML.
     let _primary = provider.open_writer().unwrap();
@@ -251,6 +257,7 @@ fn mongodb_toml_provider_produces_identical_canonical_inputs_and_artifacts_to_ro
         .unwrap()
         .with_partition_routing(outbe_offchain_data::entity_partition_routing().unwrap());
     let storage = provider.open_writer().unwrap();
+    storage.ownership.activate().unwrap();
     populate(storage.reader.clone(), storage.writer.clone());
     let exporter = StorageProvider::new(StorageConfig::load(&path).unwrap())
         .unwrap()

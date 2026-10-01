@@ -39,6 +39,8 @@ partition and a checksummed prepared journal under `system/shared/`. It applies 
 retirements and finally the checkpoint. Startup presents prepared mutations as an immutable
 inspection view; chain identity and canonical checkpoint validation precede replay and readiness.
 Read-only sessions refuse an unfinished journal and never initialize missing partitions.
+Writer handles share ownership and remain inactive until validated activation; scoped bootstrap
+authority and acknowledged teardown are described in [SESSION_LIFECYCLE.md](SESSION_LIFECYCLE.md).
 
 Tribute WWD retirement is a batch effect. Without a retention pin it does not enumerate bodies.
 RocksDB removes the selected directory; MongoDB clears only that scope's collections inside the

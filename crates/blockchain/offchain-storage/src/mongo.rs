@@ -1,3 +1,4 @@
+pub(crate) mod lifecycle;
 use std::{
     fmt,
     sync::{
@@ -91,6 +92,7 @@ pub struct MongoWriterLease {
     lost: Arc<AtomicBool>,
     stop: Option<mpsc::Sender<()>>,
     renewer: Option<JoinHandle<()>>,
+    released: bool,
 }
 
 impl fmt::Debug for MongoStorage {
@@ -272,12 +274,16 @@ impl MongoStorage {
             lost,
             stop: Some(stop_tx),
             renewer: Some(renewer),
+            released: false,
         })
     }
 }
 
 impl Drop for MongoWriterLease {
     fn drop(&mut self) {
+        if self.released {
+            return;
+        }
         if let Some(stop) = self.stop.take() {
             let _ = stop.send(());
         }
@@ -383,10 +389,12 @@ fn renew_writer_lease(database: &Database, owner: &str) -> Result<bool, StorageE
         .map_err(map_operation_error)
 }
 
-fn release_writer_lease(database: &Database, owner: &str) {
-    let _ = writer_lease_collection(database)
+fn release_writer_lease(database: &Database, owner: &str) -> Result<(), StorageError> {
+    writer_lease_collection(database)
         .delete_one(doc! { "_id": WRITER_LEASE_ID, "owner": owner })
-        .run();
+        .run()
+        .map(|_| ())
+        .map_err(map_operation_error)
 }
 
 fn release_writer_lease_detached(database: Database, owner: String) {

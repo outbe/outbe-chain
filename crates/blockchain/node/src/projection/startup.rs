@@ -24,6 +24,7 @@ use tracing::info;
 pub(super) fn prepare_projection_attempt(
     config: &OffchainDataProjectionConfig,
     selector: Option<Arc<dyn TributeRetentionSelector>>,
+    observe_completion: Option<super::StorageCompletionObserver>,
 ) -> Result<
     (
         OpenedStorage,
@@ -44,23 +45,29 @@ pub(super) fn prepare_projection_attempt(
         })
         .and_then(|provider| provider.open_writer())
         .map_err(PrepareProjectionError::Storage)?;
-    let reader = storage.reader.clone();
-    match selector.as_ref() {
-        Some(selector) => OffchainDataProjection::open_with_retention_selector(
-            projection_config,
-            reader.clone(),
-            storage.writer.clone(),
-            Arc::clone(selector),
-        ),
-        None => {
-            OffchainDataProjection::open(projection_config, reader.clone(), storage.writer.clone())
-        }
+    // Register ownership before preflight can fail, including retry attempts.
+    if let Some(observe) = observe_completion {
+        observe(storage.ownership.completion());
     }
-    .map_err(PrepareProjectionError::Projection)?;
+    let reader = storage.reader.clone();
     storage
-        .writer
-        .verify_transaction_capability()
-        .map_err(PrepareProjectionError::Storage)?;
+        .ownership
+        .preflight(|reader, writer| {
+            match selector.as_ref() {
+                Some(selector) => OffchainDataProjection::open_with_retention_selector(
+                    projection_config,
+                    reader,
+                    writer.clone(),
+                    Arc::clone(selector),
+                ),
+                None => OffchainDataProjection::open(projection_config, reader, writer.clone()),
+            }
+            .map_err(PrepareProjectionError::Projection)?;
+            writer
+                .verify_transaction_capability()
+                .map_err(PrepareProjectionError::Storage)
+        })
+        .map_err(PrepareProjectionError::Storage)??;
     gauge!("outbe_projection_storage_write_capable", "backend" => config.storage.backend_name())
         .set(1.0);
     info!(
@@ -127,17 +134,21 @@ where
             .wrap_err("read canonical Reth hash for offchain-data checkpoint validation")?
         {
             Some(canonical_hash) if canonical_hash == checkpoint.block_hash => {}
-            Some(canonical_hash) => return Err(eyre::eyre!(
-                "offchain-data offchain storage checkpoint identity mismatch at block {}: stored {}, canonical {}",
+            Some(canonical_hash) => {
+                return Err(eyre::eyre!(
+                "offchain-data checkpoint identity mismatch at block {}: stored {}, canonical {}",
                 checkpoint.block_number,
                 checkpoint.block_hash,
                 canonical_hash
-            )),
-            None => return Err(eyre::eyre!(
-                "canonical block {} for Mongo checkpoint {} is unavailable locally",
-                checkpoint.block_number,
-                checkpoint.block_hash
-            )),
+            ))
+            }
+            None => {
+                return Err(eyre::eyre!(
+                    "canonical block {} for offchain storage checkpoint {} is unavailable locally",
+                    checkpoint.block_number,
+                    checkpoint.block_hash
+                ))
+            }
         }
         if reconciled.is_some_and(|target| checkpoint.block_number == target.number) {
             (ProjectionStatus::Ready { checkpoint }, local_finalized)
@@ -165,7 +176,7 @@ where
         (status, target)
     };
     writer_lease
-        .complete_recovery()
+        .activate()
         .wrap_err("complete validated offchain partition recovery")?;
     publish_status(&readiness_publisher, status, target);
     let projection_state = projector.state();
@@ -203,7 +214,7 @@ pub(super) fn require_finalized_checkpoint(
         && checkpoint.block_hash != local_finalized.hash
     {
         bail!(
-            "offchain-data offchain storage checkpoint {} ({}) does not match local Reth finalized {} ({})",
+            "offchain-data checkpoint {} ({}) does not match local Reth finalized {} ({})",
             checkpoint.block_number,
             checkpoint.block_hash,
             local_finalized.number,

@@ -1,4 +1,5 @@
 //! Durable primary and immutable-per-session secondary RocksDB capabilities.
+pub(crate) mod lifecycle;
 
 use std::{
     fs::{File, OpenOptions},

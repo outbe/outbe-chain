@@ -7,52 +7,9 @@ use crate::partitioned::{PartitionRouting, PartitionedStorage};
 use std::sync::Arc;
 
 use crate::{
-    DayDirectory, MongoStorage, MongoWriterLease, RocksDbCloseWaiter, RocksDbReader,
-    RocksDbStorage, StorageBackend, StorageConfig, StorageError, StorageReaderHandle,
-    StorageWriterHandle,
+    DayDirectory, MongoStorage, OpenedStorage, RocksDbReader, RocksDbStorage, StorageBackend,
+    StorageConfig, StorageError, StorageReaderHandle, StorageWriterHandle,
 };
-
-/// Keeps the writer's backend-specific ownership alive through node shutdown.
-pub struct StorageOwnershipGuard {
-    _inner: Ownership,
-}
-
-impl StorageOwnershipGuard {
-    /// Replay a prepared commit after chain/checkpoint validation by the caller.
-    pub fn complete_recovery(&self) -> Result<(), StorageError> {
-        match &self._inner {
-            Ownership::PartitionedRocks { _source } => _source.complete_recovery(),
-            _ => Ok(()),
-        }
-    }
-    /// A native close barrier exists only for the process-owned RocksDB writer.
-    pub fn rocksdb_close_waiter(&self) -> Option<RocksDbCloseWaiter> {
-        match &self._inner {
-            Ownership::Mongo { .. } => None,
-            Ownership::Rocks { _storage } => Some(_storage.close_waiter()),
-            Ownership::PartitionedRocks { _source } => Some(_source.close_waiter()),
-        }
-    }
-}
-
-enum Ownership {
-    Mongo {
-        _lease: MongoWriterLease,
-    },
-    Rocks {
-        _storage: Arc<RocksDbStorage>,
-    },
-    PartitionedRocks {
-        _source: Arc<RocksPartitionDataSource>,
-    },
-}
-
-/// One writer and its read capability, referring to the same physical database.
-pub struct OpenedStorage {
-    pub reader: StorageReaderHandle,
-    pub writer: StorageWriterHandle,
-    pub ownership: StorageOwnershipGuard,
-}
 
 /// Opens capabilities for the configured storage implementation.
 #[derive(Clone)]
@@ -81,7 +38,7 @@ impl StorageProvider {
             StorageBackend::MongoDb(config) => {
                 let storage = Arc::new(MongoStorage::connect(config.clone())?);
                 storage.verify_transaction_support()?;
-                let lease = storage.acquire_writer_lease()?;
+                let lease_storage = storage.clone();
                 let (reader, writer): (StorageReaderHandle, StorageWriterHandle) = match &self
                     .routing
                 {
@@ -92,36 +49,33 @@ impl StorageProvider {
                     }
                     None => (storage.clone(), storage),
                 };
-                Ok(OpenedStorage {
+                // Routing/layout inspection must succeed before acquiring writer ownership.
+                // Keep a storage capability for the lease even in the flat branch.
+                let lease = lease_storage.acquire_writer_lease()?;
+                Ok(OpenedStorage::new(
                     reader,
                     writer,
-                    ownership: StorageOwnershipGuard {
-                        _inner: Ownership::Mongo { _lease: lease },
-                    },
-                })
+                    Box::new(crate::mongo::lifecycle::MongoLifecycle(Some(lease))),
+                ))
             }
             StorageBackend::RocksDb(config) => {
                 if let Some(routing) = &self.routing {
                     let source = Arc::new(RocksPartitionDataSource::open(&config.path)?);
                     let logical =
                         Arc::new(PartitionedStorage::new(source.clone(), routing.clone()));
-                    return Ok(OpenedStorage {
-                        reader: logical.clone(),
-                        writer: logical,
-                        ownership: StorageOwnershipGuard {
-                            _inner: Ownership::PartitionedRocks { _source: source },
-                        },
-                    });
+                    return Ok(OpenedStorage::new(
+                        logical.clone(),
+                        logical,
+                        source.lifecycle(),
+                    ));
                 }
                 let directory = DayDirectory::open(&config.path)?;
                 let storage = Arc::new(RocksDbStorage::open(directory.shared_path())?);
-                Ok(OpenedStorage {
-                    reader: storage.clone(),
-                    writer: storage.clone(),
-                    ownership: StorageOwnershipGuard {
-                        _inner: Ownership::Rocks { _storage: storage },
-                    },
-                })
+                Ok(OpenedStorage::new(
+                    storage.clone(),
+                    storage.clone(),
+                    Box::new(crate::rocks::lifecycle::RocksLifecycle::new(storage)),
+                ))
             }
         }
     }

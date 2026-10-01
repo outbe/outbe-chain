@@ -676,6 +676,7 @@ mod tests {
             .with_partition_routing(outbe_offchain_data::entity_partition_routing().unwrap())
             .open_writer()
             .unwrap();
+        writer.ownership.activate().unwrap();
         let ns = Namespace::new("fixture").unwrap();
         let key = Key::new([1]).unwrap();
         writer

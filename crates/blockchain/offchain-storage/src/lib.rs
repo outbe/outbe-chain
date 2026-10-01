@@ -10,6 +10,7 @@ mod pending;
 mod provider;
 mod rocks;
 mod rocks_codec;
+mod session;
 mod types;
 
 pub use config::{RocksDbConfig, StorageBackend, StorageConfig};
@@ -23,8 +24,11 @@ pub use partitioned::{
     SharedPartition, StorageScope, WorldwideDayPartition,
 };
 pub use pending::PendingOverlayStorage;
-pub use provider::{OpenedStorage, StorageOwnershipGuard, StorageProvider, StorageReadSource};
+pub use provider::{StorageProvider, StorageReadSource};
 pub use rocks::{RocksDbCloseWaiter, RocksDbReader, RocksDbStorage};
+pub use session::{
+    OpenedStorage, StorageCloseError, StorageCompletion, StorageLifecycle, StorageOwnershipGuard,
+};
 pub use types::{
     AtomicWriteBatch, AtomicWriteOperation, Key, Namespace, ScanEntry, ScanPage, ScanRequest,
     StorageError, StorageErrorKind, StorageMetadata, StoredValue, Value, MAX_ATOMIC_BATCH_BYTES,

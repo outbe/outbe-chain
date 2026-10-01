@@ -2,6 +2,7 @@
 
 mod journal;
 mod layout;
+pub(crate) mod lifecycle;
 mod read_view;
 
 use super::super::{
@@ -25,6 +26,7 @@ use std::{
 pub struct RocksPartitionDataSource {
     root: PathBuf,
     handles: Mutex<BTreeMap<StorageScope, Arc<RocksDbStorage>>>,
+    close_waiters: Arc<Mutex<Vec<RocksDbCloseWaiter>>>,
     commit_gate: Mutex<()>,
     pending: Mutex<Option<PartitionedBatch>>,
     validation_pending: AtomicBool,
@@ -36,13 +38,16 @@ impl RocksPartitionDataSource {
         layout::reject_legacy(root)?;
         let path = root.join("system/shared");
         std::fs::create_dir_all(&path).map_err(StorageError::unavailable)?;
+        let system = Arc::new(RocksDbStorage::open(path)?);
+        let close_waiters = Arc::new(Mutex::new(vec![system.close_waiter()]));
         let source = Self {
             root: root.to_owned(),
             handles: Mutex::new(BTreeMap::new()),
             commit_gate: Mutex::new(()),
             pending: Mutex::new(None),
             validation_pending: AtomicBool::new(false),
-            system: Arc::new(RocksDbStorage::open(path)?),
+            system,
+            close_waiters,
         };
         let pending = source.load_journal()?;
         source
@@ -63,6 +68,9 @@ impl RocksPartitionDataSource {
         self.validation_pending.store(false, Ordering::Release);
         Ok(())
     }
+    pub fn lifecycle(self: &Arc<Self>) -> Box<dyn crate::StorageLifecycle> {
+        Box::new(lifecycle::RocksPartitionLifecycle::new(self.clone()))
+    }
     pub fn close_waiter(&self) -> RocksDbCloseWaiter {
         self.system.close_waiter()
     }
@@ -77,6 +85,9 @@ impl RocksPartitionDataSource {
         let path = self.root.join(layout::relative_path(scope));
         std::fs::create_dir_all(&path).map_err(StorageError::unavailable)?;
         let storage = Arc::new(RocksDbStorage::open(path)?);
+        let mut waiters = self.close_waiters.lock();
+        waiters.retain(|waiter| !waiter.wait_timeout(std::time::Duration::ZERO));
+        waiters.push(storage.close_waiter());
         handles.insert(scope.clone(), storage.clone());
         Ok(storage)
     }

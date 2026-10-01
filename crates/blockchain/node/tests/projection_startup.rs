@@ -41,6 +41,8 @@ fn rocksdb_startup_reopens_durable_checkpoint_and_rejects_wrong_chain_or_hash() 
             .with_partition_routing(outbe_offchain_data::entity_partition_routing().unwrap())
             .open_writer()
             .unwrap();
+        storage.ownership.activate().unwrap();
+        let completion = storage.ownership.completion();
         let mut projection = OffchainDataProjection::open(
             ProjectionConfig {
                 chain_id: config.chain_id,
@@ -58,6 +60,9 @@ fn rocksdb_startup_reopens_durable_checkpoint_and_rejects_wrong_chain_or_hash() 
                 receipts: vec![],
             })
             .unwrap();
+        drop(projection);
+        drop(storage);
+        completion.wait_timeout(Duration::from_secs(5)).unwrap();
     }
     for _ in 0..2 {
         let prepared = prepare_offchain_data_projection(config.clone()).unwrap();
@@ -308,6 +313,7 @@ fn rocksdb_secondary_checkpoint_is_frozen_and_next_session_catches_up() {
     })
     .unwrap();
     let storage = provider.open_writer().unwrap();
+    storage.ownership.activate().unwrap();
     let config = ProjectionConfig {
         chain_id: DEVNET_CHAIN_ID,
         genesis_hash: B256::repeat_byte(0x11),
@@ -376,4 +382,150 @@ fn rocksdb_secondary_checkpoint_is_frozen_and_next_session_catches_up() {
             .block_number,
         3
     );
+}
+
+#[test]
+fn canonical_rejection_preserves_prepared_journal_until_validated_activation() {
+    use outbe_offchain_storage::{
+        partitioned::{adapters::RocksPartitionDataSource, PartitionedOperation},
+        AtomicWriteOperation, Key, MemoryStorage, Namespace, PartitionDataSource, PartitionedBatch,
+        RocksDbConfig, StorageBackend, StorageConfig, StorageProvider, StorageReader, StorageScope,
+        Value,
+    };
+    let root = tempfile::tempdir().unwrap();
+    let config = OffchainDataProjectionConfig {
+        chain_id: DEVNET_CHAIN_ID,
+        genesis_hash: B256::repeat_byte(0x11),
+        storage: StorageConfig {
+            start_block: 1,
+            backend: StorageBackend::RocksDb(RocksDbConfig {
+                path: root.path().join("primary"),
+                secondary_path: root.path().join("secondary"),
+            }),
+        },
+    };
+    let canonical = MockEthProvider::new();
+    let hash = add_empty_block(&canonical, 1, 1);
+    let canonical = FinalizedMockProvider::new(canonical, BlockNumHash::new(1, hash));
+    let projection_config = ProjectionConfig {
+        chain_id: config.chain_id,
+        genesis_hash: config.genesis_hash,
+        start_block: 1,
+    };
+    let memory = Arc::new(MemoryStorage::new());
+    let mut projector =
+        OffchainDataProjection::open(projection_config, memory.clone(), memory.clone()).unwrap();
+    projector
+        .project_block(&FinalizedBlock {
+            number: 1,
+            hash,
+            receipts: vec![],
+        })
+        .unwrap();
+    let namespace = Namespace::new("projection_state").unwrap();
+    let key = Key::new(b"offchain_data".to_vec()).unwrap();
+    let record = memory.get_record(namespace.clone(), &key).unwrap().unwrap();
+    let StorageBackend::RocksDb(rocks) = &config.storage.backend else {
+        unreachable!()
+    };
+    {
+        let source = RocksPartitionDataSource::open(&rocks.path).unwrap();
+        std::fs::write(
+            rocks.path.join("nod"),
+            b"interrupt before the checkpoint commit",
+        )
+        .unwrap();
+        let result = source.commit(&PartitionedBatch {
+            operations: vec![
+                PartitionedOperation {
+                    scope: StorageScope::numbered("nod", "owners", 7).unwrap(),
+                    operation: AtomicWriteOperation::put(
+                        Namespace::new("fixture").unwrap(),
+                        Key::new([1]).unwrap(),
+                        Value::new([7]).unwrap(),
+                    ),
+                },
+                PartitionedOperation {
+                    scope: StorageScope::shared("system").unwrap(),
+                    operation: AtomicWriteOperation::put_record(namespace, key, record),
+                },
+            ],
+            ..Default::default()
+        });
+        assert!(result.is_err());
+        std::fs::remove_file(rocks.path.join("nod")).unwrap();
+    }
+    let wrong = MockEthProvider::new();
+    let wrong_hash = add_empty_block(&wrong, 1, 2);
+    let wrong = FinalizedMockProvider::new(wrong, BlockNumHash::new(1, wrong_hash));
+    let prepared = prepare_offchain_data_projection(config.clone()).unwrap();
+    let completion = prepared.storage_completion();
+    assert!(validate_offchain_data_checkpoint(prepared, &wrong).is_err());
+    completion.wait_timeout(Duration::from_secs(5)).unwrap();
+    let provider = StorageProvider::new(config.storage.clone())
+        .unwrap()
+        .with_partition_routing(outbe_offchain_data::entity_partition_routing().unwrap());
+    assert!(provider
+        .read_source("pending-inspector")
+        .unwrap()
+        .open_session()
+        .is_err());
+    let prepared = prepare_offchain_data_projection(config).unwrap();
+    let completion = prepared.storage_completion();
+    drop(validate_offchain_data_checkpoint(prepared, &canonical).unwrap());
+    completion.wait_timeout(Duration::from_secs(5)).unwrap();
+    let reader = provider
+        .read_source("validated-exporter")
+        .unwrap()
+        .open_session()
+        .unwrap();
+    let checkpoint = outbe_offchain_data::read_projection_state(projection_config, reader)
+        .unwrap()
+        .unwrap()
+        .checkpoint
+        .unwrap();
+    assert_eq!(checkpoint.block_number, 1);
+    assert_eq!(checkpoint.block_hash, hash);
+}
+
+#[test]
+fn failed_preflight_registers_completion_before_releasing_ownership() {
+    use outbe_node::{
+        ocomp::retention::SharedOcompRetentionSelector,
+        projection::prepare_offchain_data_projection_with_retention,
+    };
+    use outbe_offchain_storage::{RocksDbConfig, StorageBackend, StorageConfig};
+    let root = tempfile::tempdir().unwrap();
+    let config = OffchainDataProjectionConfig {
+        chain_id: DEVNET_CHAIN_ID,
+        genesis_hash: B256::repeat_byte(0x11),
+        storage: StorageConfig {
+            start_block: 1,
+            backend: StorageBackend::RocksDb(RocksDbConfig {
+                path: root.path().join("primary"),
+                secondary_path: root.path().join("secondary"),
+            }),
+        },
+    };
+    let prepared = prepare_offchain_data_projection(config.clone()).unwrap();
+    let completion = prepared.storage_completion();
+    drop(prepared);
+    completion.wait_timeout(Duration::from_secs(5)).unwrap();
+    let mut wrong = config.clone();
+    wrong.genesis_hash = B256::repeat_byte(0x99);
+    let completions = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed = completions.clone();
+    assert!(prepare_offchain_data_projection_with_retention(
+        wrong,
+        Arc::new(SharedOcompRetentionSelector::new()),
+        move |completion| observed.lock().unwrap().push(completion),
+    )
+    .is_err());
+    let completions = completions.lock().unwrap();
+    assert_eq!(completions.len(), 1);
+    completions[0].wait_timeout(Duration::from_secs(5)).unwrap();
+    let reopened = prepare_offchain_data_projection(config).unwrap();
+    let completion = reopened.storage_completion();
+    drop(reopened);
+    completion.wait_timeout(Duration::from_secs(5)).unwrap();
 }
