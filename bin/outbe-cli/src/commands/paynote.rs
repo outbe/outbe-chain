@@ -217,6 +217,7 @@ struct QuotedSettlement {
     context: B256,
     domain: &'static str,
     target: B256,
+    series: Option<String>,
     holder: Option<Address>,
     units: U256,
     snapshot_id: U256,
@@ -305,6 +306,12 @@ async fn quote_settlement(
         context,
         domain,
         target: target_word,
+        series: match target {
+            SettlementTarget::Intex { series, .. } => {
+                Some(String::from_utf8_lossy(&series).into_owned())
+            }
+            SettlementTarget::Nod(_) | SettlementTarget::Gem(_) => None,
+        },
         holder,
         units,
         snapshot_id,
@@ -835,7 +842,7 @@ async fn spend_proof(
     let output = json!({ "version": 1, "circuit": format!("{}@{}", Paynote::LABEL, Paynote::VERSION), "proof": format!("0x{}", hex::encode(&combined)),
         "source_commitment": note.commitment, "chain_id": note.chain_id, "pool": PAYNOTE_ADDRESS,
         "asset": note.asset, "context": quoted.context, "domain": quoted.domain,
-        "target": quoted.target, "holder": quoted.holder, "units": quoted.units.to_string(),
+        "target": quoted.target, "series": quoted.series, "holder": quoted.holder, "units": quoted.units.to_string(),
         "snapshotId": quoted.snapshot_id.to_string(), "spend_amount": amount.to_string(),
         "root": public.root, "nullifier": public.nullifier, "change_commitment": public.change_commitment });
     let proof_path = save_json(

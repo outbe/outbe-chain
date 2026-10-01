@@ -20,8 +20,8 @@ pub enum SettlementDomain {
     Intex = 3,
 }
 
-/// One holder's units of an Intex series: `keccak256(series_id || holder)`. A series has
-/// many holders, so the series alone does not say whose units a note pays for.
+/// One holder's units of an Intex series, `keccak256(abi.encodePacked(bytes14 seriesId,
+/// address holder))`: a series has many holders, so the series alone names no one's units.
 pub fn intex_holding_target(series_id: &[u8; 14], holder: Address) -> B256 {
     let mut preimage = [0u8; 34];
     preimage[..14].copy_from_slice(series_id);

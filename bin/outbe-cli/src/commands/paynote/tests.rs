@@ -725,6 +725,7 @@ async fn an_intex_quote_binds_the_holder() {
     .await
     .unwrap();
     assert_eq!(quoted.holder, Some(holder));
+    assert_eq!(quoted.series.as_deref(), Some("20260212-TRY-U"));
     assert_eq!(
         quoted.context,
         settlement_context(
@@ -735,4 +736,17 @@ async fn an_intex_quote_binds_the_holder() {
         )
         .unwrap()
     );
+}
+
+#[test]
+fn a_zero_holder_is_refused_before_proving() {
+    let target = SpendTarget {
+        nod: None,
+        gem: None,
+        intex: Some("20260212-TRY-U".into()),
+    };
+    let error = target
+        .into_settlement(Some(U256::ONE), Some(Address::ZERO))
+        .unwrap_err();
+    assert!(error.to_string().contains("zero address"), "{error}");
 }
