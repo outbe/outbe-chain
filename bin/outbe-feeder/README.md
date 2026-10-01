@@ -89,6 +89,7 @@ threshold = "2.0"
 | `provider_endpoints[].rest` | only endpoint-backed providers | Provider REST base URL |
 | `provider_endpoints[].websocket` | no | Exchange market-stream endpoint override (`ws://`, `wss://`, or a host); omitted uses the exchange default |
 | `dex_providers` | only DEX sources | Explicit RPC, network and pool configuration; see [DEX providers](#dex-providers) |
+| `chainlink_providers` | only `chainlink` sources | RPC, network and aggregator feeds; see [Chainlink providers](#chainlink-providers) |
 | `deviation_thresholds[].base` | no | Asset to apply threshold to |
 | `deviation_thresholds[].threshold` | no | Max sigma deviation as an exact decimal string (default: `"2.0"`) |
 
@@ -119,7 +120,7 @@ volume-weighted mean rounded down.
 | `mock` | Working | Hardcoded COEN=1.0, ETH=2500.0 |
 | `mock_http` | Working | Configured REST endpoint compatible with the migrated Cosmos test price server |
 | `pyth` | Working | Pyth Hermes REST API for supported BTC/ETH feeds |
-| `chainlink` | Working | CryptoCompare REST API used as the Chainlink-compatible data source |
+| `chainlink` | Implemented | Chainlink `AggregatorV3` feeds read over EVM JSON-RPC at `latest` |
 | `binance` | Working | Binance WebSocket ticker/candle streams with REST bootstrap fallback |
 | `kraken` | Working | Kraken WebSocket ticker/candle streams with REST bootstrap fallback |
 | `okx` | Working | OKX WebSocket ticker/candle streams with REST bootstrap fallback |
@@ -137,6 +138,42 @@ their configured pairs, cache the latest ticker and recent candles, answer
 protocol heartbeats, and reconnect with automatic resubscription. Until a
 stream has produced data for a configured pair, its existing REST adapter is
 used as bootstrap fallback.
+
+### Chainlink providers
+
+`chainlink` reads Chainlink Data Feeds (`AggregatorV3Interface`) with `eth_call`
+against the `latest` block. Rounds are signed by the Chainlink network, so no
+finality wait applies; freshness comes from the round itself. Feeds report no
+volume, so the observation weighs one unit in the source mean.
+
+```toml
+[[currency_pairs.sources]]
+provider = "chainlink"
+base = "USDC"
+quote = "840"
+
+[[chainlink_providers]]
+chain_id = 1
+rpc_endpoint = "https://ethereum-rpc.example.invalid"
+
+[[chainlink_providers.feeds]]
+base = "USDC"
+quote = "840"
+aggregator = "0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6"
+description = "USDC / USD"
+max_age_secs = 90000
+```
+
+One `[[chainlink_providers]]` section; every `chainlink` source needs a matching
+`feeds` entry by `base`/`quote`. Take `aggregator` (the proxy address) and the
+heartbeat from [docs.chain.link](https://docs.chain.link/data-feeds/price-feeds/addresses);
+`max_age_secs` should be the heartbeat plus slack. On first use the feeder reads
+`description()` and rejects a feed whose text differs from the configured one,
+then caches `decimals()`. Each vote reads `eth_chainId`, the latest block
+timestamp and `latestRoundData()` per feed. A round is skipped when `answer` is
+not positive, `answeredInRound < roundId`, `updatedAt` is in the future, or it
+is older than `max_age_secs` relative to chain time. Chainlink lists no COEN
+feed; use this provider for listed assets and for stablecoin/USD rates.
 
 ### DEX providers
 

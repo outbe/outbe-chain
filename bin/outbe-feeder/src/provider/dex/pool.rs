@@ -9,9 +9,9 @@ use super::{
     abi::*,
     config::{DexMarketConfig, PoolConfig},
     math,
-    rpc::{Block, Log, Rpc},
 };
 use crate::fixed::FixedValue;
+use crate::provider::evm_rpc::{Block, Log, Rpc};
 
 #[derive(Clone, Copy)]
 pub(super) struct Decimals {

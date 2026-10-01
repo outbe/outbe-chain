@@ -23,6 +23,9 @@ pub struct FeederConfig {
     /// Finalized EVM pool readers; independent of the destination Outbe RPC.
     #[serde(default)]
     pub dex_providers: Vec<crate::provider::dex::DexProviderConfig>,
+    /// Chainlink aggregator readers; independent of the destination Outbe RPC.
+    #[serde(default)]
+    pub chainlink_providers: Vec<crate::provider::chainlink::ChainlinkProviderConfig>,
     /// Health/status HTTP server configuration.
     pub health: Option<HealthConfig>,
 }
@@ -290,6 +293,7 @@ impl FeederConfig {
         }
 
         crate::provider::dex::validate_config(self)?;
+        crate::provider::chainlink::validate_config(self)?;
         Ok(())
     }
 
@@ -349,6 +353,7 @@ mod tests {
             deviation_thresholds: vec![],
             provider_endpoints: vec![],
             dex_providers: vec![],
+            chainlink_providers: vec![],
             health: None,
         }
     }

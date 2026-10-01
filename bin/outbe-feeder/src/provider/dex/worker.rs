@@ -12,8 +12,8 @@ use super::{
     config::{DexMarketConfig, DexProviderConfig},
     math,
     pool::Decimals,
-    rpc::{quantity, Block, Rpc},
 };
+use crate::provider::evm_rpc::{quantity, Block, Rpc};
 use crate::provider::{Provider, TickerPrice};
 
 const WINDOW_SECS: u64 = 86_400;

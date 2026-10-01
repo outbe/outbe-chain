@@ -3,7 +3,6 @@ mod abi;
 mod config;
 mod math;
 mod pool;
-mod rpc;
 mod worker;
 
 pub(crate) use config::{validate_config, DexProviderConfig};

@@ -4,6 +4,7 @@ pub mod binance;
 pub mod chainlink;
 pub mod coinbase;
 pub(crate) mod dex;
+pub(crate) mod evm_rpc;
 pub mod gate;
 pub mod huobi;
 pub mod kraken;
@@ -12,6 +13,8 @@ pub mod mock;
 pub mod mock_http;
 pub mod okx;
 pub mod pyth;
+#[cfg(test)]
+pub(crate) mod test_server;
 mod websocket;
 
 use eyre::{eyre, Result};
@@ -196,7 +199,11 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
                 Box::new(mock_http::MockHttpProvider::new(endpoint)?)
             }
             "pyth" => Box::new(pyth::PythProvider::new()?),
-            "chainlink" => Box::new(chainlink::ChainlinkProvider::new()?),
+            "chainlink" => Box::new(chainlink::ChainlinkProvider::new(
+                config.chainlink_providers.first().ok_or_else(|| {
+                    eyre!("provider chainlink requires a [[chainlink_providers]] entry")
+                })?,
+            )?),
             "binance" => Box::new(binance::BinanceProvider::new()?),
             "kraken" => Box::new(kraken::KrakenProvider::new()?),
             "okx" => Box::new(okx::OkxProvider::new()?),
