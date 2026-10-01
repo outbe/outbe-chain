@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
+
 interface IGratisFactory {
-    struct ModifyAuth { bytes32 mac; uint64 opNonce; }
+    struct ModifyAuth {
+        bytes32 mac;
+        uint64 opNonce;
+    }
     event PledgeNote(bytes32 indexed commitment, uint32 leafIndex, bytes32 rootAfter, uint256 amount);
     event PledgeSpent(bytes32 indexed nullifier);
     event CoenMined(address indexed sender, uint256 amount);
