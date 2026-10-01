@@ -134,7 +134,7 @@ impl StorageReadSource {
                     &path,
                     &config
                         .secondary_path
-                        .join(format!("{}-tribute-day-{day}", self.reader_id)),
+                        .join(format!("{}.tribute-day-{day}", self.reader_id)),
                 )?)))
             }
         }
