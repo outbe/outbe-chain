@@ -5,6 +5,7 @@ mod batch;
 mod ports;
 mod read;
 pub mod routing;
+mod scan;
 mod scope;
 mod strategy;
 

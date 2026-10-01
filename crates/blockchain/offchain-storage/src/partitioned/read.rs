@@ -1,10 +1,7 @@
 //! Datasource-independent ordered merge, driven entirely by injected routing.
 
 use super::PartitionedStorage;
-use crate::{
-    Key, Namespace, ScanPage, ScanRequest, StorageError, StorageReader, StoredValue,
-    MAX_SCAN_PAGE_VALUE_BYTES,
-};
+use crate::{Key, Namespace, ScanPage, ScanRequest, StorageError, StorageReader, StoredValue};
 
 impl StorageReader for PartitionedStorage {
     fn storage_scope(
@@ -119,60 +116,23 @@ impl StorageReader for PartitionedStorage {
                 .routing
                 .scan(&namespace, request, self.source.as_ref())?,
         };
-        // Fetch one head per partition, then advance only the selected partition.
-        // Retained memory is O(number of partitions + output page), not page*partitions.
-        let mut heads = vec![];
-        for scope in scopes {
-            if let Some(reader) = self.source.open_reader(&scope)? {
-                let physical = namespace.logical();
-                let page = reader.scan_prefix(
-                    physical.clone(),
-                    ScanRequest::new(request.prefix(), request.after(), 1)?,
-                )?;
-                if let Some(entry) = page.entries.into_iter().next() {
-                    heads.push((reader, physical, entry));
+        if let [scope] = scopes.as_slice() {
+            return match self.source.open_reader(scope)? {
+                Some(reader) => {
+                    let page = reader.scan_prefix(namespace.logical(), request)?;
+                    super::scan::validate_page(&page, request)?;
+                    Ok(page)
                 }
-            }
+                None => Ok(ScanPage::default()),
+            };
         }
-        let mut entries: Vec<crate::ScanEntry> = vec![];
-        let mut bytes = 0;
-        while !heads.is_empty() {
-            let index = (0..heads.len())
-                .min_by_key(|i| &heads[*i].2.key)
-                .expect("nonempty heads");
-            let (reader, physical, entry) = heads.swap_remove(index);
-            if heads.iter().any(|head| head.2.key == entry.key) {
-                return Err(StorageError::Corruption(
-                    "duplicate entity key across partitions".into(),
-                ));
-            }
-            let size = entry.value.as_bytes().len()
-                + entry
-                    .metadata
-                    .as_ref()
-                    .map_or(0, crate::StorageMetadata::encoded_len);
-            if entries.len() == request.limit() || bytes + size > MAX_SCAN_PAGE_VALUE_BYTES {
-                let last = entries.last().ok_or_else(|| {
-                    StorageError::Corruption("partition record exceeds page bound".into())
-                })?;
-                return Ok(ScanPage {
-                    next_after: Some(last.key.clone()),
-                    entries,
-                });
-            }
-            bytes += size;
-            let page = reader.scan_prefix(
-                physical.clone(),
-                ScanRequest::new(request.prefix(), Some(&entry.key), 1)?,
-            )?;
-            if let Some(next) = page.entries.into_iter().next() {
-                heads.push((reader, physical, next));
-            }
-            entries.push(entry);
-        }
-        Ok(ScanPage {
-            entries,
-            next_after: None,
-        })
+        let readers = scopes
+            .iter()
+            .map(|scope| self.source.open_reader(scope))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect();
+        super::scan::merge(readers, namespace.logical(), request)
     }
 }

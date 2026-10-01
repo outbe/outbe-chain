@@ -21,6 +21,17 @@ queries select one shard; global scans merge ascending IDs from independently en
 physical partitions. The locator audit compares both complete populations and verifies
 physical placement against the body owner. A missing primary selected by a locator is corruption.
 
+Partition scans keep the existing `StorageReader::scan_prefix` interface. A single routed
+partition serves the requested page with one datasource scan. Multiple partitions use an
+ordered heap and per-call cursors, with internal tuning of 64 records per refill and a shared
+8 MiB read-ahead budget beyond the necessary partition heads. One adapter page may temporarily
+add up to 8 MiB; the output page has its separate existing 8 MiB bound. These budgets count
+values and metadata, not keys, allocations or total process RSS. Under byte pressure unread
+prefetch tails are discarded and re-read after the last retained key, never skipped. The logical
+continuation is always the last returned key. Buffers do not survive a scan call, and corruption
+discovered during read-ahead fails the call immediately. Adapter pages are checked for ordering,
+prefix, entry/byte bounds and valid continuation through the same logical read interface.
+
 MongoDB implements logical partitions as collections in the configured database. A single
 majority-acknowledged transaction contains bodies, indexes, locators, partition retirement and
 checkpoint. This does not configure MongoDB cluster sharding. RocksDB owns a database per
