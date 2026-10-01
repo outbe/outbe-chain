@@ -6,7 +6,7 @@ use outbe_intex::schema::SeriesId;
 use outbe_primitives::time::WorldwideDay;
 
 use super::Incomplete;
-use crate::snapshot::projection_store::projection_database;
+use crate::snapshot::projection_store::{projection_database, ProjectionDatabases};
 
 use super::canonical_state::CanonicalState;
 use outbe_intex::schema::CertifiedContributorGenerationProjection;
@@ -703,9 +703,11 @@ pub(crate) fn verify_pin_authority(
 
 /// Close a required lease's live/retained body union to its canonical JobIntent.
 /// Callers decide which leases remain required; historical GC alone does not
-/// create a requirement to reproduce a released population.
+/// create a requirement to reproduce a released population. `day` is the
+/// intent's Tribute day database when that day has its own.
 pub(crate) fn verify_lease_inputs(
     reader: outbe_offchain_storage::StorageReaderHandle,
+    day: Option<outbe_offchain_storage::StorageReaderHandle>,
     intent: &outbe_ocomp_protocol::intent::JobIntentV1,
     scratch_parent: &Path,
     protected: &ProtectedPaths,
@@ -739,8 +741,11 @@ pub(crate) fn verify_lease_inputs(
             ))
         }
     };
-    let source = FinalizedTributeSource::new(reader, outbe_offchain_storage::MAX_SCAN_ENTRIES)
+    let mut source = FinalizedTributeSource::new(reader, outbe_offchain_storage::MAX_SCAN_ENTRIES)
         .map_err(&classify)?;
+    if let Some(day) = day {
+        source = source.with_tribute_day(pin, day).map_err(&classify)?;
+    }
     let mut stream = source
         .reconstruction_stream(
             pin,
@@ -1970,11 +1975,7 @@ pub(crate) fn verify_canonical_obligations(
     use alloy_consensus::Sealable;
     use outbe_node::ocomp::retention::{inspect_retention_journal, PinStateV1, RetentionError};
     use outbe_offchain_data::{read_projection_state, ProjectionConfig};
-    use outbe_offchain_storage::{RocksDbReader, StorageReaderHandle};
-    use std::{
-        collections::{BTreeMap, BTreeSet},
-        sync::Arc,
-    };
+    use std::collections::{BTreeMap, BTreeSet};
 
     let mut protected = layout.protected.clone();
     protected.0.extend([
@@ -2015,14 +2016,14 @@ pub(crate) fn verify_canonical_obligations(
     let secondary = tempfile::Builder::new()
         .prefix("ocomp-projection-audit-")
         .tempdir_in(scratch_parent)?;
-    let reader: StorageReaderHandle = Arc::new(RocksDbReader::open(&database, secondary.path())?);
+    let databases = ProjectionDatabases::open(&location.root, secondary.path())?;
     let projection = read_projection_state(
         ProjectionConfig {
             chain_id: layout.chain.chain().id(),
             genesis_hash: layout.chain.genesis_hash(),
             start_block: location.start_block,
         },
-        reader.clone(),
+        databases.shared().clone(),
     )?
     .and_then(|state| state.checkpoint)
     .ok_or_else(|| Incomplete("missing initialized OCOMP projection checkpoint".into()))?;
@@ -2180,7 +2181,8 @@ pub(crate) fn verify_canonical_obligations(
             let lease = job.intent.input_lease_id()?;
             if !checked_leases.contains(&lease) {
                 verify_lease_inputs(
-                    reader.clone(),
+                    databases.shared().clone(),
+                    databases.tribute_day(WorldwideDay::new(job.intent.wwd)),
                     &job.intent,
                     scratch_parent,
                     &protected,
@@ -3676,8 +3678,7 @@ fn verify_present_projection_structure(
         CeAuditLimits, CeAuditWork, CeDomain, IdPageRequest, MAX_ID_PAGE_LIMIT,
     };
     use outbe_nod::NodRepositoryReader;
-    use outbe_offchain_storage::{RocksDbReader, StorageReaderHandle};
-    use outbe_tribute::{RetainedTributeReader, TributeRepositoryReader};
+    use outbe_tribute::TributeRepositoryReader;
     let location = layout
         .projection
         .as_ref()
@@ -3689,38 +3690,43 @@ fn verify_present_projection_structure(
     let secondary = tempfile::Builder::new()
         .prefix("ocomp-present-bodies-")
         .tempdir_in(scratch)?;
-    let reader: StorageReaderHandle =
-        std::sync::Arc::new(RocksDbReader::open(&database, secondary.path())?);
+    let databases = ProjectionDatabases::open(&location.root, secondary.path())?;
     let work = CeAuditWork::create(
         secondary.path().join("audit-work"),
         CeAuditLimits::default(),
     )?;
-    let tribute = TributeRepositoryReader::new(reader.clone());
-    let nod = NodRepositoryReader::new(reader.clone());
-    tribute.audit_indexes(&work)?;
-    nod.audit_indexes(&work)?;
+    for database in databases.live_tributes() {
+        TributeRepositoryReader::new(database.clone()).audit_indexes(&work)?;
+    }
+    for database in databases.nods() {
+        NodRepositoryReader::new(database.clone()).audit_indexes(&work)?;
+    }
     let mut live = 0_u64;
     for domain in [CeDomain::Tribute, CeDomain::NodItem, CeDomain::NodBucket] {
-        let mut after = None;
-        loop {
-            let request = IdPageRequest {
-                after,
-                limit: MAX_ID_PAGE_LIMIT,
-            };
-            let page = match domain {
-                CeDomain::Tribute => tribute.scan_stored_bodies(request)?,
-                CeDomain::NodItem => nod.scan_stored_items(request)?,
-                CeDomain::NodBucket => nod.scan_stored_buckets(request)?,
-            };
-            increment_present(&mut live, u64::try_from(page.entries.len())?)?;
-            after = page.next_after;
-            if after.is_none() {
-                break;
+        for database in databases.live(domain) {
+            let tribute = TributeRepositoryReader::new(database.clone());
+            let nod = NodRepositoryReader::new(database.clone());
+            let mut after = None;
+            loop {
+                let request = IdPageRequest {
+                    after,
+                    limit: MAX_ID_PAGE_LIMIT,
+                };
+                let page = match domain {
+                    CeDomain::Tribute => tribute.scan_stored_bodies(request)?,
+                    CeDomain::NodItem => nod.scan_stored_items(request)?,
+                    CeDomain::NodBucket => nod.scan_stored_buckets(request)?,
+                };
+                increment_present(&mut live, u64::try_from(page.entries.len())?)?;
+                after = page.next_after;
+                if after.is_none() {
+                    break;
+                }
             }
         }
     }
     let mut retained = PresentRetainedCount(0);
-    RetainedTributeReader::new(reader.clone()).audit_retained(&work, &mut retained)?;
+    databases.audit_retained(&work, &mut retained)?;
     // Reader-owned repositories and scratch work drop before secondary cleanup.
     Ok((live, retained.0))
 }

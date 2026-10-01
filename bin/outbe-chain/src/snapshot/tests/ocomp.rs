@@ -7953,6 +7953,7 @@ mod lease_inventory {
             let scratch_before = fingerprint(scratch);
             let result = verify_lease_inputs(
                 self.reader.clone(),
+                None,
                 authority,
                 scratch,
                 &ProtectedPaths(vec![self.source.clone()]),
@@ -8075,6 +8076,7 @@ mod lease_inventory {
         let before = fingerprint(&fixture.source);
         let error = verify_lease_inputs(
             fixture.reader.clone(),
+            None,
             &fixture.intent,
             &missing,
             &ProtectedPaths(vec![fixture.source.clone()]),

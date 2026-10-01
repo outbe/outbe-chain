@@ -1,6 +1,6 @@
 //! Read-only projection structure and live body equality at actual saved frontiers.
 
-use std::{path::Path, sync::Arc};
+use std::path::Path;
 
 use outbe_compressed_entities::{
     CeAuditWork, CeBodyAudit, CeBodyAuditReport, CeDomain, FinalizedMarker, IdPageRequest,
@@ -8,12 +8,11 @@ use outbe_compressed_entities::{
 };
 use outbe_nod::NodRepositoryReader;
 use outbe_offchain_data::{read_projection_state, ProjectionCheckpoint, ProjectionConfig};
-use outbe_offchain_storage::{RocksDbReader, StorageReaderHandle};
-use outbe_tribute::{RetainedTributeAuditVisitor, RetainedTributeReader, TributeRepositoryReader};
+use outbe_tribute::{RetainedTributeAuditVisitor, TributeRepositoryReader};
 
 use super::Incomplete;
 use crate::snapshot::config::RequestedLayout;
-use crate::snapshot::projection_store::projection_database;
+use crate::snapshot::projection_store::{projection_database, ProjectionDatabases};
 
 /// Successfully completed primary/index checks, with equality reported separately.
 #[derive(Debug)]
@@ -24,8 +23,8 @@ pub(crate) struct ProjectionBodyReport {
 
 /// One immutable projection view shared by state, bodies, indexes and retention.
 pub(crate) struct ProjectionBodyView {
-    // Fields drop in declaration order: release the database before its scratch.
-    reader: StorageReaderHandle,
+    // Fields drop in declaration order: release the databases before their scratch.
+    databases: ProjectionDatabases,
     checkpoint: ProjectionCheckpoint,
     _scratch: tempfile::TempDir,
 }
@@ -59,19 +58,19 @@ impl ProjectionBodyView {
         let scratch = tempfile::Builder::new()
             .prefix("projection-audit-")
             .tempdir_in(scratch_parent)?;
-        let reader: StorageReaderHandle = Arc::new(RocksDbReader::open(&database, scratch.path())?);
+        let databases = ProjectionDatabases::open(&projection.root, scratch.path())?;
         let checkpoint = read_projection_state(
             ProjectionConfig {
                 chain_id: layout.chain.chain().id(),
                 genesis_hash: layout.chain.genesis_hash(),
                 start_block: projection.start_block,
             },
-            reader.clone(),
+            databases.shared().clone(),
         )?
         .and_then(|state| state.checkpoint)
         .ok_or_else(|| Incomplete("missing initialized projection checkpoint".into()))?;
         Ok(Self {
-            reader,
+            databases,
             checkpoint,
             _scratch: scratch,
         })
@@ -85,32 +84,38 @@ impl ProjectionBodyView {
         mut expected: CeBodyAudit<'_>,
         work: &CeAuditWork,
     ) -> eyre::Result<ProjectionBodyReport> {
-        let tribute = TributeRepositoryReader::new(self.reader.clone());
-        let nod = NodRepositoryReader::new(self.reader.clone());
-        tribute.audit_indexes(work)?;
-        nod.audit_indexes(work)?;
+        for database in self.databases.live_tributes() {
+            TributeRepositoryReader::new(database.clone()).audit_indexes(work)?;
+        }
+        for database in self.databases.nods() {
+            NodRepositoryReader::new(database.clone()).audit_indexes(work)?;
+        }
         let same_frontier = marker.height == self.checkpoint.block_number
             && marker.block_hash == self.checkpoint.block_hash;
         for domain in [CeDomain::Tribute, CeDomain::NodItem, CeDomain::NodBucket] {
-            let mut after = None;
-            loop {
-                let request = IdPageRequest {
-                    after,
-                    limit: MAX_ID_PAGE_LIMIT,
-                };
-                let page = match domain {
-                    CeDomain::Tribute => tribute.scan_stored_bodies(request)?,
-                    CeDomain::NodItem => nod.scan_stored_items(request)?,
-                    CeDomain::NodBucket => nod.scan_stored_buckets(request)?,
-                };
-                if same_frontier {
-                    for (id, body) in page.entries {
-                        expected.push_body(domain, id, &body.encode())?;
+            for database in self.databases.live(domain) {
+                let tribute = TributeRepositoryReader::new(database.clone());
+                let nod = NodRepositoryReader::new(database.clone());
+                let mut after = None;
+                loop {
+                    let request = IdPageRequest {
+                        after,
+                        limit: MAX_ID_PAGE_LIMIT,
+                    };
+                    let page = match domain {
+                        CeDomain::Tribute => tribute.scan_stored_bodies(request)?,
+                        CeDomain::NodItem => nod.scan_stored_items(request)?,
+                        CeDomain::NodBucket => nod.scan_stored_buckets(request)?,
+                    };
+                    if same_frontier {
+                        for (id, body) in page.entries {
+                            expected.push_body(domain, id, &body.encode())?;
+                        }
                     }
-                }
-                after = page.next_after;
-                if after.is_none() {
-                    break;
+                    after = page.next_after;
+                    if after.is_none() {
+                        break;
+                    }
                 }
             }
         }
@@ -136,6 +141,6 @@ impl ProjectionBodyView {
         work: &CeAuditWork,
         visitor: &mut impl RetainedTributeAuditVisitor,
     ) -> eyre::Result<()> {
-        Ok(RetainedTributeReader::new(self.reader.clone()).audit_retained(work, visitor)?)
+        self.databases.audit_retained(work, visitor)
     }
 }

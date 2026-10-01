@@ -11,7 +11,7 @@ use outbe_compressed_entities::{
 };
 use outbe_nod::{NodBucketState, NodItemState, NodRepositoryWriter};
 use outbe_offchain_data::{ProjectionCheckpoint, ProjectionState, STORAGE_SCHEMA_VERSION};
-use outbe_offchain_storage::{Key, Namespace, RocksDbStorage, StorageWriter, Value};
+use outbe_offchain_storage::{DayDatabases, Key, Namespace, RocksDbStorage, StorageWriter, Value};
 use outbe_primitives::{
     reshare_artifact::{
         encode_outbe_block_artifacts, CompressedEntitiesRootArtifact, OutbeBlockArtifacts,
@@ -20,8 +20,9 @@ use outbe_primitives::{
     OutbeHeader,
 };
 use outbe_tribute::{
-    RetainedTributeAuditEntry, RetainedTributeAuditVisitor, RetainedTributePin,
-    RetainedTributeReader, TributeData, TributeRepositoryWriter,
+    write_tribute_day_mark, RetainedTributeAuditEntry, RetainedTributeAuditVisitor,
+    RetainedTributePin, RetainedTributeReader, TributeData, TributeDayMark,
+    TributeRepositoryWriter,
 };
 use reth_ethereum::provider::db::mdbx::DatabaseArguments;
 
@@ -60,6 +61,11 @@ struct Fixture {
 
 impl Fixture {
     fn new(populated: bool) -> Self {
+        Self::build(populated, false)
+    }
+
+    /// `days` stores bodies the way the node does: one database per worldwide day.
+    fn build(populated: bool, days: bool) -> Self {
         let source = tempfile::tempdir().unwrap();
         let args = super::layout::native_arguments(source.path());
         let config = source.path().join("configuration/offchain.toml");
@@ -107,14 +113,33 @@ impl Fixture {
             .unwrap(),
         );
         let ce = Arc::new(CeMdbx::open(&layout.chain_root, identity.clone(), genesis).unwrap());
-        let projection =
-            Arc::new(RocksDbStorage::open(&layout.projection.as_ref().unwrap().root).unwrap());
+        let root = &layout.projection.as_ref().unwrap().root;
+        let databases = days.then(|| Arc::new(DayDatabases::open(root).unwrap()));
+        let projection = Arc::new(match &databases {
+            Some(databases) => databases.directory().open_shared().unwrap(),
+            None => RocksDbStorage::open(root).unwrap(),
+        });
         let mut header = layout.chain.genesis_header().clone();
         let mut bucket_id = WwdEntityId::ZERO;
         if populated {
-            let tribute_writer =
-                TributeRepositoryWriter::new(projection.clone(), projection.clone());
-            let nod_writer = NodRepositoryWriter::new(projection.clone(), projection.clone());
+            let (tribute_writer, nod_writer) = match &databases {
+                Some(databases) => (
+                    TributeRepositoryWriter::with_days(
+                        projection.clone(),
+                        projection.clone(),
+                        databases.clone(),
+                    ),
+                    NodRepositoryWriter::with_days(
+                        projection.clone(),
+                        projection.clone(),
+                        databases.clone(),
+                    ),
+                ),
+                None => (
+                    TributeRepositoryWriter::new(projection.clone(), projection.clone()),
+                    NodRepositoryWriter::new(projection.clone(), projection.clone()),
+                ),
+            };
             let mut bodies = Vec::new();
             for seed in [1, 2] {
                 let body = tribute(seed);
@@ -176,21 +201,24 @@ impl Fixture {
             // A valid historical retained body is intentionally outside the live CE population.
             let old = tribute(0);
             tribute_writer.put(&old).unwrap();
-            let retained = RetainedTributeReader::new(projection.clone());
-            projection
-                .apply_atomic(
-                    &retained
-                        .plan_retain_current(
-                            RetainedTributePin {
-                                input_lease_id: B256::repeat_byte(9),
-                                worldwide_day: old.worldwide_day,
-                            },
-                            old.tribute_id,
-                        )
-                        .unwrap(),
+            let pin = RetainedTributePin {
+                input_lease_id: B256::repeat_byte(9),
+                worldwide_day: old.worldwide_day,
+            };
+            if days {
+                write_tribute_day_mark(
+                    projection.as_ref(),
+                    old.worldwide_day.value(),
+                    TributeDayMark::Retained(pin.input_lease_id),
                 )
                 .unwrap();
-            tribute_writer.delete(old.tribute_id).unwrap();
+            } else {
+                let retained = RetainedTributeReader::new(projection.clone());
+                projection
+                    .apply_atomic(&retained.plan_retain_current(pin, old.tribute_id).unwrap())
+                    .unwrap();
+                tribute_writer.delete(old.tribute_id).unwrap();
+            }
             let mutations: Vec<_> = bodies
                 .into_iter()
                 .map(|(entity, id, stored)| FinalLeafMutation {
@@ -242,6 +270,7 @@ impl Fixture {
             }),
         );
         drop(projection);
+        drop(databases);
         drop(ce);
         let ce = CeMdbxReadOnly::open(&layout.chain_root, identity).unwrap();
         Self {
@@ -323,6 +352,34 @@ fn exact_native_population_matches_all_domains_and_separates_retained_bodies() {
         assert_eq!(retained, u64::from(populated));
         assert_eq!(fingerprint(fixture.source.path()), before);
     }
+}
+
+#[test]
+fn day_databases_hold_live_and_retained_bodies_and_skip_dropped_days() {
+    let fixture = Fixture::build(true, true);
+    let before = fingerprint(fixture.source.path());
+    let (ce, bodies, retained) = fixture.verify().unwrap();
+    assert_eq!(bodies.equality.unwrap().bodies, 4);
+    assert_eq!(ce.leaves, 8);
+    assert_eq!(retained, 1);
+    assert_eq!(fingerprint(fixture.source.path()), before);
+
+    let root = &fixture.layout.projection.as_ref().unwrap().root;
+    let put_day = |seed: u8, mark: Option<TributeDayMark>| {
+        let databases = Arc::new(DayDatabases::open(root).unwrap());
+        let shared = Arc::new(databases.directory().open_shared().unwrap());
+        TributeRepositoryWriter::with_days(shared.clone(), shared.clone(), databases)
+            .put(&tribute(seed))
+            .unwrap();
+        if let Some(mark) = mark {
+            write_tribute_day_mark(shared.as_ref(), tribute(seed).worldwide_day.value(), mark)
+                .unwrap();
+        }
+    };
+    put_day(7, Some(TributeDayMark::DropPending));
+    assert_eq!(fixture.verify().unwrap().1.equality.unwrap().bodies, 4);
+    put_day(8, None);
+    assert!(fixture.verify().is_err());
 }
 
 #[test]
