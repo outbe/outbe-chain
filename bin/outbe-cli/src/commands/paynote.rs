@@ -70,10 +70,12 @@ use settlement_abi::{IGemFactory, IIntexFactory, INodFactory};
 ///   outbe-cli --rpc-url http://localhost:8545 \
 ///     paynote spend-proof ./paynotes/0xCOMMITMENT.json 600000 --nod "$NOD_ID"
 ///
-///   Bind an Intex series. The series id is exactly 14 bytes, and --units is
-///   the number of units being settled, which can differ from the token amount:
+///   Bind an Intex holding. The series id is exactly 14 bytes, --holder owns the
+///   units, and --units is the number of units being settled, which can differ
+///   from the token amount:
 ///   outbe-cli --rpc-url http://localhost:8545 \
-///     paynote spend-proof 0xCOMMITMENT 600000 --intex 20260212-TRY-U --units 2
+///     paynote spend-proof 0xCOMMITMENT 600000 --intex 20260212-TRY-U \
+///     --holder "$HOLDER_ADDRESS" --units 2
 #[derive(Subcommand)]
 #[command(verbatim_doc_comment)]
 pub enum PaynoteCmd {
@@ -107,8 +109,11 @@ pub enum PaynoteCmd {
         #[command(flatten)]
         target: SpendTarget,
         /// Units of `--intex` this proof settles.
-        #[arg(long, requires = "intex", value_parser = parse_amount)]
+        #[arg(long, conflicts_with_all = ["nod", "gem"], value_parser = parse_amount)]
         units: Option<U256>,
+        /// Owner of the `--intex` units this proof settles.
+        #[arg(long, conflicts_with_all = ["nod", "gem"])]
+        holder: Option<Address>,
     },
 }
 
@@ -123,7 +128,7 @@ pub(crate) struct SpendTarget {
     #[arg(long)]
     gem: Option<U256>,
     /// 14-byte Intex series id this proof may settle.
-    #[arg(long, requires = "units")]
+    #[arg(long, requires_all = ["units", "holder"])]
     intex: Option<String>,
 }
 
@@ -147,9 +152,10 @@ impl PaynoteCmd {
                 amount,
                 target,
                 units,
+                holder,
             } => {
                 let note = load_note(&resolve_note(dir, &paynote))?;
-                let target = target.into_settlement(units)?;
+                let target = target.into_settlement(units, holder)?;
                 spend_proof(client, dir, &note, amount, target).await?
             }
         };
@@ -163,11 +169,19 @@ impl PaynoteCmd {
 enum SettlementTarget {
     Nod(U256),
     Gem(U256),
-    Intex { series: [u8; 14], units: U256 },
+    Intex {
+        series: [u8; 14],
+        holder: Address,
+        units: U256,
+    },
 }
 
 impl SpendTarget {
-    fn into_settlement(self, units: Option<U256>) -> Result<SettlementTarget> {
+    fn into_settlement(
+        self,
+        units: Option<U256>,
+        holder: Option<Address>,
+    ) -> Result<SettlementTarget> {
         if let Some(nod) = self.nod {
             return Ok(SettlementTarget::Nod(nod));
         }
@@ -180,6 +194,10 @@ impl SpendTarget {
         let Some(units) = units else {
             return Err(eyre::eyre!("--intex requires --units"));
         };
+        let Some(holder) = holder else {
+            return Err(eyre::eyre!("--intex requires --holder"));
+        };
+        ensure!(!holder.is_zero(), "--holder must not be the zero address");
         let bytes = series.as_bytes();
         ensure!(
             bytes.len() == 14,
@@ -189,6 +207,7 @@ impl SpendTarget {
         series_id.copy_from_slice(bytes);
         Ok(SettlementTarget::Intex {
             series: series_id,
+            holder,
             units,
         })
     }
@@ -198,6 +217,7 @@ struct QuotedSettlement {
     context: B256,
     domain: &'static str,
     target: B256,
+    holder: Option<Address>,
     units: U256,
     snapshot_id: U256,
 }
@@ -208,7 +228,7 @@ async fn quote_settlement(
     amount: U256,
     target: SettlementTarget,
 ) -> Result<QuotedSettlement> {
-    let (domain, target_word, units, quote_units, snapshot_id, domain_tag) = match target {
+    let (domain, target_word, holder, units, quote_units, snapshot_id, domain_tag) = match target {
         SettlementTarget::Nod(id) => {
             let quote = call(
                 client,
@@ -222,6 +242,7 @@ async fn quote_settlement(
             (
                 "nod",
                 B256::from(id),
+                None,
                 U256::ONE,
                 quote.payableUnits,
                 quote.snapshotId,
@@ -241,13 +262,18 @@ async fn quote_settlement(
             (
                 "gem",
                 B256::from(id),
+                None,
                 U256::ONE,
                 quote.payableUnits,
                 quote.snapshotId,
                 SettlementDomain::Gem,
             )
         }
-        SettlementTarget::Intex { series, units } => {
+        SettlementTarget::Intex {
+            series,
+            holder,
+            units,
+        } => {
             let quote = call(
                 client,
                 INTEX_FACTORY_ADDRESS,
@@ -260,7 +286,8 @@ async fn quote_settlement(
             .await?;
             (
                 "intex",
-                outbe_paynote::api::intex_series_target(&series),
+                outbe_paynote::api::intex_holding_target(&series, holder),
+                Some(holder),
                 units,
                 quote.payableUnits,
                 quote.snapshotId,
@@ -278,6 +305,7 @@ async fn quote_settlement(
         context,
         domain,
         target: target_word,
+        holder,
         units,
         snapshot_id,
     })
@@ -807,7 +835,7 @@ async fn spend_proof(
     let output = json!({ "version": 1, "circuit": format!("{}@{}", Paynote::LABEL, Paynote::VERSION), "proof": format!("0x{}", hex::encode(&combined)),
         "source_commitment": note.commitment, "chain_id": note.chain_id, "pool": PAYNOTE_ADDRESS,
         "asset": note.asset, "context": quoted.context, "domain": quoted.domain,
-        "target": quoted.target, "units": quoted.units.to_string(),
+        "target": quoted.target, "holder": quoted.holder, "units": quoted.units.to_string(),
         "snapshotId": quoted.snapshot_id.to_string(), "spend_amount": amount.to_string(),
         "root": public.root, "nullifier": public.nullifier, "change_commitment": public.change_commitment });
     let proof_path = save_json(

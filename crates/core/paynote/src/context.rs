@@ -4,7 +4,7 @@
 //! only place that defines what that field means: the canonical BN254 element of
 //! `keccak256(domain || target || units || snapshot)`.
 
-use alloy_primitives::{keccak256, B256, U256};
+use alloy_primitives::{keccak256, Address, B256, U256};
 use ark_ff::Zero;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_protocol::codec::{self, field_from_be_bytes};
@@ -20,11 +20,13 @@ pub enum SettlementDomain {
     Intex = 3,
 }
 
-/// Left-align a 14-byte Intex series id in a 32-byte word.
-pub fn intex_series_target(series_id: &[u8; 14]) -> B256 {
-    let mut word = [0u8; 32];
-    word[..14].copy_from_slice(series_id);
-    B256::from(word)
+/// One holder's units of an Intex series: `keccak256(series_id || holder)`. A series has
+/// many holders, so the series alone does not say whose units a note pays for.
+pub fn intex_holding_target(series_id: &[u8; 14], holder: Address) -> B256 {
+    let mut preimage = [0u8; 34];
+    preimage[..14].copy_from_slice(series_id);
+    preimage[14..].copy_from_slice(holder.as_slice());
+    keccak256(preimage)
 }
 
 fn domain_byte(domain: SettlementDomain) -> u8 {
@@ -37,9 +39,9 @@ fn domain_byte(domain: SettlementDomain) -> u8 {
 
 /// Canonical context word for one settlement.
 ///
-/// `target` is the nod or gem id as 32 big-endian bytes, or an Intex series id
-/// in the first 14 bytes. `units` is 1 for a nod or gem and the selected amount
-/// for an Intex series. `snapshot` is the quote's VWAP id, or zero on the
+/// `target` is the nod or gem id as 32 big-endian bytes, or an Intex holding from
+/// [`intex_holding_target`]. `units` is 1 for a nod or gem and the selected amount
+/// for an Intex holding. `snapshot` is the quote's VWAP id, or zero on the
 /// reference rail.
 ///
 /// A reduction that lands on zero is a prove-time error: the circuit rejects it,
@@ -98,7 +100,7 @@ mod tests {
         let series = *b"20260212-TRY-U";
         let intex = settlement_context(
             SettlementDomain::Intex,
-            intex_series_target(&series),
+            intex_holding_target(&series, Address::repeat_byte(0x11)),
             U256::from(7u64),
             U256::ZERO,
         )
@@ -106,7 +108,7 @@ mod tests {
         assert_eq!(
             intex,
             B256::from(alloy_primitives::hex!(
-                "1f0ea2f024789bee0075321892de18a3fcf110e88565746a6fed9823cb465cbc"
+                "07e18d77ea9350ab0fbf2364d42dae5b1e94f52095d59cfde4203768b94ac30c"
             ))
         );
         assert_ne!(nod, gem);
@@ -114,10 +116,26 @@ mod tests {
     }
 
     #[test]
-    fn domain_byte_and_series_padding_change_the_word() {
-        let target = intex_series_target(b"20260212-TRY-U");
-        assert_eq!(&target.as_slice()[..14], b"20260212-TRY-U");
-        assert!(target.as_slice()[14..].iter().all(|byte| *byte == 0));
+    fn an_intex_holding_is_one_holder_of_one_series() {
+        let series = *b"20260212-TRY-U";
+        let alice = Address::repeat_byte(0x11);
+        let holding = intex_holding_target(&series, alice);
+        assert_eq!(
+            holding,
+            B256::from(alloy_primitives::hex!(
+                "b223804dfc85ac8e666b4809ab0c62869c05aaf876089b738b890ef06994ee8f"
+            ))
+        );
+        assert_ne!(
+            holding,
+            intex_holding_target(&series, Address::repeat_byte(0x22))
+        );
+        assert_ne!(holding, intex_holding_target(b"20260212-TRY-V", alice));
+    }
+
+    #[test]
+    fn the_domain_byte_changes_the_word() {
+        let target = intex_holding_target(b"20260212-TRY-U", Address::repeat_byte(0x11));
         let nod = settlement_context(SettlementDomain::Nod, target, U256::from(7u64), U256::ZERO)
             .unwrap();
         let intex = settlement_context(

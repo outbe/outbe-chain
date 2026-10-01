@@ -17,7 +17,7 @@ use crate::schema::PayNoteContract;
 
 pub use crate::runtime::PayNoteClaim;
 
-pub use crate::context::{intex_series_target, settlement_context, SettlementDomain};
+pub use crate::context::{intex_holding_target, settlement_context, SettlementDomain};
 
 /// Verify a `outbe.paynote@1.3.0` spend proof, nullify the note, append any
 /// change commitment, and return the validated claim.
