@@ -133,7 +133,7 @@ fn retirement_clears_only_one_scope_and_overlay_hides_it_before_acknowledgement(
     storage
         .put(ns.clone(), &b, &Value::new(vec![8]).unwrap())
         .unwrap();
-    let overlay = PendingOverlayStorage::new(storage.clone());
+    let overlay = PendingOverlayStorage::new(storage.clone(), storage.clone());
     let mut batch = AtomicWriteBatch::from_operations(vec![AtomicWriteOperation::put(
         Namespace::new("checkpoint").unwrap(),
         Key::new(vec![1]).unwrap(),
@@ -143,7 +143,7 @@ fn retirement_clears_only_one_scope_and_overlay_hides_it_before_acknowledgement(
     let pending = overlay.stage(batch).unwrap();
     assert!(overlay.get(ns.clone(), &a).unwrap().is_none());
     assert!(storage.get(ns.clone(), &a).unwrap().is_some());
-    pending.persist(storage.as_ref()).unwrap().acknowledge();
+    pending.persist().unwrap().acknowledge();
     assert!(storage.get(ns.clone(), &a).unwrap().is_none());
     assert_eq!(storage.get(ns, &b).unwrap().unwrap().as_bytes(), &[8]);
 }

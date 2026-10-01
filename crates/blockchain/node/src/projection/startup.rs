@@ -15,6 +15,7 @@ use outbe_offchain_storage::OpenedStorage;
 use outbe_offchain_storage::PendingOverlayStorage;
 use outbe_offchain_storage::StorageProvider;
 use outbe_offchain_storage::StorageReaderHandle;
+use outbe_offchain_storage::StorageWriterHandle;
 use outbe_primitives::projection::ProjectionCheckpoint;
 use reth_provider::BlockHashReader;
 use reth_provider::BlockIdReader;
@@ -50,6 +51,7 @@ pub(super) fn prepare_projection_attempt(
         observe(storage.ownership.completion());
     }
     let reader = storage.reader.clone();
+    let writer = storage.writer.clone();
     storage
         .ownership
         .preflight(|reader, writer| {
@@ -74,7 +76,7 @@ pub(super) fn prepare_projection_attempt(
         backend = config.storage.backend_name(),
         "offchain storage opened"
     );
-    let (overlay, projector) = open_logical_projection(projection_config, reader, selector)
+    let (overlay, projector) = open_logical_projection(projection_config, reader, writer, selector)
         .map_err(PrepareProjectionError::Projection)?;
     Ok((storage, overlay, projector))
 }
@@ -82,12 +84,13 @@ pub(super) fn prepare_projection_attempt(
 pub(super) fn open_logical_projection(
     projection_config: ProjectionConfig,
     durable_reader: StorageReaderHandle,
+    durable_writer: StorageWriterHandle,
     selector: Option<Arc<dyn TributeRetentionSelector>>,
 ) -> Result<
     (Arc<PendingOverlayStorage>, OffchainDataProjection),
     outbe_offchain_data::ProjectionError,
 > {
-    let overlay = Arc::new(PendingOverlayStorage::new(durable_reader));
+    let overlay = Arc::new(PendingOverlayStorage::new(durable_reader, durable_writer));
     let mut projector = match selector {
         Some(selector) => OffchainDataProjection::open_with_retention_selector(
             projection_config,

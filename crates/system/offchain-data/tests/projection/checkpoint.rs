@@ -158,7 +158,7 @@ fn logical_projection_advances_before_the_durable_batch_is_written() {
         OffchainDataProjection::open(config(10), durable.clone(), durable.clone()).unwrap();
     assert_eq!(bootstrap.state().checkpoint, None);
 
-    let overlay = Arc::new(PendingOverlayStorage::new(durable.clone()));
+    let overlay = Arc::new(PendingOverlayStorage::new(durable.clone(), durable.clone()));
     let mut logical =
         OffchainDataProjection::open(config(10), overlay.clone(), overlay.clone()).unwrap();
     let owner = Address::repeat_byte(0xa2);
@@ -178,7 +178,9 @@ fn logical_projection_advances_before_the_durable_batch_is_written() {
     };
 
     let prepared = logical.prepare_block(&block).unwrap();
-    let (outcome, durable_batch) = logical.apply_prepared_with_batch(prepared).unwrap();
+    let (outcome, pending) = logical
+        .apply_prepared_with(prepared, |batch| overlay.stage(batch))
+        .unwrap();
 
     assert!(matches!(
         outcome,
@@ -208,7 +210,12 @@ fn logical_projection_advances_before_the_durable_batch_is_written() {
         .unwrap()
         .is_some());
 
-    durable.apply_atomic(&durable_batch).unwrap();
+    drop(
+        pending
+            .expect("the applied block stages one durable batch")
+            .persist()
+            .unwrap(),
+    );
     assert_eq!(
         read_projection_state(config(10), durable)
             .unwrap()
@@ -257,23 +264,35 @@ fn restart_replays_pending_finalized_receipts_from_the_durable_checkpoint() {
         OffchainDataProjection::open(config(10), durable.clone(), durable.clone()).unwrap();
     durable_projection.project_block(&durable_block).unwrap();
 
-    let lost_overlay = Arc::new(PendingOverlayStorage::new(durable.clone()));
+    let lost_overlay = Arc::new(PendingOverlayStorage::new(durable.clone(), durable.clone()));
     let mut before_kill =
         OffchainDataProjection::open(config(10), lost_overlay.clone(), lost_overlay.clone())
             .unwrap();
-    before_kill.project_block(&pending_block).unwrap();
+    let prepared = before_kill.prepare_block(&pending_block).unwrap();
+    drop(
+        before_kill
+            .apply_prepared_with(prepared, |batch| lost_overlay.stage(batch))
+            .unwrap()
+            .1,
+    );
     assert!(TributeRepositoryReader::new(lost_overlay)
         .get(pending_id)
         .unwrap()
         .is_some());
     drop(before_kill);
 
-    let rebuilt_overlay = Arc::new(PendingOverlayStorage::new(durable.clone()));
+    let rebuilt_overlay = Arc::new(PendingOverlayStorage::new(durable.clone(), durable.clone()));
     let mut after_restart =
         OffchainDataProjection::open(config(10), rebuilt_overlay.clone(), rebuilt_overlay.clone())
             .unwrap();
     assert_eq!(after_restart.state().checkpoint.unwrap().block_number, 10);
-    after_restart.project_block(&pending_block).unwrap();
+    let prepared = after_restart.prepare_block(&pending_block).unwrap();
+    drop(
+        after_restart
+            .apply_prepared_with(prepared, |batch| rebuilt_overlay.stage(batch))
+            .unwrap()
+            .1,
+    );
 
     assert_eq!(after_restart.state().checkpoint.unwrap().block_number, 11);
     assert!(TributeRepositoryReader::new(rebuilt_overlay)

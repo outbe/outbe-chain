@@ -307,18 +307,17 @@ impl FinalizedProjectionSink {
             frame.block(),
             frame.receipts(),
         )?;
-        let overlay = self.runtime.overlay.clone();
+        let overlay = self.runtime.overlay.clone().ok_or_else(|| {
+            eyre::eyre!("offchain projection overlay is required before a durable write")
+        })?;
         let prepared = self
             .runtime
             .projector
             .prepare_block(&normalized)
             .wrap_err_with(|| format!("project finalized frame {}", identity.number))?;
-        let (projected, durable_write) = DurableProjectionWrite::prepare(
-            &mut self.runtime.projector,
-            prepared,
-            overlay.as_deref(),
-        )
-        .wrap_err_with(|| format!("apply logical finalized frame {}", identity.number))?;
+        let (projected, durable_write) =
+            DurableProjectionWrite::prepare(&mut self.runtime.projector, prepared, &overlay)
+                .wrap_err_with(|| format!("apply logical finalized frame {}", identity.number))?;
         let projected = match projected {
             ProjectionOutcome::Applied { checkpoint, .. } => checkpoint,
             ProjectionOutcome::AlreadyApplied(checkpoint) => {

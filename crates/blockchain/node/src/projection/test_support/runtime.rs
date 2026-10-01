@@ -137,11 +137,17 @@ where
     let (logical_checkpoint_tx, mut logical_checkpoint_rx) = tokio::sync::mpsc::unbounded_channel();
     let (durable_checkpoint_tx, mut durable_checkpoint_rx) = tokio::sync::mpsc::unbounded_channel();
     let (durable_write_tx, durable_write_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (durable_error_tx, mut durable_error_rx) = tokio::sync::mpsc::unbounded_channel();
     let (recovery_ack_tx, mut recovery_ack_rx) = tokio::sync::mpsc::unbounded_channel();
     std::thread::Builder::new()
         .name("offchain-storage-writer".to_owned())
         .spawn(move || {
-            run_durable_projection_writer(durable_writer, durable_write_rx, durable_checkpoint_tx);
+            run_durable_projection_writer(
+                durable_writer,
+                durable_write_rx,
+                durable_checkpoint_tx,
+                durable_error_tx,
+            );
         })
         .wrap_err("spawn offchain-data offchain storage writer")?;
 
@@ -168,6 +174,7 @@ where
     let mut notifications_open = true;
     let mut finalized_stream_open = true;
     let mut runtime_failures_open = true;
+    let mut durable_errors_open = true;
     let mut storage_unavailable_since: Option<tokio::time::Instant> = None;
     let mut immediate_recovery_used = false;
 
@@ -481,6 +488,21 @@ where
                 can_start_attempt = false;
             }
 
+            durable_error = durable_error_rx.recv(), if durable_errors_open && !finality_stalled => {
+                durable_errors_open = false;
+                if let Some(error) = durable_error {
+                    error!(%error, "fatal finalized offchain-data durable write");
+                    publish_fatal(
+                        &readiness_publisher,
+                        &projection_exit,
+                        projection_failure_class(&error),
+                        error.to_string(),
+                    );
+                    finality_stalled = true;
+                    can_start_attempt = false;
+                }
+            }
+
             _ = retry.tick(), if projection_attempt.is_none() && !finality_stalled => {
                 if pending_target.is_some() {
                     can_start_attempt = true;
@@ -568,7 +590,9 @@ where
             .verify_transaction_capability()
             .wrap_err("probe offchain storage before acknowledging runtime-body recovery")?;
     }
-    let overlay = runtime.overlay.clone();
+    let overlay = runtime.overlay.clone().ok_or_else(|| {
+        eyre::eyre!("offchain projection overlay is required before a durable write")
+    })?;
     let projector = &mut runtime.projector;
     let state = projector.state();
     let checkpoint = state.checkpoint;
@@ -691,7 +715,7 @@ where
             .prepare_block(&normalized)
             .wrap_err_with(|| format!("project finalized block {block_number}"))?;
         let (projected, durable_write) =
-            DurableProjectionWrite::prepare(projector, prepared, overlay.as_deref())
+            DurableProjectionWrite::prepare(projector, prepared, &overlay)
                 .wrap_err_with(|| format!("apply logical finalized block {block_number}"))?;
         let projected = match projected {
             ProjectionOutcome::Applied { checkpoint, .. }

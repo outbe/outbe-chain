@@ -165,7 +165,7 @@ impl PartitionReadSource for RocksPartitionDataSource {
         if operations.is_empty() {
             return Ok(Some(base));
         }
-        let view = Arc::new(crate::PendingOverlayStorage::new(base));
+        let view = Arc::new(crate::pending::PendingLogicalView::new(base));
         view.apply_atomic(&operations)?;
         Ok(Some(view))
     }

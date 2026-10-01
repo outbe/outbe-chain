@@ -19,15 +19,15 @@ pub(in super::super) fn run_durable_projection_writer(
     writer: StorageWriterHandle,
     mut writes: tokio::sync::mpsc::UnboundedReceiver<DurableProjectionWrite>,
     durable_checkpoint_tx: tokio::sync::mpsc::UnboundedSender<FinalizedTarget>,
+    durable_error_tx: tokio::sync::mpsc::UnboundedSender<eyre::Report>,
 ) {
     while let Some(write) = writes.blocking_recv() {
-        if apply_durable_projection_write_before(
+        if let Err(error) = apply_durable_projection_write_before(
             &writer,
             &write,
             std::time::Instant::now() + PROJECTION_RECOVERY_DEADLINE,
-        )
-        .is_err()
-        {
+        ) {
+            let _ = durable_error_tx.send(error);
             return;
         }
         if durable_checkpoint_tx.send(write.checkpoint).is_err() {

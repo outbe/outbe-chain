@@ -1,15 +1,24 @@
 # Pending writes and durable acknowledgement
 
-`PendingOverlayStorage::stage` atomically applies one batch to the logical view
-and returns a `PendingWrite` owning the association with those exact mutations.
-The generation and the batch are private. There is no numeric acknowledgement
+`PendingOverlayStorage` is constructed with one reader and one durable writer.
+`stage` atomically applies one batch to the logical view and returns a
+`PendingWrite` owning the association with those exact mutations. The
+generation and the batch are private. There is no numeric acknowledgement
 interface or separate generation capture.
 
-`PendingWrite::persist` passes the retained batch to the injected durable
-`StorageWriter`. The writer must target the durable storage underlying the
-overlay. Successful persistence returns a `PendingDurableReceipt` bound to the
-same handle. The receipt can be acknowledged once; it cannot be manufactured
-or paired with another pending batch.
+`PendingWrite::persist` takes no writer. It passes the retained batch to the
+writer captured when that overlay was constructed. That writer is the durable
+writer for the overlay. Successful persistence returns a `PendingDurableReceipt`
+bound to the same handle. The receipt can be acknowledged once; it cannot be
+manufactured or paired with another pending batch.
+
+`PendingLogicalView` is a separate `pub(crate)` type in the same module,
+constructed with a reader only. It accepts `apply_atomic` and has no `stage`
+or `persist`. The Rocks prepared journal uses it and drops the resulting
+generation. `PendingOverlayStorage::apply_atomic` returns an error, so a
+durable overlay cannot enqueue a generation that no receipt can acknowledge.
+Projection state is written by the session writer before that overlay is
+opened. Durable projection uses `stage`.
 
 Pending writes persist in stage order. The module checks this before calling
 the writer. A commit gate covers persistence through receipt acknowledgement
@@ -23,8 +32,6 @@ can retry its exact batch after an error or a dropped receipt. An abandoned
 unacknowledged handle keeps later writes blocked; process restart rebuilds the
 projection from its durable checkpoint through the existing node recovery.
 
-Logical-only writes through `StorageWriter` intentionally discard their pending
-handle and cannot later be acknowledged. Durable projection uses `stage`.
 An empty batch contains no pending mutations and consumes no place in stage
 order.
 

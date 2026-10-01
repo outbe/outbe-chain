@@ -8,8 +8,8 @@ use parking_lot::RwLock;
 
 use crate::{
     AtomicWriteBatch, AtomicWriteOperation, Key, Namespace, ScanEntry, ScanPage, ScanRequest,
-    StorageError, StorageReader, StorageReaderHandle, StorageWriter, StoredValue, MAX_SCAN_ENTRIES,
-    MAX_SCAN_PAGE_VALUE_BYTES,
+    StorageError, StorageReader, StorageReaderHandle, StorageWriter, StorageWriterHandle,
+    StoredValue, MAX_SCAN_ENTRIES, MAX_SCAN_PAGE_VALUE_BYTES,
 };
 
 #[derive(Clone, Debug)]
@@ -32,55 +32,76 @@ struct PendingState {
     retired: BTreeMap<crate::StorageScope, u64>,
 }
 
-struct PendingShared {
+struct PendingCore {
     base: StorageReaderHandle,
     state: RwLock<PendingState>,
     commit_gate: parking_lot::Mutex<()>,
 }
 
-/// Process-local finalized mutations layered over the configured durable projection.
+/// Process-local finalized mutations layered over one captured durable writer.
 pub struct PendingOverlayStorage {
-    shared: Arc<PendingShared>,
+    core: Arc<PendingCore>,
+    writer: StorageWriterHandle,
+}
+
+/// Reader-only pending view. Prepared journals use it. It has no durable persist.
+pub(crate) struct PendingLogicalView {
+    core: Arc<PendingCore>,
 }
 
 impl PendingOverlayStorage {
     #[must_use]
-    pub fn new(base: StorageReaderHandle) -> Self {
+    pub fn new(base: StorageReaderHandle, writer: StorageWriterHandle) -> Self {
         Self {
-            shared: Arc::new(PendingShared {
+            core: Arc::new(PendingCore {
+                base,
+                state: RwLock::new(PendingState::default()),
+                commit_gate: parking_lot::Mutex::new(()),
+            }),
+            writer,
+        }
+    }
+
+    /// Applies the exact batch and captures its pending ownership in one operation.
+    pub fn stage(&self, batch: AtomicWriteBatch) -> Result<PendingWrite, StorageError> {
+        let generation = self.core.apply_batch(&batch)?;
+        Ok(PendingWrite {
+            core: self.core.clone(),
+            writer: self.writer.clone(),
+            generation,
+            batch,
+        })
+    }
+}
+
+impl PendingLogicalView {
+    #[must_use]
+    pub(crate) fn new(base: StorageReaderHandle) -> Self {
+        Self {
+            core: Arc::new(PendingCore {
                 base,
                 state: RwLock::new(PendingState::default()),
                 commit_gate: parking_lot::Mutex::new(()),
             }),
         }
     }
-
-    /// Applies the exact batch and captures its pending ownership in one operation.
-    pub fn stage(&self, batch: AtomicWriteBatch) -> Result<PendingWrite, StorageError> {
-        let generation = self.apply_batch(&batch)?;
-        Ok(PendingWrite {
-            shared: self.shared.clone(),
-            generation,
-            batch,
-        })
-    }
-
-    fn is_retired(&self, namespace: &Namespace, key: &Key) -> Result<bool, StorageError> {
-        if self.shared.state.read().retired.is_empty() {
-            return Ok(false);
-        }
-        let scope = self.shared.base.storage_scope(namespace, key)?;
-        Ok(scope.is_some_and(|scope| self.shared.state.read().retired.contains_key(&scope)))
-    }
 }
 
-impl StorageReader for PendingOverlayStorage {
+impl PendingCore {
+    fn is_retired(&self, namespace: &Namespace, key: &Key) -> Result<bool, StorageError> {
+        if self.state.read().retired.is_empty() {
+            return Ok(false);
+        }
+        let scope = self.base.storage_scope(namespace, key)?;
+        Ok(scope.is_some_and(|scope| self.state.read().retired.contains_key(&scope)))
+    }
+
     fn storage_scope(
         &self,
         namespace: &Namespace,
         key: &Key,
     ) -> Result<Option<crate::StorageScope>, StorageError> {
-        self.shared.base.storage_scope(namespace, key)
+        self.base.storage_scope(namespace, key)
     }
 
     fn get_record(
@@ -92,7 +113,6 @@ impl StorageReader for PendingOverlayStorage {
             return Ok(None);
         }
         match self
-            .shared
             .state
             .read()
             .records
@@ -108,7 +128,7 @@ impl StorageReader for PendingOverlayStorage {
                 record: PendingRecord::Delete,
                 ..
             }) => Ok(None),
-            None => self.shared.base.get_record(namespace, key),
+            None => self.base.get_record(namespace, key),
         }
     }
 
@@ -132,7 +152,6 @@ impl StorageReader for PendingOverlayStorage {
         let requested_after = request.after().cloned();
         let limit = request.limit();
         let pending = self
-            .shared
             .state
             .read()
             .records
@@ -159,7 +178,7 @@ impl StorageReader for PendingOverlayStorage {
 
         loop {
             if base_entries.is_empty() && !base_exhausted {
-                let page = self.shared.base.scan_prefix(
+                let page = self.base.scan_prefix(
                     namespace.clone(),
                     ScanRequest::new(&prefix, base_after.as_ref(), MAX_SCAN_ENTRIES)?,
                 )?;
@@ -245,26 +264,13 @@ impl StorageReader for PendingOverlayStorage {
             next_after,
         })
     }
-}
 
-fn pending_scan_entry(key: &Key, record: &PendingRecord) -> Option<ScanEntry> {
-    match record {
-        PendingRecord::Put(record) => Some(ScanEntry {
-            key: key.clone(),
-            value: record.value.clone(),
-            metadata: record.metadata.clone(),
-        }),
-        PendingRecord::Delete => None,
-    }
-}
-
-impl PendingOverlayStorage {
     fn apply_batch(&self, batch: &AtomicWriteBatch) -> Result<Option<u64>, StorageError> {
         batch.validate()?;
         if batch.is_empty() {
             return Ok(None);
         }
-        let mut state = self.shared.state.write();
+        let mut state = self.state.write();
         let generation = state
             .generation
             .checked_add(1)
@@ -312,8 +318,68 @@ impl PendingOverlayStorage {
     }
 }
 
+fn pending_scan_entry(key: &Key, record: &PendingRecord) -> Option<ScanEntry> {
+    match record {
+        PendingRecord::Put(record) => Some(ScanEntry {
+            key: key.clone(),
+            value: record.value.clone(),
+            metadata: record.metadata.clone(),
+        }),
+        PendingRecord::Delete => None,
+    }
+}
+
+macro_rules! delegate_pending_reader {
+    ($ty:ty) => {
+        impl StorageReader for $ty {
+            fn storage_scope(
+                &self,
+                namespace: &Namespace,
+                key: &Key,
+            ) -> Result<Option<crate::StorageScope>, StorageError> {
+                self.core.storage_scope(namespace, key)
+            }
+
+            fn get_record(
+                &self,
+                namespace: Namespace,
+                key: &Key,
+            ) -> Result<Option<StoredValue>, StorageError> {
+                self.core.get_record(namespace, key)
+            }
+
+            fn get_records(
+                &self,
+                namespace: Namespace,
+                keys: &[Key],
+            ) -> Result<Vec<Option<StoredValue>>, StorageError> {
+                self.core.get_records(namespace, keys)
+            }
+
+            fn scan_prefix(
+                &self,
+                namespace: Namespace,
+                request: ScanRequest<'_>,
+            ) -> Result<ScanPage, StorageError> {
+                self.core.scan_prefix(namespace, request)
+            }
+        }
+    };
+}
+
+delegate_pending_reader!(PendingOverlayStorage);
+delegate_pending_reader!(PendingLogicalView);
+
 impl StorageWriter for PendingOverlayStorage {
+    fn apply_atomic(&self, _batch: &AtomicWriteBatch) -> Result<(), StorageError> {
+        Err(StorageError::invalid_argument(
+            "durable pending overlay accepts writes only through stage",
+        ))
+    }
+}
+
+impl StorageWriter for PendingLogicalView {
     fn apply_atomic(&self, batch: &AtomicWriteBatch) -> Result<(), StorageError> {
-        self.apply_batch(batch).map(|_| ())
+        self.core.apply_batch(batch).map(|_| ())
     }
 }

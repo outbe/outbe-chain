@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Weak};
 
 use outbe_offchain_storage::{
     AtomicWriteBatch, AtomicWriteOperation, Key, MemoryStorage, Namespace, PendingOverlayStorage,
@@ -18,7 +19,8 @@ fn later_pending_batch_cannot_reach_the_backend_before_the_earlier_ack() {
             Ok(())
         }
     }
-    let overlay = PendingOverlayStorage::new(Arc::new(MemoryStorage::new()));
+    let writer = Arc::new(CountingWriter(AtomicUsize::new(0)));
+    let overlay = PendingOverlayStorage::new(Arc::new(MemoryStorage::new()), writer.clone());
     let namespace = Namespace::new("records").unwrap();
     let batch = |key: &[u8]| {
         AtomicWriteBatch::from_operations(vec![AtomicWriteOperation::put(
@@ -29,20 +31,16 @@ fn later_pending_batch_cannot_reach_the_backend_before_the_earlier_ack() {
     };
     let first = overlay.stage(batch(b"first")).unwrap();
     let second = overlay.stage(batch(b"second")).unwrap();
-    let writer = CountingWriter(AtomicUsize::new(0));
-    assert!(second.persist(&writer).is_err());
+    assert!(second.persist().is_err());
     assert_eq!(writer.0.load(Ordering::SeqCst), 0);
-    drop(first.persist(&writer).unwrap());
-    assert!(
-        second.persist(&writer).is_err(),
-        "dropped receipt is not an ACK"
-    );
+    drop(first.persist().unwrap());
+    assert!(second.persist().is_err(), "dropped receipt is not an ACK");
     assert_eq!(writer.0.load(Ordering::SeqCst), 1);
-    first.persist(&writer).unwrap().acknowledge();
-    second.persist(&writer).unwrap().acknowledge();
+    first.persist().unwrap().acknowledge();
+    second.persist().unwrap().acknowledge();
     assert_eq!(writer.0.load(Ordering::SeqCst), 3);
     assert!(
-        first.persist(&writer).is_err(),
+        first.persist().is_err(),
         "an acknowledged handle cannot be persisted again"
     );
     assert_eq!(writer.0.load(Ordering::SeqCst), 3);
@@ -51,7 +49,7 @@ fn later_pending_batch_cannot_reach_the_backend_before_the_earlier_ack() {
 #[test]
 fn durable_receipt_is_required_to_release_pending_and_drop_preserves_retry() {
     let base = Arc::new(MemoryStorage::new());
-    let overlay = PendingOverlayStorage::new(base.clone());
+    let overlay = PendingOverlayStorage::new(base.clone(), base.clone());
     let namespace = Namespace::new("records").unwrap();
     let key = Key::new(b"key".to_vec()).unwrap();
     let pending = overlay
@@ -64,7 +62,7 @@ fn durable_receipt_is_required_to_release_pending_and_drop_preserves_retry() {
         ]))
         .unwrap();
     assert!(base.get(namespace.clone(), &key).unwrap().is_none());
-    let receipt = pending.persist(base.as_ref()).unwrap();
+    let receipt = pending.persist().unwrap();
     base.put(
         namespace.clone(),
         &key,
@@ -80,7 +78,7 @@ fn durable_receipt_is_required_to_release_pending_and_drop_preserves_retry() {
             .as_bytes(),
         b"pending"
     );
-    pending.persist(base.as_ref()).unwrap().acknowledge();
+    pending.persist().unwrap().acknowledge();
     base.put(
         namespace.clone(),
         &key,
@@ -96,7 +94,7 @@ fn durable_receipt_is_required_to_release_pending_and_drop_preserves_retry() {
 #[test]
 fn old_put_ack_preserves_a_newer_delete_and_abandoned_write_blocks_later_persistence() {
     let base = Arc::new(MemoryStorage::new());
-    let overlay = PendingOverlayStorage::new(base.clone());
+    let overlay = PendingOverlayStorage::new(base.clone(), base.clone());
     let namespace = Namespace::new("records").unwrap();
     let key = Key::new(b"deleted".to_vec()).unwrap();
     let put = AtomicWriteBatch::from_operations(vec![AtomicWriteOperation::put(
@@ -110,10 +108,10 @@ fn old_put_ack_preserves_a_newer_delete_and_abandoned_write_blocks_later_persist
             AtomicWriteOperation::delete(namespace.clone(), key.clone()),
         ]))
         .unwrap();
-    first.persist(base.as_ref()).unwrap().acknowledge();
+    first.persist().unwrap().acknowledge();
     assert!(base.get(namespace.clone(), &key).unwrap().is_some());
     assert!(overlay.get(namespace.clone(), &key).unwrap().is_none());
-    newer.persist(base.as_ref()).unwrap().acknowledge();
+    newer.persist().unwrap().acknowledge();
     base.put(
         namespace.clone(),
         &key,
@@ -130,7 +128,7 @@ fn old_put_ack_preserves_a_newer_delete_and_abandoned_write_blocks_later_persist
     );
     drop(overlay.stage(put.clone()).unwrap());
     let later = overlay.stage(put).unwrap();
-    assert!(later.persist(base.as_ref()).is_err());
+    assert!(later.persist().is_err());
     assert_eq!(
         base.get(namespace.clone(), &key)
             .unwrap()
@@ -168,7 +166,7 @@ fn older_ack_preserves_newer_retirements_until_their_own_ack() {
     let value = Value::new(b"body".to_vec()).unwrap();
     base.put(bodies.clone(), &retired, &value).unwrap();
     base.put(bodies.clone(), &sibling, &value).unwrap();
-    let overlay = PendingOverlayStorage::new(base.clone());
+    let overlay = PendingOverlayStorage::new(base.clone(), base.clone());
     let older = overlay
         .stage(AtomicWriteBatch::from_operations(vec![
             AtomicWriteOperation::put(
@@ -185,23 +183,17 @@ fn older_ack_preserves_newer_retirements_until_their_own_ack() {
     };
     let first_retirement = overlay.stage(retirement()).unwrap();
     let newer_retirement = overlay.stage(retirement()).unwrap();
-    older.persist(base.as_ref()).unwrap().acknowledge();
+    older.persist().unwrap().acknowledge();
     assert!(base.get(bodies.clone(), &retired).unwrap().is_some());
     assert!(overlay.get(bodies.clone(), &retired).unwrap().is_none());
-    first_retirement
-        .persist(base.as_ref())
-        .unwrap()
-        .acknowledge();
+    first_retirement.persist().unwrap().acknowledge();
     base.put(bodies.clone(), &retired, &value).unwrap();
     assert!(overlay.get(bodies.clone(), &retired).unwrap().is_none());
     assert_eq!(
         overlay.get(bodies.clone(), &sibling).unwrap().unwrap(),
         value
     );
-    newer_retirement
-        .persist(base.as_ref())
-        .unwrap()
-        .acknowledge();
+    newer_retirement.persist().unwrap().acknowledge();
     base.put(bodies.clone(), &retired, &value).unwrap();
     assert_eq!(overlay.get(bodies, &retired).unwrap().unwrap(), value);
 }
@@ -212,7 +204,8 @@ fn staging_during_durable_write_remains_visible_after_the_older_receipt_ack() {
     use std::sync::Mutex;
     struct StageDuringWrite {
         base: Arc<MemoryStorage>,
-        overlay: Arc<PendingOverlayStorage>,
+        overlay: Weak<PendingOverlayStorage>,
+        staged: AtomicBool,
         newer: Mutex<Option<PendingWrite>>,
         namespace: Namespace,
         key: Key,
@@ -223,17 +216,41 @@ fn staging_during_durable_write_remains_visible_after_the_older_receipt_ack() {
             batch: &AtomicWriteBatch,
         ) -> Result<(), outbe_offchain_storage::StorageError> {
             self.base.apply_atomic(batch)?;
+            if self.staged.swap(true, Ordering::SeqCst) {
+                return Ok(());
+            }
+            let overlay = self
+                .overlay
+                .upgrade()
+                .expect("overlay outlives the durable writer");
             *self.newer.lock().unwrap() =
-                Some(self.overlay.stage(AtomicWriteBatch::from_operations(vec![
+                Some(overlay.stage(AtomicWriteBatch::from_operations(vec![
                     AtomicWriteOperation::delete(self.namespace.clone(), self.key.clone()),
                 ]))?);
             Ok(())
         }
     }
     let base = Arc::new(MemoryStorage::new());
-    let overlay = Arc::new(PendingOverlayStorage::new(base.clone()));
     let namespace = Namespace::new("records").unwrap();
     let key = Key::new(b"key".to_vec()).unwrap();
+    let writer_slot: Arc<Mutex<Option<Arc<StageDuringWrite>>>> = Arc::new(Mutex::new(None));
+    let slot = writer_slot.clone();
+    let captured_base = base.clone();
+    let captured_namespace = namespace.clone();
+    let captured_key = key.clone();
+    let overlay = Arc::new_cyclic(move |overlay_weak| {
+        let writer = Arc::new(StageDuringWrite {
+            base: captured_base.clone(),
+            overlay: overlay_weak.clone(),
+            staged: AtomicBool::new(false),
+            newer: Mutex::default(),
+            namespace: captured_namespace.clone(),
+            key: captured_key.clone(),
+        });
+        *slot.lock().unwrap() = Some(writer.clone());
+        PendingOverlayStorage::new(captured_base, writer)
+    });
+    let writer = writer_slot.lock().unwrap().take().unwrap();
     let first = overlay
         .stage(AtomicWriteBatch::from_operations(vec![
             AtomicWriteOperation::put(
@@ -243,18 +260,11 @@ fn staging_during_durable_write_remains_visible_after_the_older_receipt_ack() {
             ),
         ]))
         .unwrap();
-    let writer = StageDuringWrite {
-        base: base.clone(),
-        overlay: overlay.clone(),
-        newer: Mutex::default(),
-        namespace: namespace.clone(),
-        key: key.clone(),
-    };
-    first.persist(&writer).unwrap().acknowledge();
+    first.persist().unwrap().acknowledge();
     assert!(base.get(namespace.clone(), &key).unwrap().is_some());
     assert!(overlay.get(namespace.clone(), &key).unwrap().is_none());
     let newer = writer.newer.lock().unwrap().take().unwrap();
-    newer.persist(base.as_ref()).unwrap().acknowledge();
+    newer.persist().unwrap().acknowledge();
     base.put(
         namespace.clone(),
         &key,

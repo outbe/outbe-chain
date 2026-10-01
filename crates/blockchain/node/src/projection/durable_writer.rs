@@ -43,26 +43,15 @@ impl DurableProjectionWrite {
     pub(super) fn prepare(
         projector: &mut outbe_offchain_data::OffchainDataProjection,
         prepared: outbe_offchain_data::PreparedBlock,
-        overlay: Option<&PendingOverlayStorage>,
+        overlay: &PendingOverlayStorage,
     ) -> Result<(outbe_offchain_data::ProjectionOutcome, Self), outbe_offchain_data::ProjectionError>
     {
         use outbe_offchain_data::ProjectionOutcome;
-        let (outcome, batch) = match overlay {
-            Some(overlay) => {
-                let (outcome, pending) =
-                    projector.apply_prepared_with(prepared, |batch| overlay.stage(batch))?;
-                (
-                    outcome,
-                    pending
-                        .map(ProjectionBatch::Pending)
-                        .unwrap_or_else(|| ProjectionBatch::Direct(AtomicWriteBatch::new())),
-                )
-            }
-            None => {
-                let (outcome, batch) = projector.apply_prepared_with_batch(prepared)?;
-                (outcome, ProjectionBatch::Direct(batch))
-            }
-        };
+        let (outcome, pending) =
+            projector.apply_prepared_with(prepared, |batch| overlay.stage(batch))?;
+        let batch = pending
+            .map(ProjectionBatch::Pending)
+            .unwrap_or_else(|| ProjectionBatch::Direct(AtomicWriteBatch::new()));
         let checkpoint = match &outcome {
             ProjectionOutcome::Applied { checkpoint, .. }
             | ProjectionOutcome::AlreadyApplied(checkpoint) => checkpoint,
@@ -80,7 +69,7 @@ impl DurableProjectionWrite {
     ) -> Result<Option<PendingDurableReceipt<'_>>, StorageError> {
         match &self.batch {
             ProjectionBatch::Direct(batch) => writer.apply_atomic(batch).map(|_| None),
-            ProjectionBatch::Pending(pending) => pending.persist(writer.as_ref()).map(Some),
+            ProjectionBatch::Pending(pending) => pending.persist().map(Some),
         }
     }
 }

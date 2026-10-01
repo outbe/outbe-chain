@@ -21,7 +21,8 @@ pub(super) fn add_empty_block(provider: &MockEthProvider, number: u64) -> B256 {
 pub(super) fn initialized_runtime(start_block: u64) -> Mutex<ProjectionRuntime> {
     let storage = Arc::new(MemoryStorage::new());
     let reader: StorageReaderHandle = storage.clone();
-    let writer: StorageWriterHandle = storage;
+    let writer: StorageWriterHandle = storage.clone();
+    let overlay = Arc::new(PendingOverlayStorage::new(storage.clone(), storage));
     let projection_config = ProjectionConfig {
         chain_id: 1,
         genesis_hash: B256::repeat_byte(0x11),
@@ -42,7 +43,7 @@ pub(super) fn initialized_runtime(start_block: u64) -> Mutex<ProjectionRuntime> 
         readiness_publisher,
         projection_config,
         _reader: reader,
-        overlay: None,
+        overlay: Some(overlay),
         writer,
         _writer_lease: None,
         runtime_failure_sender: Some(runtime_failure_tx),
