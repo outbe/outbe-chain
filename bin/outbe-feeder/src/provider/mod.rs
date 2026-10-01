@@ -61,7 +61,8 @@ impl std::error::Error for ObservationError {}
 pub struct TickerPrice {
     /// Current provider rate at FP18 (pool spot rate for DEX providers).
     pub price: FixedValue,
-    /// 24-hour trading volume at FP18.
+    /// Trailing trading volume at FP18 (exchange ticker window, or the DEX
+    /// rolling window).
     pub volume: FixedValue,
 }
 

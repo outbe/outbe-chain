@@ -27,7 +27,7 @@ use outbe_zk_canonical::noir::paynote::{Paynote as PayNote, PublicInputs, Witnes
 use crate::internal::{addresses, eth};
 use crate::world::World;
 
-mod capacity;
+pub(crate) mod capacity;
 
 /// A note this scenario owns: the spend key it was built around plus the
 /// leaf the pool will derive from the deposit.

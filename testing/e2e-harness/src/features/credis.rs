@@ -6,8 +6,7 @@ use std::time::{Duration, Instant};
 use alloy_primitives::{keccak256, Address, B256, U256};
 use cucumber::{given, then, when};
 use outbe_primitives::addresses::{
-    CCA_REGISTRY_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, ORACLE_ADDRESS,
-    VAULT_ROUTER_ADDRESS,
+    CCA_REGISTRY_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
 use outbe_tee::protocol::{GratisOp, Ledger, PromisOp};
 
@@ -224,49 +223,7 @@ fn prepare(world: &mut World) {
 
 #[then("the pledge valuation window closes over that quote")]
 fn pledge_window_closes(world: &mut World) {
-    let port = world.validators.primary_port();
-    let head = world.rpc.latest_block_timestamp(port).expect("head time");
-    // A pledge is priced from the last closed window, which ends on a whole hour.
-    let target = head - head % 3_600 + 3_600 + 60;
-    let (_, _, _, pending) =
-        crate::features::ocomp::restart_committee_at_logical_time(world, target);
-    let url = world.rpc.url(port);
-    let deadline = Instant::now() + Duration::from_secs(300);
-    loop {
-        let time_ready = world
-            .rpc
-            .latest_block_timestamp(port)
-            .is_some_and(|time| time >= target);
-        let price_ready = pending.as_ref().is_none_or(|pending| {
-            crate::features::price_oracle::observe_pending_publication(world, pending)
-        });
-        let priced = time_ready
-            && price_ready
-            && eth::read_call(
-                &url,
-                ORACLE_ADDRESS,
-                &eth::IOracle::getVwapSnapshotIdCall {},
-            )
-            .and_then(|snapshot| {
-                eth::read_call(
-                    &url,
-                    ORACLE_ADDRESS,
-                    &eth::IOracle::getFinalizedWindowVwapCall {
-                        currency: USD,
-                        snapshotId: snapshot,
-                    },
-                )
-            })
-            .is_some_and(|vwap| !vwap.is_zero());
-        if priced {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the closed pledge window never priced COEN/USD"
-        );
-        sleep(Duration::from_secs(1));
-    }
+    crate::features::entity_lifecycle::markets::close_price_window(world, &[USD]);
 }
 
 #[when("the CCA reserves 300 stablecoins for the user's smart account")]

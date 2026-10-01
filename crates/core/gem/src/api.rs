@@ -77,3 +77,8 @@ pub fn get_gem(storage: &StorageHandle<'_>, gem_id: U256) -> Result<Option<GemDa
     let gem = GemContract::new(storage.clone());
     gem.get_gem(gem_id)
 }
+
+/// The call bucket a gem belongs to; zero once it left one, or for a gem from before buckets.
+pub fn bucket_of(storage: &StorageHandle<'_>, gem_id: U256) -> Result<alloy_primitives::B256> {
+    GemContract::new(storage.clone()).gem_bucket.read(&gem_id)
+}

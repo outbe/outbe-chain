@@ -35,7 +35,7 @@ use tokio::runtime::Runtime;
 /// Supplying a limit prevents the provider from estimating gas first: an
 /// intentional contract revert is then submitted and observed through its
 /// mined receipt instead of being returned as a preflight RPC error.
-const REVERT_FRIENDLY_GAS_LIMIT: u64 = 10_000_000;
+pub(crate) const REVERT_FRIENDLY_GAS_LIMIT: u64 = 10_000_000;
 
 /// Maximum fee accepted for a transaction intended for the next block.
 ///
@@ -244,6 +244,36 @@ where
         let _ = tx.send(f.await);
     });
     rx.recv().expect("eth runtime dropped the task")
+}
+
+/// The one `E` event `emitter` logged in `receipt`.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn receipt_event<E: alloy_sol_types::SolEvent>(
+    receipt: &serde_json::Value,
+    emitter: Address,
+) -> E {
+    let mut found = receipt["logs"]
+        .as_array()
+        .expect("receipt logs")
+        .iter()
+        .filter_map(|log| {
+            if log["address"].as_str()?.parse::<Address>().ok()? != emitter {
+                return None;
+            }
+            let topics = log["topics"]
+                .as_array()?
+                .iter()
+                .map(|t| t.as_str()?.parse::<B256>().ok())
+                .collect::<Option<Vec<_>>>()?;
+            if topics.first() != Some(&E::SIGNATURE_HASH) {
+                return None;
+            }
+            let data = log["data"].as_str()?.parse::<Bytes>().ok()?;
+            Some(E::decode_raw_log(topics, &data).expect("decode matching event"))
+        });
+    let value = found.next().expect("expected event missing");
+    assert!(found.next().is_none(), "duplicate {} event", E::SIGNATURE);
+    value
 }
 
 /// `eth_call` a view function and decode its return while preserving the failure.

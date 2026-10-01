@@ -509,6 +509,12 @@ fn claim_gem_and_assert_gas_only_cost(
             encoded,
             "Gem body parity"
         );
+        // Window, threshold and bucket are not on the gem view.
+        let issued = super::paynote::capacity::single_event::<eth::IGemFactory::GemIssued>(
+            &receipt,
+            addresses::GEM_FACTORY_ADDR,
+        );
+        assert!(!issued.bucketKey.is_zero());
         super::settlement::assert_receipt_event(
             &receipt,
             addresses::GEM_FACTORY_ADDR,
@@ -522,6 +528,12 @@ fn claim_gem_and_assert_gas_only_cost(
                 issuanceCurrency: 840,
                 referenceCurrency: 840,
                 issuedAt: timestamp,
+                callPrice: gem.callPrice,
+                callWindow: issued.callWindow,
+                callThreshold: issued.callThreshold,
+                callNoticePeriod: gem.callNoticePeriod,
+                positionId: U256::ZERO,
+                bucketKey: issued.bucketKey,
             },
         );
         assert_eq!(

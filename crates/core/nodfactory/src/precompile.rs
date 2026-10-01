@@ -22,8 +22,8 @@ mod abi {
 }
 pub use abi::INodFactory;
 
-// A Nod is issued out of Lysis over a certified generation, and a called bucket
-// stays payable for seven days: only a throwaway build may skip either.
+// A Nod is issued out of Lysis over a certified generation: only a throwaway build may
+// skip that.
 #[cfg(feature = "e2e-test")]
 alloy_sol_types::sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
@@ -33,10 +33,10 @@ alloy_sol_types::sol! {
             uint32 worldwideDay,
             uint256 gratisLoadMinor,
             uint256 entryPriceMinor,
+            uint16 issuanceCurrency,
             uint16 referenceCurrency,
             uint64 issuedAt
         ) external;
-        function closeCallNoticeForTest(uint256 nodId, uint64 deadline) external;
     }
 }
 
@@ -57,7 +57,7 @@ fn issue_for_test(
         league_id: 1,
         gratis_load_minor: call.gratisLoadMinor,
         entry_price_minor: call.entryPriceMinor,
-        issuance_currency: call.referenceCurrency,
+        issuance_currency: call.issuanceCurrency,
         reference_currency: call.referenceCurrency,
     };
     runtime::issue_nod(storage, scope, parent, &params)?;
@@ -71,35 +71,6 @@ fn issue_for_test(
             .write(&bucket_key, call.issuedAt)?;
     }
     Ok(())
-}
-
-/// Move a called Nod's bucket onto `deadline`, so the next sweep finds its notice lapsed.
-#[cfg(feature = "e2e-test")]
-fn close_call_notice_for_test(
-    storage: &outbe_primitives::storage::StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-    nod_id: U256,
-    deadline: u64,
-) -> Result<()> {
-    use outbe_nod::schema::NodContract;
-
-    let item = outbe_nod::api::get_item(storage, scope, parent, WwdEntityId::from(nod_id))?
-        .ok_or_else(|| PrecompileError::Revert("closeCallNoticeForTest: unknown Nod".into()))?;
-    let nod = NodContract::new(storage.clone());
-    if nod.bucket_called_at.read(&item.bucket_key)? == 0 {
-        return Err(PrecompileError::Revert(
-            "closeCallNoticeForTest: bucket is not called".into(),
-        ));
-    }
-    let notice = u64::from(
-        nod.callable_bucket_call_notice_period
-            .read(&item.bucket_key)?,
-    );
-    let called_at = deadline.checked_sub(notice).ok_or_else(|| {
-        PrecompileError::Revert("closeCallNoticeForTest: deadline precedes the notice".into())
-    })?;
-    nod.bucket_called_at.write(&item.bucket_key, called_at)
 }
 
 pub fn base_gas(input: &[u8]) -> u64 {
@@ -124,11 +95,6 @@ pub fn dispatch(
     #[cfg(feature = "e2e-test")]
     if let Ok(call) = INodFactoryTestArming::issueForTestCall::abi_decode(data) {
         issue_for_test(&storage, scope, parent, call)?;
-        return Ok(Bytes::new());
-    }
-    #[cfg(feature = "e2e-test")]
-    if let Ok(call) = INodFactoryTestArming::closeCallNoticeForTestCall::abi_decode(data) {
-        close_call_notice_for_test(&storage, scope, parent, call.nodId, call.deadline)?;
         return Ok(Bytes::new());
     }
     if data.get(..4)

@@ -1637,7 +1637,7 @@ pub(crate) fn promis_balance(url: &str, owner: Address, view_key: &[u8; 32]) -> 
     }
 }
 
-fn gratis_balance(url: &str, owner: Address, view_key: &[u8; 32]) -> U256 {
+pub(crate) fn gratis_balance(url: &str, owner: Address, view_key: &[u8; 32]) -> U256 {
     let blob = eth::read_call(
         url,
         addresses::GRATIS_ADDR,

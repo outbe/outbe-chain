@@ -317,7 +317,10 @@ fn unmarked_directory_stays() {
         .unwrap();
     projection.project_block(&block(6, Vec::new())).unwrap();
     assert!(store.databases.directory().tribute_day_path(7).exists());
-    assert_eq!(read_tribute_day_mark(store.shared.as_ref(), 7).unwrap(), None);
+    assert_eq!(
+        read_tribute_day_mark(store.shared.as_ref(), 7).unwrap(),
+        None
+    );
 }
 
 #[test]
@@ -419,6 +422,9 @@ fn certified_event_alone_does_not_drop() {
         .project_block(&block(6, vec![certified]))
         .unwrap();
     assert!(store.databases.directory().tribute_day_path(7).exists());
-    assert_eq!(read_tribute_day_mark(store.shared.as_ref(), 7).unwrap(), None);
+    assert_eq!(
+        read_tribute_day_mark(store.shared.as_ref(), 7).unwrap(),
+        None
+    );
     assert_eq!(projection.state().checkpoint.unwrap().block_number, 6);
 }

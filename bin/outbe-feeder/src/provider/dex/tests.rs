@@ -213,11 +213,12 @@ struct Fixture {
 
 impl Fixture {
     fn block(&self, number: u64) -> Value {
+        let window = i64::try_from(super::worker::WINDOW_SECS).unwrap();
         let offset = match number {
-            0 => -172_800,
-            1 => -86_401,
-            2 => -86_400,
-            3 => -86_399,
+            0 => -2 * window,
+            1 => -window - 1,
+            2 => -window,
+            3 => -window + 1,
             4 => 0,
             _ => 2,
         };
@@ -426,7 +427,7 @@ async fn volume_window_retries_restart_and_finalized_history_changes() {
     server.fixture.fail_logs.store(true, Ordering::Relaxed);
     assert!(worker.refresh().await.is_err());
     server.fixture.fail_logs.store(false, Ordering::Relaxed);
-    // Block 3 is now outside (head_time - 24h, head_time]; block 5 is new.
+    // Block 3 is now outside (head_time - window, head_time]; block 5 is new.
     assert_eq!(worker.refresh().await.unwrap().1.volume, fp("600"));
     server.fixture.reorg.store(true, Ordering::Relaxed);
     assert!(worker.refresh().await.is_err());

@@ -302,6 +302,9 @@ fn commit_outer_transition_inner(
             let requires_resolution = matches!(
                 transition.kind(),
                 OuterWwdTransitionKind::Advance(edges)
+                    | OuterWwdTransitionKind::MissedOffering {
+                        preceding_edges: edges,
+                    }
                     if edges.contains(&WwdAdvanceEdge::ResolveForming)
             );
             if requires_resolution != rate_resolution.is_some() {
@@ -371,12 +374,25 @@ fn commit_outer_transition_inner(
                 ));
             }
         }
-        OuterWwdTransitionKind::MissedOffering => {
-            commit_status(
+        OuterWwdTransitionKind::MissedOffering { preceding_edges } => {
+            let status = commit_advance_edges(
                 permit,
                 metadosis,
                 worldwide_day,
                 source,
+                preceding_edges,
+                block_number,
+            )?;
+            if status != WwdStatus::LookbackDelay {
+                return Err(crate::errors::storage_corruption(
+                    "MissedOffering commit must terminate from LOOKBACK_DELAY".into(),
+                ));
+            }
+            commit_status(
+                permit,
+                metadosis,
+                worldwide_day,
+                status,
                 WwdStatus::Failed,
                 block_number,
                 true,

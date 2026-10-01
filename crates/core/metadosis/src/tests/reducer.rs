@@ -165,12 +165,18 @@ fn outer_reducer_covers_creation_advance_capacity_and_ready_outcomes() {
             block_time: OFFERING_END,
             retained_count: 0,
             admission_available: true,
+            limit_final: true,
         },
     )
     .unwrap();
     assert_eq!(missed.target(), WwdStatus::Failed);
     assert_eq!(missed.membership_after(), WwdMembership::Closed);
-    assert_eq!(missed.kind(), &OuterWwdTransitionKind::MissedOffering);
+    assert_eq!(
+        missed.kind(),
+        &OuterWwdTransitionKind::MissedOffering {
+            preceding_edges: vec![WwdAdvanceEdge::ResolveForming],
+        }
+    );
 
     let waiting = projection(WwdStatus::Waiting);
     let forfeited = reduce_outer_wwd(
@@ -179,6 +185,7 @@ fn outer_reducer_covers_creation_advance_capacity_and_ready_outcomes() {
             block_time: PROCESS_AT,
             retained_count: MAX_RETAINED_WWDS,
             admission_available: true,
+            limit_final: true,
         },
     )
     .unwrap();
@@ -198,6 +205,7 @@ fn outer_reducer_covers_creation_advance_capacity_and_ready_outcomes() {
             block_time: PROCESS_AT,
             retained_count: MAX_RETAINED_WWDS,
             admission_available: true,
+            limit_final: true,
         },
     )
     .unwrap();
@@ -216,6 +224,7 @@ fn outer_reducer_covers_creation_advance_capacity_and_ready_outcomes() {
                 block_time: PROCESS_AT,
                 retained_count: MAX_RETAINED_WWDS + 1,
                 admission_available: true,
+                limit_final: true,
             },
         ),
         Err(outbe_primitives::error::PrecompileError::Fatal(_))
@@ -227,6 +236,7 @@ fn outer_reducer_covers_creation_advance_capacity_and_ready_outcomes() {
             block_time: PROCESS_AT,
             retained_count: 0,
             admission_available: false,
+            limit_final: true,
         },
     )
     .unwrap();
@@ -242,6 +252,7 @@ fn outer_reducer_covers_creation_advance_capacity_and_ready_outcomes() {
             block_time: PROCESS_AT,
             retained_count: 0,
             admission_available: false,
+            limit_final: true,
         },
     )
     .unwrap();
@@ -253,8 +264,6 @@ fn outer_reducer_covers_creation_advance_capacity_and_ready_outcomes() {
 
     let ready = projection(WwdStatus::Ready);
     for (disposition, target) in [
-        (ReadyDisposition::ZeroDayLimit, WwdStatus::Failed),
-        (ReadyDisposition::UnknownDayType, WwdStatus::Failed),
         (ReadyDisposition::EmptyTributeDay, WwdStatus::Completed),
         (ReadyDisposition::ZeroGratisAllocation, WwdStatus::Completed),
         (ReadyDisposition::PrepareOcomp, WwdStatus::Ready),
@@ -284,6 +293,73 @@ fn outer_reducer_covers_creation_advance_capacity_and_ready_outcomes() {
 }
 
 #[test]
+fn final_zero_limit_turns_every_opening_advance_into_missed_offering() {
+    use WwdAdvanceEdge::{BecomeReady, CloseOffering, OpenOffering, ResolveForming};
+    let advance = |status: WwdStatus, limit: U256, block_time: u64, limit_final: bool| {
+        let mut current = projection(status);
+        current.metadosis_limit_amount = limit;
+        reduce_outer_wwd(
+            Some(&current),
+            OuterWwdEvent::AdvanceDue {
+                block_time,
+                retained_count: 0,
+                admission_available: true,
+                limit_final,
+            },
+        )
+        .unwrap()
+    };
+    let opening = [
+        (
+            WwdStatus::Forming,
+            LOOKBACK_END,
+            vec![ResolveForming, OpenOffering],
+        ),
+        (
+            WwdStatus::Forming,
+            OFFERING_END - 1,
+            vec![ResolveForming, OpenOffering],
+        ),
+        (WwdStatus::LookbackDelay, LOOKBACK_END, vec![OpenOffering]),
+        (
+            WwdStatus::LookbackDelay,
+            OFFERING_END - 1,
+            vec![OpenOffering],
+        ),
+    ];
+    for (status, block_time, edges) in opening {
+        let missed = advance(status, U256::ZERO, block_time, true);
+        assert_eq!(missed.target(), WwdStatus::Failed);
+        assert_eq!(missed.membership_after(), WwdMembership::Closed);
+        assert_eq!(
+            missed.kind(),
+            &OuterWwdTransitionKind::MissedOffering {
+                preceding_edges: edges[..edges.len() - 1].to_vec(),
+            }
+        );
+        for (limit, limit_final) in [(U256::ZERO, false), (U256::ONE, true)] {
+            let opened = advance(status, limit, block_time, limit_final);
+            assert_eq!(opened.target(), WwdStatus::Offering);
+            assert_eq!(
+                opened.kind(),
+                &OuterWwdTransitionKind::Advance(edges.clone())
+            );
+        }
+    }
+
+    for (status, block_time, edges) in [
+        (WwdStatus::Forming, FORMING_END, vec![ResolveForming]),
+        (WwdStatus::Offering, OFFERING_END, vec![CloseOffering]),
+        (WwdStatus::Waiting, PROCESS_AT, vec![BecomeReady]),
+    ] {
+        assert_eq!(
+            advance(status, U256::ZERO, block_time, true).kind(),
+            &OuterWwdTransitionKind::Advance(edges)
+        );
+    }
+}
+
+#[test]
 fn outer_wwd_state_event_matrix_is_exhaustive() {
     let statuses = [
         WwdStatus::Forming,
@@ -301,9 +377,8 @@ fn outer_wwd_state_event_matrix_is_exhaustive() {
             block_time: PROCESS_AT,
             retained_count: 0,
             admission_available: true,
+            limit_final: true,
         },
-        OuterWwdEvent::ProcessReady(ReadyDisposition::ZeroDayLimit),
-        OuterWwdEvent::ProcessReady(ReadyDisposition::UnknownDayType),
         OuterWwdEvent::ProcessReady(ReadyDisposition::EmptyTributeDay),
         OuterWwdEvent::ProcessReady(ReadyDisposition::ZeroGratisAllocation),
         OuterWwdEvent::ProcessReady(ReadyDisposition::PrepareOcomp),
@@ -372,9 +447,18 @@ fn expected_transition_at_process_time(
     let (target, kind) = match event {
         OuterWwdEvent::CreateDay => (status, OuterWwdTransitionKind::Noop),
         OuterWwdEvent::AdvanceDue { .. } => match status {
-            WwdStatus::Forming | WwdStatus::LookbackDelay => {
-                (WwdStatus::Failed, OuterWwdTransitionKind::MissedOffering)
-            }
+            WwdStatus::Forming => (
+                WwdStatus::Failed,
+                OuterWwdTransitionKind::MissedOffering {
+                    preceding_edges: vec![WwdAdvanceEdge::ResolveForming],
+                },
+            ),
+            WwdStatus::LookbackDelay => (
+                WwdStatus::Failed,
+                OuterWwdTransitionKind::MissedOffering {
+                    preceding_edges: Vec::new(),
+                },
+            ),
             WwdStatus::Offering => (
                 WwdStatus::Ready,
                 OuterWwdTransitionKind::Advance(vec![
@@ -393,9 +477,6 @@ fn expected_transition_at_process_time(
         },
         OuterWwdEvent::ProcessReady(disposition) if status == WwdStatus::Ready => {
             let target = match disposition {
-                ReadyDisposition::ZeroDayLimit | ReadyDisposition::UnknownDayType => {
-                    WwdStatus::Failed
-                }
                 ReadyDisposition::EmptyTributeDay | ReadyDisposition::ZeroGratisAllocation => {
                     WwdStatus::Completed
                 }

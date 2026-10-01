@@ -46,10 +46,20 @@ Feature: Intex from auction to Promis
     And the cleared day issues the Intex on every chain it reached
     And each escrow settles the day and returns what the bids did not buy
 
-  # Two series rather than one: the call sweep decides per (reference currency,
-  # worldwide day), so a single series makes every group a group of one and the
-  # mark batching is not exercised at all. The two share a day and a reference
-  # currency, and differ in issuance currency.
+  # Four series of one day and one reference currency: the call sweep decides per
+  # (reference currency, worldwide day), so a single series makes every group a
+  # group of one and the mark batching is not exercised at all.
+  #
+  # Two series are paid for, one issued in MYR and one in EUR, each in two parts:
+  # what is home once they qualify, and the rest once they are called and brought
+  # home. The four payments take both rails and both currencies; the MYR ones
+  # price off a closed pricing window, so the committee steps past the next whole
+  # hour once the series are issued. On this localnet that hour is midnight: the
+  # committee closes the day on its own feed, and every seeded day repeats that
+  # close, because a target chain records a day's price once. The other two are
+  # left to run out: one is settled in part and one never touched, so the sweep
+  # has to return the load of the unrealized units alone from one and the whole
+  # tirage from the other.
   #
   # Time is seeded rather than lived through. A worldwide day sits in Forming
   # until its offering window closes, and stepping past that window on a day
@@ -57,20 +67,15 @@ Feature: Intex from auction to Promis
   # tribute path this scenario exists to avoid. So the days the Called sweep
   # reads are filled in and issuance is stamped behind them, exactly as this
   # module's own unit tests do. The sweep still walks its index, checks the
-  # finalized watermark and counts the breach days itself.
-  #
-  # Qualification reads a closed day's VWAP as well, so that day is seeded the
-  # same way, and every chain derives it from there.
-  #
-  # Two more series are left to run out instead of being settled whole: one is settled
-  # in part and one is never touched at all, so the sweep has to return the load of the
-  # unrealized units alone from one and the whole tirage from the other.
+  # finalized watermark and counts the breach days itself. Qualification reads a
+  # closed day's VWAP as well, so that day is seeded the same way, and every
+  # chain derives it from there.
   #
   # The two hops home also take the bridge's two routes: one series at a time
   # first, then both together, which is how an owner of several actually moves
   # them and which carries its own message encoding.
-  @intex-lifecycle
-  Scenario: Four Intex series qualify as one group, settle from both states, and burn or expire
+  @intex-lifecycle @myr-issuance
+  Scenario: Four Intex series qualify as one group, two are paid on both rails in both currencies, two run out, and the paid ones end in COEN
     Given a fresh four-validator OCOMP public capacity localnet
     When a local target chain is started
     And the intex venue is deployed on the target chain
@@ -78,26 +83,34 @@ Feature: Intex from auction to Promis
     When the intex engine is deployed on the committee chain
     Then the committee chain hosts the intex engine
     When a relay carries messages between the two chains
-    And the settlement currency is registered on the committee chain
-    Then owners may settle in that currency
-    When four test Intex series sharing a reference currency are issued to a funded owner
+    And the settlement currencies are registered on the committee chain
+    Then owners may settle in each of them
+    When four test Intex series sharing a reference currency are issued to the owner
     Then the owner holds issued units of every series on each chain
-    Then the controlled COEN USD quote is finalized through the real price feeder
-    When the reference rate stands above the series floor
-    Then every series qualifies on the seeded day
+    And every Intex series reads Issued and carries its terms
+    And no Intex series can be paid before it qualifies
+    And the controlled COEN quotes are finalized through the real price feeder
+    And the pricing window closes over those quotes
+    When the reference rate stands above the Intex series floor
+    Then every Intex series qualifies
     And every series card reads Qualified on both chains
     When the owner brings part of the target-chain units home
-    And the owner settles part of their units
-    Then those units move from issued to settled
-    And the settlement payment lands in the reserve vault
-    When the call trigger holds above the call price across the call window
-    Then every series becomes Called
+    Then an Intex series payment is refused for a stale snapshot, a foreign currency or a note bound to another holding
+    And an unpaid Intex series cannot be mined
+    When a qualified Intex series is paid in USD by ERC20 and another in MYR by PayNote
+    Then each payment settles exactly its quote into its currency's vault
+    When the reference rate holds above the Intex series call price across the call window
+    Then every unpaid Intex series becomes Called while what was paid stays Settled
     When the owner brings the remaining units home to their own address in one batch
-    And the owner settles the remaining units inside the notice period
-    Then no issued units remain of the pair being settled whole
-    When the owner mines Promis against their settled units
-    Then the settled units are burned and Promis is mined
+    And a called Intex series is paid in MYR by ERC20 and another in USD by PayNote
+    Then each payment settles exactly its quote into its currency's vault
     When the owner settles part of one series they let run out
-    And the call notice runs out on both of them
-    Then both series read Expired on both chains
-    And only their unrealized load returns to the unallocated pool
+    And the call notice lapses on the unpaid Intex series
+    Then the unpaid Intex series is forfeited and its unpaid load returns to the unallocated pool
+    And the series left to run out read Expired on both chains
+    And every paid Intex series stays Settled
+    When the owners mine every paid Intex series
+    Then each paid load lands in its owner's balance
+    And a mined Intex series cannot be mined again
+    When the owners redeem what they mined into COEN
+    Then each owner's native COEN grows by exactly that load

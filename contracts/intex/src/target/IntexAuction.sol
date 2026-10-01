@@ -9,7 +9,6 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {IIntexAuction} from "./interfaces/IIntexAuction.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
-import {IWhitelist, WhitelistUpdated, requireWhitelisted} from "@shared/Whitelist.sol";
 
 /// @title IntexAuction
 /// @author Outbe
@@ -59,8 +58,6 @@ contract IntexAuction is
         ///      `Completed`-stage signal - so a no-sale clearing (issuedUnits == 0,
         ///      clearingRate may be 0) also reads as Completed, not just a positive-rate sale.
         mapping(uint32 worldwideDay => bool) cleared;
-        /// @dev Registry gating who may commit bids. Zero address leaves the gate open.
-        IWhitelist whitelist;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexAuction")) - 1)) & ~bytes32(uint256(0xff))
@@ -125,19 +122,6 @@ contract IntexAuction is
     /// @return True when the bid was revealed.
     function revealedBidsByBidder(uint32 worldwideDay, address bidder) external view returns (bool) {
         return _s().revealedBidsByBidder[worldwideDay][bidder];
-    }
-
-    // --- Admin ---
-    /// @inheritdoc IIntexAuction
-    function setWhitelist(address registry) external override onlyRole(DEFAULT_ADMIN_ROLE) {
-        IntexAuctionStorage storage $ = _s();
-        emit WhitelistUpdated(address($.whitelist), registry);
-        $.whitelist = IWhitelist(registry);
-    }
-
-    /// @inheritdoc IIntexAuction
-    function whitelist() external view override returns (address) {
-        return address(_s().whitelist);
     }
 
     /// @inheritdoc IIntexAuction
@@ -260,7 +244,6 @@ contract IntexAuction is
     // --- User Actions ---
     /// @inheritdoc IIntexAuction
     function commitBid(uint32 worldwideDay, bytes32 commitHash) external override nonReentrant {
-        requireWhitelisted(_s().whitelist, msg.sender);
         if (commitHash == bytes32(0)) revert InvalidCommitHash();
 
         IntexAuctionStorage storage $ = _s();

@@ -39,6 +39,7 @@ pub(crate) fn advance_active_worldwide_days(
     require_active_ocomp_profile(&metadosis)?;
     let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
     let retained_count = aggregate.retained_count();
+    let block_utc_day = outbe_primitives::time::timestamp_to_date_key(ctx.block.timestamp);
     let mut admission_consumed = false;
     for current in aggregate.active_records() {
         let transition = reduce_outer_wwd(
@@ -47,12 +48,27 @@ pub(crate) fn advance_active_worldwide_days(
                 block_time: ctx.block.timestamp,
                 retained_count,
                 admission_available: !admission_consumed,
+                // Only settling a WWD's UTC day forms its limit, earlier in this same tick.
+                limit_final: block_utc_day > current.worldwide_day.value(),
             },
         )?;
         match transition.kind() {
             OuterWwdTransitionKind::Noop => {}
-            OuterWwdTransitionKind::MissedOffering => {
-                apply_missed_offering(&mut metadosis, ctx, scope, current, &transition)?;
+            OuterWwdTransitionKind::MissedOffering { preceding_edges } => {
+                let rate_resolution = apply_wwd_advance_edges(
+                    &mut metadosis,
+                    current.worldwide_day,
+                    preceding_edges,
+                    "missed offering resolved one WWD rate more than once",
+                )?;
+                apply_missed_offering(
+                    &mut metadosis,
+                    ctx,
+                    scope,
+                    current,
+                    &transition,
+                    rate_resolution,
+                )?;
             }
             OuterWwdTransitionKind::Advance(edges) => {
                 let rate_resolution = apply_wwd_advance_edges(
@@ -349,6 +365,7 @@ fn apply_missed_offering(
     scope: &ExecutionScope,
     current: &WwdProjection,
     transition: &OuterWwdTransition,
+    rate_resolution: Option<WwdRateResolution>,
 ) -> Result<()> {
     // A day limit is written only together with its formation, so an absent
     // formation must mean an untouched limit; anything else is real corruption.
@@ -390,11 +407,12 @@ fn apply_missed_offering(
             block_number: ctx.block.block_number,
         };
         metadosis.write_missed_offering_receipt(receipt)?;
-        commit_outer_transition(
+        commit_outer_transition_with_rate(
             metadosis,
             current.worldwide_day,
             transition,
             ctx.block.block_number,
+            rate_resolution,
         )?;
         metadosis.emit(IMetadosis::WorldwideDayMissedOffering {
             worldwideDay: current.worldwide_day.into(),
