@@ -29,6 +29,14 @@ impl DayDirectory {
         })
     }
 
+    /// Read an existing layout without creating or moving anything.
+    #[must_use]
+    pub fn inspect(root: impl AsRef<Path>) -> Self {
+        Self {
+            root: root.as_ref().to_path_buf(),
+        }
+    }
+
     #[must_use]
     pub fn shared_path(&self) -> PathBuf {
         self.root.join(SHARED_DIR)
