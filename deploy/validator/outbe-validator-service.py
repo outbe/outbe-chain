@@ -7,15 +7,13 @@ import json
 import os
 import pathlib
 import re
-import subprocess
 import sys
-import time
+import tomllib
 from typing import NoReturn
 
 
 OUTBE_ROOT = pathlib.Path("/opt/outbe-chain")
-MONGODB_CONTAINER = "outbe-mongodb"
-MONGODB_PORT = 27017
+STORAGE_CONFIG = OUTBE_ROOT / "offchain-storage.toml"
 
 
 def fail(message: str) -> NoReturn:
@@ -35,85 +33,40 @@ def exec_role(argv: list[str], *, cwd: pathlib.Path | None = None) -> NoReturn:
     os.execvpe(argv[0], argv, os.environ.copy())
 
 
-def mongodb() -> NoReturn:
-    image = required_env("OUTBE_MONGODB_IMAGE")
-    mongodb_dir = OUTBE_ROOT / "validator-0" / "mongodb"
-    mongodb_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    mongodb_dir.chmod(0o700)
-    exec_role(
-        [
-            "/usr/bin/docker",
-            "run",
-            "--rm",
-            "--name",
-            MONGODB_CONTAINER,
-            "-p",
-            f"127.0.0.1:{MONGODB_PORT}:{MONGODB_PORT}",
-            "--mount",
-            f"type=bind,src={mongodb_dir},dst=/data/db",
-            image,
-            "--replSet",
-            "rs0",
-            "--bind_ip_all",
-            "--port",
-            str(MONGODB_PORT),
-        ]
-    )
+def verify_rocksdb_storage(path: pathlib.Path) -> None:
+    try:
+        with path.open("rb") as stream:
+            document = tomllib.load(stream)
+    except OSError as error:
+        fail(f"cannot read storage configuration: {error}")
+    except tomllib.TOMLDecodeError:
+        fail("storage configuration is not valid TOML")
 
+    if document.get("version") != 1:
+        fail("storage configuration requires version = 1")
+    if document.get("backend") != "rocksdb":
+        fail("validator deployment requires RocksDB storage")
 
-def docker_exec(script: str, *, quiet: bool = False) -> subprocess.CompletedProcess[bytes]:
-    return subprocess.run(
-        [
-            "/usr/bin/docker",
-            "exec",
-            MONGODB_CONTAINER,
-            "mongosh",
-            "--quiet",
-            "--port",
-            str(MONGODB_PORT),
-            "--eval",
-            script,
-        ],
-        stdout=subprocess.DEVNULL if quiet else None,
-        stderr=subprocess.DEVNULL if quiet else None,
-        check=False,
-    )
+    allowed = {"version", "backend", "start_block", "rocksdb"}
+    if set(document) - allowed:
+        fail("storage configuration contains unknown fields")
 
+    start_block = document.get("start_block", 1)
+    if (
+        isinstance(start_block, bool)
+        or not isinstance(start_block, int)
+        or not 0 <= start_block <= 2**64 - 1
+    ):
+        fail("storage start_block must be a u64")
 
-def mongodb_init() -> None:
-    deadline = time.monotonic() + 120
-    while time.monotonic() < deadline:
-        if docker_exec("db.runCommand({ping:1}).ok", quiet=True).returncode == 0:
-            break
-        time.sleep(1)
-    else:
-        fail("MongoDB did not become reachable")
-
-    script = (
-        "try { rs.status() } catch (e) { "
-        "rs.initiate({_id:'rs0',members:[{_id:0,host:'127.0.0.1:27017'}]}) }"
-    )
-    if docker_exec(script).returncode != 0:
-        fail("MongoDB replica-set initialization failed")
-
-    deadline = time.monotonic() + 60
-    while time.monotonic() < deadline:
-        result = docker_exec(
-            "db.hello().isWritablePrimary ? quit(0) : quit(1)", quiet=True
-        )
-        if result.returncode == 0:
-            return
-        time.sleep(1)
-    fail("MongoDB replica set did not elect a writable primary")
-
-
-def mongodb_stop() -> None:
-    subprocess.run(
-        ["/usr/bin/docker", "stop", "-t", "30", MONGODB_CONTAINER],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
+    rocksdb = document.get("rocksdb")
+    required = {"path", "secondary_path"}
+    if not isinstance(rocksdb, dict) or set(rocksdb) != required:
+        fail("storage configuration has an invalid rocksdb section")
+    if any(
+        not isinstance(value, str) or not value.strip() for value in rocksdb.values()
+    ):
+        fail("storage configuration has an invalid rocksdb value")
 
 
 def enclave() -> NoReturn:
@@ -199,20 +152,17 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "role",
-        choices=("mongodb", "mongodb-init", "mongodb-stop", "enclave", "feeder"),
+        choices=("verify-rocksdb", "enclave", "feeder"),
     )
+    parser.add_argument("--storage-config", type=pathlib.Path, default=STORAGE_CONFIG)
     return parser.parse_args()
 
 
 def main() -> int:
-    role = parse_args().role
-    if role == "mongodb":
-        mongodb()
-    if role == "mongodb-init":
-        mongodb_init()
-        return 0
-    if role == "mongodb-stop":
-        mongodb_stop()
+    args = parse_args()
+    role = args.role
+    if role == "verify-rocksdb":
+        verify_rocksdb_storage(args.storage_config)
         return 0
     if role == "enclave":
         enclave()
