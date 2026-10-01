@@ -22,10 +22,7 @@ use outbe_primitives::storage::{Bytecode, StorageHandle};
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 use outbe_primitives::units::{checked_protocol_to_native, SCALE_1E6_U256};
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
-use outbe_tee_enclave::gratis::{
-    decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
-    pledge_secret, spend_auth_mac,
-};
+use outbe_tee_enclave::gratis::{decrypt_balance, derive_modify_key, derive_view_key, modify_mac};
 use outbe_vaultrouter::{LiquidityReservation, VaultRouterContract};
 
 use crate::runtime;
@@ -112,78 +109,101 @@ pub fn pledge_stake() -> U256 {
     checked_protocol_to_native(pledge_cost()).expect("pledge fixture fits native U256")
 }
 
-/// Pledge [`pledge_stables`] of credit for `who` at op-nonce `nonce` (uncapped), and
-/// return the resulting handle plus a CCA reservation created first. The gratis
-/// it costs is derived from the seeded rate.
-pub fn pledge(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> (B256, U256) {
-    let reservation_id = seed_reservation(storage, who, pledge_stables());
-    let (handle, gratis_cost) = pledge_fixture(
-        storage.clone(),
-        who,
-        pledge_stables(),
-        asset(),
-        U256::MAX,
-        auth(GratisOp::Pledge, who, pledge_stables(), nonce),
-    )
-    .unwrap();
-    assert_eq!(gratis_cost, pledge_cost(), "seeded rate drifted");
-    (handle, reservation_id)
-}
-
-/// Seal a known Minor6 quote independently of the unimplemented Oracle period
-/// helper. These tests exercise Credis consumption, not Oracle observation policy.
-pub fn pledge_fixture(
-    storage: StorageHandle<'_>,
-    who: Address,
-    principal: U256,
-    asset: Address,
-    max_gratis: U256,
-    auth: ModifyAuth,
-) -> outbe_primitives::error::Result<(B256, U256)> {
-    let valuation_price = oracle_rate();
-    let (gratis_amount, entry_price) =
-        outbe_primitives::math::scaled_math::checked_quote(principal, 6, valuation_price)?;
-    assert!(gratis_amount <= max_gratis);
-    let handle = outbe_gratis::api::pledge(
-        storage,
-        who,
-        principal,
-        outbe_gratis::api::PledgeTerms {
-            stables_amount: principal,
-            gratis_amount,
-            asset,
-            entry_price,
-            issuance_currency: ISSUANCE_ISO,
-            asset_decimals: 6,
-            valuation_price,
-        },
-        auth,
-    )?;
-    Ok((handle, gratis_amount))
-}
-
-/// Pledge and open a position for alice, originated by [`cca`].
 pub fn open(storage: &StorageHandle<'_>, nonce: u64) -> U256 {
     open_for(storage, alice(), nonce)
 }
-
-/// Pledge and open a position owned by `who`, originated by [`cca`].
 pub fn open_for(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> U256 {
-    let (handle, reservation_id) = pledge(storage, who, nonce);
-    let spend = credis_spend_auth(who, handle, who);
+    let reservation_id = seed_reservation(storage, who, pledge_stables());
+    let note = pledge_note(storage, who, pledge_cost(), nonce);
+    let r = outbe_vaultrouter::api::reservation_of(storage, reservation_id).unwrap();
+    let context = runtime::reservation_context(CHAIN_ID, reservation_id, &r.into()).unwrap();
+    let proof = prove_latest(storage, &note, pledge_cost(), context);
     fund_stake(storage, pledge_stake());
-    let (position_id, _) = runtime::issue_credis(
+    runtime::issue_credis(
         storage.clone(),
         cca(),
-        who,
-        handle,
-        spend,
-        REFERENCE_ISO,
         reservation_id,
+        &proof,
         pledge_stake(),
     )
+    .unwrap()
+    .0
+}
+pub fn pledge_note(
+    storage: &StorageHandle<'_>,
+    who: Address,
+    amount: U256,
+    nonce: u64,
+) -> outbe_gratis::client::Note {
+    let key = derive_modify_key(&test_enclave::state_key(), who).unwrap();
+    let note = outbe_gratis::client::Note::initial(CHAIN_ID, who, &key, amount, nonce).unwrap();
+    let commitment = outbe_gratisfactory::runtime::pledge_gratis(
+        storage.clone(),
+        who,
+        amount,
+        auth(GratisOp::Pledge, who, amount, nonce),
+    )
     .unwrap();
-    position_id
+    assert_eq!(commitment, note.commitment().unwrap());
+    note
+}
+pub fn prove_latest(
+    storage: &StorageHandle<'_>,
+    note: &outbe_gratis::client::Note,
+    amount: U256,
+    context: B256,
+) -> Vec<u8> {
+    use outbe_protocol::{codec, protocol::zk::ProofGenerator};
+    use outbe_zk_canonical::{
+        noir::pledge_issue::{self, PledgeIssue},
+        pledge as hash,
+    };
+    let pool = outbe_gratis::pledge::PledgePool::new(storage.clone());
+    let index = u32::try_from(pool.leaf_count.read().unwrap() - 1).unwrap();
+    let zeros = hash::empty_subtrees(CHAIN_ID, 32).unwrap();
+    let auth_path = core::array::from_fn(|i| {
+        if (index >> i) & 1 == 1 {
+            pool.filled_subtrees.read(&(i as u8)).unwrap()
+        } else {
+            codec::field_to_b256(&zeros[i]).unwrap()
+        }
+    });
+    let witness = pledge_issue::alloy::Witness {
+        source: note.owner,
+        note_secret: note.secret,
+        note_amount: note.amount,
+        receipt_context: note.receipt_context,
+        leaf_index: index,
+        auth_path,
+    };
+    let public = pledge_issue::alloy::PublicInputs {
+        chain_id: CHAIN_ID,
+        root: pool.current_root.read().unwrap(),
+        nullifier: note.nullifier().unwrap(),
+        context,
+        spend_amount: amount,
+        change_commitment: note
+            .change(amount)
+            .unwrap()
+            .map(|n| n.commitment().unwrap())
+            .unwrap_or_default(),
+        return_note_serial: codec::field_to_b256(
+            &hash::owner_serial(
+                note.owner,
+                codec::field_from_b256(&note.return_secret(context).unwrap()).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    };
+    let public = public.try_into().unwrap();
+    let proof = ProofGenerator::<PledgeIssue>::generate(
+        &outbe_zk_backend::barretenberg::Barretenberg::default(),
+        &witness.try_into().unwrap(),
+        &public,
+    )
+    .unwrap();
+    pledge_issue::encode_combined_proof(public, proof.proof).unwrap()
 }
 
 /// Parks a live vault reservation for `smart_account` so `issue_credis` can
@@ -226,6 +246,20 @@ pub fn seed_reservation_at(
             cca: originator,
             vault: address!("0x0000000000000000000000000000000000000777"),
             expires_at,
+            collateral: amount / U256::from(2),
+            snapshot_id: U256::from(17),
+            entry_price: oracle_rate(),
+            valuation_price: oracle_rate(),
+            policy_rate: policy_rate(),
+            issuance_currency: ISSUANCE_ISO,
+            asset_decimals: 6,
+            reference_currency: REFERENCE_ISO,
+            call_anchor_price: oracle_rate(),
+            call_price: at_call(),
+            call_notice_period: outbe_credis::constants::CALL_NOTICE_PERIOD,
+            call_rate: outbe_credis::constants::CALL_RATE_PCT,
+            call_window: outbe_credis::constants::CALL_WINDOW,
+            call_threshold: outbe_credis::constants::CALL_THRESHOLD,
         })
         .unwrap();
     id
@@ -436,22 +470,6 @@ pub fn view_balance(s: &StorageHandle<'_>, a: Address) -> U256 {
     decrypt_balance(&vk, a, &blob).unwrap()
 }
 
-pub fn view_pledged(s: &StorageHandle<'_>, a: Address) -> U256 {
-    let vk = derive_view_key(&test_enclave::state_key(), a).unwrap();
-    let blob = outbe_gratis::api::pledged_ct(s.clone(), a).unwrap();
-    if blob.is_empty() {
-        return U256::ZERO;
-    }
-    decrypt_pledged(&vk, a, &blob).unwrap()
-}
-
-/// The spend authorization the pledger EOA hands to the CCA to bind a pledge to a
-/// destination smart account (`HMAC(pledgeSecret, "credis-bind" || smart_account)`).
-pub fn credis_spend_auth(eoa: Address, handle: B256, smart_account: Address) -> [u8; 32] {
-    let mk = derive_modify_key(&test_enclave::state_key(), eoa).unwrap();
-    spend_auth_mac(&pledge_secret(&mk, handle), smart_account)
-}
-
 /// Storage set up with the block time, sub-call stubs, and the enclave installed.
 pub fn env() -> HashMapStorageProvider {
     test_enclave::install();
@@ -462,6 +480,21 @@ pub fn env() -> HashMapStorageProvider {
     storage.enable_sub_call_stub();
     storage.stub_sub_call_at(VAULT_ROUTER_ADDRESS, zero_word());
     storage.stub_sub_call_at(asset(), iso_word(ISSUANCE_ISO));
+    storage.stub_sub_call_at_selector(
+        asset(),
+        crate::sol_ext::IERC20::transferFromCall::SELECTOR,
+        iso_word(1),
+    );
+    storage.stub_sub_call_at_selector(
+        asset(),
+        crate::sol_ext::IERC20::approveCall::SELECTOR,
+        iso_word(1),
+    );
+    storage.stub_sub_call_at_selector(
+        VAULT_ROUTER_ADDRESS,
+        outbe_vaultrouter::api::IVaultRouter::releaseReservationCall::SELECTOR,
+        Bytes::from(pledge_stables().to_be_bytes::<32>().to_vec()),
+    );
     storage.stub_sub_call_at_selector(
         asset(),
         crate::sol_ext::IERC20::decimalsCall::SELECTOR,

@@ -8313,6 +8313,10 @@ dependencies = [
  "hex",
  "k256 0.13.4",
  "outbe-consensus",
+ "outbe-credis",
+ "outbe-credisfactory",
+ "outbe-gratis",
+ "outbe-gratisfactory",
  "outbe-operator",
  "outbe-paynote",
  "outbe-primitives",
@@ -8320,6 +8324,7 @@ dependencies = [
  "outbe-rpc",
  "outbe-tee",
  "outbe-update",
+ "outbe-vaultrouter",
  "outbe-zerofee",
  "outbe-zk-backend",
  "outbe-zk-canonical",
@@ -8427,6 +8432,7 @@ dependencies = [
  "outbe-common",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-protocol",
  "serde_json",
  "thiserror 2.0.18",
 ]
@@ -8444,11 +8450,15 @@ dependencies = [
  "outbe-gratisfactory",
  "outbe-macros",
  "outbe-oracle",
+ "outbe-paynote",
  "outbe-primitives",
  "outbe-promislimit",
+ "outbe-protocol",
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-vaultrouter",
+ "outbe-zk-backend",
+ "outbe-zk-canonical",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -8557,8 +8567,10 @@ dependencies = [
  "outbe-common",
  "outbe-compressed-entities",
  "outbe-consensus",
+ "outbe-credisfactory",
  "outbe-evm",
  "outbe-fidelity",
+ "outbe-gratis",
  "outbe-l2registry",
  "outbe-metadosis",
  "outbe-nod",
@@ -8578,6 +8590,7 @@ dependencies = [
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-tribute",
+ "outbe-vaultrouter",
  "outbe-zk-backend",
  "outbe-zk-canonical",
  "radicle",
@@ -8909,9 +8922,14 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-macros",
+ "outbe-paynote",
  "outbe-primitives",
+ "outbe-protocol",
  "outbe-tee",
  "outbe-tee-enclave",
+ "outbe-zk-backend",
+ "outbe-zk-canonical",
+ "serde",
 ]
 
 [[package]]
@@ -9529,7 +9547,7 @@ dependencies = [
 [[package]]
 name = "outbe-protocol"
 version = "0.26.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.26.0#237cac3058e71f6617fa3dfb9277883d709e5b8e"
+source = "git+https://github.com/outbe/outbe-circuits.git?rev=a7b7e375e857dd7588b8ed09b39968606ecbc9b1#a7b7e375e857dd7588b8ed09b39968606ecbc9b1"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",
@@ -9600,7 +9618,7 @@ dependencies = [
 [[package]]
 name = "outbe-protocol-derive"
 version = "0.26.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.26.0#237cac3058e71f6617fa3dfb9277883d709e5b8e"
+source = "git+https://github.com/outbe/outbe-circuits.git?rev=a7b7e375e857dd7588b8ed09b39968606ecbc9b1#a7b7e375e857dd7588b8ed09b39968606ecbc9b1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9893,6 +9911,7 @@ dependencies = [
  "outbe-protocol",
  "outbe-protocol-derive",
  "outbe-tee",
+ "outbe-zk-canonical",
  "rand 0.10.2",
  "rand_core 0.10.1",
  "rand_core 0.6.4",
@@ -10067,6 +10086,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-ccaregistry",
+ "outbe-credis",
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
@@ -10111,7 +10131,7 @@ dependencies = [
 [[package]]
 name = "outbe-zk-backend"
 version = "0.26.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.26.0#237cac3058e71f6617fa3dfb9277883d709e5b8e"
+source = "git+https://github.com/outbe/outbe-circuits.git?rev=a7b7e375e857dd7588b8ed09b39968606ecbc9b1#a7b7e375e857dd7588b8ed09b39968606ecbc9b1"
 dependencies = [
  "acir",
  "acvm",
@@ -10129,7 +10149,7 @@ dependencies = [
 [[package]]
 name = "outbe-zk-canonical"
 version = "0.26.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.26.0#237cac3058e71f6617fa3dfb9277883d709e5b8e"
+source = "git+https://github.com/outbe/outbe-circuits.git?rev=a7b7e375e857dd7588b8ed09b39968606ecbc9b1#a7b7e375e857dd7588b8ed09b39968606ecbc9b1"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",

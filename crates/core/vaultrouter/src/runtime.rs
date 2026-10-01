@@ -411,23 +411,25 @@ pub(crate) fn reserve_stables(
     smart_account: Address,
     asset: Address,
     amount: U256,
+    reference_currency: u16,
 ) -> Result<U256> {
-    outbe_ccaregistry::api::require_active_cca(&storage, caller)?;
-    if smart_account.is_zero() || asset.is_zero() {
-        return Err(VaultRouterError::ZeroAddress.into());
-    }
-    if amount.is_zero() {
-        return Err(VaultRouterError::InvalidReservationAmount.into());
-    }
-
-    let now = now_secs(&storage)?;
-    let expires_at = now
-        .checked_add(RESERVATION_TTL_SECS)
-        .ok_or(VaultRouterError::TimestampOverflow)?;
-    let vault = first_vault(&storage, asset)?;
-    ensure_shares_cover(&storage, vault, amount)?;
-
     storage.with_checkpoint(|| {
+        outbe_ccaregistry::api::require_active_cca(&storage, caller)?;
+        if smart_account.is_zero() || asset.is_zero() {
+            return Err(VaultRouterError::ZeroAddress.into());
+        }
+        if amount.is_zero() {
+            return Err(VaultRouterError::InvalidReservationAmount.into());
+        }
+
+        let now = now_secs(&storage)?;
+        let expires_at = now
+            .checked_add(RESERVATION_TTL_SECS)
+            .ok_or(VaultRouterError::TimestampOverflow)?;
+        let vault = first_vault(&storage, asset)?;
+        ensure_shares_cover(&storage, vault, amount)?;
+        let mut terms = crate::reservation::quote(&storage, asset, amount, reference_currency)?;
+
         let contract = VaultRouterContract::new(storage.clone());
         let nonce = contract
             .reservation_nonce
@@ -441,15 +443,12 @@ pub(crate) fn reserve_stables(
         }
 
         vault_withdraw(&storage, vault, amount, SELF, SELF)?;
-        contract.reservations.create(&LiquidityReservation {
-            id,
-            asset,
-            amount,
-            smart_account,
-            cca: caller,
-            vault,
-            expires_at,
-        })?;
+        terms.id = id;
+        terms.smart_account = smart_account;
+        terms.cca = caller;
+        terms.vault = vault;
+        terms.expires_at = expires_at;
+        contract.reservations.create(&terms)?;
 
         let mut contract = VaultRouterContract::new(storage.clone());
         contract.emit(IVaultRouter::ReservationCreated {
@@ -762,12 +761,7 @@ pub fn reservation_of(storage: &StorageHandle<'_>, id: U256) -> Result<Liquidity
         .get(id)?
         .unwrap_or(LiquidityReservation {
             id,
-            asset: Address::ZERO,
-            amount: U256::ZERO,
-            smart_account: Address::ZERO,
-            cca: Address::ZERO,
-            vault: Address::ZERO,
-            expires_at: 0,
+            ..Default::default()
         }))
 }
 

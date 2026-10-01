@@ -189,14 +189,11 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   // --- Balances --------------------------------------------------------------
   server.tool(
     "gratis_balance",
-    "Gratis balance + pledged amount for an account (in COEN).",
+    "Encrypted Gratis balance; decrypt locally with the account view key. Pledge notes are tracked privately.",
     { account: addr },
     handler(async ({ account }) => {
-      const [balance, pledged] = await Promise.all([
-        view(ctx, "gratis", "balanceOf", [account]),
-        view(ctx, "gratis", "pledgedOf", [account]),
-      ]);
-      return ok({ account, balance, pledged });
+      const balance = await view(ctx, "gratis", "balanceOf", [account]);
+      return ok({ account, balance });
     }),
   );
 

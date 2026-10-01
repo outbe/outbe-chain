@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+outbe-paynote.workspace = true
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-ccaregistry.workspace = true
@@ -21,6 +22,10 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+outbe-primitives = { workspace = true, features = ["bench-utils"] }
+outbe-protocol.workspace = true
+outbe-zk-canonical.workspace = true
+outbe-zk-backend.workspace = true
 outbe-gratisfactory.workspace = true
 # Drive the confidential Gratis + Fidelity paths in the e2e tests via the
 # in-process enclave engines; `test-enclave` is unioned into each dep for tests.

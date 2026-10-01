@@ -5,16 +5,14 @@
 //! day count, and even that is evaluated lazily at settlement rather than
 //! accrued per block.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{timestamp_to_date_key, SECONDS_PER_DAY};
 use outbe_primitives::units::SCALE_1E6_U256;
 
-use crate::constants::{
-    CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, DAYS_PER_YEAR, PRICE_RATE_DEN,
-};
+use crate::constants::{CALL_RATE_PCT, DAYS_PER_YEAR, PRICE_RATE_DEN};
 use crate::errors::CredisError;
 use crate::precompile::ICredis;
 use crate::schema::{CredisContract, CredisState, Position};
@@ -33,8 +31,8 @@ fn reward_day(storage: &StorageHandle<'_>) -> Result<u32> {
 pub struct OpenPositionParams {
     pub smart_account: Address,
     pub cca: Address,
-    /// Sealed pledger EOA, opaque here.
-    pub eoa_ct: Vec<u8>,
+    /// Proof-authenticated return serial, opaque here.
+    pub return_note_serial: B256,
     pub asset: Address,
     /// ISO 4217 numeric code of the disbursed `asset`.
     pub issuance_currency: u16,
@@ -45,13 +43,18 @@ pub struct OpenPositionParams {
     pub policy_rate: U256,
     /// `P` - stablecoin minor units disbursed.
     pub principal: U256,
-    /// Entry price in the issuance currency, scale 1e6, sealed on the pledge.
+    /// Entry price in the issuance currency, scale 1e6, fixed by the reservation.
     pub entry_price: U256,
     /// Call anchor price in the reference currency, scale 1e6, sealed at issuance.
     pub call_anchor_price: U256,
     /// `G` - pledged Gratis collateral.
     pub collateral: U256,
     pub issued_at: u64,
+    pub call_price: U256,
+    pub call_notice_period: u32,
+    pub call_rate: u16,
+    pub call_window: u32,
+    pub call_threshold: u32,
 }
 
 /// Outcome of [`CredisContract::settle`]. The caller moves the money: it pulls
@@ -85,8 +88,8 @@ pub struct Void {
     /// Unpaid share of the original principal, scale `1e6`. Scales the
     /// originating CCA's penalty.
     pub unpaid_share: U256,
-    /// Sealed pledger EOA - the caller opens it to key the confidential ledgers.
-    pub eoa_ct: Vec<u8>,
+    /// Return serial used when constructing repayment notes.
+    pub return_note_serial: B256,
 }
 
 /// `price x (100 + rate_pct) / 100`.
@@ -153,6 +156,8 @@ impl CredisContract<'_> {
                 || params.collateral.is_zero()
                 || params.entry_price.is_zero()
                 || params.call_anchor_price.is_zero()
+                || params.return_note_serial.is_zero()
+                || outbe_protocol::codec::field_from_b256(&params.return_note_serial).is_err()
             {
                 return Err(CredisError::InvalidAmount.into());
             }
@@ -175,22 +180,22 @@ impl CredisContract<'_> {
                 asset: params.asset,
                 issuance_currency: params.issuance_currency,
                 reference_currency: params.reference_currency,
-                eoa_ct: params.eoa_ct,
+                return_note_serial: params.return_note_serial,
                 principal: params.principal,
                 outstanding: params.principal,
                 collateral: params.collateral,
                 collateral_locked: params.collateral,
                 policy_rate: params.policy_rate,
                 entry_price: params.entry_price,
-                call_price: calc_call_price(params.call_anchor_price)?,
+                call_price: params.call_price,
                 issued_at: params.issued_at,
                 last_settled_at: params.issued_at,
                 called_at: 0,
                 state: CredisState::Open as u8,
-                call_notice_period: CALL_NOTICE_PERIOD,
-                call_rate: CALL_RATE_PCT,
-                call_window: CALL_WINDOW,
-                call_threshold: CALL_THRESHOLD,
+                call_notice_period: params.call_notice_period,
+                call_rate: params.call_rate,
+                call_window: params.call_window,
+                call_threshold: params.call_threshold,
                 call_anchor_price: params.call_anchor_price,
                 interest_paid: U256::ZERO,
             };
@@ -420,7 +425,7 @@ impl CredisContract<'_> {
                 smart_account: position.smart_account,
                 cca: position.cca,
                 unpaid_share,
-                eoa_ct: position.eoa_ct,
+                return_note_serial: position.return_note_serial,
             })
         })
     }

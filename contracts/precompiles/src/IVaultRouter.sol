@@ -24,6 +24,20 @@ interface IVaultRouter {
         address cca;
         address vault;
         uint64 expiresAt;
+        uint256 collateral;
+        uint256 snapshotId;
+        uint256 entryPrice;
+        uint256 valuationPrice;
+        uint256 policyRate;
+        uint16 issuanceCurrency;
+        uint8 assetDecimals;
+        uint16 referenceCurrency;
+        uint256 callAnchorPrice;
+        uint256 callPrice;
+        uint32 callNoticePeriod;
+        uint16 callRate;
+        uint32 callWindow;
+        uint32 callThreshold;
     }
 
     error TokenOperationFailed();
@@ -198,7 +212,7 @@ interface IVaultRouter {
     /// @notice Redeems `amount` of `asset` from its origin vault and holds it in this
     ///         router's custody for `smartAccount`, guaranteeing it can later be
     ///         delivered for 15 minutes. Caller must be an active CCA.
-    function reserveStables(address smartAccount, address asset, uint256 amount)
+    function reserveStables(address smartAccount, address asset, uint256 amount, uint16 referenceCurrency)
         external
         returns (uint256 reservationId);
 

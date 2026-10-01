@@ -18,6 +18,8 @@ pub enum SettlementDomain {
     Nod = 1,
     Gem = 2,
     Intex = 3,
+    GratisPledge = 4,
+    GratisUnpledge = 5,
 }
 
 /// Left-align a 14-byte Intex series id in a 32-byte word.
@@ -32,6 +34,8 @@ fn domain_byte(domain: SettlementDomain) -> u8 {
         SettlementDomain::Nod => 1,
         SettlementDomain::Gem => 2,
         SettlementDomain::Intex => 3,
+        SettlementDomain::GratisPledge => 4,
+        SettlementDomain::GratisUnpledge => 5,
     }
 }
 
@@ -128,5 +132,42 @@ mod tests {
         )
         .unwrap();
         assert_ne!(nod, intex);
+    }
+    #[test]
+    fn pledge_context_binds_operation_target_amount_and_snapshot() {
+        let target = word(17);
+        let units = U256::from(23);
+        let snapshot = U256::from(42);
+        let pledge =
+            settlement_context(SettlementDomain::GratisPledge, target, units, snapshot).unwrap();
+        for (domain, target, units, snapshot) in [
+            (SettlementDomain::Nod, target, units, snapshot),
+            (SettlementDomain::Gem, target, units, snapshot),
+            (SettlementDomain::Intex, target, units, snapshot),
+            (SettlementDomain::GratisUnpledge, target, units, snapshot),
+            (SettlementDomain::GratisPledge, word(18), units, snapshot),
+            (
+                SettlementDomain::GratisPledge,
+                target,
+                units + U256::ONE,
+                snapshot,
+            ),
+            (
+                SettlementDomain::GratisPledge,
+                target,
+                units,
+                snapshot + U256::ONE,
+            ),
+        ] {
+            assert_ne!(
+                pledge,
+                settlement_context(domain, target, units, snapshot).unwrap()
+            );
+        }
+        assert!(!pledge.is_zero());
+        assert_eq!(
+            codec::field_to_b256(&codec::field_from_b256(&pledge).unwrap()).unwrap(),
+            pledge
+        );
     }
 }

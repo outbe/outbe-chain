@@ -1,10 +1,4 @@
-//! ABI dispatch for the credisfactory precompile at `CREDIS_FACTORY_ADDRESS`.
-//!
-//! `issueCredis` consumes a confidential Gratis pledge (pledge note + spend
-//! authorization) and opens a credis position bound to `smartAccount`.
-//! `settle` applies an arbitrary amount interest-first and releases the matching
-//! share of the pledged collateral back to the original pledger's encrypted
-//! Gratis balance.
+//! Credis factory ABI: consume reservation-bound proofs and issue return notes on repayment.
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
@@ -45,11 +39,8 @@ pub fn dispatch(
                         let (position_id, amount_stables) = runtime::issue_credis(
                             storage.clone(),
                             sender,
-                            c.smartAccount,
-                            c.pledgeNote,
-                            c.spendAuth.0,
-                            c.referenceCurrency,
                             c.reservationId,
+                            &c.proof,
                             val,
                         )?;
                         Ok(ICredisFactory::issueCredisReturn {

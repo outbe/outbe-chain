@@ -506,6 +506,76 @@
             "name": "expiresAt",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "collateral",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "snapshotId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "entryPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "valuationPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "policyRate",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "issuanceCurrency",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "assetDecimals",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "referenceCurrency",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "callAnchorPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "callPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "callNoticePeriod",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "callRate",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "callWindow",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "callThreshold",
+            "type": "uint32",
+            "internalType": "uint32"
           }
         ]
       }
@@ -530,6 +600,11 @@
         "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
     "outputs": [

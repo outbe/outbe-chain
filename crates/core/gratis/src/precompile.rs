@@ -18,7 +18,7 @@ const TRANSFER_NOT_ALLOWED: &str = "gratis token transfers are not allowed";
 /// Dispatches an ABI-encoded call to the Gratis precompile.
 ///
 /// This surface is **read-only + the non-transferable ERC-20 stubs**. Balances
-/// are confidential: `balanceOf`/`pledgedOf` return the account's ciphertext blob
+/// are confidential: `balanceOf` returns the account's ciphertext blob
 /// (`version || AEAD-ct`) for the caller to decrypt with its view key. All state
 /// changes go through the enclave-backed [`crate::api`] (called cross-crate by the
 /// factories), never this ABI.
@@ -43,7 +43,6 @@ pub fn dispatch(
 
             // Confidential reads - return ciphertext; decrypt client-side.
             balanceOf(c) => view(c, |c| gratis.balance_ct_of(c.account).map(Bytes::from)),
-            pledgedOf(c) => view(c, |c| gratis.pledged_ct_of(c.account).map(Bytes::from)),
             opNonceOf(c) => view(c, |c| gratis.op_nonce_of(c.account)),
 
             // Non-transferable surface.
