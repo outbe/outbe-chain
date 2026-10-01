@@ -127,8 +127,8 @@ volume-weighted mean rounded down.
 | `huobi` | Working | Huobi WebSocket ticker/candle streams with REST bootstrap fallback |
 | `mexc` | Working | MEXC protobuf WebSocket ticker/candle streams with REST bootstrap fallback |
 | `coinbase` | Working | Coinbase WebSocket ticker stream with REST bootstrap fallback |
-| `uniswap` | Implemented | Ethereum finalized V2/V3/V4 pool spot rate and 24h COEN swap volume |
-| `pancakeswap` | Implemented | BNB Chain finalized V2/V3/Infinity CL/Bin pool spot rate and 24h COEN swap volume |
+| `uniswap` | Implemented | Ethereum finalized V2/V3/V4 pool spot rate and 1h COEN swap volume |
+| `pancakeswap` | Implemented | BNB Chain finalized V2/V3/Infinity CL/Bin pool spot rate and 1h COEN swap volume |
 
 Provider errors, non-success responses, unsupported custom pairs, and timeouts are logged and skipped. The feeder does not fabricate fallback prices from failed providers.
 
@@ -140,8 +140,8 @@ used as bootstrap fallback.
 
 ### DEX providers
 
-DEX v1 reads the current pool spot rate and independently collects 24-hour
-COEN volume. It returns tickers, with no candles or time averaging of the rate.
+DEX v1 reads the current pool spot rate and independently collects one-hour
+COEN volume, matching the 60 one-minute candles exchange sources aggregate. It returns tickers, with no candles or time averaging of the rate.
 All configured `COEN/USDC` and `COEN/USDT` source markets feed the same
 `COEN/840` Oracle pair through the existing deviation filter and volume-weighted
 source mean. **V1 assumes USDC = USDT = 1 USD.** There is no stablecoin/USD feed
@@ -192,7 +192,7 @@ including its hook settings and fee. A dynamic fee is encoded as `8388608`.
 RPC must support `eth_chainId`, `eth_getBlockByNumber("finalized")`, historical
 block headers, `eth_getLogs`, and EIP-1898 `eth_call` with
 `{blockHash, requireCanonical: true}`. Price and decimals reads use one finalized
-block hash; volume covers `(block timestamp - 24h, block timestamp]`. There is no
+block hash; volume covers `(block timestamp - 1h, block timestamp]`. There is no
 fallback to `latest`. Some [public BNB RPCs disable eth_getLogs](https://docs.bnbchain.org/bnb-smart-chain/developers/json_rpc/json-rpc-endpoint/);
 use an endpoint that exposes it and returns complete results or a range-limit
 error. Oversized responses above 16 MiB are rejected and log ranges reduced.

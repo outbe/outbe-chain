@@ -4,6 +4,7 @@ pub(crate) mod config;
 pub(crate) mod create;
 pub(crate) mod inventory;
 pub(crate) mod native;
+pub(crate) mod projection_store;
 
 pub(crate) mod validation;
 

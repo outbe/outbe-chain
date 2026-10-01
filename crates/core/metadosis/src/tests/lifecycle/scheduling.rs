@@ -25,6 +25,7 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
             )
             .unwrap();
         metadosis.add_active_wwd(wwd).unwrap();
+        metadosis.set_metadosis_limit(wwd, U256::ONE).unwrap();
 
         let mut tribute = TributeContract::new(storage.clone());
         tribute.seal_day(wwd).unwrap();
@@ -289,6 +290,7 @@ fn test_normal_lifecycle_never_leaves_ready_day_type_unknown() {
         metadosis.add_active_wwd(wwd).unwrap();
 
         let mut tribute = TributeContract::new(storage.clone());
+        tribute.initialize_fresh_ocomp_profile().unwrap();
         tribute.seal_day(wwd).unwrap();
 
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)

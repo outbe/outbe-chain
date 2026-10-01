@@ -2,14 +2,18 @@
 
 use std::fs;
 use std::io::Write;
+use std::path::Path;
+use std::sync::Arc;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use eyre::{bail, eyre, Result, WrapErr};
 use outbe_compressed_entities::{decode_stored_tribute_v1, WwdEntityId};
+#[cfg(test)]
+use outbe_offchain_storage::StorageProvider;
 use outbe_offchain_storage::{
-    Key, Namespace, RocksDbConfig, ScanEntry, ScanRequest, StorageBackend, StorageConfig,
-    StorageProvider, StorageReader, StorageReaderHandle,
+    DayDirectory, Key, Namespace, RocksDbConfig, RocksDbReader, ScanEntry, ScanRequest,
+    StorageBackend, StorageConfig, StorageReader, StorageReaderHandle,
 };
 
 #[cfg(test)]
@@ -181,6 +185,7 @@ fn reject_symlink_path(path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 fn session(cfg: &Config, index: usize) -> Result<StorageReaderHandle> {
     let config = rocksdb_config(cfg, index)?;
     Ok(StorageProvider::new(config)?
@@ -245,10 +250,12 @@ impl ProjectionFixture {
             let mut last = eyre!("projection did not appear");
             for _ in 0..tries {
                 let result = (|| -> Result<()> {
-                    let canonical = snapshot(session(&cfg, 0)?.as_ref(), &tx_hash)?;
+                    let canonical = snapshot_across(&tribute_readers(&cfg, 0)?, &tx_hash)?;
                     for index in 1..validators {
-                        let observed = snapshot(session(&cfg, index)?.as_ref(), &tx_hash)?;
-                        if canonical != observed { bail!("validator-{index}: projection differs from validator-0"); }
+                        let observed = snapshot_across(&tribute_readers(&cfg, index)?, &tx_hash)?;
+                        if canonical != observed {
+                            bail!("validator-{index}: projection differs from validator-0");
+                        }
                     }
                     Ok(())
                 })();
@@ -267,13 +274,17 @@ impl ProjectionFixture {
 
     pub fn projected_tribute(&self, validator: usize, tx_hash: &str) -> Result<ProjectedTribute> {
         let tx_hash = tx_hash.to_owned();
-        self.run(move |cfg| {
-            let record = primary(session(&cfg, validator)?.as_ref(), &tx_hash)?;
-            Ok(ProjectedTribute {
-                raw_id: WwdEntityId::try_from(record.key.as_bytes())?,
-                stored_body: record.value.as_bytes().to_vec(),
-            })
-        })
+        self.run(move |cfg| projected_from_readers(&tribute_readers(&cfg, validator)?, &tx_hash))
+    }
+
+    /// Read one Tribute from the day databases under an off-chain root.
+    pub fn observe_offchain_tribute(
+        offchain_root: &Path,
+        tx_hash: &str,
+    ) -> Result<ProjectedTribute> {
+        let scratch = tempfile::tempdir()?;
+        let readers = open_tribute_readers(offchain_root, scratch.path())?;
+        projected_from_readers(&readers, tx_hash)
     }
 
     pub fn tribute_projection_snapshot(
@@ -282,24 +293,97 @@ impl ProjectionFixture {
         tx_hash: &str,
     ) -> Result<TributeProjectionSnapshot> {
         let tx_hash = tx_hash.to_owned();
-        self.run(move |cfg| snapshot(session(&cfg, validator)?.as_ref(), &tx_hash))
+        self.run(move |cfg| snapshot_across(&tribute_readers(&cfg, validator)?, &tx_hash))
     }
 
     pub fn assert_no_tribute_projection(&self) -> Result<()> {
         self.run(|cfg| {
             for index in 0..cfg.validators {
-                let reader = session(&cfg, index)?;
-                for name in COLLECTIONS {
-                    let page = reader
-                        .scan_prefix(Namespace::new(name)?, ScanRequest::new(&[], None, 1)?)?;
-                    if !page.entries.is_empty() {
-                        bail!("validator-{index}.{name}: expected no records");
+                for reader in tribute_readers(&cfg, index)? {
+                    for name in COLLECTIONS {
+                        let page = reader
+                            .scan_prefix(Namespace::new(name)?, ScanRequest::new(&[], None, 1)?)?;
+                        if !page.entries.is_empty() {
+                            bail!("validator-{index}.{name}: expected no records");
+                        }
                     }
                 }
             }
             Ok(())
         })
     }
+}
+
+fn projected_from_readers(
+    readers: &[StorageReaderHandle],
+    tx_hash: &str,
+) -> Result<ProjectedTribute> {
+    let record = find_primary(readers, tx_hash)?.1;
+    Ok(ProjectedTribute {
+        raw_id: WwdEntityId::try_from(record.key.as_bytes())?,
+        stored_body: record.value.as_bytes().to_vec(),
+    })
+}
+
+fn tribute_readers(cfg: &Config, index: usize) -> Result<Vec<StorageReaderHandle>> {
+    let config = rocksdb_config(cfg, index)?;
+    let StorageBackend::RocksDb(rocks) = config.backend else {
+        bail!("E2E requires RocksDB storage for validator-{index}");
+    };
+    open_tribute_readers(&rocks.path, &rocks.secondary_path)
+}
+
+/// Shared database first, then each Tribute day. A secondary directory keeps the
+/// node primary lock free.
+fn open_tribute_readers(
+    offchain_root: &Path,
+    secondary_root: &Path,
+) -> Result<Vec<StorageReaderHandle>> {
+    let directory = DayDirectory::open(offchain_root)?;
+    fs::create_dir_all(secondary_root)?;
+    let mut readers = Vec::new();
+    let shared = directory.shared_path();
+    if shared.join("CURRENT").is_file() {
+        readers.push(Arc::new(RocksDbReader::open(
+            &shared,
+            &secondary_root.join("shared"),
+        )?) as StorageReaderHandle);
+    }
+    for day in directory.list_tribute_days()? {
+        let path = directory.tribute_day_path(day);
+        if path.join("CURRENT").is_file() {
+            readers.push(Arc::new(RocksDbReader::open(
+                &path,
+                &secondary_root.join(format!("tribute-day-{day}")),
+            )?) as StorageReaderHandle);
+        }
+    }
+    Ok(readers)
+}
+
+fn find_primary(readers: &[StorageReaderHandle], tx_hash: &str) -> Result<(usize, ScanEntry)> {
+    let mut found = None;
+    for (index, reader) in readers.iter().enumerate() {
+        match primary(reader.as_ref(), tx_hash) {
+            Ok(entry) => {
+                if found.is_some() {
+                    bail!("multiple Tribute records for transaction {tx_hash}");
+                }
+                found = Some((index, entry));
+            }
+            Err(error) if error.to_string().contains("no Tribute") => {}
+            Err(error) => return Err(error),
+        }
+    }
+    found.ok_or_else(|| eyre!("no Tribute for transaction {tx_hash}"))
+}
+
+fn snapshot_across(
+    readers: &[StorageReaderHandle],
+    tx_hash: &str,
+) -> Result<TributeProjectionSnapshot> {
+    let (index, _) = find_primary(readers, tx_hash)?;
+    snapshot(readers[index].as_ref(), tx_hash)
 }
 
 fn primary(reader: &dyn StorageReader, tx_hash: &str) -> Result<ScanEntry> {

@@ -1,14 +1,18 @@
 //! Typed off-chain persistence boundary for Tribute bodies and indexes.
 
+mod day_store;
+
 use alloy_primitives::{Address, B256};
 use outbe_compressed_entities::{
     decode_stored_tribute_v1, encode_tribute_v1, CanonicalBodyError, CeAuditError, CeAuditWork,
     EntityRef, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef,
     StoredBody, StoredBodyPage, TributeBodyV1, WwdEntityId,
 };
+use std::sync::Arc;
+
 use outbe_offchain_storage::{
-    Key, Namespace, ScanEntry, ScanRequest, StorageError, StorageMetadata, StorageReaderHandle,
-    StorageWriterHandle, Value, MAX_SCAN_ENTRIES,
+    DayDatabases, Key, Namespace, ScanEntry, ScanRequest, StorageError, StorageMetadata,
+    StorageReaderHandle, StorageWriterHandle, Value, MAX_SCAN_ENTRIES,
 };
 use outbe_primitives::time::WorldwideDay;
 use thiserror::Error;
@@ -173,13 +177,48 @@ pub enum TributeRepositoryError {
 #[derive(Clone)]
 pub struct TributeRepositoryReader {
     storage: StorageReaderHandle,
+    route: Option<day_store::DayRoute>,
 }
 
 impl TributeRepositoryReader {
     /// Creates a typed Tribute reader over a backend-neutral storage handle.
     #[must_use]
     pub fn new(storage: StorageReaderHandle) -> Self {
-        Self { storage }
+        Self {
+            storage,
+            route: None,
+        }
+    }
+
+    /// Reads and writes through one database per worldwide day.
+    ///
+    /// `shared` keeps the migration cursor. New bodies are stored in the day database.
+    #[must_use]
+    pub fn with_days(
+        shared: StorageReaderHandle,
+        shared_writer: StorageWriterHandle,
+        databases: Arc<DayDatabases>,
+    ) -> Self {
+        Self {
+            storage: shared,
+            route: Some(day_store::DayRoute {
+                shared_writer,
+                databases,
+                wrap: None,
+            }),
+        }
+    }
+
+    /// Reads each day database through `wrap` (execution budgets, diagnostics).
+    #[must_use]
+    pub fn with_day_read_wrap(
+        mut self,
+        wrap: Arc<dyn Fn(StorageReaderHandle) -> StorageReaderHandle + Send + Sync>,
+    ) -> Self {
+        if let Some(route) = &mut self.route {
+            route.wrap = Some(wrap);
+        }
+        self
     }
 
     /// Enumerates canonical primary bodies independently of secondary indexes.
@@ -282,6 +321,9 @@ impl TributeRepositoryReader {
         &self,
         tribute_id: WwdEntityId,
     ) -> Result<Option<StoredBody>, TributeRepositoryError> {
+        if self.route.is_some() {
+            return day_store::get_stored_body(self, tribute_id);
+        }
         let key = primary_key(tribute_id)?;
         let Some(record) = self
             .storage
@@ -297,6 +339,9 @@ impl TributeRepositoryReader {
         &self,
         tribute_id: WwdEntityId,
     ) -> Result<Option<(TributeData, Option<StorageMetadata>)>, TributeRepositoryError> {
+        if self.route.is_some() {
+            return day_store::get_with_metadata(self, tribute_id);
+        }
         let key = primary_key(tribute_id)?;
         let Some(record) = self
             .storage
@@ -337,6 +382,9 @@ impl TributeRepositoryReader {
         &self,
         tribute_ids: &[WwdEntityId],
     ) -> Result<crate::projection::TributeProjectionSession, TributeRepositoryError> {
+        if self.route.is_some() {
+            return day_store::projection_session(self, tribute_ids);
+        }
         let keys = tribute_ids
             .iter()
             .copied()
@@ -354,6 +402,9 @@ impl TributeRepositoryReader {
         owner: Address,
         request: TributePageRequest,
     ) -> Result<TributePage, TributeRepositoryError> {
+        if self.route.is_some() {
+            return day_store::list_by_owner(self, owner, request);
+        }
         validate_page_limit(request.limit)?;
         let prefix = owner.as_slice();
         let after = request
@@ -391,6 +442,9 @@ impl TributeRepositoryReader {
         owner: Address,
         request: IdPageRequest,
     ) -> Result<IdPage, TributeRepositoryError> {
+        if self.route.is_some() {
+            return day_store::list_ids_by_owner(self, owner, request);
+        }
         let limit = validate_id_page_request(request)?;
         let after = request
             .after
@@ -448,6 +502,9 @@ impl TributeRepositoryReader {
         worldwide_day: WorldwideDay,
         request: IdPageRequest,
     ) -> Result<IdPage, TributeRepositoryError> {
+        if self.route.is_some() {
+            return day_store::list_ids_by_day(self, worldwide_day, request);
+        }
         let limit = validate_id_page_request(request)?;
         if let Some(cursor) = request.after {
             if cursor.worldwide_day() != worldwide_day {
@@ -619,8 +676,28 @@ impl TributeRepositoryWriter {
         }
     }
 
+    /// Writes each Tribute into the database of its worldwide day.
+    #[must_use]
+    pub fn with_days(
+        shared_reader: StorageReaderHandle,
+        shared_writer: StorageWriterHandle,
+        databases: Arc<DayDatabases>,
+    ) -> Self {
+        Self {
+            reader: TributeRepositoryReader::with_days(
+                shared_reader,
+                shared_writer.clone(),
+                databases,
+            ),
+            writer: shared_writer,
+        }
+    }
+
     /// Inserts or replaces one body and its owner/day indexes.
     pub fn put(&self, tribute: &TributeData) -> Result<(), TributeRepositoryError> {
+        if self.reader.route.is_some() {
+            return day_store::put(self, tribute);
+        }
         let mut session = self.reader.projection_session(&[tribute.tribute_id])?;
         let batch = session.store(tribute.tribute_id, encode_body(tribute)?, None)?;
         self.writer.apply_atomic(&batch)?;
@@ -629,10 +706,18 @@ impl TributeRepositoryWriter {
 
     /// Deletes a body and its derived indexes. Missing bodies are a success.
     pub fn delete(&self, tribute_id: WwdEntityId) -> Result<(), TributeRepositoryError> {
+        if self.reader.route.is_some() {
+            return day_store::delete(self, tribute_id);
+        }
         let mut session = self.reader.projection_session(&[tribute_id])?;
         let batch = session.delete(tribute_id)?;
         self.writer.apply_atomic(&batch)?;
         Ok(())
+    }
+
+    /// Moves Tribute keys already stored in the shared database into their day databases.
+    pub fn migrate_legacy_keys(&self) -> Result<(), TributeRepositoryError> {
+        day_store::migrate(&self.reader)
     }
 }
 

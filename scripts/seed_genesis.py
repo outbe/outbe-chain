@@ -237,12 +237,13 @@ DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS = 151_200
 DEFAULT_EPOCH_LENGTH_BLOCKS = 1_200
 SECONDS_PER_DAY = 86_400
 
-# Profile selectors. Numbers live in Rust (crates/core/intexfactory/src/config.rs
-# and crates/core/gem/src/config.rs); genesis only picks one. The slots are pinned
-# by a test in each crate.
+# Profile selectors. Numbers live in Rust (crates/core/intexfactory/src/config.rs,
+# crates/core/gem/src/config.rs and crates/core/nod/src/config.rs); genesis only
+# picks one. The slots are pinned by a test in each crate.
 PROFILE_SELECTORS = {"auto": 0, "dev": 1, "prod": 2}
 INTEX_PROFILE_SLOT = 5
 GEM_PROFILE_SLOT = 34
+NOD_PROFILE_SLOT = 49
 
 ALL_PRECOMPILE_ADDRESSES = [
     GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS, PROMIS_ADDRESS, TRIBUTE_ADDRESS,
@@ -791,6 +792,7 @@ def seed_gems(storage: StorageBuilder, gems: list):
       slot 18:     owner_gem_ids    Map<B256, U256>  (key = owner_index_key)
       slot 19:     all_gem_ids      List<U256>  (len @ slot 19, data @ keccak(19)+i)
       slot 20:     gem_index        Map<U256, u32>
+      slot 43:     owner_gem_position Map<U256, u32>  (index in owner_gem_ids + 1)
 
     Settled gems sit in neither the call-price index nor the called queue, so
     those slots stay empty.
@@ -835,6 +837,7 @@ def seed_gems(storage: StorageBuilder, gems: list):
         # owner_gem_ids index (slot 18) + swap-and-pop counter (slot 17 below).
         oi = owner_counts.get(owner.lower(), 0)
         storage.set_mapping(18, gem_owner_index_key(owner, oi), int.from_bytes(gem_id, "big"))
+        storage.set_mapping(43, gem_id, oi + 1)
         owner_counts[owner.lower()] = oi + 1
 
         # all_gem_ids List element i (slot 19 data region) + gem_index (slot 20).
@@ -1981,6 +1984,7 @@ def apply_seed(
     for section, address, slot, label in (
         ("intex_factory", INTEX_FACTORY_ADDRESS, INTEX_PROFILE_SLOT, "IntexFactory"),
         ("gem_profile", GEM_ADDRESS, GEM_PROFILE_SLOT, "Gem"),
+        ("nod_profile", NOD_ADDRESS, NOD_PROFILE_SLOT, "Nod"),
     ):
         if section not in seed:
             continue

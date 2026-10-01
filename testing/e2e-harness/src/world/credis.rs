@@ -1,8 +1,8 @@
 //! Credis fixtures and observations over the same RPC/deployment path as Intex.
 
-use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
+use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{sol, SolCall, SolEvent};
+use alloy_sol_types::{sol, SolCall};
 use outbe_primitives::addresses::{
     CCA_REGISTRY_ADDRESS, CREDIS_ADDRESS, ORACLE_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
@@ -128,30 +128,7 @@ pub(crate) fn execute<C: SolCall>(
 }
 
 /// Decode exactly one event from its expected emitter; never accept another contract's log.
-pub(crate) fn event<E: SolEvent>(receipt: &serde_json::Value, emitter: Address) -> E {
-    let mut found = receipt["logs"]
-        .as_array()
-        .expect("receipt logs")
-        .iter()
-        .filter_map(|log| {
-            if log["address"].as_str()?.parse::<Address>().ok()? != emitter {
-                return None;
-            }
-            let topics = log["topics"]
-                .as_array()?
-                .iter()
-                .map(|t| t.as_str()?.parse::<B256>().ok())
-                .collect::<Option<Vec<_>>>()?;
-            if topics.first() != Some(&E::SIGNATURE_HASH) {
-                return None;
-            }
-            let data = log["data"].as_str()?.parse::<Bytes>().ok()?;
-            Some(E::decode_raw_log(topics, &data).expect("decode matching event"))
-        });
-    let value = found.next().expect("expected event missing");
-    assert!(found.next().is_none(), "duplicate {} event", E::SIGNATURE);
-    value
-}
+pub(crate) use crate::internal::eth::receipt_event as event;
 
 pub(crate) fn read<C: SolCall>(url: &str, to: Address, call: &C, height: u64) -> C::Return
 where

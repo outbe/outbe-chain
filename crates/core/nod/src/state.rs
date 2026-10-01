@@ -14,26 +14,28 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     api::{LoadedNodBucket, LoadedNodItem},
-    constants::{BIN_STEP_BP, CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW},
+    config::NodParams,
+    constants::BIN_STEP_BP,
     errors::NodError,
     precompile::INod,
     schema::{CallTerms, NodBucketState, NodContract, NodItemState},
 };
 
-/// `entry × (100 + CALL_RATE_PCT) / 100` plus the four call constants.
+/// `entry × (100 + call_rate) / 100` plus the profile's other call terms.
 ///
 /// `None` when entry is zero: a zero call price would fire on the first scan.
-/// The constants are read exactly here. Every later check reads the bucket's
+/// The profile is read exactly here. Every later check reads the bucket's
 /// sealed copy, so a retune cannot re-term an already-issued Nod.
 pub(crate) fn derived_call_terms(
     entry_price_minor: U256,
     reference_currency: u16,
+    params: NodParams,
 ) -> Result<Option<CallTerms>> {
     if entry_price_minor.is_zero() {
         return Ok(None);
     }
     let call_price = entry_price_minor
-        .checked_mul(U256::from(100 + CALL_RATE_PCT))
+        .checked_mul(U256::from(100 + params.call_rate))
         .ok_or_else(|| {
             outbe_primitives::error::PrecompileError::Fatal("Nod call price overflow".into())
         })?
@@ -41,10 +43,10 @@ pub(crate) fn derived_call_terms(
     Ok(Some(CallTerms {
         call_price,
         reference_currency,
-        call_rate: CALL_RATE_PCT,
-        call_window: CALL_WINDOW,
-        call_threshold: CALL_THRESHOLD,
-        call_notice_period: CALL_NOTICE_PERIOD,
+        call_rate: params.call_rate,
+        call_window: params.call_window,
+        call_threshold: params.call_threshold,
+        call_notice_period: params.call_notice_period,
     }))
 }
 
@@ -285,7 +287,9 @@ impl NodContract<'_> {
                     .write(&item.bucket_key, item.worldwide_day)?;
                 self.callable_bucket_issued_at
                     .write(&item.bucket_key, item.issued_at)?;
-                if let Some(terms) = derived_call_terms(entry_price_minor, item.reference_currency)?
+                let params = crate::config::read_from(self, self.storage_handle().chain_id()?)?;
+                if let Some(terms) =
+                    derived_call_terms(entry_price_minor, item.reference_currency, params)?
                 {
                     self.seal_bucket_call_terms(item.bucket_key, terms)?;
                     self.insert_call_bin(item.bucket_key)?;
@@ -749,7 +753,7 @@ const fn unpack_bin_slot(packed: u64) -> (u32, u32) {
     ((packed >> 32) as u32, (packed as u32).wrapping_sub(1))
 }
 
-/// One currency's call-price trie, like `outbe_gem::state::CallBins`.
+/// One currency's call-price trie, like `outbe_gem::state::BucketBins`.
 pub(crate) struct CallBins<'a, 'storage>(pub(crate) &'a NodContract<'storage>, pub(crate) u16);
 
 impl BinTreeStorage for CallBins<'_, '_> {

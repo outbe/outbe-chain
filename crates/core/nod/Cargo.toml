@@ -25,10 +25,13 @@ alloy-primitives = { workspace = true, features = ["rand"] }
 base64.workspace = true
 mongodb.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 
 [features]
 default = []
 test-utils = ["outbe-primitives/test-utils"]
+# Shortens the DEV call notice to a real e2e wait. Never enabled in a release build.
+e2e-test = []
 
 [lints]
 workspace = true

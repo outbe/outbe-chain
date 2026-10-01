@@ -16,7 +16,9 @@ use super::{
 };
 use crate::provider::{Provider, TickerPrice};
 
-const WINDOW_SECS: u64 = 86_400;
+/// Rolling swap-volume window. One hour matches the exchange providers'
+/// 60 one-minute candles so every source weighs on the same scale.
+pub(super) const WINDOW_SECS: u64 = 3_600;
 const SNAPSHOT_TTL: Duration = Duration::from_secs(30);
 
 struct Snapshot {

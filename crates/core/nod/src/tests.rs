@@ -33,6 +33,11 @@ fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
             ),
         )
         .unwrap();
+    // These tests exercise the production call terms.
+    NodContract::new(storage.clone())
+        .config_profile
+        .write(crate::config::PROFILE_PROD)
+        .unwrap();
 }
 
 /// Close `day` just above `floor` on `COEN/<iso>`, registering the pair on first use.

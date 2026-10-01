@@ -650,22 +650,17 @@ pub struct FixtureState {
     pub target_contracts: Option<crate::world::target_chain::TargetContracts>,
     /// Addresses the origin-side deploy reported.
     pub origin_contracts: Option<crate::world::origin_venue::OriginContracts>,
-    /// Units of each lifecycle series settled so far.
-    pub settled_units: u32,
     /// The Intex series the gem scenario parks to open its position.
     pub gem_source_series: Option<alloy_primitives::FixedBytes<14>>,
     /// The merchant position those parked units opened.
     pub gem_position: Option<alloy_primitives::U256>,
-    /// The gem that is settled and mined, and the one whose notice runs out.
-    pub mined_gem: Option<alloy_primitives::U256>,
-    pub forfeited_gem: Option<alloy_primitives::U256>,
-    /// Promis held before mining, so the mined load shows as a delta.
-    pub promis_before_mining: Option<alloy_primitives::U256>,
-    /// Finalized height and unallocated PROMIS before either expiry return.
-    pub gem_expiry_baseline: Option<(u64, alloy_primitives::U256)>,
-    /// The Nod paid inside the call notice, and the one whose notice runs out.
-    pub paid_nod: Option<alloy_primitives::U256>,
-    pub forfeited_nod: Option<alloy_primitives::U256>,
+    /// The gem lifecycle's gems, one per owner, in owner order.
+    pub lifecycle_gems: Vec<alloy_primitives::U256>,
+    /// The Nod lifecycle's Nods, one per owner, in owner order.
+    pub lifecycle_nods: Vec<alloy_primitives::U256>,
+    /// What the shared lifecycle phases recorded.
+    #[cfg(feature = "ocomp-integration")]
+    pub entity_lifecycle: crate::features::entity_lifecycle::LifecycleLedger,
     /// The series the lifecycle scenario issued, in the order it issued them.
     pub lifecycle_series: Vec<alloy_primitives::FixedBytes<14>>,
     /// Issued alongside them and only partly settled, so the call notice runs out on
@@ -675,11 +670,15 @@ pub struct FixtureState {
     pub untouched_series: Option<alloy_primitives::FixedBytes<14>>,
     /// The worldwide day the lifecycle series were issued into; the called group's key.
     pub lifecycle_day: Option<u32>,
-    /// Unallocated PROMIS before the notice ran out, so the forfeit shows as a delta.
-    pub unallocated_before_expiry: Option<alloy_primitives::U256>,
     /// The stablecoin owners settle Intex in, and its reserve vault.
     #[cfg(feature = "ocomp-integration")]
     pub settlement_currency: Option<crate::world::settlement_currency::SettlementCurrency>,
+    /// Every settlement currency a lifecycle scenario registered, by ISO code.
+    #[cfg(feature = "ocomp-integration")]
+    pub currencies:
+        std::collections::BTreeMap<u16, crate::world::settlement_currency::SettlementCurrency>,
+    /// The issuance currency a lifecycle scenario prices besides USD, chosen by its tag.
+    pub issuance_market: Option<u16>,
     pub auction_bidders: Vec<crate::world::bidders::Bidder>,
 }
 
@@ -723,20 +722,19 @@ impl Default for FixtureState {
             downtime: None,
             #[cfg(feature = "ocomp-integration")]
             settlement_currency: None,
+            #[cfg(feature = "ocomp-integration")]
+            currencies: std::collections::BTreeMap::new(),
+            issuance_market: None,
             gem_source_series: None,
             gem_position: None,
-            mined_gem: None,
-            forfeited_gem: None,
-            promis_before_mining: None,
-            gem_expiry_baseline: None,
-            paid_nod: None,
-            forfeited_nod: None,
+            lifecycle_gems: Vec::new(),
+            lifecycle_nods: Vec::new(),
+            #[cfg(feature = "ocomp-integration")]
+            entity_lifecycle: Default::default(),
             lifecycle_series: Vec::new(),
             expiring_series: None,
             untouched_series: None,
             lifecycle_day: None,
-            unallocated_before_expiry: None,
-            settled_units: 0,
             proposal_id: 1,
             proposed_version: None,
             activation_height: None,

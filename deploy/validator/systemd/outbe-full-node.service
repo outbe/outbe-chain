@@ -1,9 +1,9 @@
 [Unit]
 Description=Outbe certified FullNode
-After=network-online.target outbe-mongodb.service outbe-enclave.service
+After=network-online.target outbe-enclave.service
 Wants=network-online.target
 Wants=outbe-ocomp-exporter.service outbe-ocomp-worker@0.service
-Requires=outbe-mongodb.service outbe-enclave.service
+Requires=outbe-enclave.service
 Conflicts=outbe-validator.service
 StartLimitIntervalSec=300
 StartLimitBurst=5

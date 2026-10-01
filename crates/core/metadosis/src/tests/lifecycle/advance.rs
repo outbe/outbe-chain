@@ -35,6 +35,7 @@ fn seed_forming_day_for_advance(
             )
             .unwrap();
         metadosis.add_active_wwd(wwd).unwrap();
+        metadosis.set_metadosis_limit(wwd, U256::ONE).unwrap();
         TributeContract::new(storage).seal_day(wwd).unwrap();
         metadosis
             .worldwide_days
@@ -259,6 +260,7 @@ fn advance_active_worldwide_days_advances_status_without_creating_or_settling() 
             )
             .unwrap();
         metadosis.add_active_wwd(wwd).unwrap();
+        metadosis.set_metadosis_limit(wwd, U256::ONE).unwrap();
         drop(metadosis);
 
         let mut tribute = TributeContract::new(storage.clone());

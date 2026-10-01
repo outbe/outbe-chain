@@ -1,9 +1,9 @@
 [Unit]
 Description=Outbe Validator
-After=network-online.target outbe-mongodb.service outbe-enclave.service outbe-radicle.service
+After=network-online.target outbe-enclave.service outbe-radicle.service
 Wants=network-online.target
 Wants=outbe-ocomp-exporter.service outbe-ocomp-worker@0.service
-Requires=outbe-mongodb.service outbe-enclave.service outbe-radicle.service
+Requires=outbe-enclave.service outbe-radicle.service
 Conflicts=outbe-full-node.service
 PartOf=outbe-validator.target
 StartLimitIntervalSec=300

@@ -13,6 +13,7 @@ use outbe_tribute::{RetainedTributeAuditVisitor, RetainedTributeReader, TributeR
 
 use super::Incomplete;
 use crate::snapshot::config::RequestedLayout;
+use crate::snapshot::projection_store::projection_database;
 
 /// Successfully completed primary/index checks, with equality reported separately.
 #[derive(Debug)]
@@ -45,7 +46,8 @@ impl ProjectionBodyView {
             projection.root.clone(),
         ]);
         outbe_snapshot::layout::validate_layout(&[], &protected, &[scratch_parent.to_path_buf()])?;
-        match std::fs::metadata(projection.root.join("CURRENT")) {
+        let database = projection_database(&projection.root);
+        match std::fs::metadata(database.join("CURRENT")) {
             Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Err(
@@ -57,8 +59,7 @@ impl ProjectionBodyView {
         let scratch = tempfile::Builder::new()
             .prefix("projection-audit-")
             .tempdir_in(scratch_parent)?;
-        let reader: StorageReaderHandle =
-            Arc::new(RocksDbReader::open(&projection.root, scratch.path())?);
+        let reader: StorageReaderHandle = Arc::new(RocksDbReader::open(&database, scratch.path())?);
         let checkpoint = read_projection_state(
             ProjectionConfig {
                 chain_id: layout.chain.chain().id(),

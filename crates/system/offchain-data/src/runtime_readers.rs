@@ -17,6 +17,8 @@ use outbe_offchain_storage::{
     Key, Namespace, ScanPage, ScanRequest, StorageError, StorageErrorKind, StorageReader,
     StorageReaderHandle, StoredValue,
 };
+
+use crate::DayDatabaseRoute;
 use outbe_primitives::projection::{
     ExecutionReadBudget, ProjectionFailure, ProjectionFailureClass,
 };
@@ -99,6 +101,19 @@ impl Drop for ExecutionReadBudgetGuard {
 }
 
 type BodyReadObservation = (Namespace, Key, Option<StoredValue>);
+
+fn reader_wrap(
+    budgets: Arc<ExecutionReadBudgets>,
+    last_body_read: Arc<Mutex<Option<BodyReadObservation>>>,
+) -> Arc<dyn Fn(StorageReaderHandle) -> StorageReaderHandle + Send + Sync> {
+    Arc::new(move |inner| {
+        Arc::new(BudgetedStorageReader {
+            inner,
+            budgets: budgets.clone(),
+            last_body_read: last_body_read.clone(),
+        })
+    })
+}
 
 struct BudgetedStorageReader {
     inner: StorageReaderHandle,
@@ -213,28 +228,14 @@ pub struct RuntimeBodyReaders {
     failure_sender: Option<tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>>,
     budgets: Arc<ExecutionReadBudgets>,
     last_body_read: Arc<Mutex<Option<BodyReadObservation>>>,
+    days: Option<DayDatabaseRoute>,
 }
 
 impl RuntimeBodyReaders {
     /// Builds both domain readers over one shared storage adapter.
     #[must_use]
     pub fn new(storage: StorageReaderHandle) -> Self {
-        let budgets = Arc::new(ExecutionReadBudgets::default());
-        let last_body_read = Arc::new(Mutex::new(None));
-        let raw_storage = storage.clone();
-        let storage: StorageReaderHandle = Arc::new(BudgetedStorageReader {
-            inner: storage,
-            budgets: budgets.clone(),
-            last_body_read: last_body_read.clone(),
-        });
-        Self {
-            storage: raw_storage,
-            tribute: TributeRepositoryReader::new(storage.clone()),
-            nod: NodRepositoryReader::new(storage),
-            failure_sender: None,
-            budgets,
-            last_body_read,
-        }
+        Self::build(storage, None, None)
     }
 
     /// Builds supervised readers whose infrastructure failures share the ExEx outage lifecycle.
@@ -243,41 +244,75 @@ impl RuntimeBodyReaders {
         storage: StorageReaderHandle,
         failure_sender: tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>,
     ) -> Self {
-        let budgets = Arc::new(ExecutionReadBudgets::default());
-        let last_body_read = Arc::new(Mutex::new(None));
-        let raw_storage = storage.clone();
-        let storage: StorageReaderHandle = Arc::new(BudgetedStorageReader {
-            inner: storage,
-            budgets: budgets.clone(),
-            last_body_read: last_body_read.clone(),
-        });
-        Self {
-            storage: raw_storage,
-            tribute: TributeRepositoryReader::new(storage.clone()),
-            nod: NodRepositoryReader::new(storage),
-            failure_sender: Some(failure_sender),
-            budgets,
-            last_body_read,
-        }
+        Self::build(storage, Some(failure_sender), None)
+    }
+
+    /// Supervised readers that load Tribute and Nod bodies from per-day databases.
+    #[must_use]
+    pub fn new_supervised_with_days(
+        storage: StorageReaderHandle,
+        days: DayDatabaseRoute,
+        failure_sender: tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>,
+    ) -> Self {
+        Self::build(storage, Some(failure_sender), Some(days))
     }
 
     /// Creates an execution-local budget scope over the same least-authority backend.
     #[must_use]
     pub fn fork_execution(&self) -> Self {
+        Self::build(
+            self.storage.clone(),
+            self.failure_sender.clone(),
+            self.days.clone(),
+        )
+    }
+
+    fn build(
+        storage: StorageReaderHandle,
+        failure_sender: Option<tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>>,
+        days: Option<DayDatabaseRoute>,
+    ) -> Self {
         let budgets = Arc::new(ExecutionReadBudgets::default());
         let last_body_read = Arc::new(Mutex::new(None));
-        let storage: StorageReaderHandle = Arc::new(BudgetedStorageReader {
-            inner: self.storage.clone(),
-            budgets: budgets.clone(),
-            last_body_read: last_body_read.clone(),
-        });
+        let raw_storage = storage.clone();
+        let (tribute, nod) = match &days {
+            None => {
+                let budgeted: StorageReaderHandle = Arc::new(BudgetedStorageReader {
+                    inner: storage,
+                    budgets: budgets.clone(),
+                    last_body_read: last_body_read.clone(),
+                });
+                (
+                    TributeRepositoryReader::new(budgeted.clone()),
+                    NodRepositoryReader::new(budgeted),
+                )
+            }
+            Some(route) => {
+                let wrap = reader_wrap(budgets.clone(), last_body_read.clone());
+                (
+                    TributeRepositoryReader::with_days(
+                        route.durable_reader.clone(),
+                        route.durable_writer.clone(),
+                        route.databases.clone(),
+                    )
+                    .with_day_read_wrap(wrap.clone()),
+                    NodRepositoryReader::with_days(
+                        route.durable_reader.clone(),
+                        route.durable_writer.clone(),
+                        route.databases.clone(),
+                    )
+                    .with_day_read_wrap(wrap),
+                )
+            }
+        };
         Self {
-            storage: self.storage.clone(),
-            tribute: TributeRepositoryReader::new(storage.clone()),
-            nod: NodRepositoryReader::new(storage),
-            failure_sender: self.failure_sender.clone(),
+            storage: raw_storage,
+            tribute,
+            nod,
+            failure_sender,
             budgets,
             last_body_read,
+            days,
         }
     }
 

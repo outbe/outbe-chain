@@ -6,6 +6,7 @@ use outbe_intex::schema::SeriesId;
 use outbe_primitives::time::WorldwideDay;
 
 use super::Incomplete;
+use crate::snapshot::projection_store::projection_database;
 
 use super::canonical_state::CanonicalState;
 use outbe_intex::schema::CertifiedContributorGenerationProjection;
@@ -1999,7 +2000,8 @@ pub(crate) fn verify_canonical_obligations(
         .projection
         .as_ref()
         .ok_or_else(|| Incomplete("missing OCOMP projection configuration".into()))?;
-    match std::fs::metadata(location.root.join("CURRENT")) {
+    let database = projection_database(&location.root);
+    match std::fs::metadata(database.join("CURRENT")) {
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Err(
@@ -2013,8 +2015,7 @@ pub(crate) fn verify_canonical_obligations(
     let secondary = tempfile::Builder::new()
         .prefix("ocomp-projection-audit-")
         .tempdir_in(scratch_parent)?;
-    let reader: StorageReaderHandle =
-        Arc::new(RocksDbReader::open(&location.root, secondary.path())?);
+    let reader: StorageReaderHandle = Arc::new(RocksDbReader::open(&database, secondary.path())?);
     let projection = read_projection_state(
         ProjectionConfig {
             chain_id: layout.chain.chain().id(),
@@ -3681,14 +3682,15 @@ fn verify_present_projection_structure(
         .projection
         .as_ref()
         .ok_or_else(|| Incomplete("missing selected OCOMP projection configuration".into()))?;
-    if !existing_file(&location.root.join("CURRENT"))? {
+    let database = projection_database(&location.root);
+    if !existing_file(&database.join("CURRENT"))? {
         return Err(Incomplete("missing selected OCOMP projection CURRENT".into()).into());
     }
     let secondary = tempfile::Builder::new()
         .prefix("ocomp-present-bodies-")
         .tempdir_in(scratch)?;
     let reader: StorageReaderHandle =
-        std::sync::Arc::new(RocksDbReader::open(&location.root, secondary.path())?);
+        std::sync::Arc::new(RocksDbReader::open(&database, secondary.path())?);
     let work = CeAuditWork::create(
         secondary.path().join("audit-work"),
         CeAuditLimits::default(),

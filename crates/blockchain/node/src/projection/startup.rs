@@ -7,15 +7,21 @@ use super::ReadyOffchainDataProjection;
 use eyre::bail;
 use eyre::Context;
 use metrics::gauge;
+use outbe_nod::NodRepositoryWriter;
+use outbe_offchain_data::DayDatabaseRoute;
 use outbe_offchain_data::OffchainDataProjection;
 use outbe_offchain_data::ProjectionConfig;
+use outbe_offchain_data::ProjectionError;
 use outbe_offchain_data::ProjectionStatus;
 use outbe_offchain_data::TributeRetentionSelector;
+use outbe_offchain_storage::DayDatabases;
 use outbe_offchain_storage::OpenedStorage;
 use outbe_offchain_storage::PendingOverlayStorage;
+use outbe_offchain_storage::StorageBackend;
 use outbe_offchain_storage::StorageProvider;
 use outbe_offchain_storage::StorageReaderHandle;
 use outbe_primitives::projection::ProjectionCheckpoint;
+use outbe_tribute::TributeRepositoryWriter;
 use reth_provider::BlockHashReader;
 use reth_provider::BlockIdReader;
 use std::sync::Arc;
@@ -63,8 +69,34 @@ pub(super) fn prepare_projection_attempt(
         backend = config.storage.backend_name(),
         "offchain storage opened"
     );
-    let (overlay, projector) = open_logical_projection(projection_config, reader, selector)
+    let (overlay, mut projector) = open_logical_projection(projection_config, reader, selector)
         .map_err(PrepareProjectionError::Projection)?;
+    if let StorageBackend::RocksDb(rocks) = &config.storage.backend {
+        let databases =
+            Arc::new(DayDatabases::open(&rocks.path).map_err(PrepareProjectionError::Storage)?);
+        let route = DayDatabaseRoute {
+            databases: Arc::clone(&databases),
+            durable_reader: storage.reader.clone(),
+            durable_writer: storage.writer.clone(),
+        };
+        TributeRepositoryWriter::with_days(
+            route.durable_reader.clone(),
+            route.durable_writer.clone(),
+            Arc::clone(&databases),
+        )
+        .migrate_legacy_keys()
+        .map_err(|error| PrepareProjectionError::Projection(ProjectionError::from(error)))?;
+        NodRepositoryWriter::with_days(
+            route.durable_reader.clone(),
+            route.durable_writer.clone(),
+            databases,
+        )
+        .migrate_legacy_keys()
+        .map_err(|error| PrepareProjectionError::Projection(ProjectionError::from(error)))?;
+        projector
+            .set_day_route(route)
+            .map_err(PrepareProjectionError::Projection)?;
+    }
     Ok((storage, overlay, projector))
 }
 

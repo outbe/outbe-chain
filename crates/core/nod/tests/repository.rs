@@ -411,34 +411,20 @@ fn run_contract(reader: StorageReaderHandle, writer: StorageWriterHandle) {
     );
 
     let first = repository_reader
-        .list_all(NodPageRequest {
+        .list_ids_all(IdPageRequest {
             after: None,
             limit: 2,
         })
         .unwrap();
-    assert_eq!(
-        first
-            .records
-            .iter()
-            .map(|body| body.nod_id)
-            .collect::<Vec<_>>(),
-        [nod_id(1), nod_id(2)]
-    );
+    assert_eq!(first.ids, [nod_id(1), nod_id(2)]);
     assert_eq!(first.next_after, Some(nod_id(2)));
     let second = repository_reader
-        .list_all(NodPageRequest {
+        .list_ids_all(IdPageRequest {
             after: first.next_after,
             limit: 3,
         })
         .unwrap();
-    assert_eq!(
-        second
-            .records
-            .iter()
-            .map(|body| body.nod_id)
-            .collect::<Vec<_>>(),
-        [nod_id(3), nod_id(4)]
-    );
+    assert_eq!(second.ids, [nod_id(3), nod_id(4)]);
     assert_eq!(second.next_after, None);
     assert_eq!(
         repository_reader
@@ -468,19 +454,12 @@ fn run_contract(reader: StorageReaderHandle, writer: StorageWriterHandle) {
     repository_writer.delete_nod(nod_id(2)).unwrap();
     repository_writer.delete_nod(nod_id(2)).unwrap();
     let remaining = repository_reader
-        .list_all(NodPageRequest {
+        .list_ids_all(IdPageRequest {
             after: None,
             limit: 10,
         })
         .unwrap();
-    assert_eq!(
-        remaining
-            .records
-            .iter()
-            .map(|body| body.nod_id)
-            .collect::<Vec<_>>(),
-        [nod_id(1), nod_id(3), nod_id(4)]
-    );
+    assert_eq!(remaining.ids, [nod_id(1), nod_id(3), nod_id(4)]);
     repository_writer.delete_bucket(selected_bucket_id).unwrap();
     repository_writer.delete_bucket(selected_bucket_id).unwrap();
     assert!(repository_reader
@@ -685,7 +664,7 @@ fn run_corruption_contract(reader_storage: StorageReaderHandle, storage: Storage
         )
         .unwrap();
     assert!(matches!(
-        reader.list_all(NodPageRequest {
+        reader.list_ids_all(IdPageRequest {
             after: None,
             limit: 10
         }),
@@ -730,16 +709,16 @@ fn run_corruption_contract(reader_storage: StorageReaderHandle, storage: Storage
         Err(NodRepositoryError::CanonicalBody(_))
     ));
     assert!(matches!(
-        reader.list_all(NodPageRequest {
+        reader.list_ids_all(IdPageRequest {
             after: None,
             limit: 0
         }),
         Err(NodRepositoryError::InvalidPageLimit { .. })
     ));
     assert!(matches!(
-        reader.list_all(NodPageRequest {
+        reader.list_ids_all(IdPageRequest {
             after: None,
-            limit: MAX_SCAN_ENTRIES + 1,
+            limit: u32::try_from(MAX_SCAN_ENTRIES).unwrap() + 1,
         }),
         Err(NodRepositoryError::InvalidPageLimit { .. })
     ));

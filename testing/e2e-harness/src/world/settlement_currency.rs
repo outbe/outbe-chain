@@ -50,6 +50,16 @@ pub(crate) fn deploy(
     url: &str,
     owner_key: &str,
 ) -> Result<SettlementCurrency> {
+    deploy_for(repo_intex, url, owner_key, USD_ISO)
+}
+
+/// [`deploy`] for a stablecoin answering `iso_code` instead of USD.
+pub(crate) fn deploy_for(
+    repo_intex: &std::path::Path,
+    url: &str,
+    owner_key: &str,
+    iso_code: u16,
+) -> Result<SettlementCurrency> {
     let asset = address_from(
         &forge::run_with_ctor(
             repo_intex,
@@ -57,7 +67,7 @@ pub(crate) fn deploy(
                 "create",
                 "test/mocks/MockReferenceStablecoin.sol:MockReferenceStablecoin",
             ],
-            &[&USD_ISO.to_string()],
+            &[&iso_code.to_string()],
             &[],
             url,
         )?,
