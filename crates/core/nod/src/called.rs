@@ -34,7 +34,7 @@ use outbe_oracle::{api::get_all_reference_currencies, schema::OracleContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     daily_sweep::{Scheduled, SweepDays},
-    error::Result,
+    error::{Result, SweepFailure},
     math::{constants::MAX_BIN_ID, tree_math},
     storage::StorageHandle,
     time::{first_full_day, previous_date_key, timestamp_to_date_key},
@@ -303,9 +303,17 @@ pub(crate) fn call_currency(
             let bucket_key = nod
                 .call_bin_buckets
                 .read(&NodContract::bin_index_key(iso_code, bin_id, remaining))?;
-            if try_call(ctx, nod, window, bucket_key, now)? {
-                called = called.saturating_add(1);
-                called_days.insert(nod.bucket_worldwide_day.read(&bucket_key)?.value());
+            match try_call(ctx, nod, window, bucket_key, now)? {
+                Some(true) => {
+                    called = called.saturating_add(1);
+                    called_days.insert(nod.bucket_worldwide_day.read(&bucket_key)?.value());
+                }
+                Some(false) => {}
+                None => {
+                    nod.call_bin_cursor
+                        .write(&iso_code, pack_cursor(bin_id, remaining + 1))?;
+                    return Ok((called, false));
+                }
             }
         }
         from_bin = match bin_id.checked_add(1) {
@@ -318,27 +326,35 @@ pub(crate) fn call_currency(
     }
 }
 
+/// Whether the bucket was called, or `None` when the gas ran out before it.
 fn try_call(
     ctx: &BlockRuntimeContext,
     nod: &mut NodContract<'_>,
     window: &[(u32, Option<U256>)],
     bucket_key: B256,
     now: u64,
-) -> Result<bool> {
+) -> Result<Option<bool>> {
     if nod.bucket_nod_count.read(&bucket_key)? == 0 || nod.bucket_called_at.read(&bucket_key)? != 0
     {
-        return Ok(false);
+        return Ok(Some(false));
     }
     let issued_at = nod.callable_bucket_issued_at.read(&bucket_key)?;
     let terms = nod.read_call_terms(bucket_key)?;
     if !breached_enough(window, &terms, first_full_day(issued_at)) {
-        return Ok(false);
+        return Ok(Some(false));
     }
-    // A failing bucket rolls back alone, so it never halts the scan.
-    Ok(ctx
+    // A deterministic failure rolls this bucket back alone; a node-local one fails the block.
+    match ctx
         .storage
         .with_checkpoint(|| mark_called(nod, bucket_key, now, terms.call_notice_period))
-        .is_ok())
+    {
+        Ok(()) => Ok(Some(true)),
+        Err(error) => match error.sweep_failure() {
+            SweepFailure::Skip => Ok(Some(false)),
+            SweepFailure::Stop => Ok(None),
+            SweepFailure::Propagate => Err(error),
+        },
+    }
 }
 
 /// Returns the Nods burned and whether the walk reached the bottom.

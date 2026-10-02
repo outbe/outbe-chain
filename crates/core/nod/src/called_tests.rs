@@ -1479,6 +1479,47 @@ fn a_running_call_sweep_keeps_its_day() {
     });
 }
 
+#[test]
+fn a_node_local_failure_while_calling_a_bucket_fails_the_slice() {
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let scope = ExecutionScope::new();
+    let at = START + 30 * DAY;
+    let bucket_key = StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        register(&storage, ISO);
+        let item = issue_qualified(&storage, &scope, &parent, Address::repeat_byte(0x61), ISO);
+        fill_days(
+            &storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
+        NodContract::new(storage.clone())
+            .call_sweep_day
+            .write(last_closed_day(at))
+            .unwrap();
+        item.bucket_key
+    });
+    provider.fail_after_mutation_at(0);
+    let result = StorageHandle::enter(&mut provider, |storage| {
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(BLOCK_NUMBER, at, CHAIN_ID),
+            storage.clone(),
+        );
+        crate::called::run_call_slice(&ctx, &scope, &parent)
+    });
+    provider.clear_mutation_failure();
+    assert!(matches!(
+        result,
+        Err(outbe_primitives::error::PrecompileError::Storage(_))
+    ));
+    StorageHandle::enter(&mut provider, |storage| {
+        assert_eq!(called_at(&storage, bucket_key), 0);
+    });
+}
+
 /// A closed day behind a running call sweep waits, and a newer one takes its
 /// place and names the day it pushed out.
 #[test]
