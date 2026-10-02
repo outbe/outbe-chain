@@ -10,7 +10,7 @@ Public commands, read APIs, Solidity ABI and protocol economics stay unchanged.
 - [x] Normalize the live job index to identity keys.
 - [x] Decompose aggregate validation by index invariant.
 - [x] Separate request, finality and voting.
-- [ ] Isolate completion and expiry.
+- [x] Isolate completion and expiry.
 - [ ] Separate worldwide-day advancement and effects.
 - [ ] Decompose activation fixtures by domain responsibility.
 - [ ] Extract precompile queries; run final verification and static analysis.
@@ -63,3 +63,9 @@ Step 4: 251 library tests passed. Request binding is named identity/limit/hash
 policy, voting selects all due jobs before committing the unique candidate, and
 finality pins inclusive admission heights plus checked open/deadline arithmetic.
 Private tests preserve retained receipt nonce semantics and reject overflow.
+
+Step 5: 252 library tests passed. Completion separates live pre-state, terminal
+permit binding, conservation, applied evidence, persistence and ordered events.
+The one-shot permit still commits last, and the generation write still precedes
+the finalized-record check inside the existing rollback boundary. Failed expiry
+checks preserve fallible read order and split identity/membership/evidence policy.

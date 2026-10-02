@@ -42,6 +42,7 @@ impl MetadosisContract<'_> {
     fn terminal_receipt_validation_context(
         &self,
         worldwide_day: WorldwideDay,
+        expected_value: Option<alloy_primitives::U256>,
     ) -> Result<TerminalReceiptValidationContext> {
         use crate::schema::WorldwideDayEntryExt;
         let active = self.active_wwd.read_all()?;
@@ -56,10 +57,14 @@ impl MetadosisContract<'_> {
                 .iter()
                 .filter(|candidate| **candidate == worldwide_day)
                 .count(),
-            self.worldwide_days
-                .entry(worldwide_day)
-                .metadosis_limit_amount()
-                .read()?,
+            match expected_value {
+                Some(value) => value,
+                None => self
+                    .worldwide_days
+                    .entry(worldwide_day)
+                    .metadosis_limit_amount()
+                    .read()?,
+            },
         ))
     }
 
@@ -103,8 +108,8 @@ impl MetadosisContract<'_> {
         else {
             return Ok(None);
         };
-        let mut context = self.terminal_receipt_validation_context(worldwide_day)?;
-        context.expected_value_routed = expected_value_routed;
+        let context =
+            self.terminal_receipt_validation_context(worldwide_day, Some(expected_value_routed))?;
         receipt.validate(context)?;
         Ok(Some(MetadosisFailureReceipt {
             worldwide_day,
@@ -123,7 +128,7 @@ impl MetadosisContract<'_> {
         let Some(receipt) = self.read_terminal_receipt(worldwide_day)? else {
             return Ok(None);
         };
-        receipt.validate(self.terminal_receipt_validation_context(worldwide_day)?)?;
+        receipt.validate(self.terminal_receipt_validation_context(worldwide_day, None)?)?;
         match receipt {
             WwdTerminalReceipt::MissedOffering(common) => Ok(Some(MissedOfferingReceipt {
                 worldwide_day,
@@ -172,7 +177,7 @@ impl MetadosisContract<'_> {
         let Some(receipt) = self.read_terminal_receipt(worldwide_day)? else {
             return Ok(None);
         };
-        receipt.validate(self.terminal_receipt_validation_context(worldwide_day)?)?;
+        receipt.validate(self.terminal_receipt_validation_context(worldwide_day, None)?)?;
         match receipt {
             WwdTerminalReceipt::CapacityForfeiture { common, detail } => {
                 Ok(Some(CapacityForfeitureReceipt {
