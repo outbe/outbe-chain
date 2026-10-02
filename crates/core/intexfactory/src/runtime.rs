@@ -285,9 +285,9 @@ pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
 /// on the six-decimal scale independently of native COEN denomination.
 const PRODUCT_DECIMALS: u32 = 2 * PROTOCOL_AMOUNT_DECIMALS as u32;
 
-/// Cost of `units` in payment-token minor units, floored once above the
+/// Cost of `units` in payment-asset minor units, floored once above the
 /// per-unit minimum of one reference-currency minor unit. `rate` is
-/// `(COEN/target, COEN/reference)` when the token is not in the reference currency.
+/// `(COEN/target, COEN/reference)` when the asset is not in the reference currency.
 pub(crate) fn settlement_units(
     product: U256,
     units: U256,
@@ -684,8 +684,8 @@ pub fn settle_intex(
     snapshot_id: U256,
 ) -> Result<()> {
     let quote = |series: &outbe_intex::SeriesRecord| {
-        let currency = accept_payment_token(storage, asset, series)?;
-        let (cost, snapshot) = cost_in_token(storage, series, asset, currency, units)?;
+        let currency = accept_payment_asset(storage, asset, series)?;
+        let (cost, snapshot) = cost_in_asset(storage, series, asset, currency, units)?;
         require_snapshot(snapshot, snapshot_id)?;
         Ok(cost)
     };
@@ -881,8 +881,8 @@ fn discharge_cost(
     paynote_proof: &[u8],
 ) -> Result<()> {
     let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
-    let currency = accept_payment_token(storage, claim.asset, series)?;
-    let (cost, snapshot) = cost_in_token(storage, series, claim.asset, currency, units)?;
+    let currency = accept_payment_asset(storage, claim.asset, series)?;
+    let (cost, snapshot) = cost_in_asset(storage, series, claim.asset, currency, units)?;
     let expected = outbe_paynote::api::settlement_context(
         outbe_paynote::api::SettlementDomain::Intex,
         outbe_paynote::api::intex_series_target(series_id.as_bytes()),
@@ -951,12 +951,12 @@ pub fn quote_settlement(
     units: U256,
 ) -> Result<(u16, U256, U256)> {
     let series = outbe_intex::api::read_series(storage, series_id)?;
-    let currency = accept_payment_token(storage, asset, &series)?;
+    let currency = accept_payment_asset(storage, asset, &series)?;
     let settlement_currency = match currency {
         PaymentCurrency::Reference => series.reference_currency,
         PaymentCurrency::Issuance => series.issuance_currency,
     };
-    let (cost, snapshot) = cost_in_token(storage, &series, asset, currency, units)?;
+    let (cost, snapshot) = cost_in_asset(storage, &series, asset, currency, units)?;
     Ok((
         settlement_currency,
         cost,
@@ -964,25 +964,25 @@ pub fn quote_settlement(
     ))
 }
 
-/// Which of the series' two currencies a payment token is denominated in.
+/// Which of the series' two currencies a payment asset is denominated in.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PaymentCurrency {
     Reference,
     Issuance,
 }
 
-/// Cost of `units` in `token`'s minor units and, on the issuance rail, the
+/// Cost of `units` in `asset`'s minor units and, on the issuance rail, the
 /// VWAP snapshot both COEN legs came from. The Cost Amount is denominated in the
-/// reference currency; an issuance-currency token is charged at the snapshot's
+/// reference currency; an issuance-currency asset is charged at the snapshot's
 /// COEN cross rate, folded into the same fraction so the conversion floors once.
-fn cost_in_token(
+fn cost_in_asset(
     storage: &StorageHandle<'_>,
     series: &outbe_intex::SeriesRecord,
-    token: Address,
+    asset: Address,
     currency: PaymentCurrency,
     units: U256,
 ) -> Result<(U256, Option<VwapSnapshotId>)> {
-    let payment_decimals = erc20_decimals(storage, token)?;
+    let payment_decimals = erc20_decimals(storage, asset)?;
     let product = series
         .entry_price_minor
         .checked_mul(series.promis_load_minor)
@@ -1008,27 +1008,27 @@ fn cost_in_token(
     ))
 }
 
-/// Rejects `token` unless the router holds a vault for it and the token reports
+/// Rejects `asset` unless the router holds a vault for it and the asset reports
 /// one of the series' two currencies; returns which one. Registration is checked
-/// first: an unregistered token need not implement `isoCode()` at all.
-fn accept_payment_token(
+/// first: an unregistered asset need not implement `isoCode()` at all.
+fn accept_payment_asset(
     storage: &StorageHandle<'_>,
-    token: Address,
+    asset: Address,
     series: &outbe_intex::SeriesRecord,
 ) -> Result<PaymentCurrency> {
     let ret = storage.staticcall(
         VAULT_ROUTER_ADDRESS,
-        IVaultRouter::assetVaultsCountCall { asset: token }
+        IVaultRouter::assetVaultsCountCall { asset }
             .abi_encode()
             .into(),
     )?;
     let vaults = IVaultRouter::assetVaultsCountCall::abi_decode_returns(&ret)
         .map_err(|_| PrecompileError::Revert("assetVaultsCount undecodable".into()))?;
     if vaults.is_zero() {
-        return Err(IntexFactoryError::PaymentTokenNotRegistered(token).into());
+        return Err(IntexFactoryError::SettlementAssetNotRegistered(asset).into());
     }
 
-    let iso = asset_iso_code(storage, token)?;
+    let iso = asset_iso_code(storage, asset)?;
     if iso == series.reference_currency {
         return Ok(PaymentCurrency::Reference);
     }
@@ -1038,17 +1038,17 @@ fn accept_payment_token(
     Err(IntexFactoryError::SettlementCurrencyMismatch(iso).into())
 }
 
-fn asset_iso_code(storage: &StorageHandle<'_>, token: Address) -> Result<u16> {
+fn asset_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
     let ret = storage.staticcall(
-        token,
+        asset,
         IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
     )?;
     IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
         .map_err(|_| PrecompileError::Revert("isoCode undecodable".into()))
 }
 
-fn erc20_decimals(storage: &StorageHandle<'_>, token: Address) -> Result<u8> {
-    let ret = storage.staticcall(token, IERC20::decimalsCall {}.abi_encode().into())?;
+fn erc20_decimals(storage: &StorageHandle<'_>, asset: Address) -> Result<u8> {
+    let ret = storage.staticcall(asset, IERC20::decimalsCall {}.abi_encode().into())?;
     IERC20::decimalsCall::abi_decode_returns(&ret)
         .map_err(|_| PrecompileError::Revert("ERC20 decimals undecodable".into()))
 }

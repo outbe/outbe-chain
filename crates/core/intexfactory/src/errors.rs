@@ -37,9 +37,9 @@ pub enum IntexFactoryError {
         authorized: alloy_primitives::U256,
         required: alloy_primitives::U256,
     },
-    #[error("payment token {0} has no registered vault")]
-    PaymentTokenNotRegistered(alloy_primitives::Address),
-    #[error("payment token currency {0} does not match the series")]
+    #[error("settlement asset {0} has no registered vault")]
+    SettlementAssetNotRegistered(alloy_primitives::Address),
+    #[error("settlement asset currency {0} does not match the series")]
     SettlementCurrencyMismatch(u16),
     #[error("no COEN rate published for currency {0}")]
     FxRateUnavailable(u16),

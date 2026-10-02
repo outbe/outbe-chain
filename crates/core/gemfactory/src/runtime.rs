@@ -306,7 +306,7 @@ pub fn settle_gem(
 ) -> Result<()> {
     let quote = |item: &outbe_gem::GemData| {
         let currency = accept_payment_asset(storage, asset, item)?;
-        let (amount_paid, snapshot) = cost_in_token(storage, item, asset, currency)?;
+        let (amount_paid, snapshot) = cost_in_asset(storage, item, asset, currency)?;
         require_snapshot(snapshot, snapshot_id)?;
         Ok((settlement_currency(item, currency), amount_paid))
     };
@@ -335,7 +335,7 @@ pub fn settle_gem_with_paynote(
         |item, ()| {
             let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
             let currency = accept_payment_asset(storage, claim.asset, item)?;
-            let (amount_paid, snapshot) = cost_in_token(storage, item, claim.asset, currency)?;
+            let (amount_paid, snapshot) = cost_in_asset(storage, item, claim.asset, currency)?;
             let expected = outbe_paynote::api::settlement_context(
                 outbe_paynote::api::SettlementDomain::Gem,
                 B256::from(gem_id),
@@ -526,7 +526,7 @@ fn accept_payment_asset(
 /// Cost of one gem in `asset`'s minor units and, on the issuance rail, the VWAP
 /// snapshot both COEN legs came from. The cross rate is folded into the same
 /// fraction, so the whole thing is floored once.
-fn cost_in_token(
+fn cost_in_asset(
     storage: &StorageHandle<'_>,
     item: &outbe_gem::GemData,
     asset: Address,
@@ -637,7 +637,7 @@ pub fn quote_settlement(
 ) -> Result<(u16, U256, U256)> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     let currency = accept_payment_asset(storage, asset, &item)?;
-    let (cost, snapshot) = cost_in_token(storage, &item, asset, currency)?;
+    let (cost, snapshot) = cost_in_asset(storage, &item, asset, currency)?;
     Ok((
         settlement_currency(&item, currency),
         cost,
