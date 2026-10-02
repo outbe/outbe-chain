@@ -204,7 +204,7 @@
         "internalType": "bytes32"
       },
       {
-        "name": "nodAmountTotal",
+        "name": "totalSettlementCostMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

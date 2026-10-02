@@ -86,6 +86,6 @@ interface IDesis {
     /// invariant failures revert instead of being converted to business state.
     /// `reasonCode == 1` means the Desis Limit exceeds Desis' uint128 auction domain.
     event AuctionBriefRejectedToCarryOver(
-        uint32 indexed worldwideDay, uint256 desisLimitMinor, uint256 maxAccepted, uint8 reasonCode
+        uint32 indexed worldwideDay, uint256 desisLimitMinor, uint256 maxAcceptedMinor, uint8 reasonCode
     );
 }

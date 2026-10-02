@@ -75,7 +75,7 @@ pub fn dispatch_auction_brief(
             contract.emit(IDesis::AuctionBriefRejectedToCarryOver {
                 worldwideDay: worldwide_day.into(),
                 desisLimitMinor: desis_limit_minor,
-                maxAccepted: max_accepted,
+                maxAcceptedMinor: max_accepted,
                 reasonCode: reason.code(),
             })?;
             return Ok(AuctionBriefReceipt::RejectedToCarryOver {

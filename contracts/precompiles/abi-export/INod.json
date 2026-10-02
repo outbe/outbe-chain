@@ -98,7 +98,7 @@
             "internalType": "uint32"
           },
           {
-            "name": "nodAmountTotal",
+            "name": "totalSettlementCostMinor",
             "type": "uint256",
             "internalType": "uint256"
           },

@@ -429,7 +429,7 @@ fn certified_generation_is_available_through_the_public_nod_abi() {
         assert_eq!(actual.tributeCount, generation.tribute_count);
         assert_eq!(actual.nodCount, generation.nod_count);
         assert_eq!(actual.bucketCount, generation.bucket_count);
-        assert_eq!(actual.nodAmountTotal, generation.nod_amount_total);
+        assert_eq!(actual.totalSettlementCostMinor, generation.nod_amount_total);
         assert_eq!(
             actual.lysisAllocationMinor,
             generation.lysis_allocation_minor
@@ -465,7 +465,7 @@ fn absent_certified_generation_has_an_explicit_public_abi_result() {
         assert_eq!(actual.tributeCount, 0);
         assert_eq!(actual.nodCount, 0);
         assert_eq!(actual.bucketCount, 0);
-        assert_eq!(actual.nodAmountTotal, U256::ZERO);
+        assert_eq!(actual.totalSettlementCostMinor, U256::ZERO);
         assert_eq!(actual.lysisAllocationMinor, U256::ZERO);
         assert_eq!(actual.issuedAt, 0);
     });

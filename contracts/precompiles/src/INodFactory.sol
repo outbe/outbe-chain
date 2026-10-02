@@ -46,7 +46,7 @@ interface INodFactory {
         bytes32 nodRoot,
         bytes32 bucketRoot,
         bytes32 outputManifestRoot,
-        uint256 nodAmountTotal,
+        uint256 totalSettlementCostMinor,
         uint256 lysisAllocationMinor,
         uint64 issuedAt,
         bytes32 stateEventDigest

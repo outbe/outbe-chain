@@ -794,7 +794,7 @@ fn dispatch_auction_brief_oversized_limit_returns_typed_full_carry_over() {
     let event = IDesis::AuctionBriefRejectedToCarryOver::decode_log_data(&logs[0]).unwrap();
     assert_eq!(event.worldwideDay, WORLDWIDE_DAY.value());
     assert_eq!(event.desisLimitMinor, U256::MAX);
-    assert_eq!(event.maxAccepted, U256::from(u128::MAX));
+    assert_eq!(event.maxAcceptedMinor, U256::from(u128::MAX));
     assert_eq!(
         event.reasonCode,
         AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain.code()
@@ -847,7 +847,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
             .unwrap();
     assert_eq!(event.worldwideDay, WORLDWIDE_DAY.value());
     assert_eq!(event.desisLimitMinor, supply);
-    assert_eq!(event.maxAccepted, U256::from(u128::MAX));
+    assert_eq!(event.maxAcceptedMinor, U256::from(u128::MAX));
     assert_eq!(
         event.reasonCode,
         AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain.code()

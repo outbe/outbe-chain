@@ -187,7 +187,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "maxAccepted",
+        "name": "maxAcceptedMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
