@@ -1802,7 +1802,6 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
                     gratis_load_minor: U256::from(11),
                     worldwide_day,
                     league_id: 4,
-                    floor_price_minor: NodContract::floor_price_minor(U256::from(entry)).unwrap(),
                     bucket_key: NodContract::bucket_key(worldwide_day, U256::from(entry), 840),
                     issuance_currency: 840,
                     reference_currency: 840,

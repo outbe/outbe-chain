@@ -254,7 +254,6 @@ fn nod_item_and_bucket_follow_the_same_closed_transition_lifecycle() {
         settled_nods: 0,
         bucket_key: B256::repeat_byte(22),
         worldwide_day: WorldwideDay::new(8),
-        floor_price_minor: U256::from(10),
         entry_price_minor: U256::from(11),
         reference_currency: 840,
     };
@@ -350,7 +349,6 @@ fn every_typed_collection_obeys_the_complete_same_block_transition_matrix() {
         settled_nods: 0,
         bucket_key: B256::repeat_byte(0x33),
         worldwide_day: WorldwideDay::new(8),
-        floor_price_minor: U256::from(10),
         entry_price_minor: U256::from(11),
         reference_currency: 840,
     };

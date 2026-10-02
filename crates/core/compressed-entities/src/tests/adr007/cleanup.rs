@@ -130,7 +130,6 @@ fn every_cleanup_write_boundary_rolls_back_the_complete_end_block_cleanup() {
             settled_nods: 0,
             bucket_key: B256::repeat_byte(0x8f),
             worldwide_day: WorldwideDay::new(14),
-            floor_price_minor: U256::from(10),
             entry_price_minor: U256::from(11),
             reference_currency: 840,
         }),
@@ -194,7 +193,6 @@ fn maximum_v1_body_footprint_and_storage_tail_cleanup_are_exact() {
         gratis_load_minor: U256::MAX,
         worldwide_day: day,
         league_id: u16::MAX,
-        floor_price_minor: U256::MAX,
         bucket_key: B256::repeat_byte(0xff),
         issuance_currency: u16::MAX,
         reference_currency: u16::MAX,
@@ -203,10 +201,9 @@ fn maximum_v1_body_footprint_and_storage_tail_cleanup_are_exact() {
     let maximum_stored = StoredBody::new_v1(encode_nod_item_v1(&maximum).unwrap())
         .unwrap()
         .encode();
-    assert_eq!(maximum_stored.len(), MAX_STORED_BODY_BYTES_V1);
+    assert!(maximum_stored.len() <= MAX_STORED_BODY_BYTES_V1);
 
-    // The reserve only covers the tail it prepays for, so the Nod item has to
-    // stay the largest of the three v1 bodies.
+    // The reserve only covers the tail it prepays for, so every v1 body has to fit it.
     let widest_tribute = TributeBodyV1 {
         tribute_id: id,
         owner: Address::repeat_byte(0xff),
@@ -284,7 +281,6 @@ fn widest_bucket(day: WorldwideDay) -> NodBucketBodyV1 {
         settled_nods: 0,
         bucket_key: B256::repeat_byte(0xff),
         worldwide_day: day,
-        floor_price_minor: U256::MAX,
         entry_price_minor: U256::MAX,
         reference_currency: u16::MAX,
     }

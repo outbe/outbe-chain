@@ -83,7 +83,6 @@ fn nod(nod_id: WwdEntityId, bucket_key: B256) -> NodItemState {
         gratis_load_minor: U256::from(55),
         worldwide_day: WorldwideDay::new(20_260_715),
         league_id: 7,
-        floor_price_minor: U256::from(8),
         bucket_key,
         issuance_currency: 840,
         reference_currency: 978,
@@ -96,7 +95,6 @@ fn bucket(bucket_key: B256) -> NodBucketState {
         settled_nods: 0,
         bucket_key,
         worldwide_day: WorldwideDay::new(20_260_715),
-        floor_price_minor: U256::from(8),
         entry_price_minor: U256::from(5),
         reference_currency: 978,
     }
@@ -128,7 +126,7 @@ fn typed_readers_share_one_memory_adapter() {
     assert_eq!(stored_nod.bucket_key, bucket_key);
 
     let stored_bucket = readers.nod().get_bucket(bucket_id).unwrap().unwrap();
-    assert_eq!(stored_bucket.floor_price_minor, U256::from(8));
+    assert_eq!(stored_bucket.entry_price_minor, U256::from(5));
 }
 
 #[test]

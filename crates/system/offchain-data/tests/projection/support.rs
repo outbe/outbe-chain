@@ -197,7 +197,6 @@ pub(crate) fn nod_body(nod_id: WwdEntityId, owner: Address, bucket_key: B256) ->
         gratis_load_minor: U256::from(101),
         worldwide_day: WorldwideDay::new(20260715),
         league_id: 7,
-        floor_price_minor: U256::from(102),
         bucket_key,
         issuance_currency: 840,
         reference_currency: 978,
@@ -238,7 +237,6 @@ pub(crate) fn bucket_body(bucket_key: B256) -> NodBucketState {
         settled_nods: 0,
         bucket_key,
         worldwide_day: WorldwideDay::new(20260715),
-        floor_price_minor: U256::from(102),
         entry_price_minor: U256::from(104),
         reference_currency: 978,
     }

@@ -27,7 +27,6 @@ fn item(owner: Address, day: WorldwideDay) -> NodItemState {
         gratis_load_minor: U256::from(11),
         worldwide_day: day,
         league_id: 4,
-        floor_price_minor: U256::from(5),
         bucket_key: NodContract::bucket_key(day, U256::from(5), 978),
         issuance_currency: 840,
         reference_currency: 978,
@@ -185,9 +184,7 @@ fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
             .iter()
             .map(|&(owner_byte, currency, entry)| {
                 let entry = U256::from(entry);
-                let floor = NodContract::floor_price_minor(entry).unwrap();
                 let mut body = item(Address::repeat_byte(owner_byte), day);
-                body.floor_price_minor = floor;
                 body.reference_currency = currency;
                 body.bucket_key = NodContract::bucket_key(day, entry, currency);
                 api::add_nod(&storage, &scope, &parent, &body, entry).unwrap();
@@ -280,7 +277,6 @@ fn idle_daily_scans_do_not_write_storage() {
         for (owner, entry) in [(0x51, 12u64), (0x52, 13)] {
             let entry = U256::from(entry);
             let mut body = item(Address::repeat_byte(owner), WorldwideDay::new(20260715));
-            body.floor_price_minor = NodContract::floor_price_minor(entry).unwrap();
             body.bucket_key = NodContract::bucket_key(body.worldwide_day, entry, 978);
             api::add_nod(&storage, &scope, &parent, &body, entry).unwrap();
         }

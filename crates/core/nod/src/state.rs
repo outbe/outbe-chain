@@ -277,7 +277,6 @@ impl NodContract<'_> {
                     settled_nods: 0,
                     bucket_key: item.bucket_key,
                     worldwide_day: item.worldwide_day,
-                    floor_price_minor: item.floor_price_minor,
                     entry_price_minor,
                     reference_currency: item.reference_currency,
                 };

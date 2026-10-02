@@ -55,9 +55,6 @@ pub struct NodItemState {
     #[attribute(order = 3)]
     pub league_id: u16,
 
-    #[attribute(order = 4)]
-    pub floor_price_minor: U256,
-
     #[attribute(order = 5)]
     pub bucket_key: B256,
 
@@ -104,10 +101,9 @@ pub struct CallTerms {
 pub struct NodBucketState {
     pub bucket_key: B256,
     pub worldwide_day: WorldwideDay,
-    pub floor_price_minor: U256,
     pub entry_price_minor: U256,
 
-    /// Denomination of `floor_price_minor`, propagated from the Nods in the
+    /// Denomination of `entry_price_minor`, propagated from the Nods in the
     /// bucket. Qualification compares the floor against the COEN day price for this
     /// currency only, and the call index is namespaced by it.
     pub reference_currency: u16,

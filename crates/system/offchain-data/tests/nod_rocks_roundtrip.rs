@@ -18,7 +18,6 @@ fn nod_bytes_and_commitment_survive_rocksdb_write_read_and_reopen() {
         gratis_load_minor: U256::from_be_bytes([0xa7; 32]),
         worldwide_day: day,
         league_id: 257,
-        floor_price_minor: U256::from(123_456_789),
         bucket_key: B256::repeat_byte(0xff),
         issuance_currency: 840,
         reference_currency: 978,

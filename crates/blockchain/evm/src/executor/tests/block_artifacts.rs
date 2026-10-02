@@ -1312,7 +1312,6 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
 
     let proposer = test_evm_signer().address();
     let worldwide_day = WorldwideDay::new(20_241_220);
-    let floor_price_minor = U256::from(500_000u64);
     let entry_price_minor = U256::from(450_000_000u64);
     let bucket_key = NodContract::bucket_key(worldwide_day, entry_price_minor, 840);
     let nod_item = || NodItemState {
@@ -1322,7 +1321,6 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
         gratis_load_minor: U256::from(1_000_000u64),
         worldwide_day,
         league_id: 1,
-        floor_price_minor,
         bucket_key,
         issuance_currency: 840,
         reference_currency: 840,
@@ -1427,7 +1425,6 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
                 settled_nods: 0,
                 bucket_key,
                 worldwide_day,
-                floor_price_minor,
                 entry_price_minor,
                 reference_currency: 840,
             })
@@ -1700,7 +1697,6 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
                         gratis_load_minor: U256::from(1),
                         worldwide_day: day,
                         league_id: 2,
-                        floor_price_minor: U256::from(13),
                         bucket_key,
                         issuance_currency: 840,
                         reference_currency: 978,
@@ -1790,7 +1786,6 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
                 gratis_load_minor: U256::from(1),
                 worldwide_day: day,
                 league_id: 2,
-                floor_price_minor: U256::from(13),
                 bucket_key,
                 issuance_currency: 840,
                 reference_currency: 978,

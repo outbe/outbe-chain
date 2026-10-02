@@ -44,7 +44,6 @@ fn nod(nod_id: WwdEntityId, owner: Address) -> NodItemState {
         gratis_load_minor: U256::MAX,
         worldwide_day: nod_id.worldwide_day(),
         league_id: u16::MAX,
-        floor_price_minor: U256::ZERO,
         bucket_key: B256::repeat_byte(0x33),
         issuance_currency: 0,
         reference_currency: u16::MAX,
@@ -66,7 +65,6 @@ fn bucket(bucket_id: WwdEntityId) -> NodBucketState {
         settled_nods: 0,
         bucket_key: bucket_key_for(bucket_id),
         worldwide_day: bucket_id.worldwide_day(),
-        floor_price_minor: U256::MAX,
         entry_price_minor: U256::ZERO,
         reference_currency: 978,
     }
@@ -286,7 +284,6 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
             gratis_load_minor: U256::ZERO,
             worldwide_day: WorldwideDay::new(0),
             league_id: 0,
-            floor_price_minor: U256::ZERO,
             bucket_key: B256::ZERO,
             issuance_currency: 0,
             reference_currency: 0,
@@ -299,7 +296,6 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
             gratis_load_minor: U256::MAX,
             worldwide_day: WorldwideDay::new(u32::MAX),
             league_id: u16::MAX,
-            floor_price_minor: U256::MAX,
             bucket_key: B256::repeat_byte(u8::MAX),
             issuance_currency: u16::MAX,
             reference_currency: u16::MAX,
@@ -313,7 +309,6 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
         assert_eq!(decoded.gratis_load_minor, body.gratis_load_minor);
         assert_eq!(decoded.worldwide_day, body.worldwide_day);
         assert_eq!(decoded.league_id, body.league_id);
-        assert_eq!(decoded.floor_price_minor, body.floor_price_minor);
         assert_eq!(decoded.bucket_key, body.bucket_key);
         assert_eq!(decoded.issuance_currency, body.issuance_currency);
         assert_eq!(decoded.reference_currency, body.reference_currency);
@@ -325,12 +320,10 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
             settled_nods: 0,
             bucket_key: B256::ZERO,
             worldwide_day: WorldwideDay::new(0),
-            floor_price_minor: U256::ZERO,
             entry_price_minor: U256::ZERO,
             reference_currency: 0,
         },
         NodBucketState {
-            floor_price_minor: U256::MAX,
             entry_price_minor: U256::MAX,
             reference_currency: u16::MAX,
             ..bucket(bucket_id(
@@ -343,7 +336,6 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
         let decoded = from_canonical_bucket(decode_stored_nod_bucket_v1(&stored).unwrap());
         assert_eq!(decoded.bucket_key, body.bucket_key);
         assert_eq!(decoded.worldwide_day, body.worldwide_day);
-        assert_eq!(decoded.floor_price_minor, body.floor_price_minor);
         assert_eq!(decoded.entry_price_minor, body.entry_price_minor);
         assert_eq!(decoded.reference_currency, body.reference_currency);
     }

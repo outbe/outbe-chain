@@ -407,6 +407,16 @@ impl World {
             let item = nod_api::get_item(&storage, scope, parent, nod_id)
                 .unwrap()
                 .unwrap();
+            let floor = nod_api::get_bucket(
+                &storage,
+                scope,
+                parent,
+                WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0),
+            )
+            .unwrap()
+            .unwrap()
+            .floor_price_minor()
+            .unwrap();
             let issued_at = NodContract::new(storage.clone())
                 .callable_bucket_issued_at
                 .read(&item.bucket_key)
@@ -419,7 +429,7 @@ impl World {
             }
             let day = outbe_primitives::time::first_full_day(issued_at);
             oracle
-                .record_utc_day_vwap(day, index, item.floor_price_minor + U256::from(1))
+                .record_utc_day_vwap(day, index, floor + U256::from(1))
                 .unwrap();
             if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
                 oracle.utc_day_vwap_last_finalized.write(day).unwrap();

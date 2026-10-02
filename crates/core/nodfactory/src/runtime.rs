@@ -86,7 +86,6 @@ fn issue_nod_inner(
         gratis_load_minor: params.gratis_load_minor,
         worldwide_day: params.worldwide_day,
         league_id: params.league_id,
-        floor_price_minor,
         bucket_key,
         issuance_currency: params.issuance_currency,
         reference_currency: params.reference_currency,

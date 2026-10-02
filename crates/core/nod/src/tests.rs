@@ -56,12 +56,12 @@ pub(crate) fn close_day_above(storage: &StorageHandle<'_>, iso: u16, floor: U256
     }
 }
 
-/// Qualify the Nod's bucket: close its first full day above its floor.
-pub(crate) fn qualify(storage: &StorageHandle<'_>, item: &NodItemState) {
+/// Qualify the Nod's bucket: close its first full day above the floor of `entry`.
+pub(crate) fn qualify(storage: &StorageHandle<'_>, item: &NodItemState, entry: U256) {
     close_day_above(
         storage,
         item.reference_currency,
-        item.floor_price_minor,
+        NodContract::floor_price_minor(entry).unwrap(),
         first_full_day(item.issued_at),
     );
 }
@@ -85,7 +85,6 @@ fn bucket_of(
 /// A Nod whose `bucket_key` is derived the way `record_nod_issued` requires.
 fn item(owner: Address, entry: U256, reference_currency: u16) -> NodItemState {
     let worldwide_day = WorldwideDay::new(20_260_715);
-    let floor = NodContract::floor_price_minor(entry).unwrap();
     NodItemState {
         is_settled: false,
         nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
@@ -93,7 +92,6 @@ fn item(owner: Address, entry: U256, reference_currency: u16) -> NodItemState {
         gratis_load_minor: U256::from(11),
         worldwide_day,
         league_id: 4,
-        floor_price_minor: floor,
         bucket_key: NodContract::bucket_key(worldwide_day, entry, reference_currency),
         issuance_currency: 840,
         reference_currency,
@@ -223,7 +221,7 @@ fn same_day_and_floor_in_two_currencies_are_two_buckets_in_two_bins() {
         assert_eq!(nod.call_bin_count.read(&u64::from(bin)).unwrap(), 0);
 
         // A COEN/USD day above the shared floor qualifies the USD bucket only.
-        qualify(&storage, &usd);
+        qualify(&storage, &usd, entry);
         let usd_bucket = bucket_of(&storage, &scope, &parent, &usd);
         let eur_bucket = bucket_of(&storage, &scope, &parent, &eur);
         assert!(api::is_qualified(&storage, &usd_bucket).unwrap());
@@ -240,7 +238,9 @@ fn same_day_and_floor_in_two_currencies_are_two_buckets_in_two_bins() {
 #[test]
 fn qualification_skips_days_before_first_full_day() {
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
-    let body = item(Address::repeat_byte(0x11), U256::from(5), USD);
+    let entry = U256::from(5);
+    let floor = NodContract::floor_price_minor(entry).unwrap();
+    let body = item(Address::repeat_byte(0x11), entry, USD);
     let issuance_day = timestamp_to_date_key(body.issued_at);
     let full_day = first_full_day(body.issued_at);
     assert_ne!(
@@ -253,13 +253,13 @@ fn qualification_skips_days_before_first_full_day() {
     StorageHandle::enter(&mut provider, |storage| {
         seed_compressed_entities_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
-        api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap();
+        api::add_nod(&storage, &scope, &parent, &body, entry).unwrap();
         let qualified =
             || api::is_qualified(&storage, &bucket_of(&storage, &scope, &parent, &body)).unwrap();
 
-        close_day_above(&storage, USD, body.floor_price_minor, issuance_day);
+        close_day_above(&storage, USD, floor, issuance_day);
         assert!(!qualified());
-        close_day_above(&storage, USD, body.floor_price_minor, full_day);
+        close_day_above(&storage, USD, floor, full_day);
         assert!(qualified());
     });
 }
@@ -323,7 +323,7 @@ fn settled_state_is_exposed_in_nod_data_and_metadata() {
         begin_block(storage.clone(), &scope).unwrap();
         let item = item(Address::repeat_byte(0x86), U256::from(20), USD);
         api::add_nod(&storage, &scope, &parent, &item, U256::from(20)).unwrap();
-        qualify(&storage, &item);
+        qualify(&storage, &item, U256::from(20));
         let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
         api::settle_nod(
             &storage,
@@ -415,7 +415,7 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
             )
             .unwrap();
             if qualified {
-                qualify(&storage, &item);
+                qualify(&storage, &item, U256::from(20));
             }
             let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
             if paid {
@@ -612,7 +612,7 @@ fn qualification_announces_nothing_and_settlement_updates_the_nod() {
         close_day_above(
             &storage,
             USD,
-            second.floor_price_minor,
+            NodContract::floor_price_minor(U256::from(600_000)).unwrap(),
             first_full_day(first.issued_at),
         );
 
@@ -831,7 +831,7 @@ fn token_uri_renders_the_nod_image_and_metadata() {
         assert!(row("Entry Price") < row("Floor Price"));
         assert!(row("Floor Price") < row("Call Price"));
 
-        qualify(&storage, &body);
+        qualify(&storage, &body, U256::from(400_000));
         let (json, svg) = read();
         let hex = format!("{:064x}", body.nod_id.to_u256());
         let id = format!("{}-{}", body.worldwide_day, &hex[8..16]);
@@ -886,7 +886,7 @@ fn nod_card_hides_call_rows_it_cannot_honour() {
             },
         )
         .unwrap();
-        qualify(&storage, &item);
+        qualify(&storage, &item, U256::from(20));
         let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
         api::settle_nod(
             &storage,

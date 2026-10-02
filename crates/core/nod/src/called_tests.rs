@@ -110,7 +110,6 @@ fn nod_item_issued(
     issued_at: u64,
 ) -> NodItemState {
     let worldwide_day = WorldwideDay::new(worldwide_day);
-    let floor_price_minor = NodContract::floor_price_minor(entry_price_minor).unwrap();
     NodItemState {
         is_settled: false,
         nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
@@ -118,7 +117,6 @@ fn nod_item_issued(
         gratis_load_minor: U256::from(11),
         worldwide_day,
         league_id: 4,
-        floor_price_minor,
         bucket_key: NodContract::bucket_key(worldwide_day, entry_price_minor, iso),
         issuance_currency: iso,
         reference_currency: iso,
@@ -198,7 +196,7 @@ fn issue_qualified_item(
     item: NodItemState,
 ) -> NodItemState {
     api::add_nod(storage, scope, parent, &item, entry_price()).unwrap();
-    crate::tests::qualify(storage, &item);
+    crate::tests::qualify(storage, &item, entry_price());
     item
 }
 
@@ -274,7 +272,7 @@ fn arm_lapsed(
         })
         .collect();
     let bucket_key = items[0].bucket_key;
-    crate::tests::qualify(storage, &items[0]);
+    crate::tests::qualify(storage, &items[0], entry_price());
     let id = WwdEntityId::from_day_and_digest(items[0].worldwide_day, bucket_key);
     for (item, &(_, _, paid)) in items.iter().zip(specs) {
         if paid {
@@ -1265,7 +1263,7 @@ fn mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exerci
         let key = items[0].bucket_key;
         let id = WwdEntityId::from_day_and_digest(items[0].worldwide_day, key);
         let nod = NodContract::new(storage.clone());
-        crate::tests::qualify(storage, &items[0]);
+        crate::tests::qualify(storage, &items[0], entry_price());
         // Settle the middle member, exercising swap-remove of the unpaid tail.
         api::settle_nod(
             storage,

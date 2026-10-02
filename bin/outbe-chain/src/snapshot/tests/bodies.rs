@@ -137,7 +137,6 @@ impl Fixture {
                 gratis_load_minor: U256::from(1),
                 worldwide_day: day,
                 league_id: 7,
-                floor_price_minor: U256::from(2),
                 bucket_key: B256::repeat_byte(4),
                 issuance_currency: 840,
                 reference_currency: 978,
@@ -159,7 +158,6 @@ impl Fixture {
                 settled_nods: 0,
                 bucket_key: item.bucket_key,
                 worldwide_day: day,
-                floor_price_minor: U256::from(2),
                 entry_price_minor: U256::from(3),
                 reference_currency: 978,
             };

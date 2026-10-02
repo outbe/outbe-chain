@@ -128,7 +128,6 @@ fn nod_item_v1_uses_one_strict_canonical_protobuf_representation() {
         gratis_load_minor: U256::from(1),
         worldwide_day: WorldwideDay::from(1),
         league_id: 2,
-        floor_price_minor: U256::from(2),
         bucket_key: B256::repeat_byte(0x33),
         issuance_currency: 840,
         reference_currency: 978,
@@ -142,7 +141,6 @@ fn nod_item_v1_uses_one_strict_canonical_protobuf_representation() {
         "1a200000000000000000000000000000000000000000000000000000000000000001",
         "2001",
         "2802",
-        "32200000000000000000000000000000000000000000000000000000000000000002",
         "3a20",
         "3333333333333333333333333333333333333333333333333333333333333333",
         "48c806",
@@ -166,7 +164,6 @@ fn settled_nod_body_round_trips_without_changing_legacy_encoding() {
         gratis_load_minor: U256::from(1),
         worldwide_day: WorldwideDay::from(1),
         league_id: 2,
-        floor_price_minor: U256::from(2),
         bucket_key: B256::repeat_byte(0x33),
         issuance_currency: 840,
         reference_currency: 978,
@@ -196,9 +193,8 @@ fn settled_nod_body_round_trips_without_changing_legacy_encoding() {
 /// with the value dropped on the floor.
 #[test]
 fn a_nod_item_carrying_the_retired_cost_field_is_rejected() {
-    // The exact bytes this schema produced before the cost became a derivation
-    // from the bucket's entry price and the Nod's gratis load: field 8 sitting
-    // in its canonical position between `bucket_key` and `issuance_currency`.
+    // This schema's bytes with the cost as it was written: field 8 sitting in
+    // its canonical position between `bucket_key` and `issuance_currency`.
     let with_cost = hex::decode(concat!(
         "0a2000000001",
         "11111111111111111111111111111111111111111111111111111111",
@@ -207,7 +203,6 @@ fn a_nod_item_carrying_the_retired_cost_field_is_rejected() {
         "1a200000000000000000000000000000000000000000000000000000000000000001",
         "2001",
         "2802",
-        "32200000000000000000000000000000000000000000000000000000000000000002",
         "3a20",
         "3333333333333333333333333333333333333333333333333333333333333333",
         "42200000000000000000000000000000000000000000000000000000000000000003",
@@ -223,13 +218,52 @@ fn a_nod_item_carrying_the_retired_cost_field_is_rejected() {
     ));
 }
 
+/// The floor derives from the bucket's entry price, so a body that still
+/// carries it in the field it was written to is refused.
+#[test]
+fn a_nod_body_carrying_the_retired_floor_field_is_rejected() {
+    let item_with_floor = hex::decode(concat!(
+        "0a2000000001",
+        "11111111111111111111111111111111111111111111111111111111",
+        "1214",
+        "2222222222222222222222222222222222222222",
+        "1a200000000000000000000000000000000000000000000000000000000000000001",
+        "2001",
+        "2802",
+        "32200000000000000000000000000000000000000000000000000000000000000002",
+        "3a20",
+        "3333333333333333333333333333333333333333333333333333333333333333",
+        "48c806",
+        "50d207",
+        "5805"
+    ))
+    .unwrap();
+    assert!(matches!(
+        decode_nod_item_v1(&item_with_floor),
+        Err(CanonicalBodyError::UnknownField { field: 6 })
+    ));
+
+    let bucket_with_floor = hex::decode(concat!(
+        "0a20",
+        "3333333333333333333333333333333333333333333333333333333333333333",
+        "1001",
+        "1a200000000000000000000000000000000000000000000000000000000000000001",
+        "32200000000000000000000000000000000000000000000000000000000000000003",
+        "38c806"
+    ))
+    .unwrap();
+    assert!(matches!(
+        decode_nod_bucket_v1(&bucket_with_floor),
+        Err(CanonicalBodyError::UnknownField { field: 3 })
+    ));
+}
+
 #[test]
 fn nod_bucket_v1_uses_one_strict_canonical_protobuf_representation() {
     let body = NodBucketBodyV1 {
         settled_nods: 0,
         bucket_key: B256::repeat_byte(0x33),
         worldwide_day: WorldwideDay::from(1),
-        floor_price_minor: U256::from(1),
         entry_price_minor: U256::from(3),
         reference_currency: 840,
     };
@@ -237,7 +271,6 @@ fn nod_bucket_v1_uses_one_strict_canonical_protobuf_representation() {
         "0a20",
         "3333333333333333333333333333333333333333333333333333333333333333",
         "1001",
-        "1a200000000000000000000000000000000000000000000000000000000000000001",
         "32200000000000000000000000000000000000000000000000000000000000000003",
         "38c806"
     ))
@@ -434,7 +467,6 @@ fn protobuf_profile_rejects_order_length_width_wire_and_range_violations() {
         gratis_load_minor: U256::from(1),
         worldwide_day: WorldwideDay::from(1),
         league_id: 2,
-        floor_price_minor: U256::from(2),
         bucket_key: B256::repeat_byte(0x33),
         issuance_currency: 840,
         reference_currency: 978,
@@ -456,7 +488,6 @@ fn protobuf_profile_rejects_order_length_width_wire_and_range_violations() {
         settled_nods: 0,
         bucket_key: B256::repeat_byte(0x33),
         worldwide_day: WorldwideDay::from(1),
-        floor_price_minor: U256::from(1),
         entry_price_minor: U256::from(3),
         reference_currency: 840,
     };

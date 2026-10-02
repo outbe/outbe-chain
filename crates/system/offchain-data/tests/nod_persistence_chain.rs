@@ -60,7 +60,6 @@ fn assert_authenticated_nods(
             .expect("authenticate the shared bucket against its persisted CE leaf")
             .unwrap();
         assert_eq!(bucket.body().entry_price_minor, U256::from(5));
-        assert_eq!(bucket.body().floor_price_minor, first.floor_price_minor);
         assert_eq!(bucket.body().reference_currency, first.reference_currency);
     });
 }
@@ -130,7 +129,6 @@ fn production_nod_receipts_and_ce_seal_agree_with_rocksdb_after_reopen() {
             gratis_load_minor: U256::from(123_456),
             worldwide_day: day,
             league_id: 7,
-            floor_price_minor: U256::from(8),
             bucket_key: NodContract::bucket_key(day, U256::from(5), 978),
             issuance_currency: 840,
             reference_currency: 978,
