@@ -21,6 +21,7 @@ import {
  *  - WorldwideDay u32 YYYYMMDD .......... crates/core/common/src/worldwideday.rs
  *  - native COEN amounts at 1e18 ........ explicit contract/function boundaries
  *  - protocol monetary amounts at 1e6 ... crates/blockchain/primitives/src/units.rs
+ *  - asset-native amounts, raw .......... the asset's own decimals (Credis, settlement, PayNote)
  *  - Credis annual currency rate at 1e6 . Oracle/Credis contract
  *  - generic prices/ratios at 1e18 ...... their owning protocol modules
  *  - status / day_type enums ............ crates/core/metadosis/src/schema.rs
@@ -28,10 +29,12 @@ import {
 
 const DATE_RE = /(worldwideday|^wwd$|^wwds$|^date$|^day$)/i;
 const SIX_DECIMAL_AMOUNT_RE = /(minor$|amount|stake|balance|pledged|reward)/i;
+const ASSET_UNIT_AMOUNT_RE =
+  /^(principal|outstandingPrincipal|principalPaid|principalWrittenOff|interestPaid|interestAccrued|interest|payment|amount)Minor$/;
 const SIX_DECIMAL_RATE_RE = /currencyrate/i;
 const DIMENSIONLESS_FP18_RE = /(rewardband|minvalidperwindow|slashfraction)/i;
 const GENERIC_FP18_RE = /(vwap|twap|rate|price|volume|peakprice|currentvalue|nominalprice|maxscurve)/i;
-const TIME_RE = /(at$|time$|timestamp$|start$|end$|date$|duedate$|paidat$)/i;
+const TIME_RE = /(at$|time$|timestamp$|start$|end$|date$|duedate$|paidat$|deadline$)/i;
 
 function isIsoCurrencyAddress(value: unknown): boolean {
   if (typeof value !== "string") return false;
@@ -236,8 +239,9 @@ function formatScalar(
     const v = value as bigint;
     return { raw: v.toString(), value: formatUnits(v, 6) };
   }
-  // A settlement quote is in the paying asset's own minor units, whose decimals vary.
-  if (context.functionName === "quoteSettlement" && n === "paymentMinor") {
+  // Credis principal and interest, settlement payments and PayNote spends are in the
+  // asset's own atomic units, whose decimals vary by asset.
+  if (type === "uint256" && ASSET_UNIT_AMOUNT_RE.test(n)) {
     return (value as bigint).toString();
   }
   if (type === "uint256" && SIX_DECIMAL_AMOUNT_RE.test(n)) {
