@@ -467,17 +467,78 @@ fn a_bucket_the_sweep_cannot_finish_is_retired_rather_than_left_in_front() {
         );
         crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
 
+        let later = IntexFactoryContract::deadline_bucket(now + 400 * DAY);
+        assert_eq!(f.expiry_bucket_live.read(&bucket).unwrap(), 0);
         assert_eq!(
             f.first_expiry_day().unwrap(),
-            None,
+            Some(later),
             "the day leaves the tree instead of blocking every later one"
         );
         assert_eq!(
             f.called_group_count.read(&key).unwrap(),
-            0,
-            "and takes its group's records with it"
+            1,
+            "and its group waits in the bucket its deadline falls in"
         );
+        assert_eq!(f.expiry_bucket_live.read(&later).unwrap(), 1);
     });
+}
+
+#[test]
+fn a_group_requeued_at_retirement_is_expired_and_credited_once() {
+    use alloy_sol_types::SolEvent;
+
+    let mut provider = factory_provider();
+    let now = ISSUED_AT as u64;
+    let day = WorldwideDay::new(20260101);
+    let key = IntexFactoryContract::scoped(REFERENCE_ISO, day.value());
+    let bucket = IntexFactoryContract::deadline_bucket(now + DAY);
+    let later = IntexFactoryContract::deadline_bucket(now + 3 * DAY);
+    StorageHandle::enter(&mut provider, |s| {
+        select_prod_profile(&s);
+        let mut f = IntexFactoryContract::new(s.clone());
+        let member = called_series(&s, day.value());
+        f.push_called_group(REFERENCE_ISO, day, now + DAY, &[member])
+            .unwrap();
+        f.called_group_deadline.write(&key, now + 3 * DAY).unwrap();
+        let sweep = |at: u64| {
+            let ctx =
+                BlockRuntimeContext::new(BlockContext::empty_for_tests(1, at, CHAIN_ID), s.clone());
+            crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
+        };
+        let unallocated = || {
+            outbe_promislimit::PromisLimitContract::new(s.clone())
+                .get_total_unallocated()
+                .unwrap()
+        };
+
+        sweep(IntexFactoryContract::bucket_end(bucket));
+        assert_eq!(f.first_expiry_day().unwrap(), Some(later));
+        assert_eq!(f.called_group_count.read(&key).unwrap(), 1);
+        assert_eq!(unallocated(), U256::ZERO);
+
+        sweep(IntexFactoryContract::bucket_end(later));
+        assert_eq!(f.first_expiry_day().unwrap(), None);
+        assert_eq!(f.called_group_count.read(&key).unwrap(), 0);
+        assert_eq!(unallocated(), U256::from(PROMIS_LOAD_MINOR));
+
+        sweep(IntexFactoryContract::bucket_end(later) + DAY);
+        assert_eq!(unallocated(), U256::from(PROMIS_LOAD_MINOR));
+    });
+
+    let deferred: Vec<_> = provider
+        .get_events(INTEX_FACTORY_ADDRESS)
+        .iter()
+        .filter_map(|log| IIntexFactory::ExpiryDeferred::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(deferred.len(), 1);
+    assert_eq!(deferred[0].worldwideDay, day.value());
+    assert_eq!(deferred[0].retryAt, IntexFactoryContract::bucket_end(later));
+    let expired = provider
+        .get_events(INTEX_FACTORY_ADDRESS)
+        .iter()
+        .filter_map(|log| IIntexFactory::SeriesExpired::decode_log_data(log).ok())
+        .count();
+    assert_eq!(expired, 1);
 }
 
 #[test]

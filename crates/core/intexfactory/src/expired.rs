@@ -142,14 +142,24 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
         }
         factory.expiry_sweep_day.write(0)?;
         factory.expiry_cursor.write(0)?;
-        // Anything left broke the invariant above; retiring it keeps the tree moving.
+        // Anything left is not due yet; retiring the bucket keeps the tree moving.
         if factory.expiry_bucket_live.read(&day)? != 0 {
-            let dropped = factory.force_retire_bucket(day)?;
+            let requeued = factory.force_retire_bucket(day, now)?;
+            for &(iso_code, worldwide_day, retry_day) in &requeued {
+                emit_event(
+                    storage,
+                    crate::precompile::IIntexFactory::ExpiryDeferred {
+                        referenceCurrency: iso_code,
+                        worldwideDay: worldwide_day.value(),
+                        retryAt: IntexFactoryContract::bucket_end(retry_day),
+                    },
+                )?;
+            }
             tracing::warn!(
                 target: "outbe::intexfactory",
                 day,
-                dropped,
-                "expiry sweep: bucket outlived its day, retiring it"
+                requeued = requeued.len(),
+                "expiry sweep: bucket outlived its day, requeued what it held"
             );
         }
     }
