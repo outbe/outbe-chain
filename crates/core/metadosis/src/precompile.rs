@@ -73,7 +73,7 @@ pub fn dispatch(
             }),
             getWorldwideDayTerminalReceipt(c) => view(c, |c| {
                 let wwd = c.wwd.into();
-                let Some(stored) = metadosis.worldwide_day_terminal_receipts.get(wwd)? else {
+                let Some(stored) = metadosis.read_terminal_receipt(wwd)? else {
                     return Ok((
                         terminal_outcome::NONE,
                         U256::ZERO,
@@ -84,7 +84,7 @@ pub fn dispatch(
                     )
                         .into());
                 };
-                match stored.outcome {
+                match stored.outcome() {
                     terminal_outcome::MISSED_OFFERING => {
                         metadosis.read_missed_offering_receipt(wwd)?;
                     }
@@ -110,13 +110,14 @@ pub fn dispatch(
                         ));
                     }
                 }
+                let common = stored.common();
                 Ok((
-                    stored.outcome,
-                    stored.value_routed,
-                    stored.carry_over_before,
-                    stored.carry_over_after,
-                    stored.retirement,
-                    stored.block_number,
+                    stored.outcome(),
+                    common.value_routed,
+                    common.carry_over_before,
+                    common.carry_over_after,
+                    crate::terminal::encode_retirement(common.retirement),
+                    common.block_number,
                 )
                     .into())
             }),

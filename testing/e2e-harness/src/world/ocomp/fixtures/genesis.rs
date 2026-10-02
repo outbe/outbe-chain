@@ -119,7 +119,7 @@ impl OcompTopology {
 }
 
 pub const METADOSIS_STORAGE_LAYOUT_V1_HASH_HEX: &str =
-    "0x193b70d52eaf69583d3407af7281cbff732334fb32992ee0be69404a841c468a";
+    "0xb8cc7a9695ff2a15dffcf3d22598973f8c81e029c708889de155112449d12b95";
 
 /// Provisional block envelope used by the disposable OCM-25 measurement chain.
 #[cfg(feature = "ocomp-integration")]

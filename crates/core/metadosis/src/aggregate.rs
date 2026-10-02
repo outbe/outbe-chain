@@ -13,11 +13,8 @@ use crate::{
     errors::storage_corruption_message,
     ocomp::state::{DayPhase, OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS},
     ocomp::{poc_schema_limits, ResponseDeadlineKey},
-    schema::{day_type, status, terminal_outcome, MetadosisContract},
-    terminal::{
-        validate_capacity_forfeiture_detail, validate_terminal_receipt_state,
-        TerminalReceiptValidationContext,
-    },
+    schema::{day_type, status, MetadosisContract},
+    terminal::{model::WwdTerminalReceipt, TerminalReceiptValidationContext},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -323,76 +320,30 @@ fn validate_terminal_state(
     membership: WwdMembership,
     record: &crate::schema::WorldwideDay,
 ) -> Result<()> {
-    let generic_receipt = contract.worldwide_day_terminal_receipts.get(wwd)?;
-    let capacity_receipt = contract.capacity_forfeiture_receipts.get(wwd)?;
-    let Some(receipt) = generic_receipt else {
-        if capacity_receipt.is_some() {
-            return Err(storage_corruption_message(format!(
-                "Metadosis WWD {wwd} has capacity detail without terminal receipt"
-            )));
-        }
+    let Some(receipt) = contract.read_terminal_receipt(wwd)? else {
         return Ok(());
     };
-    let context = TerminalReceiptValidationContext::new(
-        status.as_u8(),
-        usize::from(membership == WwdMembership::Active),
-        usize::from(membership == WwdMembership::Closed),
-        record.metadosis_limit_amount,
-    );
-    let receipt_validation = match receipt.outcome {
-        terminal_outcome::MISSED_OFFERING => {
-            if capacity_receipt.is_some() {
-                Err(storage_corruption_message(format!(
-                    "Metadosis WWD {wwd} has an invalid terminal receipt"
-                )))
-            } else {
-                validate_terminal_receipt_state(
-                    &receipt,
-                    terminal_outcome::MISSED_OFFERING,
-                    context,
-                )
-            }
-        }
-        terminal_outcome::CAPACITY_FORFEITURE => {
-            let detail = capacity_receipt.as_ref().ok_or_else(|| {
-                storage_corruption_message(format!(
-                    "Metadosis WWD {wwd} has an invalid terminal receipt"
-                ))
-            })?;
-            validate_capacity_forfeiture_detail(&receipt, detail, context)
-        }
-        terminal_outcome::METADOSIS_FAILURE => {
-            if capacity_receipt.is_some() {
-                Err(storage_corruption_message(format!(
-                    "Metadosis WWD {wwd} has an invalid terminal receipt"
-                )))
-            } else {
-                let expected_value_routed = contract
-                    .request_limit_receipt(wwd, &poc_schema_limits())?
-                    .map_or(record.metadosis_limit_amount, |receipt| {
-                        receipt.lysis_limit_minor
-                    });
-                validate_terminal_receipt_state(
-                    &receipt,
-                    terminal_outcome::METADOSIS_FAILURE,
-                    TerminalReceiptValidationContext::new(
-                        status.as_u8(),
-                        usize::from(membership == WwdMembership::Active),
-                        usize::from(membership == WwdMembership::Closed),
-                        expected_value_routed,
-                    ),
-                )
-            }
-        }
-        _ => Err(storage_corruption_message(format!(
-            "Metadosis WWD {wwd} has an invalid terminal receipt"
-        ))),
+    let expected_value_routed = if matches!(receipt, WwdTerminalReceipt::MetadosisFailure(_)) {
+        contract
+            .request_limit_receipt(wwd, &poc_schema_limits())?
+            .map_or(record.metadosis_limit_amount, |receipt| {
+                receipt.lysis_limit_minor
+            })
+    } else {
+        record.metadosis_limit_amount
     };
-    receipt_validation.map_err(|_| {
-        storage_corruption_message(format!(
-            "Metadosis WWD {wwd} has an invalid terminal receipt"
+    receipt
+        .validate(TerminalReceiptValidationContext::new(
+            status.as_u8(),
+            usize::from(membership == WwdMembership::Active),
+            usize::from(membership == WwdMembership::Closed),
+            expected_value_routed,
         ))
-    })
+        .map_err(|_| {
+            storage_corruption_message(format!(
+                "Metadosis WWD {wwd} has an invalid terminal receipt"
+            ))
+        })
 }
 
 fn validate_record_ocomp_presence(

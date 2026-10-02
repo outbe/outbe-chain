@@ -202,12 +202,9 @@ impl MetadosisContract<'_> {
             // The day's terminal-evidence index dies with the day; without
             // this, retired days would leak index entries forever.
             self.delete_terminal_index(wwd_key)?;
-            if self.worldwide_day_terminal_receipts.get(wwd_key)?.is_some() {
-                self.worldwide_day_terminal_receipts.delete(wwd_key)?;
-            }
-            if self.capacity_forfeiture_receipts.get(wwd_key)?.is_some() {
-                self.capacity_forfeiture_receipts.delete(wwd_key)?;
-            }
+            self.worldwide_day_terminal_receipts
+                .get_bytes(&wwd_key)
+                .clear()?;
             self.worldwide_days.delete(wwd_key)?;
             if self
                 .day_limit_formation_receipts

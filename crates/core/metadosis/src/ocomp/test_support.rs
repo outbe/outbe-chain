@@ -266,12 +266,9 @@ impl FixtureKernelExt for MetadosisContract<'_> {
     fn delete_worldwide_day(&mut self, wwd: WorldwideDay) -> PrecompileResult<()> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
-            if self.worldwide_day_terminal_receipts.get(wwd)?.is_some() {
-                self.worldwide_day_terminal_receipts.delete(wwd)?;
-            }
-            if self.capacity_forfeiture_receipts.get(wwd)?.is_some() {
-                self.capacity_forfeiture_receipts.delete(wwd)?;
-            }
+            self.worldwide_day_terminal_receipts
+                .get_bytes(&wwd)
+                .clear()?;
             self.worldwide_days.delete(wwd)?;
             if self
                 .day_limit_formation_receipts

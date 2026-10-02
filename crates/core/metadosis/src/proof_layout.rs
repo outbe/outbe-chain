@@ -8,7 +8,7 @@ pub use crate::schema::OCOMP_JOB_RECORDS_BASE_SLOT;
 /// The corresponding schema test pins every value encoded here to the actual
 /// generated storage layout. Changing either the layout or this description
 /// therefore requires an explicit fresh-genesis contract revision.
-pub const METADOSIS_STORAGE_LAYOUT_V1_CANONICAL: &[u8] = b"OUTBE_METADOSIS_STORAGE_LAYOUT_V1|worldwide_day_slots=10|active_wwd_count_slot=11|closed_wwd_base_slot=14|terminal_receipt_base_slot=31|terminal_receipt_slots=6|capacity_forfeiture_base_slot=37|capacity_forfeiture_slots=13|day_limit_receipt_base_slot=50|day_limit_receipt_slots=7";
+pub const METADOSIS_STORAGE_LAYOUT_V1_CANONICAL: &[u8] = b"OUTBE_METADOSIS_STORAGE_LAYOUT_V1|worldwide_day_slots=10|closed_wwd_base_slot=13|ocomp_job_records_base_slot=19|league_snapshot_base_slot=28|terminal_receipt_base_slot=30|terminal_receipt_codec=OMTR1|live_index_codec=OMLI1|day_limit_receipt_base_slot=31|day_limit_receipt_slots=7";
 
 pub const METADOSIS_STORAGE_LAYOUT_V1_HASH: B256 =
-    b256!("193b70d52eaf69583d3407af7281cbff732334fb32992ee0be69404a841c468a");
+    b256!("b8cc7a9695ff2a15dffcf3d22598973f8c81e029c708889de155112449d12b95");

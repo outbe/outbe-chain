@@ -909,15 +909,17 @@ fn malformed_capacity_detail_is_fatal() {
 
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage);
-        let mut detail = metadosis
-            .capacity_forfeiture_receipts
-            .get(victim)
-            .unwrap()
-            .unwrap();
-        detail.block_number += 1;
+        let mut receipt = metadosis.read_terminal_receipt(victim).unwrap().unwrap();
+        let crate::terminal::model::WwdTerminalReceipt::CapacityForfeiture { detail, .. } =
+            &mut receipt
+        else {
+            panic!("capacity receipt expected");
+        };
+        detail.retired_generation += 1;
         metadosis
-            .capacity_forfeiture_receipts
-            .update(&detail)
+            .worldwide_day_terminal_receipts
+            .get_bytes(&victim)
+            .write(&crate::terminal::codec::encode(&receipt))
             .unwrap();
 
         assert!(matches!(
@@ -928,7 +930,7 @@ fn malformed_capacity_detail_is_fatal() {
 }
 
 #[test]
-fn capacity_generic_without_detail_is_fatal_in_reader_and_aggregate() {
+fn capacity_receipt_without_detail_is_fatal_in_reader_and_aggregate() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let (victim, scheduled) = seed_capacity_fixture(
         &mut provider,
@@ -942,10 +944,10 @@ fn capacity_generic_without_detail_is_fatal_in_reader_and_aggregate() {
 
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
-        metadosis
-            .capacity_forfeiture_receipts
-            .delete(victim)
-            .unwrap();
+        let bytes = metadosis.worldwide_day_terminal_receipts.get_bytes(&victim);
+        let mut malformed = bytes.read().unwrap();
+        malformed.truncate(crate::terminal::codec::COMMON_LEN);
+        bytes.write(&malformed).unwrap();
 
         assert!(matches!(
             metadosis.read_capacity_forfeiture_receipt(victim),

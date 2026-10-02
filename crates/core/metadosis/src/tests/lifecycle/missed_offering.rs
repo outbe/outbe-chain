@@ -358,14 +358,12 @@ fn malformed_missed_offering_receipt_is_fatal() {
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0801);
     with_contract(|metadosis| {
         metadosis
-            .worldwide_day_terminal_receipts
-            .create(&crate::schema::WorldwideDayTerminalReceiptState {
-                wwd,
-                outcome: crate::schema::terminal_outcome::MISSED_OFFERING,
+            .write_missed_offering_receipt(crate::terminal::MissedOfferingReceipt {
+                worldwide_day: wwd,
                 value_routed: U256::from(10),
                 carry_over_before: U256::from(3),
                 carry_over_after: U256::from(12),
-                retirement: crate::schema::terminal_retirement::NOT_PRESENT,
+                retirement: outbe_compressed_entities::RetirementOutcome::NotPresent,
                 block_number: 1,
             })
             .unwrap();
@@ -388,16 +386,13 @@ fn missed_receipt_value_drift_is_fatal_in_reader_and_aggregate() {
 
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
-        let mut receipt = metadosis
-            .worldwide_day_terminal_receipts
-            .get(wwd)
-            .unwrap()
-            .unwrap();
-        receipt.value_routed += U256::from(1);
-        receipt.carry_over_after += U256::from(1);
+        let mut receipt = metadosis.read_terminal_receipt(wwd).unwrap().unwrap();
+        receipt.common_mut().value_routed += U256::from(1);
+        receipt.common_mut().carry_over_after += U256::from(1);
         metadosis
             .worldwide_day_terminal_receipts
-            .update(&receipt)
+            .get_bytes(&wwd)
+            .write(&crate::terminal::codec::encode(&receipt))
             .unwrap();
 
         assert!(matches!(
@@ -412,7 +407,7 @@ fn missed_receipt_value_drift_is_fatal_in_reader_and_aggregate() {
 }
 
 #[test]
-fn missed_receipt_with_capacity_detail_is_fatal_in_reader_and_aggregate() {
+fn missed_receipt_with_trailing_capacity_payload_is_fatal_in_reader_and_aggregate() {
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0803);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let offering_end =
@@ -422,30 +417,10 @@ fn missed_receipt_with_capacity_detail_is_fatal_in_reader_and_aggregate() {
 
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
-        let receipt = metadosis
-            .worldwide_day_terminal_receipts
-            .get(wwd)
-            .unwrap()
-            .unwrap();
-        metadosis
-            .capacity_forfeiture_receipts
-            .create(&crate::schema::CapacityForfeitureReceiptState {
-                wwd,
-                outcome: crate::schema::terminal_outcome::CAPACITY_FORFEITURE,
-                max_retained_wwds: MAX_RETAINED_WWDS as u32,
-                retained_count_before: MAX_RETAINED_WWDS as u32,
-                value_routed: receipt.value_routed,
-                carry_over_before: receipt.carry_over_before,
-                carry_over_after: receipt.carry_over_after,
-                sealed_collection_root: B256::ZERO,
-                forfeited_count: 0,
-                forfeited_nominal: U256::ZERO,
-                source_generation: 0,
-                retired_generation: 1,
-                retirement: receipt.retirement,
-                block_number: receipt.block_number,
-            })
-            .unwrap();
+        let bytes = metadosis.worldwide_day_terminal_receipts.get_bytes(&wwd);
+        let mut malformed = bytes.read().unwrap();
+        malformed.extend_from_slice(&[0; 92]);
+        bytes.write(&malformed).unwrap();
 
         assert!(matches!(
             metadosis.read_missed_offering_receipt(wwd),
