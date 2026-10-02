@@ -198,8 +198,11 @@ export function proposalStatusCode(name: ProposalStatusName): number {
   return PROPOSAL_STATUS.indexOf(name);
 }
 
-// Gem lifecycle state (crates/core/gem/src/schema.rs::GemState).
-export const GEM_STATE = ["Issued", "Qualified", "Called", "Settled"] as const;
+// Gem lifecycle state (crates/core/gem/src/schema.rs::GemState); Forfeited is derived on read.
+export const GEM_STATE = ["Issued", "Qualified", "Called", "Settled", "Forfeited"] as const;
+
+// Credis position state (crates/core/credis/src/schema.rs::CredisState).
+export const CREDIS_STATE = ["Open", "Called", "Settled", "Void"] as const;
 
 // ISO 4217 numeric -> symbol. Chain currently accepts 840 (USD) only; the rest
 // are convenience labels for display.
@@ -220,6 +223,9 @@ export function dayTypeName(v: number): string {
 }
 export function gemStateName(v: number): string {
   return GEM_STATE[v] ?? `UNKNOWN(${v})`;
+}
+export function credisStateName(v: number): string {
+  return CREDIS_STATE[v] ?? `UNKNOWN(${v})`;
 }
 export function currencyLabel(code: number): { code: number; symbol: string } {
   return { code, symbol: ISO_4217[code] ?? `#${code}` };
