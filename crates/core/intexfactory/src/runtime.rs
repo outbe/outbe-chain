@@ -759,7 +759,7 @@ fn settle<Q>(
                 seriesId: series_id.into(),
                 from: intex_owner,
                 to: intex_owner,
-                amount,
+                units: amount,
             }
             .abi_encode()
             .into(),
@@ -775,8 +775,8 @@ fn settle<Q>(
             storage,
             crate::precompile::IIntexFactory::Settled {
                 seriesId: series_id.into(),
-                intexOwner: intex_owner,
-                amount,
+                owner: intex_owner,
+                units: amount,
             },
         )
     })
@@ -1068,7 +1068,7 @@ pub fn mine_promis(
             IIntexNFT1155::burnSettledCall {
                 owner,
                 seriesId: series_id.into(),
-                amount,
+                units: amount,
             }
             .abi_encode()
             .into(),
@@ -1087,7 +1087,7 @@ pub fn mine_promis(
             crate::precompile::IIntexFactory::PromisMined {
                 seriesId: series_id.into(),
                 owner,
-                amount,
+                units: amount,
                 promisMinor: promis_amount,
             },
         )?;

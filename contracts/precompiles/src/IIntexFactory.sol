@@ -9,8 +9,8 @@ pragma solidity ^0.8.30;
 ///         precompile selector. Series identity + lifecycle live in Intex; this
 ///         precompile owns settlement bookkeeping and the call-price index.
 interface IIntexFactory {
-    /// @notice Settle `amount` Issued Intexes of `seriesId` held by
-    ///         `intexOwner`, paying the cost in `asset`. Any caller may pay; the
+    /// @notice Settle `units` Issued Intexes of `seriesId` held by
+    ///         `owner`, paying the cost in `asset`. Any caller may pay; the
     ///         settled units stay with the owner. Allowed once qualified (voluntary,
     ///         see `isSeriesQualified`) and once called (forced, until the deadline).
     /// @dev Approve IntexFactory for the `quoteSettlement` amount before calling.
@@ -20,8 +20,7 @@ interface IIntexFactory {
     ///        the trailing VWAP snapshot required at this block.
     /// @param snapshotId The snapshot `quoteSettlement` returned; an issuance-currency
     ///        payment naming any other snapshot reverts. Ignored on the reference rail.
-    function settleIntex(bytes14 seriesId, address intexOwner, uint256 amount, address asset, uint256 snapshotId)
-        external;
+    function settleIntex(bytes14 seriesId, address owner, uint256 units, address asset, uint256 snapshotId) external;
 
     /// @notice Settle like `settleIntex`, paying the cost by spending a PayNote.
     /// @dev Moves no tokens: the underlying assets reached the reserve vault when
@@ -31,10 +30,10 @@ interface IIntexFactory {
     ///        the series' currencies, and spend exactly the settlement cost. The
     ///        proof names no VWAP snapshot: an issuance-currency note must spend what
     ///        `quoteSettlement` returns at the executing block.
-    function settleIntexWithPayNote(bytes14 seriesId, address intexOwner, uint256 amount, bytes calldata payNoteProof)
+    function settleIntexWithPayNote(bytes14 seriesId, address owner, uint256 units, bytes calldata payNoteProof)
         external;
 
-    /// @notice What settling `amount` units of `seriesId` with `asset` costs,
+    /// @notice What settling `units` of `seriesId` with `asset` costs,
     ///         and which of the series' two currencies that asset settles on. Priced
     ///         exactly as `settleIntex` charges it. Reverts for an asset the series does
     ///         not accept.
@@ -42,7 +41,7 @@ interface IIntexFactory {
     /// @return amountMinor Amount to pay, in `asset`'s own minor units.
     /// @return snapshotId Trailing VWAP snapshot the amount converts at; zero on the
     ///         reference rail. It goes stale at the next update cutoff.
-    function quoteSettlement(bytes14 seriesId, address asset, uint256 amount)
+    function quoteSettlement(bytes14 seriesId, address asset, uint256 units)
         external
         view
         returns (uint16 settlementCurrency, uint256 amountMinor, uint256 snapshotId);
@@ -59,9 +58,9 @@ interface IIntexFactory {
     ///         owner's Promis modify key: `mac = HMAC(modifyKey, op-preimage)`
     ///         where `opNonce` MUST equal the owner's current on-chain promis
     ///         op-nonce (fetch via `outbe_deriveKeys` + `IPromis.opNonceOf`) and the
-    ///         bound amount is `promis_load_minor * amount`. Returns the minted
+    ///         bound amount is `promis_load_minor * units`. Returns the minted
     ///         Promis.
-    function minePromis(bytes14 seriesId, address owner, uint256 amount, uint64 nonce, bytes32 mac, uint64 opNonce)
+    function minePromis(bytes14 seriesId, address owner, uint256 units, uint64 nonce, bytes32 mac, uint64 opNonce)
         external
         returns (uint256 promisMinor);
 
@@ -135,11 +134,11 @@ interface IIntexFactory {
     /// @notice A new series was created from a cleared auction.
     event SeriesIssued(bytes14 indexed seriesId, uint32 issuedUnits, uint256 entryPriceMinor);
 
-    /// @notice `amount` Issued Intexes of `seriesId` were settled.
-    event Settled(bytes14 indexed seriesId, address indexed intexOwner, uint256 amount);
+    /// @notice `units` Issued Intexes of `seriesId` were settled.
+    event Settled(bytes14 indexed seriesId, address indexed owner, uint256 units);
 
     /// @notice Settled Intexes were burned and `promisMinor` Promis minted.
-    event PromisMined(bytes14 indexed seriesId, address indexed owner, uint256 amount, uint256 promisMinor);
+    event PromisMined(bytes14 indexed seriesId, address indexed owner, uint256 units, uint256 promisMinor);
 
     /// @notice The series was force-called.
     event SeriesCalled(bytes14 indexed seriesId, uint32 calledAt);

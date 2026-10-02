@@ -210,7 +210,7 @@ fn burn_intex_into_gem_factory(
         IIntexNFT1155::sendToGemFactoryCall {
             owner,
             seriesId: series_id.into(),
-            amount,
+            units: amount,
         }
         .abi_encode()
         .into(),

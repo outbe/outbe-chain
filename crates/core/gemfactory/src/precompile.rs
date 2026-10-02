@@ -45,7 +45,7 @@ pub fn dispatch(
                     &storage,
                     sender,
                     SeriesId::from(c.sourceIntexId),
-                    c.amount,
+                    c.units,
                 )
             }),
             issueGem(c) => mutate(c, caller, |sender, c| {

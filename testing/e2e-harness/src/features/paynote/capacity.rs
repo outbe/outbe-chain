@@ -458,7 +458,7 @@ fn issue_gems(world: &mut World, notes_count: u32) -> Vec<U256> {
             addresses::GEM_FACTORY_ADDR,
             &eth::IGemFactory::issueGemPositionCall {
                 sourceIntexId: series,
-                amount: U256::from(gems_per_position),
+                units: U256::from(gems_per_position),
             },
         );
         assert_mined_success(&parked, "park capacity batch");

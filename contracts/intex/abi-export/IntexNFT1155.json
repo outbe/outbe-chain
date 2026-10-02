@@ -147,7 +147,7 @@
           "internalType": "bytes14"
         },
         {
-          "name": "amount",
+          "name": "units",
           "type": "uint256",
           "internalType": "uint256"
         }
@@ -475,7 +475,7 @@
           "internalType": "address"
         },
         {
-          "name": "quantity",
+          "name": "units",
           "type": "uint256",
           "internalType": "uint256"
         },
@@ -560,12 +560,12 @@
           "internalType": "struct IIntexNFT1155.OwnerBalances",
           "components": [
             {
-              "name": "issued",
+              "name": "issuedUnits",
               "type": "uint32",
               "internalType": "uint32"
             },
             {
-              "name": "settled",
+              "name": "settledUnits",
               "type": "uint32",
               "internalType": "uint32"
             }
@@ -812,7 +812,7 @@
           "internalType": "bytes14"
         },
         {
-          "name": "amount",
+          "name": "units",
           "type": "uint256",
           "internalType": "uint256"
         }
@@ -915,7 +915,7 @@
           "internalType": "address"
         },
         {
-          "name": "amount",
+          "name": "units",
           "type": "uint256",
           "internalType": "uint256"
         }
@@ -1173,7 +1173,7 @@
           "internalType": "address"
         },
         {
-          "name": "amount",
+          "name": "units",
           "type": "uint256",
           "indexed": false,
           "internalType": "uint256"
@@ -1204,7 +1204,7 @@
           "internalType": "address"
         },
         {
-          "name": "quantity",
+          "name": "units",
           "type": "uint256",
           "indexed": false,
           "internalType": "uint256"
@@ -1229,7 +1229,7 @@
           "internalType": "address"
         },
         {
-          "name": "amount",
+          "name": "units",
           "type": "uint256",
           "indexed": false,
           "internalType": "uint256"
@@ -1735,17 +1735,6 @@
     },
     {
       "type": "error",
-      "name": "QuantityTooLarge",
-      "inputs": [
-        {
-          "name": "quantity",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
       "name": "SettleAfterDeadline",
       "inputs": [
         {
@@ -1832,6 +1821,17 @@
     },
     {
       "type": "error",
+      "name": "UnitsTooLarge",
+      "inputs": [
+        {
+          "name": "units",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "ZeroAddress",
       "inputs": [
         {
@@ -1848,12 +1848,12 @@
     },
     {
       "type": "error",
-      "name": "ZeroAmount",
+      "name": "ZeroIssuedUnits",
       "inputs": []
     },
     {
       "type": "error",
-      "name": "ZeroIssuedUnits",
+      "name": "ZeroUnits",
       "inputs": []
     }
   ]

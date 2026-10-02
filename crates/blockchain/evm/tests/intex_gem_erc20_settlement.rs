@@ -82,8 +82,8 @@ impl Factory {
         match self {
             Factory::Intex => IIntexFactory::settleIntexCall {
                 seriesId: FixedBytes(SERIES),
-                intexOwner: OWNER,
-                amount: U256::from(UNITS),
+                owner: OWNER,
+                units: U256::from(UNITS),
                 asset: ASSET,
                 snapshotId: U256::ZERO,
             }
@@ -319,7 +319,7 @@ impl World {
                     IIntexFactory::quoteSettlementCall {
                         seriesId: FixedBytes(SERIES),
                         asset: ASSET,
-                        amount: U256::from(UNITS),
+                        units: U256::from(UNITS),
                     },
                 )
                 .amountMinor
@@ -401,8 +401,8 @@ impl World {
                     .filter_map(|log| IIntexFactory::Settled::decode_log_data(&log.data).ok())
                     .collect();
                 assert_eq!(settled.len(), 1);
-                assert_eq!(settled[0].intexOwner, OWNER);
-                assert_eq!(settled[0].amount, U256::from(UNITS));
+                assert_eq!(settled[0].owner, OWNER);
+                assert_eq!(settled[0].units, U256::from(UNITS));
             }
             Factory::Gem => {
                 let settled: Vec<_> = logs

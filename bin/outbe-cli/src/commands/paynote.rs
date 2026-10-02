@@ -254,7 +254,7 @@ async fn quote_settlement(
                 IIntexFactory::quoteSettlementCall {
                     seriesId: FixedBytes::from(series),
                     asset: note.asset,
-                    amount: units,
+                    units,
                 },
             )
             .await?;

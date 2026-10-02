@@ -143,14 +143,14 @@ contract IntexNFT1155SupplyTest is Test {
         nft.issue(ownerA, 5, SERIES_ID);
         // amount == 0 is rejected before any series-state work.
         vm.prank(settler);
-        vm.expectRevert(IIntexNFT1155.ZeroAmount.selector);
+        vm.expectRevert(IIntexNFT1155.ZeroUnits.selector);
         nft.settleIntex(SERIES_ID, ownerA, ownerA, 0);
     }
 
     function test_BurnSettled_ZeroAmount_Reverts() public {
         _issueAndSettle({cap: 10, mintAmount: 6, settleAmount: 4, callBeforeSettle: false});
         vm.prank(promis);
-        vm.expectRevert(IIntexNFT1155.ZeroAmount.selector);
+        vm.expectRevert(IIntexNFT1155.ZeroUnits.selector);
         nft.burnSettled(ownerA, SERIES_ID, 0);
     }
 

@@ -53,7 +53,7 @@ pub(crate) fn quote(world: &World, target: &Target, asset: Address) -> Quote {
                 &eth::IIntexFactory::quoteSettlementCall {
                     seriesId: *id,
                     asset,
-                    amount: U256::from(*units),
+                    units: U256::from(*units),
                 },
             )
             .unwrap_or_else(|| panic!("series {id} does not quote a payment in {asset}"));
@@ -224,8 +224,8 @@ fn settle_erc20(
             addresses::INTEX_FACTORY_ADDR,
             &eth::IIntexFactory::settleIntexCall {
                 seriesId: *id,
-                intexOwner: target.owner,
-                amount: U256::from(*units),
+                owner: target.owner,
+                units: U256::from(*units),
                 asset,
                 snapshotId: snapshot,
             },
@@ -265,8 +265,8 @@ fn settle_paynote(
             addresses::INTEX_FACTORY_ADDR,
             &eth::IIntexFactory::settleIntexWithPayNoteCall {
                 seriesId: *id,
-                intexOwner: target.owner,
-                amount: U256::from(*units),
+                owner: target.owner,
+                units: U256::from(*units),
                 payNoteProof: proof.into(),
             },
         ),
@@ -320,7 +320,7 @@ fn assert_paid_event(
                 addresses::INTEX_FACTORY_ADDR,
             );
             assert_eq!(
-                (settled.seriesId, settled.intexOwner, settled.amount),
+                (settled.seriesId, settled.owner, settled.units),
                 (*id, target.owner, U256::from(*units)),
                 "Settled does not record this payment"
             );

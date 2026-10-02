@@ -213,9 +213,9 @@ pub fn dispatch(
                     runtime::settle_intex(
                         &storage,
                         SeriesId::from(c.seriesId),
-                        c.intexOwner,
+                        c.owner,
                         sender,
-                        c.amount,
+                        c.units,
                         c.asset,
                         c.snapshotId,
                     )
@@ -224,9 +224,9 @@ pub fn dispatch(
                     runtime::settle_intex_with_paynote(
                         &storage,
                         SeriesId::from(c.seriesId),
-                        c.intexOwner,
+                        c.owner,
                         sender,
-                        c.amount,
+                        c.units,
                         &c.payNoteProof,
                     )
                 }),
@@ -235,7 +235,7 @@ pub fn dispatch(
                         &storage,
                         SeriesId::from(c.seriesId),
                         c.asset,
-                        c.amount,
+                        c.units,
                     )?;
                     Ok(IIntexFactory::quoteSettlementReturn {
                         settlementCurrency: settlement_currency,
@@ -266,7 +266,7 @@ pub fn dispatch(
                         &storage,
                         SeriesId::from(c.seriesId),
                         c.owner,
-                        c.amount,
+                        c.units,
                         c.nonce,
                         auth,
                     )

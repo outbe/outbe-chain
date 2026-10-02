@@ -179,7 +179,7 @@ contract IntexNFT1155Test is Test {
 
         uint256 tooLarge = uint256(type(uint16).max) + 1;
         vm.prank(bridger);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.QuantityTooLarge.selector, tooLarge));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.UnitsTooLarge.selector, tooLarge));
         nft.issue(user, tooLarge, SERIES_ID_1);
     }
 
@@ -591,8 +591,8 @@ contract IntexNFT1155Test is Test {
         assertEq(nft.totalSupply(settled), 4);
 
         IIntexNFT1155.OwnerBalances memory bals = nft.ownerBalances(SERIES_ID_1, user);
-        assertEq(bals.issued, 6);
-        assertEq(bals.settled, 4);
+        assertEq(bals.issuedUnits, 6);
+        assertEq(bals.settledUnits, 4);
     }
 
     function test_OwnerBalances_AboveUint16NoTruncation() public {
@@ -606,8 +606,8 @@ contract IntexNFT1155Test is Test {
 
         // 80_000 would wrap to 14_464 under the old uint16 field; the widened field must not truncate.
         IIntexNFT1155.OwnerBalances memory bals = nft.ownerBalances(SERIES_ID_1, user);
-        assertEq(bals.issued, 80_000);
-        assertEq(bals.settled, 0);
+        assertEq(bals.issuedUnits, 80_000);
+        assertEq(bals.settledUnits, 0);
     }
 
     function test_Settle_OnlySettlementRole() public {
@@ -784,7 +784,7 @@ contract IntexNFT1155Test is Test {
     function test_ParkIntex_RevertsOnZeroAmount() public {
         _createSeries(SERIES_ID_1_DAY, 0);
         _grantGemRole(address(this));
-        vm.expectRevert(IIntexNFT1155.ZeroAmount.selector);
+        vm.expectRevert(IIntexNFT1155.ZeroUnits.selector);
         nft.sendToGemFactory(user, SERIES_ID_1, 0);
     }
 

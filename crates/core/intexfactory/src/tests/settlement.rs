@@ -234,7 +234,7 @@ fn settlement_quote_dispatch() {
             &IIntexFactory::quoteSettlementCall {
                 seriesId: sid(7).into(),
                 asset: payment_token(),
-                amount: U256::from(2u64),
+                units: U256::from(2u64),
             }
             .abi_encode(),
             owner(),
@@ -377,8 +377,8 @@ fn anyone_may_settle_and_the_units_stay_with_the_owner() {
         .map(|log| IIntexFactory::Settled::decode_log_data(log).unwrap())
         .collect();
     assert_eq!(settled.len(), 1);
-    assert_eq!(settled[0].intexOwner, owner(), "the payer keeps nothing");
-    assert_eq!(settled[0].amount, U256::from(2u64));
+    assert_eq!(settled[0].owner, owner(), "the payer keeps nothing");
+    assert_eq!(settled[0].units, U256::from(2u64));
 }
 
 #[test]
@@ -528,16 +528,16 @@ fn only_the_paynote_settle_pays_for_proof_verification() {
 
     let erc20 = IIntexFactory::settleIntexCall {
         seriesId: sid(7).into(),
-        intexOwner: owner(),
-        amount: U256::ONE,
+        owner: owner(),
+        units: U256::ONE,
         asset: payment_token(),
         snapshotId: U256::ZERO,
     }
     .abi_encode();
     let paynote = IIntexFactory::settleIntexWithPayNoteCall {
         seriesId: sid(7).into(),
-        intexOwner: owner(),
-        amount: U256::ONE,
+        owner: owner(),
+        units: U256::ONE,
         payNoteProof: Default::default(),
     }
     .abi_encode();

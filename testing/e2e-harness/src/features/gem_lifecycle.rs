@@ -148,7 +148,7 @@ fn park_units(world: &mut World) {
 
     let call = eth::IGemFactory::issueGemPositionCall {
         sourceIntexId: series,
-        amount: U256::from(PARKED_UNITS),
+        units: U256::from(PARKED_UNITS),
     };
     // The precompile reports a decode failure rather than the collection's own
     // revert, so simulate first: that keeps the real reason in the failure.

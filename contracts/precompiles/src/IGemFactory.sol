@@ -2,10 +2,10 @@
 pragma solidity ^0.8.30;
 
 interface IGemFactory {
-    /// @notice Send the caller's Intex series `sourceIntexId` to the Gem Factory (burning `amount`
-    ///         units via IntexNFT1155) and issue a GemPosition NFT to the caller.
+    /// @notice Send the caller's Intex series `sourceIntexId` to the Gem Factory (burning `units`
+    ///         via IntexNFT1155) and issue a GemPosition NFT to the caller.
     ///         Returns the new `positionId`.
-    function issueGemPosition(bytes14 sourceIntexId, uint256 amount) external returns (uint256 positionId);
+    function issueGemPosition(bytes14 sourceIntexId, uint256 units) external returns (uint256 positionId);
     /// @notice Issue one Merchant gem to `owner`, draining the position's
     ///         capacity. Only the position's merchant (the caller) may call.
     function issueGem(uint256 positionId, address owner, uint256 promisLoadMinor) external returns (uint256 gemId);
