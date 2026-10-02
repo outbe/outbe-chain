@@ -15,7 +15,7 @@ use outbe_primitives::daily_sweep::{Scheduled, SweepDays};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result},
+    error::{PrecompileError, Result, SweepFailure},
     math::{constants::MAX_BIN_ID, tree_math},
     storage::StorageHandle,
     time::{first_full_day, previous_date_key, timestamp_to_date_key, SECONDS_PER_DAY},
@@ -232,7 +232,7 @@ fn call_currency(
             }
             budget.spend_decision();
             // Isolate per-group: a deterministic Err rolls back the group's checkpoint and is
-            // skipped (logged); structural reads above keep `?` so infra errors still propagate.
+            // skipped (logged); a node-local one, like the structural reads above, fails the block.
             let res = ctx.storage.with_checkpoint(|| {
                 try_call_group(
                     &ctx.storage,
@@ -249,6 +249,7 @@ fn call_currency(
                     budget.spend_actions(applied);
                     called = called.saturating_add(applied);
                 }
+                Err(e) if e.sweep_failure() == SweepFailure::Propagate => return Err(e),
                 Err(e) => {
                     tracing::warn!(target: "outbe::intexfactory", iso_code, worldwide_day = %worldwide_day, error = ?e, "call scan: skipping group");
                 }

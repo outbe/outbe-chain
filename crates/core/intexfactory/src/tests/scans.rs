@@ -413,6 +413,40 @@ fn a_group_due_sooner_is_retired_even_when_a_later_one_was_called_first() {
 }
 
 #[test]
+fn a_node_local_failure_while_expiring_fails_the_sweep() {
+    let mut provider = factory_provider();
+    let now = ISSUED_AT as u64;
+    let day = WorldwideDay::new(20260101);
+    let key = IntexFactoryContract::scoped(REFERENCE_ISO, day.value());
+    let due = IntexFactoryContract::bucket_end(IntexFactoryContract::deadline_bucket(now + DAY));
+    StorageHandle::enter(&mut provider, |s| {
+        select_prod_profile(&s);
+        let member = called_series(&s, day.value());
+        IntexFactoryContract::new(s.clone())
+            .push_called_group(REFERENCE_ISO, day, now + DAY, &[member])
+            .unwrap();
+    });
+    provider.fail_after_mutation_at(0);
+    let result = StorageHandle::enter(&mut provider, |s| {
+        let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(1, due, CHAIN_ID), s);
+        crate::expired::sweep_expiry_deadlines(&ctx)
+    });
+    provider.clear_mutation_failure();
+    assert!(matches!(
+        result,
+        Err(outbe_primitives::error::PrecompileError::Storage(_))
+    ));
+    StorageHandle::enter(&mut provider, |s| {
+        let f = IntexFactoryContract::new(s);
+        assert_eq!(f.called_group_count.read(&key).unwrap(), 1);
+        assert_eq!(
+            f.first_expiry_day().unwrap(),
+            Some(IntexFactoryContract::deadline_bucket(now + DAY))
+        );
+    });
+}
+
+#[test]
 fn a_bucket_the_sweep_cannot_finish_is_retired_rather_than_left_in_front() {
     with_factory(|s| {
         let mut f = IntexFactoryContract::new(s.clone());
