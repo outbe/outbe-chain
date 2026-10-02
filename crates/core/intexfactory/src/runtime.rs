@@ -909,23 +909,23 @@ pub fn is_series_qualified(storage: &StorageHandle<'_>, series_id: SeriesId) -> 
     is_qualified(storage, &outbe_intex::api::read_series(storage, series_id)?)
 }
 
-/// What settling `amount` units of `series_id` with `payment_token` costs, which
-/// of the series' two currencies that token settles on, and the VWAP snapshot an
+/// What settling `amount` units of `series_id` with `asset` costs, which
+/// of the series' two currencies that asset settles on, and the VWAP snapshot an
 /// issuance-currency payment must name (zero on the reference rail). Priced exactly
-/// as `settleIntex` charges it. Rejects a token the series does not accept.
+/// as `settleIntex` charges it. Rejects an asset the series does not accept.
 pub fn quote_settlement(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
-    payment_token: Address,
+    asset: Address,
     amount: U256,
 ) -> Result<(u16, U256, U256)> {
     let series = outbe_intex::api::read_series(storage, series_id)?;
-    let currency = accept_payment_token(storage, payment_token, &series)?;
+    let currency = accept_payment_token(storage, asset, &series)?;
     let settlement_currency = match currency {
         PaymentCurrency::Reference => series.reference_currency,
         PaymentCurrency::Issuance => series.issuance_currency,
     };
-    let (cost, snapshot) = cost_in_token(storage, &series, payment_token, currency, amount)?;
+    let (cost, snapshot) = cost_in_token(storage, &series, asset, currency, amount)?;
     Ok((
         settlement_currency,
         cost,

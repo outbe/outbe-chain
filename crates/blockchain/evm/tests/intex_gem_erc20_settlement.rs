@@ -318,7 +318,7 @@ impl World {
                     INTEX_FACTORY_ADDRESS,
                     IIntexFactory::quoteSettlementCall {
                         seriesId: FixedBytes(SERIES),
-                        paymentToken: ASSET,
+                        asset: ASSET,
                         amount: U256::from(UNITS),
                     },
                 )

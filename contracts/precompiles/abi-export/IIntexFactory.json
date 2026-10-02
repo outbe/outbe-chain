@@ -224,7 +224,7 @@
         "internalType": "bytes14"
       },
       {
-        "name": "paymentToken",
+        "name": "asset",
         "type": "address",
         "internalType": "address"
       },

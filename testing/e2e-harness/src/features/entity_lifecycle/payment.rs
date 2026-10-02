@@ -52,7 +52,7 @@ pub(crate) fn quote(world: &World, target: &Target, asset: Address) -> Quote {
                 addresses::INTEX_FACTORY_ADDR,
                 &eth::IIntexFactory::quoteSettlementCall {
                     seriesId: *id,
-                    paymentToken: asset,
+                    asset,
                     amount: U256::from(*units),
                 },
             )

@@ -233,7 +233,7 @@ fn settlement_quote_dispatch() {
             s.clone(),
             &IIntexFactory::quoteSettlementCall {
                 seriesId: sid(7).into(),
-                paymentToken: payment_token(),
+                asset: payment_token(),
                 amount: U256::from(2u64),
             }
             .abi_encode(),

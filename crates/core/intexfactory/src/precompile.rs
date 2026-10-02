@@ -234,7 +234,7 @@ pub fn dispatch(
                     let (settlement_currency, amount, snapshot_id) = runtime::quote_settlement(
                         &storage,
                         SeriesId::from(c.seriesId),
-                        c.paymentToken,
+                        c.asset,
                         c.amount,
                     )?;
                     Ok(IIntexFactory::quoteSettlementReturn {

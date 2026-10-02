@@ -253,7 +253,7 @@ async fn quote_settlement(
                 INTEX_FACTORY_ADDRESS,
                 IIntexFactory::quoteSettlementCall {
                     seriesId: FixedBytes::from(series),
-                    paymentToken: note.asset,
+                    asset: note.asset,
                     amount: units,
                 },
             )

@@ -34,15 +34,15 @@ interface IIntexFactory {
     function settleIntexWithPayNote(bytes14 seriesId, address intexOwner, uint256 amount, bytes calldata payNoteProof)
         external;
 
-    /// @notice What settling `amount` units of `seriesId` with `paymentToken` costs,
-    ///         and which of the series' two currencies that token settles on. Priced
-    ///         exactly as `settleIntex` charges it. Reverts for a token the series does
+    /// @notice What settling `amount` units of `seriesId` with `asset` costs,
+    ///         and which of the series' two currencies that asset settles on. Priced
+    ///         exactly as `settleIntex` charges it. Reverts for an asset the series does
     ///         not accept.
     /// @return settlementCurrency ISO 4217 code the payment is denominated in.
-    /// @return amountMinor Amount to pay, in `paymentToken`'s own minor units.
+    /// @return amountMinor Amount to pay, in `asset`'s own minor units.
     /// @return snapshotId Trailing VWAP snapshot the amount converts at; zero on the
     ///         reference rail. It goes stale at the next update cutoff.
-    function quoteSettlement(bytes14 seriesId, address paymentToken, uint256 amount)
+    function quoteSettlement(bytes14 seriesId, address asset, uint256 amount)
         external
         view
         returns (uint16 settlementCurrency, uint256 amountMinor, uint256 snapshotId);
