@@ -131,6 +131,22 @@ interface IIntexFactory {
     /// @notice Read the disjoint unit counts of `seriesId`.
     function seriesUnitCounts(bytes14 seriesId) external view returns (UnitCounts memory);
 
+    /// @notice One owner's units of a series. `issuedUnits` and `settledUnits` are the
+    ///         owner's current balances, with Issued units counted only while the series
+    ///         has not expired. `exercisedUnits` and `gemFactoryUnits` are the owner's own
+    ///         history and do not move with a transfer. `ownerUnits` is
+    ///         `issuedUnits + settledUnits`, derived on every call, never stored.
+    struct OwnerBalances {
+        uint32 issuedUnits;
+        uint32 settledUnits;
+        uint32 exercisedUnits;
+        uint32 gemFactoryUnits;
+        uint32 ownerUnits;
+    }
+
+    /// @notice Read `owner`'s units of `seriesId`. Reverts if the series does not exist.
+    function ownerBalances(bytes14 seriesId, address owner) external view returns (OwnerBalances memory);
+
     /// @notice A new series was created from a cleared auction.
     event SeriesIssued(bytes14 indexed seriesId, uint32 issuedUnits, uint256 entryPriceMinor);
 

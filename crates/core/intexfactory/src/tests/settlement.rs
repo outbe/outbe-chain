@@ -855,6 +855,56 @@ fn the_unit_counts_view_reports_the_disjoint_classes() {
     });
 }
 
+/// Live balances count until the series expires; the owner's history stays with the owner.
+#[test]
+fn the_owner_balances_view_reports_live_units_and_owner_history() {
+    use crate::sol_ext::IERC1155;
+
+    let read = |s: &StorageHandle<'_>| {
+        let out = precompile::dispatch(
+            s.clone(),
+            &IIntexFactory::ownerBalancesCall {
+                seriesId: sid(7).into(),
+                owner: owner(),
+            }
+            .abi_encode(),
+            owner(),
+            U256::ZERO,
+        )
+        .unwrap();
+        IIntexFactory::ownerBalancesCall::abi_decode_returns(&out).unwrap()
+    };
+    let mut storage = factory_provider();
+    storage.stub_sub_call_at_selector(
+        crate::constants::INTEX_NFT1155_ADDRESS,
+        IERC1155::balanceOfCall::SELECTOR,
+        word(3),
+    );
+    let deadline = StorageHandle::enter(&mut storage, |s| {
+        select_prod_profile(&s);
+        runtime::issue(&s, sample(7)).unwrap();
+        outbe_intex::api::record_settled_units(&s, sid(7), 40).unwrap();
+        outbe_intex::api::record_gem_factory_units(&s, sid(7), owner(), 10).unwrap();
+        outbe_intex::api::record_exercised_units(&s, sid(7), owner(), 15).unwrap();
+        outbe_intex::api::mark_called(&s, sid(7), ISSUED_AT).unwrap();
+
+        let live = read(&s);
+        assert_eq!((live.issuedUnits, live.settledUnits), (3, 3));
+        assert_eq!((live.exercisedUnits, live.gemFactoryUnits), (15, 10));
+        assert_eq!(live.ownerUnits, 6);
+        let series = outbe_intex::api::read_series(&s, sid(7)).unwrap();
+        u64::from(series.called_at) + u64::from(series.call_notice_period_seconds)
+    });
+
+    storage.set_timestamp(U256::from(deadline + 1));
+    StorageHandle::enter(&mut storage, |s| {
+        let expired = read(&s);
+        assert_eq!((expired.issuedUnits, expired.settledUnits), (0, 3));
+        assert_eq!((expired.exercisedUnits, expired.gemFactoryUnits), (15, 10));
+        assert_eq!(expired.ownerUnits, 3);
+    });
+}
+
 #[test]
 fn merged_paynote_settles_intex_units_without_additional_funding() {
     let (_, outcome) = settle_two_units_spending_from(TWO_UNIT_COST, true);

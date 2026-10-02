@@ -571,6 +571,32 @@ pub(crate) fn series_unit_counts(
     })
 }
 
+/// One owner's units of `series_id`: its current balances, Issued ones only until the
+/// series expires, and its own exercise and Gem Factory history.
+pub(crate) fn owner_balances(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    owner: Address,
+) -> Result<crate::precompile::IIntexFactory::OwnerBalances> {
+    let series = outbe_intex::api::read_series(storage, series_id)?;
+    let now = storage.timestamp()?.to::<u64>();
+    let issued = if series.effective_state(now)? == IntexState::Expired {
+        0
+    } else {
+        nft_units_of(storage, owner, issued_token_id(series_id))?
+    };
+    let settled = nft_units_of(storage, owner, settled_token_id(series_id))?;
+    Ok(crate::precompile::IIntexFactory::OwnerBalances {
+        issuedUnits: issued,
+        settledUnits: settled,
+        exercisedUnits: outbe_intex::api::owner_exercised_units(storage, series_id, owner)?,
+        gemFactoryUnits: outbe_intex::api::owner_gem_factory_units(storage, series_id, owner)?,
+        ownerUnits: issued
+            .checked_add(settled)
+            .ok_or_else(|| PrecompileError::Revert("owner units exceed u32".into()))?,
+    })
+}
+
 /// Progress of one day's payout round; all-zero when no round is open.
 pub(crate) fn contributor_payout_round(
     storage: &StorageHandle<'_>,
@@ -882,6 +908,11 @@ fn discharge_cost(
 }
 
 // --- storage.call helpers (localnet-exercised) ---
+
+fn nft_units_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Result<u32> {
+    u32::try_from(nft_balance_of(storage, account, id)?)
+        .map_err(|_| PrecompileError::Revert("NFT balance exceeds u32".into()))
+}
 
 fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Result<U256> {
     let ret = storage.staticcall(

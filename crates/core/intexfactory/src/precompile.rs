@@ -304,6 +304,9 @@ pub fn dispatch(
                 seriesUnitCounts(c) => view(c, |c| {
                     runtime::series_unit_counts(&storage, c.seriesId.into())
                 }),
+                ownerBalances(c) => view(c, |c| {
+                    runtime::owner_balances(&storage, c.seriesId.into(), c.owner)
+                }),
             }
         },
     )
