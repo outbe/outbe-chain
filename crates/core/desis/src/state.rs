@@ -56,7 +56,7 @@ impl DesisContract<'_> {
             let key = Self::reference_price_key(worldwide_day, index);
             rows.push(ReferenceCurrencyPrice {
                 iso_code: self.reference_price_iso.read(&key)? as u16,
-                entry_price_minor: self.reference_price_entry.read(&key)?,
+                entry_price_minor: self.reference_entry_price_minor.read(&key)?,
             });
         }
         Ok(rows)
@@ -89,7 +89,7 @@ impl DesisContract<'_> {
             let key = Self::reference_price_key(worldwide_day, index as u32);
             self.reference_price_iso
                 .write(&key, u32::from(row.iso_code))?;
-            self.reference_price_entry
+            self.reference_entry_price_minor
                 .write(&key, row.entry_price_minor)?;
         }
         Ok(())

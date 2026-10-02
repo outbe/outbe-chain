@@ -282,7 +282,7 @@ pub struct DesisContract {
     /// keccak256(worldwide_day_be32 ++ index_be32) -> entry price in ISO stable-units (1e6).
     /// Floor and call derive from it, so only the anchor is stored.
     #[attribute(order = 37)]
-    pub reference_price_entry: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub reference_entry_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
 
     // --- PROMIS load ladder ---
     /// Exponent `k` of the current load, `promis_load_minor = 10^k`. Zero until the
