@@ -495,6 +495,17 @@ class SeedStageTests(unittest.TestCase):
             slot20 = "0x" + f"{20:064x}"  # validator_count
             self.assertEqual(int(validator_set["storage"][slot20], 16), 4)
 
+    def test_a_nod_profile_reaches_the_nod_selector_slot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = minimal_config(tmp) | {"nod_profile": {"profile": "dev"}}
+            seeded = self.seed_once(pathlib.Path(tmp), config)
+
+            nod = seeded["alloc"][SEED_GENESIS.NOD_ADDRESS]
+            slot = "0x" + f"{SEED_GENESIS.NOD_PROFILE_SLOT:064x}"
+            self.assertEqual(
+                int(nod["storage"][slot], 16), SEED_GENESIS.PROFILE_SELECTORS["dev"]
+            )
+
     def test_production_seed_stage_preserves_oracle_orientation_and_wire_scales(self):
         token = "0x1111111111111111111111111111111111111111"
         pairs = [
