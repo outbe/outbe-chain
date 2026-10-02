@@ -304,12 +304,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function settleIntex(bytes14 seriesId, address from, address to, uint256 amount)
-        external
-        onlyRole(SETTLEMENT_ROLE)
-    {
-        if (from == address(0)) revert ZeroAddress("from", from);
-        if (to == address(0)) revert ZeroAddress("to", to);
+    function settleIntex(bytes14 seriesId, address owner, uint256 amount) external onlyRole(SETTLEMENT_ROLE) {
+        if (owner == address(0)) revert ZeroAddress("owner", owner);
         if (amount == 0) revert ZeroAmount();
 
         IntexNFT1155Storage storage $ = _s();
@@ -331,14 +327,14 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
         // CEI ok: update both Issued and Settled totalSupply mirrors before the external _mint
         // callback fires - keeps (totalSupply == sum balanceOf) consistent mid-callback.
-        // Burn `amount` Issued from `from` and mint the same `amount` of Settled to `to`.
+        // Burn `amount` of the owner's Issued and mint the same `amount` of Settled back to the owner.
         // forge-lint: disable-next-line(unsafe-typecast) -- amount <= issued balance <= totalSupply (uint32); _burn reverts otherwise
         data.totalSupply -= uint32(amount);
-        _burn(from, iTok, amount);
+        _burn(owner, iTok, amount);
 
         // forge-lint: disable-next-line(unsafe-typecast) -- amount mirrors the issued amount burned above
         $.settledSupply[sTok] += uint32(amount);
-        _mint(to, sTok, amount, "");
+        _mint(owner, sTok, amount, "");
     }
 
     /// @inheritdoc IIntexNFT1155

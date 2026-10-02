@@ -242,7 +242,7 @@ contract IntexNFT1155MetadataTest is Test {
 
     function test_uri_SettledToken_SuffixAndNoLifecycle() public {
         vm.prank(bridger);
-        token.settleIntex(SERIES_ID, user, user2, 3);
+        token.settleIntex(SERIES_ID, user, 3);
 
         bytes memory json = _json(sTok);
         _assertContains(json, string.concat("\"name\":\"Intex ", string(abi.encodePacked(SERIES_ID)), " - Settled\","));

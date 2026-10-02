@@ -116,7 +116,7 @@ contract IntexNFT1155SupplyTest is Test {
             nft.markCalled(SERIES_ID, uint32(block.timestamp));
         }
         vm.prank(settler);
-        nft.settleIntex(SERIES_ID, ownerA, ownerA, settleAmount);
+        nft.settleIntex(SERIES_ID, ownerA, settleAmount);
     }
 
     function test_BurnSettled_OnIssuedState_Succeeds() public {
@@ -144,7 +144,7 @@ contract IntexNFT1155SupplyTest is Test {
         // amount == 0 is rejected before any series-state work.
         vm.prank(settler);
         vm.expectRevert(IIntexNFT1155.ZeroAmount.selector);
-        nft.settleIntex(SERIES_ID, ownerA, ownerA, 0);
+        nft.settleIntex(SERIES_ID, ownerA, 0);
     }
 
     function test_BurnSettled_ZeroAmount_Reverts() public {
@@ -167,7 +167,7 @@ contract IntexNFT1155SupplyTest is Test {
         vm.stopPrank();
 
         vm.prank(settler);
-        nft.settleIntex(SERIES_ID, ownerA, ownerA, 4);
+        nft.settleIntex(SERIES_ID, ownerA, 4);
         assertEq(nft.readData(SERIES_ID).totalSupply, 6, "settle burns Issued, freeing cap room");
 
         // The 4 units freed by settle can be re-minted.
@@ -228,7 +228,7 @@ contract IntexNFT1155SupplyTest is Test {
         // settle burns Issued from ownerA - live totalSupply decreases, freeing cap room.
         vm.stopPrank();
         vm.prank(settler);
-        nft.settleIntex(SERIES_ID, ownerA, ownerA, 2);
+        nft.settleIntex(SERIES_ID, ownerA, 2);
         assertEq(nft.totalSupply(TOKEN_ID), 5, "settle burns Issued (totalSupply 7 - 2)");
         assertEq(nft.readData(SERIES_ID).totalSupply, 5, "SeriesData mirror tracks live Issued supply");
     }

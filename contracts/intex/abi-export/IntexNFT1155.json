@@ -905,12 +905,7 @@
           "internalType": "bytes14"
         },
         {
-          "name": "from",
-          "type": "address",
-          "internalType": "address"
-        },
-        {
-          "name": "to",
+          "name": "owner",
           "type": "address",
           "internalType": "address"
         },

@@ -765,8 +765,7 @@ fn settle<Q>(
             U256::ZERO,
             IIntexNFT1155::settleIntexCall {
                 seriesId: series_id.into(),
-                from: intex_owner,
-                to: intex_owner,
+                owner: intex_owner,
                 amount,
             }
             .abi_encode()

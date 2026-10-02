@@ -624,7 +624,7 @@ contract IntexNFT1155Test is Test {
 
         // Grant SETTLEMENT_ROLE to this test for direct settle invocation.
         _grantSettlementRole(address(this));
-        nft.settleIntex(SERIES_ID_1, user, user, 4);
+        nft.settleIntex(SERIES_ID_1, user, 4);
 
         (uint256 issued, uint256 settled) = nft.tokenIds(SERIES_ID_1);
         assertEq(nft.balanceOf(user, issued), 6, "Issued drained by settled amount");
@@ -657,7 +657,7 @@ contract IntexNFT1155Test is Test {
         // Bridger has RELAYER_ROLE only - settle must reject.
         vm.expectRevert();
         vm.prank(bridger);
-        nft.settleIntex(SERIES_ID_1, user, user, 1);
+        nft.settleIntex(SERIES_ID_1, user, 1);
     }
 
     function test_Settled_IsSoulbound() public {
@@ -667,7 +667,7 @@ contract IntexNFT1155Test is Test {
         nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
         vm.stopPrank();
         _grantSettlementRole(address(this));
-        nft.settleIntex(SERIES_ID_1, user, user, 5);
+        nft.settleIntex(SERIES_ID_1, user, 5);
 
         uint256 sTok = nft.settledTokenId(SERIES_ID_1);
         // Settled cannot be transferred to another owner.
@@ -683,7 +683,7 @@ contract IntexNFT1155Test is Test {
         nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
         vm.stopPrank();
         _grantSettlementRole(address(this));
-        nft.settleIntex(SERIES_ID_1, user, user, 5);
+        nft.settleIntex(SERIES_ID_1, user, 5);
 
         // Without PROMIS_ROLE, burnSettled reverts.
         vm.expectRevert();
@@ -714,7 +714,7 @@ contract IntexNFT1155Test is Test {
         // One second past the call window: no new Settled tokens may be minted.
         vm.warp(uint256(deadline) + 1);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.SettleAfterDeadline.selector, TOKEN_ID_1, deadline));
-        nft.settleIntex(SERIES_ID_1, user, user, 4);
+        nft.settleIntex(SERIES_ID_1, user, 4);
     }
 
     function test_Settle_AllowedAtDeadlineBoundary() public {
@@ -730,7 +730,7 @@ contract IntexNFT1155Test is Test {
         _grantSettlementRole(address(this));
         // Exactly at the deadline is still inside the window (the gate is strict `>`).
         vm.warp(deadline);
-        nft.settleIntex(SERIES_ID_1, user, user, 4);
+        nft.settleIntex(SERIES_ID_1, user, 4);
 
         (uint256 issued, uint256 settled) = nft.tokenIds(SERIES_ID_1);
         assertEq(nft.balanceOf(user, issued), 6);
@@ -747,7 +747,7 @@ contract IntexNFT1155Test is Test {
         _grantSettlementRole(address(this));
         // An uncalled series has no call deadline (`calledAt == 0`), so settle is time-independent.
         vm.warp(block.timestamp + 3650 days);
-        nft.settleIntex(SERIES_ID_1, user, user, 4);
+        nft.settleIntex(SERIES_ID_1, user, 4);
 
         (, uint256 settled) = nft.tokenIds(SERIES_ID_1);
         assertEq(nft.balanceOf(user, settled), 4);
@@ -765,7 +765,7 @@ contract IntexNFT1155Test is Test {
         _grantPromisRole(address(this));
         // Redeem after the window: the exit stays open so a settled owner is never trapped.
         uint32 deadline = uint32(block.timestamp) + callPeriod;
-        nft.settleIntex(SERIES_ID_1, user, user, 5);
+        nft.settleIntex(SERIES_ID_1, user, 5);
 
         vm.warp(uint256(deadline) + 1);
         nft.burnSettled(user, SERIES_ID_1, 5);
@@ -856,7 +856,7 @@ contract IntexNFT1155Test is Test {
         nft.issue(user, 10, SERIES_ID_1);
         vm.stopPrank();
         _grantSettlementRole(address(this));
-        nft.settleIntex(SERIES_ID_1, user, user, 4);
+        nft.settleIntex(SERIES_ID_1, user, 4);
         _grantGemRole(address(this));
 
         nft.sendToGemFactory(user, SERIES_ID_1, 6);
@@ -890,7 +890,7 @@ contract IntexNFT1155Test is Test {
         nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
         vm.stopPrank();
         _grantSettlementRole(address(this));
-        nft.settleIntex(SERIES_ID_1, user, user, 5);
+        nft.settleIntex(SERIES_ID_1, user, 5);
 
         uint256 sTok = nft.settledTokenId(SERIES_ID_1);
         // crosschainBurn is gated by RELAYER_ROLE; bridger has it. Even so, Settled ids are rejected.
@@ -983,17 +983,17 @@ contract IntexNFT1155Test is Test {
 
     function test_Settle_TotalSupplyConsistentMidCallback() public {
         _createSeries(SERIES_ID_1_DAY, 0);
+        MidCallbackSnapshotReceiver receiver = new MidCallbackSnapshotReceiver(nft);
         vm.startPrank(bridger);
-        nft.issue(user, 10, SERIES_ID_1);
+        nft.issue(address(receiver), 10, SERIES_ID_1);
         nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
         vm.stopPrank();
         _grantSettlementRole(address(this));
 
-        MidCallbackSnapshotReceiver receiver = new MidCallbackSnapshotReceiver(nft);
         uint256 sTok = nft.settledTokenId(SERIES_ID_1);
         uint256 iTokSupplyBefore = nft.totalSupply(TOKEN_ID_1);
 
-        nft.settleIntex(SERIES_ID_1, user, address(receiver), 4);
+        nft.settleIntex(SERIES_ID_1, address(receiver), 4);
 
         // Settled mint callback: settled totalSupply must already reflect the new mint.
         assertTrue(receiver.observed(), "callback did not fire");

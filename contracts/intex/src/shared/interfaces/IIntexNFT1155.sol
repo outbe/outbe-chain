@@ -213,14 +213,13 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param calledAt Unix time the origin marked the series Called; the deadline derives from it.
     function markCalled(bytes14 seriesId, uint32 calledAt) external;
 
-    /// @notice Burn `amount` Issued Intex from `from` and mint the same `amount` of Settled Intex to `to`.
+    /// @notice Burn `amount` of `owner`'s Issued Intex and mint the same `amount` of Settled Intex to `owner`.
     /// @dev Settlement-contract entry point under SETTLEMENT_ROLE. The caller checks qualification; a Called
     ///      series settles only until its deadline.
     /// @param seriesId Series identifier.
-    /// @param from Owner whose Issued tokens are burned.
-    /// @param to Recipient of the newly minted Settled tokens.
+    /// @param owner Owner whose Issued tokens are burned and who receives the Settled tokens.
     /// @param amount Amount of Issued burned and Settled minted.
-    function settleIntex(bytes14 seriesId, address from, address to, uint256 amount) external;
+    function settleIntex(bytes14 seriesId, address owner, uint256 amount) external;
 
     /// @notice Burn `amount` Settled Intex from `owner`.
     /// @dev Promis-facade entry point under PROMIS_ROLE.
