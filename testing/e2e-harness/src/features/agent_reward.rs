@@ -809,6 +809,9 @@ mod claim_tests {
             callPriceMinor: U256::from(1_100_001),
             calledAt: 0,
             callNoticePeriod: 0,
+            callWindow: 0,
+            callThreshold: 0,
+            settlementDeadline: 0,
         }
     }
 

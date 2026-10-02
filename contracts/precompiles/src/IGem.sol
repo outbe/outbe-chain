@@ -16,6 +16,11 @@ interface IGem {
         uint256 callPriceMinor;
         uint64 calledAt;
         uint32 callNoticePeriod;
+        /// Call terms sealed at issuance, in seconds.
+        uint32 callWindow;
+        uint32 callThreshold;
+        /// Inclusive deadline: 0 when uncalled.
+        uint64 settlementDeadline;
     }
 
     // ERC-165

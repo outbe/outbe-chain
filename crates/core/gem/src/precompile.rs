@@ -160,5 +160,13 @@ fn to_abi_data(item: &GemData) -> IGem::GemData {
         callPriceMinor: item.call_price_minor,
         calledAt: item.called_at,
         callNoticePeriod: item.call_notice_period_seconds,
+        callWindow: item.call_window_seconds,
+        callThreshold: item.call_threshold_seconds,
+        settlementDeadline: if item.called_at == 0 {
+            0
+        } else {
+            item.called_at
+                .saturating_add(u64::from(item.call_notice_period_seconds))
+        },
     }
 }
