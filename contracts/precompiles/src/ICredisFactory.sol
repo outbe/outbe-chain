@@ -38,7 +38,8 @@ interface ICredisFactory {
     ///        The daily breach scan reads that same currency's series. The anchor
     ///        is independent of spot and the pledge entry price, even when the
     ///        reference and issuance currencies match. It does not denominate the position.
-    /// @return positionId Derived from `pledgeNote` and `smartAccount`.
+    /// @return positionId `keccak256(abi.encodePacked(msg.sender, smartAccount, asset, uint64(block.number)))`:
+    ///         the issuing CCA, the smart account, the pledge's stablecoin and the block.
     /// @return amountStables Stablecoin amount disbursed, as quoted at pledge time.
     function issueCredis(
         address smartAccount,
