@@ -10,6 +10,8 @@ pub(crate) fn token_uri(position: &Position, now: u64) -> Result<String> {
     let lifecycle = position.lifecycle_state()?;
     let state = match lifecycle {
         CredisState::Open => nft_card::OPEN,
+        // The void sweep may not have reached it yet; the card shows the lapse already.
+        CredisState::Called if now > settlement_deadline(position) => nft_card::VOID,
         CredisState::Called => nft_card::CALLED,
         CredisState::Settled => nft_card::SETTLED,
         CredisState::Void => nft_card::VOID,
