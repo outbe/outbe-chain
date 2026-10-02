@@ -46,8 +46,8 @@ fn a_minimum_the_payment_asset_cannot_express_is_refused() {
 }
 
 #[test]
-fn a_subunit_cost_charges_one_minor_unit_per_selected_unit() {
-    for (amount, expected) in [(1u64, 1u64), (3, 3), (1_000, 1_000)] {
+fn a_subunit_purchase_charges_one_minor_unit_once() {
+    for (amount, expected) in [(1u64, 1u64), (3, 1), (1_000, 1), (2_500_000, 2)] {
         assert_eq!(
             runtime::settlement_units(U256::ONE, U256::from(amount), None, 6).unwrap(),
             U256::from(expected)
