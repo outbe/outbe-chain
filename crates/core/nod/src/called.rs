@@ -464,9 +464,9 @@ const fn unpack_cursor(packed: u64) -> (u32, u32) {
 /// Days at or below the call price, and days with no published price, both
 /// simply fail to count, so the window absorbs up to `window - threshold` of
 /// either. The walk stops at the first UTC day preceding `first_full_day` of
-/// the bucket's sealed `issued_at`, so a delayed materialization cannot inherit
-/// a breach run from before the right existed, and a partial issuance UTC day
-/// does not count. The window is newest-first, so everything beyond that point
+/// the bucket's sealed `issued_at`, the logical issuance time however late the
+/// right materializes, so days before issuance and the partial issuance UTC day
+/// do not count. The window is newest-first, so everything beyond that point
 /// is older still.
 fn breached_enough(window: &[(u32, Option<U256>)], terms: &CallTerms, start_day: u32) -> bool {
     let window_days = terms.call_window / SECS_PER_DAY;
