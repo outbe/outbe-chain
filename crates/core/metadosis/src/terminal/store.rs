@@ -32,9 +32,13 @@ impl MetadosisContract<'_> {
             .worldwide_day_terminal_receipts
             .get_bytes(&receipt.common().worldwide_day);
         if !bytes.is_empty()? {
-            return Err(storage_corruption_message(
-                "Metadosis WWD terminal receipt is immutable",
-            ));
+            let message = match receipt {
+                WwdTerminalReceipt::CapacityForfeiture { .. } => {
+                    "Metadosis capacity-forfeiture receipt is immutable"
+                }
+                _ => "Metadosis WWD terminal receipt is immutable",
+            };
+            return Err(storage_corruption_message(message));
         }
         bytes.write(&codec::encode(&receipt))
     }

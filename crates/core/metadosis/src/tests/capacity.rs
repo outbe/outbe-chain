@@ -678,7 +678,7 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
     run_advance(&mut provider, &scope, 20, scheduled).unwrap();
 
     StorageHandle::enter(&mut provider, |storage| {
-        let metadosis = MetadosisContract::new(storage.clone());
+        let mut metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(victim).unwrap(), status::FAILED);
         assert!(!metadosis.active_wwd.read_all().unwrap().contains(&victim));
         assert!(metadosis.closed_wwd.read_all().unwrap().contains(&victim));
@@ -728,6 +728,18 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
         assert_eq!(receipt.source_generation, 0);
         assert_eq!(receipt.retired_generation, 1);
         assert_eq!(receipt.retirement, RetirementOutcome::NotPresent);
+        let error = metadosis
+            .write_capacity_forfeiture_receipt(receipt)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            PrecompileError::Fatal(message)
+                if message == "Metadosis capacity-forfeiture receipt is immutable"
+        ));
+        assert_eq!(
+            metadosis.read_capacity_forfeiture_receipt(victim).unwrap(),
+            Some(receipt)
+        );
 
         let call = IMetadosis::getCapacityForfeitureReceiptCall {
             wwd: victim.value(),
