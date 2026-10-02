@@ -15,10 +15,6 @@ const SCHEDULER_PHASE_READY: u8 = 1;
 const SCHEDULER_PHASE_PENDING: u8 = 2;
 pub(super) const SCHEDULER_ENCODED_LEN: usize =
     4 + 2 + 1 + 4 + 8 + 8 + 32 + 8 + 8 + 1 + 8 + 32 + 32;
-const LIVE_INDEX_MAGIC: [u8; 4] = *b"OMLI";
-const LIVE_INDEX_VERSION: u16 = 1;
-pub(super) const LIVE_INDEX_HEADER_LEN: usize = 4 + 2 + 2;
-
 pub(super) struct FixedReader<'a> {
     encoded: &'a [u8],
     offset: usize,
@@ -150,131 +146,6 @@ pub(super) fn encode_scheduler_snapshot(snapshot: &JobFsmSnapshot) -> Result<Vec
     Ok(encoded)
 }
 
-pub(super) fn live_snapshot_key(snapshot: &JobFsmSnapshot) -> (u32, B256) {
-    (
-        snapshot.worldwide_day.value(),
-        snapshot
-            .live
-            .as_ref()
-            .map_or(B256::ZERO, |live| live.intent_id),
-    )
-}
-
-pub(super) fn encode_live_scheduler_index(index: &[JobFsmSnapshot]) -> Result<Vec<u8>> {
-    validate_live_scheduler_index(index)?;
-    let count = u16::try_from(index.len())
-        .map_err(|_| storage_corruption_message("OCOMP live index count exceeds u16"))?;
-    let capacity = SCHEDULER_ENCODED_LEN
-        .checked_mul(index.len())
-        .and_then(|bytes| LIVE_INDEX_HEADER_LEN.checked_add(bytes))
-        .ok_or_else(|| storage_corruption_message("OCOMP live index encoded length overflow"))?;
-    let mut encoded = Vec::new();
-    encoded
-        .try_reserve_exact(capacity)
-        .map_err(|_| storage_corruption_message("allocate bounded OCOMP live index"))?;
-    encoded.extend_from_slice(&LIVE_INDEX_MAGIC);
-    encoded.extend_from_slice(&LIVE_INDEX_VERSION.to_be_bytes());
-    encoded.extend_from_slice(&count.to_be_bytes());
-    for snapshot in index {
-        encoded.extend_from_slice(&encode_scheduler_snapshot(snapshot)?);
-    }
-    if encoded.len() != capacity {
-        return Err(storage_corruption_message(
-            "OCOMP live index encoded length mismatch",
-        ));
-    }
-    Ok(encoded)
-}
-
-pub(super) fn decode_live_scheduler_index(encoded: &[u8]) -> Result<Vec<JobFsmSnapshot>> {
-    if encoded.is_empty() {
-        return Ok(Vec::new());
-    }
-    if encoded.len() < LIVE_INDEX_HEADER_LEN {
-        return Err(storage_corruption_message(
-            "OCOMP live index is shorter than its header",
-        ));
-    }
-    let mut reader = FixedReader::new(encoded);
-    if reader.take::<4>()? != LIVE_INDEX_MAGIC
-        || u16::from_be_bytes(reader.take::<2>()?) != LIVE_INDEX_VERSION
-    {
-        return Err(storage_corruption_message(
-            "OCOMP live index magic/version mismatch",
-        ));
-    }
-    let count = usize::from(u16::from_be_bytes(reader.take::<2>()?));
-    if count == 0 {
-        return Err(storage_corruption_message(
-            "OCOMP live index must use empty bytes for zero jobs",
-        ));
-    }
-    let expected_len = SCHEDULER_ENCODED_LEN
-        .checked_mul(count)
-        .and_then(|bytes| LIVE_INDEX_HEADER_LEN.checked_add(bytes))
-        .ok_or_else(|| storage_corruption_message("OCOMP live index declared length overflow"))?;
-    if encoded.len() != expected_len {
-        return Err(storage_corruption_message(
-            "OCOMP live index has non-canonical length",
-        ));
-    }
-    let mut index = Vec::new();
-    index
-        .try_reserve_exact(count)
-        .map_err(|_| storage_corruption_message("allocate bounded OCOMP live index"))?;
-    for _ in 0..count {
-        index.push(decode_scheduler(&reader.take::<SCHEDULER_ENCODED_LEN>()?)?);
-    }
-    reader.finish()?;
-    validate_live_scheduler_index(&index)?;
-    Ok(index)
-}
-
-fn validate_live_scheduler_index(index: &[JobFsmSnapshot]) -> Result<()> {
-    for snapshot in index {
-        if snapshot.ready.is_some()
-            || !snapshot.terminal.is_empty()
-            || snapshot
-                .live
-                .as_ref()
-                .is_none_or(|live| live.intent_id.is_zero())
-        {
-            return Err(storage_corruption_message(
-                "OCOMP live index contains a non-live state",
-            ));
-        }
-    }
-    if index
-        .windows(2)
-        .any(|pair| live_snapshot_key(&pair[0]) >= live_snapshot_key(&pair[1]))
-    {
-        return Err(storage_corruption_message(
-            "OCOMP live index is not in strict canonical order",
-        ));
-    }
-    for (position, snapshot) in index.iter().enumerate() {
-        let intent_id = snapshot
-            .live
-            .as_ref()
-            .ok_or_else(|| {
-                storage_corruption_message("OCOMP live index contains a non-live state")
-            })?
-            .intent_id;
-        if index[..position].iter().any(|existing| {
-            existing.worldwide_day == snapshot.worldwide_day
-                || existing
-                    .live
-                    .as_ref()
-                    .is_some_and(|live| live.intent_id == intent_id)
-        }) {
-            return Err(storage_corruption_message(
-                "OCOMP live index contains a duplicate job",
-            ));
-        }
-    }
-    Ok(())
-}
-
 fn encode_retained_effect(encoded: &mut Vec<u8>, effect: Option<RetainedRequestEffectSnapshot>) {
     match effect {
         Some(effect) => {
@@ -316,9 +187,43 @@ pub(super) fn decode_scheduler(encoded: &[u8]) -> Result<JobFsmSnapshot> {
     let retained_effect = decode_retained_effect(&mut reader)?;
     reader.finish()?;
 
+    decode_scheduler_phase(SchedulerFields {
+        phase,
+        worldwide_day,
+        pending_nonce,
+        next_check_height,
+        intent_id,
+        requested_height,
+        deadline_height,
+        retained_effect,
+    })
+}
+
+struct SchedulerFields {
+    phase: u8,
+    worldwide_day: WorldwideDay,
+    pending_nonce: u64,
+    next_check_height: u64,
+    intent_id: B256,
+    requested_height: u64,
+    deadline_height: u64,
+    retained_effect: Option<RetainedRequestEffectSnapshot>,
+}
+
+fn decode_scheduler_phase(fields: SchedulerFields) -> Result<JobFsmSnapshot> {
+    let SchedulerFields {
+        phase,
+        worldwide_day,
+        pending_nonce,
+        next_check_height,
+        intent_id,
+        requested_height,
+        deadline_height,
+        retained_effect,
+    } = fields;
     let (ready, live) = match phase {
         SCHEDULER_PHASE_READY
-            if intent_id.is_zero() && requested_height == 0 && deadline_height == 0 =>
+            if (intent_id, requested_height, deadline_height) == (B256::ZERO, 0, 0) =>
         {
             (
                 Some(ReadyAttemptSnapshot {

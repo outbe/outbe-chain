@@ -52,12 +52,14 @@ pub(crate) fn require_current_ocomp_attempt_snapshot(
     intent: &outbe_ocomp_protocol::intent::JobIntentV1,
 ) -> Result<()> {
     let expected = current_ocomp_attempt_snapshot(storage)?;
-    if intent.result_validator_set_epoch != expected.validator_set_epoch
-        || intent.result_committee_set_hash != expected.committee_set_hash
-        || intent.result_ocomp_binding_hash != expected.ocomp_binding_hash
-        || intent.result_member_count != expected.member_count
-        || intent.result_quorum_threshold != expected.quorum_threshold
-    {
+    let actual = OcompAttemptSnapshotBinding {
+        validator_set_epoch: intent.result_validator_set_epoch,
+        committee_set_hash: intent.result_committee_set_hash,
+        ocomp_binding_hash: intent.result_ocomp_binding_hash,
+        member_count: intent.result_member_count,
+        quorum_threshold: intent.result_quorum_threshold,
+    };
+    if actual != expected {
         return Err(storage_corruption_message(
             "OCOMP intent membership differs from the current ValidatorSet snapshot",
         ));

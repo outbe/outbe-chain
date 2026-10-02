@@ -32,7 +32,12 @@ pub(crate) fn seed_retention_journal_for_test(
     if records.is_empty()
         || records.len() != record_count
         || records.len() > JOURNAL_RECORD_COUNT_MAX
-        || !records.contains_key(&last_updated)
+    {
+        return Err(RetentionError::MalformedJournal(
+            "invalid canonical test seed registry",
+        ));
+    }
+    if !records.contains_key(&last_updated)
         || records.values().map(|record| record.generation).max() != Some(generation)
     {
         return Err(RetentionError::MalformedJournal(
@@ -120,9 +125,14 @@ impl OcompRetentionCoordinator {
         retry_schedule: &mut RetainedGcRetrySchedule,
     ) -> Result<crate::ocomp::retention::RetainedGcCycleTestReport, RetentionError> {
         match self
-            .run_scheduled_gc_cycle(finalized_height, eligibility_now, retry_schedule, || {
-                retry_now
-            })
+            .run_scheduled_gc_cycle(
+                finalized_height,
+                retry_schedule,
+                gc::RetainedGcClock {
+                    eligibility_now,
+                    current_time: || retry_now,
+                },
+            )
             .map_err(|failure| failure.error)?
         {
             RetainedGcScheduledCycle::DeferredGlobal(_) => Ok(RetainedGcCycleTestReport {

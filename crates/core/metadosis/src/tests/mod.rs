@@ -12,7 +12,7 @@ use outbe_primitives::storage::dsl::StorageRecord;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{MetadosisMutationPurposeTag, StorageHandle};
 use outbe_promislimit::PromisLimitContract;
-use outbe_tribute::{TributeContract, TributeData, TributeRepositoryReader};
+use outbe_tribute::{TributeContract, TributeRepositoryReader};
 use std::sync::Arc;
 
 use crate::constants::*;
@@ -212,6 +212,12 @@ mod ocomp_semantic_migrations;
 mod ocomp_snapshot_views;
 mod ocomp_storage;
 mod pre_admission;
+mod precompile;
 mod reducer;
 mod state;
 mod wwd_vwap_overflow;
+
+mod tribute_fixture;
+
+#[cfg(feature = "test-utils")]
+mod api;

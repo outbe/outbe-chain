@@ -145,7 +145,7 @@ fn oversized_closed_count_rejects_before_payload() {
 #[test]
 fn oversized_scheduler_rejects_before_payload() {
     let slots = NativeSlots::discover();
-    let length = 8 + 148 * usize::from(u16::MAX) + 1;
+    let length = 8 + 36 * usize::from(u16::MAX) + 1;
     assert_rejects_before_payload(&slots, slots.scheduler, U256::from(length * 2 + 1));
 }
 

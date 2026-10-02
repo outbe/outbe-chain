@@ -4,6 +4,26 @@
 //! checkpoints for finalized network-key provisioning and binding transitions.
 //! A separate legacy checkpoint supports copying an existing MRSIGNER seal.
 
+use super::journal_storage::{sync_directory, JournalPaths};
+
+mod storage;
+use storage::{
+    read_private_bounded_file, read_snapshot, validate_directory, validate_private_file,
+};
+
+mod context;
+mod identity;
+mod journal_validation;
+mod preparation;
+mod relay;
+use identity::{
+    ensure_transition_source_or_target_v1, transition_target_matches_v1,
+    validate_candidate_identity_v1,
+};
+use journal_validation::{security_material, validate_checkpoint_transition};
+use relay::{finalized_transition_matches_v1, prepare_upgrade_relay_v1};
+mod submission;
+
 use std::{
     fs::{self, DirBuilder, File, OpenOptions},
     io::{Read as _, Write as _},
@@ -43,9 +63,6 @@ use super::{
 };
 
 const DIRECTORY: &str = "tee-upgrade-v1";
-const JOURNAL: &str = "journal.json";
-const NEXT: &str = "journal.next";
-const LOCK: &str = "state.lock";
 const SEALED_ROOT: &str = "sealed_root.bin";
 const DIRECTORY_MODE: u32 = 0o700;
 const FILE_MODE: u32 = 0o600;
@@ -62,23 +79,6 @@ pub struct UpgradeContextV1 {
     pub activation_height: u64,
     pub active_tee_dir: PathBuf,
     pub candidate_tee_dir: PathBuf,
-}
-
-impl UpgradeContextV1 {
-    fn validate(&self) -> Result<()> {
-        if self.predecessor_manifest_hash.is_zero()
-            || self.candidate_manifest_hash.is_zero()
-            || self.predecessor_manifest_hash == self.candidate_manifest_hash
-            || self.successor_policy_hash.is_zero()
-            || self.activation_height == 0
-            || self.active_tee_dir.as_os_str().is_empty()
-            || self.candidate_tee_dir.as_os_str().is_empty()
-            || self.active_tee_dir == self.candidate_tee_dir
-        {
-            eyre::bail!("upgrade context is incomplete or self-referential");
-        }
-        Ok(())
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,36 +121,6 @@ pub enum UpgradeSubmissionOutcomeV1 {
         transaction_hash: B256,
         finalized_height: u64,
     },
-}
-
-impl PreparedUpgradeSubmissionV1 {
-    fn validate(&self) -> Result<()> {
-        if self.intent_hash.is_zero()
-            || self.evidence_hash.is_zero()
-            || self.calldata_hash.is_zero()
-            || self.relay.is_zero()
-            || self.relay_variants.is_empty()
-            || self.relay_variants.len() > MAX_RELAY_VARIANTS
-        {
-            eyre::bail!("upgrade submission is incomplete or exceeds its variant cap");
-        }
-        let first = &self.relay_variants[0];
-        if first.relay != self.relay || first.calldata_hash != self.calldata_hash {
-            eyre::bail!("upgrade submission relay binding mismatch");
-        }
-        for variant in &self.relay_variants {
-            if variant.relay != self.relay
-                || variant.chain_id != first.chain_id
-                || variant.account_nonce != first.account_nonce
-                || variant.gas_limit != first.gas_limit
-                || variant.calldata_hash != self.calldata_hash
-                || keccak256(&variant.raw_transaction) != variant.transaction_hash
-            {
-                eyre::bail!("upgrade submission contains a competing relay variant");
-            }
-        }
-        Ok(())
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -238,104 +208,6 @@ impl UpgradeJournalStateV1 {
             | Self::TerminalMissedCutoff { context, .. } => context,
         }
     }
-
-    fn validate(&self) -> Result<()> {
-        self.context().validate()?;
-        match self {
-            Self::CandidatePrepared { .. } => Ok(()),
-            Self::KeyProvisioned {
-                sealed_root_hash, ..
-            } => validate_root(*sealed_root_hash),
-            Self::CandidateKeyReady {
-                sealed_root_hash,
-                resident_offer_public,
-                proof_hash,
-                ..
-            } => validate_key_ready(*sealed_root_hash, *resident_offer_public, *proof_hash),
-            Self::SubmissionPrepared {
-                sealed_root_hash,
-                resident_offer_public,
-                proof_hash,
-                submission,
-                ..
-            } => {
-                validate_key_ready(*sealed_root_hash, *resident_offer_public, *proof_hash)?;
-                submission.validate()
-            }
-            Self::Submitted {
-                sealed_root_hash,
-                resident_offer_public,
-                proof_hash,
-                submission,
-                transaction_hashes,
-                ..
-            } => {
-                validate_key_ready(*sealed_root_hash, *resident_offer_public, *proof_hash)?;
-                submission.validate()?;
-                if transaction_hashes.is_empty()
-                    || transaction_hashes.len() > submission.relay_variants.len()
-                    || transaction_hashes.iter().enumerate().any(|(index, hash)| {
-                        submission.relay_variants[index].transaction_hash != *hash
-                    })
-                {
-                    eyre::bail!("submitted upgrade transaction list is non-canonical");
-                }
-                Ok(())
-            }
-            Self::Finalized {
-                sealed_root_hash,
-                resident_offer_public,
-                proof_hash,
-                submission,
-                finalized_hash,
-                ..
-            }
-            | Self::Promoted {
-                sealed_root_hash,
-                resident_offer_public,
-                proof_hash,
-                submission,
-                finalized_hash,
-                ..
-            } => {
-                validate_key_ready(*sealed_root_hash, *resident_offer_public, *proof_hash)?;
-                submission.validate()?;
-                if finalized_hash.is_zero() {
-                    eyre::bail!("finalized upgrade checkpoint has a zero block hash");
-                }
-                Ok(())
-            }
-            Self::TerminalMissedCutoff {
-                finalized_height,
-                activation_height,
-                ..
-            } => {
-                if *activation_height == 0 || finalized_height < activation_height {
-                    eyre::bail!("terminal cutoff checkpoint precedes policy activation");
-                }
-                Ok(())
-            }
-        }
-    }
-}
-
-fn validate_root(sealed_root_hash: B256) -> Result<()> {
-    if sealed_root_hash.is_zero() {
-        eyre::bail!("upgrade checkpoint has a zero sealed-root hash");
-    }
-    Ok(())
-}
-
-fn validate_key_ready(
-    sealed_root_hash: B256,
-    resident_offer_public: B256,
-    proof_hash: B256,
-) -> Result<()> {
-    validate_root(sealed_root_hash)?;
-    if resident_offer_public.is_zero() || proof_hash.is_zero() {
-        eyre::bail!("key-ready checkpoint has a zero offer key or proof hash");
-    }
-    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -368,63 +240,6 @@ pub struct UpgradeJournalGuardV1 {
     _lock: File,
 }
 
-impl UpgradeJournalGuardV1 {
-    pub fn acquire(node_data_dir: &Path) -> Result<Self> {
-        let paths = JournalPaths::new(node_data_dir);
-        create_or_validate_directory(&paths.root)?;
-        let lock = open_private_file(&paths.lock, true, MAX_JOURNAL_BYTES)?;
-        if let Err(error) =
-            rustix::fs::flock(&lock, rustix::fs::FlockOperation::NonBlockingLockExclusive)
-        {
-            let error = std::io::Error::from(error);
-            if error.kind() == std::io::ErrorKind::WouldBlock {
-                eyre::bail!("another upgrade operator owns the journal lock");
-            }
-            return Err(error).wrap_err("lock upgrade journal");
-        }
-        reconcile_scratch(&paths)?;
-        Ok(Self { paths, _lock: lock })
-    }
-
-    pub fn load(&self) -> Result<Option<UpgradeJournalSnapshotV1>> {
-        read_snapshot(&self.paths.journal)
-    }
-
-    pub fn store(&self, mut snapshot: UpgradeJournalSnapshotV1) -> Result<()> {
-        if let Some(current) = self.load()? {
-            if is_next_upgrade(&current.lifecycle, &snapshot.lifecycle) {
-                // A completed rollout may be followed by the next exact successor.
-            } else {
-                if snapshot.lifecycle.context() != current.lifecycle.context() {
-                    eyre::bail!("upgrade journal context cannot change after preparation");
-                }
-                validate_checkpoint_transition(&current.lifecycle, &snapshot.lifecycle)?;
-            }
-            snapshot.generation = current
-                .generation
-                .checked_add(1)
-                .ok_or_else(|| eyre::eyre!("upgrade journal generation exhausted"))?;
-        }
-        snapshot.validate()?;
-        let encoded = serde_json::to_vec(&snapshot).wrap_err("encode upgrade journal")?;
-        if encoded.len() as u64 > MAX_JOURNAL_BYTES {
-            eyre::bail!("upgrade journal exceeds its size cap");
-        }
-        let mut next = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(FILE_MODE)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(&self.paths.next)
-            .wrap_err("create upgrade journal scratch")?;
-        next.write_all(&encoded)
-            .wrap_err("write upgrade journal scratch")?;
-        next.sync_all().wrap_err("fsync upgrade journal scratch")?;
-        fs::rename(&self.paths.next, &self.paths.journal).wrap_err("commit upgrade journal")?;
-        sync_directory(&self.paths.root)
-    }
-}
-
 fn is_next_upgrade(current: &UpgradeJournalStateV1, next: &UpgradeJournalStateV1) -> bool {
     let (
         UpgradeJournalStateV1::Promoted { context: old, .. },
@@ -438,131 +253,10 @@ fn is_next_upgrade(current: &UpgradeJournalStateV1, next: &UpgradeJournalStateV1
         && new.successor_policy_hash != old.successor_policy_hash
 }
 
-fn validate_checkpoint_transition(
-    current: &UpgradeJournalStateV1,
-    next: &UpgradeJournalStateV1,
-) -> Result<()> {
-    use UpgradeJournalStateV1::{
-        CandidateKeyReady, CandidatePrepared, Finalized, KeyProvisioned, Promoted,
-        SubmissionPrepared, Submitted, TerminalMissedCutoff,
-    };
-    if let (
-        CandidateKeyReady {
-            sealed_root_hash: before,
-            ..
-        }
-        | SubmissionPrepared {
-            sealed_root_hash: before,
-            ..
-        }
-        | Submitted {
-            sealed_root_hash: before,
-            ..
-        },
-        KeyProvisioned {
-            sealed_root_hash: after,
-            ..
-        },
-    ) = (current, next)
-    {
-        if before == after {
-            return Ok(());
-        }
-        eyre::bail!("expired submission recovery changed the sealed root");
-    }
-    let allowed = matches!(
-        (current, next),
-        (CandidatePrepared { .. }, KeyProvisioned { .. })
-            | (CandidatePrepared { .. }, TerminalMissedCutoff { .. })
-            | (KeyProvisioned { .. }, CandidateKeyReady { .. })
-            | (CandidateKeyReady { .. }, SubmissionPrepared { .. })
-            | (SubmissionPrepared { .. }, Submitted { .. })
-            | (Submitted { .. }, Submitted { .. })
-            | (Submitted { .. }, Finalized { .. })
-            | (Finalized { .. }, Promoted { .. })
-            | (Promoted { .. }, Promoted { .. })
-            | (TerminalMissedCutoff { .. }, TerminalMissedCutoff { .. })
-            | (KeyProvisioned { .. }, TerminalMissedCutoff { .. })
-            | (CandidateKeyReady { .. }, TerminalMissedCutoff { .. })
-            | (SubmissionPrepared { .. }, TerminalMissedCutoff { .. })
-            | (Submitted { .. }, TerminalMissedCutoff { .. })
-    );
-    if !allowed {
-        eyre::bail!(
-            "invalid upgrade checkpoint transition {} -> {}",
-            current.label(),
-            next.label()
-        );
-    }
-    if let (Some(current), Some(next)) = (security_material(current), security_material(next)) {
-        if current.0 != next.0
-            || (!current.1.is_zero() && current.1 != next.1)
-            || (!current.2.is_zero() && current.2 != next.2)
-            || current
-                .3
-                .is_some_and(|submission| Some(submission) != next.3)
-        {
-            eyre::bail!("upgrade security material changed across checkpoints");
-        }
-    }
-    Ok(())
-}
-
-fn security_material(
-    state: &UpgradeJournalStateV1,
-) -> Option<(B256, B256, B256, Option<&PreparedUpgradeSubmissionV1>)> {
-    match state {
-        UpgradeJournalStateV1::CandidatePrepared { .. }
-        | UpgradeJournalStateV1::TerminalMissedCutoff { .. } => None,
-        UpgradeJournalStateV1::KeyProvisioned {
-            sealed_root_hash, ..
-        } => Some((*sealed_root_hash, B256::ZERO, B256::ZERO, None)),
-        UpgradeJournalStateV1::CandidateKeyReady {
-            sealed_root_hash,
-            resident_offer_public,
-            proof_hash,
-            ..
-        } => Some((*sealed_root_hash, *resident_offer_public, *proof_hash, None)),
-        UpgradeJournalStateV1::SubmissionPrepared {
-            sealed_root_hash,
-            resident_offer_public,
-            proof_hash,
-            submission,
-            ..
-        }
-        | UpgradeJournalStateV1::Submitted {
-            sealed_root_hash,
-            resident_offer_public,
-            proof_hash,
-            submission,
-            ..
-        }
-        | UpgradeJournalStateV1::Finalized {
-            sealed_root_hash,
-            resident_offer_public,
-            proof_hash,
-            submission,
-            ..
-        }
-        | UpgradeJournalStateV1::Promoted {
-            sealed_root_hash,
-            resident_offer_public,
-            proof_hash,
-            submission,
-            ..
-        } => Some((
-            *sealed_root_hash,
-            *resident_offer_public,
-            *proof_hash,
-            Some(submission),
-        )),
-    }
-}
-
 pub fn inspect_upgrade_journal_v1(
     node_data_dir: &Path,
 ) -> Result<Option<UpgradeJournalSnapshotV1>> {
-    let paths = JournalPaths::new(node_data_dir);
+    let paths = JournalPaths::new(node_data_dir, DIRECTORY);
     if !paths.root.exists() {
         return Ok(None);
     }
@@ -725,54 +419,7 @@ pub struct NetworkUpgradeSubmissionV1 {
     pub calldata: Vec<u8>,
     pub transaction: RawRelayTransactionV1,
 }
-impl NetworkUpgradeSubmissionV1 {
-    fn validate(&self) -> Result<()> {
-        let evidence = AttestationEvidenceV1::decode_canonical(&self.evidence)
-            .map_err(|e| eyre::eyre!("saved prepare evidence: {e}"))?;
-        let intent = evidence.intent();
-        let context =
-            outbe_tee::dcap_protocol::DcapOnboardingContextV1::decode_canonical(&self.context)
-                .map_err(|e| eyre::eyre!("saved prepare context: {e:?}"))?;
-        let call = ITeeRegistryV1::prepareEnclaveUpgradeCall::abi_decode(&self.calldata)?;
-        let node_sig: [u8; 65] = call
-            .nodeSignature
-            .as_ref()
-            .try_into()
-            .map_err(|_| eyre::eyre!("saved node signature length"))?;
-        let enclave_sig: [u8; 64] = call
-            .enclaveSignature
-            .as_ref()
-            .try_into()
-            .map_err(|_| eyre::eyre!("saved enclave signature length"))?;
-        if self.candidate_manifest_hash.is_zero()
-            || intent.operation != AttestationOperationV1::PrepareEnclaveUpgrade
-            || call.evidence.as_ref() != self.evidence
-            || self.calldata != call.abi_encode()
-            || !intent.verify_node_signature(&node_sig)
-            || !intent.verify_enclave_signature(&enclave_sig)
-            || context.intent_hash
-                != intent
-                    .intent_hash()
-                    .map_err(|e| eyre::eyre!("saved intent: {e}"))?
-            || context.chain_id != intent.chain_id
-            || context.genesis_hash != intent.genesis_hash
-            || context.node_id_hash
-                != intent
-                    .node_id
-                    .node_id_hash()
-                    .map_err(|e| eyre::eyre!("saved node: {e}"))?
-            || context.enclave_id != intent.enclave_id
-            || context.binding_id != intent.binding_id
-            || context.policy_hash != intent.policy_hash
-            || context.recipient_x25519 != intent.recipient_x25519
-            || keccak256(&self.calldata) != self.transaction.calldata_hash
-            || keccak256(&self.transaction.raw_transaction) != self.transaction.transaction_hash
-        {
-            eyre::bail!("saved network upgrade commitments or signatures are inconsistent");
-        }
-        Ok(())
-    }
-}
+
 impl UpgradeJournalGuardV1 {
     pub fn load_network_submission(&self) -> Result<Option<NetworkUpgradeSubmissionV1>> {
         let path = self.paths.root.join("network-submission.json");
@@ -1038,131 +685,17 @@ pub async fn run_upgrade_submission_v1(
     binding_id: B256,
     requested_valid_until: u64,
 ) -> Result<UpgradeSubmissionOutcomeV1> {
-    let replayed = inspect_upgrade_journal_v1(node_data_dir)?.is_some();
-    loop {
-        let snapshot = inspect_upgrade_journal_v1(node_data_dir)?
-            .ok_or_else(|| eyre::eyre!("upgrade candidate is not prepared"))?;
-        if matches!(
-            snapshot.lifecycle,
-            UpgradeJournalStateV1::CandidateKeyReady { .. }
-                | UpgradeJournalStateV1::SubmissionPrepared { .. }
-                | UpgradeJournalStateV1::Submitted { .. }
-        ) && reset_expired_upgrade_submission_v1(rpc, node_data_dir, selector, &snapshot).await?
-        {
-            continue;
-        }
-        match snapshot.lifecycle {
-            UpgradeJournalStateV1::CandidatePrepared { .. } => {
-                eyre::bail!("candidate key is not provisioned; run upgrade-provision");
-            }
-            UpgradeJournalStateV1::KeyProvisioned { .. } => {
-                prepare_candidate_key_ready_v1(
-                    rpc,
-                    candidate,
-                    node_signer,
-                    node_data_dir,
-                    selector,
-                    binding_id,
-                    requested_valid_until,
-                )
-                .await?;
-            }
-            UpgradeJournalStateV1::CandidateKeyReady { .. } => {
-                prepare_upgrade_relay_v1(rpc, relay, node_data_dir, selector).await?;
-            }
-            UpgradeJournalStateV1::SubmissionPrepared { ref submission, .. } => {
-                let transaction_hash = last_transaction_hash(submission)?;
-                if finalized_transition_matches_v1(rpc, selector, node_data_dir, submission).await?
-                {
-                    let finalized = read_finalized_bound_renewal_view_v1(rpc, selector).await?;
-                    record_upgrade_submitted_v1(
-                        node_data_dir,
-                        finalized.schedule.finalized_height,
-                    )?;
-                    return Ok(UpgradeSubmissionOutcomeV1::AlreadySubmitted { transaction_hash });
-                }
-                let raw = submission
-                    .relay_variants
-                    .last()
-                    .ok_or_else(|| eyre::eyre!("upgrade submission has no relay bytes"))?;
-                let returned_hash = match rpc.send_raw_transaction(&raw.raw_transaction).await {
-                    Ok(returned) => returned
-                        .parse::<B256>()
-                        .wrap_err("parse transition transaction hash")?,
-                    Err(error) if transaction_is_already_known(&error) => raw.transaction_hash,
-                    Err(error) => {
-                        return Err(error)
-                            .wrap_err("submit exact measurement-transition transaction")
-                    }
-                };
-                if returned_hash != raw.transaction_hash {
-                    eyre::bail!(
-                        "RPC returned a transaction hash different from the signed transition bytes"
-                    );
-                }
-                let finalized = read_finalized_bound_renewal_view_v1(rpc, selector).await?;
-                record_upgrade_submitted_v1(node_data_dir, finalized.schedule.finalized_height)?;
-                return Ok(UpgradeSubmissionOutcomeV1::Submitted {
-                    transaction_hash: returned_hash,
-                    replayed,
-                });
-            }
-            UpgradeJournalStateV1::Submitted { ref submission, .. } => {
-                let transaction_hash = last_transaction_hash(submission)?;
-                if !finalized_transition_matches_v1(rpc, selector, node_data_dir, submission)
-                    .await?
-                    && rpc
-                        .transaction_receipt(&format!("{transaction_hash:#x}"))
-                        .await?
-                        .is_none()
-                {
-                    let raw = submission
-                        .relay_variants
-                        .last()
-                        .expect("validated relay variants");
-                    match rpc.send_raw_transaction(&raw.raw_transaction).await {
-                        Ok(hash) if hash.parse::<B256>()? == transaction_hash => {}
-                        Ok(_) => eyre::bail!("RPC returned a different replay transaction hash"),
-                        Err(error) if transaction_is_already_known(&error) => {}
-                        Err(error) => {
-                            return Err(error)
-                                .wrap_err("replay exact measurement-transition transaction")
-                        }
-                    }
-                }
-                return Ok(UpgradeSubmissionOutcomeV1::AlreadySubmitted { transaction_hash });
-            }
-            UpgradeJournalStateV1::Finalized {
-                ref submission,
-                finalized_height,
-                ..
-            } => {
-                return Ok(UpgradeSubmissionOutcomeV1::Finalized {
-                    transaction_hash: last_transaction_hash(submission)?,
-                    finalized_height,
-                });
-            }
-            UpgradeJournalStateV1::Promoted {
-                ref submission,
-                finalized_height,
-                ..
-            } => {
-                return Ok(UpgradeSubmissionOutcomeV1::Promoted {
-                    transaction_hash: last_transaction_hash(submission)?,
-                    finalized_height,
-                });
-            }
-            UpgradeJournalStateV1::TerminalMissedCutoff {
-                finalized_height,
-                activation_height,
-                ..
-            } => {
-                eyre::bail!(
-                    "upgrade missed successor activation cutoff {activation_height} at finalized height {finalized_height}"
-                );
-            }
-        }
-    }
+    let mut service = submission::UpgradeSubmissionService {
+        rpc,
+        relay,
+        candidate,
+        node_signer,
+        node_data_dir,
+        selector,
+        binding_id,
+        requested_valid_until,
+    };
+    submission::run(&mut service).await
 }
 
 async fn reset_expired_upgrade_submission_v1(
@@ -1211,145 +744,6 @@ fn last_transaction_hash(submission: &PreparedUpgradeSubmissionV1) -> Result<B25
 fn transaction_is_already_known(error: &eyre::Report) -> bool {
     let message = format!("{error:#}").to_ascii_lowercase();
     message.contains("already known") || message.contains("known transaction")
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn prepare_candidate_key_ready_v1(
-    rpc: &(impl RenewalRpc + Sync),
-    candidate: &mut ReplacementCandidateEnclaveV1,
-    node_signer: &impl UpgradeNodeSignerV1,
-    node_data_dir: &Path,
-    selector: &NodeBindingSelectorV1,
-    binding_id: B256,
-    requested_valid_until: u64,
-) -> Result<()> {
-    let checkpoint = inspect_upgrade_journal_v1(node_data_dir)?
-        .ok_or_else(|| eyre::eyre!("upgrade candidate is not prepared"))?;
-    let UpgradeJournalStateV1::KeyProvisioned { ref context, .. } = checkpoint.lifecycle else {
-        eyre::bail!("candidate key readiness requires the key-provisioned checkpoint");
-    };
-    let candidate_manifest_hash = candidate
-        .manifest()
-        .authorization_hash()
-        .map_err(|error| eyre::eyre!("hash candidate manifest: {error}"))?;
-    if candidate_manifest_hash != context.candidate_manifest_hash {
-        eyre::bail!("connected candidate differs from the journaled candidate manifest");
-    }
-    let active = read_finalized_bound_renewal_view_v1(rpc, selector).await?;
-    let successor = read_finalized_upgrade_policy_v1(rpc)
-        .await?
-        .ok_or_else(|| eyre::eyre!("no successor TEE policy is staged at finalized state"))?;
-    if active.schedule.finalized_height != successor.finalized_height
-        || active.schedule.finalized_hash != successor.finalized_hash
-    {
-        eyre::bail!("finalized active binding and staged policy were read at different heads");
-    }
-    let active_policy_hash = active
-        .policy
-        .policy_hash()
-        .map_err(|error| eyre::eyre!("hash active finalized policy: {error}"))?;
-    if successor.policy.chain_id != active.policy.chain_id
-        || successor.policy.genesis_hash != active.policy.genesis_hash
-        || (successor.policy.predecessor_policy_hash != active_policy_hash
-            && successor
-                .policy
-                .policy_hash()
-                .map_err(|e| eyre::eyre!("invalid successor: {e}"))?
-                != active_policy_hash)
-        || successor
-            .policy
-            .policy_hash()
-            .map_err(|error| eyre::eyre!("hash staged successor policy: {error}"))?
-            != context.successor_policy_hash
-        || successor.policy.activation_height != context.activation_height
-    {
-        eyre::bail!("staged successor is not the direct successor of the finalized active policy");
-    }
-    validate_candidate_identity_v1(candidate, selector, &active)?;
-
-    if let Some(durable) = load_replacement_candidate_submission(node_data_dir)
-        .map_err(|error| eyre::eyre!("reload durable candidate submission: {error}"))?
-    {
-        let evidence = AttestationEvidenceV1::decode_canonical(durable.evidence())
-            .map_err(|e| eyre::eyre!("invalid durable transition: {e}"))?;
-        if active.schedule.finalized_timestamp >= evidence.intent().requested_valid_until {
-            ensure_transition_source_or_target_v1(&active.binding, evidence.intent())?;
-            if transition_target_matches_v1(&active.binding, evidence.intent()) {
-                eyre::bail!("expired transition already executed; finalize it before renewing");
-            }
-            outbe_tee::node_host::clear_expired_transition_submission_v1(
-                node_data_dir,
-                evidence
-                    .intent()
-                    .intent_hash()
-                    .map_err(|e| eyre::eyre!("invalid intent: {e}"))?,
-                active.schedule.finalized_timestamp,
-            )?;
-        } else {
-            recover_candidate_key_ready_v1(
-                node_data_dir,
-                &durable,
-                &successor.policy,
-                active.tribute_offer_public,
-            )?;
-            return Ok(());
-        }
-    }
-
-    let desired = transition_intent_v1(
-        candidate,
-        &active,
-        &successor.policy,
-        binding_id,
-        requested_valid_until,
-    )?;
-    let mut prepared = generate_transition_evidence_v1(candidate, desired, &successor.policy)?;
-    let ceiling = prepared
-        .collateral_expiration
-        .checked_sub(successor.policy.collateral_margin)
-        .ok_or_else(|| eyre::eyre!("transition collateral margin underflows"))?;
-    if prepared.intent.requested_valid_until > ceiling {
-        let minimum = active
-            .schedule
-            .finalized_timestamp
-            .checked_add(successor.policy.minimum_lease)
-            .ok_or_else(|| eyre::eyre!("minimum transition lease overflows"))?;
-        if ceiling < minimum {
-            eyre::bail!("fresh Intel collateral cannot satisfy the successor minimum lease");
-        }
-        prepared.intent.requested_valid_until = ceiling;
-        prepared = generate_transition_evidence_v1(candidate, prepared.intent, &successor.policy)?;
-    }
-    validate_transition_time_window_v1(
-        &prepared,
-        &successor.policy,
-        active.schedule.finalized_timestamp,
-    )?;
-    let intent_hash = prepared
-        .intent
-        .intent_hash()
-        .map_err(|error| eyre::eyre!("hash transition intent: {error}"))?;
-    let node_signature = node_signer
-        .sign_node_hash(intent_hash)
-        .wrap_err("sign transition intent with node authority")?;
-    let evidence = prepared.evidence;
-    persist_replacement_candidate_submission(
-        node_data_dir,
-        &evidence,
-        &node_signature,
-        &prepared.enclave_signature,
-    )
-    .map_err(|error| eyre::eyre!("persist exact candidate submission: {error}"))?;
-    let proof = evidence
-        .transition_key_ready_proof()
-        .ok_or_else(|| eyre::eyre!("candidate transition evidence has no key-ready proof"))?;
-    record_candidate_key_ready_v1(
-        node_data_dir,
-        evidence.intent(),
-        proof,
-        active.tribute_offer_public.into(),
-    )?;
-    Ok(())
 }
 
 pub struct PreparedTransitionEvidenceV1 {
@@ -1414,39 +808,6 @@ pub fn generate_transition_evidence_v1(
     })
 }
 
-fn validate_candidate_identity_v1(
-    candidate: &ReplacementCandidateEnclaveV1,
-    selector: &NodeBindingSelectorV1,
-    active: &super::registry::FinalizedRenewalChainViewV1,
-) -> Result<()> {
-    let manifest = candidate.manifest();
-    let node_id_hash = manifest
-        .node_id
-        .node_id_hash()
-        .map_err(|error| eyre::eyre!("hash candidate node identity: {error}"))?;
-    let enclave_id = manifest
-        .enclave_id()
-        .map_err(|error| eyre::eyre!("derive candidate enclave identity: {error}"))?;
-    let node_host_authorization_hash = manifest
-        .node_host_authorization_hash()
-        .map_err(|error| eyre::eyre!("derive candidate NodeHost authorization: {error}"))?;
-    if manifest.chain_id != active.policy.chain_id
-        || manifest.genesis_hash != active.policy.genesis_hash
-        || node_id_hash != active.binding.node_id_hash
-        || enclave_id == active.binding.enclave_id
-        || node_host_authorization_hash != active.binding.node_host_authorization_hash
-    {
-        eyre::bail!("candidate manifest is not a same-NodeHost successor of finalized A");
-    }
-    match selector {
-        NodeBindingSelectorV1::NodeHost(public) if public == &manifest.node_id.reth_p2p_public => {}
-        _ => {
-            eyre::bail!("upgrade selector does not match the candidate node identity");
-        }
-    }
-    Ok(())
-}
-
 pub fn transition_intent_v1(
     candidate: &ReplacementCandidateEnclaveV1,
     active: &super::registry::FinalizedRenewalChainViewV1,
@@ -1499,254 +860,6 @@ pub fn transition_intent_v1(
     Ok(intent)
 }
 
-fn validate_transition_time_window_v1(
-    prepared: &PreparedTransitionEvidenceV1,
-    policy: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
-    finalized_timestamp: u64,
-) -> Result<()> {
-    let lease = prepared
-        .intent
-        .requested_valid_until
-        .checked_sub(finalized_timestamp)
-        .ok_or_else(|| eyre::eyre!("transition lease is already expired at finalized time"))?;
-    let ceiling = prepared
-        .collateral_expiration
-        .checked_sub(policy.collateral_margin)
-        .ok_or_else(|| eyre::eyre!("transition collateral margin underflows"))?;
-    if prepared.collateral_issue_floor > finalized_timestamp
-        || lease < policy.minimum_lease
-        || lease > policy.maximum_lease
-        || prepared.intent.requested_valid_until > ceiling
-    {
-        eyre::bail!("candidate evidence cannot satisfy the staged successor lease window");
-    }
-    Ok(())
-}
-
-fn recover_candidate_key_ready_v1(
-    node_data_dir: &Path,
-    durable: &ReplacementCandidateSubmissionV1,
-    successor: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
-    expected_offer_public: B256,
-) -> Result<()> {
-    let evidence = AttestationEvidenceV1::decode_canonical(durable.evidence())
-        .map_err(|error| eyre::eyre!("decode durable transition evidence: {error}"))?;
-    if evidence.intent().operation != AttestationOperationV1::TransitionEnclaveMeasurement
-        || evidence.intent().policy_hash
-            != successor
-                .policy_hash()
-                .map_err(|error| eyre::eyre!("hash staged successor policy: {error}"))?
-    {
-        eyre::bail!("durable candidate submission targets another transition policy");
-    }
-    let proof = evidence
-        .transition_key_ready_proof()
-        .ok_or_else(|| eyre::eyre!("durable transition evidence has no key-ready proof"))?;
-    record_candidate_key_ready_v1(
-        node_data_dir,
-        evidence.intent(),
-        proof,
-        expected_offer_public.into(),
-    )?;
-    Ok(())
-}
-
-async fn prepare_upgrade_relay_v1(
-    rpc: &(impl RenewalRpc + Sync),
-    relay: &RelaySignerV1,
-    node_data_dir: &Path,
-    selector: &NodeBindingSelectorV1,
-) -> Result<()> {
-    let snapshot = inspect_upgrade_journal_v1(node_data_dir)?
-        .ok_or_else(|| eyre::eyre!("upgrade candidate is not prepared"))?;
-    let UpgradeJournalStateV1::CandidateKeyReady {
-        ref context,
-        resident_offer_public,
-        proof_hash,
-        ..
-    } = snapshot.lifecycle
-    else {
-        eyre::bail!("upgrade relay requires candidate-key-ready checkpoint");
-    };
-    let durable = load_replacement_candidate_submission(node_data_dir)
-        .map_err(|error| eyre::eyre!("reload exact candidate submission: {error}"))?
-        .ok_or_else(|| eyre::eyre!("candidate-key-ready checkpoint has no durable submission"))?;
-    let evidence = AttestationEvidenceV1::decode_canonical(durable.evidence())
-        .map_err(|error| eyre::eyre!("decode durable transition evidence: {error}"))?;
-    let proof = evidence
-        .transition_key_ready_proof()
-        .ok_or_else(|| eyre::eyre!("durable transition evidence has no key-ready proof"))?;
-    let encoded_proof = proof
-        .encode_canonical()
-        .map_err(|error| eyre::eyre!("encode durable key-ready proof: {error}"))?;
-    if keccak256(encoded_proof) != proof_hash
-        || B256::from(proof.resident_offer_public) != resident_offer_public
-    {
-        eyre::bail!("durable transition proof differs from the journaled key-ready checkpoint");
-    }
-
-    let active = read_finalized_bound_renewal_view_v1(rpc, selector).await?;
-    let successor = read_finalized_upgrade_policy_v1(rpc)
-        .await?
-        .ok_or_else(|| eyre::eyre!("no successor TEE policy is staged at finalized state"))?;
-    if active.schedule.finalized_height != successor.finalized_height
-        || active.schedule.finalized_hash != successor.finalized_hash
-    {
-        eyre::bail!("finalized active binding and staged policy were read at different heads");
-    }
-    let policy_hash = successor
-        .policy
-        .policy_hash()
-        .map_err(|error| eyre::eyre!("hash staged successor policy: {error}"))?;
-    if policy_hash != context.successor_policy_hash
-        || successor.policy.activation_height != context.activation_height
-        || evidence.intent().policy_hash != policy_hash
-        || evidence.intent().operation != AttestationOperationV1::TransitionEnclaveMeasurement
-    {
-        eyre::bail!("durable candidate submission targets another transition policy");
-    }
-    proof
-        .verify_for_transition(evidence.intent(), active.tribute_offer_public.into())
-        .map_err(|error| eyre::eyre!("durable key-ready proof is invalid: {error}"))?;
-    ensure_transition_source_or_target_v1(&active.binding, evidence.intent())?;
-
-    let calldata = ITeeRegistryV1::transitionEnclaveMeasurementCall {
-        evidence: durable.evidence().to_vec().into(),
-        nodeSignature: durable.node_signature().to_vec().into(),
-        enclaveSignature: durable.enclave_signature().to_vec().into(),
-    }
-    .abi_encode();
-    let gas_limit = TeeRegistryGasScheduleV1::normative()
-        .maximum_transaction_gas(
-            RegistryMutatorV1::TransitionEnclaveMeasurement,
-            calldata.len(),
-            durable.evidence().len(),
-            successor.policy.measurement_rules.len(),
-            successor.policy.attestation_mode,
-        )
-        .map_err(|error| eyre::eyre!("calculate normative transition gas: {error}"))?;
-    let chain_id = rpc.chain_id().await?;
-    let account_nonce = rpc.transaction_count(relay.address()).await?;
-    let gas_price = buffered_gas_price(rpc.gas_price().await?);
-    let required_balance = gas_price.saturating_mul(U256::from(gas_limit));
-    let balance = rpc.balance(relay.address()).await?;
-    if balance < required_balance {
-        eyre::bail!(
-            "upgrade relay {} has {balance} but needs at least {required_balance}",
-            relay.address()
-        );
-    }
-    let raw = relay.sign_renewal(
-        chain_id,
-        account_nonce,
-        gas_price,
-        gas_limit,
-        TEE_REGISTRY_ADDRESS,
-        &calldata,
-    )?;
-    let intent_hash = evidence
-        .intent()
-        .intent_hash()
-        .map_err(|error| eyre::eyre!("hash durable transition intent: {error}"))?;
-    let evidence_hash = AttestationEvidenceV1::decode_canonical(durable.evidence())
-        .and_then(|e| e.evidence_hash())
-        .map_err(|code| eyre::eyre!("hash durable transition evidence: {code:?}"))?;
-    record_upgrade_submission_prepared_v1(
-        node_data_dir,
-        PreparedUpgradeSubmissionV1 {
-            intent_hash,
-            evidence_hash,
-            calldata_hash: keccak256(&calldata),
-            relay: relay.address(),
-            relay_variants: vec![raw],
-        },
-    )?;
-    Ok(())
-}
-
-fn ensure_transition_source_or_target_v1(
-    current: &super::registry::RenewalBindingV1,
-    intent: &RegistrationIntentV1,
-) -> Result<()> {
-    if transition_target_matches_v1(current, intent) {
-        return Ok(());
-    }
-    let source_matches = current.node_id_hash
-        == intent
-            .node_id
-            .node_id_hash()
-            .map_err(|error| eyre::eyre!("hash transition node identity: {error}"))?
-        && current.binding_version.checked_add(1) == Some(intent.binding_version)
-        && current.registration_version.checked_add(1) == Some(intent.registration_version)
-        && current.renewal_nonce == intent.renewal_nonce
-        && current.transition_nonce.checked_add(1) == Some(intent.transition_nonce)
-        && current.node_host_authorization_hash == intent.node_host_authorization_hash
-        && current.enclave_id != intent.enclave_id
-        && current.binding_id != intent.binding_id;
-    if !source_matches {
-        eyre::bail!("finalized Registry binding matches neither transition source nor target");
-    }
-    Ok(())
-}
-
-fn transition_target_matches_v1(
-    current: &super::registry::RenewalBindingV1,
-    intent: &RegistrationIntentV1,
-) -> bool {
-    current.node_id_hash == intent.node_id.node_id_hash().unwrap_or(B256::ZERO)
-        && current.enclave_id == intent.enclave_id
-        && current.binding_id == intent.binding_id
-        && current.intent_hash == intent.intent_hash().unwrap_or(B256::ZERO)
-        && current.policy_hash == intent.policy_hash
-        && current.binding_version == intent.binding_version
-        && current.registration_version == intent.registration_version
-        && current.renewal_nonce == intent.renewal_nonce
-        && current.transition_nonce == intent.transition_nonce
-        && current.valid_until == intent.requested_valid_until
-        && current.recipient_x25519 == B256::from(intent.recipient_x25519)
-        && current.attestation_ed25519 == B256::from(intent.attestation_ed25519)
-        && current.noise_responder_x25519 == B256::from(intent.noise_responder_x25519)
-        && current.node_host_authorization_hash == intent.node_host_authorization_hash
-}
-
-async fn finalized_transition_matches_v1(
-    rpc: &(impl RenewalRpc + Sync),
-    selector: &NodeBindingSelectorV1,
-    node_data_dir: &Path,
-    submission: &PreparedUpgradeSubmissionV1,
-) -> Result<bool> {
-    let durable = load_replacement_candidate_submission(node_data_dir)
-        .map_err(|error| eyre::eyre!("reload exact candidate submission: {error}"))?
-        .ok_or_else(|| eyre::eyre!("submission checkpoint has no durable NodeHost material"))?;
-    let durable_evidence = AttestationEvidenceV1::decode_canonical(durable.evidence())
-        .map_err(|error| eyre::eyre!("decode durable transition evidence: {error}"))?;
-    let intent_hash = durable_evidence
-        .intent()
-        .intent_hash()
-        .map_err(|error| eyre::eyre!("hash durable transition intent: {error}"))?;
-    let evidence_hash = AttestationEvidenceV1::decode_canonical(durable.evidence())
-        .and_then(|e| e.evidence_hash())
-        .map_err(|code| eyre::eyre!("hash durable transition evidence: {code:?}"))?;
-    let calldata = ITeeRegistryV1::transitionEnclaveMeasurementCall {
-        evidence: durable.evidence().to_vec().into(),
-        nodeSignature: durable.node_signature().to_vec().into(),
-        enclaveSignature: durable.enclave_signature().to_vec().into(),
-    }
-    .abi_encode();
-    if intent_hash != submission.intent_hash
-        || evidence_hash != submission.evidence_hash
-        || keccak256(calldata) != submission.calldata_hash
-    {
-        eyre::bail!("NodeHost transition material differs from the relay checkpoint");
-    }
-    let view = read_finalized_bound_renewal_view_v1(rpc, selector).await?;
-    ensure_transition_source_or_target_v1(&view.binding, durable_evidence.intent())?;
-    Ok(transition_target_matches_v1(
-        &view.binding,
-        durable_evidence.intent(),
-    ))
-}
-
 /// Copy exactly `sealed_root.bin` from active A to prepared candidate B.
 /// A byte-identical destination is an idempotent crash retry; any other
 /// pre-existing destination fails closed.
@@ -1787,126 +900,37 @@ pub fn copy_same_platform_sealed_root_v1(context: &UpgradeContextV1) -> Result<B
     Ok(hash)
 }
 
-#[derive(Clone)]
-struct JournalPaths {
-    root: PathBuf,
-    journal: PathBuf,
-    next: PathBuf,
-    lock: PathBuf,
-}
-
-impl JournalPaths {
-    fn new(node_data_dir: &Path) -> Self {
-        let root = node_data_dir.join(DIRECTORY);
-        Self {
-            journal: root.join(JOURNAL),
-            next: root.join(NEXT),
-            lock: root.join(LOCK),
-            root,
-        }
-    }
-}
-
-fn create_or_validate_directory(path: &Path) -> Result<()> {
-    let mut builder = DirBuilder::new();
-    builder.mode(DIRECTORY_MODE);
-    match builder.create(path) {
-        Ok(()) => sync_directory(
-            path.parent()
-                .ok_or_else(|| eyre::eyre!("upgrade directory has no parent"))?,
-        ),
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => validate_directory(path),
-        Err(error) => Err(error).wrap_err("create upgrade journal directory"),
-    }
-}
-
-fn validate_directory(path: &Path) -> Result<()> {
-    let metadata = fs::symlink_metadata(path)
-        .wrap_err_with(|| format!("stat private directory {}", path.display()))?;
-    if !metadata.file_type().is_dir()
-        || metadata.uid() != rustix::process::geteuid().as_raw()
-        || metadata.permissions().mode() & 0o777 != DIRECTORY_MODE
-    {
-        eyre::bail!(
-            "private directory {} is not owner-only 0700",
-            path.display()
-        );
-    }
-    Ok(())
-}
-
-fn open_private_file(path: &Path, create: bool, max_bytes: u64) -> Result<File> {
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(create)
-        .mode(FILE_MODE)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)
-        .wrap_err_with(|| format!("open private file {}", path.display()))?;
-    validate_private_file(path, max_bytes)?;
-    Ok(file)
-}
-
-fn validate_private_file(path: &Path, max_bytes: u64) -> Result<()> {
-    let metadata = fs::symlink_metadata(path)
-        .wrap_err_with(|| format!("stat private file {}", path.display()))?;
-    if !metadata.file_type().is_file()
-        || metadata.uid() != rustix::process::geteuid().as_raw()
-        || metadata.permissions().mode() & 0o777 != FILE_MODE
-        || metadata.len() > max_bytes
-    {
-        eyre::bail!(
-            "private file {} violates owner or size bounds",
-            path.display()
-        );
-    }
-    Ok(())
-}
-
-fn read_private_bounded_file(path: &Path, max_bytes: u64) -> Result<Vec<u8>> {
-    let file = open_private_file(path, false, max_bytes)?;
-    let mut bytes = Vec::new();
-    file.take(max_bytes + 1)
-        .read_to_end(&mut bytes)
-        .wrap_err_with(|| format!("read private file {}", path.display()))?;
-    if bytes.len() as u64 > max_bytes {
-        eyre::bail!("private file {} exceeds its size cap", path.display());
-    }
-    Ok(bytes)
-}
-
-fn reconcile_scratch(paths: &JournalPaths) -> Result<()> {
-    if paths.next.exists() {
-        validate_private_file(&paths.next, MAX_JOURNAL_BYTES)?;
-        fs::remove_file(&paths.next).wrap_err("discard incomplete upgrade journal scratch")?;
-        sync_directory(&paths.root)?;
-    }
-    Ok(())
-}
-
-fn read_snapshot(path: &Path) -> Result<Option<UpgradeJournalSnapshotV1>> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    let bytes = read_private_bounded_file(path, MAX_JOURNAL_BYTES)?;
-    let snapshot: UpgradeJournalSnapshotV1 =
-        serde_json::from_slice(&bytes).wrap_err("decode upgrade journal")?;
-    snapshot.validate()?;
-    Ok(Some(snapshot))
-}
-
-fn sync_directory(path: &Path) -> Result<()> {
-    File::open(path)
-        .wrap_err_with(|| format!("open directory {} for fsync", path.display()))?
-        .sync_all()
-        .wrap_err_with(|| format!("fsync directory {}", path.display()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy_primitives::U256;
+
+    fn store_checkpoint(guard: &UpgradeJournalGuardV1, state: UpgradeJournalStateV1) {
+        guard.store(UpgradeJournalSnapshotV1::new(state)).unwrap();
+    }
+    fn store_candidate_prepared(guard: &UpgradeJournalGuardV1, context: &UpgradeContextV1) {
+        store_checkpoint(
+            guard,
+            UpgradeJournalStateV1::CandidatePrepared {
+                context: context.clone(),
+            },
+        );
+    }
+
+    fn key_provisioned(context: UpgradeContextV1, sealed_root_hash: B256) -> UpgradeJournalStateV1 {
+        UpgradeJournalStateV1::KeyProvisioned {
+            context,
+            sealed_root_hash,
+        }
+    }
+    fn key_ready(context: UpgradeContextV1, sealed_root_hash: B256) -> UpgradeJournalStateV1 {
+        UpgradeJournalStateV1::CandidateKeyReady {
+            context,
+            sealed_root_hash,
+            resident_offer_public: B256::repeat_byte(7),
+            proof_hash: B256::repeat_byte(8),
+        }
+    }
 
     #[test]
     fn software_seal_checkpoint_is_explicitly_feature_and_network_gated() {
@@ -2038,85 +1062,62 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let context = context(root.path());
         let guard = UpgradeJournalGuardV1::acquire(root.path()).unwrap();
-        guard
-            .store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::CandidatePrepared {
-                    context: context.clone(),
-                },
-            ))
-            .unwrap();
-        guard
-            .store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::KeyProvisioned {
-                    context: context.clone(),
-                    sealed_root_hash: B256::repeat_byte(6),
-                },
-            ))
-            .unwrap();
-        guard
-            .store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::CandidateKeyReady {
-                    context: context.clone(),
-                    sealed_root_hash: B256::repeat_byte(6),
-                    resident_offer_public: B256::repeat_byte(7),
-                    proof_hash: B256::repeat_byte(8),
-                },
-            ))
-            .unwrap();
-        guard
-            .store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::SubmissionPrepared {
-                    context: context.clone(),
-                    sealed_root_hash: B256::repeat_byte(6),
-                    resident_offer_public: B256::repeat_byte(7),
-                    proof_hash: B256::repeat_byte(8),
-                    submission: submission(),
-                },
-            ))
-            .unwrap();
-        guard
-            .store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::Submitted {
-                    context: context.clone(),
-                    sealed_root_hash: B256::repeat_byte(6),
-                    resident_offer_public: B256::repeat_byte(7),
-                    proof_hash: B256::repeat_byte(8),
-                    submission: submission(),
-                    submitted_at_finalized_height: 90,
-                    transaction_hashes: vec![submission().relay_variants[0].transaction_hash],
-                },
-            ))
-            .unwrap();
-        guard
-            .store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::Finalized {
-                    context: context.clone(),
-                    sealed_root_hash: B256::repeat_byte(6),
-                    resident_offer_public: B256::repeat_byte(7),
-                    proof_hash: B256::repeat_byte(8),
-                    submission: submission(),
-                    finalized_height: 91,
-                    finalized_hash: B256::repeat_byte(9),
-                },
-            ))
-            .unwrap();
-        guard
-            .store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::Promoted {
-                    context,
-                    sealed_root_hash: B256::repeat_byte(6),
-                    resident_offer_public: B256::repeat_byte(7),
-                    proof_hash: B256::repeat_byte(8),
-                    submission: submission(),
-                    finalized_height: 91,
-                    finalized_hash: B256::repeat_byte(9),
-                },
-            ))
-            .unwrap();
+        store_candidate_prepared(&guard, &context);
+        store_checkpoint(
+            &guard,
+            key_provisioned(context.clone(), B256::repeat_byte(6)),
+        );
+        store_checkpoint(&guard, key_ready(context.clone(), B256::repeat_byte(6)));
+        store_checkpoint(
+            &guard,
+            UpgradeJournalStateV1::SubmissionPrepared {
+                context: context.clone(),
+                sealed_root_hash: B256::repeat_byte(6),
+                resident_offer_public: B256::repeat_byte(7),
+                proof_hash: B256::repeat_byte(8),
+                submission: submission(),
+            },
+        );
+        store_checkpoint(
+            &guard,
+            UpgradeJournalStateV1::Submitted {
+                context: context.clone(),
+                sealed_root_hash: B256::repeat_byte(6),
+                resident_offer_public: B256::repeat_byte(7),
+                proof_hash: B256::repeat_byte(8),
+                submission: submission(),
+                submitted_at_finalized_height: 90,
+                transaction_hashes: vec![submission().relay_variants[0].transaction_hash],
+            },
+        );
+        store_checkpoint(
+            &guard,
+            UpgradeJournalStateV1::Finalized {
+                context: context.clone(),
+                sealed_root_hash: B256::repeat_byte(6),
+                resident_offer_public: B256::repeat_byte(7),
+                proof_hash: B256::repeat_byte(8),
+                submission: submission(),
+                finalized_height: 91,
+                finalized_hash: B256::repeat_byte(9),
+            },
+        );
+        store_checkpoint(
+            &guard,
+            UpgradeJournalStateV1::Promoted {
+                context,
+                sealed_root_hash: B256::repeat_byte(6),
+                resident_offer_public: B256::repeat_byte(7),
+                proof_hash: B256::repeat_byte(8),
+                submission: submission(),
+                finalized_height: 91,
+                finalized_hash: B256::repeat_byte(9),
+            },
+        );
         let snapshot = guard.load().unwrap().unwrap();
         assert_eq!(snapshot.generation, 7);
         assert_eq!(snapshot.lifecycle.label(), "promoted");
-        let metadata = fs::metadata(root.path().join(DIRECTORY).join(JOURNAL)).unwrap();
+        let metadata = fs::metadata(root.path().join(DIRECTORY).join("journal.json")).unwrap();
         assert_eq!(metadata.permissions().mode() & 0o777, FILE_MODE);
     }
 
@@ -2149,16 +1150,8 @@ mod tests {
             &completed,
             &UpgradeJournalStateV1::CandidatePrepared { context: next }
         ));
-        let pending = UpgradeJournalStateV1::CandidateKeyReady {
-            context: old.clone(),
-            sealed_root_hash: B256::repeat_byte(6),
-            resident_offer_public: B256::repeat_byte(7),
-            proof_hash: B256::repeat_byte(8),
-        };
-        let retry = UpgradeJournalStateV1::KeyProvisioned {
-            context: old,
-            sealed_root_hash: B256::repeat_byte(6),
-        };
+        let pending = key_ready(old.clone(), B256::repeat_byte(6));
+        let retry = key_provisioned(old, B256::repeat_byte(6));
         assert!(validate_checkpoint_transition(&pending, &retry).is_ok());
         assert!(validate_checkpoint_transition(&completed, &retry).is_err());
     }
@@ -2168,13 +1161,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let guard = UpgradeJournalGuardV1::acquire(root.path()).unwrap();
         let context = context(root.path());
-        guard
-            .store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::CandidatePrepared {
-                    context: context.clone(),
-                },
-            ))
-            .unwrap();
+        store_candidate_prepared(&guard, &context);
         let mut different = context;
         different.candidate_manifest_hash = B256::repeat_byte(9);
         assert!(guard
@@ -2183,7 +1170,7 @@ mod tests {
             ))
             .is_err());
         drop(guard);
-        fs::write(root.path().join(DIRECTORY).join(JOURNAL), b"corrupt").unwrap();
+        fs::write(root.path().join(DIRECTORY).join("journal.json"), b"corrupt").unwrap();
         assert!(inspect_upgrade_journal_v1(root.path()).is_err());
     }
 
@@ -2192,40 +1179,22 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let guard = UpgradeJournalGuardV1::acquire(root.path()).unwrap();
         let context = context(root.path());
-        guard
-            .store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::CandidatePrepared {
-                    context: context.clone(),
-                },
-            ))
-            .unwrap();
+        store_candidate_prepared(&guard, &context);
         assert!(guard
-            .store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::CandidateKeyReady {
-                    context: context.clone(),
-                    sealed_root_hash: B256::repeat_byte(6),
-                    resident_offer_public: B256::repeat_byte(7),
-                    proof_hash: B256::repeat_byte(8),
-                },
-            ))
+            .store(UpgradeJournalSnapshotV1::new(key_ready(
+                context.clone(),
+                B256::repeat_byte(6)
+            ),))
             .is_err());
-        guard
-            .store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::KeyProvisioned {
-                    context: context.clone(),
-                    sealed_root_hash: B256::repeat_byte(6),
-                },
-            ))
-            .unwrap();
+        store_checkpoint(
+            &guard,
+            key_provisioned(context.clone(), B256::repeat_byte(6)),
+        );
         assert!(guard
-            .store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::CandidateKeyReady {
-                    context,
-                    sealed_root_hash: B256::repeat_byte(9),
-                    resident_offer_public: B256::repeat_byte(7),
-                    proof_hash: B256::repeat_byte(8),
-                },
-            ))
+            .store(UpgradeJournalSnapshotV1::new(key_ready(
+                context,
+                B256::repeat_byte(9)
+            ),))
             .is_err());
     }
 }

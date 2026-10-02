@@ -26,6 +26,23 @@ pub enum DayLimitFormationReceipt {
 }
 
 impl MetadosisContract<'_> {
+    pub(crate) fn validate_day_limit_binding(
+        &self,
+        current: &crate::aggregate::WwdProjection,
+        reason: &'static str,
+    ) -> Result<()> {
+        match self.ocomp_day_limit_formation(current.worldwide_day)? {
+            Some(formation) if formation.day_limit == current.metadosis_limit_amount => Ok(()),
+            Some(_) => Err(crate::errors::storage_corruption(format!(
+                "{reason} formed day limit does not match WWD state"
+            ))),
+            None if current.metadosis_limit_amount.is_zero() => Ok(()),
+            None => Err(crate::errors::storage_corruption(format!(
+                "{reason} has a day limit with no formation"
+            ))),
+        }
+    }
+
     // --- WorldwideDay Management ---
 
     pub(crate) fn commit_create_worldwide_day(
@@ -34,28 +51,19 @@ impl MetadosisContract<'_> {
         wwd: WorldwideDayKey,
         schedule: crate::commit::NewWwdSchedule,
     ) -> Result<()> {
-        self.create_worldwide_day_raw(
-            wwd,
-            schedule.forming_start,
-            schedule.forming_period_seconds,
-            schedule.lookback_delay_seconds,
-            schedule.offering_period_seconds,
-            schedule.waiting_period_seconds,
-        )
+        self.create_worldwide_day_raw(wwd, schedule)
     }
 
     pub(crate) fn commit_set_wwd_rate_resolution(
         &mut self,
         _permit: &crate::commit::CommitPermit<'_>,
         wwd: WorldwideDayKey,
-        previous_vwap: U256,
-        current_vwap: U256,
-        day_type: WwdDayType,
+        resolution: crate::commit::WwdRateResolution,
     ) -> Result<()> {
         let day = self.worldwide_days.entry(wwd);
-        day.previous_vwap().write(previous_vwap)?;
-        day.current_vwap().write(current_vwap)?;
-        day.day_type().write(day_type.as_u8())
+        day.previous_vwap().write(resolution.previous_vwap)?;
+        day.current_vwap().write(resolution.current_vwap)?;
+        day.day_type().write(resolution.day_type.as_u8())
     }
 
     pub(crate) fn commit_write_day_limit_formation(
@@ -108,12 +116,15 @@ impl MetadosisContract<'_> {
     fn create_worldwide_day_raw(
         &mut self,
         wwd: WorldwideDayKey,
-        forming_start: u64,
-        forming_period_seconds: u64,
-        lookback_delay_seconds: u64,
-        offering_period_seconds: u64,
-        waiting_period_seconds: u64,
+        schedule: crate::commit::NewWwdSchedule,
     ) -> Result<()> {
+        let crate::commit::NewWwdSchedule {
+            forming_start,
+            forming_period_seconds,
+            lookback_delay_seconds,
+            offering_period_seconds,
+            waiting_period_seconds,
+        } = schedule;
         let forming_end = forming_start
             .checked_add(forming_period_seconds)
             .ok_or_else(|| crate::errors::caller_rejection("Metadosis forming window overflow"))?;
@@ -161,11 +172,10 @@ impl MetadosisContract<'_> {
         let carry_over_after = receipt.carry_over_after().read()?;
         let day_limit = receipt.formed_day_limit().read()?;
         let block_number = receipt.block_number().read()?;
-        if base_limit.checked_add(carry_over_taken) != Some(day_limit)
-            || carry_over_before.checked_sub(carry_over_taken) != Some(carry_over_after)
-            || day_limit != persisted_day_limit
-            || block_number == 0
-        {
+        let valid_arithmetic = base_limit.checked_add(carry_over_taken) == Some(day_limit)
+            && carry_over_before.checked_sub(carry_over_taken) == Some(carry_over_after);
+        let valid_binding = day_limit == persisted_day_limit && block_number != 0;
+        if !valid_arithmetic || !valid_binding {
             return Err(crate::errors::storage_corruption(
                 "formed OCOMP day-limit receipt is inconsistent".into(),
             ));
@@ -202,12 +212,9 @@ impl MetadosisContract<'_> {
             // The day's terminal-evidence index dies with the day; without
             // this, retired days would leak index entries forever.
             self.delete_terminal_index(wwd_key)?;
-            if self.worldwide_day_terminal_receipts.get(wwd_key)?.is_some() {
-                self.worldwide_day_terminal_receipts.delete(wwd_key)?;
-            }
-            if self.capacity_forfeiture_receipts.get(wwd_key)?.is_some() {
-                self.capacity_forfeiture_receipts.delete(wwd_key)?;
-            }
+            self.worldwide_day_terminal_receipts
+                .get_bytes(&wwd_key)
+                .clear()?;
             self.worldwide_days.delete(wwd_key)?;
             if self
                 .day_limit_formation_receipts
