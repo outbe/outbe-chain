@@ -130,6 +130,41 @@ mod tests {
     use outbe_primitives::signer::OutbeEvmSigner;
     use outbe_primitives::system_tx::{OcompLifecycleActivation, SystemTxInputV2};
 
+    fn steady_system_inputs(parent_hash: B256) -> Vec<SystemTxInputV2> {
+        vec![
+            SystemTxInputV2::CertifiedParentAccounting {
+                metadata: finalized_metadata(parent_hash),
+            },
+            SystemTxInputV2::LateFinalizeCredits {
+                artifact: Default::default(),
+            },
+            SystemTxInputV2::CycleTick,
+            SystemTxInputV2::RewardsGemDelivery,
+            SystemTxInputV2::OracleSlashWindow,
+            SystemTxInputV2::HookEvents,
+        ]
+    }
+
+    fn leader_context<'a>(
+        round: Round,
+        proposer: &'a commonware_cryptography::bls12381::PublicKey,
+        providers: (
+            &'a crate::hybrid::HybridSchemeProvider<
+                commonware_cryptography::bls12381::primitives::variant::MinSig,
+            >,
+            &'a crate::committee_provider::CommitteeProvider,
+        ),
+    ) -> SystemTxLeaderValidationContext<'a> {
+        SystemTxLeaderValidationContext {
+            round,
+            proposer,
+            chain_id: outbe_primitives::chain::CHAIN_ID,
+            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
+            certificate_scheme_provider: providers.0,
+            committee_provider: providers.1,
+        }
+    }
+
     #[test]
     fn rewards_beneficiary_rejects_non_genesis_mismatch() {
         let block = block_with_number_and_parent(1, B256::ZERO);
@@ -188,14 +223,11 @@ mod tests {
 
         let error = validate_system_tx_leader_binding_for_activation(
             &block,
-            SystemTxLeaderValidationContext {
-                round: Round::new(Epoch::new(0), View::new(1)),
-                proposer: &keys[0].public_key(),
-                chain_id: outbe_primitives::chain::CHAIN_ID,
-                ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
-                certificate_scheme_provider: &scheme_provider,
-                committee_provider: &committee_provider,
-            },
+            leader_context(
+                Round::new(Epoch::new(0), View::new(1)),
+                &keys[0].public_key(),
+                (&scheme_provider, &committee_provider),
+            ),
         )
         .expect_err("block 1 must carry mandatory CycleTick system tx");
 
@@ -214,14 +246,11 @@ mod tests {
 
         validate_system_tx_leader_binding_for_activation(
             &block,
-            SystemTxLeaderValidationContext {
-                round: Round::new(Epoch::new(0), View::new(1)),
-                proposer: &keys[0].public_key(),
-                chain_id: outbe_primitives::chain::CHAIN_ID,
-                ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
-                certificate_scheme_provider: &scheme_provider,
-                committee_provider: &committee_provider,
-            },
+            leader_context(
+                Round::new(Epoch::new(0), View::new(1)),
+                &keys[0].public_key(),
+                (&scheme_provider, &committee_provider),
+            ),
         )
         .expect("system tx signer matches consensus leader EVM address");
     }
@@ -240,32 +269,18 @@ mod tests {
             2,
             parent_hash,
             Bytes::new(),
-            vec![
-                SystemTxInputV2::CertifiedParentAccounting {
-                    metadata: finalized_metadata(parent_hash),
-                },
-                SystemTxInputV2::LateFinalizeCredits {
-                    artifact: Default::default(),
-                },
-                SystemTxInputV2::CycleTick,
-                SystemTxInputV2::RewardsGemDelivery,
-                SystemTxInputV2::OracleSlashWindow,
-                SystemTxInputV2::HookEvents,
-            ],
+            steady_system_inputs(parent_hash),
             outbe_primitives::chain::CHAIN_ID,
             30_000_000,
         );
 
         validate_system_tx_leader_binding_for_activation(
             &block,
-            SystemTxLeaderValidationContext {
-                round: Round::new(Epoch::new(0), View::new(1)),
-                proposer: &keys[0].public_key(),
-                chain_id: outbe_primitives::chain::CHAIN_ID,
-                ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
-                certificate_scheme_provider: &scheme_provider,
-                committee_provider: &committee_provider,
-            },
+            leader_context(
+                Round::new(Epoch::new(0), View::new(1)),
+                &keys[0].public_key(),
+                (&scheme_provider, &committee_provider),
+            ),
         )
         .expect("validator must accept the payload builder's visible gas plan");
     }
@@ -284,32 +299,18 @@ mod tests {
             2,
             parent_hash,
             Bytes::new(),
-            vec![
-                SystemTxInputV2::CertifiedParentAccounting {
-                    metadata: finalized_metadata(parent_hash),
-                },
-                SystemTxInputV2::LateFinalizeCredits {
-                    artifact: Default::default(),
-                },
-                SystemTxInputV2::CycleTick,
-                SystemTxInputV2::RewardsGemDelivery,
-                SystemTxInputV2::OracleSlashWindow,
-                SystemTxInputV2::HookEvents,
-            ],
+            steady_system_inputs(parent_hash),
             outbe_primitives::chain::CHAIN_ID,
             outbe_primitives::system_tx::BOOTSTRAP_BLOCK_GAS_LIMIT,
         );
 
         let error = validate_system_tx_leader_binding_for_activation(
             &block,
-            SystemTxLeaderValidationContext {
-                round: Round::new(Epoch::new(0), View::new(1)),
-                proposer: &keys[0].public_key(),
-                chain_id: outbe_primitives::chain::CHAIN_ID,
-                ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
-                certificate_scheme_provider: &scheme_provider,
-                committee_provider: &committee_provider,
-            },
+            leader_context(
+                Round::new(Epoch::new(0), View::new(1)),
+                &keys[0].public_key(),
+                (&scheme_provider, &committee_provider),
+            ),
         )
         .expect_err("500M is valid only at block 1");
         assert!(error.contains("protocol gas limit"));
@@ -353,26 +354,23 @@ mod tests {
         validate_system_tx_leader_binding_for_activation(
             &block,
             SystemTxLeaderValidationContext {
-                round,
-                proposer: &keys[0].public_key(),
-                chain_id: outbe_primitives::chain::CHAIN_ID,
                 ocomp_lifecycle_activation: OcompLifecycleActivation::at_block(ACTIVATION_HEIGHT),
-                certificate_scheme_provider: &scheme_provider,
-                committee_provider: &committee_provider,
+                ..leader_context(
+                    round,
+                    &keys[0].public_key(),
+                    (&scheme_provider, &committee_provider),
+                )
             },
         )
         .expect("consensus verifier must accept the active payload layout at H");
 
         let error = validate_system_tx_leader_binding_for_activation(
             &block,
-            SystemTxLeaderValidationContext {
+            leader_context(
                 round,
-                proposer: &keys[0].public_key(),
-                chain_id: outbe_primitives::chain::CHAIN_ID,
-                ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
-                certificate_scheme_provider: &scheme_provider,
-                committee_provider: &committee_provider,
-            },
+                &keys[0].public_key(),
+                (&scheme_provider, &committee_provider),
+            ),
         )
         .expect_err("the same payload must be invalid when OCOMP is not armed");
         assert!(error.contains("active system tx set mismatch"));
@@ -390,14 +388,11 @@ mod tests {
 
         validate_system_tx_leader_binding_for_activation(
             &block,
-            SystemTxLeaderValidationContext {
-                round: Round::new(Epoch::new(1), View::new(1)),
-                proposer: &keys[1].public_key(),
-                chain_id: outbe_primitives::chain::CHAIN_ID,
-                ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
-                certificate_scheme_provider: &scheme_provider,
-                committee_provider: &committee_provider,
-            },
+            leader_context(
+                Round::new(Epoch::new(1), View::new(1)),
+                &keys[1].public_key(),
+                (&scheme_provider, &committee_provider),
+            ),
         )
         .expect("epoch-scoped committee maps current leader to EVM signer");
     }
@@ -416,14 +411,11 @@ mod tests {
 
         let error = validate_system_tx_leader_binding_for_activation(
             &block,
-            SystemTxLeaderValidationContext {
-                round: Round::new(Epoch::new(0), View::new(1)),
-                proposer: &keys[0].public_key(),
-                chain_id: outbe_primitives::chain::CHAIN_ID,
-                ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
-                certificate_scheme_provider: &scheme_provider,
-                committee_provider: &committee_provider,
-            },
+            leader_context(
+                Round::new(Epoch::new(0), View::new(1)),
+                &keys[0].public_key(),
+                (&scheme_provider, &committee_provider),
+            ),
         )
         .expect_err("non-leader system tx signer must be rejected");
         assert!(error.contains("does not match consensus leader EVM address"));
@@ -442,12 +434,12 @@ mod tests {
         let error = validate_system_tx_leader_binding_for_activation(
             &block,
             SystemTxLeaderValidationContext {
-                round: Round::new(Epoch::new(0), View::new(1)),
-                proposer: &keys[0].public_key(),
                 chain_id: outbe_primitives::chain::CHAIN_ID + 1,
-                ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
-                certificate_scheme_provider: &scheme_provider,
-                committee_provider: &committee_provider,
+                ..leader_context(
+                    Round::new(Epoch::new(0), View::new(1)),
+                    &keys[0].public_key(),
+                    (&scheme_provider, &committee_provider),
+                )
             },
         )
         .expect_err("wrong active chain id must be rejected before Engine status");
@@ -469,22 +461,11 @@ mod tests {
             2,
             parent_hash,
             Bytes::new(),
-            vec![
-                SystemTxInputV2::CertifiedParentAccounting {
-                    metadata: finalized_metadata(wrong_hash),
-                },
-                SystemTxInputV2::LateFinalizeCredits {
-                    artifact: Default::default(),
-                },
-                SystemTxInputV2::CycleTick,
-                SystemTxInputV2::RewardsGemDelivery,
-                SystemTxInputV2::OracleSlashWindow,
-                SystemTxInputV2::HookEvents,
-            ],
+            steady_system_inputs(wrong_hash),
             outbe_primitives::chain::CHAIN_ID,
         );
 
-        let error = validate_system_tx_leader_binding_for_activation(&block, SystemTxLeaderValidationContext { round: Round::new(Epoch::new(0), View::new(1)), proposer: &keys[0].public_key(), chain_id: outbe_primitives::chain::CHAIN_ID, ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled, certificate_scheme_provider: &scheme_provider, committee_provider: &committee_provider })
+        let error = validate_system_tx_leader_binding_for_activation(&block, leader_context(Round::new(Epoch::new(0), View::new(1)), &keys[0].public_key(), (&scheme_provider, &committee_provider)))
         .expect_err(
             "CertifiedParentAccounting metadata must bind to header parent hash before Engine status",
         );
@@ -546,14 +527,11 @@ mod tests {
 
         let error = validate_system_tx_leader_binding_for_activation(
             &block,
-            SystemTxLeaderValidationContext {
-                round: Round::new(Epoch::new(0), View::new(1)),
-                proposer: &keys[0].public_key(),
-                chain_id: outbe_primitives::chain::CHAIN_ID,
-                ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
-                certificate_scheme_provider: &scheme_provider,
-                committee_provider: &committee_provider,
-            },
+            leader_context(
+                Round::new(Epoch::new(0), View::new(1)),
+                &keys[0].public_key(),
+                (&scheme_provider, &committee_provider),
+            ),
         )
         .expect_err("BoundaryOutcome calldata must bind to header artifact before Engine status");
         assert!(error.contains("BoundaryOutcome system tx artifact mismatch"));
