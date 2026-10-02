@@ -32,10 +32,8 @@ pub struct PledgePool {
     #[attribute(order = 5)]
     pub spent_nullifiers: outbe_primitives::storage::dsl::Map<B256, bool>,
 }
-sol! {
-    event PledgeNote(bytes32 indexed commitment, uint32 leafIndex, bytes32 rootAfter, uint256 amount);
-    event PledgeSpent(bytes32 indexed nullifier);
-}
+sol!("../../../contracts/precompiles/src/IGratisFactory.sol");
+pub use IGratisFactory::{PledgeNote, PledgeSpent};
 fn invalid(error: impl std::fmt::Display) -> PrecompileError {
     PrecompileError::Revert(format!("pledge: {error}"))
 }
