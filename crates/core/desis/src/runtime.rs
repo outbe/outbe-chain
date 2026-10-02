@@ -269,9 +269,9 @@ fn fold_profile(
     let iparams = outbe_intexfactory::read_params(storage)?;
     config.min_intex_bid_quantity = min_bid_qty;
     config.call_trigger = crate::schema::IntexCallTrigger {
-        call_window: iparams.call_window_seconds,
-        call_threshold: iparams.call_threshold_seconds,
-        call_notice_period: iparams.call_notice_period_seconds,
+        call_window_seconds: iparams.call_window_seconds,
+        call_threshold_seconds: iparams.call_threshold_seconds,
+        call_notice_period_seconds: iparams.call_notice_period_seconds,
     };
     config.commit_bond_minor = iparams.commit_bond_minor;
     Ok(iparams)

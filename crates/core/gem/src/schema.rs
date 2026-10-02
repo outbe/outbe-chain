@@ -36,9 +36,9 @@ pub(crate) struct BucketTerms {
     pub(crate) start_day: u32,
     pub(crate) reference_currency: u16,
     pub(crate) call_price: U256,
-    pub(crate) call_window: u32,
-    pub(crate) call_threshold: u32,
-    pub(crate) call_notice_period: u32,
+    pub(crate) call_window_seconds: u32,
+    pub(crate) call_threshold_seconds: u32,
+    pub(crate) call_notice_period_seconds: u32,
 }
 
 impl BucketTerms {
@@ -47,9 +47,9 @@ impl BucketTerms {
             start_day: first_full_day(item.issued_at),
             reference_currency: item.reference_currency,
             call_price: item.call_price_minor,
-            call_window: item.call_window_seconds,
-            call_threshold: item.call_threshold_seconds,
-            call_notice_period: item.call_notice_period_seconds,
+            call_window_seconds: item.call_window_seconds,
+            call_threshold_seconds: item.call_threshold_seconds,
+            call_notice_period_seconds: item.call_notice_period_seconds,
         }
     }
 
@@ -58,9 +58,9 @@ impl BucketTerms {
         buf[0..4].copy_from_slice(&self.start_day.to_be_bytes());
         buf[4..6].copy_from_slice(&self.reference_currency.to_be_bytes());
         buf[6..38].copy_from_slice(&self.call_price.to_be_bytes::<32>());
-        buf[38..42].copy_from_slice(&self.call_window.to_be_bytes());
-        buf[42..46].copy_from_slice(&self.call_threshold.to_be_bytes());
-        buf[46..50].copy_from_slice(&self.call_notice_period.to_be_bytes());
+        buf[38..42].copy_from_slice(&self.call_window_seconds.to_be_bytes());
+        buf[42..46].copy_from_slice(&self.call_threshold_seconds.to_be_bytes());
+        buf[46..50].copy_from_slice(&self.call_notice_period_seconds.to_be_bytes());
         keccak256(buf)
     }
 }
@@ -254,11 +254,11 @@ pub struct GemContract {
     #[attribute(order = 42)]
     pub bucket_start_day: outbe_primitives::storage::dsl::Map<B256, u32>,
     #[attribute(order = 43)]
-    pub bucket_call_window: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub bucket_call_window_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
     #[attribute(order = 44)]
-    pub bucket_call_threshold: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub bucket_call_threshold_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
     #[attribute(order = 45)]
-    pub bucket_call_notice_period: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub bucket_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
     /// Block timestamp the bucket was called; `0` until then.
     #[attribute(order = 46)]
     pub bucket_called_at: outbe_primitives::storage::dsl::Map<B256, u64>,

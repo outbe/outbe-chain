@@ -59,14 +59,14 @@ fn reterm(
 ) {
     let credis = CredisContract::new(storage.clone());
     let mut position = credis.get_position(position_id).unwrap();
-    position.call_window = window_days * SECS_PER_DAY;
-    position.call_threshold = threshold_days * SECS_PER_DAY;
-    position.call_notice_period = notice_days * SECS_PER_DAY;
+    position.call_window_seconds = window_days * SECS_PER_DAY;
+    position.call_threshold_seconds = threshold_days * SECS_PER_DAY;
+    position.call_notice_period_seconds = notice_days * SECS_PER_DAY;
     credis.positions.update(&position).unwrap();
-    if position.call_window > credis.max_call_window.read(&REFERENCE_ISO).unwrap() {
+    if position.call_window_seconds > credis.max_call_window_seconds.read(&REFERENCE_ISO).unwrap() {
         credis
-            .max_call_window
-            .write(&REFERENCE_ISO, position.call_window)
+            .max_call_window_seconds
+            .write(&REFERENCE_ISO, position.call_window_seconds)
             .unwrap();
     }
 }
@@ -140,7 +140,7 @@ fn a_position_with_zero_call_terms_is_never_called() {
 
 /// A position whose sealed window outruns the current constant still gets its
 /// whole span collected: the scan sizes the shared per-currency window off the
-/// `max_call_window` high-water mark, not off the constant.
+/// `max_call_window_seconds` high-water mark, not off the constant.
 #[test]
 fn a_window_wider_than_the_constant_is_collected_in_full() {
     let mut storage = env();

@@ -137,10 +137,10 @@ pub struct Position {
     pub reference_currency: u16,
 
     /// Call Notice Period in seconds: a called position whose remainder is
-    /// still outstanding at `called_at + call_notice_period` is voided.
+    /// still outstanding at `called_at + call_notice_period_seconds` is voided.
     /// Snapshot of the protocol constant at opening.
     #[attribute(order = 17, default = 0)]
-    pub call_notice_period: u32,
+    pub call_notice_period_seconds: u32,
 
     /// Call-price markup percent (snapshot of `CALL_RATE_PCT` at issuance).
     /// Applied to `call_anchor_price_minor`, not to `entry_price_minor` (64 => 1.64x).
@@ -151,12 +151,12 @@ pub struct Position {
     /// constant at opening); the trailing span the daily scan reads for Call
     /// Price breaches. Divided by 86400 to get the day count.
     #[attribute(order = 19, default = 0)]
-    pub call_window: u32,
+    pub call_window_seconds: u32,
 
     /// Breach threshold in seconds (snapshot of the protocol constant at
     /// opening); divided by 86400 to get the required breach-day count.
     #[attribute(order = 20, default = 0)]
-    pub call_threshold: u32,
+    pub call_threshold_seconds: u32,
 
     /// COEN price in `reference_currency` (scale `1e6`) sealed at issuance:
     /// the previous closed UTC-day VWAP, independent of spot.
@@ -223,11 +223,11 @@ pub struct CredisContract {
     #[attribute(order = 7)]
     pub called_position_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
 
-    /// Widest `call_window` ever opened in a reference currency, in seconds. It
+    /// Widest `call_window_seconds` ever opened in a reference currency, in seconds. It
     /// only grows, so the trailing span the daily scan collects always covers a
     /// position whose sealed window outruns the current constant.
     #[attribute(order = 8)]
-    pub max_call_window: outbe_primitives::storage::dsl::Map<u16, u32>,
+    pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 }
 
 impl CredisContract<'_> {

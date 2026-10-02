@@ -127,7 +127,7 @@ fn to_abi_data(
     let deadline = if called_at == 0 {
         0
     } else {
-        api::settlement_deadline_of(called_at, terms.call_notice_period)
+        api::settlement_deadline_of(called_at, terms.call_notice_period_seconds)
     };
     let qualified = api::is_qualified(storage, bucket)?;
     let state = api::effective_state(item, qualified, called_at, deadline, storage.timestamp()?);
@@ -152,9 +152,9 @@ fn to_abi_data(
         effectiveState: state as u8,
         callPriceMinor: terms.call_price,
         callRate: terms.call_rate,
-        callWindow: terms.call_window,
-        callThreshold: terms.call_threshold,
-        callNoticePeriod: terms.call_notice_period,
+        callWindow: terms.call_window_seconds,
+        callThreshold: terms.call_threshold_seconds,
+        callNoticePeriod: terms.call_notice_period_seconds,
         settlementDeadline: deadline,
     })
 }

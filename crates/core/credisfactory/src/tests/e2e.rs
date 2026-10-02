@@ -706,9 +706,9 @@ fn oracle_call_survives_half_repayment_then_voids_the_unpaid_share() {
         oracle.config_vote_period.write(0).unwrap();
         let pair = AddressPair::new_coen_to(issued.reference_currency);
         let price = issued.call_price_minor + U256::ONE;
-        let threshold_days = u64::from(issued.call_threshold) / DAY;
+        let threshold_days = u64::from(issued.call_threshold_seconds) / DAY;
         assert!(threshold_days > 1);
-        assert!(issued.call_threshold <= issued.call_window);
+        assert!(issued.call_threshold_seconds <= issued.call_window_seconds);
         let first_midnight = issued.issued_at - issued.issued_at % DAY;
         let tick = |timestamp| {
             advance_to(&storage, timestamp);

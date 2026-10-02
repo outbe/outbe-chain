@@ -438,9 +438,9 @@ impl GemContract<'_> {
             start_day: self.bucket_start_day.read(&bucket)?,
             reference_currency: self.bucket_currency.read(&bucket)?,
             call_price: self.bucket_call_price.read(&bucket)?,
-            call_window: self.bucket_call_window.read(&bucket)?,
-            call_threshold: self.bucket_call_threshold.read(&bucket)?,
-            call_notice_period: self.bucket_call_notice_period.read(&bucket)?,
+            call_window_seconds: self.bucket_call_window_seconds.read(&bucket)?,
+            call_threshold_seconds: self.bucket_call_threshold_seconds.read(&bucket)?,
+            call_notice_period_seconds: self.bucket_call_notice_period_seconds.read(&bucket)?,
         })
     }
 
@@ -449,11 +449,12 @@ impl GemContract<'_> {
         self.bucket_currency
             .write(&bucket, terms.reference_currency)?;
         self.bucket_call_price.write(&bucket, terms.call_price)?;
-        self.bucket_call_window.write(&bucket, terms.call_window)?;
-        self.bucket_call_threshold
-            .write(&bucket, terms.call_threshold)?;
-        self.bucket_call_notice_period
-            .write(&bucket, terms.call_notice_period)?;
+        self.bucket_call_window_seconds
+            .write(&bucket, terms.call_window_seconds)?;
+        self.bucket_call_threshold_seconds
+            .write(&bucket, terms.call_threshold_seconds)?;
+        self.bucket_call_notice_period_seconds
+            .write(&bucket, terms.call_notice_period_seconds)?;
         self.insert_bucket_bin(bucket, terms)
     }
 
@@ -467,7 +468,7 @@ impl GemContract<'_> {
     ) -> Result<()> {
         self.remove_bucket_bin(bucket, terms)?;
         self.bucket_called_at.write(&bucket, now)?;
-        let deadline = now + u64::from(terms.call_notice_period);
+        let deadline = now + u64::from(terms.call_notice_period_seconds);
         self.push_called(bucket_entry(bucket), deadline)?;
         self.emit(IGem::GemBucketCalled {
             bucketKey: bucket,
@@ -502,7 +503,7 @@ impl GemContract<'_> {
     /// Settlement deadline of a called bucket.
     pub(crate) fn bucket_deadline(&self, bucket: B256) -> Result<u64> {
         Ok(self.bucket_called_at.read(&bucket)?
-            + u64::from(self.bucket_call_notice_period.read(&bucket)?))
+            + u64::from(self.bucket_call_notice_period_seconds.read(&bucket)?))
     }
 
     fn close_bucket(&mut self, bucket: B256) -> Result<()> {
@@ -512,9 +513,9 @@ impl GemContract<'_> {
         self.bucket_start_day.clear(&bucket)?;
         self.bucket_currency.clear(&bucket)?;
         self.bucket_call_price.clear(&bucket)?;
-        self.bucket_call_window.clear(&bucket)?;
-        self.bucket_call_threshold.clear(&bucket)?;
-        self.bucket_call_notice_period.clear(&bucket)?;
+        self.bucket_call_window_seconds.clear(&bucket)?;
+        self.bucket_call_threshold_seconds.clear(&bucket)?;
+        self.bucket_call_notice_period_seconds.clear(&bucket)?;
         self.bucket_called_at.clear(&bucket)
     }
 

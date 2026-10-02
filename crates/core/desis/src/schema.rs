@@ -41,11 +41,11 @@ impl AuctionStage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct IntexCallTrigger {
     /// Rolling VWAP window evaluated for the call condition (seconds).
-    pub call_window: u32,
+    pub call_window_seconds: u32,
     /// Breach time within the window required to trigger a call (seconds).
-    pub call_threshold: u32,
+    pub call_threshold_seconds: u32,
     /// Notice a holder gets to settle after the series is Called (seconds).
-    pub call_notice_period: u32,
+    pub call_notice_period_seconds: u32,
 }
 
 /// Entry price of one reference currency, chosen at auction start.
@@ -196,15 +196,15 @@ pub struct DesisContract {
     pub clearing_initiated: outbe_primitives::storage::dsl::Map<WorldwideDay, u8>,
 
     // --- Extended auction config ---
-    /// worldwide_day -> call-trigger window (whole days).
+    /// worldwide_day -> call-trigger window (seconds).
     #[attribute(order = 13)]
-    pub config_call_window: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
-    /// worldwide_day -> call-trigger threshold (whole days).
+    pub config_call_window_seconds: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
+    /// worldwide_day -> call-trigger threshold (seconds).
     #[attribute(order = 14)]
-    pub config_call_threshold: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
+    pub config_call_threshold_seconds: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
     /// worldwide_day -> call cooldown (seconds).
     #[attribute(order = 15)]
-    pub config_call_notice_period: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
+    pub config_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 
     /// worldwide_day -> commit-entry bond (payment-token minor units).
     #[attribute(order = 16)]

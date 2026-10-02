@@ -91,11 +91,11 @@ pub struct CallTerms {
     /// `call_price` that outlives the constant.
     pub call_rate: u16,
     /// Trailing span the daily scan reads for breaches, in seconds.
-    pub call_window: u32,
+    pub call_window_seconds: u32,
     /// Breach seconds within that span which arm the call.
-    pub call_threshold: u32,
+    pub call_threshold_seconds: u32,
     /// Seconds after `called_at` in which the owner must settle.
-    pub call_notice_period: u32,
+    pub call_notice_period_seconds: u32,
 }
 
 /// Shared bucket body. Unpaid membership is tracked by `bucket_nod_count`;
@@ -306,21 +306,21 @@ pub struct NodContract {
 
     /// Trailing span the daily scan reads for breaches, in seconds.
     #[attribute(order = 46)]
-    pub callable_bucket_call_window: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub callable_bucket_call_window_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     /// Breach seconds within that span which arm the call.
     #[attribute(order = 47)]
-    pub callable_bucket_call_threshold: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub callable_bucket_call_threshold_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     /// Seconds after `bucket_called_at` in which the owner must settle.
     #[attribute(order = 48)]
-    pub callable_bucket_call_notice_period: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub callable_bucket_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    /// Widest `call_window` ever issued in a reference currency, in seconds. It
+    /// Widest `call_window_seconds` ever issued in a reference currency, in seconds. It
     /// only grows, so the trailing span the daily scan collects always covers a
     /// bucket whose sealed window outruns the current constant.
     #[attribute(order = 49)]
-    pub max_call_window: outbe_primitives::storage::dsl::Map<u16, u32>,
+    pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
     /// Complete entry-price snapshot captured before issuance, once per day.
     #[attribute(order = 50)]

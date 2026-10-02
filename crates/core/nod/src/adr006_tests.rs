@@ -305,16 +305,19 @@ fn nod_contract_slot_layout_is_pinned() {
             U256::from(24)
         );
         assert_eq!(nod.callable_bucket_call_rate.base_slot(), U256::from(25));
-        assert_eq!(nod.callable_bucket_call_window.base_slot(), U256::from(26));
         assert_eq!(
-            nod.callable_bucket_call_threshold.base_slot(),
+            nod.callable_bucket_call_window_seconds.base_slot(),
+            U256::from(26)
+        );
+        assert_eq!(
+            nod.callable_bucket_call_threshold_seconds.base_slot(),
             U256::from(27)
         );
         assert_eq!(
-            nod.callable_bucket_call_notice_period.base_slot(),
+            nod.callable_bucket_call_notice_period_seconds.base_slot(),
             U256::from(28)
         );
-        assert_eq!(nod.max_call_window.base_slot(), U256::from(29));
+        assert_eq!(nod.max_call_window_seconds.base_slot(), U256::from(29));
         assert_eq!(nod.entry_prices_frozen.base_slot(), U256::from(30));
         assert_eq!(nod.entry_price_currency_count.base_slot(), U256::from(31));
         assert_eq!(nod.entry_price_currency.base_slot(), U256::from(32));

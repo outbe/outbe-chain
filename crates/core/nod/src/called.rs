@@ -8,9 +8,9 @@
 //!
 //! - *not called* -> *called*, walking each currency's call-price trie, when
 //!   the reference price exceeded the bucket's call price on at least its
-//!   `call_threshold` of the trailing `call_window`.
+//!   `call_threshold_seconds` of the trailing `call_window_seconds`.
 //! - *called* -> *forfeited*, walking the called-bucket list, when the bucket's
-//!   `call_notice_period` has lapsed with Nods still unpaid. The two can never
+//!   `call_notice_period_seconds` has lapsed with Nods still unpaid. The two can never
 //!   fire in one pass, since a bucket called now cannot also be a notice period
 //!   past its call.
 //!
@@ -337,7 +337,7 @@ fn try_call(
     // A failing bucket rolls back alone, so it never halts the scan.
     Ok(ctx
         .storage
-        .with_checkpoint(|| mark_called(nod, bucket_key, now, terms.call_notice_period))
+        .with_checkpoint(|| mark_called(nod, bucket_key, now, terms.call_notice_period_seconds))
         .is_ok())
 }
 
@@ -426,8 +426,8 @@ const fn unpack_cursor(packed: u64) -> (u32, u32) {
     ((packed >> 32) as u32, packed as u32)
 }
 
-/// True when the bucket's trailing `call_window` carries at least its
-/// `call_threshold` of days strictly above its `call_price`.
+/// True when the bucket's trailing `call_window_seconds` carries at least its
+/// `call_threshold_seconds` of days strictly above its `call_price`.
 ///
 /// Every term comes off the bucket, not from the constants, so a retune cannot
 /// re-term a bucket that is already armed. `window` is sized for the widest
@@ -441,8 +441,8 @@ const fn unpack_cursor(packed: u64) -> (u32, u32) {
 /// does not count. The window is newest-first, so everything beyond that point
 /// is older still.
 fn breached_enough(window: &[(u32, Option<U256>)], terms: &CallTerms, start_day: u32) -> bool {
-    let window_days = terms.call_window / SECS_PER_DAY;
-    let threshold_days = terms.call_threshold / SECS_PER_DAY;
+    let window_days = terms.call_window_seconds / SECS_PER_DAY;
+    let threshold_days = terms.call_threshold_seconds / SECS_PER_DAY;
     if threshold_days > window_days {
         return false;
     }
@@ -464,7 +464,8 @@ fn breached_enough(window: &[(u32, Option<U256>)], terms: &CallTerms, start_day:
 /// The bucket's sealed notice period. Read on its own in the forfeit arm, which
 /// needs no other term.
 fn notice_period(nod: &NodContract<'_>, bucket_key: B256) -> Result<u32> {
-    nod.callable_bucket_call_notice_period.read(&bucket_key)
+    nod.callable_bucket_call_notice_period_seconds
+        .read(&bucket_key)
 }
 
 /// Stamps the call and opens the settlement window the bucket sealed.
@@ -584,7 +585,11 @@ fn window_for(
         // Widest of the current constant and anything ever armed: a bucket keeps
         // the window it was armed with, so a narrowed constant must not shorten
         // the span the scan collects for it.
-        let window_days = nod.max_call_window.read(&iso_code)?.max(CALL_WINDOW) / SECS_PER_DAY;
+        let window_days = nod
+            .max_call_window_seconds
+            .read(&iso_code)?
+            .max(CALL_WINDOW)
+            / SECS_PER_DAY;
         window.reserve(window_days as usize);
         let mut day = last_closed_day;
         for _ in 0..window_days {

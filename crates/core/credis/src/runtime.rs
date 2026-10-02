@@ -104,7 +104,7 @@ pub fn calc_call_price(price: U256) -> Result<U256> {
 pub fn settlement_deadline(position: &Position) -> u64 {
     position
         .called_at
-        .saturating_add(u64::from(position.call_notice_period))
+        .saturating_add(u64::from(position.call_notice_period_seconds))
 }
 
 impl CredisContract<'_> {
@@ -190,10 +190,10 @@ impl CredisContract<'_> {
                 last_settled_at: params.issued_at,
                 called_at: 0,
                 state: CredisState::Open as u8,
-                call_notice_period: CALL_NOTICE_PERIOD,
+                call_notice_period_seconds: CALL_NOTICE_PERIOD,
                 call_rate: CALL_RATE_PCT,
-                call_window: CALL_WINDOW,
-                call_threshold: CALL_THRESHOLD,
+                call_window_seconds: CALL_WINDOW,
+                call_threshold_seconds: CALL_THRESHOLD,
                 call_anchor_price_minor: params.call_anchor_price_minor,
                 interest_paid_minor: U256::ZERO,
             };
@@ -204,7 +204,7 @@ impl CredisContract<'_> {
                 params.collateral,
             )?;
             self.create_position_record(&position)?;
-            self.widen_max_call_window(position.reference_currency, position.call_window)?;
+            self.widen_max_call_window(position.reference_currency, position.call_window_seconds)?;
             self.append_to_address_index(params.smart_account, position_id)?;
             self.append_to_global_index(position_id)?;
             self.insert_active(position_id)?;

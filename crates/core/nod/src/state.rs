@@ -44,9 +44,9 @@ pub(crate) fn derived_call_terms(
         call_price,
         reference_currency,
         call_rate: params.call_rate,
-        call_window: params.call_window,
-        call_threshold: params.call_threshold,
-        call_notice_period: params.call_notice_period,
+        call_window_seconds: params.call_window_seconds,
+        call_threshold_seconds: params.call_threshold_seconds,
+        call_notice_period_seconds: params.call_notice_period_seconds,
     }))
 }
 
@@ -642,13 +642,13 @@ impl NodContract<'_> {
             .write(&bucket_key, terms.reference_currency)?;
         self.callable_bucket_call_rate
             .write(&bucket_key, terms.call_rate)?;
-        self.callable_bucket_call_window
-            .write(&bucket_key, terms.call_window)?;
-        self.callable_bucket_call_threshold
-            .write(&bucket_key, terms.call_threshold)?;
-        self.callable_bucket_call_notice_period
-            .write(&bucket_key, terms.call_notice_period)?;
-        self.widen_max_call_window(terms.reference_currency, terms.call_window)
+        self.callable_bucket_call_window_seconds
+            .write(&bucket_key, terms.call_window_seconds)?;
+        self.callable_bucket_call_threshold_seconds
+            .write(&bucket_key, terms.call_threshold_seconds)?;
+        self.callable_bucket_call_notice_period_seconds
+            .write(&bucket_key, terms.call_notice_period_seconds)?;
+        self.widen_max_call_window(terms.reference_currency, terms.call_window_seconds)
     }
 
     /// Puts a called bucket on the list the forfeit arm walks.
@@ -664,20 +664,28 @@ impl NodContract<'_> {
             call_price: self.callable_bucket_call_price.read(&bucket_key)?,
             reference_currency: self.callable_bucket_currency.read(&bucket_key)?,
             call_rate: self.callable_bucket_call_rate.read(&bucket_key)?,
-            call_window: self.callable_bucket_call_window.read(&bucket_key)?,
-            call_threshold: self.callable_bucket_call_threshold.read(&bucket_key)?,
-            call_notice_period: self.callable_bucket_call_notice_period.read(&bucket_key)?,
+            call_window_seconds: self.callable_bucket_call_window_seconds.read(&bucket_key)?,
+            call_threshold_seconds: self
+                .callable_bucket_call_threshold_seconds
+                .read(&bucket_key)?,
+            call_notice_period_seconds: self
+                .callable_bucket_call_notice_period_seconds
+                .read(&bucket_key)?,
         })
     }
 
     /// Raises the currency's widest-window high-water mark if this bucket
     /// outruns it. Monotonic, so the daily scan can size one shared VWAP window
     /// per currency and still cover every bucket denominated in it. Mirrors
-    /// `outbe_gem`'s `max_call_window`.
-    fn widen_max_call_window(&mut self, reference_currency: u16, call_window: u32) -> Result<()> {
-        if call_window > self.max_call_window.read(&reference_currency)? {
-            self.max_call_window
-                .write(&reference_currency, call_window)?;
+    /// `outbe_gem`'s `max_call_window_seconds`.
+    fn widen_max_call_window(
+        &mut self,
+        reference_currency: u16,
+        call_window_seconds: u32,
+    ) -> Result<()> {
+        if call_window_seconds > self.max_call_window_seconds.read(&reference_currency)? {
+            self.max_call_window_seconds
+                .write(&reference_currency, call_window_seconds)?;
         }
         Ok(())
     }
@@ -718,9 +726,12 @@ impl NodContract<'_> {
         self.callable_bucket_call_price.clear(&bucket_key)?;
         self.callable_bucket_currency.get(&bucket_key).delete()?;
         self.callable_bucket_call_rate.get(&bucket_key).delete()?;
-        self.callable_bucket_call_window.clear(&bucket_key)?;
-        self.callable_bucket_call_threshold.clear(&bucket_key)?;
-        self.callable_bucket_call_notice_period.clear(&bucket_key)?;
+        self.callable_bucket_call_window_seconds
+            .clear(&bucket_key)?;
+        self.callable_bucket_call_threshold_seconds
+            .clear(&bucket_key)?;
+        self.callable_bucket_call_notice_period_seconds
+            .clear(&bucket_key)?;
         self.callable_bucket_issued_at.clear(&bucket_key)?;
         self.bucket_called_at.clear(&bucket_key)?;
         Ok(())
