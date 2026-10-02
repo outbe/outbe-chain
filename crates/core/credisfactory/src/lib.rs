@@ -6,7 +6,7 @@
 //!   position bound to the smart account (storing the pledger EOA), crediting the
 //!   collateral into the pledger's own pledged ledger, and pays reserved stablecoins
 //!   to the CCA to cover native COEN delivered to the user's smart account.
-//! - `settle` applies a payment interest-first and releases the principal-proportional
+//! - `settleCredis` applies a payment interest-first and releases the principal-proportional
 //!   share of collateral from the pledger's pledged ledger back to its balance.
 //! - [`called`] is the daily Cycle-triggered price-path scan: it calls positions
 //!   whose breach window filled and voids the remainder of called positions whose

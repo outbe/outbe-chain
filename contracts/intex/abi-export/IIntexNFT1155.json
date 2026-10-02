@@ -310,7 +310,7 @@
     },
     {
       "type": "function",
-      "name": "issue",
+      "name": "issueIntex",
       "inputs": [
         {
           "name": "to",

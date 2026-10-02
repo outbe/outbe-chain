@@ -202,7 +202,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param to Recipient of the minted Issued tokens.
     /// @param units Units to mint (bounded by `type(uint16).max` and the series supply cap).
     /// @param seriesId Series identifier.
-    function issue(address to, uint256 units, bytes14 seriesId) external;
+    function issueIntex(address to, uint256 units, bytes14 seriesId) external;
 
     /// @notice Mark a series as Called (Issued -> Called).
     /// @param seriesId Series identifier.

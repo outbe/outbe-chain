@@ -516,7 +516,7 @@ fn repay(world: &mut World) {
             f.account,
             DEPLOYER_KEY,
             CREDIS_FACTORY_ADDRESS,
-            &ICredisFactory::settleCall {
+            &ICredisFactory::settleCredisCall {
                 positionId: f.position_id,
                 amountMinor: amount,
             },

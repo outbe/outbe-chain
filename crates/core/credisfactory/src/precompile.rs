@@ -2,7 +2,7 @@
 //!
 //! `issueCredis` consumes a confidential Gratis pledge (pledge note + spend
 //! authorization) and opens a credis position bound to `smartAccount`.
-//! `settle` applies an arbitrary amount interest-first and releases the matching
+//! `settleCredis` applies an arbitrary amount interest-first and releases the matching
 //! share of the pledged collateral back to the original pledger's encrypted
 //! Gratis balance.
 
@@ -58,10 +58,10 @@ pub fn dispatch(
                         })
                     })
                 }
-                settle(c) => mutate(c, caller, |sender, c| {
+                settleCredis(c) => mutate(c, caller, |sender, c| {
                     let (principal, interest) =
                         runtime::settle(storage.clone(), sender, c.positionId, c.amountMinor)?;
-                    Ok(ICredisFactory::settleReturn {
+                    Ok(ICredisFactory::settleCredisReturn {
                         principalPaidMinor: principal,
                         interestPaidMinor: interest,
                     })

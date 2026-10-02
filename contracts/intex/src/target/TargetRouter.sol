@@ -393,7 +393,7 @@ contract TargetRouter is
     /// @notice Self-call shim around a single issuance; isolates a reverting recipient hook.
     function issueOne(bytes14 seriesId, address to, uint256 quantity) external {
         if (msg.sender != address(this)) revert NotSelf();
-        _ts().intex.issue(to, quantity, seriesId);
+        _ts().intex.issueIntex(to, quantity, seriesId);
     }
 
     /// @notice Permissionless retry of a previously deferred issuance.
@@ -402,7 +402,7 @@ contract TargetRouter is
         if (!p.exists) revert NoSuchParkedIssuance(idx);
         if (p.done) revert AlreadyResolved(idx);
         p.done = true;
-        _ts().intex.issue(p.recipient, p.quantity, p.seriesId);
+        _ts().intex.issueIntex(p.recipient, p.quantity, p.seriesId);
         emit ParkedIssuanceApplied(idx, p.seriesId);
     }
 

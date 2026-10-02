@@ -512,13 +512,13 @@ fn the_settle_abi_returns_the_principal_and_interest_split() {
 
         // Drive the real ABI path, so the two-field return is exercised through
         // encoding and decoding rather than only as a Rust tuple.
-        let data = ICredisFactory::settleCall {
+        let data = ICredisFactory::settleCredisCall {
             positionId: position_id,
             amountMinor: interest + principal,
         }
         .abi_encode();
         let out = crate::precompile::dispatch(storage.clone(), &data, alice(), U256::ZERO).unwrap();
-        let decoded = ICredisFactory::settleCall::abi_decode_returns(&out).unwrap();
+        let decoded = ICredisFactory::settleCredisCall::abi_decode_returns(&out).unwrap();
 
         // Order matters: principal first, interest second.
         assert_eq!(decoded.principalPaidMinor, principal);
@@ -1597,7 +1597,7 @@ fn repayment_deadline_is_enforced_before_cleanup_through_the_abi() {
             advance_to(&storage, now);
             let position = credis.get_position(id).unwrap();
             let interest = CredisContract::accrued_interest(&position, now).unwrap();
-            let data = ICredisFactory::settleCall {
+            let data = ICredisFactory::settleCredisCall {
                 positionId: id,
                 amountMinor: principal + interest,
             }
@@ -1605,7 +1605,7 @@ fn repayment_deadline_is_enforced_before_cleanup_through_the_abi() {
             let result =
                 crate::precompile::dispatch(storage.clone(), &data, bob(), U256::ZERO).unwrap();
             assert_eq!(
-                ICredisFactory::settleCall::abi_decode_returns(&result)
+                ICredisFactory::settleCredisCall::abi_decode_returns(&result)
                     .unwrap()
                     .principalPaidMinor,
                 principal
@@ -1616,7 +1616,7 @@ fn repayment_deadline_is_enforced_before_cleanup_through_the_abi() {
         let pledged = view_pledged(&storage, alice());
         assert_eq!(pledged, pledge_cost() / U256::from(2));
         advance_to(&storage, deadline + 1);
-        let data = ICredisFactory::settleCall {
+        let data = ICredisFactory::settleCredisCall {
             positionId: id,
             amountMinor: U256::MAX,
         }

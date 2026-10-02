@@ -109,7 +109,7 @@ contract IntexNFT1155BridgeReentrancyTest is CrossChainTest {
         tokenA.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
         tokenB.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
 
-        tokenA.issue(user, AMOUNT, SERIES_ID);
+        tokenA.issueIntex(user, AMOUNT, SERIES_ID);
     }
 
     function test_receiveMessage_blocks_reentry_to_multiSend() public {

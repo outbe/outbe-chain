@@ -160,7 +160,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function issue(address to, uint256 units, bytes14 seriesId) external onlyRole(RELAYER_ROLE) {
+    function issueIntex(address to, uint256 units, bytes14 seriesId) external onlyRole(RELAYER_ROLE) {
         if (to == address(0)) {
             revert ZeroAddress("to", to);
         }

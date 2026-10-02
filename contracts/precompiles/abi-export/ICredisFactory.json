@@ -45,7 +45,7 @@
   },
   {
     "type": "function",
-    "name": "settle",
+    "name": "settleCredis",
     "inputs": [
       {
         "name": "positionId",

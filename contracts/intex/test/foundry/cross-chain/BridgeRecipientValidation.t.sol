@@ -39,7 +39,7 @@ contract BridgeRecipientValidationTest is CrossChainTest {
         adapter.setRemoteMessenger(B_CHAIN_ID, _interop(B_CHAIN_ID, address(adapter)));
 
         token.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
-        token.issue(user, AMOUNT, SERIES_ID);
+        token.issueIntex(user, AMOUNT, SERIES_ID);
     }
 
     function _expectMalformed() internal {

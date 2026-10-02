@@ -33,7 +33,7 @@ contract CalledOwnershipFreezeTest is CrossChainTest {
         intex.grantRole(intex.RELAYER_ROLE(), address(nftBridge));
 
         intex.createSeries(CreateSeriesLib.params(WORLDWIDE_DAY, 10_000, 1 days));
-        intex.issue(owner, 10, SERIES_ID);
+        intex.issueIntex(owner, 10, SERIES_ID);
         tokenId = intex.issuedTokenId(SERIES_ID);
         intex.markCalled(SERIES_ID, uint32(block.timestamp));
     }
@@ -80,7 +80,7 @@ contract CalledOwnershipFreezeTest is CrossChainTest {
     function test_BeforeTheCallTheBridgeStillCarriesToAnyone() public {
         intex.createSeries(CreateSeriesLib.params(20260502, 10_000, 1 days));
         bytes14 open = "20260502-USD-U";
-        intex.issue(owner, 5, open);
+        intex.issueIntex(owner, 5, open);
 
         uint256 openTokenId = intex.issuedTokenId(open);
         vm.prank(owner);

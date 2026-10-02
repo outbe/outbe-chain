@@ -69,7 +69,7 @@ interface ICredisFactory {
     ///         before any principal, and never carried between settlements. This is
     ///         the payment delta; the position's `interestPaidMinor` is the sum of
     ///         these deltas across successful settlements.
-    function settle(uint256 positionId, uint256 amountMinor)
+    function settleCredis(uint256 positionId, uint256 amountMinor)
         external
         returns (uint256 principalPaidMinor, uint256 interestPaidMinor);
 

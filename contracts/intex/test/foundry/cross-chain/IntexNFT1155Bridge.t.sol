@@ -68,8 +68,8 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
         vm.deal(sender, 100 ether); // batchSend/multiSend are caller-funded
 
         // Stock the sender with units on both series so the per-item `crosschainBurn` succeeds.
-        srcToken.issue(sender, 100, SERIES_A);
-        srcToken.issue(sender, 100, SERIES_B);
+        srcToken.issueIntex(sender, 100, SERIES_A);
+        srcToken.issueIntex(sender, 100, SERIES_B);
     }
 
     // --- helpers ---

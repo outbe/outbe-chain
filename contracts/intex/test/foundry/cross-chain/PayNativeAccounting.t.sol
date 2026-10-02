@@ -74,7 +74,7 @@ contract PayNativeAccountingTest is CrossChainTest {
 
         // Series + owner balance so markCalled/owner enumeration and the entry-path bridge sends have tokens.
         intex.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
-        intex.issue(owner, 5, SERIES_ID);
+        intex.issueIntex(owner, 5, SERIES_ID);
     }
 
     /// @dev A 1-token bridge-out to Outbe; the entry path (payable `send`) burns it from `owner`.
@@ -163,7 +163,7 @@ contract PayNativeAccountingTest is CrossChainTest {
         // the RefundFailed guard. Without it, a refactor that swallowed the .call return would silently seed the
         // relay float with the entry caller's excess.
         NftRefundRejector rejector = new NftRefundRejector(address(nftBridge));
-        intex.issue(address(rejector), 1, SERIES_ID);
+        intex.issueIntex(address(rejector), 1, SERIES_ID);
 
         SendParam memory params = _sendParam();
         params.to = bytes32(uint256(uint160(address(rejector))));
