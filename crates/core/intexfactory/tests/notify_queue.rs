@@ -1,8 +1,7 @@
 //! Queue mechanics of the lifecycle notices the `intex_drain_notices` trigger sends.
 //!
-//! The notice itself is best-effort, so these pin what must hold regardless of
-//! whether it reaches the router: the chunk bound, the resume point, and that a
-//! drained entry is gone.
+//! The router accepts every send here, so these pin the queue walk itself: the
+//! chunk bound, the resume point, and that a drained entry is gone.
 
 use alloy_primitives::U256;
 use outbe_intex::SeriesId;
@@ -34,6 +33,16 @@ fn seed(handle: &StorageHandle<'_>, count: u32) {
     factory.notify_tail.write(count).unwrap();
 }
 
+/// A provider whose OriginRouter accepts sends.
+fn provider() -> HashMapStorageProvider {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at(
+        outbe_intexfactory::constants::ORIGIN_ROUTER_ADDRESS,
+        alloy_primitives::Bytes::from(vec![0u8; 32]),
+    );
+    storage
+}
+
 fn drain(handle: &StorageHandle<'_>) {
     let ctx = BlockRuntimeContext::new(
         BlockContext::empty_for_tests(1, NOW, CHAIN_ID),
@@ -52,7 +61,7 @@ fn queue_bounds(handle: &StorageHandle<'_>) -> (u32, u32) {
 
 #[test]
 fn a_backlog_drains_one_firing_worth_at_a_time() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
         let queued = MAX_ROUTER_CALLS_PER_FIRING + 5;
         seed(&handle, queued);
@@ -75,7 +84,7 @@ fn a_backlog_drains_one_firing_worth_at_a_time() {
 
 #[test]
 fn a_drained_entry_is_gone() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
         seed(&handle, 3);
         drain(&handle);
@@ -93,7 +102,7 @@ fn a_drained_entry_is_gone() {
 
 #[test]
 fn an_empty_queue_is_a_noop() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
         drain(&handle);
         assert_eq!(queue_bounds(&handle), (0, 0));
@@ -102,7 +111,7 @@ fn an_empty_queue_is_a_noop() {
 
 #[test]
 fn an_exactly_full_firing_rewinds_the_queue() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
         seed(&handle, MAX_ROUTER_CALLS_PER_FIRING);
         drain(&handle);
