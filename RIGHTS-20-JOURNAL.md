@@ -76,6 +76,28 @@ Verification against the locked release:
 
 Verification logs: `/tmp/rights20-v027-{check,tests,enclave,evm,benchmark,workspace,harness,clippy,fmt}.log`.
 
+## Pledge context ownership (2026-10-02)
+
+Pledge-note operation contexts now belong to `outbe_gratis::context`:
+`PledgeDomain::{Issue, Unpledge}` and `pledge_context`. The existing
+`outbe_gratis::api::unpledge_context` path remains available through a re-export.
+CredisFactory still encodes the complete reservation target and delegates the
+operation context to Gratis. Paynote's `SettlementDomain` now contains only
+Nod, Gem and Intex; Gratis and CredisFactory no longer depend on Paynote.
+
+Domain bytes 4 and 5, the 97-byte preimage, and Keccak-to-field reduction are
+unchanged. Fixed vectors captured from the original implementation verify
+compatibility and separation from Paynote contexts. The zero-context rejection
+now uses a pledge-specific revert. No circuits, proof formats, storage or
+Solidity interfaces changed, and this refactor requires no additional genesis
+reset or regeneration of v0.27.0 notes/proofs.
+
+Verification: 65 tests passed (Paynote 28, Gratis 14, CredisFactory 23), including
+context binding, real proofs, original-owner redemption, shared nullifiers,
+repayment notes and rollback. Workspace/all-targets compilation, formatting,
+diff whitespace checks and Clippy with warnings denied for Paynote, Gratis and
+CredisFactory passed. Logs: `/tmp/pledge-context-{vectors,tests,workspace,clippy}.log`.
+
 ## Privacy and accounting
 
 `pledged_total = unspent_note_backing + Credis_collateral_balance`;

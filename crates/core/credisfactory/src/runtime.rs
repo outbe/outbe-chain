@@ -20,15 +20,10 @@ pub fn reservation_context(
     id: U256,
     r: &outbe_vaultrouter::api::IVaultRouter::LiquidityReservation,
 ) -> Result<B256> {
-    use outbe_paynote::context::{settlement_context, SettlementDomain};
+    use outbe_gratis::context::{pledge_context, PledgeDomain};
     let target =
         keccak256((U256::from(chain_id), CREDIS_FACTORY_ADDRESS, id, r.clone()).abi_encode());
-    settlement_context(
-        SettlementDomain::GratisPledge,
-        target,
-        r.collateral,
-        r.snapshotId,
-    )
+    pledge_context(PledgeDomain::Issue, target, r.collateral, r.snapshotId)
 }
 fn revert(message: &str) -> PrecompileError {
     PrecompileError::Revert(message.into())

@@ -19,6 +19,7 @@
 
 pub mod api;
 pub mod client;
+pub mod context;
 pub mod enclave_client;
 pub mod pledge;
 pub mod precompile;

@@ -5,6 +5,7 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
+pub use crate::context::unpledge_context;
 pub use outbe_tee::protocol::{FidelityOpOutcome, FidelityOpSection, ModifyAuth};
 
 use crate::runtime;
@@ -107,20 +108,4 @@ pub fn return_collateral(
 }
 pub fn forfeit(storage: &StorageHandle<'_>, amount: U256) -> Result<()> {
     runtime::forfeit(storage, amount)
-}
-
-/// Wallet and runtime use the same chain/factory/destination/amount binding.
-pub fn unpledge_context(chain_id: u64, destination: Address, amount: U256) -> Result<B256> {
-    use alloy_sol_types::SolValue;
-    use outbe_paynote::context::{settlement_context, SettlementDomain};
-    let target = alloy_primitives::keccak256(
-        (
-            U256::from(chain_id),
-            outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS,
-            destination,
-            amount,
-        )
-            .abi_encode(),
-    );
-    settlement_context(SettlementDomain::GratisUnpledge, target, amount, U256::ZERO)
 }

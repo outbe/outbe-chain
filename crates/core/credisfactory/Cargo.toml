@@ -6,7 +6,6 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-outbe-paynote.workspace = true
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-ccaregistry.workspace = true
