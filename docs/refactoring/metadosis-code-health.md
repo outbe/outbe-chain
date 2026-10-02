@@ -7,7 +7,7 @@ Public commands, read APIs, Solidity ABI and protocol economics stay unchanged.
 ## Execution checklist
 
 - [x] Unify terminal receipt storage and proof/genesis bindings.
-- [ ] Normalize the live job index to identity keys.
+- [x] Normalize the live job index to identity keys.
 - [ ] Decompose aggregate validation by index invariant.
 - [ ] Separate request, finality and voting.
 - [ ] Isolate completion and expiry.
@@ -49,3 +49,8 @@ Step 1: 245 library tests and all 12 integration/model/facade harness tests pass
 The fixed OMTR wire vectors first failed against the empty encoder, then passed
 with canonical encoding. Registry and measurement shape were regenerated from
 their authorities; the intermediate live codec remains OMLI1 until step 2.
+
+Step 2: 249 library tests passed, one separately gated fault matrix ignored.
+OMLI2 stores 36-byte identity keys instead of 148-byte FSM copies. Snapshot and
+carrier admission byte caps follow the new key size; per-day FSM validation remains
+authoritative. The fresh-chain layout hash now commits OMLI2.

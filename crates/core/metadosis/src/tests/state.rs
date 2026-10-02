@@ -518,7 +518,7 @@ fn test_query_worldwide_days_by_status_via_precompile() {
 fn storage_layout_string_matches_the_live_schema() {
     with_contract(|m| {
         let live = format!(
-            "OUTBE_METADOSIS_STORAGE_LAYOUT_V1|worldwide_day_slots={}|closed_wwd_base_slot={}|ocomp_job_records_base_slot={}|league_snapshot_base_slot={}|terminal_receipt_base_slot={}|terminal_receipt_codec=OMTR1|live_index_codec=OMLI1|day_limit_receipt_base_slot={}|day_limit_receipt_slots={}",
+            "OUTBE_METADOSIS_STORAGE_LAYOUT_V1|worldwide_day_slots={}|closed_wwd_base_slot={}|ocomp_job_records_base_slot={}|league_snapshot_base_slot={}|terminal_receipt_base_slot={}|terminal_receipt_codec=OMTR1|live_index_codec=OMLI2|day_limit_receipt_base_slot={}|day_limit_receipt_slots={}",
             <WorldwideDay as StorageRecord>::SLOTS, m.closed_wwd.base_slot(), m.ocomp_job_records.base_slot(), m.ocomp_fidelity_league_snapshot.base_slot(), m.worldwide_day_terminal_receipts.base_slot(), m.day_limit_formation_receipts.base_slot(), <crate::schema::DayLimitFormationReceiptState as StorageRecord>::SLOTS,
         );
         assert_eq!(

@@ -16,11 +16,12 @@ use crate::{
 };
 
 use super::{
-    codec::{decode_live_scheduler_index, LIVE_INDEX_HEADER_LEN, SCHEDULER_ENCODED_LEN},
+    codec::SCHEDULER_ENCODED_LEN,
     index::{
         READY_INDEX_HEADER_LEN, READY_INDEX_KEY_LEN, RESPONSE_INDEX_HEADER_LEN,
         RESPONSE_INDEX_KEY_LEN,
     },
+    live_index::{decode_live_scheduler_index, LIVE_INDEX_HEADER_LEN, LIVE_INDEX_KEY_LEN},
     schema::poc_schema_limits,
 };
 
@@ -86,7 +87,7 @@ fn preflight_live_job_view(contract: &MetadosisContract<'_>) -> Result<()> {
         (
             &contract.ocomp_scheduler,
             LIVE_INDEX_HEADER_LEN,
-            SCHEDULER_ENCODED_LEN,
+            LIVE_INDEX_KEY_LEN,
             usize::from(u16::MAX),
             "OCOMP live scheduler",
         ),

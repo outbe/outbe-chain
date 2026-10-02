@@ -9,7 +9,7 @@ use outbe_primitives::{error::PrecompileError, storage::StorageHandle};
 use crate::{constants::MAX_ACTIVE_WWDS, schema::MetadosisContract};
 
 use super::{
-    codec::{LIVE_INDEX_HEADER_LEN, SCHEDULER_ENCODED_LEN},
+    live_index::{LIVE_INDEX_HEADER_LEN, LIVE_INDEX_KEY_LEN},
     vote::{
         authorize_historical_result_vote_carrier_signer, preflight_result_vote_calldata,
         resolve_historical_result_vote_member, ResolvedHistoricalResultVoteMemberV1,
@@ -140,7 +140,7 @@ fn live_job_for_finalized_job_id(
     job_id: alloy_primitives::B256,
     limits: &SchemaLimits,
 ) -> Result<Option<OcompJobRecordV1>, PrecompileError> {
-    let max_scheduler_bytes = SCHEDULER_ENCODED_LEN
+    let max_scheduler_bytes = LIVE_INDEX_KEY_LEN
         .checked_mul(MAX_ACTIVE_WWDS)
         .and_then(|bytes| LIVE_INDEX_HEADER_LEN.checked_add(bytes))
         .ok_or_else(|| PrecompileError::Fatal("OCOMP live scheduler byte cap overflow".into()))?;
