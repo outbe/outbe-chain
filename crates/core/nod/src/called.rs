@@ -393,8 +393,10 @@ fn forfeit_arm(
             let called_at = nod.bucket_called_at.read(&bucket_key)?;
             // Paid entitlements retain their bucket terms, but cannot be forfeited.
             let has_unpaid = nod.bucket_nod_count.read(&bucket_key)? != 0;
+            // A bucket whose Nods are still landing stays listed for a later pass.
             if has_unpaid
                 && now > api::settlement_deadline_of(called_at, notice_period(nod, bucket_key)?)
+                && !materializing(nod, bucket_key)?
             {
                 let budget = MAX_NOD_FORFEITS_PER_BLOCK.saturating_sub(forfeited);
                 if budget == 0 {

@@ -1513,6 +1513,37 @@ fn a_bucket_is_not_called_while_its_generation_is_materializing() {
 }
 
 #[test]
+fn a_lapsed_bucket_waits_for_its_generation_to_materialize_before_forfeiting() {
+    harness(|storage, scope, parent| {
+        let (bucket_key, items) = arm_lapsed(
+            storage,
+            scope,
+            parent,
+            &[(0x95, 3, false), (0x96, 5, false)],
+        );
+        let nod = NodContract::new(storage.clone());
+        let worldwide_day = items[0].worldwide_day;
+        nod.ocomp_target_generation
+            .write(&worldwide_day, 1)
+            .unwrap();
+        let past = START + 30 * DAY + NOTICE + 1;
+        assert_eq!(scan(storage, scope, parent, past), 0);
+        assert_eq!(nod.bucket_nod_count.read(&bucket_key).unwrap(), 2);
+        assert_eq!(nod.called_buckets.len().unwrap(), 1);
+        assert_eq!(reserve(storage), U256::ZERO);
+
+        nod.ocomp_target_generation
+            .write(&worldwide_day, 0)
+            .unwrap();
+        let next = past + DAY;
+        finalize_through(storage, next);
+        assert_eq!(scan(storage, scope, parent, next), 2);
+        assert_eq!(nod.bucket_nod_count.read(&bucket_key).unwrap(), 0);
+        assert_eq!(reserve(storage), U256::from(8u64));
+    });
+}
+
+#[test]
 fn a_node_local_failure_while_calling_a_bucket_fails_the_slice() {
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
