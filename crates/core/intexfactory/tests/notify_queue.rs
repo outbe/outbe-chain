@@ -221,6 +221,52 @@ fn a_refused_notice_does_not_hold_back_the_rest() {
     assert!(dropped_notices(&storage).is_empty());
 }
 
+fn same_day_series(index: u8) -> SeriesId {
+    SeriesId::pack(
+        WorldwideDay::new(20_260_101),
+        [b'0', b'0', b'0' + index],
+        b'U',
+    )
+    .expect("well-formed series id")
+}
+
+#[test]
+fn every_entry_of_a_refused_run_is_requeued() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |handle| {
+        let factory = IntexFactoryContract::new(handle.clone());
+        for index in 0..3u8 {
+            factory
+                .notify_at
+                .write(
+                    &u32::from(index),
+                    pack_called_notice(same_day_series(index), CALLED_AT),
+                )
+                .unwrap();
+        }
+        factory.notify_tail.write(3).unwrap();
+        drain(&handle);
+
+        assert_eq!(queue_bounds(&handle), (3, 6), "one run, refused whole");
+        for index in 0..3u8 {
+            let entry = queued(&handle, 3 + u32::from(index));
+            assert_eq!(SeriesId::from_word(entry), same_day_series(index));
+            assert_eq!(called_notice_attempts(entry), 1);
+        }
+    });
+
+    accept_sends(&mut storage);
+    StorageHandle::enter(&mut storage, |handle| {
+        drain(&handle);
+        assert_eq!(
+            queue_bounds(&handle),
+            (0, 0),
+            "the requeued run goes out together"
+        );
+    });
+    assert!(dropped_notices(&storage).is_empty());
+}
+
 #[test]
 fn a_router_refusing_every_run_ends_the_firing_early() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
