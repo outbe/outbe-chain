@@ -8,7 +8,7 @@ Public commands, read APIs, Solidity ABI and protocol economics stay unchanged.
 
 - [x] Unify terminal receipt storage and proof/genesis bindings.
 - [x] Normalize the live job index to identity keys.
-- [ ] Decompose aggregate validation by index invariant.
+- [x] Decompose aggregate validation by index invariant.
 - [ ] Separate request, finality and voting.
 - [ ] Isolate completion and expiry.
 - [ ] Separate worldwide-day advancement and effects.
@@ -54,3 +54,7 @@ Step 2: 249 library tests passed, one separately gated fault matrix ignored.
 OMLI2 stores 36-byte identity keys instead of 148-byte FSM copies. Snapshot and
 carrier admission byte caps follow the new key size; per-day FSM validation remains
 authoritative. The fresh-chain layout hash now commits OMLI2.
+
+Step 3: 249 library tests passed. Aggregate validation is split into profile
+presence, pending/live membership, job deadlines, response windows and READY keys.
+Both directions of index equivalence and completed quorum windows remain checked.
