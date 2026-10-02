@@ -1775,6 +1775,51 @@ fn a_limit_short_of_one_unit_is_cancelled_at_start() {
     assert_eq!(event.promisLoadMinor, LOAD_MINOR);
 }
 
+fn allocation_records(
+    events: &[alloy_primitives::LogData],
+) -> Vec<crate::precompile::IDesis::DesisAllocationRecorded> {
+    use crate::precompile::IDesis::DesisAllocationRecorded;
+    use alloy_sol_types::SolEvent;
+    events
+        .iter()
+        .filter_map(|log| DesisAllocationRecorded::decode_log_data(log).ok())
+        .collect()
+}
+
+#[test]
+fn a_day_cancelled_at_start_records_a_zero_desis_allocation() {
+    let (stage, _, events) = start_day(LOAD_MINOR - 1, true);
+
+    assert_eq!(stage, AuctionStage::Cancelled);
+    let records = allocation_records(&events);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].worldwideDay, WORLDWIDE_DAY.value());
+    assert_eq!(records[0].desisLimitMinor, U256::from(LOAD_MINOR - 1));
+    assert_eq!(records[0].desisAllocationMinor, U256::ZERO);
+}
+
+#[test]
+fn an_overdue_day_records_a_zero_desis_allocation() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(NOW));
+    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+    storage.stub_sub_call_at(
+        outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
+        Bytes::from(vec![0u8; 32]),
+    );
+    StorageHandle::enter(&mut storage, |s| {
+        brief(&s, true);
+        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + 3 * 86_400).unwrap();
+    });
+
+    let records =
+        allocation_records(storage.get_events(outbe_primitives::addresses::DESIS_ADDRESS));
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].desisLimitMinor, U256::from(10 * LOAD_MINOR));
+    assert_eq!(records[0].desisAllocationMinor, U256::ZERO);
+}
+
 #[test]
 fn a_green_day_with_no_limit_is_cancelled_below_one_unit() {
     let (stage, _, events) = start_day(0, true);
@@ -2192,10 +2237,13 @@ fn clearing_reports_the_desis_allocation_and_the_unused_limit() {
     });
 
     let logs = storage.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
-    let allocation = logs
-        .iter()
-        .find_map(|log| IDesis::DesisAllocationRecorded::decode_log_data(log).ok())
-        .expect("the clearing records its Desis Allocation");
+    let records = allocation_records(logs);
+    assert_eq!(
+        records.len(),
+        1,
+        "the clearing records its Desis Allocation once"
+    );
+    let allocation = &records[0];
     assert_eq!(allocation.worldwideDay, WORLDWIDE_DAY.value());
     assert_eq!(allocation.desisLimitMinor, U256::from(3 * LOAD_MINOR));
     assert_eq!(allocation.desisAllocationMinor, U256::from(LOAD_MINOR));

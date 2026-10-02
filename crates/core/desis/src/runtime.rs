@@ -543,8 +543,9 @@ fn start_auction(
     Ok(StartOutcome::Started)
 }
 
-/// Return a retiring day's unused Desis Limit to PromisLimit. No-op once the
-/// limit was consumed at clearing (or for a red day, which briefs zero).
+/// Return a retiring day's unused Desis Limit to PromisLimit, recording its
+/// Desis Allocation as zero. No-op once the limit was consumed at clearing (or
+/// for a red day, which briefs zero).
 fn refund_unused_desis_limit(
     storage: &StorageHandle<'_>,
     contract: &mut DesisContract<'_>,
@@ -557,6 +558,11 @@ fn refund_unused_desis_limit(
     contract
         .pending_desis_limit_minor
         .write(&worldwide_day, U256::ZERO)?;
+    contract.emit(IDesis::DesisAllocationRecorded {
+        worldwideDay: worldwide_day.into(),
+        desisLimitMinor: unused,
+        desisAllocationMinor: U256::ZERO,
+    })?;
     contract.emit(IDesis::UnusedDesisLimitReported {
         worldwideDay: worldwide_day.into(),
         unusedDesisLimitMinor: unused,

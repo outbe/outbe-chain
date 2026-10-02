@@ -68,7 +68,7 @@ interface IDesis {
     event AuctionOverdue(uint32 indexed worldwideDay);
     event AuctionCleared(uint32 indexed worldwideDay, uint32 issuedUnits, uint32 clearingRate, uint64 totalDemand);
     event AuctionClearedEmpty(uint32 indexed worldwideDay, uint64 totalDemand);
-    /// @notice The clearing put `desisAllocationMinor` of the day's `desisLimitMinor` into issued Intex.
+    /// @notice The day put `desisAllocationMinor` of its `desisLimitMinor` into issued Intex; zero when cancelled.
     event DesisAllocationRecorded(uint32 indexed worldwideDay, uint256 desisLimitMinor, uint256 desisAllocationMinor);
     /// @notice The part of the day's Desis Limit left unallocated returned to PromisLimit.
     event UnusedDesisLimitReported(uint32 indexed worldwideDay, uint256 unusedDesisLimitMinor);
