@@ -238,7 +238,7 @@ or receive a code-grounded disposition, without blanket analyzer suppression.
 - [x] Commit/reducer and genesis domain operations.
 - [x] OCOMP voting, admission, expiry, request and activation.
 - [x] Private argument contexts and shared fixture setup; independent assertion oracles retained.
-- [ ] Coverage gaps, complete analyzer rerun and per-finding reconciliation.
+- [x] Coverage measurement, complete analyzer rerun and per-finding reconciliation; remaining gaps are explicit.
 
 First slice: 255 library tests passed. Missing terminal/capacity receipts return
 canonical NONE tuples; missing OCOMP artifacts retain their record-specific
@@ -281,3 +281,63 @@ canonical proof DTO test initializer also used by the protocol module. Changing
 a public signature or coupling independent protocol test fixtures solely to
 remove these rows would violate this refactor's boundaries. Raw analyzer counts
 are reported separately from these reviewed dispositions.
+
+
+Fifth slice: immutable activation authority and retained request effects compare
+complete typed bindings instead of compound boolean clauses. READY admission is
+a policy separate from time-plan classification. Sealed admission persistence
+owns its envelope/hash consistency check. Public API tests now exercise absent
+receipts and fork authority as well as the successfully installed authority.
+260 library tests plus all integration/model/facade targets pass; strict Clippy
+passes. Cross-boundary checks on the preceding fourth slice passed: EVM request
+lifecycle 8, node OCOMP 62, capacity fault matrix 1, doctests 6 and no-default
+feature build. Runtime effects, public signatures and codecs remain unchanged.
+
+
+## Second-pass measured result and remaining work
+
+Measured code commit: `c2c18c0a7` (subsequent report-only commits do not alter
+these code bytes). Whole-module scans include all 98 files and extracted helpers.
+
+| Signal | First pass | Second pass |
+| --- | ---: | ---: |
+| Qlty raw findings, including tests | 58 | 2 |
+| Repowise raw findings, everything scope | 941 | 853 |
+| Repowise size/complexity/conditional/nesting/brain/bumpy-road rows | 82 | 15 |
+| LLVM source-file line coverage, same exclusions | 83.31% | 86.77% |
+| Public `api.rs` line coverage | 44% at original coverage-gap baseline | 100% |
+
+Coverage is 8,568 / 9,874 executable lines. Inline cfg(test) blocks remain in
+source-file summaries; this is not a pure-production or branch-coverage claim.
+Both original `coverage_gap` markers are absent. The remaining two
+`untested_hotspot` rows are constants-only and Registry re-export files with no
+executable function bodies. No paired test was fabricated for either file.
+
+All original baseline rows and every current row have a disposition in
+`metadosis-findings.json`. The 999 baseline rows are separated from the current
+853 Repowise + 2 Qlty rows. A baseline file/symbol/kind no longer reported is
+not treated as proof that extracted functions have no findings: the full current
+inventory is included. The lead clone pair of each current DRY row was located
+in Repowise's token-pair cache and inspected; identifiers/literals are normalized
+and some windows span adjacent functions. Their source locations are preserved.
+
+This is **not full closure**. Remaining work is explicit: 47 actual line-coverage
+signals and 56 file-level clone warnings need further selective scenario/clone
+work. No blanket false-positive disposition is applied to these rows. The two
+production structural rows are simple exhaustive routers (`commit_existing_wwd`
+and ABI `dispatch`); they remain reported. Fixture/scenario tables retain their
+size/complexity markers and independent assertions. Typed boundaries, required
+trait methods, test fail-fast assertions and private validated-map invariants
+have reviewed retention reasons rather than rewritten behavior or disabled rules.
+
+For the second pass, all-targets verification passed 260 library tests, 2 mutation
+UI harness tests (6 compile-fail cases), 7 FSM model tests and 5 semantic facade
+tests. One expensive capacity failure matrix was run separately and passed.
+Strict Clippy with `-D warnings`, no-default-features, 6 doctests, formatting and
+whitespace checks pass. EVM lifecycle (8) and node OCOMP (62) passed at `c97265d8`
+before the final additional binding/query slice; the final Metadosis all-targets
+and LLVM-instrumented runs cover that slice. No live multinode E2E run is claimed.
+
+Local evidence: `/tmp/metadosis-stage2-final.sarif`,
+`/tmp/metadosis-stage2-health-final.json`, `/tmp/metadosis-stage2-coverage.json`,
+`/tmp/metadosis-stage2-repowise.lcov` and the corresponding test logs.
