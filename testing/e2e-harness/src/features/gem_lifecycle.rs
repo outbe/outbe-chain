@@ -38,10 +38,11 @@ const GEM_LOAD_MINOR: u128 = 100_003;
 const REFERENCE_BYTE: u8 = b'U';
 /// `GemTypes::Merchant`.
 const MERCHANT_GEM_TYPE: u8 = 5;
-/// `GemState::Issued` / `Called` / `Settled`.
+/// `GemState::Issued` / `Called` / `Settled` / `Forfeited`; the last is read-time only.
 const ISSUED: u8 = 0;
 const CALLED: u8 = 2;
 const SETTLED: u8 = 3;
+const FORFEITED_STATE: u8 = 4;
 const HOLDER_SEED: u64 = 0x0e6e_0000;
 /// Issuance mints through a message, not inside the issuing call.
 const ISSUANCE_TIMEOUT_SECS: u64 = 180;
@@ -382,7 +383,7 @@ impl Lifecycle for GemLifecycle {
         let url = world_url(world);
         let id = gem(world, FORFEITED);
         let called = read_gem(world, id);
-        assert_eq!(called.state, CALLED);
+        assert!(matches!(called.state, CALLED | FORFEITED_STATE));
         let notice = u64::from(called.callNoticePeriod);
         assert!(
             notice <= EXPIRY_BUCKET_SECS,
@@ -395,6 +396,16 @@ impl Lifecycle for GemLifecycle {
             || format!("gem {id} never reached its call deadline {notice_end}"),
             || head_time(world) >= notice_end,
         );
+        if let Some(lapsed) = eth::read_call(
+            &url,
+            addresses::GEM_ADDR,
+            &eth::IGem::getGemStatusCall { gemId: id },
+        ) {
+            assert_eq!(
+                lapsed.state, FORFEITED_STATE,
+                "gem {id} past its call deadline must read Forfeited until the sweep burns it"
+            );
+        }
         eth::send_call(
             &url,
             addresses::GEM_ADDR,
