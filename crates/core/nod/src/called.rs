@@ -37,7 +37,7 @@ use outbe_primitives::{
     error::{Result, SweepFailure},
     math::{constants::MAX_BIN_ID, tree_math},
     storage::StorageHandle,
-    time::{first_full_day, previous_date_key, timestamp_to_date_key},
+    time::{first_full_day, previous_date_key, timestamp_to_date_key, WorldwideDay},
 };
 
 use crate::{
@@ -400,12 +400,19 @@ fn forfeit_arm(
                 let res = ctx.storage.with_checkpoint(|| {
                     forfeit_members(&ctx.storage, nod, scope, parent, bucket_key, budget)
                 });
-                if let Ok(burned) = res {
-                    forfeited = forfeited.saturating_add(burned);
-                    // The next slice resumes on this bucket.
-                    if burned == budget && nod.bucket_nod_count.read(&bucket_key)? != 0 {
-                        break false;
+                match res {
+                    Ok(burned) => {
+                        forfeited = forfeited.saturating_add(burned);
+                        // Members left: the budget or the gas ran out, so the next slice resumes here.
+                        if nod.bucket_nod_count.read(&bucket_key)? != 0 {
+                            break false;
+                        }
                     }
+                    Err(error) => match error.sweep_failure() {
+                        SweepFailure::Skip => {}
+                        SweepFailure::Stop => break false,
+                        SweepFailure::Propagate => return Err(error),
+                    },
                 }
             }
         }
@@ -508,6 +515,9 @@ fn mark_called(
 /// closed, so nothing can rescue the remainder. Removing the last member deletes
 /// the bucket body and drops it from the called list.
 ///
+/// Each member burns in its own checkpoint, so running out of gas stops the batch
+/// early and keeps the members already burned.
+///
 /// Each burned load returns to the Promis Reserve. Lysis drew it out of the day
 /// limit and only mining converts it into Gratis, so a load that is destroyed
 /// unmined would otherwise leave the reserve with nothing minted against it.
@@ -525,42 +535,15 @@ pub(crate) fn forfeit_members(
     let mut burned: u32 = 0;
     let mut credit = U256::ZERO;
     while burned < budget {
-        let count = nod.bucket_nod_count.read(&bucket_key)?;
-        let Some(last) = count.checked_sub(1) else {
-            break;
+        let member = storage.with_checkpoint(|| {
+            forfeit_last_member(storage, nod, scope, parent, bucket_key, worldwide_day)
+        });
+        let gratis_load_minor = match member {
+            Ok(Some(load)) => load,
+            Ok(None) => break,
+            Err(error) if error.sweep_failure() == SweepFailure::Stop => break,
+            Err(error) => return Err(error),
         };
-        let nod_id = nod
-            .bucket_nods
-            .read(&NodContract::bucket_nod_key(bucket_key, last))?;
-        if nod_id.is_zero() {
-            return Err(outbe_primitives::error::PrecompileError::Revert(format!(
-                "Nod bucket {bucket_key} member slot {last} is empty during forfeit"
-            )));
-        }
-        let item = api::load_item(storage, scope, parent, nod_id)?.ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::Revert(format!(
-                "Nod bucket {bucket_key} member {nod_id} has no body during forfeit"
-            ))
-        })?;
-        if item.body().is_settled || item.body().bucket_key != bucket_key {
-            return Err(outbe_primitives::error::PrecompileError::Revert(format!(
-                "Nod bucket {bucket_key} indexes an ineligible member {nod_id}"
-            )));
-        }
-        let owner = item.body().owner;
-        let gratis_load_minor = item.body().gratis_load_minor;
-        let bucket_id = WwdEntityId::from_day_and_digest(worldwide_day, bucket_key.0);
-        let bucket = api::load_bucket(storage, scope, parent, bucket_id)?.ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::Revert(format!(
-                "Nod bucket {bucket_key} has no body during forfeit"
-            ))
-        })?;
-        api::remove_nod(storage, scope, item, bucket)?;
-        nod.emit(INod::NodForfeited {
-            owner,
-            nodId: nod_id.to_u256(),
-            gratisLoadMinor: gratis_load_minor,
-        })?;
         credit = credit.checked_add(gratis_load_minor).ok_or_else(|| {
             outbe_primitives::error::PrecompileError::Revert(
                 "Nod forfeit Promis Reserve credit overflow".into(),
@@ -573,6 +556,54 @@ pub(crate) fn forfeit_members(
             .add_to_total_unallocated(credit)?;
     }
     Ok(burned)
+}
+
+/// Burns the bucket's newest unpaid member and returns its load, or `None` when none is left.
+fn forfeit_last_member(
+    storage: &StorageHandle<'_>,
+    nod: &mut NodContract<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    bucket_key: B256,
+    worldwide_day: WorldwideDay,
+) -> Result<Option<U256>> {
+    let count = nod.bucket_nod_count.read(&bucket_key)?;
+    let Some(last) = count.checked_sub(1) else {
+        return Ok(None);
+    };
+    let nod_id = nod
+        .bucket_nods
+        .read(&NodContract::bucket_nod_key(bucket_key, last))?;
+    if nod_id.is_zero() {
+        return Err(outbe_primitives::error::PrecompileError::Revert(format!(
+            "Nod bucket {bucket_key} member slot {last} is empty during forfeit"
+        )));
+    }
+    let item = api::load_item(storage, scope, parent, nod_id)?.ok_or_else(|| {
+        outbe_primitives::error::PrecompileError::Revert(format!(
+            "Nod bucket {bucket_key} member {nod_id} has no body during forfeit"
+        ))
+    })?;
+    if item.body().is_settled || item.body().bucket_key != bucket_key {
+        return Err(outbe_primitives::error::PrecompileError::Revert(format!(
+            "Nod bucket {bucket_key} indexes an ineligible member {nod_id}"
+        )));
+    }
+    let owner = item.body().owner;
+    let gratis_load_minor = item.body().gratis_load_minor;
+    let bucket_id = WwdEntityId::from_day_and_digest(worldwide_day, bucket_key.0);
+    let bucket = api::load_bucket(storage, scope, parent, bucket_id)?.ok_or_else(|| {
+        outbe_primitives::error::PrecompileError::Revert(format!(
+            "Nod bucket {bucket_key} has no body during forfeit"
+        ))
+    })?;
+    api::remove_nod(storage, scope, item, bucket)?;
+    nod.emit(INod::NodForfeited {
+        owner,
+        nodId: nod_id.to_u256(),
+        gratisLoadMinor: gratis_load_minor,
+    })?;
+    Ok(Some(gratis_load_minor))
 }
 
 /// Index into `cache` of the trailing finalized-VWAP window for `COEN/<iso>`,

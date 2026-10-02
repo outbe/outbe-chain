@@ -1684,6 +1684,93 @@ fn a18_forfeit_slices_credit_the_same_total_as_one_pass() {
     });
 }
 
+#[test]
+fn a_forfeit_out_of_gas_keeps_what_it_burned_and_resumes_on_the_bucket() {
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let specs = [(0x71u8, 3u64, false), (0x72, 5, false), (0x73, 8, false)];
+    let past = START + 30 * DAY + NOTICE + 1;
+    let arm = |provider: &mut HashMapStorageProvider, scope: &ExecutionScope| {
+        StorageHandle::enter(provider, |storage| {
+            seed_compressed_entities_genesis(&storage);
+            begin_block(storage.clone(), scope).unwrap();
+            register(&storage, ISO);
+            arm_lapsed(&storage, scope, &parent, &specs).0
+        })
+    };
+
+    let mut probe = HashMapStorageProvider::new(CHAIN_ID);
+    let probe_scope = ExecutionScope::new();
+    arm(&mut probe, &probe_scope);
+    let full_pass_gas = StorageHandle::enter(&mut probe, |storage| {
+        let checkpoint = probe_scope.explicit_gas_checkpoint();
+        assert_eq!(scan(&storage, &probe_scope, &parent, past), 3);
+        probe_scope.explicit_gas_since(checkpoint).unwrap()
+    });
+
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let scope = ExecutionScope::new();
+    let bucket_key = arm(&mut provider, &scope);
+    StorageHandle::enter(&mut provider, |storage| {
+        let nod = NodContract::new(storage.clone());
+        {
+            let _window = scope.begin_explicit_gas_window(full_pass_gas - 1).unwrap();
+            assert_eq!(scan(&storage, &scope, &parent, past), 2);
+        }
+        assert_eq!(nod.bucket_nod_count.read(&bucket_key).unwrap(), 1);
+        assert_eq!(reserve(&storage), U256::from(13u64));
+        assert_ne!(nod.call_sweep_day.read().unwrap(), 0);
+
+        assert_eq!(slice(&storage, &scope, &parent, past), 1);
+        assert_eq!(nod.bucket_nod_count.read(&bucket_key).unwrap(), 0);
+        assert_eq!(reserve(&storage), U256::from(16u64));
+        assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
+    });
+    assert_eq!(forfeited_event_loads(&provider), U256::from(16u64));
+}
+
+#[test]
+fn a_node_local_failure_while_forfeiting_fails_the_slice() {
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let scope = ExecutionScope::new();
+    let past = START + 30 * DAY + NOTICE + 1;
+    let bucket_key = StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        register(&storage, ISO);
+        let bucket_key = arm_lapsed(&storage, &scope, &parent, &[(0x81, 3, false)]).0;
+        let nod = NodContract::new(storage.clone());
+        nod.call_sweep_day.write(last_closed_day(past)).unwrap();
+        nod.call_currency_cursor
+            .write(crate::called::CALL_ARM_DONE)
+            .unwrap();
+        bucket_key
+    });
+    provider.fail_after_mutation_at(0);
+    let result = StorageHandle::enter(&mut provider, |storage| {
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(BLOCK_NUMBER, past, CHAIN_ID),
+            storage.clone(),
+        );
+        crate::called::run_call_slice(&ctx, &scope, &parent)
+    });
+    provider.clear_mutation_failure();
+    assert!(matches!(
+        result,
+        Err(outbe_primitives::error::PrecompileError::Storage(_))
+    ));
+    StorageHandle::enter(&mut provider, |storage| {
+        assert_eq!(
+            NodContract::new(storage.clone())
+                .bucket_nod_count
+                .read(&bucket_key)
+                .unwrap(),
+            1
+        );
+        assert_eq!(reserve(&storage), U256::ZERO);
+    });
+}
+
 /// T15/A18.6: every persistent write of a forfeit (burn, event, Promis Limit
 /// credit) rolls back with its checkpoint. Retry credits the original unpaid
 /// loads once, neither zero nor twice.
