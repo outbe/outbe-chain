@@ -509,6 +509,44 @@ fn multiple_batches_create_ordinary_nods_and_advance_fifo_atomically() {
 }
 
 #[test]
+fn a_certified_nod_id_its_owner_does_not_give_is_rejected_before_any_write() {
+    let mut actions = (0..8)
+        .map(|ordinal| action_for(MATERIALIZATION_WWD, ordinal))
+        .collect::<Vec<_>>();
+    actions[3].nod_id = *NodContract::generate_nod_id(
+        Address::repeat_byte(0xee),
+        WorldwideDay::new(MATERIALIZATION_WWD),
+    )
+    .unwrap();
+    assert_rejected_before_any_write(actions);
+}
+
+#[test]
+fn a_certified_entry_beyond_the_call_price_bound_is_rejected_before_any_write() {
+    let mut actions = (0..8)
+        .map(|ordinal| action_for(MATERIALIZATION_WWD, ordinal))
+        .collect::<Vec<_>>();
+    actions[3].entry_price_minor =
+        U256::MAX / U256::from(100 + u32::from(u16::MAX)) + U256::from(1);
+    assert_rejected_before_any_write(actions);
+}
+
+fn assert_rejected_before_any_write(actions: Vec<NodActionV1>) {
+    let population = population_of(actions);
+    let mut world = World::new();
+    seed_generation(&mut world, &population);
+    let before = world.provider.storage.clone();
+
+    let error = apply(&mut world, &batch(&population, 0, 8)).unwrap_err();
+    assert!(matches!(
+        error,
+        PrecompileError::Revert(ref reason)
+            if reason == &NodFactoryError::InvalidMaterializationProof.to_string()
+    ));
+    assert_eq!(world.provider.storage, before);
+}
+
+#[test]
 fn a_second_attempt_in_one_block_is_rejected_before_proof_work() {
     let mut world = World::new();
     let population = population(10);

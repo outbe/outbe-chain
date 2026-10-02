@@ -9,7 +9,7 @@ use outbe_lysis::program_v1::artifacts::{
     encode_enumerated_run, encode_fidelity_map_output, encode_finalized_output_run,
     encode_fixed_reduce_output, encode_gratis_prefix_down_output, encode_gratis_segment_summary,
     encode_raw_coverage_carrier, enumerate_tributes, gratis_summary_coverage, FixedReduceOutputV1,
-    GratisPrefixDownOutputV1, RawCoverageCarrierV1,
+    GratisPrefixDownOutputV1, LysisArtifactErrorV1, RawCoverageCarrierV1,
 };
 use outbe_lysis::program_v1::phases::{
     amount_map, fidelity_map, fidelity_reduce, fidelity_reduce_pair, finalize_fi_fraction_table,
@@ -2507,10 +2507,12 @@ fn output_finalize_commits_all_excluded_nominal_once_per_shard_and_checks_overfl
 }
 
 #[test]
-fn an_entry_whose_floor_overflows_is_never_certified() {
+fn an_entry_beyond_the_call_price_bound_is_never_certified() {
     let day = WorldwideDay::new(20_260_724);
+    let entry = U256::MAX / U256::from(100 + u32::from(u16::MAX)) + U256::from(1);
+    assert!(outbe_nod::NodContract::floor_price_minor(entry).is_some());
     let mut item = observed(1, day, 100, 1, false);
-    item.entry_price_minor = ObservationValueV1::Value(U256::MAX);
+    item.entry_price_minor = ObservationValueV1::Value(entry);
     let tributes = vec![item];
     let budget = U256::from(100);
     assert!(matches!(
@@ -2542,7 +2544,7 @@ fn an_entry_whose_floor_overflows_is_never_certified() {
             nominal_amount_minor: U256::from(100),
             gratis_fraction_fp: SIX_DECIMAL_SCALE,
             gratis_load_minor: U256::from(1),
-            entry_price_minor: U256::MAX,
+            entry_price_minor: entry,
             settlement_cost_minor: U256::from(1),
             issuance_currency: 840,
             reference_currency: 978,
@@ -2551,7 +2553,12 @@ fn an_entry_whose_floor_overflows_is_never_certified() {
         checked_segment_gratis_total: U256::from(1),
     };
     let limits = poc_schema_limits();
-    assert!(encode_amount_run(&amount, &limits).is_err());
+    assert!(matches!(
+        encode_amount_run(&amount, &limits),
+        Err(LysisArtifactErrorV1::InvalidEncoding(
+            "amount run Nod entry price bound"
+        ))
+    ));
     let finalized = output_finalize(
         &amount,
         &GratisLeafPrefixV1 {

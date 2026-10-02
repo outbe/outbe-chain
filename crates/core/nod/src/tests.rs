@@ -142,6 +142,14 @@ fn a_nod_floor_is_its_entry_marked_up_and_rounded_down() {
 }
 
 #[test]
+fn an_issuable_entry_keeps_the_call_price_at_any_rate_in_range() {
+    let bound = U256::MAX / U256::from(100 + u32::from(u16::MAX));
+    assert!(NodContract::is_issuable_entry(bound));
+    assert!(!NodContract::is_issuable_entry(bound + U256::from(1)));
+    assert!(NodContract::floor_price_minor(bound + U256::from(1)).is_some());
+}
+
+#[test]
 fn bucket_key_binds_the_reference_currency() {
     let day = WorldwideDay::new(20_260_715);
     let entry = U256::from(13);
