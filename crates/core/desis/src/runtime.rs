@@ -557,9 +557,9 @@ fn refund_unused_desis_limit(
     contract
         .pending_desis_limit_minor
         .write(&worldwide_day, U256::ZERO)?;
-    contract.emit(IDesis::UnusedSupplyReported {
+    contract.emit(IDesis::UnusedDesisLimitReported {
         worldwideDay: worldwide_day.into(),
-        unusedPromis: unused,
+        unusedDesisLimitMinor: unused,
     })?;
     PromisLimitContract::new(storage.clone()).add_to_total_unallocated(unused)?;
     Ok(())
@@ -1037,10 +1037,15 @@ fn clear_inner(
             allocation: desis_allocation_minor,
             limit: desis_limit_minor,
         })?;
+    contract.emit(IDesis::DesisAllocationRecorded {
+        worldwideDay: worldwide_day.into(),
+        desisLimitMinor: desis_limit_minor,
+        desisAllocationMinor: desis_allocation_minor,
+    })?;
     if !unused_desis_limit_minor.is_zero() {
-        contract.emit(IDesis::UnusedSupplyReported {
+        contract.emit(IDesis::UnusedDesisLimitReported {
             worldwideDay: worldwide_day.into(),
-            unusedPromis: unused_desis_limit_minor,
+            unusedDesisLimitMinor: unused_desis_limit_minor,
         })?;
         PromisLimitContract::new(storage.clone())
             .add_to_total_unallocated(unused_desis_limit_minor)?;

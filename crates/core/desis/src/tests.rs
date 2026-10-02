@@ -2172,6 +2172,40 @@ fn force_clear_waits_then_fires_when_all_done() {
     });
 }
 
+/// A clearing names its Desis Allocation and returns the unused Desis Limit.
+#[test]
+fn clearing_reports_the_desis_allocation_and_the_unused_limit() {
+    use crate::precompile::IDesis;
+    use alloy_sol_types::SolEvent;
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(NOW));
+    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+    storage.stub_sub_call_at(
+        outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
+        Bytes::from(vec![0u8; 32]),
+    );
+    StorageHandle::enter(&mut storage, |s| {
+        open_clearing(&s, 3);
+        relay_bids(&s, SRC_CHAIN, 1, 200);
+        assert_eq!(clear(&s).issued_units, 1);
+    });
+
+    let logs = storage.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
+    let allocation = logs
+        .iter()
+        .find_map(|log| IDesis::DesisAllocationRecorded::decode_log_data(log).ok())
+        .expect("the clearing records its Desis Allocation");
+    assert_eq!(allocation.worldwideDay, WORLDWIDE_DAY.value());
+    assert_eq!(allocation.desisLimitMinor, U256::from(3 * LOAD_MINOR));
+    assert_eq!(allocation.desisAllocationMinor, U256::from(LOAD_MINOR));
+    let unused = logs
+        .iter()
+        .find_map(|log| IDesis::UnusedDesisLimitReported::decode_log_data(log).ok())
+        .expect("the clearing returns its unused Desis Limit");
+    assert_eq!(unused.unusedDesisLimitMinor, U256::from(2 * LOAD_MINOR));
+}
+
 /// After the deadline, clearing proceeds without the missing chain and reports it skipped.
 #[test]
 fn force_clear_skips_missing_chain_after_deadline() {
