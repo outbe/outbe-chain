@@ -31,7 +31,6 @@ contract IntexNFT1155MetadataTest is Test {
     address internal admin = makeAddr("admin");
     address internal bridger = makeAddr("bridger");
     address internal user = makeAddr("user");
-    address internal user2 = makeAddr("user2");
 
     IntexNFT1155 internal token;
     uint256 internal iTok;
