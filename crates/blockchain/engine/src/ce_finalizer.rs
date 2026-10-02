@@ -869,6 +869,27 @@ mod tests {
         )
     }
 
+    fn spawn_commit(finalizer: &Arc<RethCeFinalizer>) -> tokio::task::JoinHandle<eyre::Result<()>> {
+        let finalizer = finalizer.clone();
+        tokio::spawn(async move { finalizer.commit(finalized_block()).await })
+    }
+
+    async fn assert_rejected_before_apply(
+        state: Arc<FakeDurableState>,
+        tree: Arc<FakeTree>,
+        expected: &str,
+    ) {
+        let error = finalizer(state, tree.clone())
+            .commit(finalized_block())
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains(expected),
+            "expected {expected}, got {error}"
+        );
+        assert_eq!(tree.attempts(), 0);
+    }
+
     #[tokio::test]
     async fn waits_for_exact_persistence_before_applying_tree() {
         let staged = candidate();
@@ -877,10 +898,7 @@ mod tests {
         let tree = FakeTree::new(Some(staged));
         let finalizer = Arc::new(finalizer(state.clone(), tree.clone()));
 
-        let task = {
-            let finalizer = finalizer.clone();
-            tokio::spawn(async move { finalizer.commit(finalized_block()).await })
-        };
+        let task = spawn_commit(&finalizer);
         tokio::task::yield_now().await;
         assert_eq!(tree.attempts(), 0);
 
@@ -905,10 +923,7 @@ mod tests {
             Duration::from_millis(100),
         ));
 
-        let commit = {
-            let finalizer = finalizer.clone();
-            tokio::spawn(async move { finalizer.commit(finalized_block()).await })
-        };
+        let commit = spawn_commit(&finalizer);
         tokio::task::yield_now().await;
 
         // Model a lost/coalesced persistence notification: the canonical block
@@ -938,10 +953,7 @@ mod tests {
             Duration::from_millis(100),
         ));
 
-        let commit = {
-            let finalizer = finalizer.clone();
-            tokio::spawn(async move { finalizer.commit(finalized_block()).await })
-        };
+        let commit = spawn_commit(&finalizer);
         tokio::task::yield_now().await;
         persisted_tx
             .unbounded_send(BlockNumHash::new(1, hash(2)))
@@ -993,10 +1005,7 @@ mod tests {
         let tree = FakeTree::new(Some(staged));
         let finalizer = Arc::new(finalizer(state.clone(), tree.clone()));
 
-        let task = {
-            let finalizer = finalizer.clone();
-            tokio::spawn(async move { finalizer.commit(finalized_block()).await })
-        };
+        let task = spawn_commit(&finalizer);
         tokio::task::yield_now().await;
         state.set(1, hash(2), root);
         persisted_tx
@@ -1020,10 +1029,7 @@ mod tests {
             Duration::from_millis(100),
         ));
 
-        let task = {
-            let finalizer = finalizer.clone();
-            tokio::spawn(async move { finalizer.commit(finalized_block()).await })
-        };
+        let task = spawn_commit(&finalizer);
         tokio::task::yield_now().await;
 
         // Reth may durably publish a speculative block at the target height
@@ -1074,12 +1080,7 @@ mod tests {
         let (state, _tx) = FakeDurableState::new();
         state.set(1, hash(7), root);
         let tree = FakeTree::committed();
-        let error = finalizer(state, tree.clone())
-            .commit(finalized_block())
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("canonical conflict"));
-        assert_eq!(tree.attempts(), 0);
+        assert_rejected_before_apply(state, tree, "canonical conflict").await;
     }
 
     #[tokio::test]
@@ -1087,12 +1088,7 @@ mod tests {
         let (state, _tx) = FakeDurableState::new();
         state.set(1, hash(2), hash(8));
         let tree = FakeTree::new(Some(candidate()));
-        let error = finalizer(state, tree.clone())
-            .commit(finalized_block())
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("root conflict"));
-        assert_eq!(tree.attempts(), 0);
+        assert_rejected_before_apply(state, tree, "root conflict").await;
     }
 
     #[tokio::test]
@@ -1101,12 +1097,7 @@ mod tests {
         state.set(1, hash(2), hash(7));
         state.set_header_root(1, None);
         let tree = FakeTree::new(Some(candidate()));
-        let error = finalizer(state, tree.clone())
-            .commit(finalized_block())
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("missing CE root artifact"));
-        assert_eq!(tree.attempts(), 0);
+        assert_rejected_before_apply(state, tree, "missing CE root artifact").await;
     }
 
     #[tokio::test]
@@ -1121,12 +1112,7 @@ mod tests {
             }),
         );
         let tree = FakeTree::new(Some(candidate()));
-        let error = finalizer(state, tree.clone())
-            .commit(finalized_block())
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("scheme mismatch"));
-        assert_eq!(tree.attempts(), 0);
+        assert_rejected_before_apply(state, tree, "scheme mismatch").await;
     }
 
     #[tokio::test]
@@ -1141,12 +1127,7 @@ mod tests {
             }),
         );
         let tree = FakeTree::new(Some(candidate()));
-        let error = finalizer(state, tree.clone())
-            .commit(finalized_block())
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("header/EVM CE root mismatch"));
-        assert_eq!(tree.attempts(), 0);
+        assert_rejected_before_apply(state, tree, "header/EVM CE root mismatch").await;
     }
 
     #[tokio::test]
@@ -1355,12 +1336,7 @@ mod tests {
             apply_error: false,
         });
 
-        let error = finalizer(state, tree.clone())
-            .commit(finalized_block())
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("parent identity conflicts"));
-        assert_eq!(tree.attempts(), 0);
+        assert_rejected_before_apply(state, tree, "parent identity conflicts").await;
     }
 
     #[tokio::test]
