@@ -2,8 +2,8 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_protocol::{codec, error::Error};
 use outbe_zk_canonical::{
-    noir::{pledge_issue, pledge_unpledge},
-    pledge as hash,
+    noir::{pledgenote_issue, pledgenote_unpledge},
+    pledgenote as hash,
 };
 use serde::{Deserialize, Serialize};
 
@@ -39,7 +39,7 @@ impl Note {
         if self.owner.is_zero() || self.secret.is_zero() {
             return Err(Error::NonCanonical("zero pledge owner or secret"));
         }
-        codec::field_to_b256(&hash::owner_serial(
+        codec::field_to_b256(&hash::note_sn(
             self.owner,
             codec::field_from_b256(&self.secret)?,
         )?)
@@ -149,8 +149,8 @@ pub fn issue_inputs(
     context: B256,
 ) -> Result<
     (
-        pledge_issue::alloy::Witness,
-        pledge_issue::alloy::PublicInputs,
+        pledgenote_issue::alloy::Witness,
+        pledgenote_issue::alloy::PublicInputs,
     ),
     Error,
 > {
@@ -160,20 +160,20 @@ pub fn issue_inputs(
         .map(|n| n.commitment())
         .transpose()?
         .unwrap_or(B256::ZERO);
-    let serial = hash::owner_serial(
+    let serial = hash::note_sn(
         note.owner,
         codec::field_from_b256(&note.return_secret(context)?)?,
     )?;
     Ok((
-        pledge_issue::alloy::Witness {
-            source: note.owner,
-            note_secret: note.secret,
+        pledgenote_issue::alloy::Witness {
+            owner: note.owner,
+            note_spend_key: note.secret,
             note_amount: note.amount,
             receipt_context: note.receipt_context,
             leaf_index,
             auth_path,
         },
-        pledge_issue::alloy::PublicInputs {
+        pledgenote_issue::alloy::PublicInputs {
             chain_id: note.chain_id,
             root: codec::field_to_b256(&tree.root())?,
             nullifier: note.nullifier()?,
@@ -191,8 +191,8 @@ pub fn unpledge_inputs(
     context: B256,
 ) -> Result<
     (
-        pledge_unpledge::alloy::Witness,
-        pledge_unpledge::alloy::PublicInputs,
+        pledgenote_unpledge::alloy::Witness,
+        pledgenote_unpledge::alloy::PublicInputs,
     ),
     Error,
 > {
@@ -206,21 +206,21 @@ pub fn unpledge_inputs(
         .transpose()?
         .unwrap_or(B256::ZERO);
     Ok((
-        pledge_unpledge::alloy::Witness {
-            note_secret: note.secret,
+        pledgenote_unpledge::alloy::Witness {
+            note_spend_key: note.secret,
             note_amount: note.amount,
             receipt_context: note.receipt_context,
             leaf_index,
             auth_path,
         },
-        pledge_unpledge::alloy::PublicInputs {
+        pledgenote_unpledge::alloy::PublicInputs {
             chain_id: note.chain_id,
             root: codec::field_to_b256(&tree.root())?,
             nullifier: note.nullifier()?,
             context,
             spend_amount: amount,
             change_commitment: change,
-            destination: note.owner,
+            owner: note.owner,
         },
     ))
 }
@@ -235,12 +235,12 @@ pub fn prove_issue(
     use outbe_zk_backend::barretenberg::Barretenberg;
     let (witness, public) = issue_inputs(note, tree, amount, context)?;
     let public = public.try_into()?;
-    let proof = ProofGenerator::<pledge_issue::PledgeIssue>::generate(
+    let proof = ProofGenerator::<pledgenote_issue::PledgenoteIssue>::generate(
         &Barretenberg::default(),
         &witness.try_into()?,
         &public,
     )?;
-    pledge_issue::encode_combined_proof(public, proof.proof)
+    pledgenote_issue::encode_combined_proof(public, proof.proof)
 }
 pub fn prove_unpledge(
     note: &Note,
@@ -252,10 +252,10 @@ pub fn prove_unpledge(
     use outbe_zk_backend::barretenberg::Barretenberg;
     let (witness, public) = unpledge_inputs(note, tree, amount, context)?;
     let public = public.try_into()?;
-    let proof = ProofGenerator::<pledge_unpledge::PledgeUnpledge>::generate(
+    let proof = ProofGenerator::<pledgenote_unpledge::PledgenoteUnpledge>::generate(
         &Barretenberg::default(),
         &witness.try_into()?,
         &public,
     )?;
-    pledge_unpledge::encode_combined_proof(public, proof.proof)
+    pledgenote_unpledge::encode_combined_proof(public, proof.proof)
 }

@@ -292,7 +292,7 @@ pub(crate) fn snapshot(world: &World) -> Snapshot {
     first
 }
 
-pub(crate) fn pledge_tree(url: &str, chain_id: u64) -> outbe_zk_canonical::pledge::Tree {
+pub(crate) fn pledge_tree(url: &str, chain_id: u64) -> outbe_zk_canonical::pledgenote::Tree {
     let logs = eth::raw_json_result(url, "eth_getLogs", serde_json::json!([{
         "address": format!("{:#x}", addresses::GRATIS_FACTORY_ADDR), "fromBlock": "0x0", "toBlock": "latest",
         "topics": [format!("{:#x}", eth::IGratisFactory::PledgeNote::SIGNATURE_HASH)]

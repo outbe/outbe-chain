@@ -186,7 +186,7 @@ async fn ensure_unspent(rpc: &impl Rpc, note: &Note) -> Result<()> {
     ensure!(!used, "pledge note already spent");
     Ok(())
 }
-async fn read_tree(rpc: &impl Rpc, chain_id: u64) -> Result<outbe_zk_canonical::pledge::Tree> {
+async fn read_tree(rpc: &impl Rpc, chain_id: u64) -> Result<outbe_zk_canonical::pledgenote::Tree> {
     let head = rpc.eth_block_number().await?;
     let tag = format!("0x{head:x}");
     let mut tree = client::new_tree(chain_id)?;

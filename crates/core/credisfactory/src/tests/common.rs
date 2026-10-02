@@ -155,8 +155,8 @@ pub fn prove_latest(
 ) -> Vec<u8> {
     use outbe_protocol::{codec, protocol::zk::ProofGenerator};
     use outbe_zk_canonical::{
-        noir::pledge_issue::{self, PledgeIssue},
-        pledge as hash,
+        noir::pledgenote_issue::{self, PledgenoteIssue},
+        pledgenote as hash,
     };
     let pool = outbe_gratis::pledge::PledgePool::new(storage.clone());
     let index = u32::try_from(pool.leaf_count.read().unwrap() - 1).unwrap();
@@ -168,15 +168,15 @@ pub fn prove_latest(
             codec::field_to_b256(&zeros[i]).unwrap()
         }
     });
-    let witness = pledge_issue::alloy::Witness {
-        source: note.owner,
-        note_secret: note.secret,
+    let witness = pledgenote_issue::alloy::Witness {
+        owner: note.owner,
+        note_spend_key: note.secret,
         note_amount: note.amount,
         receipt_context: note.receipt_context,
         leaf_index: index,
         auth_path,
     };
-    let public = pledge_issue::alloy::PublicInputs {
+    let public = pledgenote_issue::alloy::PublicInputs {
         chain_id: CHAIN_ID,
         root: pool.current_root.read().unwrap(),
         nullifier: note.nullifier().unwrap(),
@@ -188,7 +188,7 @@ pub fn prove_latest(
             .map(|n| n.commitment().unwrap())
             .unwrap_or_default(),
         return_note_serial: codec::field_to_b256(
-            &hash::owner_serial(
+            &hash::note_sn(
                 note.owner,
                 codec::field_from_b256(&note.return_secret(context).unwrap()).unwrap(),
             )
@@ -197,13 +197,13 @@ pub fn prove_latest(
         .unwrap(),
     };
     let public = public.try_into().unwrap();
-    let proof = ProofGenerator::<PledgeIssue>::generate(
+    let proof = ProofGenerator::<PledgenoteIssue>::generate(
         &outbe_zk_backend::barretenberg::Barretenberg::default(),
         &witness.try_into().unwrap(),
         &public,
     )
     .unwrap();
-    pledge_issue::encode_combined_proof(public, proof.proof).unwrap()
+    pledgenote_issue::encode_combined_proof(public, proof.proof).unwrap()
 }
 
 /// Parks a live vault reservation for `smart_account` so `issue_credis` can

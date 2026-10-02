@@ -10,8 +10,8 @@ use outbe_primitives::{
 use outbe_protocol::codec;
 use outbe_zk_backend::barretenberg::verify_circuit;
 use outbe_zk_canonical::{
-    noir::{pledge_issue, pledge_unpledge},
-    pledge as hash,
+    noir::{pledgenote_issue, pledgenote_unpledge},
+    pledgenote as hash,
 };
 
 pub const DEPTH: usize = 32;
@@ -144,35 +144,10 @@ fn book(storage: &StorageHandle<'_>, nullifier: B256, change: B256) -> Result<()
 pub fn consume_issue(
     storage: &StorageHandle<'_>,
     proof: &[u8],
-) -> Result<pledge_issue::alloy::PublicInputs> {
+) -> Result<pledgenote_issue::alloy::PublicInputs> {
     storage.with_checkpoint(|| {
-        let claim: pledge_issue::alloy::PublicInputs = pledge_issue::decode_public_inputs(proof)
-            .and_then(TryInto::try_into)
-            .map_err(invalid)?;
-        check(
-            storage,
-            claim.chain_id,
-            claim.root,
-            claim.nullifier,
-            claim.context,
-            claim.spend_amount,
-        )?;
-        if claim.return_note_serial.is_zero()
-            || !verify_circuit::<pledge_issue::PledgeIssue>(proof).map_err(invalid)?
-        {
-            return Err(invalid("invalid issue proof"));
-        }
-        book(storage, claim.nullifier, claim.change_commitment)?;
-        Ok(claim)
-    })
-}
-pub fn consume_unpledge(
-    storage: &StorageHandle<'_>,
-    proof: &[u8],
-) -> Result<pledge_unpledge::alloy::PublicInputs> {
-    storage.with_checkpoint(|| {
-        let claim: pledge_unpledge::alloy::PublicInputs =
-            pledge_unpledge::decode_public_inputs(proof)
+        let claim: pledgenote_issue::alloy::PublicInputs =
+            pledgenote_issue::decode_public_inputs(proof)
                 .and_then(TryInto::try_into)
                 .map_err(invalid)?;
         check(
@@ -183,8 +158,34 @@ pub fn consume_unpledge(
             claim.context,
             claim.spend_amount,
         )?;
-        if claim.destination == Address::ZERO
-            || !verify_circuit::<pledge_unpledge::PledgeUnpledge>(proof).map_err(invalid)?
+        if claim.return_note_serial.is_zero()
+            || !verify_circuit::<pledgenote_issue::PledgenoteIssue>(proof).map_err(invalid)?
+        {
+            return Err(invalid("invalid issue proof"));
+        }
+        book(storage, claim.nullifier, claim.change_commitment)?;
+        Ok(claim)
+    })
+}
+pub fn consume_unpledge(
+    storage: &StorageHandle<'_>,
+    proof: &[u8],
+) -> Result<pledgenote_unpledge::alloy::PublicInputs> {
+    storage.with_checkpoint(|| {
+        let claim: pledgenote_unpledge::alloy::PublicInputs =
+            pledgenote_unpledge::decode_public_inputs(proof)
+                .and_then(TryInto::try_into)
+                .map_err(invalid)?;
+        check(
+            storage,
+            claim.chain_id,
+            claim.root,
+            claim.nullifier,
+            claim.context,
+            claim.spend_amount,
+        )?;
+        if claim.owner == Address::ZERO
+            || !verify_circuit::<pledgenote_unpledge::PledgenoteUnpledge>(proof).map_err(invalid)?
         {
             return Err(invalid("invalid unpledge proof"));
         }

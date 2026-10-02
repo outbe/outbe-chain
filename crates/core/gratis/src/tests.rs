@@ -275,7 +275,7 @@ fn real_note_profiles_share_nullifiers_and_preserve_original_owner() {
     use crate::{client, pledge::PledgePool};
     use outbe_protocol::{codec, protocol::zk::ProofGenerator};
     use outbe_zk_backend::barretenberg::{verify_circuit, Barretenberg};
-    use outbe_zk_canonical::noir::{pledge_issue, pledge_unpledge};
+    use outbe_zk_canonical::noir::{pledgenote_issue, pledgenote_unpledge};
     with_env(|storage| {
         let amount = (U256::ONE << 200usize) + U256::from(100);
         api::mint(
@@ -303,37 +303,41 @@ fn real_note_profiles_share_nullifiers_and_preserve_original_owner() {
         let spend = U256::from(40);
         let context = api::unpledge_context(CHAIN_ID, alice(), spend).unwrap();
         let proof = client::prove_unpledge(&note, &tree, spend, context).unwrap();
-        assert!(verify_circuit::<pledge_unpledge::PledgeUnpledge>(&proof).unwrap());
+        assert!(verify_circuit::<pledgenote_unpledge::PledgenoteUnpledge>(&proof).unwrap());
         let issue = client::prove_issue(&note, &tree, spend, B256::from(U256::from(19))).unwrap();
         let second_context =
             client::prove_issue(&note, &tree, spend, B256::from(U256::from(20))).unwrap();
-        let first = pledge_issue::decode_public_inputs(&issue).unwrap();
-        let second = pledge_issue::decode_public_inputs(&second_context).unwrap();
+        let first = pledgenote_issue::decode_public_inputs(&issue).unwrap();
+        let second = pledgenote_issue::decode_public_inputs(&second_context).unwrap();
         assert_eq!(first.nullifier, second.nullifier);
         assert_eq!(
             first.nullifier,
-            pledge_unpledge::decode_public_inputs(&proof)
+            pledgenote_unpledge::decode_public_inputs(&proof)
                 .unwrap()
                 .nullifier
         );
         assert_ne!(first.return_note_serial, second.return_note_serial);
         // A holder may not redirect the withdrawal or the authenticated return serial.
         let (w, mut p) = client::unpledge_inputs(&note, &tree, spend, context).unwrap();
-        p.destination = Address::repeat_byte(0x55);
-        assert!(ProofGenerator::<pledge_unpledge::PledgeUnpledge>::generate(
-            &Barretenberg::default(),
-            &w.try_into().unwrap(),
-            &p.try_into().unwrap()
-        )
-        .is_err());
+        p.owner = Address::repeat_byte(0x55);
+        assert!(
+            ProofGenerator::<pledgenote_unpledge::PledgenoteUnpledge>::generate(
+                &Barretenberg::default(),
+                &w.try_into().unwrap(),
+                &p.try_into().unwrap()
+            )
+            .is_err()
+        );
         let (w, mut p) = client::issue_inputs(&note, &tree, spend, context).unwrap();
         p.return_note_serial = B256::from(U256::from(9));
-        assert!(ProofGenerator::<pledge_issue::PledgeIssue>::generate(
-            &Barretenberg::default(),
-            &w.try_into().unwrap(),
-            &p.try_into().unwrap()
-        )
-        .is_err());
+        assert!(
+            ProofGenerator::<pledgenote_issue::PledgenoteIssue>::generate(
+                &Barretenberg::default(),
+                &w.try_into().unwrap(),
+                &p.try_into().unwrap()
+            )
+            .is_err()
+        );
         // Valid cryptography with the wrong operation context still cannot withdraw.
         let wrong =
             client::prove_unpledge(&note, &tree, spend, B256::from(U256::from(99))).unwrap();

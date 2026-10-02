@@ -254,17 +254,13 @@ pub(crate) fn unpledge(storage: StorageHandle<'_>, proof: &[u8]) -> Result<U256>
     storage.with_checkpoint(|| {
         let claim = crate::pledge::consume_unpledge(&storage, proof)?;
         if claim.context
-            != crate::api::unpledge_context(
-                storage.chain_id()?,
-                claim.destination,
-                claim.spend_amount,
-            )?
+            != crate::api::unpledge_context(storage.chain_id()?, claim.owner, claim.spend_amount)?
         {
             return Err(PrecompileError::Revert("pledge context mismatch".into()));
         }
         collateral_balance(
             &storage,
-            claim.destination,
+            claim.owner,
             claim.spend_amount,
             GratisOp::Unpledge,
         )?;
@@ -300,7 +296,7 @@ pub(crate) fn return_collateral(
             amount,
             GratisOp::ReleaseCollateral,
         )?;
-        let receipt = outbe_zk_canonical::pledge::receipt_context(position_id, released_total)
+        let receipt = outbe_zk_canonical::pledgenote::receipt_context(position_id, released_total)
             .and_then(|field| outbe_protocol::codec::field_to_b256(&field))
             .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
         crate::pledge::fund(storage, serial, amount, receipt)?;

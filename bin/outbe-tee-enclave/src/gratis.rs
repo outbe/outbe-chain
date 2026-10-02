@@ -117,7 +117,7 @@ pub fn apply_op(state_key: &[u8; 32], req: &GratisOpRequest) -> GratisOpResult {
 fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisOpResult> {
     use outbe_primitives::addresses::CREDIS_ADDRESS;
     use outbe_protocol::codec;
-    use outbe_zk_canonical::pledge;
+    use outbe_zk_canonical::pledgenote;
     if req.amount.is_zero() || req.account.is_zero() {
         return Ok(reject("amount and account must be nonzero"));
     }
@@ -147,12 +147,12 @@ fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
                 req.modify_auth.op_nonce,
             );
             let secret = codec::field_from_be_bytes(&entropy);
-            if secret == pledge::Field::from(0) {
+            if secret == pledgenote::Field::from(0) {
                 return Ok(reject("zero note secret"));
             }
-            let serial = pledge::owner_serial(req.account, secret)
+            let serial = pledgenote::note_sn(req.account, secret)
                 .map_err(|_| crate::errors::TeeError::DecryptFailed)?;
-            if serial == pledge::Field::from(0) {
+            if serial == pledgenote::Field::from(0) {
                 return Ok(reject("zero note serial"));
             }
             r.note_serial = codec::field_to_b256(&serial)
