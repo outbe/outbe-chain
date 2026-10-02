@@ -200,6 +200,22 @@ impl MetadosisContract<'_> {
             ));
         }
 
+        self.validate_retained_request_effect(state, limits)?;
+        match projection.phase {
+            DayPhase::Ready => self.validate_ready_equivalence(projection),
+            DayPhase::OffchainPending => self.validate_pending_equivalence(projection, limits),
+            DayPhase::Terminal => Err(storage_corruption_message(
+                "terminal OCOMP FSM must not be persisted",
+            )),
+        }
+    }
+
+    fn validate_retained_request_effect(
+        &self,
+        state: &JobFsmState,
+        limits: &SchemaLimits,
+    ) -> Result<()> {
+        let projection = state.projection();
         let receipt = self.request_limit_receipt(projection.worldwide_day, limits)?;
         match projection.retained_lysis_limit_minor {
             None if receipt.is_none() && projection.pending_nonce == 0 => {}
@@ -218,11 +234,11 @@ impl MetadosisContract<'_> {
                     .ok_or_else(|| {
                         storage_corruption_message("OCOMP retained effect snapshot is missing")
                     })?;
-                if receipt.wwd != projection.worldwide_day.value()
-                    || receipt.lysis_limit_minor != lysis_limit_minor
-                    || receipt.pending_nonce != retained.effect_nonce
-                    || expected_hash != retained.receipt_hash
-                {
+                let limit_matches = receipt.wwd == projection.worldwide_day.value()
+                    && receipt.lysis_limit_minor == lysis_limit_minor;
+                let effect_matches = receipt.pending_nonce == retained.effect_nonce
+                    && expected_hash == retained.receipt_hash;
+                if !limit_matches || !effect_matches {
                     return Err(storage_corruption_message(
                         "OCOMP limit receipt/state mismatch",
                     ));
@@ -235,74 +251,49 @@ impl MetadosisContract<'_> {
             }
         }
 
-        match projection.phase {
-            DayPhase::Ready => {
-                let key = ReadyIndexKey::from_projection(projection)?;
-                if self.read_ready_index()?.binary_search(&key).is_err() {
-                    return Err(storage_corruption_message(
-                        "OCOMP READY FSM has no exact due-index key",
-                    ));
-                }
-            }
-            DayPhase::OffchainPending => {
-                let intent_id = projection.live_intent_id.ok_or_else(|| {
-                    storage_corruption_message("OCOMP pending FSM has no live intent")
-                })?;
-                let record = self.ocomp_job_record(intent_id, limits)?.ok_or_else(|| {
-                    storage_corruption_message("OCOMP live scheduler key has no job record")
-                })?;
-                let expected_deadline = match record.status {
-                    OcompJobStatus::AwaitingFinality => Some(
-                        record
-                            .intent_height
-                            .checked_add(OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS)
-                            .ok_or_else(|| {
-                                storage_corruption_message(
-                                    "OCOMP awaiting-finality deadline overflow",
-                                )
-                            })?,
-                    ),
-                    OcompJobStatus::VotingOpen => Some(
-                        record
-                            .finalized
-                            .as_ref()
-                            .ok_or_else(|| {
-                                storage_corruption_message(
-                                    "live OCOMP job has no finalized binding",
-                                )
-                            })?
-                            .deadline_height,
-                    ),
-                    _ => {
-                        return Err(storage_corruption_message(
-                            "terminal OCOMP job remains in the live scheduler",
-                        ))
-                    }
-                };
-                if record.terminal.is_some()
-                    || record.intent.wwd != projection.worldwide_day.value()
-                    || record.intent.pending_nonce != projection.pending_nonce
-                    || expected_deadline != projection.deadline_height
-                {
-                    return Err(storage_corruption_message(
-                        "OCOMP live scheduler/job record mismatch",
-                    ));
-                }
-                if self
-                    .read_ready_index()?
-                    .iter()
-                    .any(|key| key.worldwide_day == projection.worldwide_day)
-                {
-                    return Err(storage_corruption_message(
-                        "OCOMP live WWD remains in the READY index",
-                    ));
-                }
-            }
-            DayPhase::Terminal => {
-                return Err(storage_corruption_message(
-                    "terminal OCOMP FSM must not be persisted",
-                ))
-            }
+        Ok(())
+    }
+
+    fn validate_ready_equivalence(&self, projection: super::state::JobFsmProjection) -> Result<()> {
+        let key = ReadyIndexKey::from_projection(projection)?;
+        if self.read_ready_index()?.binary_search(&key).is_err() {
+            return Err(storage_corruption_message(
+                "OCOMP READY FSM has no exact due-index key",
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_pending_equivalence(
+        &self,
+        projection: super::state::JobFsmProjection,
+        limits: &SchemaLimits,
+    ) -> Result<()> {
+        let intent_id = projection
+            .live_intent_id
+            .ok_or_else(|| storage_corruption_message("OCOMP pending FSM has no live intent"))?;
+        let record = self.ocomp_job_record(intent_id, limits)?.ok_or_else(|| {
+            storage_corruption_message("OCOMP live scheduler key has no job record")
+        })?;
+        let expected_deadline = Some(expected_live_deadline(&record)?);
+        let identity_matches = record.intent.wwd == projection.worldwide_day.value()
+            && record.intent.pending_nonce == projection.pending_nonce;
+        if record.terminal.is_some()
+            || !identity_matches
+            || expected_deadline != projection.deadline_height
+        {
+            return Err(storage_corruption_message(
+                "OCOMP live scheduler/job record mismatch",
+            ));
+        }
+        if self
+            .read_ready_index()?
+            .iter()
+            .any(|key| key.worldwide_day == projection.worldwide_day)
+        {
+            return Err(storage_corruption_message(
+                "OCOMP live WWD remains in the READY index",
+            ));
         }
         Ok(())
     }
@@ -378,6 +369,27 @@ impl MetadosisContract<'_> {
         } else {
             self.ocomp_scheduler
                 .write(&encode_live_scheduler_index(&index)?)
+        }
+    }
+}
+
+fn expected_live_deadline(record: &OcompJobRecordV1) -> Result<u64> {
+    match record.status {
+        OcompJobStatus::AwaitingFinality => Ok(record
+            .intent_height
+            .checked_add(OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS)
+            .ok_or_else(|| {
+                storage_corruption_message("OCOMP awaiting-finality deadline overflow")
+            })?),
+        OcompJobStatus::VotingOpen => Ok(record
+            .finalized
+            .as_ref()
+            .ok_or_else(|| storage_corruption_message("live OCOMP job has no finalized binding"))?
+            .deadline_height),
+        _ => {
+            return Err(storage_corruption_message(
+                "terminal OCOMP job remains in the live scheduler",
+            ))
         }
     }
 }

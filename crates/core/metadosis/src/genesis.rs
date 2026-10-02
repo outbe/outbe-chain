@@ -47,10 +47,15 @@ impl GenesisWorldwideDay {
                 "fresh-devnet genesis WWD requires a known day type",
             ));
         }
-        if !(self.forming_start <= self.forming_end
-            && self.forming_end <= self.lookback_end
-            && self.lookback_end <= self.offering_end
-            && self.offering_end <= self.scheduled_process_time)
+        if ![
+            self.forming_start,
+            self.forming_end,
+            self.lookback_end,
+            self.offering_end,
+            self.scheduled_process_time,
+        ]
+        .windows(2)
+        .all(|pair| pair[0] <= pair[1])
         {
             return Err(storage_corruption_message(
                 "fresh-devnet genesis WWD phase order is invalid",
@@ -120,90 +125,110 @@ impl FreshDevnetGenesisBuilder {
         let mut changed = false;
         let contract = MetadosisContract::new(storage.clone());
         for operation in self.operations {
-            match operation {
-                GenesisOperation::SeedActive(day) => {
-                    let day = day.validate()?;
-                    if contract.worldwide_days.get(day.worldwide_day)?.is_some() {
-                        return Err(storage_corruption_message(
-                            "fresh-devnet genesis WWD already exists",
-                        ));
-                    }
-                    contract.worldwide_days.create(&WorldwideDayRecord {
-                        wwd: day.worldwide_day,
-                        status: status_tag(day.status),
-                        day_type: day.day_type.as_u8(),
-                        forming_start: day.forming_start,
-                        forming_end: day.forming_end,
-                        lookback_end: day.lookback_end,
-                        offering_end: day.offering_end,
-                        scheduled_process_time: day.scheduled_process_time,
-                        metadosis_limit_amount: day.metadosis_limit_amount,
-                        previous_vwap: day.previous_vwap,
-                        current_vwap: day.current_vwap,
-                    })?;
-                    contract.active_wwd.insert(day.worldwide_day)?;
-                    changed = true;
-                }
-                GenesisOperation::RetimeOffering {
-                    worldwide_day,
-                    offering_end,
-                } => {
-                    let mut day = contract.worldwide_days.get(worldwide_day)?.ok_or_else(|| {
-                        storage_corruption_message("fresh-devnet offering WWD is missing")
-                    })?;
-                    if WwdStatus::try_from(day.status)? != WwdStatus::Offering {
-                        return Err(storage_corruption_message(
-                            "fresh-devnet WWD is not in OFFERING",
-                        ));
-                    }
-                    if day.forming_end > offering_end || day.lookback_end > offering_end {
-                        return Err(storage_corruption_message(
-                            "fresh-devnet WWD phases end after the requested offering deadline",
-                        ));
-                    }
-                    let operation_changed = day.offering_end != offering_end
-                        || day.scheduled_process_time != offering_end;
-                    day.offering_end = offering_end;
-                    day.scheduled_process_time = offering_end;
-                    contract.worldwide_days.update(&day)?;
-                    changed |= operation_changed;
-                }
-                GenesisOperation::ClearSingleOffering {
-                    expected_worldwide_day,
-                } => {
-                    let active = contract.active_wwd.read_all()?;
-                    if active.len() > 1
-                        || active
-                            .first()
-                            .is_some_and(|day| *day != expected_worldwide_day)
-                    {
-                        return Err(storage_corruption_message(
-                            "fresh-devnet genesis contains an unexpected active WWD",
-                        ));
-                    }
-                    let Some(day) = contract.worldwide_days.get(expected_worldwide_day)? else {
-                        if active.is_empty() {
-                            continue;
-                        }
-                        return Err(storage_corruption_message(
-                            "fresh-devnet active WWD record is missing",
-                        ));
-                    };
-                    if WwdStatus::try_from(day.status)? != WwdStatus::Offering {
-                        return Err(storage_corruption_message(
-                            "fresh-devnet seeded WWD is not in OFFERING",
-                        ));
-                    }
-                    if !active.is_empty() {
-                        contract.active_wwd.remove(&expected_worldwide_day)?;
-                    }
-                    contract.worldwide_days.delete(expected_worldwide_day)?;
-                    changed = true;
-                }
-            }
+            let Some(operation_changed) = operation.apply(&contract)? else {
+                continue;
+            };
+            changed |= operation_changed;
             ValidatedWwdAggregate::load_and_validate(storage.clone())?;
         }
         Ok(FreshDevnetGenesisReport { changed })
+    }
+}
+
+impl GenesisOperation {
+    fn apply(self, contract: &MetadosisContract<'_>) -> Result<Option<bool>> {
+        match self {
+            Self::SeedActive(day) => Self::seed(contract, day),
+            Self::RetimeOffering {
+                worldwide_day,
+                offering_end,
+            } => Self::retime(contract, worldwide_day, offering_end),
+            Self::ClearSingleOffering {
+                expected_worldwide_day,
+            } => Self::clear(contract, expected_worldwide_day),
+        }
+    }
+    fn seed(contract: &MetadosisContract<'_>, day: GenesisWorldwideDay) -> Result<Option<bool>> {
+        let day = day.validate()?;
+        if contract.worldwide_days.get(day.worldwide_day)?.is_some() {
+            return Err(storage_corruption_message(
+                "fresh-devnet genesis WWD already exists",
+            ));
+        }
+        contract.worldwide_days.create(&WorldwideDayRecord {
+            wwd: day.worldwide_day,
+            status: status_tag(day.status),
+            day_type: day.day_type.as_u8(),
+            forming_start: day.forming_start,
+            forming_end: day.forming_end,
+            lookback_end: day.lookback_end,
+            offering_end: day.offering_end,
+            scheduled_process_time: day.scheduled_process_time,
+            metadosis_limit_amount: day.metadosis_limit_amount,
+            previous_vwap: day.previous_vwap,
+            current_vwap: day.current_vwap,
+        })?;
+        contract.active_wwd.insert(day.worldwide_day)?;
+        Ok(Some(true))
+    }
+    fn retime(
+        contract: &MetadosisContract<'_>,
+        worldwide_day: WorldwideDay,
+        offering_end: u64,
+    ) -> Result<Option<bool>> {
+        let mut day = contract
+            .worldwide_days
+            .get(worldwide_day)?
+            .ok_or_else(|| storage_corruption_message("fresh-devnet offering WWD is missing"))?;
+        if WwdStatus::try_from(day.status)? != WwdStatus::Offering {
+            return Err(storage_corruption_message(
+                "fresh-devnet WWD is not in OFFERING",
+            ));
+        }
+        if day.forming_end > offering_end || day.lookback_end > offering_end {
+            return Err(storage_corruption_message(
+                "fresh-devnet WWD phases end after the requested offering deadline",
+            ));
+        }
+        let operation_changed =
+            day.offering_end != offering_end || day.scheduled_process_time != offering_end;
+        day.offering_end = offering_end;
+        day.scheduled_process_time = offering_end;
+        contract.worldwide_days.update(&day)?;
+        Ok(Some(operation_changed))
+    }
+    fn clear(
+        contract: &MetadosisContract<'_>,
+        expected_worldwide_day: WorldwideDay,
+    ) -> Result<Option<bool>> {
+        let active = contract.active_wwd.read_all()?;
+        if active.len() > 1
+            || active
+                .first()
+                .is_some_and(|day| *day != expected_worldwide_day)
+        {
+            return Err(storage_corruption_message(
+                "fresh-devnet genesis contains an unexpected active WWD",
+            ));
+        }
+        let Some(day) = contract.worldwide_days.get(expected_worldwide_day)? else {
+            if active.is_empty() {
+                return Ok(None);
+            }
+            return Err(storage_corruption_message(
+                "fresh-devnet active WWD record is missing",
+            ));
+        };
+        if WwdStatus::try_from(day.status)? != WwdStatus::Offering {
+            return Err(storage_corruption_message(
+                "fresh-devnet seeded WWD is not in OFFERING",
+            ));
+        }
+        if !active.is_empty() {
+            contract.active_wwd.remove(&expected_worldwide_day)?;
+        }
+        contract.worldwide_days.delete(expected_worldwide_day)?;
+        Ok(Some(true))
     }
 }
 

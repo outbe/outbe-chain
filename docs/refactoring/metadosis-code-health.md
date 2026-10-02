@@ -234,8 +234,8 @@ or receive a code-grounded disposition, without blanket analyzer suppression.
 
 - [x] Response-window policy and ordered capacity effect decomposition.
 - [x] ABI missing-receipt, missing-artifact and successful metadata characterization.
-- [ ] FSM state invariants and persisted equivalences.
-- [ ] Commit/reducer and genesis domain operations.
+- [x] FSM state invariants and persisted equivalences.
+- [x] Commit/reducer and genesis domain operations.
 - [ ] OCOMP voting, admission, expiry, request and activation.
 - [ ] Private argument contexts, shared fixture setup and duplicated test assertions.
 - [ ] Coverage gaps, complete analyzer rerun and per-finding reconciliation.
@@ -245,3 +245,12 @@ canonical NONE tuples; missing OCOMP artifacts retain their record-specific
 Revert identities. Response-window policy distinguishes voting from completed
 quorum windows. Capacity preflight, ordered Tribute/Promis effects, receipt,
 transition and event projection are separate responsibilities.
+
+Second slice: the internal FSM stores exactly one typed attempt. Public restore,
+apply and snapshot interfaces and the OMJS codec are unchanged; new model tests
+cover all phase-cardinality combinations and error precedence/atomic refusal.
+Persisted status, retained receipt, READY membership and live deadline
+validation now have separate policies. Commit binds permit/day/block to a
+private scope and separates creation, advance, terminal close and execution-owned
+events. Reducer admission and genesis operations are decomposed along their
+domain decisions. 255 library tests and all external/model/facade targets pass.
