@@ -859,7 +859,7 @@ fn forfeiting_the_last_member_drops_the_bucket_from_the_call_index() {
 #[test]
 fn the_member_index_tracks_issuance_and_removal_in_a_qualified_bucket() {
     harness(|storage, scope, parent| {
-        // Two owners on the same worldwide day share one bucket: identical floor
+        // Two owners on the same worldwide day share one bucket: identical entry
         // price and currency.
         let a = issue_qualified(storage, scope, parent, Address::repeat_byte(0x11), ISO);
         let b_item = nod_item(Address::repeat_byte(0x22), ISO);
@@ -942,7 +942,7 @@ fn a_bucket_is_callable_from_issuance_and_settles_once_called() {
 #[test]
 fn every_member_of_a_lapsed_bucket_burns_in_one_pass() {
     harness(|storage, scope, parent| {
-        // Three owners on the same day, floor and currency share one bucket.
+        // Three owners on the same day, entry price and currency share one bucket.
         let owners = [0x11u8, 0x22, 0x33].map(Address::repeat_byte);
         let items: Vec<NodItemState> = owners
             .iter()

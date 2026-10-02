@@ -193,8 +193,7 @@ fn settled_nod_body_round_trips_without_changing_legacy_encoding() {
 /// with the value dropped on the floor.
 #[test]
 fn a_nod_item_carrying_the_retired_cost_field_is_rejected() {
-    // This schema's bytes with the cost as it was written: field 8 sitting in
-    // its canonical position between `bucket_key` and `issuance_currency`.
+    // Field 8 sits in its canonical position between `bucket_key` and `issuance_currency`.
     let with_cost = hex::decode(concat!(
         "0a2000000001",
         "11111111111111111111111111111111111111111111111111111111",
@@ -218,8 +217,7 @@ fn a_nod_item_carrying_the_retired_cost_field_is_rejected() {
     ));
 }
 
-/// The floor derives from the bucket's entry price, so a body that still
-/// carries it in the field it was written to is refused.
+/// The floor derives from the bucket's entry price, so a body carrying a floor field is refused.
 #[test]
 fn a_nod_body_carrying_the_retired_floor_field_is_rejected() {
     let item_with_floor = hex::decode(concat!(

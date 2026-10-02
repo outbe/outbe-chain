@@ -431,7 +431,7 @@ impl NodContract<'_> {
 
     // --- Bin index helpers (PancakeSwap LB-style ladder) -------------------
 
-    /// Maps a six-decimal `floor_price_minor` (or oracle rate) to a 24-bit
+    /// Maps a six-decimal call price (or oracle rate) to a 24-bit
     /// bin id on the LB log-spaced ladder. Saturates to `[0, MAX_BIN_ID]` -
     /// see `lb_math::get_id_from_price` for the deviation from LB's revert.
     pub fn price_to_bin(price_minor: U256) -> Result<u32> {

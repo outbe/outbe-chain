@@ -190,10 +190,10 @@ fn currency_scoped_bin_keys_do_not_alias() {
 }
 
 /// The headline regression: two Nods sharing a worldwide day and an identical
-/// `floor_price_minor` but denominated differently are two buckets in two
+/// `entry_price_minor` but denominated differently are two buckets in two
 /// independent bin tries, and a day price only qualifies its own currency.
 #[test]
-fn same_day_and_floor_in_two_currencies_are_two_buckets_in_two_bins() {
+fn same_day_and_entry_in_two_currencies_are_two_buckets_in_two_bins() {
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
     let entry = U256::from(5);
     let usd = item(Address::repeat_byte(0x11), entry, USD);
