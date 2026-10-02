@@ -7,13 +7,25 @@ import json
 import os
 import pathlib
 import re
+import socket
+import stat
 import sys
+import time
 import tomllib
+import urllib.request
+from collections.abc import Callable
 from typing import NoReturn
 
 
 OUTBE_ROOT = pathlib.Path("/opt/outbe-chain")
 STORAGE_CONFIG = OUTBE_ROOT / "offchain-storage.toml"
+RADICLE_CONTROL_SOCKET = (
+    OUTBE_ROOT / "keys" / "radicle" / "node" / "outbe-control.sock"
+)
+ENCLAVE_ADDRESS = ("127.0.0.1", 17000)
+LOCAL_RPC_URL = "http://127.0.0.1:8545"
+DEFAULT_READINESS_TIMEOUT = 120.0
+DIRECT_URL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def fail(message: str) -> NoReturn:
@@ -31,6 +43,87 @@ def exec_role(argv: list[str], *, cwd: pathlib.Path | None = None) -> NoReturn:
     if cwd is not None:
         os.chdir(cwd)
     os.execvpe(argv[0], argv, os.environ.copy())
+
+
+def wait_for(
+    description: str,
+    probe: Callable[[], None],
+    timeout: float,
+) -> None:
+    deadline = time.monotonic() + timeout
+    last_error = "not ready"
+    while True:
+        try:
+            probe()
+            return
+        except Exception as error:
+            last_error = str(error)
+
+        if time.monotonic() >= deadline:
+            fail(f"timed out waiting for {description}: {last_error}")
+        time.sleep(0.25)
+
+
+def probe_enclave() -> None:
+    with socket.create_connection(ENCLAVE_ADDRESS, timeout=2.0):
+        pass
+
+
+def probe_radicle() -> None:
+    try:
+        mode = RADICLE_CONTROL_SOCKET.stat().st_mode
+    except FileNotFoundError as error:
+        raise RuntimeError("Radicle control socket is absent") from error
+    if not stat.S_ISSOCK(mode):
+        raise RuntimeError("Radicle control path is not a socket")
+
+
+def probe_validator_dependencies() -> None:
+    probe_radicle()
+    probe_enclave()
+
+
+def probe_rpc() -> None:
+    request = urllib.request.Request(
+        LOCAL_RPC_URL,
+        data=json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "eth_chainId",
+                "params": [],
+            }
+        ).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with DIRECT_URL_OPENER.open(request, timeout=2.0) as response:
+        payload = json.load(response)
+
+    if payload.get("error") is not None:
+        raise RuntimeError(f"local RPC returned an error: {payload['error']}")
+    chain_id = int(payload["result"], 16)
+    expected_chain_id = int(required_env("OCOMP_CHAIN_ID"))
+    if chain_id != expected_chain_id:
+        raise RuntimeError(
+            f"local RPC chain id {chain_id} does not match {expected_chain_id}"
+        )
+
+
+def wait_enclave(timeout: float) -> None:
+    wait_for("TEE enclave", probe_enclave, timeout)
+
+
+def wait_validator_dependencies(timeout: float) -> None:
+    wait_for(
+        "TEE enclave and Radicle control socket",
+        probe_validator_dependencies,
+        timeout,
+    )
+
+
+def wait_rpc(timeout: float) -> None:
+    wait_for("local validator RPC", probe_rpc, timeout)
 
 
 def verify_rocksdb_storage(path: pathlib.Path) -> None:
@@ -152,9 +245,21 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "role",
-        choices=("verify-rocksdb", "enclave", "feeder"),
+        choices=(
+            "verify-rocksdb",
+            "wait-enclave",
+            "wait-validator-dependencies",
+            "wait-rpc",
+            "enclave",
+            "feeder",
+        ),
     )
     parser.add_argument("--storage-config", type=pathlib.Path, default=STORAGE_CONFIG)
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=DEFAULT_READINESS_TIMEOUT,
+    )
     return parser.parse_args()
 
 
@@ -163,6 +268,15 @@ def main() -> int:
     role = args.role
     if role == "verify-rocksdb":
         verify_rocksdb_storage(args.storage_config)
+        return 0
+    if role == "wait-enclave":
+        wait_enclave(args.timeout)
+        return 0
+    if role == "wait-validator-dependencies":
+        wait_validator_dependencies(args.timeout)
+        return 0
+    if role == "wait-rpc":
+        wait_rpc(args.timeout)
         return 0
     if role == "enclave":
         enclave()

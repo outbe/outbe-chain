@@ -3,7 +3,7 @@ Feature: Off-chain storage through Lysis with the native mock enclave
   Four validators exercise the real storage and OCOMP processes. Enclave
   emulation does not cover SGX or the separately tested fifth-node onboarding.
 
-  Scenario: RocksDB supports public Tribute, Lysis, and durable restart
+  Scenario: The configured datasource supports public Tribute, Lysis, and durable restart
     Given a fresh four-validator Metadosis capacity localnet at FORMING
     Then the fresh capacity day is created in FORMING by finalized block 1
     And the controlled COEN USD quote is finalized through the real price feeder

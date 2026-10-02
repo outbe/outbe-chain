@@ -59,6 +59,9 @@ use crate::application::epoch_boundary::{
     resolve_epoch_boundary_parent, ApplicationEpochFence, EpochBoundaryParentError,
 };
 
+#[path = "handler/tests/verify_stages.rs"]
+mod verify_stages;
+
 struct TestApplicationShared {
     shared: ApplicationShared,
     _projection_publisher: ProjectionReadinessPublisher,

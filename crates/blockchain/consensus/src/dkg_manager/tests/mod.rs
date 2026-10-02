@@ -8,6 +8,7 @@
 mod admission;
 mod boundary;
 mod dealer_log;
+mod finalized;
 mod odko;
 
 use alloy_primitives::{address, B256, U256};

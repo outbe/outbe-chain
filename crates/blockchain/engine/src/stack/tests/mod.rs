@@ -61,6 +61,7 @@ use std::{
 
 mod boundary_promotion;
 mod configuration;
+mod continuity;
 mod dkg_persistence;
 mod epoch_handoff;
 mod epoch_transition_harness;
@@ -78,6 +79,7 @@ mod recovery;
 mod restart_recovery;
 mod shutdown;
 mod signer_replacement;
+mod startup_material;
 
 use fixtures::{
     recovery_block, recovery_finalization_fixture, run_test_dkg, run_test_dkg_complete,

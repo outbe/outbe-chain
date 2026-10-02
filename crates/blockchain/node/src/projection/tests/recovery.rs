@@ -159,6 +159,7 @@ async fn deterministic_projection_failure_reports_exit_while_exex_keeps_draining
     };
     let projector =
         OffchainDataProjection::open(projection_config, reader.clone(), writer.clone()).unwrap();
+    let overlay = Arc::new(PendingOverlayStorage::new(storage.clone(), storage.clone()));
     storage.fail_writes.store(true, Ordering::SeqCst);
 
     let (mut notification_tx, notification_rx) = mpsc::channel(1);
@@ -183,7 +184,7 @@ async fn deterministic_projection_failure_reports_exit_while_exex_keeps_draining
             readiness_publisher,
             projection_config,
             _reader: reader,
-            overlay: None,
+            overlay: Some(overlay),
             writer,
             _writer_lease: None,
             runtime_failure_sender: Some(runtime_failure_tx),
@@ -239,6 +240,7 @@ async fn runtime_body_corruption_reports_exit_while_exex_keeps_draining() {
     };
     let projector =
         OffchainDataProjection::open(projection_config, reader.clone(), writer.clone()).unwrap();
+    let overlay = Arc::new(PendingOverlayStorage::new(reader.clone(), writer.clone()));
     let (readiness_publisher, _readiness) = outbe_offchain_data::projection_readiness(
         outbe_offchain_data::ProjectionCheckpoint {
             block_number: 0,
@@ -261,7 +263,7 @@ async fn runtime_body_corruption_reports_exit_while_exex_keeps_draining() {
             readiness_publisher,
             projection_config,
             _reader: reader,
-            overlay: None,
+            overlay: Some(overlay),
             writer,
             _writer_lease: None,
             runtime_failure_sender: Some(runtime_failure_tx.clone()),
@@ -342,6 +344,7 @@ async fn runtime_body_unavailability_uses_the_projection_recovery_session() {
     };
     let projector =
         OffchainDataProjection::open(projection_config, reader.clone(), writer.clone()).unwrap();
+    let overlay = Arc::new(PendingOverlayStorage::new(reader.clone(), writer.clone()));
     let (readiness_publisher, readiness) = outbe_offchain_data::projection_readiness(
         outbe_offchain_data::ProjectionCheckpoint {
             block_number: 0,
@@ -369,7 +372,7 @@ async fn runtime_body_unavailability_uses_the_projection_recovery_session() {
             readiness_publisher,
             projection_config,
             _reader: reader,
-            overlay: None,
+            overlay: Some(overlay),
             writer,
             _writer_lease: None,
             runtime_failure_sender: Some(runtime_failure_tx.clone()),
@@ -474,7 +477,7 @@ async fn unavailable_mongo_write_retries_without_changing_logical_readiness() {
         start_block: 1,
     };
     OffchainDataProjection::open(projection_config, storage.clone(), storage.clone()).unwrap();
-    let overlay = Arc::new(PendingOverlayStorage::new(storage.clone()));
+    let overlay = Arc::new(PendingOverlayStorage::new(storage.clone(), storage.clone()));
     let reader: StorageReaderHandle = overlay.clone();
     let logical_writer: StorageWriterHandle = overlay.clone();
     let durable_writer: StorageWriterHandle = storage.clone();
@@ -571,7 +574,7 @@ async fn blocked_mongo_write_does_not_block_logical_projection_readiness() {
         start_block: 1,
     };
     OffchainDataProjection::open(projection_config, durable.clone(), durable.clone()).unwrap();
-    let overlay = Arc::new(PendingOverlayStorage::new(durable.clone()));
+    let overlay = Arc::new(PendingOverlayStorage::new(durable.clone(), durable.clone()));
     let logical_reader: StorageReaderHandle = overlay.clone();
     let logical_writer: StorageWriterHandle = overlay.clone();
     let durable_writer: StorageWriterHandle = durable.clone();
@@ -707,7 +710,7 @@ async fn restart_replays_after_the_durable_checkpoint_before_mongo_catches_up() 
         .unwrap();
     drop(durable_projection);
 
-    let overlay = Arc::new(PendingOverlayStorage::new(durable.clone()));
+    let overlay = Arc::new(PendingOverlayStorage::new(durable.clone(), durable.clone()));
     let logical_reader: StorageReaderHandle = overlay.clone();
     let logical_writer: StorageWriterHandle = overlay.clone();
     let projector =
@@ -810,6 +813,7 @@ async fn fatal_status_stays_sticky_when_detached_worker_finishes_late() {
     };
     let projector =
         OffchainDataProjection::open(projection_config, reader.clone(), writer.clone()).unwrap();
+    let overlay = Arc::new(PendingOverlayStorage::new(storage.clone(), storage.clone()));
     let checkpoint = ProjectionCheckpoint {
         block_number: 0,
         block_hash: projection_config.genesis_hash,
@@ -834,7 +838,7 @@ async fn fatal_status_stays_sticky_when_detached_worker_finishes_late() {
             readiness_publisher,
             projection_config,
             _reader: reader,
-            overlay: None,
+            overlay: Some(overlay),
             writer,
             _writer_lease: None,
             runtime_failure_sender: Some(runtime_failure_tx.clone()),

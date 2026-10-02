@@ -1,3 +1,4 @@
+use crate::snapshot::tests::projection_fixture::PartitionFixtureStore as RocksDbStorage;
 use std::{fs, sync::Arc};
 
 use alloy_consensus::{Header, Sealable};
@@ -11,7 +12,7 @@ use outbe_compressed_entities::{
 };
 use outbe_nod::{NodBucketState, NodItemState, NodRepositoryWriter};
 use outbe_offchain_data::{ProjectionCheckpoint, ProjectionState, STORAGE_SCHEMA_VERSION};
-use outbe_offchain_storage::{Key, Namespace, RocksDbStorage, StorageWriter, Value};
+use outbe_offchain_storage::{Key, Namespace, StorageWriter, Value};
 use outbe_primitives::{
     reshare_artifact::{
         encode_outbe_block_artifacts, CompressedEntitiesRootArtifact, OutbeBlockArtifacts,
@@ -452,7 +453,7 @@ fn missing_projection_root_or_current_is_incomplete_without_creating_a_view() {
         if missing_root {
             fs::remove_dir_all(projection_root).unwrap();
         } else {
-            fs::remove_file(projection_root.join("CURRENT")).unwrap();
+            fs::remove_file(projection_root.join("system/shared/CURRENT")).unwrap();
         }
         let before = fingerprint(fixture.source.path());
         let scratch = tempfile::tempdir().unwrap();
@@ -460,7 +461,7 @@ fn missing_projection_root_or_current_is_incomplete_without_creating_a_view() {
             .err()
             .unwrap();
         assert!(error.downcast_ref::<Incomplete>().is_some(), "{error}");
-        assert!(!projection_root.join("CURRENT").exists());
+        assert!(!projection_root.join("system/shared/CURRENT").exists());
         assert_eq!(projection_root.exists(), !missing_root);
         assert_eq!(fingerprint(fixture.source.path()), before);
         assert_eq!(fs::read_dir(scratch.path()).unwrap().count(), 0);

@@ -94,6 +94,7 @@ use revm::{
 use std::sync::{Arc, Mutex};
 
 mod accounting;
+mod begin_layout;
 mod block_artifacts;
 mod boundary;
 mod fixtures;

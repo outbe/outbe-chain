@@ -13,6 +13,9 @@ use crate::config::GemParams;
 use crate::precompile::{dispatch, IGem};
 use crate::schema::{GemAddParams, GemContract, GemState};
 
+#[path = "hooks_tests.rs"]
+mod hooks;
+
 const T_NOW: u64 = 1_700_000_000;
 const ALICE: Address = address!("0x1111111111111111111111111111111111111111");
 const BOB: Address = address!("0x2222222222222222222222222222222222222222");

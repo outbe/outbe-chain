@@ -10,15 +10,16 @@ use outbe_e2e_harness::metadosis_p0::{
 };
 use outbe_e2e_harness::ocomp_evidence::{
     assemble_closure, assemble_lane, closure_manifest_in, discover, manifest_in, publish_report,
-    require_pass, task_progress_report, verify_manifest, verify_retained_semantics, PlanningLedger,
+    require_pass, run_command_lane, task_progress_report, verify_manifest,
+    verify_retained_semantics, PlanningLedger,
 };
 #[cfg(feature = "ocomp-integration")]
 use outbe_e2e_harness::{
     ocomp_capacity::{observe_capacity_host, OcompCapacityHostObservationV1},
-    ocomp_evidence::assemble_capacity_evidence,
+    ocomp_evidence::{assemble_capacity_evidence, verify_capacity_run_preimage},
 };
 #[cfg(feature = "ocomp-integration")]
-use outbe_ocomp_protocol::capacity::CapacityBudgetV1;
+use outbe_ocomp_protocol::capacity::{CapacityBudgetV1, CapacityEvidenceV1};
 
 #[derive(Debug, Parser)]
 #[command(name = "outbe-e2e-evidence")]
@@ -79,6 +80,16 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Re-derive each cold run from its public scenario preimage.
+    #[cfg(feature = "ocomp-integration")]
+    VerifyCapacityPreimage {
+        /// CapacityEvidenceV1 JSON.
+        #[arg(long)]
+        evidence: PathBuf,
+        /// Public scenario preimages in ordinal order, one per cold run.
+        #[arg(long = "scenario", required = true)]
+        scenarios: Vec<PathBuf>,
+    },
     /// Assemble exactly five public scenario records into CapacityEvidenceV1.
     #[cfg(feature = "ocomp-integration")]
     CapacityAssemble {
@@ -114,6 +125,17 @@ enum Command {
         /// Stable IDs proved by the immediately preceding task-local command.
         #[arg(long = "passed", required = true)]
         passed: Vec<String>,
+    },
+    /// Execute one exact FAST or INT command plan and retain its receipt.
+    CommandLane {
+        /// Registered ledger lane, `OCM-FAST` or `OCM-INT`.
+        lane: String,
+        /// Sealed directory of the exact binaries the lane must invoke.
+        #[arg(long)]
+        artifact_set: PathBuf,
+        /// Fresh directory that receives the command-lane receipt.
+        #[arg(long)]
+        evidence_dir: PathBuf,
     },
     /// Fail closed until every test in a lane has real evidence.
     Lane {
@@ -218,6 +240,38 @@ fn main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&verified)?);
             Ok(())
         }
+        #[cfg(feature = "ocomp-integration")]
+        Command::VerifyCapacityPreimage {
+            evidence,
+            scenarios,
+        } => {
+            let evidence_path = resolve_from_current(&evidence)?;
+            let evidence: CapacityEvidenceV1 = decode_json(&evidence_path)?;
+            ensure!(
+                scenarios.len() == evidence.runs.len(),
+                "capacity generation requires one public scenario preimage per cold run"
+            );
+            let run_count =
+                u8::try_from(evidence.runs.len()).wrap_err("capacity run count exceeds u8")?;
+            for ordinal in 1_u8..=run_count {
+                let expected = evidence
+                    .runs
+                    .iter()
+                    .find(|run| run.ordinal == ordinal)
+                    .ok_or_else(|| eyre::eyre!("capacity evidence is missing ordinal {ordinal}"))?;
+                let scenario = scenarios.get(usize::from(ordinal - 1)).ok_or_else(|| {
+                    eyre::eyre!("capacity scenario preimage is missing ordinal {ordinal}")
+                })?;
+                verify_capacity_run_preimage(expected, &resolve_from_current(scenario)?)
+                    .wrap_err_with(|| {
+                        format!(
+                            "verify capacity cold run {ordinal} from {}",
+                            scenario.display()
+                        )
+                    })?;
+            }
+            Ok(())
+        }
         Command::ValidateLedger => {
             println!(
                 "ledger PASS: {} tests, {} lanes, {} tasks",
@@ -250,6 +304,16 @@ fn main() -> Result<()> {
             let report = task_progress_report(&ledger, &task, discovery, &passed)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
             require_pass(&report)
+        }
+        Command::CommandLane {
+            lane,
+            artifact_set,
+            evidence_dir,
+        } => {
+            let artifact_set = resolve_from_current(&artifact_set)?;
+            let evidence_dir = resolve_from_current(&evidence_dir)?;
+            run_command_lane(&repo, &ledger, &lane, &artifact_set, &evidence_dir)?;
+            Ok(())
         }
         Command::Lane { lane, evidence_dir } => {
             ensure!(ledger.lanes.contains_key(&lane), "unknown lane {lane}");

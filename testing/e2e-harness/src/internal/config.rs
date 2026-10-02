@@ -41,6 +41,7 @@ pub(crate) fn validate_node_ipc_path(node_dir: &Path) -> Result<()> {
 
 #[derive(Clone, Debug)]
 pub(crate) struct Config {
+    pub projection_backend: crate::env::ProjectionBackend,
     /// Repo root (`--repo`); working dir for every script/binary we invoke.
     pub repo: PathBuf,
     /// Localnet data dir (`--data-dir`).
@@ -115,6 +116,7 @@ impl Config {
         let run_tag = dir_tag(&env.data_dir);
         let radicle_runtime_root = short_radicle_runtime_root(&env.data_dir);
         Self {
+            projection_backend: env.projection_backend,
             repo: env.repo.clone(),
             dir: env.data_dir.clone(),
             bin_chain: env.chain_bin.clone(),

@@ -1,5 +1,11 @@
 use super::super::*;
 
+type BeginSystemTransaction = (
+    SystemTxKind,
+    SystemTxInputV2,
+    Option<AccountedParentArtifact>,
+);
+
 type ExpectedSystemTransaction = (
     usize,
     SystemTxKind,
@@ -75,248 +81,225 @@ where
         &self,
         block_number: u64,
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
-    ) -> Result<
-        Vec<(
-            SystemTxKind,
-            SystemTxInputV2,
-            Option<AccountedParentArtifact>,
-        )>,
-        BlockExecutionError,
-    > {
-        // Block 0 (genesis) has no begin-zone system txs. Mirror the proposer
-        // body builder (`OutbeEvmConfig::build_begin_system_txs`), which returns
-        // empty for block 0, so both deterministic paths agree even if a stray
-        // `pending_tee_bootstrap` is set - never inject a begin-zone tx at genesis.
+    ) -> Result<Vec<BeginSystemTransaction>, BlockExecutionError> {
+        // Genesis returns before inspecting queued bootstrap or body inputs.
         if block_number == 0 {
             return Ok(Vec::new());
         }
-
-        let verifier_mode = !self.expected_begin_system_txs.is_empty();
-        let mut ordinal = 0usize;
+        let has_boundary_outcome = matches!(
+            block_artifacts.consensus_header_artifact,
+            Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
+        );
+        let ocomp_activation = if self.ocomp_lifecycle_active {
+            OcompLifecycleActivation::at_block(0)
+        } else {
+            OcompLifecycleActivation::Disabled
+        };
+        // The shared layout defines order; block 1 always reserves mandatory OST3.
+        let kinds = expected_begin_block_kinds_for_activation(
+            block_number,
+            has_boundary_outcome,
+            block_number == 1,
+            ocomp_activation,
+        );
         let mut system_txs = Vec::new();
-
-        if block_number >= 2 {
-            let input = if verifier_mode {
-                self.expected_begin_input(ordinal)?
-            } else {
-                let metadata = self.parent_consensus_metadata.clone().ok_or_else(|| {
-                    BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                        "missing parent consensus metadata for CertifiedParentAccounting".into(),
-                    ))
-                })?;
-                SystemTxInputV2::CertifiedParentAccounting { metadata }
-            };
-            let SystemTxInputV2::CertifiedParentAccounting { metadata } = &input else {
-                return Err(BlockExecutionError::Internal(
-                    InternalBlockExecutionError::Other(
-                        "expected CertifiedParentAccounting system tx at ordinal 0".into(),
-                    ),
-                ));
-            };
-            if metadata.finalized_block_hash != self.parent_hash {
-                return Err(BlockExecutionError::Internal(
-                    InternalBlockExecutionError::Other(
-                        format!(
-                            "CertifiedParentAccounting metadata hash must match block parent: expected {}, got {}",
-                            self.parent_hash, metadata.finalized_block_hash
-                        )
-                        .into(),
-                    ),
-                ));
-            }
-            let summary = self.accounted_parent_artifact_for_metadata(metadata)?;
-            system_txs.push((
-                SystemTxKind::CertifiedParentAccounting,
-                input,
-                Some(summary),
-            ));
-            ordinal += 1;
-        }
-
-        // mandatory LateFinalizeCredits phase for every block >= 2,
-        // ordered immediately after Phase 1 (CPA). Proposer mode builds it from
-        // the header artifact (empty until Phase 7 wires gathered credits);
-        // verifier mode re-derives it from the body and the header<->calldata
-        // parity check enforces equality.
-        if block_number >= 2 {
-            let input = if verifier_mode {
-                self.expected_begin_input(ordinal)?
-            } else {
-                SystemTxInputV2::LateFinalizeCredits {
-                    artifact: block_artifacts
-                        .late_finalize_credits
-                        .clone()
-                        .unwrap_or_default(),
+        for kind in &kinds {
+            let ordinal = system_txs.len();
+            match *kind {
+                SystemTxKind::CertifiedParentAccounting => {
+                    system_txs.push(self.certified_parent_begin_input(ordinal)?);
                 }
-            };
-            if !matches!(input, SystemTxInputV2::LateFinalizeCredits { .. }) {
-                return Err(BlockExecutionError::Internal(
-                    InternalBlockExecutionError::Other(
-                        format!("expected LateFinalizeCredits system tx at ordinal {ordinal}")
-                            .into(),
-                    ),
-                ));
-            }
-            system_txs.push((SystemTxKind::LateFinalizeCredits, input, None));
-            ordinal += 1;
-        }
-
-        if self.ocomp_lifecycle_active {
-            let input = if verifier_mode {
-                self.expected_begin_input(ordinal)?
-            } else {
-                SystemTxInputV2::OcompLifecycleBegin
-            };
-            if !matches!(input, SystemTxInputV2::OcompLifecycleBegin) {
-                return Err(BlockExecutionError::Internal(
-                    InternalBlockExecutionError::Other(
-                        format!("expected OcompLifecycleBegin system tx at ordinal {ordinal}")
-                            .into(),
-                    ),
-                ));
-            }
-            system_txs.push((SystemTxKind::OcompLifecycleBegin, input, None));
-            ordinal += 1;
-        }
-
-        if block_number >= 1 {
-            let input = if verifier_mode {
-                self.expected_begin_input(ordinal)?
-            } else {
-                SystemTxInputV2::CycleTick
-            };
-            if !matches!(input, SystemTxInputV2::CycleTick) {
-                return Err(BlockExecutionError::Internal(
-                    InternalBlockExecutionError::Other(
-                        format!("expected CycleTick system tx at ordinal {ordinal}").into(),
-                    ),
-                ));
-            }
-            system_txs.push((SystemTxKind::CycleTick, input, None));
-            ordinal += 1;
-
-            let input = if verifier_mode {
-                self.expected_begin_input(ordinal)?
-            } else {
-                SystemTxInputV2::RewardsGemDelivery
-            };
-            if !matches!(input, SystemTxInputV2::RewardsGemDelivery) {
-                return Err(BlockExecutionError::Internal(
-                    InternalBlockExecutionError::Other(
-                        format!("expected RewardsGemDelivery system tx at ordinal {ordinal}")
-                            .into(),
-                    ),
-                ));
-            }
-            system_txs.push((SystemTxKind::RewardsGemDelivery, input, None));
-            ordinal += 1;
-        }
-
-        if let Some(ConsensusHeaderArtifact::BoundaryOutcome(artifact)) =
-            &block_artifacts.consensus_header_artifact
-        {
-            let input = if verifier_mode {
-                self.expected_begin_input(ordinal)?
-            } else {
-                SystemTxInputV2::BoundaryOutcome {
-                    artifact: artifact.clone(),
+                SystemTxKind::BoundaryOutcome => {
+                    if let Some(ConsensusHeaderArtifact::BoundaryOutcome(artifact)) =
+                        &block_artifacts.consensus_header_artifact
+                    {
+                        let input = self.boundary_begin_input(ordinal, artifact)?;
+                        system_txs.push((*kind, input, None));
+                    }
                 }
-            };
-            match &input {
-                SystemTxInputV2::BoundaryOutcome {
-                    artifact: input_artifact,
-                } if input_artifact == artifact => {}
-                SystemTxInputV2::BoundaryOutcome { .. } => {
-                    return Err(BlockExecutionError::Internal(
-                        InternalBlockExecutionError::Other(
-                            format!(
-                                "BoundaryOutcome system tx artifact mismatch at ordinal {ordinal}"
-                            )
-                            .into(),
-                        ),
-                    ));
+                SystemTxKind::TeeBootstrap => {
+                    let input = self.bootstrap_begin_input(ordinal)?;
+                    system_txs.push((*kind, input, None));
                 }
-                _ => {
-                    return Err(BlockExecutionError::Internal(
-                        InternalBlockExecutionError::Other(
-                            format!("expected BoundaryOutcome system tx at ordinal {ordinal}")
+                SystemTxKind::LateFinalizeCredits => {
+                    self.append_begin_input(&mut system_txs, *kind, || {
+                        SystemTxInputV2::LateFinalizeCredits {
+                            artifact: block_artifacts
+                                .late_finalize_credits
+                                .clone()
+                                .unwrap_or_default(),
+                        }
+                    })?
+                }
+                SystemTxKind::OcompLifecycleBegin => {
+                    self.append_begin_input(&mut system_txs, *kind, || {
+                        SystemTxInputV2::OcompLifecycleBegin
+                    })?
+                }
+                SystemTxKind::CycleTick => {
+                    self.append_begin_input(&mut system_txs, *kind, || SystemTxInputV2::CycleTick)?
+                }
+                SystemTxKind::RewardsGemDelivery => {
+                    self.append_begin_input(&mut system_txs, *kind, || {
+                        SystemTxInputV2::RewardsGemDelivery
+                    })?
+                }
+                SystemTxKind::OracleSlashWindow => {
+                    // Keep late OST3 rejection after boundary, before decoding Oracle.
+                    if block_number != 1 && self.pending_tee_bootstrap.is_some() {
+                        return Err(BlockExecutionError::Internal(
+                            InternalBlockExecutionError::Other(
+                                format!(
+                                    "OST3 bootstrap payload is forbidden at block {block_number}"
+                                )
                                 .into(),
+                            ),
+                        ));
+                    }
+                    self.append_begin_input(&mut system_txs, *kind, || {
+                        SystemTxInputV2::OracleSlashWindow
+                    })?;
+                }
+                SystemTxKind::HookEvents => {
+                    self.append_begin_input(&mut system_txs, *kind, || SystemTxInputV2::HookEvents)?
+                }
+                // The canonical begin plan excludes the end-zone terminal request.
+                SystemTxKind::OcompTerminalRequest => {
+                    return Err(BlockExecutionError::Internal(
+                        InternalBlockExecutionError::Other(
+                            format!("unexpected system tx at body_index={ordinal}; expected begin_block system txs {kinds:?}").into(),
                         ),
                     ));
                 }
             }
-            system_txs.push((SystemTxKind::BoundaryOutcome, input, None));
-            ordinal += 1;
         }
+        Ok(system_txs)
+    }
 
-        // Optional Phase 3b: one-time `TeeBootstrap`, between `BoundaryOutcome`
-        // (begin_order 5) and `OracleSlashWindow` (begin_order 7).
-        // Verifier mode: include it iff the body carries it at this ordinal.
-        // Proposer mode: inject the `pending_tee_bootstrap` payload supplied by
-        // the bootstrap producer - identically to `build_begin_system_txs` so the
-        // proposer's signed body and the executor's expected inputs match.
-        if block_number == 1 {
-            let input = if verifier_mode {
-                self.expected_begin_input(ordinal)?
-            } else {
-                let payload = self.pending_tee_bootstrap.clone().ok_or_else(|| {
-                    BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                        "missing mandatory block-1 OST3 bootstrap payload".into(),
-                    ))
-                })?;
-                SystemTxInputV2::TeeBootstrap { payload }
-            };
-            if !matches!(input, SystemTxInputV2::TeeBootstrap { .. }) {
-                return Err(BlockExecutionError::Internal(
-                    InternalBlockExecutionError::Other(
-                        format!("expected mandatory OST3 system tx at ordinal {ordinal}").into(),
-                    ),
-                ));
-            }
-            system_txs.push((SystemTxKind::TeeBootstrap, input, None));
-            ordinal += 1;
-        } else if self.pending_tee_bootstrap.is_some() {
+    /// Admit a simple phase and advance its ordinal only after validation.
+    fn append_begin_input(
+        &self,
+        system_txs: &mut Vec<BeginSystemTransaction>,
+        expected_kind: SystemTxKind,
+        proposer_input: impl FnOnce() -> SystemTxInputV2,
+    ) -> Result<(), BlockExecutionError> {
+        let ordinal = system_txs.len();
+        let input = if self.expected_begin_system_txs.is_empty() {
+            proposer_input()
+        } else {
+            self.expected_begin_input(ordinal)?
+        };
+        if input.kind() != expected_kind {
             return Err(BlockExecutionError::Internal(
                 InternalBlockExecutionError::Other(
-                    format!("OST3 bootstrap payload is forbidden at block {block_number}").into(),
+                    format!("expected {expected_kind:?} system tx at ordinal {ordinal}").into(),
                 ),
             ));
         }
+        system_txs.push((expected_kind, input, None));
+        Ok(())
+    }
 
-        if block_number >= 1 {
-            let input = if verifier_mode {
-                self.expected_begin_input(ordinal)?
-            } else {
-                SystemTxInputV2::OracleSlashWindow
-            };
-            if !matches!(input, SystemTxInputV2::OracleSlashWindow) {
+    fn certified_parent_begin_input(
+        &self,
+        ordinal: usize,
+    ) -> Result<BeginSystemTransaction, BlockExecutionError> {
+        let verifier_mode = !self.expected_begin_system_txs.is_empty();
+        let input = if verifier_mode {
+            self.expected_begin_input(ordinal)?
+        } else {
+            let metadata = self.parent_consensus_metadata.clone().ok_or_else(|| {
+                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                    "missing parent consensus metadata for CertifiedParentAccounting".into(),
+                ))
+            })?;
+            SystemTxInputV2::CertifiedParentAccounting { metadata }
+        };
+        let SystemTxInputV2::CertifiedParentAccounting { metadata } = &input else {
+            return Err(BlockExecutionError::Internal(
+                InternalBlockExecutionError::Other(
+                    "expected CertifiedParentAccounting system tx at ordinal 0".into(),
+                ),
+            ));
+        };
+        if metadata.finalized_block_hash != self.parent_hash {
+            return Err(BlockExecutionError::Internal(
+            InternalBlockExecutionError::Other(
+                format!(
+                    "CertifiedParentAccounting metadata hash must match block parent: expected {}, got {}",
+                    self.parent_hash, metadata.finalized_block_hash
+                )
+                .into(),
+            ),
+        ));
+        }
+        let summary = self.accounted_parent_artifact_for_metadata(metadata)?;
+        Ok((
+            SystemTxKind::CertifiedParentAccounting,
+            input,
+            Some(summary),
+        ))
+    }
+
+    fn boundary_begin_input(
+        &self,
+        ordinal: usize,
+        artifact: &outbe_primitives::consensus::DkgBoundaryArtifact,
+    ) -> Result<SystemTxInputV2, BlockExecutionError> {
+        let verifier_mode = !self.expected_begin_system_txs.is_empty();
+        let input = if verifier_mode {
+            self.expected_begin_input(ordinal)?
+        } else {
+            SystemTxInputV2::BoundaryOutcome {
+                artifact: artifact.clone(),
+            }
+        };
+        match &input {
+            SystemTxInputV2::BoundaryOutcome {
+                artifact: input_artifact,
+            } if input_artifact == artifact => {}
+            SystemTxInputV2::BoundaryOutcome { .. } => {
                 return Err(BlockExecutionError::Internal(
                     InternalBlockExecutionError::Other(
-                        format!("expected OracleSlashWindow system tx at ordinal {ordinal}").into(),
+                        format!("BoundaryOutcome system tx artifact mismatch at ordinal {ordinal}")
+                            .into(),
                     ),
                 ));
             }
-            system_txs.push((SystemTxKind::OracleSlashWindow, input, None));
-            ordinal += 1;
-        }
-
-        if block_number >= 1 {
-            let input = if verifier_mode {
-                self.expected_begin_input(ordinal)?
-            } else {
-                SystemTxInputV2::HookEvents
-            };
-            if !matches!(input, SystemTxInputV2::HookEvents) {
+            _ => {
                 return Err(BlockExecutionError::Internal(
                     InternalBlockExecutionError::Other(
-                        format!("expected HookEvents system tx at ordinal {ordinal}").into(),
+                        format!("expected BoundaryOutcome system tx at ordinal {ordinal}").into(),
                     ),
                 ));
             }
-            system_txs.push((SystemTxKind::HookEvents, input, None));
         }
+        Ok(input)
+    }
 
-        Ok(system_txs)
+    fn bootstrap_begin_input(
+        &self,
+        ordinal: usize,
+    ) -> Result<SystemTxInputV2, BlockExecutionError> {
+        let verifier_mode = !self.expected_begin_system_txs.is_empty();
+        let input = if verifier_mode {
+            self.expected_begin_input(ordinal)?
+        } else {
+            let payload = self.pending_tee_bootstrap.clone().ok_or_else(|| {
+                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                    "missing mandatory block-1 OST3 bootstrap payload".into(),
+                ))
+            })?;
+            SystemTxInputV2::TeeBootstrap { payload }
+        };
+        if !matches!(input, SystemTxInputV2::TeeBootstrap { .. }) {
+            return Err(BlockExecutionError::Internal(
+                InternalBlockExecutionError::Other(
+                    format!("expected mandatory OST3 system tx at ordinal {ordinal}").into(),
+                ),
+            ));
+        }
+        Ok(input)
     }
 
     fn expected_system_tx_at_body_index(

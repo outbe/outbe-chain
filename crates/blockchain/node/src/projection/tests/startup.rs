@@ -116,15 +116,23 @@ fn node_runtime_opens_logical_projection_over_pending_overlay() {
     };
     OffchainDataProjection::open(projection_config, durable.clone(), durable.clone()).unwrap();
     let durable_reader: StorageReaderHandle = durable.clone();
+    let durable_writer: StorageWriterHandle = durable.clone();
     let (overlay, mut projector) =
-        super::open_logical_projection(projection_config, durable_reader, None).unwrap();
+        super::open_logical_projection(projection_config, durable_reader, durable_writer, None)
+            .unwrap();
     let block = FinalizedBlock {
         number: 1,
         hash: B256::repeat_byte(0x22),
         receipts: Vec::new(),
     };
 
-    projector.project_block(&block).unwrap();
+    let prepared = projector.prepare_block(&block).unwrap();
+    drop(
+        projector
+            .apply_prepared_with(prepared, |batch| overlay.stage(batch))
+            .unwrap()
+            .1,
+    );
 
     assert_eq!(projector.state().checkpoint.unwrap().block_number, 1);
     assert_eq!(

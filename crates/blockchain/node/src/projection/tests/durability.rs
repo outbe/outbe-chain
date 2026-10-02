@@ -70,7 +70,7 @@ fn frame_sink_returns_only_after_the_exact_durable_write_finishes() {
         start_block: 1,
     };
     OffchainDataProjection::open(projection_config, durable.clone(), durable.clone()).unwrap();
-    let overlay = Arc::new(PendingOverlayStorage::new(durable.clone()));
+    let overlay = Arc::new(PendingOverlayStorage::new(durable.clone(), durable.clone()));
     let reader: StorageReaderHandle = overlay.clone();
     let logical_writer: StorageWriterHandle = overlay.clone();
     let durable_writer: StorageWriterHandle = durable.clone();
@@ -136,7 +136,7 @@ fn frame_sink_accepts_restart_replay_below_durable_p_and_rejects_conflicting_p()
         start_block: 1,
     };
     OffchainDataProjection::open(projection_config, storage.clone(), storage.clone()).unwrap();
-    let overlay = Arc::new(PendingOverlayStorage::new(storage.clone()));
+    let overlay = Arc::new(PendingOverlayStorage::new(storage.clone(), storage.clone()));
     let reader: StorageReaderHandle = overlay.clone();
     let logical_writer: StorageWriterHandle = overlay.clone();
     let durable_writer: StorageWriterHandle = storage.clone();
@@ -250,7 +250,7 @@ fn frame_sink_accepts_restart_replay_below_durable_p_and_rejects_conflicting_p()
     assert_eq!(sink.durable_checkpoint(), Some(durable_p));
 
     drop(sink);
-    let overlay = Arc::new(PendingOverlayStorage::new(storage.clone()));
+    let overlay = Arc::new(PendingOverlayStorage::new(storage.clone(), storage.clone()));
     let reader: StorageReaderHandle = overlay.clone();
     let logical_writer: StorageWriterHandle = overlay.clone();
     let durable_writer: StorageWriterHandle = storage;
@@ -334,7 +334,10 @@ fn later_provider_failure_keeps_and_reports_earlier_durable_checkpoint() {
 #[test]
 fn ambiguous_mongo_result_retries_the_same_batch_before_advancing_durable_height() {
     let storage = Arc::new(AmbiguousFirstWriteStorage::default());
-    let overlay = Arc::new(PendingOverlayStorage::new(storage.inner.clone()));
+    let overlay = Arc::new(PendingOverlayStorage::new(
+        storage.inner.clone(),
+        storage.clone(),
+    ));
     let writer: StorageWriterHandle = storage.clone();
     let namespace = Namespace::new("records").unwrap();
     let key = Key::new(b"key".to_vec()).unwrap();
@@ -345,27 +348,16 @@ fn ambiguous_mongo_result_retries_the_same_batch_before_advancing_durable_height
         value,
     )]);
     let checkpoint = FinalizedTarget::new(7, B256::repeat_byte(0x77));
-    let (write_tx, write_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (checkpoint_tx, mut checkpoint_rx) = tokio::sync::mpsc::unbounded_channel();
-    let writer_thread = std::thread::spawn(move || {
-        super::run_durable_projection_writer(writer, write_rx, checkpoint_tx);
-    });
-
     storage.ambiguous_next.store(true, Ordering::Release);
-    overlay.apply_atomic(&batch).unwrap();
-    let overlay_generation = overlay.current_generation();
-    write_tx
-        .send(super::DurableProjectionWrite {
-            checkpoint,
-            batch,
-            overlay_ack: Some((overlay.clone(), overlay_generation)),
-        })
-        .unwrap();
-    let durable = checkpoint_rx
-        .blocking_recv()
-        .expect("the exact batch must be retried after an ambiguous result");
+    let pending = overlay.stage(batch).unwrap();
+    let write = DurableProjectionWrite::pending(checkpoint, pending);
+    apply_durable_projection_write_before(
+        &writer,
+        &write,
+        std::time::Instant::now() + PROJECTION_RECOVERY_DEADLINE,
+    )
+    .expect("the production writer must retry the exact batch after an ambiguous result");
 
-    assert_eq!(durable, checkpoint);
     assert_eq!(storage.attempts.load(Ordering::Acquire), 2);
     assert_eq!(
         storage
@@ -389,8 +381,6 @@ fn ambiguous_mongo_result_retries_the_same_batch_before_advancing_durable_height
         b"base-after-ack",
         "durable ACK must retire the acknowledged overlay generation"
     );
-    drop(write_tx);
-    writer_thread.join().unwrap();
 }
 
 #[test]
@@ -409,11 +399,7 @@ fn durable_write_deadline_has_a_typed_error_for_lifecycle_classification() {
 
     let report = apply_durable_projection_write_until(
         &writer,
-        &DurableProjectionWrite {
-            checkpoint,
-            batch,
-            overlay_ack: None,
-        },
+        &DurableProjectionWrite::direct(checkpoint, batch),
         Duration::ZERO,
     )
     .unwrap_err();
@@ -445,11 +431,7 @@ fn successful_write_after_the_absolute_deadline_never_publishes_progress() {
     )]);
     let report = apply_durable_projection_write_before(
         &writer,
-        &DurableProjectionWrite {
-            checkpoint,
-            batch,
-            overlay_ack: None,
-        },
+        &DurableProjectionWrite::direct(checkpoint, batch),
         std::time::Instant::now() + Duration::from_millis(1),
     )
     .unwrap_err();
@@ -457,6 +439,53 @@ fn successful_write_after_the_absolute_deadline_never_publishes_progress() {
     assert_eq!(
         projection_frame_failure_class(&report),
         ProjectionFailureClass::MongoReconnectDeadline
+    );
+}
+
+#[test]
+fn late_durable_success_keeps_the_exact_pending_batch_unacknowledged() {
+    struct LateWriter(Arc<MemoryStorage>);
+    impl StorageWriter for LateWriter {
+        fn apply_atomic(&self, batch: &AtomicWriteBatch) -> Result<(), StorageError> {
+            self.0.apply_atomic(batch)?;
+            std::thread::sleep(Duration::from_millis(20));
+            Ok(())
+        }
+    }
+    let base = Arc::new(MemoryStorage::new());
+    let writer: StorageWriterHandle = Arc::new(LateWriter(base.clone()));
+    let overlay = PendingOverlayStorage::new(base.clone(), writer.clone());
+    let namespace = Namespace::new("records").unwrap();
+    let key = Key::new(b"late".to_vec()).unwrap();
+    let pending = overlay
+        .stage(AtomicWriteBatch::from_operations(vec![
+            AtomicWriteOperation::put(
+                namespace.clone(),
+                key.clone(),
+                outbe_offchain_storage::Value::new(b"pending".to_vec()).unwrap(),
+            ),
+        ]))
+        .unwrap();
+    let write =
+        DurableProjectionWrite::pending(FinalizedTarget::new(7, B256::repeat_byte(0x78)), pending);
+    let error = apply_durable_projection_write_before(
+        &writer,
+        &write,
+        std::time::Instant::now() + Duration::from_millis(1),
+    )
+    .unwrap_err();
+    assert!(error
+        .downcast_ref::<ProjectionWriteDeadlineError>()
+        .is_some());
+    base.put(
+        namespace.clone(),
+        &key,
+        &outbe_offchain_storage::Value::new(b"durable-after-deadline".to_vec()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        overlay.get(namespace, &key).unwrap().unwrap().as_bytes(),
+        b"pending"
     );
 }
 
@@ -485,11 +514,7 @@ fn deterministic_projection_storage_failures_are_immediate_and_typed() {
         let started = std::time::Instant::now();
         let report = apply_durable_projection_write_until(
             &writer,
-            &DurableProjectionWrite {
-                checkpoint,
-                batch: batch(),
-                overlay_ack: None,
-            },
+            &DurableProjectionWrite::direct(checkpoint, batch()),
             PROJECTION_RECOVERY_DEADLINE,
         )
         .unwrap_err();

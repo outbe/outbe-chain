@@ -106,14 +106,24 @@ fn rocks_input() -> (Vec<AuthenticatedTributeRecord>, TributeStreamSummary) {
         "version=1\nbackend='rocksdb'\n[rocksdb]\npath='primary'\nsecondary_path='secondary'\n",
     )
     .unwrap();
-    let provider = StorageProvider::new(StorageConfig::load(&path).unwrap()).unwrap();
+    let provider = StorageProvider::new(StorageConfig::load(&path).unwrap())
+        .unwrap()
+        .with_partition_routing(outbe_offchain_data::entity_partition_routing().unwrap());
     {
         let storage = provider.open_writer().unwrap();
+        storage.ownership.activate().unwrap();
+        let completion = storage.ownership.completion();
         populate(storage.reader.clone(), storage.writer.clone());
+        drop(storage);
+        completion
+            .wait_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
     }
     // Node reopens its writer; the exporter independently loads the same TOML.
     let _primary = provider.open_writer().unwrap();
-    let exporter = StorageProvider::new(StorageConfig::load(&path).unwrap()).unwrap();
+    let exporter = StorageProvider::new(StorageConfig::load(&path).unwrap())
+        .unwrap()
+        .with_partition_routing(outbe_offchain_data::entity_partition_routing().unwrap());
     collect(
         exporter
             .read_source("exporter-v1")
@@ -243,10 +253,15 @@ fn mongodb_toml_provider_produces_identical_canonical_inputs_and_artifacts_to_ro
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("offchain-storage.toml");
     std::fs::write(&path, config.to_toml().unwrap()).unwrap();
-    let provider = StorageProvider::new(StorageConfig::load(&path).unwrap()).unwrap();
+    let provider = StorageProvider::new(StorageConfig::load(&path).unwrap())
+        .unwrap()
+        .with_partition_routing(outbe_offchain_data::entity_partition_routing().unwrap());
     let storage = provider.open_writer().unwrap();
+    storage.ownership.activate().unwrap();
     populate(storage.reader.clone(), storage.writer.clone());
-    let exporter = StorageProvider::new(StorageConfig::load(&path).unwrap()).unwrap();
+    let exporter = StorageProvider::new(StorageConfig::load(&path).unwrap())
+        .unwrap()
+        .with_partition_routing(outbe_offchain_data::entity_partition_routing().unwrap());
     let memory = Arc::new(MemoryStorage::new());
     populate(memory.clone(), memory.clone());
     let mongo = collect(

@@ -1,6 +1,7 @@
 pub mod certified;
 mod day_mark;
 pub mod errors;
+pub mod partitioning;
 pub mod precompile;
 pub mod projection;
 mod repository;
