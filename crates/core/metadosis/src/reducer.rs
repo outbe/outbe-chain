@@ -211,40 +211,42 @@ fn reduce_admission_plan(
                 OuterWwdTransitionKind::MissedOffering { preceding_edges },
             )
         }
-        WwdTransitionPlan::Advance(mut edges)
-            if edges.last() == Some(&WwdAdvanceEdge::BecomeReady) && !admission.available =>
-        {
-            edges.pop();
-            let target = edges.last().map_or(current.status, |edge| edge.target());
-            let kind = if edges.is_empty() {
-                OuterWwdTransitionKind::Noop
-            } else {
-                OuterWwdTransitionKind::Advance(edges)
-            };
-            transition(Some(current.status), target, kind)
-        }
-        WwdTransitionPlan::Advance(mut edges)
-            if admission.retained_count == MAX_RETAINED_WWDS
-                && edges.last() == Some(&WwdAdvanceEdge::BecomeReady) =>
-        {
-            edges.pop();
-            transition(
-                Some(current.status),
-                WwdStatus::Failed,
-                OuterWwdTransitionKind::CapacityForfeiture {
-                    preceding_edges: edges,
-                },
-            )
-        }
-        WwdTransitionPlan::Advance(edges) => {
-            let target = edges.last().map_or(current.status, |edge| edge.target());
-            transition(
-                Some(current.status),
-                target,
-                OuterWwdTransitionKind::Advance(edges),
-            )
-        }
+        WwdTransitionPlan::Advance(edges) => reduce_ready_admission(current, edges, admission),
     }
+}
+
+fn reduce_ready_admission(
+    current: &WwdProjection,
+    mut edges: Vec<WwdAdvanceEdge>,
+    admission: Admission,
+) -> OuterWwdTransition {
+    let becomes_ready = edges.last() == Some(&WwdAdvanceEdge::BecomeReady);
+    if becomes_ready && !admission.available {
+        edges.pop();
+        let target = edges.last().map_or(current.status, |edge| edge.target());
+        let kind = if edges.is_empty() {
+            OuterWwdTransitionKind::Noop
+        } else {
+            OuterWwdTransitionKind::Advance(edges)
+        };
+        return transition(Some(current.status), target, kind);
+    }
+    if becomes_ready && admission.retained_count == MAX_RETAINED_WWDS {
+        edges.pop();
+        return transition(
+            Some(current.status),
+            WwdStatus::Failed,
+            OuterWwdTransitionKind::CapacityForfeiture {
+                preceding_edges: edges,
+            },
+        );
+    }
+    let target = edges.last().map_or(current.status, |edge| edge.target());
+    transition(
+        Some(current.status),
+        target,
+        OuterWwdTransitionKind::Advance(edges),
+    )
 }
 
 fn reduce_ready(

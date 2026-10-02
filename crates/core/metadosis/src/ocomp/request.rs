@@ -258,7 +258,6 @@ fn seal_request_admission(
         pre_admission_context,
         candidate_envelope,
     } = candidate;
-    let schema_limits = poc_schema_limits();
     let exact_collection = roots.tribute;
     let mut tribute = TributeContract::new(ctx.storage.clone());
     let nod_target = NodContract::new(ctx.storage.clone()).ocomp_target_projection(wwd)?;
@@ -289,18 +288,8 @@ fn seal_request_admission(
         ));
     }
 
-    let envelope_projection =
-        metadosis.commit_pre_admission_envelope(wwd, &sealed_envelope, &schema_limits)?;
-    let envelope_hash = sealed_envelope
-        .envelope_hash(&schema_limits)
-        .map_err(|error| {
-            storage_corruption_message(format!("hash OCOMP pre-admission envelope: {error}"))
-        })?;
-    if envelope_projection.envelope_hash != envelope_hash {
-        return Err(storage_corruption_message(
-            "stored OCOMP pre-admission envelope hash mismatch",
-        ));
-    }
+    let (envelope_projection, envelope_hash) =
+        persist_sealed_admission(metadosis, wwd, &sealed_envelope)?;
 
     Ok(AdmittedRequest {
         tribute: sealed_tribute_projection,
@@ -312,6 +301,28 @@ fn seal_request_admission(
         envelope_hash,
         current_vwap,
     })
+}
+
+fn persist_sealed_admission(
+    metadosis: &mut MetadosisContract<'_>,
+    wwd: WorldwideDay,
+    sealed_envelope: &outbe_ocomp_protocol::intent::PreAdmissionEnvelopeV1,
+) -> Result<(crate::pre_admission::MetadosisPreAdmissionProjection, B256)> {
+    let schema_limits = poc_schema_limits();
+    let envelope_projection =
+        metadosis.commit_pre_admission_envelope(wwd, sealed_envelope, &schema_limits)?;
+    let envelope_hash = sealed_envelope
+        .envelope_hash(&schema_limits)
+        .map_err(|error| {
+            storage_corruption_message(format!("hash OCOMP pre-admission envelope: {error}"))
+        })?;
+    if envelope_projection.envelope_hash != envelope_hash {
+        return Err(storage_corruption_message(
+            "stored OCOMP pre-admission envelope hash mismatch",
+        ));
+    }
+
+    Ok((envelope_projection, envelope_hash))
 }
 
 fn freeze_request_limits(

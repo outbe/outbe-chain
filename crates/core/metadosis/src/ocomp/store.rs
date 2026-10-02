@@ -234,11 +234,19 @@ impl MetadosisContract<'_> {
                     .ok_or_else(|| {
                         storage_corruption_message("OCOMP retained effect snapshot is missing")
                     })?;
-                let limit_matches = receipt.wwd == projection.worldwide_day.value()
-                    && receipt.lysis_limit_minor == lysis_limit_minor;
-                let effect_matches = receipt.pending_nonce == retained.effect_nonce
-                    && expected_hash == retained.receipt_hash;
-                if !limit_matches || !effect_matches {
+                let receipt_binding = (
+                    receipt.wwd,
+                    receipt.lysis_limit_minor,
+                    receipt.pending_nonce,
+                    expected_hash,
+                );
+                let retained_binding = (
+                    projection.worldwide_day.value(),
+                    lysis_limit_minor,
+                    retained.effect_nonce,
+                    retained.receipt_hash,
+                );
+                if receipt_binding != retained_binding {
                     return Err(storage_corruption_message(
                         "OCOMP limit receipt/state mismatch",
                     ));

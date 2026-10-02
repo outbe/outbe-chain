@@ -596,11 +596,19 @@ pub(crate) fn validate_activation_authority(
     let bundle_hash = bundle
         .protocol_bundle_hash(limits)
         .map_err(protocol_error)?;
-    if bundle_hash != profile.protocol_bundle_hash
-        || bundle.fork_id != profile.fork_id
-        || bundle.correctness_profile_id != profile.correctness_profile_id
-        || bundle.capacity_profile_id != profile.capacity_profile.profile_id
-    {
+    let installed_identity = (
+        profile.protocol_bundle_hash,
+        profile.fork_id,
+        profile.correctness_profile_id,
+        profile.capacity_profile.profile_id,
+    );
+    let certified_identity = (
+        bundle_hash,
+        bundle.fork_id,
+        bundle.correctness_profile_id,
+        bundle.capacity_profile_id,
+    );
+    if certified_identity != installed_identity {
         return Err(storage_corruption_message(
             "OCOMP protocol bundle differs from the request profile",
         ));

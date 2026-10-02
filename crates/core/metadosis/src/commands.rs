@@ -345,6 +345,8 @@ mod tests {
             );
             install_fork_profile(&ctx, &install).unwrap();
             let validators = ValidatorSet::new(storage.clone());
+            assert!(crate::api::has_active_ocomp_profile(storage.clone()).unwrap());
+            assert!(crate::api::is_active_ocomp_fork_install(storage.clone(), &install).unwrap());
             assert_eq!(
                 validators
                     .ocomp_registration(Address::repeat_byte(0xB0))
