@@ -17,6 +17,7 @@ use alloy_primitives::U256;
 use outbe_lysis::program_v1::artifacts::decode_finalized_output_run;
 
 use outbe_lysis::program_v1::phases::FinalizedOutputRunV1;
+use outbe_lysis::program_v1::phases::NodBucketKeyV1;
 
 use outbe_lysis::program_v1::planner::LysisPlanTopologyV1;
 
@@ -58,9 +59,6 @@ use outbe_ocomp_protocol::unit::WorkOutputHeaderV1;
 use outbe_ocomp_protocol::ListKind;
 
 use outbe_ocomp_protocol::SchemaLimits;
-
-use outbe_nod::NodContract;
-use outbe_primitives::time::WorldwideDay;
 
 use std::sync::atomic::AtomicBool;
 
@@ -319,11 +317,7 @@ fn execute_root_reduce_leaf(
     let mut buckets = nod_actions
         .iter()
         .map(|action| ShuffleBucketRecordV1 {
-            bucket_key: NodContract::bucket_key(
-                WorldwideDay::new(action.wwd),
-                action.entry_price_minor,
-                action.reference_currency,
-            ),
+            bucket_key: action.bucket_key(),
             raw_ordinal: action.raw_ordinal,
             tribute_id: action.tribute_id,
             nod_id: action.nod_id,

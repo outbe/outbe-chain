@@ -20,14 +20,13 @@ use outbe_ocomp_protocol::{
     unit::{PlanCommitmentV1, UnitArtifactV1, UnitPhase},
     CanonicalWriter, ListKind, ObjectKind, ProtocolError, SchemaLimits, StreamingOrderedListRoot,
 };
-use outbe_primitives::time::WorldwideDay;
 
 use super::{
     artifacts::{
         decode_fixed_reduce_output, decode_gratis_prefix_down_output, GratisPrefixDownOutputV1,
         LysisArtifactErrorV1,
     },
-    phases::GratisLeafPrefixV1,
+    phases::{GratisLeafPrefixV1, NodBucketKeyV1},
     planner::{LysisPlanTopologyV1, PlannedUnitPositionV1, PlannerErrorV1},
     result::{
         decode_root_reduce_output, LysisListSubtreeCarrierV1, RootReduceOutputV1,
@@ -555,11 +554,7 @@ where
             nod_root.push(&record, limits.max_bounded_bytes)?;
             nod_records.push(record);
             bucket_records.push(ShuffleBucketRecordV1 {
-                bucket_key: NodContract::bucket_key(
-                    WorldwideDay::new(action.wwd),
-                    action.entry_price_minor,
-                    action.reference_currency,
-                ),
+                bucket_key: action.bucket_key(),
                 raw_ordinal: action.raw_ordinal,
                 tribute_id: action.tribute_id,
                 nod_id: action.nod_id,

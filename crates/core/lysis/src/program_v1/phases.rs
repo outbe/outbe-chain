@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{derive_poseidon_entity_id, WwdEntityId};
 use outbe_nod::NodContract;
+use outbe_ocomp_protocol::result::NodActionV1 as CertifiedNodActionV1;
 use outbe_primitives::time::WorldwideDay;
 
 use super::{
@@ -108,6 +109,31 @@ pub struct BucketRecordV1 {
     pub raw_ordinal: u32,
     pub tribute_id: WwdEntityId,
     pub nod_id: WwdEntityId,
+}
+
+/// Key of the shuffle bucket a Nod action sorts into: its day, entry price and currency.
+pub trait NodBucketKeyV1 {
+    fn bucket_key(&self) -> B256;
+}
+
+impl NodBucketKeyV1 for NodActionV1 {
+    fn bucket_key(&self) -> B256 {
+        NodContract::bucket_key(
+            self.worldwide_day,
+            self.entry_price_minor,
+            self.reference_currency,
+        )
+    }
+}
+
+impl NodBucketKeyV1 for CertifiedNodActionV1 {
+    fn bucket_key(&self) -> B256 {
+        NodContract::bucket_key(
+            WorldwideDay::new(self.wwd),
+            self.entry_price_minor,
+            self.reference_currency,
+        )
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -770,11 +796,7 @@ pub fn shuffle_buckets(run: &FinalizedOutputRunV1) -> Result<BucketOrderedRunV1,
         .ordered_records
         .iter()
         .map(|record| BucketRecordV1 {
-            bucket_key: NodContract::bucket_key(
-                record.nod_action.worldwide_day,
-                record.nod_action.entry_price_minor,
-                record.nod_action.reference_currency,
-            ),
+            bucket_key: record.nod_action.bucket_key(),
             raw_ordinal: record.raw_ordinal,
             tribute_id: record.nod_action.source_tribute_id,
             nod_id: record.nod_action.nod_id,

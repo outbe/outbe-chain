@@ -19,7 +19,7 @@ use outbe_lysis::program_v1::finalizer::{
     VerifiedLysisFinalizationInputsV1,
 };
 use outbe_lysis::program_v1::phases::{
-    output_finalize, AmountRecordV1, AmountRunV1, GratisLeafPrefixV1,
+    output_finalize, AmountRecordV1, AmountRunV1, GratisLeafPrefixV1, NodBucketKeyV1,
 };
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1, PlannedUnitPositionV1,
@@ -1705,11 +1705,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         .encode_canonical(&limits)
         .expect("canonical finalization chunk");
     let bucket_record = ShuffleBucketRecordV1 {
-        bucket_key: outbe_nod::NodContract::bucket_key(
-            WorldwideDay::new(chunk.ordered_nod_actions[0].wwd),
-            chunk.ordered_nod_actions[0].entry_price_minor,
-            chunk.ordered_nod_actions[0].reference_currency,
-        ),
+        bucket_key: chunk.ordered_nod_actions[0].bucket_key(),
         raw_ordinal: chunk.ordered_nod_actions[0].raw_ordinal,
         tribute_id: chunk.ordered_nod_actions[0].tribute_id,
         nod_id: chunk.ordered_nod_actions[0].nod_id,
