@@ -171,6 +171,13 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         if (data.issuedAt == 0) {
             revert NonexistentToken(tokenId);
         }
+        if (data.state == IIntexNFT1155.IntexState.Called) {
+            uint256 deadline = _settlementDeadline(data);
+            if (block.timestamp > deadline) {
+                // forge-lint: disable-next-line(unsafe-typecast) -- below block.timestamp, so within uint32
+                revert IssueAfterDeadline(tokenId, uint32(deadline));
+            }
+        }
 
         // A per-recipient mint quantity is one bidder's auction win, bounded by their bid's
         // `intexQuantity` (uint16); keeps the ERC1155 balance and `totalSupply` consistent.
@@ -212,7 +219,9 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         data.state = IIntexNFT1155.IntexState.Called;
         data.calledAt = calledAt;
 
-        uint32 derivedDeadline = calledAt + data.callTrigger.callNoticePeriod;
+        uint256 deadline = _settlementDeadline(data);
+        // forge-lint: disable-next-line(unsafe-typecast) -- saturated to the event's uint32
+        uint32 derivedDeadline = deadline > type(uint32).max ? type(uint32).max : uint32(deadline);
 
         emit IntexStatusUpdated(
             msg.sender, tokenId, previousState, IIntexNFT1155.IntexState.Called, calledAt, derivedDeadline
@@ -240,9 +249,10 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             if (to != from) revert TransferOnCalledForbidden(tokenId);
             // Past `calledAt + callNoticePeriod` the series is settlement-complete and balances freeze,
             // so no hop may still move one out (or `crosschainMint` re-inflate one back in).
-            uint32 derivedDeadline = data.calledAt + data.callTrigger.callNoticePeriod;
-            if (block.timestamp > derivedDeadline) {
-                revert BridgeAfterDeadline(tokenId, derivedDeadline);
+            uint256 deadline = _settlementDeadline(data);
+            if (block.timestamp > deadline) {
+                // forge-lint: disable-next-line(unsafe-typecast) -- below block.timestamp, so within uint32
+                revert BridgeAfterDeadline(tokenId, uint32(deadline));
             }
         }
 
@@ -266,9 +276,10 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
         if (data.state == IIntexNFT1155.IntexState.Called) {
             // Mirror of `crosschainBurn`: no bridge-in past the settlement deadline.
-            uint32 derivedDeadline = data.calledAt + data.callTrigger.callNoticePeriod;
-            if (block.timestamp > derivedDeadline) {
-                revert BridgeAfterDeadline(tokenId, derivedDeadline);
+            uint256 deadline = _settlementDeadline(data);
+            if (block.timestamp > deadline) {
+                // forge-lint: disable-next-line(unsafe-typecast) -- below block.timestamp, so within uint32
+                revert BridgeAfterDeadline(tokenId, uint32(deadline));
             }
         }
 
@@ -309,9 +320,10 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // Qualification is derived by the factory before it calls; a called series settles until its deadline.
         if (data.state == IIntexNFT1155.IntexState.Called) {
             // No new Settled tokens past the call window (mirrors the crosschainBurn/crosschainMint freeze).
-            uint32 derivedDeadline = data.calledAt + data.callTrigger.callNoticePeriod;
-            if (block.timestamp > derivedDeadline) {
-                revert SettleAfterDeadline(iTok, derivedDeadline);
+            uint256 deadline = _settlementDeadline(data);
+            if (block.timestamp > deadline) {
+                // forge-lint: disable-next-line(unsafe-typecast) -- below block.timestamp, so within uint32
+                revert SettleAfterDeadline(iTok, uint32(deadline));
             }
         }
 
@@ -413,6 +425,11 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     /// @dev Pure helper used internally and exposed via `settledTokenId`.
     function _settledTokenId(bytes14 seriesId) internal pure returns (uint256) {
         return uint256(uint112(seriesId)) | _SETTLED_TAG;
+    }
+
+    /// @dev `calledAt + callNoticePeriod`, widened so the sum cannot overflow.
+    function _settlementDeadline(IIntexNFT1155.SeriesData storage data) internal view returns (uint256) {
+        return uint256(data.calledAt) + data.callTrigger.callNoticePeriod;
     }
 
     /// @dev Whether the id belongs to the Settled class. Derived from the id, so it holds for a

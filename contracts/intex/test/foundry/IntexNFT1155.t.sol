@@ -536,6 +536,48 @@ contract IntexNFT1155Test is Test {
         assertEq(nft.balanceOf(user, TOKEN_ID_1), 5);
     }
 
+    function test_Issue_RevertsAfterDeadline() public {
+        uint32 callPeriod = uint32(14 days);
+        _createSeries(SERIES_ID_1_DAY, callPeriod);
+        vm.startPrank(bridger);
+        uint32 calledAt = uint32(block.timestamp);
+        nft.markCalled(SERIES_ID_1, calledAt);
+        uint32 deadline = calledAt + callPeriod;
+
+        vm.warp(uint256(deadline) + 1);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.IssueAfterDeadline.selector, TOKEN_ID_1, deadline));
+        nft.issue(user, 10, SERIES_ID_1);
+        vm.stopPrank();
+    }
+
+    function test_Issue_AllowedOnCalledSeriesAtDeadlineBoundary() public {
+        uint32 callPeriod = uint32(14 days);
+        _createSeries(SERIES_ID_1_DAY, callPeriod);
+        vm.startPrank(bridger);
+        uint32 calledAt = uint32(block.timestamp);
+        nft.markCalled(SERIES_ID_1, calledAt);
+
+        vm.warp(uint256(calledAt) + callPeriod);
+        nft.issue(user, 10, SERIES_ID_1);
+        vm.stopPrank();
+
+        assertEq(nft.balanceOf(user, TOKEN_ID_1), 10);
+    }
+
+    /// @dev A notice period near `type(uint32).max` pushes the deadline past uint32; nothing may overflow.
+    function test_Deadline_BeyondUint32_DoesNotOverflow() public {
+        _createSeries(SERIES_ID_1_DAY, type(uint32).max);
+        vm.startPrank(bridger);
+        nft.issue(user, 10, SERIES_ID_1);
+        nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
+        nft.issue(user, 10, SERIES_ID_1);
+        nft.crosschainBurn(user, user, TOKEN_ID_1, 5);
+        nft.crosschainMint(user, TOKEN_ID_1, 5);
+        vm.stopPrank();
+
+        assertEq(nft.balanceOf(user, TOKEN_ID_1), 20);
+    }
+
     function test_OnlyBridgeCanCrosschainMint() public {
         _createSeries(SERIES_ID_1_DAY, 0);
 

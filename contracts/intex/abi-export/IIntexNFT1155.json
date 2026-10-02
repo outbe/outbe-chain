@@ -1234,6 +1234,22 @@
     },
     {
       "type": "error",
+      "name": "IssueAfterDeadline",
+      "inputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "deadline",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "NonexistentToken",
       "inputs": [
         {
