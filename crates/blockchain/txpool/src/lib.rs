@@ -438,9 +438,8 @@ where
         ocomp_admission::validate(
             &self.inner,
             self.ocomp_lifecycle_activation,
-            origin,
             transaction,
-            candidate,
+            ocomp_admission::CarrierAdmissionContext { origin, candidate },
         )
     }
 
