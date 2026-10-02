@@ -1,4 +1,5 @@
 use super::*;
+use crate::application::handler::verification::VerifyTask;
 use futures::{FutureExt as _, StreamExt as _};
 use outbe_primitives::projection::ExecutionReadBudget;
 use outbe_primitives::signer::OutbeEvmSigner;
@@ -120,8 +121,15 @@ fn verify_execution_preserves_verdict_and_side_effect_order() {
                 let (response, receiver) = oneshot::channel();
                 let mut receiver = Some(receiver);
                 let mut delivered_before_canonicalize = false;
-                let verify =
-                    shared.handle_verify(&clock, request, block.digest(), response, budget.clone());
+                let verify = shared.handle_verify(
+                    &clock,
+                    VerifyTask {
+                        context: request,
+                        payload_digest: block.digest(),
+                        response,
+                        execution_read_budget: budget.clone(),
+                    },
+                );
                 let execution = async {
                     if let Some(parent) = &parent {
                         let statuses: &[PayloadStatusEnum] = match parent_case {
@@ -317,10 +325,12 @@ fn verify_prechecks_reject_or_withhold_before_engine_work() {
                         shared
                             .handle_verify(
                                 &clock,
-                                request,
-                                block.digest(),
-                                response,
-                                budget.clone(),
+                                VerifyTask {
+                                    context: request,
+                                    payload_digest: block.digest(),
+                                    response,
+                                    execution_read_budget: budget.clone(),
+                                },
                             )
                             .await
                             .unwrap();
@@ -339,7 +349,15 @@ fn verify_prechecks_reject_or_withhold_before_engine_work() {
                     EarlyCase::MalformedPhase1 => {}
                 }
                 let result = shared
-                    .handle_verify(&clock, request, block.digest(), response, budget)
+                    .handle_verify(
+                        &clock,
+                        VerifyTask {
+                            context: request,
+                            payload_digest: block.digest(),
+                            response,
+                            execution_read_budget: budget,
+                        },
+                    )
                     .await;
                 if matches!(case, EarlyCase::MissingEpochAnchor) {
                     assert!(result

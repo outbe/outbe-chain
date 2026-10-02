@@ -37,32 +37,34 @@ use std::time::Duration;
 use commonware_broadcast::buffered;
 use commonware_codec::Encode as _;
 use commonware_consensus::{
-    marshal::{self, core::DigestFallback, Start},
+    Reporter as _,
+    marshal::{self, Start, core::DigestFallback},
     simplex::types::{Activity, Notarization, Notarize, Proposal},
     types::{Epoch, FixedEpocher, Round, View, ViewDelta},
-    Reporter as _,
 };
 use commonware_cryptography::{
+    Signer as _,
     bls12381::{self, primitives::variant::MinSig},
     certificate::Verifier as _,
-    Signer as _,
 };
 use commonware_p2p::{
-    simulated::{Config as SimConfig, Link, Network},
     Manager as _,
+    simulated::{Config as SimConfig, Link, Network},
 };
 use commonware_parallel::Sequential;
 use commonware_runtime::{
-    buffer::paged::CacheRef, deterministic, Clock as _, Quota, Runner as _, Supervisor as _,
+    Clock as _, Quota, Runner as _, Supervisor as _, buffer::paged::CacheRef, deterministic,
 };
 use commonware_storage::archive::immutable;
 use commonware_utils::{
+    NZU32, NZUsize, TryCollect as _,
     ordered::{Quorum as _, Set},
-    NZUsize, TryCollect as _, NZU32,
 };
 
 use alloy_primitives::Bytes;
-use reth_ethereum::{primitives::SealedBlock, Block};
+use reth_ethereum::{Block, primitives::SealedBlock};
+
+use crate::test_fixtures::marshal::{MarshalArchiveFixture, MarshalArchiveKind};
 
 use crate::block::ConsensusBlock;
 use crate::digest::Digest;
@@ -185,52 +187,27 @@ async fn start_marshal_node(
     let write_buffer = NonZeroUsize::new(1024).expect("non-zero write buffer");
     let partition_prefix = format!("marshal-resolver-p2p-{label}");
 
+    let archive_fixture = MarshalArchiveFixture {
+        partition_prefix: &partition_prefix,
+        page_cache: &page_cache,
+        items_per_section,
+        replay_buffer,
+        write_buffer,
+    };
+
     let finalizations_archive = immutable::Archive::init(
         context.child("marshal_finalizations"),
-        immutable::Config {
-            metadata_partition: format!("{partition_prefix}-finalizations-metadata"),
-            freezer_table_partition: format!("{partition_prefix}-finalizations-freezer-table"),
-            freezer_table_initial_size: 64,
-            freezer_table_resize_frequency: 10,
-            freezer_table_resize_chunk_size: 10,
-            freezer_key_partition: format!("{partition_prefix}-finalizations-freezer-key"),
-            freezer_key_page_cache: page_cache.clone(),
-            freezer_value_partition: format!("{partition_prefix}-finalizations-freezer-value"),
-            freezer_value_target_size: 1024,
-            freezer_value_compression: None,
-            ordinal_partition: format!("{partition_prefix}-finalizations-ordinal"),
-            items_per_section,
-            codec_config: HybridScheme::<MinSig>::certificate_codec_config_unbounded(),
-            replay_buffer,
-            freezer_key_write_buffer: write_buffer,
-            freezer_value_write_buffer: write_buffer,
-            ordinal_write_buffer: write_buffer,
-        },
+        archive_fixture.config(
+            MarshalArchiveKind::Finalizations,
+            HybridScheme::<MinSig>::certificate_codec_config_unbounded(),
+        ),
     )
     .await
     .expect("finalizations archive should initialize");
 
     let blocks_archive = immutable::Archive::init(
         context.child("marshal_blocks"),
-        immutable::Config {
-            metadata_partition: format!("{partition_prefix}-blocks-metadata"),
-            freezer_table_partition: format!("{partition_prefix}-blocks-freezer-table"),
-            freezer_table_initial_size: 64,
-            freezer_table_resize_frequency: 10,
-            freezer_table_resize_chunk_size: 10,
-            freezer_key_partition: format!("{partition_prefix}-blocks-freezer-key"),
-            freezer_key_page_cache: page_cache.clone(),
-            freezer_value_partition: format!("{partition_prefix}-blocks-freezer-value"),
-            freezer_value_target_size: 1024,
-            freezer_value_compression: None,
-            ordinal_partition: format!("{partition_prefix}-blocks-ordinal"),
-            items_per_section,
-            codec_config: (),
-            replay_buffer,
-            freezer_key_write_buffer: write_buffer,
-            freezer_value_write_buffer: write_buffer,
-            ordinal_write_buffer: write_buffer,
-        },
+        archive_fixture.config(MarshalArchiveKind::Blocks, ()),
     )
     .await
     .expect("blocks archive should initialize");

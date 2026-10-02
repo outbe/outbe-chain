@@ -1,3 +1,5 @@
+mod journal_storage;
+
 pub mod onboarding;
 pub mod registry;
 pub mod renewal;

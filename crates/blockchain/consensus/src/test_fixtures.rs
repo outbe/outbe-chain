@@ -8,6 +8,8 @@
 //! artifacts, and the in-memory `AncestryReader`. Promoting them here keeps a
 //! single definition instead of duplicating across modules.
 
+pub(crate) mod marshal;
+
 use std::{
     collections::BTreeMap,
     sync::{
