@@ -10,6 +10,8 @@
 //! - Non-proposers resolve blocks via `marshal::resolver` (on-demand P2P)
 //! - No ad-hoc block propagation channel or local cache admission
 
+mod dispatch;
+
 use std::sync::Arc;
 
 use outbe_primitives::runtime_audit_v1::{
@@ -300,7 +302,7 @@ impl ApplicationHandler {
         // this handler. Finalization events flow voter -> OutbeReporter ->
         // FinalizationActor (via the unbounded
         // `finalization::ingress::Mailbox`); the application handler's
-        // mailbox handles only Genesis / Propose / Verify / Broadcast.
+        // mailbox handles only Genesis / Propose / Verify.
         loop {
             let msg = match self.rx.next().await {
                 Some(m) => m,
@@ -309,141 +311,7 @@ impl ApplicationHandler {
                     return Ok(());
                 }
             };
-            match msg {
-                Message::Genesis(genesis) => {
-                    context.child("genesis").spawn({
-                        let shared = self.shared.clone();
-                        move |ctx| async move {
-                            shared.handle_genesis(&ctx, genesis).await;
-                        }
-                    });
-                }
-                Message::Propose(propose) => {
-                    context.child("propose").spawn({
-                        let shared = self.shared.clone();
-                        move |ctx| async move {
-                            let propose = *propose;
-                            let mut response = propose.response;
-                            let execution_read_budget = ExecutionReadBudget::new();
-                            let payload_trace = ProposalPayloadTrace::default();
-                            // Closure-level instant covering the whole build + marshal path,
-                            // used only for proposer-side min-block-time pacing.
-                            let propose_start = ctx.current();
-                            let handle = Box::pin(shared.handle_propose(
-                                &ctx,
-                                ProposalRequest {
-                                    context: propose.context,
-                                    propose_start,
-                                    execution_read_budget: execution_read_budget.clone(),
-                                    payload_trace: payload_trace.clone(),
-                                },
-                            ));
-                            let cancelled = Box::pin(response.closed());
-                            let outcome = match futures::future::select(handle, cancelled).await {
-                                futures::future::Either::Left((outcome, _)) => outcome,
-                                futures::future::Either::Right(((), _)) => {
-                                    execution_read_budget.cancel();
-                                    if let Some(payload_id) = payload_trace.payload_id() {
-                                        debug!(
-                                            audit_schema = SCHEMA_VERSION,
-                                            audit_event = %PROPOSAL_VIEW_CANCELLED,
-                                            process_instance = %process_instance_id(),
-                                            %payload_id,
-                                            "view cancelled during proposal execution"
-                                        );
-                                    } else {
-                                        debug!(
-                                            payload_id = "unassigned",
-                                            "view cancelled during proposal execution"
-                                        );
-                                    }
-                                    return;
-                                }
-                            };
-                            match outcome {
-                                Ok(ProposeOutcome::Proposed(digest)) => {
-                                    // Proposer-side liveness pacing only: hold the already-sealed
-                                    // digest until the min-block-time floor elapses, then hand it
-                                    // to Simplex (or abort if the view is cancelled first). Never
-                                    // touches block bytes/hash/validation.
-                                    pace_and_send(
-                                        &ctx,
-                                        response,
-                                        digest,
-                                        shared.min_block_time,
-                                        propose_start,
-                                    )
-                                    .await;
-                                }
-                                Ok(ProposeOutcome::ParentProofUnavailable) => {
-                                    debug!(
-                                        "proposal task completed without response: exact parent proof unavailable"
-                                    );
-                                }
-                                Ok(ProposeOutcome::EpochStale) => {
-                                    debug!(
-                                        "proposal task completed without response for stale epoch work"
-                                    );
-                                }
-                                Ok(ProposeOutcome::BoundaryUnavailable) => {
-                                    debug!(
-                                        "proposal task completed without response: DKG boundary requirement unavailable"
-                                    );
-                                }
-                                Ok(ProposeOutcome::ProjectionUnavailable) => {
-                                    debug!(
-                                        "proposal task completed without response: exact parent is not projected"
-                                    );
-                                }
-                                Ok(ProposeOutcome::ExecutionUnavailable) => {
-                                    debug!(
-                                        "proposal task completed without response: candidate execution is not valid"
-                                    );
-                                }
-                                Err(error) => {
-                                    if let Some(suppressed_since_last) =
-                                        shared.proposal_failure_log_limiter.check()
-                                    {
-                                        tracing::error!(
-                                            %error,
-                                            suppressed_since_last,
-                                            "critical proposal failure; stopping proposal task"
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    });
-                }
-                Message::Verify(verify) => {
-                    context.child("verify").spawn({
-                        let shared = self.shared.clone();
-                        move |ctx| async move {
-                            let verify = *verify;
-                            let response = verify.response;
-                            let execution_read_budget = ExecutionReadBudget::new();
-                            match shared
-                                .handle_verify(
-                                    &ctx,
-                                    verify.context,
-                                    verify.payload,
-                                    response,
-                                    execution_read_budget,
-                                )
-                                .await
-                            {
-                                Ok(()) => {}
-                                Err(error) => {
-                                    info!(
-                                        %error,
-                                        "could not decide proposal validity; dropping verify response channel"
-                                    );
-                                }
-                            }
-                        }
-                    });
-                }
-            }
+            self.dispatch_message(&context, msg);
         }
     }
 }
