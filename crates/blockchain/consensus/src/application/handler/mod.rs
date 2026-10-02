@@ -331,10 +331,12 @@ impl ApplicationHandler {
                             let propose_start = ctx.current();
                             let handle = Box::pin(shared.handle_propose(
                                 &ctx,
-                                propose.context,
-                                propose_start,
-                                execution_read_budget.clone(),
-                                payload_trace.clone(),
+                                ProposalRequest {
+                                    context: propose.context,
+                                    propose_start,
+                                    execution_read_budget: execution_read_budget.clone(),
+                                    payload_trace: payload_trace.clone(),
+                                },
                             ));
                             let cancelled = Box::pin(response.closed());
                             let outcome = match futures::future::select(handle, cancelled).await {
@@ -571,7 +573,7 @@ mod proposal;
 use super::{ancestry, ingress};
 #[cfg(test)]
 use proposal::{prepare_built_candidate, BuildBlockOutcome};
-use proposal::{ProposalPayloadTrace, ProposeOutcome};
+use proposal::{ProposalPayloadTrace, ProposalRequest, ProposeOutcome};
 
 mod verification;
 #[cfg(test)]
