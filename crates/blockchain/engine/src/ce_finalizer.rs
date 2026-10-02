@@ -35,6 +35,11 @@ use reth_storage_overlay::{OverlayManager, OverlayStateProvider};
 
 use crate::ce_recovery::{CanonicalCeReplayBlock, CanonicalCeReplaySource};
 
+mod commit;
+mod persistence;
+use commit::{FinalizedCommit, FinalizedDelivery};
+use persistence::DurableCePersistence;
+
 /// The authoritative compressed-entity root is storage slot 1 at `0xEE0D`.
 const CE_ROOT_SLOT: B256 = B256::new(U256::from_limbs([1, 0, 0, 0]).to_be_bytes::<32>());
 /// Poll durable Reth state while an advisory persistence notification is absent.
@@ -405,11 +410,9 @@ impl FinalizedCeTree for CompressedTreeService {
 /// Single serialized finalization coordinator shared by validator/follower
 /// executor wiring.
 pub struct RethCeFinalizer {
-    state: Arc<dyn DurableCeState>,
-    persisted: Arc<futures::lock::Mutex<BoxStream<'static, BlockNumHash>>>,
+    persistence: DurableCePersistence,
     tree: Arc<dyn FinalizedCeTree>,
     finalization: Arc<futures::lock::Mutex<()>>,
-    wait_policy: CePersistenceWaitPolicy,
 }
 
 impl std::fmt::Debug for RethCeFinalizer {
@@ -436,76 +439,25 @@ impl RethCeFinalizer {
         debug_assert!(!wait_policy.deadline.is_zero());
         let persisted = state.persisted_blocks();
         Self {
-            state,
-            persisted: Arc::new(futures::lock::Mutex::new(persisted)),
+            persistence: DurableCePersistence {
+                state,
+                persisted: Arc::new(futures::lock::Mutex::new(persisted)),
+                wait_policy,
+            },
             tree,
             finalization: Arc::new(futures::lock::Mutex::new(())),
-            wait_policy,
         }
     }
 
     async fn commit(&self, block: FinalizedCeBlock) -> eyre::Result<()> {
         let _serial = self.finalization.lock().await;
         let current = self.tree.finalized_marker()?;
+        let delivery = FinalizedDelivery {
+            persistence: &self.persistence,
+            tree: self.tree.as_ref(),
+        };
         if current.height == block.height {
-            if current.commitment_scheme_version != ACTIVE_COMMITMENT_SCHEME
-                || current.block_hash != block.block_hash
-                || current.parent_block_hash != block.parent_block_hash
-            {
-                eyre::bail!(
-                    "redelivered finalized CE block conflicts with the durable marker at {}/{}: {current:?}",
-                    block.height,
-                    block.block_hash
-                );
-            }
-            let authoritative_root = match self.verify_durable(block)? {
-                Some(root) => root,
-                None => {
-                    self.wait_for_exact_persistence(block).await?;
-                    self.verify_durable(block)?.ok_or_else(|| {
-                        eyre::eyre!(
-                            "Reth emitted persistence for redelivered block {}/{}, but DB-only state is absent",
-                            block.height,
-                            block.block_hash
-                        )
-                    })?
-                }
-            };
-            if current.new_root != authoritative_root {
-                eyre::bail!(
-                    "redelivered finalized CE block root conflicts with the durable marker at {}/{}: Reth={}, marker={}",
-                    block.height,
-                    block.block_hash,
-                    authoritative_root,
-                    current.new_root
-                );
-            }
-            let durable_parent = self
-                .state
-                .block_and_root(block.height.saturating_sub(1))?
-                .ok_or_else(|| {
-                    eyre::eyre!(
-                        "durable parent is absent while validating redelivered finalized CE block {}/{}",
-                        block.height,
-                        block.block_hash
-                    )
-                })?;
-            let durable_parent_root =
-                validate_durable_header_evidence(block.height.saturating_sub(1), durable_parent)?;
-            if current.parent_block_hash != durable_parent.block_hash
-                || current.parent_root != durable_parent_root
-            {
-                eyre::bail!(
-                    "redelivered finalized CE block parent identity conflicts with the durable marker at {}/{}: Reth=({}, {}), marker=({}, {})",
-                    block.height,
-                    block.block_hash,
-                    durable_parent.block_hash,
-                    durable_parent_root,
-                    current.parent_block_hash,
-                    current.parent_root
-                );
-            }
-            return Ok(());
+            return delivery.validate_redelivery(block, current).await;
         }
         if current.height > block.height {
             eyre::bail!(
@@ -514,225 +466,24 @@ impl RethCeFinalizer {
                 block.block_hash
             );
         }
-        let authoritative_root = match self.probe_durable(block)? {
-            DurableCeProbe::Exact(root) => root,
-            DurableCeProbe::Absent | DurableCeProbe::DifferentHash(_) => {
-                self.wait_for_exact_persistence(block).await?;
-                self.verify_durable(block)?.ok_or_else(|| {
-                    eyre::eyre!(
-                        "Reth emitted persistence for {}/{}, but DB-only state is absent",
-                        block.height,
-                        block.block_hash
-                    )
-                })?
-            }
+        let authoritative_root = delivery.new_delivery_root(block).await?;
+        delivery.validate_new_parent(block, current)?;
+        let commit = FinalizedCommit {
+            block,
+            current,
+            authoritative_root,
         };
-        let durable_parent = self
-            .state
-            .block_and_root(block.height.saturating_sub(1))?
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "durable parent is absent for finalized CE block {}/{}",
-                    block.height,
-                    block.block_hash
-                )
-            })?;
-        let durable_parent_root =
-            validate_durable_header_evidence(block.height.saturating_sub(1), durable_parent)?;
-        if durable_parent.block_hash != block.parent_block_hash
-            || durable_parent.block_hash != current.block_hash
-            || durable_parent_root != current.new_root
-        {
-            eyre::bail!(
-                "durable parent/header conflicts with finalized CE parent at {}/{}: actor=({}, {}), marker=({}, {})",
-                block.height,
-                block.block_hash,
-                block.parent_block_hash,
-                durable_parent_root,
-                current.block_hash,
-                current.new_root
-            );
-        }
-
-        let marker = if let Some(candidate) = self.tree.candidate(block.height, block.block_hash)? {
-            if candidate.parent_block_hash() != block.parent_block_hash {
-                eyre::bail!(
-                    "finalized CE candidate parent conflict at {}/{}: actor={}, candidate={}",
-                    block.height,
-                    block.block_hash,
-                    block.parent_block_hash,
-                    candidate.parent_block_hash()
-                );
-            }
-            if candidate.new_root() != authoritative_root {
-                eyre::bail!(
-                    "durable EVM/CE candidate root conflict at {}/{}: evm={}, candidate={}",
-                    block.height,
-                    block.block_hash,
-                    authoritative_root,
-                    candidate.new_root()
-                );
-            }
-            self.tree
-                .apply_finalized(block.height, block.block_hash, authoritative_root)?
-        } else {
-            // Validator/import execution must not publish before Reth's receipt
-            // and state-root checks. Once the block is durable and exact, rebuild
-            // the same batch from its canonical receipts instead of trusting a
-            // speculative executor artifact.
-            let replay = self.state.replay_block(block.height)?.ok_or_else(|| {
-                eyre::eyre!(
-                    "durable canonical CE replay missing for finalized block {}/{}",
-                    block.height,
-                    block.block_hash
-                )
-            })?;
-            if replay.number != block.height
-                || replay.hash != block.block_hash
-                || replay.parent_hash != block.parent_block_hash
-                || replay.new_root != authoritative_root
-                || replay.parent_hash != current.block_hash
-                || replay.parent_root != current.new_root
-            {
-                eyre::bail!(
-                    "durable canonical CE replay identity/root conflict for finalized block {}/{}: current={current:?}, replay={replay:?}, authoritative_root={authoritative_root}",
-                    block.height,
-                    block.block_hash
-                );
-            }
-            self.tree.apply_replayed(&replay)?
-        };
-        if marker.commitment_scheme_version != ACTIVE_COMMITMENT_SCHEME
-            || marker.height != block.height
-            || marker.block_hash != block.block_hash
-            || marker.parent_block_hash != block.parent_block_hash
-            || marker.parent_root != current.new_root
-            || marker.new_root != authoritative_root
-        {
-            eyre::bail!(
-                "CE MDBX returned conflicting finalized marker for {}/{}: {marker:?}",
-                block.height,
-                block.block_hash
-            );
-        }
-        Ok(())
-    }
-
-    fn verify_durable(&self, block: FinalizedCeBlock) -> eyre::Result<Option<B256>> {
-        match self.probe_durable(block)? {
-            DurableCeProbe::Absent => Ok(None),
-            DurableCeProbe::Exact(root) => Ok(Some(root)),
-            DurableCeProbe::DifferentHash(actual) => {
-                eyre::bail!(
-                    "durable canonical conflict at height {}: finalized={}, Reth={}",
-                    block.height,
-                    block.block_hash,
-                    actual
-                );
-            }
-        }
-    }
-
-    fn probe_durable(&self, block: FinalizedCeBlock) -> eyre::Result<DurableCeProbe> {
-        let Some(evidence) = self.state.block_and_root(block.height)? else {
-            return Ok(DurableCeProbe::Absent);
-        };
-        if evidence.block_hash != block.block_hash {
-            return Ok(DurableCeProbe::DifferentHash(evidence.block_hash));
-        }
-        Ok(DurableCeProbe::Exact(validate_durable_header_evidence(
-            block.height,
-            evidence,
-        )?))
-    }
-
-    async fn wait_for_exact_persistence(&self, block: FinalizedCeBlock) -> eyre::Result<()> {
-        let mut persisted = self.persisted.lock().await;
-        let deadline = tokio::time::sleep(self.wait_policy.deadline);
-        tokio::pin!(deadline);
-        let first_recheck = tokio::time::Instant::now() + self.wait_policy.recheck_interval;
-        let mut rechecks =
-            tokio::time::interval_at(first_recheck, self.wait_policy.recheck_interval);
-        rechecks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-        loop {
-            tokio::select! {
-                biased;
-                _ = &mut deadline => {
-                    // Resolve the boundary race in favor of durable proof: a block
-                    // becoming visible at the deadline still completes online.
-                    if matches!(self.probe_durable(block)?, DurableCeProbe::Exact(_)) {
-                        return Ok(());
-                    }
-                    eyre::bail!(
-                        "finalized CE persistence deadline exceeded for {}/{} after {:?}",
-                        block.height,
-                        block.block_hash,
-                        self.wait_policy.deadline
-                    );
-                }
-                _ = rechecks.tick() => {
-                    if matches!(self.probe_durable(block)?, DurableCeProbe::Exact(_)) {
-                        return Ok(());
-                    }
-                }
-                notification = persisted.next() => {
-                    let Some(notification) = notification else {
-                        return Err(eyre::eyre!(
-                            "Reth persistence stream ended before finalized CE block {}/{}",
-                            block.height,
-                            block.block_hash
-                        ));
-                    };
-                    if notification.number < block.height {
-                        continue;
-                    }
-                    if notification.number == block.height
-                        && notification.hash == block.block_hash
-                    {
-                        // Notifications are advisory. Accept the wake only after
-                        // the exact target is visible through a fresh DB-only read.
-                        if matches!(self.probe_durable(block)?, DurableCeProbe::Exact(_)) {
-                            return Ok(());
-                        }
-                        continue;
-                    }
-                    if notification.number == block.height {
-                        // Reth can persist a speculative canonical head at H before
-                        // consensus finalizes a different block at the same H. The
-                        // finalized block was already submitted through newPayload and
-                        // FCU, so wait for its replacement persistence notification.
-                        // Treating the old same-height hash as "passed" kills an honest
-                        // validator during an ordinary pre-finalization reorg.
-                        continue;
-                    }
-                    if matches!(self.probe_durable(block)?, DurableCeProbe::Exact(_)) {
-                        // This is a watch stream, so a slow receiver may observe a
-                        // later durable tip. The target is accepted only after a fresh
-                        // DB-only transaction proves its exact canonical identity.
-                        return Ok(());
-                    }
-                    eyre::bail!(
-                        "Reth persistence passed finalized CE block {}/{} with {}/{}",
-                        block.height,
-                        block.block_hash,
-                        notification.number,
-                        notification.hash
-                    );
-                }
-            }
-        }
+        let marker = delivery.apply_commit(&commit)?;
+        commit.validate_marker(marker)
     }
 }
 
 impl FinalizedCeCommitter for RethCeFinalizer {
     fn commit_finalized(&self, block: FinalizedCeBlock) -> BoxFuture<'static, eyre::Result<()>> {
         let this = Self {
-            state: Arc::clone(&self.state),
-            persisted: Arc::clone(&self.persisted),
+            persistence: self.persistence.clone(),
             tree: Arc::clone(&self.tree),
             finalization: Arc::clone(&self.finalization),
-            wait_policy: self.wait_policy,
         };
         async move { this.commit(block).await }.boxed()
     }
