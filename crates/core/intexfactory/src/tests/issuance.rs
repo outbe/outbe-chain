@@ -60,7 +60,7 @@ fn issuance_legs_route_winners_to_their_own_chain() {
     let other = address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
     let mut p = sample(7);
     p.recipients = vec![owner(), other];
-    p.quantities = vec![U256::from(1), U256::from(2)];
+    p.units = vec![U256::from(1), U256::from(2)];
     p.recipient_chains = vec![10, 20];
     p.snapshot_chains = vec![10, 20, 30];
 
@@ -137,13 +137,13 @@ fn leg(chain_id: u32, series: u32, recipients: usize) -> runtime::IssuanceLeg {
         callThreshold: 0,
         callPriceMinor: 0,
         recipients: Vec::new(),
-        quantities: Vec::new(),
+        units: Vec::new(),
     };
     for i in 0..recipients {
         payload
             .recipients
             .push(Address::from([(i % 250) as u8 + 1; 20]));
-        payload.quantities.push(U256::from(1u64));
+        payload.units.push(U256::from(1u64));
     }
     runtime::IssuanceLeg { chain_id, payload }
 }

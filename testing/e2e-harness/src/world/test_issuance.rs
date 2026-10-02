@@ -59,7 +59,7 @@ sol! {
             uint256 entryPriceMinor,
             uint16 referenceCurrency,
             address[] recipients,
-            uint256[] quantities,
+            uint256[] units,
             uint32[] recipientChains,
             uint32[] snapshotChains
         ) external;
@@ -102,14 +102,14 @@ sol! {
         uint32 dstChainId;
         bytes32 to;
         uint256 tokenId;
-        uint256 amount;
+        uint256 units;
     }
 
     struct BatchSendParam {
         uint32 dstChainId;
         bytes32 to;
         uint256[] tokenIds;
-        uint256[] amounts;
+        uint256[] units;
     }
 
     interface IIntexNFT1155Bridge {
@@ -192,7 +192,7 @@ pub fn issue_series(
             // One recipient leg per chain: the owner ends up with units on each,
             // which is what makes bringing them home a real step later.
             recipients: vec![owner; chains.len()],
-            quantities: units_per_chain.iter().copied().map(U256::from).collect(),
+            units: units_per_chain.iter().copied().map(U256::from).collect(),
             recipientChains: chains.to_vec(),
             snapshotChains: chains.to_vec(),
         },
@@ -239,7 +239,7 @@ pub fn mine_promis(
     url: &str,
     owner_key: &str,
     series: FixedBytes<14>,
-    amount: u32,
+    units: u32,
     nonce: u64,
     mac: [u8; 32],
     op_nonce: u64,
@@ -255,7 +255,7 @@ pub fn mine_promis(
         &IPromisMining::minePromisCall {
             seriesId: series,
             owner,
-            units: U256::from(amount),
+            units: U256::from(units),
             nonce,
             mac: mac.into(),
             opNonce: op_nonce,
@@ -357,7 +357,7 @@ pub fn close_call_notice(
     )
 }
 
-/// Bring `amount` units of `series` home from the chain `bridge` lives on.
+/// Bring `units` of `series` home from the chain `bridge` lives on.
 ///
 /// While a series is tradable the hop may change hands; once it is Called only a
 /// move to the owner's own address is allowed, so `to` is always the owner here.
@@ -368,13 +368,13 @@ pub fn bridge_home(
     home_chain_id: u32,
     token_id: U256,
     owner: Address,
-    amount: u32,
+    units: u32,
 ) -> Result<()> {
     let params = SendParam {
         dstChainId: home_chain_id,
         to: FixedBytes::<32>::left_padding_from(owner.as_slice()),
         tokenId: token_id,
-        amount: U256::from(amount),
+        units: U256::from(units),
     };
     let fee = eth::read_call(
         url,
@@ -448,10 +448,7 @@ pub fn batch_bridge_home(
         dstChainId: home_chain_id,
         to: FixedBytes::<32>::left_padding_from(owner.as_slice()),
         tokenIds: tokens.iter().map(|(id, _)| *id).collect(),
-        amounts: tokens
-            .iter()
-            .map(|(_, amount)| U256::from(*amount))
-            .collect(),
+        units: tokens.iter().map(|(_, units)| U256::from(*units)).collect(),
     };
     let fee = eth::read_call(
         url,

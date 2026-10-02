@@ -61,9 +61,9 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         payload.issuanceCurrency = 840;
         payload.referenceCurrency = 840;
         payload.recipients = new address[](1);
-        payload.quantities = new uint256[](1);
+        payload.units = new uint256[](1);
         payload.recipients[0] = makeAddr("winner");
-        payload.quantities[0] = 3;
+        payload.units[0] = 3;
         return BridgeMsgCodec.encodeIssuanceInstructions(DAY, 0, 1, IssuanceBatchLib.one(payload));
     }
 

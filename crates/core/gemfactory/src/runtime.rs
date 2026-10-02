@@ -117,7 +117,7 @@ pub fn issue_gem_position(
     storage: &StorageHandle<'_>,
     caller: Address,
     source_intex_id: SeriesId,
-    amount: U256,
+    units: U256,
 ) -> Result<U256> {
     if caller.is_zero() {
         return Err(GemFactoryError::InvalidOwner.into());
@@ -132,16 +132,16 @@ pub fn issue_gem_position(
         series.reference_currency,
     )?;
 
-    // Burn `amount` of the merchant's Intex units; `sendToGemFactory` returns the
-    // burned count (and reverts on a state that may not be sent, or a zero amount).
-    let units = burn_intex_into_gem_factory(storage, caller, source_intex_id, amount)?;
+    // Burn `units` of the merchant's Intex; `sendToGemFactory` returns the
+    // burned count (and reverts on a state that may not be sent, or zero units).
+    let burned = burn_intex_into_gem_factory(storage, caller, source_intex_id, units)?;
     let capacity = series
         .promis_load_minor
-        .checked_mul(units)
+        .checked_mul(burned)
         .ok_or(GemFactoryError::Overflow)?;
 
     // Their load moved into the position, so the source series cannot forfeit them.
-    let gem_factory_units = u32::try_from(units).map_err(|_| GemFactoryError::Overflow)?;
+    let gem_factory_units = u32::try_from(burned).map_err(|_| GemFactoryError::Overflow)?;
     outbe_intex::api::record_gem_factory_units(
         storage,
         source_intex_id,
@@ -195,14 +195,14 @@ pub fn issue_gem_position(
     Ok(position_id)
 }
 
-/// Burn `amount` of the merchant's Issued Intex units via `sendToGemFactory`
+/// Burn `units` of the merchant's Issued Intex via `sendToGemFactory`
 /// (GEM_ROLE) and return the burned count. Reverts if the series is in a
-/// non-sendable (non-Issued) state or `amount` is zero.
+/// non-sendable (non-Issued) state or `units` is zero.
 fn burn_intex_into_gem_factory(
     storage: &StorageHandle<'_>,
     owner: Address,
     series_id: SeriesId,
-    amount: U256,
+    units: U256,
 ) -> Result<U256> {
     let ret = storage.call(
         INTEX_NFT1155_ADDRESS,
@@ -210,7 +210,7 @@ fn burn_intex_into_gem_factory(
         IIntexNFT1155::sendToGemFactoryCall {
             owner,
             seriesId: series_id.into(),
-            units: amount,
+            units,
         }
         .abi_encode()
         .into(),

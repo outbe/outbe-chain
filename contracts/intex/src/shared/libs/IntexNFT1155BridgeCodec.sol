@@ -32,14 +32,14 @@ library IntexNFT1155BridgeCodec {
     struct BatchPayload {
         bytes32 to;
         uint256[] tokenIds;
-        uint256[] amounts;
+        uint256[] units;
     }
 
     /// @notice Multi-recipient batch body (`SEND_MULTI`): each entry has its own recipient.
     struct MultiPayload {
         bytes32[] recipients;
         uint256[] tokenIds;
-        uint256[] amounts;
+        uint256[] units;
     }
 
     /// @notice Body decoded with an unsupported `bodyVersion` byte.
@@ -72,14 +72,14 @@ library IntexNFT1155BridgeCodec {
     error MalformedBody();
 
     /// @notice Encode a single-recipient batch body. Single-pass `abi.encode` - no growing buffer.
-    /// @param _payload The single-recipient batch (`to`, `tokenIds`, `amounts`).
+    /// @param _payload The single-recipient batch (`to`, `tokenIds`, `units`).
     /// @return The wire body: `[BODY_VERSION_V1][SEND][abi.encode(_payload)]`.
     function encodeBatch(BatchPayload memory _payload) internal pure returns (bytes memory) {
         return abi.encodePacked(BODY_VERSION_V1, SEND, abi.encode(_payload));
     }
 
     /// @notice Encode a multi-recipient batch body. Single-pass `abi.encode` - no growing buffer.
-    /// @param _payload The multi-recipient batch (`recipients`, `tokenIds`, `amounts`).
+    /// @param _payload The multi-recipient batch (`recipients`, `tokenIds`, `units`).
     /// @return The wire body: `[BODY_VERSION_V1][SEND_MULTI][abi.encode(_payload)]`.
     function encodeMulti(MultiPayload memory _payload) internal pure returns (bytes memory) {
         return abi.encodePacked(BODY_VERSION_V1, SEND_MULTI, abi.encode(_payload));
@@ -87,7 +87,7 @@ library IntexNFT1155BridgeCodec {
 
     /// @notice Decode + validate a `SEND` body. Reverts {UnsupportedBodyVersion} on a non-V1
     ///         header, {MalformedBody} on a non-canonical/wrong-schema body, {ArrayLengthMismatch}
-    ///         on unequal tokenId/amount arrays, and {BatchTooLarge} past the cap. Address
+    ///         on unequal tokenId/units arrays, and {BatchTooLarge} past the cap. Address
     ///         well-formedness is the adapter's check (it casts + crosschain-mints).
     /// @param _message The full inbound wire body (including the 2-byte header).
     /// @return payload The decoded, length- and size-validated `BatchPayload`.
@@ -97,12 +97,12 @@ library IntexNFT1155BridgeCodec {
         payload = abi.decode(body, (BatchPayload));
         if (keccak256(abi.encode(payload)) != keccak256(body)) revert MalformedBody();
         uint256 n = payload.tokenIds.length;
-        if (n != payload.amounts.length) revert ArrayLengthMismatch();
+        if (n != payload.units.length) revert ArrayLengthMismatch();
         if (n > MAX_BATCH_SIZE) revert BatchTooLarge(n, MAX_BATCH_SIZE);
     }
 
     /// @notice Decode + validate a `SEND_MULTI` body. Same guards as {decodeBatch} across all three
-    ///         arrays (recipients/tokenIds/amounts).
+    ///         arrays (recipients/tokenIds/units).
     /// @param _message The full inbound wire body (including the 2-byte header).
     /// @return payload The decoded, length- and size-validated `MultiPayload`.
     function decodeMulti(bytes calldata _message) internal pure returns (MultiPayload memory payload) {
@@ -111,7 +111,7 @@ library IntexNFT1155BridgeCodec {
         payload = abi.decode(body, (MultiPayload));
         if (keccak256(abi.encode(payload)) != keccak256(body)) revert MalformedBody();
         uint256 n = payload.recipients.length;
-        if (n != payload.tokenIds.length || n != payload.amounts.length) revert ArrayLengthMismatch();
+        if (n != payload.tokenIds.length || n != payload.units.length) revert ArrayLengthMismatch();
         if (n > MAX_BATCH_SIZE) revert BatchTooLarge(n, MAX_BATCH_SIZE);
     }
 

@@ -70,7 +70,7 @@ contract DuplicateProtectionTest is CrossChainTest {
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = 1;
         return BatchSendParam({
-            dstChainId: DST_CHAIN_ID, to: bytes32(uint256(uint160(to))), tokenIds: tokenIds, amounts: amounts
+            dstChainId: DST_CHAIN_ID, to: bytes32(uint256(uint160(to))), tokenIds: tokenIds, units: amounts
         });
     }
 

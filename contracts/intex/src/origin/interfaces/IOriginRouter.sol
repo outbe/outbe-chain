@@ -201,7 +201,7 @@ interface IOriginRouter {
         uint32 callThreshold;
         uint64 callPriceMinor;
         address[] recipients;
-        uint256[] quantities;
+        uint256[] units;
     }
 
     // --- Errors ---

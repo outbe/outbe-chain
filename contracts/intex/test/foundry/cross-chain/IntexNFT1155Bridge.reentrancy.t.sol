@@ -33,7 +33,7 @@ contract ReentrantBatchProbe is IERC1155Receiver {
         attempted = true;
 
         MultiRecipientSendParam memory param = MultiRecipientSendParam({
-            dstChainId: 0, recipients: new bytes32[](0), tokenIds: new uint256[](0), amounts: new uint256[](0)
+            dstChainId: 0, recipients: new bytes32[](0), tokenIds: new uint256[](0), units: new uint256[](0)
         });
 
         try IIntexNFT1155Bridge(adapter).multiSend{value: 0}(param) {
@@ -121,7 +121,7 @@ contract IntexNFT1155BridgeReentrancyTest is CrossChainTest {
         amts[0] = AMOUNT;
 
         BatchSendParam memory sendParam = BatchSendParam({
-            dstChainId: bChainId, to: bytes32(uint256(uint160(address(probe)))), tokenIds: ids, amounts: amts
+            dstChainId: bChainId, to: bytes32(uint256(uint160(address(probe)))), tokenIds: ids, units: amts
         });
 
         uint256 fee = adapterA.quoteBatchSend(sendParam);

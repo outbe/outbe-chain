@@ -338,7 +338,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     .number()
     .int()
     .describe("reference currency the bid prices in, ISO 4217 numeric; must be one the day prices (auction_info)");
-  const amountArg = z.string().describe("amount as the raw on-chain integer");
+  const unitsArg = z.string().describe("Intex units, a whole number");
   const recipientArg = z.string().optional().describe("recipient on outbe (default: the signer)");
   const waitArg = z.boolean().optional().describe("wait for the receipt (default true)");
 
@@ -373,10 +373,10 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         network: n.name,
         seriesId: fromSeriesId(d.seriesId as unknown as Hex),
         // scales per crates/core/intex/src/schema.rs (SeriesRecord):
-        promisLoad: { raw: d.promisLoadMinor.toString(), value: formatUnits(u256(d.promisLoadMinor), 6) },
-        entryPrice: { raw: d.entryPriceMinor.toString(), value: formatUnits(u256(d.entryPriceMinor), 6), scale: "1e6 ISO stable-unit" },
-        floorPrice: { raw: d.floorPriceMinor.toString(), value: formatUnits(u256(d.floorPriceMinor), 6), scale: "1e6 ISO stable-unit" },
-        callPrice: { raw: d.callPriceMinor.toString(), value: formatUnits(u256(d.callPriceMinor), 6), scale: "1e6 ISO stable-unit" },
+        promisLoadMinor: { raw: d.promisLoadMinor.toString(), value: formatUnits(u256(d.promisLoadMinor), 6) },
+        entryPriceMinor: { raw: d.entryPriceMinor.toString(), value: formatUnits(u256(d.entryPriceMinor), 6), scale: "1e6 ISO stable-unit" },
+        floorPriceMinor: { raw: d.floorPriceMinor.toString(), value: formatUnits(u256(d.floorPriceMinor), 6), scale: "1e6 ISO stable-unit" },
+        callPriceMinor: { raw: d.callPriceMinor.toString(), value: formatUnits(u256(d.callPriceMinor), 6), scale: "1e6 ISO stable-unit" },
         issuedUnits: Number(counts.issuedUnits),
         // Disjoint classes summing to issuedUnits. Active units lose their load to
         // the pool once the call window closes and they are forfeited.
@@ -623,9 +623,9 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           // A bid's reference currency must appear here.
           prices: d.params.prices.map((row) => ({
             isoCode: Number(row.isoCode),
-            entryPrice: priced(row.entryPriceMinor),
-            floorPrice: priced(row.floorPriceMinor),
-            callPrice: priced(row.callPriceMinor),
+            entryPriceMinor: priced(row.entryPriceMinor),
+            floorPriceMinor: priced(row.floorPriceMinor),
+            callPriceMinor: priced(row.callPriceMinor),
           })),
         },
         result: {
@@ -1046,7 +1046,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   // --- Bridge BSC -> outbe (IntexNFT1155Bridge, signed) ----------------------
 
-  async function buildSendParam(n: Network, series: Hex, amount: bigint, recipient: Address) {
+  async function buildSendParam(n: Network, series: Hex, units: bigint, recipient: Address) {
     const ids = (await n.client.readContract({
       address: addr(n, "nft"),
       abi: NFT_ABI,
@@ -1057,7 +1057,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       dstChainId: bridgeDstChainId(n.name),
       to: pad(recipient, { size: 32 }),
       tokenId: ids[0], // issued token id
-      amount,
+      units,
     };
   }
 
@@ -1067,11 +1067,11 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "Bridge native fee to move an Intex NFT from BSC to outbe. Bridging is owner-initiated at every stage: " +
       "to any recipient while the series is Issued or Qualified, and to yourself only once it is Called, up to " +
       "its callDeadline (read it with intex_series_info).",
-    { series: seriesArg, amount: amountArg, recipient: recipientArg, network: networkArg.optional() },
-    handler(async ({ series, amount, recipient, network }) => {
+    { series: seriesArg, units: unitsArg, recipient: recipientArg, network: networkArg.optional() },
+    handler(async ({ series, units, recipient, network }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
       const to = recipient ? getAddress(recipient) : whoever();
-      const sp = await buildSendParam(n, series, BigInt(amount), to);
+      const sp = await buildSendParam(n, series, BigInt(units), to);
       const fee = (await n.client.readContract({
         address: addr(n, "nftBridge"),
         abi: NFT_BRIDGE_ABI,
@@ -1097,13 +1097,13 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "(ownership is frozen then, so a recipient other than you is refused). The bridge burns your token " +
       "directly (role-gated), so no approval is needed. Auto-quotes the native fee (paid as value), which " +
       "you pay in the source chain's native token. Requires OUTBE_PRIVATE_KEY.",
-    { series: seriesArg, amount: amountArg, recipient: recipientArg, network: networkArg.optional(), wait: waitArg },
-    handler(async ({ series, amount, recipient, network, wait }) => {
+    { series: seriesArg, units: unitsArg, recipient: recipientArg, network: networkArg.optional(), wait: waitArg },
+    handler(async ({ series, units, recipient, network, wait }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
       const account = requireAccount();
       const bridge = addr(n, "nftBridge");
       const to = recipient ? getAddress(recipient) : account.address;
-      const sp = await buildSendParam(n, series, BigInt(amount), to);
+      const sp = await buildSendParam(n, series, BigInt(units), to);
       const fee = (await n.client.readContract({
         address: bridge,
         abi: NFT_BRIDGE_ABI,
@@ -1140,16 +1140,16 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "OUTBE_PRIVATE_KEY.",
     {
       series: seriesArg,
-      amount: amountArg,
+      units: unitsArg,
       owner: accountArg,
       pay_note_proof: z.string().describe("0x-hex `outbe.paynote` spend proof naming the signing wallet as its owner"),
       network: networkArg.optional(),
       wait: waitArg,
     },
-    handler(async ({ series, amount, owner, pay_note_proof, network, wait }) => {
+    handler(async ({ series, units, owner, pay_note_proof, network, wait }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");
       const account = requireAccount();
-      const intexOwner = owner ? getAddress(owner) : account.address;
+      const holder = owner ? getAddress(owner) : account.address;
       if (!/^0x[0-9a-fA-F]*$/.test(pay_note_proof) || pay_note_proof.length < 4) {
         throw new Error("pay_note_proof must be a 0x-prefixed hex PayNote spend proof");
       }
@@ -1158,15 +1158,15 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       const data = encodeFunctionData({
         abi: FACTORY_ABI,
         functionName: "settleIntexWithPayNote",
-        args: [series, intexOwner, BigInt(amount), pay_note_proof as Hex],
+        args: [series, holder, BigInt(units), pay_note_proof as Hex],
       });
       const receipt = await submit(n, factory, data, 0n, wait);
       return ok({
         network: n.name,
         series,
-        intexOwner,
-        amount,
-        self: intexOwner === account.address,
+        owner: holder,
+        units,
+        self: holder === account.address,
         ...receipt,
       });
     }),
@@ -1217,20 +1217,20 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "intex_promis_mine",
     "Settlement step 2: burn your Settled Intexes and mine Promis to your own wallet (run auction_bid_settle " +
-      "first). The proof-of-work nonce is computed locally; you give only series and amount. Requires OUTBE_PRIVATE_KEY.",
-    { series: seriesArg, amount: amountArg, network: networkArg.optional(), wait: waitArg },
-    handler(async ({ series, amount, network, wait }) => {
+      "first). The proof-of-work nonce is computed locally; you give only series and units. Requires OUTBE_PRIVATE_KEY.",
+    { series: seriesArg, units: unitsArg, network: networkArg.optional(), wait: waitArg },
+    handler(async ({ series, units, network, wait }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");
       const account = requireAccount();
       const owner = account.address;
-      const amt = BigInt(amount);
+      const amt = BigInt(units);
       const sd = (await n.client.readContract({
         address: addr(n, "intex"),
         abi: INTEX_ABI,
         functionName: "seriesData",
         args: [series],
       })) as { promisLoadMinor: bigint };
-      const promisAmount = sd.promisLoadMinor * amt;
+      const promisMinor = sd.promisLoadMinor * amt;
       // seq = this owner's prior mines for the series (feeds the PoW preimage).
       const logs = await n.client.getLogs({
         address: addr(n, "factory"),
@@ -1240,14 +1240,14 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         toBlock: "latest",
       });
       const seq = logs.length;
-      const pow = grindNonce(owner, promisAmount, series, seq);
+      const pow = grindNonce(owner, promisMinor, series, seq);
       throw new Error(
         "minePromis also requires a Promis modify-auth mac and opNonce, which this server cannot produce: " +
           "the modify key is sealed to an ephemeral X25519 key by outbe_deriveKeys(Promis, ...) and no unsealing " +
           "or mac derivation is implemented here. " +
           `Proof of work is done - nonce ${pow.nonce} (seq ${seq}, difficulty ${POW_DIFFICULTY}, ` +
           `${pow.iterations} iterations, hash ${pow.hash}) ` +
-          `for ${promisAmount} Promis on series ${series}. Submit minePromis(${series}, ${owner}, ${amt}, ${pow.nonce}, mac, opNonce) ` +
+          `for ${promisMinor} Promis on series ${series}. Submit minePromis(${series}, ${owner}, ${amt}, ${pow.nonce}, mac, opNonce) ` +
           "with a client that holds the modify key.",
       );
     }),

@@ -63,14 +63,14 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     }
 
     /// @notice Series-level data, stored once per series under its Issued token id.
-    /// @dev `issuedUnits` caps the current `totalSupply` minted via `mint` (a burn frees cap room).
+    /// @dev `issuedUnits` caps the current `totalSupply` minted via `issueIntex` (a burn frees cap room).
     struct SeriesData {
         /// @notice Issuance currency (ISO numeric); single USD (840) until multi-currency.
         uint16 issuanceCurrency;
         /// @notice Reference currency (ISO numeric); single USD (840) until multi-currency.
         uint16 referenceCurrency;
-        /// @notice Auction-cleared cap on the Issued mint quantity. Set once at `createSeries`,
-        ///         never mutated; `mint` rejects pushing `totalSupply` past it.
+        /// @notice Auction-cleared cap on the Issued units. Set once at `createSeries`,
+        ///         never mutated; `issueIntex` rejects pushing `totalSupply` past it.
         uint32 issuedUnits;
         /// @notice PROMIS-units per Intex unit (1e6).
         uint128 promisLoadMinor;

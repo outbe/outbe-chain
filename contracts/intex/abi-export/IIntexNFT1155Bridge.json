@@ -26,7 +26,7 @@
               "internalType": "uint256[]"
             },
             {
-              "name": "amounts",
+              "name": "units",
               "type": "uint256[]",
               "internalType": "uint256[]"
             }
@@ -67,7 +67,7 @@
               "internalType": "uint256[]"
             },
             {
-              "name": "amounts",
+              "name": "units",
               "type": "uint256[]",
               "internalType": "uint256[]"
             }
@@ -108,7 +108,7 @@
               "internalType": "uint256[]"
             },
             {
-              "name": "amounts",
+              "name": "units",
               "type": "uint256[]",
               "internalType": "uint256[]"
             }
@@ -149,7 +149,7 @@
               "internalType": "uint256[]"
             },
             {
-              "name": "amounts",
+              "name": "units",
               "type": "uint256[]",
               "internalType": "uint256[]"
             }
@@ -190,7 +190,7 @@
               "internalType": "uint256"
             },
             {
-              "name": "amount",
+              "name": "units",
               "type": "uint256",
               "internalType": "uint256"
             }
@@ -231,7 +231,7 @@
               "internalType": "uint256"
             },
             {
-              "name": "amount",
+              "name": "units",
               "type": "uint256",
               "internalType": "uint256"
             }
@@ -312,7 +312,7 @@
           "internalType": "uint256[]"
         },
         {
-          "name": "amounts",
+          "name": "units",
           "type": "uint256[]",
           "indexed": false,
           "internalType": "uint256[]"
@@ -349,7 +349,7 @@
           "internalType": "uint256[]"
         },
         {
-          "name": "amounts",
+          "name": "units",
           "type": "uint256[]",
           "indexed": false,
           "internalType": "uint256[]"
@@ -386,7 +386,7 @@
           "internalType": "uint256"
         },
         {
-          "name": "amount",
+          "name": "units",
           "type": "uint256",
           "indexed": false,
           "internalType": "uint256"
@@ -429,7 +429,7 @@
           "internalType": "uint256"
         },
         {
-          "name": "amount",
+          "name": "units",
           "type": "uint256",
           "indexed": false,
           "internalType": "uint256"
@@ -478,7 +478,7 @@
           "internalType": "uint256"
         },
         {
-          "name": "amount",
+          "name": "units",
           "type": "uint256",
           "indexed": false,
           "internalType": "uint256"
@@ -540,7 +540,7 @@
           "internalType": "uint256[]"
         },
         {
-          "name": "amounts",
+          "name": "units",
           "type": "uint256[]",
           "indexed": false,
           "internalType": "uint256[]"
@@ -577,7 +577,7 @@
           "internalType": "uint256[]"
         },
         {
-          "name": "amounts",
+          "name": "units",
           "type": "uint256[]",
           "indexed": false,
           "internalType": "uint256[]"

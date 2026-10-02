@@ -57,7 +57,7 @@ sol! {
             uint256 entryPriceMinor,
             uint16 referenceCurrency,
             address[] recipients,
-            uint256[] quantities,
+            uint256[] units,
             uint32[] recipientChains,
             uint32[] snapshotChains
         ) external;
@@ -164,7 +164,7 @@ pub fn dispatch(
                     issuance_currency,
                     reference_currency: call.referenceCurrency,
                     recipients: call.recipients.clone(),
-                    quantities: call.quantities.clone(),
+                    units: call.units.clone(),
                     recipient_chains: call.recipientChains.clone(),
                     snapshot_chains: call.snapshotChains.clone(),
                 },
@@ -231,15 +231,16 @@ pub fn dispatch(
                     )
                 }),
                 quoteSettlement(c) => metadata::<IIntexFactory::quoteSettlementCall>(|| {
-                    let (settlement_currency, amount, snapshot_id) = runtime::quote_settlement(
-                        &storage,
-                        SeriesId::from(c.seriesId),
-                        c.asset,
-                        c.units,
-                    )?;
+                    let (settlement_currency, payment_minor, snapshot_id) =
+                        runtime::quote_settlement(
+                            &storage,
+                            SeriesId::from(c.seriesId),
+                            c.asset,
+                            c.units,
+                        )?;
                     Ok(IIntexFactory::quoteSettlementReturn {
                         settlementCurrency: settlement_currency,
-                        paymentMinor: amount,
+                        paymentMinor: payment_minor,
                         snapshotId: snapshot_id,
                     })
                 }),

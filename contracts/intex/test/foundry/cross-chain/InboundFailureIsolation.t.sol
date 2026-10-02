@@ -72,7 +72,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         amounts[1] = 75;
         return IntexNFT1155BridgeCodec.encodeBatch(
             IntexNFT1155BridgeCodec.BatchPayload({
-                to: bytes32(uint256(uint160(recipient))), tokenIds: tokenIds, amounts: amounts
+                to: bytes32(uint256(uint160(recipient))), tokenIds: tokenIds, units: amounts
             })
         );
     }
@@ -89,7 +89,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         amounts[0] = 50;
         amounts[1] = 75;
         return IntexNFT1155BridgeCodec.encodeMulti(
-            IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts})
+            IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, units: amounts})
         );
     }
 
@@ -243,7 +243,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         amounts[0] = 100;
         bytes memory packet = IntexNFT1155BridgeCodec.encodeBatch(
             IntexNFT1155BridgeCodec.BatchPayload({
-                to: bytes32(uint256(uint160(recipient))), tokenIds: tokenIds, amounts: amounts
+                to: bytes32(uint256(uint160(recipient))), tokenIds: tokenIds, units: amounts
             })
         );
         _deliverInbound(packet);

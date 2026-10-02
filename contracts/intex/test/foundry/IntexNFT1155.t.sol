@@ -174,7 +174,7 @@ contract IntexNFT1155Test is Test {
         nft.issueIntex(user, 10, SERIES_ID_1);
     }
 
-    function test_IssueQuantityTooLarge() public {
+    function test_IssueUnitsTooLarge() public {
         _createSeries(SERIES_ID_1_DAY, 0);
 
         uint256 tooLarge = uint256(type(uint16).max) + 1;
@@ -781,7 +781,7 @@ contract IntexNFT1155Test is Test {
         nft.sendToGemFactory(user, SERIES_ID_1, 1);
     }
 
-    function test_ParkIntex_RevertsOnZeroAmount() public {
+    function test_ParkIntex_RevertsOnZeroUnits() public {
         _createSeries(SERIES_ID_1_DAY, 0);
         _grantGemRole(address(this));
         vm.expectRevert(IIntexNFT1155.ZeroUnits.selector);

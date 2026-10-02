@@ -135,19 +135,19 @@ contract IntexNFT1155SupplyTest is Test {
         assertEq(nft.balanceOf(ownerA, nft.settledTokenId(SERIES_ID)), 0);
     }
 
-    // --- ZeroAmount: split out of the former overloaded EmptyArray (one error = one failure) ---
+    // --- ZeroUnits: split out of the former overloaded EmptyArray (one error = one failure) ---
 
-    function test_Settle_ZeroAmount_Reverts() public {
+    function test_Settle_ZeroUnits_Reverts() public {
         _createSeries(10);
         vm.prank(bridger);
         nft.issueIntex(ownerA, 5, SERIES_ID);
-        // amount == 0 is rejected before any series-state work.
+        // units == 0 is rejected before any series-state work.
         vm.prank(settler);
         vm.expectRevert(IIntexNFT1155.ZeroUnits.selector);
         nft.settleIntex(SERIES_ID, ownerA, ownerA, 0);
     }
 
-    function test_BurnSettled_ZeroAmount_Reverts() public {
+    function test_BurnSettled_ZeroUnits_Reverts() public {
         _issueAndSettle({cap: 10, mintAmount: 6, settleAmount: 4, callBeforeSettle: false});
         vm.prank(promis);
         vm.expectRevert(IIntexNFT1155.ZeroUnits.selector);

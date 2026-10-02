@@ -14,7 +14,7 @@ import {BatchSendParam, IIntexNFT1155Bridge} from "@contracts/shared/interfaces/
 ///     `issuedUnits` cap of the underlying series. Mint+bridge+round-trip moves balances
 ///     between chains but cannot inflate the global pool.
 ///   - SI-09: a `crosschainBurn` of `amount` on the source mints exactly `amount` on the destination,
-///     even when the inbound crosschainMint fails: the parked-amount `failedCrosschainMints[receiveId][idx].amount`
+///     even when the inbound crosschainMint fails: the parked-amount `failedCrosschainMints[receiveId][idx].units`
 ///     holds the in-flight units until retry, so the source-burned amount equals
 ///     `destination-minted + destination-parked` at every step.
 contract CrossChainSupplyConservationTest is CrossChainTest {
@@ -196,7 +196,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         amounts[0] = amount;
 
         BatchSendParam memory params = BatchSendParam({
-            dstChainId: dstChainId, to: bytes32(uint256(uint160(recipient))), tokenIds: tokenIds, amounts: amounts
+            dstChainId: dstChainId, to: bytes32(uint256(uint160(recipient))), tokenIds: tokenIds, units: amounts
         });
 
         uint256 fee = from.quoteBatchSend(params);

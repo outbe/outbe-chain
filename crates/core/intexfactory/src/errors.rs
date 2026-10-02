@@ -12,6 +12,8 @@ pub enum IntexFactoryError {
     ZeroAddress,
     #[error("amount must be positive")]
     ZeroAmount,
+    #[error("units must be positive")]
+    ZeroUnits,
     #[error("series not found")]
     SeriesNotFound,
     #[error("series not settleable in state {0}")]
@@ -20,8 +22,8 @@ pub enum IntexFactoryError {
     DeadlineExpired,
     #[error("zero balance")]
     ZeroBalance,
-    #[error("amount exceeds balance")]
-    AmountExceedsBalance,
+    #[error("units exceed balance")]
+    UnitsExceedBalance,
     #[error("insufficient settled balance")]
     InsufficientSettled,
     #[error("insufficient proof of work")]
