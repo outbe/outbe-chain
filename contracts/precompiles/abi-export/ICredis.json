@@ -930,7 +930,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "interestPaidMinor",
+        "name": "interestMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

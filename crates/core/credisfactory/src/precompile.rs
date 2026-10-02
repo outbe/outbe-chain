@@ -63,7 +63,7 @@ pub fn dispatch(
                         runtime::settle(storage.clone(), sender, c.positionId, c.amountMinor)?;
                     Ok(ICredisFactory::settleCredisReturn {
                         principalPaidMinor: principal,
-                        interestPaidMinor: interest,
+                        interestMinor: interest,
                     })
                 }),
                 supportsInterface(c) => view(c, |c| {

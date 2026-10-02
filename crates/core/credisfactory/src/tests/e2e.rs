@@ -525,7 +525,7 @@ fn the_settle_abi_returns_the_principal_and_interest_split() {
 
         // Order matters: principal first, interest second.
         assert_eq!(decoded.principalPaidMinor, principal);
-        assert_eq!(decoded.interestPaidMinor, interest);
+        assert_eq!(decoded.interestMinor, interest);
 
         let after = CredisContract::new(storage.clone())
             .get_position(position_id)

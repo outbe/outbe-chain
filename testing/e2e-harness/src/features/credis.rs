@@ -539,7 +539,7 @@ fn repay(world: &mut World) {
             CREDIS_ADDRESS,
             &ICredis::SettlementApplied {
                 positionId: f.position_id,
-                interestPaidMinor: interest,
+                interestMinor: interest,
                 principalPaidMinor: principal,
                 gratisReturnedMinor: released,
                 outstandingPrincipalMinor: p.outstandingPrincipalMinor - principal,

@@ -643,9 +643,9 @@ fn lifetime_interest_paid_sums_interest_only_and_principal_deltas() {
         .collect();
     assert_eq!(applied.len(), 2);
     assert_eq!(applied[0].positionId, id);
-    assert_eq!(applied[0].interestPaidMinor, U256::from(8_000_000u64));
+    assert_eq!(applied[0].interestMinor, U256::from(8_000_000u64));
     assert!(applied[0].principalPaidMinor.is_zero());
-    assert_eq!(applied[1].interestPaidMinor, U256::from(8_000_000u64));
+    assert_eq!(applied[1].interestMinor, U256::from(8_000_000u64));
     assert_eq!(applied[1].principalPaidMinor, U256::from(100_000_000u64));
 }
 
@@ -689,7 +689,7 @@ fn rejected_settlement_leaves_lifetime_interest_and_emits_nothing() {
         .filter_map(|log| ICredis::SettlementApplied::decode_log_data(log).ok())
         .collect();
     assert_eq!(applied.len(), 1);
-    assert_eq!(applied[0].interestPaidMinor, U256::from(8_000_000u64));
+    assert_eq!(applied[0].interestMinor, U256::from(8_000_000u64));
 }
 
 #[test]

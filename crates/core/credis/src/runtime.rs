@@ -334,7 +334,7 @@ impl CredisContract<'_> {
 
         self.emit(ICredis::SettlementApplied {
             positionId: position_id,
-            interestPaidMinor: interest,
+            interestMinor: interest,
             principalPaidMinor: principal_paid,
             gratisReturnedMinor: gratis_returned_minor,
             outstandingPrincipalMinor: position.outstanding_principal_minor,

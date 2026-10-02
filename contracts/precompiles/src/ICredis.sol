@@ -22,13 +22,13 @@ interface ICredis {
 
     event PositionCalled(uint256 indexed positionId, uint64 calledAt, uint64 settlementDeadline);
 
-    /// @notice One successful settlement. `interestPaidMinor` is this payment's interest
-    ///         delta. The position's `interestPaidMinor` is the sum of these deltas
+    /// @notice One successful settlement. `interestMinor` is this payment's interest.
+    ///         The position's `interestPaidMinor` is the sum of these payments
     ///         across successful settlements. A reverted settlement emits nothing
     ///         and leaves that total unchanged.
     event SettlementApplied(
         uint256 indexed positionId,
-        uint256 interestPaidMinor,
+        uint256 interestMinor,
         uint256 principalPaidMinor,
         uint256 gratisReturnedMinor,
         uint256 outstandingPrincipalMinor
@@ -90,7 +90,7 @@ interface ICredis {
         /// See {State}.
         uint8 state;
         /// Lifetime interest collected, in asset minor units. The sum of successful
-        /// `SettlementApplied.interestPaidMinor` deltas. Current-period accrual is
+        /// `SettlementApplied.interestMinor` payments. Current-period accrual is
         /// {interestAccruedMinor}.
         uint256 interestPaidMinor;
         /// Inclusive deadline: 0 when uncalled.
@@ -131,7 +131,7 @@ interface ICredis {
     function interestAccruedMinor(uint256 positionId) external view returns (uint256);
 
     /// @notice Lifetime interest collected on this position, in asset minor units.
-    ///         Equals the sum of `SettlementApplied.interestPaidMinor` over successful
+    ///         Equals the sum of `SettlementApplied.interestMinor` over successful
     ///         settlements. Forfeiture does not add unpaid interest.
     function interestPaidMinor(uint256 positionId) external view returns (uint256);
 

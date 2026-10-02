@@ -65,13 +65,13 @@ interface ICredisFactory {
     ///         pledger, so a payer can never redirect value to themselves.
     /// @return principalPaidMinor Principal covered by this settlement. Drives the collateral
     ///         released and the reduction in the position's outstanding balance.
-    /// @return interestPaidMinor Accrued interest collected by this settlement. Taken in full
+    /// @return interestMinor Accrued interest collected by this settlement. Taken in full
     ///         before any principal, and never carried between settlements. This is
     ///         the payment delta; the position's `interestPaidMinor` is the sum of
     ///         these deltas across successful settlements.
     function settleCredis(uint256 positionId, uint256 amountMinor)
         external
-        returns (uint256 principalPaidMinor, uint256 interestPaidMinor);
+        returns (uint256 principalPaidMinor, uint256 interestMinor);
 
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }
