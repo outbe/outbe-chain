@@ -415,6 +415,43 @@ fn full_width_u256_spend_round_trip() {
 }
 
 #[test]
+fn the_merge_circuit_is_pinned() {
+    use outbe_zk_canonical::paynote_merge::PaynoteMerge;
+    assert_eq!(PaynoteMerge::LABEL, "outbe.paynote.merge");
+    assert_eq!(PaynoteMerge::VERSION, "1.0.0");
+    assert_eq!(
+        PaynoteMerge::CIRCUIT_HASH,
+        alloy_primitives::hex!("2536a6813a5d9f5468cedc74376497d4c06bc6492aabfb69cd1783dda0b29722")
+    );
+    assert_eq!(
+        PaynoteMerge::VK_HASH,
+        alloy_primitives::hex!("c8c627470cfa8f26a44f3049232d5160d0b967f1150a28b2e4bf6cdb2f007175")
+    );
+}
+
+#[test]
+fn note_hashes_match_known_answers() {
+    use crate::hash::{note_commitment, note_nullifier, note_sn};
+    let spend_key = Field::from(17u64);
+    let serial = note_sn(spend_key).unwrap();
+    let amount = (U256::from(1) << 200) + U256::from(100);
+    let commitment = note_commitment(CHAIN_ID, serial, USDC, amount).unwrap();
+    let nullifier = note_nullifier(commitment, spend_key).unwrap();
+    assert_eq!(
+        b256(serial),
+        alloy_primitives::b256!("0f35b19d42814cf1a8537456508387afd5aa95683c85d7391a701038a6ec71b1")
+    );
+    assert_eq!(
+        b256(commitment),
+        alloy_primitives::b256!("028fbf70b0d0d472b78ddb7fe58bc963966b7bf2e45c012feceac9c6ecb5d9a9")
+    );
+    assert_eq!(
+        b256(nullifier),
+        alloy_primitives::b256!("2128c37317f20aa992287b2055d86628181dc8db1d7dab90568103e8c38c06ec")
+    );
+}
+
+#[test]
 fn zero_context_is_rejected_before_verification() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let (mut proof, _, tree) = prove_spend(CHAIN_ID, USDC, 100, 100);
