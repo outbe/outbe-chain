@@ -1313,7 +1313,8 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
     let proposer = test_evm_signer().address();
     let worldwide_day = WorldwideDay::new(20_241_220);
     let floor_price_minor = U256::from(500_000u64);
-    let bucket_key = NodContract::bucket_key(worldwide_day, floor_price_minor, 840);
+    let entry_price_minor = U256::from(450_000_000u64);
+    let bucket_key = NodContract::bucket_key(worldwide_day, entry_price_minor, 840);
     let nod_item = || NodItemState {
         is_settled: false,
         nod_id: NodContract::generate_nod_id(proposer, worldwide_day).unwrap(),
@@ -1427,7 +1428,7 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
                 bucket_key,
                 worldwide_day,
                 floor_price_minor,
-                entry_price_minor: U256::from(450_000_000u64),
+                entry_price_minor,
                 reference_currency: 840,
             })
             .expect("seed independent off-chain Nod bucket");
@@ -1661,7 +1662,7 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
         outbe_compressed_entities::derive_poseidon_entity_id(tribute_owner, day).unwrap();
     let nod_owner = Address::repeat_byte(0x32);
     let nod_id = outbe_compressed_entities::derive_poseidon_entity_id(nod_owner, day).unwrap();
-    let bucket_key = NodContract::bucket_key(day, U256::from(13), 978);
+    let bucket_key = NodContract::bucket_key(day, U256::from(16), 978);
     let ctx = BlockContext::new(1, 1, CHAIN_ID, proposer, vec![proposer]);
 
     let run = || {

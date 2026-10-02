@@ -62,10 +62,11 @@ fn issue_for_test(
     };
     runtime::issue_nod(storage, scope, parent, &params)?;
     if call.issuedAt != 0 {
-        let floor = NodContract::floor_price_minor(call.entryPriceMinor)
-            .ok_or_else(|| PrecompileError::Revert("issueForTest: floor overflow".into()))?;
-        let bucket_key =
-            NodContract::bucket_key(params.worldwide_day, floor, params.reference_currency);
+        let bucket_key = NodContract::bucket_key(
+            params.worldwide_day,
+            call.entryPriceMinor,
+            params.reference_currency,
+        );
         NodContract::new(storage.clone())
             .callable_bucket_issued_at
             .write(&bucket_key, call.issuedAt)?;

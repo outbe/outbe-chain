@@ -66,7 +66,7 @@ pub(crate) fn single_league_actions(
             assert!(!cost.is_zero(), "positive expected cost");
             let mut bucket_preimage = Vec::with_capacity(38);
             bucket_preimage.extend(tribute.worldwide_day.value().to_be_bytes());
-            bucket_preimage.extend(floor_price.to_be_bytes::<32>());
+            bucket_preimage.extend(entry_price.to_be_bytes::<32>());
             bucket_preimage.extend(tribute.reference_currency.to_be_bytes());
             NodActionV1 {
                 raw_ordinal: u32::try_from(ordinal).expect("bounded ordinal"),

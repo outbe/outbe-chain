@@ -487,11 +487,12 @@ fn seed_bucket_issued(
     iso: u16,
     issued_at: u64,
 ) -> WwdEntityId {
+    let entry = U256::from(5);
     let mut body = item(owner);
     body.reference_currency = iso;
     body.issued_at = issued_at;
-    body.bucket_key = NodContract::bucket_key(body.worldwide_day, body.floor_price_minor, iso);
-    api::add_nod(storage, scope, parent, &body, U256::from(5)).unwrap();
+    body.bucket_key = NodContract::bucket_key(body.worldwide_day, entry, iso);
+    api::add_nod(storage, scope, parent, &body, entry).unwrap();
     WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key)
 }
 

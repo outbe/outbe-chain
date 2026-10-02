@@ -239,7 +239,7 @@ impl NodContract<'_> {
 
         let canonical_bucket_key = Self::bucket_key(
             item.worldwide_day,
-            item.floor_price_minor,
+            entry_price_minor,
             item.reference_currency,
         );
         if item.bucket_key != canonical_bucket_key {

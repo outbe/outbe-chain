@@ -1285,7 +1285,7 @@ fn validate_finalized_output_run(run: &FinalizedOutputRunV1) -> Result<(), Lysis
             || nod.bucket_key
                 != NodContract::bucket_key(
                     nod.worldwide_day,
-                    nod.floor_price_minor,
+                    nod.entry_price_minor,
                     nod.reference_currency,
                 )
             || nod.issued_at == 0

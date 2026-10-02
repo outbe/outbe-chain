@@ -94,7 +94,7 @@ fn item(owner: Address, entry: U256, reference_currency: u16) -> NodItemState {
         worldwide_day,
         league_id: 4,
         floor_price_minor: floor,
-        bucket_key: NodContract::bucket_key(worldwide_day, floor, reference_currency),
+        bucket_key: NodContract::bucket_key(worldwide_day, entry, reference_currency),
         issuance_currency: 840,
         reference_currency,
         issued_at: 1_752_534_000,
@@ -146,20 +146,20 @@ fn a_nod_floor_is_its_entry_marked_up_and_rounded_down() {
 #[test]
 fn bucket_key_binds_the_reference_currency() {
     let day = WorldwideDay::new(20_260_715);
-    let floor = U256::from(13);
+    let entry = U256::from(13);
     assert_ne!(
-        NodContract::bucket_key(day, floor, USD),
-        NodContract::bucket_key(day, floor, EUR),
-        "same day and floor in two currencies must not share a bucket"
+        NodContract::bucket_key(day, entry, USD),
+        NodContract::bucket_key(day, entry, EUR),
+        "same day and entry in two currencies must not share a bucket"
     );
 
     // The ISO occupies the trailing two bytes of a 38-byte preimage.
     let mut expected = [0u8; 38];
     expected[0..4].copy_from_slice(&20_260_715u32.to_be_bytes());
-    expected[4..36].copy_from_slice(&floor.to_be_bytes::<32>());
+    expected[4..36].copy_from_slice(&entry.to_be_bytes::<32>());
     expected[36..38].copy_from_slice(&USD.to_be_bytes());
     assert_eq!(
-        NodContract::bucket_key(day, floor, USD),
+        NodContract::bucket_key(day, entry, USD),
         alloy_primitives::keccak256(expected)
     );
 }
@@ -288,7 +288,7 @@ fn zero_reference_currency_is_rejected_at_issuance() {
 }
 
 /// The bucket key is derived, not supplied: a caller whose key disagrees with
-/// `(day, floor, currency)` is rejected, so the on-chain and Lysis derivations
+/// `(day, entry, currency)` is rejected, so the on-chain and Lysis derivations
 /// cannot drift apart silently.
 #[test]
 fn a_bucket_key_that_does_not_match_its_inputs_is_rejected() {

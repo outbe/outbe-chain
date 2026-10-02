@@ -179,7 +179,7 @@ impl NodCertifiedGenerationProjection {
 /// EVM storage layout for the Nod NFT contract.
 ///
 /// Nod item and bucket bodies live in the compressed-entity store, not here.
-/// Bucket key = keccak256(worldwide_day ++ floor_price_minor ++ reference_currency).
+/// Bucket key = keccak256(worldwide_day ++ entry_price_minor ++ reference_currency).
 ///
 /// Uncalled buckets wait in a per-currency bitmap trie by call price, see `state::CallBins`.
 ///
@@ -406,22 +406,22 @@ impl<'storage> NodContract<'storage> {
     }
 
     /// Computes the bucket key from
-    /// `(worldwide_day, floor_price_minor, reference_currency)`.
+    /// `(worldwide_day, entry_price_minor, reference_currency)`.
     ///
-    /// The currency is part of the preimage because `floor_price_minor` is
-    /// denominated in it: two Nods sharing a day and a floor value in
+    /// The currency is part of the preimage because `entry_price_minor` is
+    /// denominated in it: two Nods sharing a day and an entry value in
     /// different currencies are priced against different oracle rates and must
     /// not share a bucket. This is the single derivation - the Lysis program
     /// calls it too, so the off-chain and on-chain keys cannot drift.
     pub fn bucket_key(
         worldwide_day: WorldwideDay,
-        floor_price_minor: U256,
+        entry_price_minor: U256,
         reference_currency: u16,
     ) -> B256 {
         use alloy_primitives::keccak256;
         let mut buf = [0u8; 38];
         buf[0..4].copy_from_slice(worldwide_day.key_bytes().as_slice());
-        buf[4..36].copy_from_slice(&floor_price_minor.to_be_bytes::<32>());
+        buf[4..36].copy_from_slice(&entry_price_minor.to_be_bytes::<32>());
         buf[36..38].copy_from_slice(&reference_currency.to_be_bytes());
         keccak256(buf)
     }

@@ -75,7 +75,7 @@ fn issue_nod_inner(
         .ok_or(NodFactoryError::FloorPriceOverflow)?;
     let bucket_key = NodContract::bucket_key(
         params.worldwide_day,
-        floor_price_minor,
+        params.entry_price_minor,
         params.reference_currency,
     );
 

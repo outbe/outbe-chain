@@ -131,7 +131,7 @@ fn production_nod_receipts_and_ce_seal_agree_with_rocksdb_after_reopen() {
             worldwide_day: day,
             league_id: 7,
             floor_price_minor: U256::from(8),
-            bucket_key: NodContract::bucket_key(day, U256::from(8), 978),
+            bucket_key: NodContract::bucket_key(day, U256::from(5), 978),
             issuance_currency: 840,
             reference_currency: 978,
             issued_at: 1_788_652_800 + height,

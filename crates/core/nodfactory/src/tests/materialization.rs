@@ -41,7 +41,7 @@ fn action_for(materialization_wwd: u32, ordinal: u32) -> NodActionV1 {
         issuance_currency: 840,
         reference_currency: 840,
         issued_at: 1_650_000_000,
-        bucket_key: NodContract::bucket_key(worldwide_day, floor_price_minor, 840),
+        bucket_key: NodContract::bucket_key(worldwide_day, entry_price_minor, 840),
     }
 }
 
@@ -516,7 +516,7 @@ fn a_certified_floor_its_entry_does_not_give_is_rejected_before_any_write() {
     tampered.floor_price_minor = U256::from(3_240_000);
     tampered.bucket_key = NodContract::bucket_key(
         WorldwideDay::new(MATERIALIZATION_WWD),
-        tampered.floor_price_minor,
+        tampered.entry_price_minor,
         tampered.reference_currency,
     );
     let population = population_of(actions);

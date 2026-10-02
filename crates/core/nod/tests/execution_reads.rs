@@ -27,8 +27,8 @@ fn item(owner: Address, day: WorldwideDay) -> NodItemState {
         gratis_load_minor: U256::from(11),
         worldwide_day: day,
         league_id: 4,
-        floor_price_minor: U256::from(13),
-        bucket_key: NodContract::bucket_key(day, U256::from(13), 978),
+        floor_price_minor: U256::from(5),
+        bucket_key: NodContract::bucket_key(day, U256::from(5), 978),
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 1_752_534_000,
@@ -189,7 +189,7 @@ fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
                 let mut body = item(Address::repeat_byte(owner_byte), day);
                 body.floor_price_minor = floor;
                 body.reference_currency = currency;
-                body.bucket_key = NodContract::bucket_key(day, floor, currency);
+                body.bucket_key = NodContract::bucket_key(day, entry, currency);
                 api::add_nod(&storage, &scope, &parent, &body, entry).unwrap();
                 WwdEntityId::from_day_and_digest(day, body.bucket_key.0)
             })
@@ -277,12 +277,12 @@ fn idle_daily_scans_do_not_write_storage() {
             .record_utc_day_vwap(20260715, index, U256::from(13))
             .unwrap();
         oracle.utc_day_vwap_last_finalized.write(20260715).unwrap();
-        for (owner, floor) in [(0x51, 12), (0x52, 13)] {
+        for (owner, entry) in [(0x51, 12u64), (0x52, 13)] {
+            let entry = U256::from(entry);
             let mut body = item(Address::repeat_byte(owner), WorldwideDay::new(20260715));
-            body.floor_price_minor = U256::from(floor);
-            body.bucket_key =
-                NodContract::bucket_key(body.worldwide_day, body.floor_price_minor, 978);
-            api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap();
+            body.floor_price_minor = NodContract::floor_price_minor(entry).unwrap();
+            body.bucket_key = NodContract::bucket_key(body.worldwide_day, entry, 978);
+            api::add_nod(&storage, &scope, &parent, &body, entry).unwrap();
         }
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(1, midnight, 1),

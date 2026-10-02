@@ -106,7 +106,7 @@ fn certified_action(index: usize) -> NodActionV1 {
         issuance_currency: 840,
         reference_currency: 840,
         issued_at: 1_600_000_000,
-        bucket_key: NodContract::bucket_key(TARGET_WWD, floor_price_minor, 840),
+        bucket_key: NodContract::bucket_key(TARGET_WWD, entry_price_minor, 840),
     }
 }
 

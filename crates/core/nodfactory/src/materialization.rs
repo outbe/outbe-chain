@@ -183,7 +183,7 @@ pub(crate) fn materialize_after_attempt(
         let derived_floor = NodContract::floor_price_minor(action.entry_price_minor);
         let derived_bucket_key = NodContract::bucket_key(
             worldwide_day,
-            action.floor_price_minor,
+            action.entry_price_minor,
             action.reference_currency,
         );
         if supplied_nod_id != derived_nod_id

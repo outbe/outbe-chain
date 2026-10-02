@@ -238,7 +238,7 @@ impl ProgramExecutionV1 {
             })?;
         let bucket_key = NodContract::bucket_key(
             tribute.worldwide_day,
-            floor_price_minor,
+            entry_price_minor,
             tribute.reference_currency,
         );
         if !nod_target_available || tribute.owner.is_zero() {

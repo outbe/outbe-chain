@@ -96,8 +96,8 @@ fn nod_item(owner: Address, iso: u16) -> NodItemState {
     nod_item_at(owner, iso, entry_price())
 }
 
-/// A Nod issued at `entry_price_minor`, so distinct entries give distinct
-/// buckets on the same worldwide day.
+/// A Nod whose bucket is keyed by its entry price, so distinct entries give
+/// distinct buckets on the same worldwide day.
 fn nod_item_at(owner: Address, iso: u16, entry_price_minor: U256) -> NodItemState {
     nod_item_issued(owner, iso, entry_price_minor, WWD, START)
 }
@@ -119,7 +119,7 @@ fn nod_item_issued(
         worldwide_day,
         league_id: 4,
         floor_price_minor,
-        bucket_key: NodContract::bucket_key(worldwide_day, floor_price_minor, iso),
+        bucket_key: NodContract::bucket_key(worldwide_day, entry_price_minor, iso),
         issuance_currency: iso,
         reference_currency: iso,
         issued_at,

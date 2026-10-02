@@ -670,7 +670,7 @@ pub fn output_finalize(
             })?;
         let bucket_key = NodContract::bucket_key(
             amount.worldwide_day,
-            amount.floor_price_minor,
+            amount.entry_price_minor,
             amount.reference_currency,
         );
         ordered_records.push(FinalizedOutputRecordV1 {

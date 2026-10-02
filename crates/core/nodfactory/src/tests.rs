@@ -477,7 +477,7 @@ fn second_same_block_issue_reuses_the_pending_bucket_without_parent_projection()
 
     let bucket_key = NodContract::bucket_key(
         first.worldwide_day,
-        NodContract::floor_price_minor(first.entry_price_minor).unwrap(),
+        first.entry_price_minor,
         first.reference_currency,
     );
     let bucket_id = WwdEntityId::from_day_and_digest(first.worldwide_day, bucket_key.0);
@@ -634,7 +634,7 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
         .is_none());
     let bucket_key = NodContract::bucket_key(
         input.worldwide_day,
-        NodContract::floor_price_minor(input.entry_price_minor).unwrap(),
+        input.entry_price_minor,
         input.reference_currency,
     );
     let bucket_id = WwdEntityId::from_day_and_digest(input.worldwide_day, bucket_key.0);
