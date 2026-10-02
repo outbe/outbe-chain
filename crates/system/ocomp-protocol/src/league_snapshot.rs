@@ -21,10 +21,10 @@ use alloy_primitives::{keccak256, Address, B256, U256};
 /// `Mapping::base_slot()`; if the Metadosis layout ever changes, that test
 /// fails loudly rather than silently opening the wrong slots.
 ///
-/// Derivation (anchored on the pinned `OCOMP_JOB_RECORDS_BASE_SLOT = 20`,
-/// order 8): orders 9-13 are single-slot each (21..=25), orders 15, 18 and 19
-/// single-slot each (26..=28), so the order-20 snapshot mapping lands at 29.
-pub const METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT: u64 = 29;
+/// Derivation (anchored on the pinned `OCOMP_JOB_RECORDS_BASE_SLOT = 19`,
+/// order 8): orders 9-13 are single-slot each (20..=24), orders 15, 18 and 19
+/// single-slot each (25..=27), so the order-20 snapshot mapping lands at 28.
+pub const METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT: u64 = 28;
 
 /// Domain separator for the composite `(wwd, owner)` mapping key, keeping the
 /// league-snapshot key space disjoint from any other B256-keyed mapping.
@@ -118,7 +118,7 @@ mod tests {
             .copy_from_slice(&U256::from(METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT).to_be_bytes::<32>());
         assert_eq!(league_snapshot_slot(20_000, OWNER_A), keccak256(buf));
         // Base slot must be the order-20 mapping slot.
-        assert_eq!(METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT, 29);
+        assert_eq!(METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT, 28);
     }
 
     #[test]

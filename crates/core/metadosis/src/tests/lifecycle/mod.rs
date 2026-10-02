@@ -9,7 +9,7 @@ mod fixtures;
 use fixtures::{
     assert_no_ocomp_job, begin_persistent_active_scope, create_waiting_day,
     end_persistent_active_scope, issue_one_tribute_in_scope, run_start_command,
-    seed_missed_offering_day, FailOncePartitionLookup, FailSecondPartitionLookup,
+    seed_missed_offering_day, FailOncePartitionLookup, FailSecondPartitionLookup, FixtureTribute,
 };
 
 mod advance;

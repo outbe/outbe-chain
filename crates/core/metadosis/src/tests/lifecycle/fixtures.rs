@@ -188,35 +188,34 @@ pub(super) fn create_waiting_day(
         .unwrap()
 }
 
+pub(super) struct FixtureTribute {
+    pub(super) owner: Address,
+    pub(super) wwd: outbe_primitives::time::WorldwideDay,
+    pub(super) nominal: U256,
+}
+
 pub(super) fn issue_one_tribute_in_scope(
     storage: &StorageHandle,
     scope: &ExecutionScope,
     parent: &TestParent,
-    owner: Address,
-    wwd: outbe_primitives::time::WorldwideDay,
-    nominal: U256,
+    input: FixtureTribute,
 ) {
+    let FixtureTribute {
+        owner,
+        wwd,
+        nominal,
+    } = input;
     let mut tribute = TributeContract::new(storage.clone());
-    tribute.initialize_fresh_ocomp_profile().unwrap();
-    tribute.unseal_day(wwd).unwrap();
-    tribute
-        .issue(
-            scope,
-            parent,
-            &TributeData {
-                tribute_id: NodContract::generate_nod_id(owner, wwd).unwrap(),
-                owner,
-                worldwide_day: wwd,
-                issuance_amount_minor: nominal,
-                issuance_currency: 840,
-                nominal_amount_minor: nominal,
-                reference_currency: 840,
-                exclude_from_intex_issuance: false,
-                tribute_price_minor: U256::from(2),
-            },
-        )
-        .unwrap();
-    tribute.seal_day(wwd).unwrap();
+    crate::tests::tribute_fixture::issue_sealed_tribute(
+        &mut tribute,
+        scope,
+        parent,
+        crate::tests::tribute_fixture::FixtureTribute {
+            owner,
+            wwd,
+            nominal,
+        },
+    );
 }
 
 pub(super) fn assert_no_ocomp_job(
@@ -284,27 +283,11 @@ pub(super) fn begin_persistent_active_scope(
 ) -> (ExecutionScope, TestParent) {
     let scope = ExecutionScope::new();
     let parent = TestParent::empty();
-    StorageHandle::enter(provider, |storage| {
-        storage
-            .sstore(
-                outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-                U256::ZERO,
-                U256::from(4),
-            )
-            .unwrap();
-        storage
-            .sstore(
-                outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-                U256::from(1),
-                U256::from_be_slice(
-                    outbe_compressed_entities::sealed_root(B256::ZERO)
-                        .unwrap()
-                        .as_slice(),
-                ),
-            )
-            .unwrap();
-        begin_block(storage, &scope).unwrap();
-    });
+    begin_scope_with_persisted_parent(
+        provider,
+        &scope,
+        outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
+    );
     (scope, parent)
 }
 
@@ -333,4 +316,15 @@ pub(super) fn run_start_command(
         );
         crate::commands::start_metadosis(&ctx, scope, parent)
     })
+}
+
+pub(super) fn begin_scope_with_persisted_parent(
+    provider: &mut HashMapStorageProvider,
+    scope: &ExecutionScope,
+    parent_root: B256,
+) {
+    StorageHandle::enter(provider, |storage| {
+        crate::fixture_kernel::seed_ce_parent(&storage, parent_root).unwrap();
+        begin_block(storage, scope).unwrap();
+    });
 }

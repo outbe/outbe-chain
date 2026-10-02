@@ -10,7 +10,7 @@ use outbe_primitives::time::WorldwideDay as WorldwideDayKey;
 /// not the field's `order = 8`. OCM finality proof construction and verification
 /// use this fixed consensus path; the storage behavior test pins it to the
 /// macro-generated contract layout.
-pub const OCOMP_JOB_RECORDS_BASE_SLOT: u64 = 20;
+pub const OCOMP_JOB_RECORDS_BASE_SLOT: u64 = 19;
 
 /// WorldwideDay status values stored as u8.
 pub mod status {
@@ -130,76 +130,6 @@ pub struct OcompPreAdmissionState {
     pub envelope_hash: B256,
 }
 
-#[storage_record(exists_field = outcome)]
-pub struct WorldwideDayTerminalReceiptState {
-    #[key]
-    pub wwd: WorldwideDayKey,
-
-    #[attribute(order = 0, default = terminal_outcome::NONE)]
-    pub outcome: u8,
-
-    #[attribute(order = 1, default = U256::ZERO)]
-    pub value_routed: U256,
-
-    #[attribute(order = 2, default = U256::ZERO)]
-    pub carry_over_before: U256,
-
-    #[attribute(order = 3, default = U256::ZERO)]
-    pub carry_over_after: U256,
-
-    #[attribute(order = 4, default = terminal_retirement::NONE)]
-    pub retirement: u8,
-
-    #[attribute(order = 5)]
-    pub block_number: u64,
-}
-
-/// Exact bounded evidence for the deterministic retained-cap admission policy.
-#[storage_record(exists_field = outcome)]
-pub struct CapacityForfeitureReceiptState {
-    #[key]
-    pub wwd: WorldwideDayKey,
-
-    #[attribute(order = 0, default = terminal_outcome::NONE)]
-    pub outcome: u8,
-
-    #[attribute(order = 1)]
-    pub max_retained_wwds: u32,
-
-    #[attribute(order = 2)]
-    pub retained_count_before: u32,
-
-    #[attribute(order = 3, default = U256::ZERO)]
-    pub value_routed: U256,
-
-    #[attribute(order = 4, default = U256::ZERO)]
-    pub carry_over_before: U256,
-
-    #[attribute(order = 5, default = U256::ZERO)]
-    pub carry_over_after: U256,
-
-    #[attribute(order = 6, default = B256::ZERO)]
-    pub sealed_collection_root: B256,
-
-    #[attribute(order = 7)]
-    pub forfeited_count: u32,
-
-    #[attribute(order = 8, default = U256::ZERO)]
-    pub forfeited_nominal: U256,
-
-    #[attribute(order = 9)]
-    pub source_generation: u64,
-
-    #[attribute(order = 10)]
-    pub retired_generation: u64,
-
-    #[attribute(order = 11, default = terminal_retirement::NONE)]
-    pub retirement: u8,
-
-    #[attribute(order = 12)]
-    pub block_number: u64,
-}
-
 /// EVM storage layout for the Metadosis orchestrator contract.
 ///
 /// Manages worldwide day lifecycle and daily emission accumulation.
@@ -211,9 +141,6 @@ pub struct MetadosisContract {
 
     #[attribute(order = 1)]
     pub worldwide_days: outbe_primitives::storage::dsl::Map<WorldwideDayKey, WorldwideDay>,
-
-    #[attribute(order = 2)]
-    pub active_wwd_count: outbe_primitives::storage::dsl::Value<u16>,
 
     #[attribute(order = 3)]
     pub active_wwd: outbe_primitives::storage::dsl::Set<WorldwideDayKey>,
@@ -301,7 +228,7 @@ pub struct MetadosisContract {
     /// `outbe_ocomp_protocol::league_snapshot::league_snapshot_key(wwd, owner)`,
     /// it stores one league word per owner so the OCOMP openings MPT-prove a
     /// single league slot per owner instead of the raw Fidelity cohort ledger.
-    /// Base slot 29; `league_snapshot::METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT` is
+    /// Base slot 28; `league_snapshot::METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT` is
     /// pinned to this layout by test.
     #[attribute(order = 20)]
     pub ocomp_fidelity_league_snapshot: Mapping<B256, u16>,
@@ -317,14 +244,7 @@ pub struct MetadosisContract {
 
     /// Durable typed outer-WWD terminal receipt.
     #[attribute(order = 22)]
-    pub worldwide_day_terminal_receipts:
-        outbe_primitives::storage::dsl::Map<WorldwideDayKey, WorldwideDayTerminalReceiptState>,
-
-    /// Capacity-forfeiture detail receipt linked to the generic terminal
-    /// receipt above.
-    #[attribute(order = 23)]
-    pub capacity_forfeiture_receipts:
-        outbe_primitives::storage::dsl::Map<WorldwideDayKey, CapacityForfeitureReceiptState>,
+    pub worldwide_day_terminal_receipts: Mapping<WorldwideDayKey, StorageBytes>,
 
     /// Complete Metadosis-owned semantic result for day-limit replay.
     #[attribute(order = 24)]

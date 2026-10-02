@@ -1,3 +1,4 @@
+use super::fixtures::begin_scope_with_persisted_parent;
 use super::*;
 
 pub(super) fn run_advance_command(
@@ -148,23 +149,7 @@ fn cycle_command_restores_all_prior_ce_work_when_a_later_wwd_fails() {
         tree.clone(),
         outbe_compressed_entities::CeWorkConfig::new(0, 0, u64::MAX),
     );
-    StorageHandle::enter(&mut provider, |storage| {
-        storage
-            .sstore(
-                outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-                U256::ZERO,
-                U256::from(4),
-            )
-            .unwrap();
-        storage
-            .sstore(
-                outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-                U256::from(1),
-                U256::from_be_slice(parent_root.as_slice()),
-            )
-            .unwrap();
-        begin_block(storage, &scope).unwrap();
-    });
+    begin_scope_with_persisted_parent(&mut provider, &scope, parent_root);
     let storage_before = provider.storage.clone();
     let events_before = provider.events.clone();
     let ordered_before = provider.get_ordered_events().to_vec();

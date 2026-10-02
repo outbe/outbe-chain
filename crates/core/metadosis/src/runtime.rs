@@ -9,9 +9,10 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 use crate::schema::MetadosisContract;
 use crate::{
-    aggregate::ValidatedWwdAggregate, lifecycle,
+    aggregate::ValidatedWwdAggregate,
+    lifecycle,
     ocomp::schema::require_active_ocomp_profile as load_active_ocomp_profile,
-    settlement::process_ocomp_ready_candidate,
+    settlement::{process_ocomp_ready_candidate, ReadyOwners},
 };
 
 /// Converts a unix timestamp to a yyyymmdd date key (UTC).
@@ -52,7 +53,7 @@ pub fn start_metadosis(
     let mut metadosis = MetadosisContract::new(ctx.storage.clone());
     let timestamp = ctx.block.timestamp;
     lifecycle::validate_metadosis_timestamp(timestamp)?;
-    let ocomp_profile = require_active_ocomp_profile(&metadosis)?;
+    require_active_ocomp_profile(&metadosis)?;
 
     if ctx.block.block_number == 1 {
         lifecycle::init_genesis_day_inner(&mut metadosis, ctx)?;
@@ -71,7 +72,7 @@ pub fn start_metadosis(
             metadosis.ocomp_fsm_state(wwd, &schema_limits)?;
             continue;
         }
-        process_ocomp_ready_candidate(&mut metadosis, ctx, scope, parent, current, &ocomp_profile)?;
+        process_ocomp_ready_candidate(&mut metadosis, ctx, current, ReadyOwners { scope, parent })?;
         break;
     }
 
