@@ -52,8 +52,8 @@ fn item(owner: Address) -> NodItemState {
         gratis_load_minor: U256::from(11),
         worldwide_day,
         league_id: 4,
-        floor_price_minor: U256::from(13),
-        bucket_key: NodContract::bucket_key(worldwide_day, U256::from(13), 978),
+        floor_price_minor: U256::from(5),
+        bucket_key: NodContract::bucket_key(worldwide_day, U256::from(5), 978),
         issuance_currency: 840,
         reference_currency: 978,
         // Midnight of the last UTC day closed at `NOW`, so a bucket issued in
@@ -591,11 +591,11 @@ fn a_priced_currency_still_qualifies_when_a_sibling_currency_is_unpriced() {
 #[test]
 fn qualification_requires_a_finalized_day_above_the_floor_and_stays() {
     for (daily_rate, finalized, live_rate, qualifies) in [
-        (0, true, 14, false),   // Missing day; no fallback to a live price.
-        (12, true, 14, false),  // A live crossing cannot qualify.
-        (13, true, 14, false),  // Equality is not enough.
-        (14, false, 14, false), // Wait for Oracle finalization.
-        (14, true, 1, true),    // A low live rate cannot prevent qualification.
+        (0, true, 14, false),  // Missing day; no fallback to a live price.
+        (4, true, 14, false),  // A live crossing cannot qualify.
+        (5, true, 14, false),  // Equality is not enough.
+        (6, false, 14, false), // Wait for Oracle finalization.
+        (6, true, 1, true),    // A low live rate cannot prevent qualification.
     ] {
         let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
         let mut provider = HashMapStorageProvider::new(1);
@@ -651,7 +651,7 @@ fn qualification_requires_a_finalized_day_above_the_floor_and_stays() {
                 .unwrap();
             assert_eq!(
                 is_qualified(&storage, &scope, &parent, bucket_id),
-                daily_rate > 13
+                daily_rate > 5
             );
         });
     }

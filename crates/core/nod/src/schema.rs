@@ -117,6 +117,14 @@ pub struct NodBucketState {
     pub settled_nods: u64,
 }
 
+impl NodBucketState {
+    /// The floor every Nod in the bucket shares, derived from its entry price.
+    pub fn floor_price_minor(&self) -> outbe_primitives::error::Result<U256> {
+        NodContract::floor_price_minor(self.entry_price_minor)
+            .ok_or_else(|| crate::errors::NodError::FloorPriceOverflow.into())
+    }
+}
+
 /// Immutable owner projection frozen into one OCOMP activation precondition.
 ///
 /// The values describe the per-WWD certified Nod namespace that OCM-18 later

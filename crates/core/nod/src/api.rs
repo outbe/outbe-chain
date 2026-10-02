@@ -41,7 +41,7 @@ pub fn is_qualified(storage: &StorageHandle<'_>, bucket: &NodBucketState) -> Res
     outbe_oracle::api::closed_above_floor(
         storage.clone(),
         bucket.reference_currency,
-        bucket.floor_price_minor,
+        bucket.floor_price_minor()?,
         first_full_day(issued_at),
     )
 }

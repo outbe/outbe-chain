@@ -83,8 +83,9 @@ fn bucket_of(
 }
 
 /// A Nod whose `bucket_key` is derived the way `record_nod_issued` requires.
-fn item(owner: Address, floor: U256, reference_currency: u16) -> NodItemState {
+fn item(owner: Address, entry: U256, reference_currency: u16) -> NodItemState {
     let worldwide_day = WorldwideDay::new(20_260_715);
+    let floor = NodContract::floor_price_minor(entry).unwrap();
     NodItemState {
         is_settled: false,
         nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
@@ -188,9 +189,9 @@ fn currency_scoped_bin_keys_do_not_alias() {
 #[test]
 fn same_day_and_floor_in_two_currencies_are_two_buckets_in_two_bins() {
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
-    let floor = U256::from(500_000_000_000_000_000u128);
-    let usd = item(Address::repeat_byte(0x11), floor, USD);
-    let eur = item(Address::repeat_byte(0x22), floor, EUR);
+    let entry = U256::from(5);
+    let usd = item(Address::repeat_byte(0x11), entry, USD);
+    let eur = item(Address::repeat_byte(0x22), entry, EUR);
     assert_ne!(usd.bucket_key, eur.bucket_key);
 
     let mut provider = HashMapStorageProvider::new(1);
@@ -198,8 +199,8 @@ fn same_day_and_floor_in_two_currencies_are_two_buckets_in_two_bins() {
     StorageHandle::enter(&mut provider, |storage| {
         seed_compressed_entities_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
-        api::add_nod(&storage, &scope, &parent, &usd, U256::from(5)).unwrap();
-        api::add_nod(&storage, &scope, &parent, &eur, U256::from(5)).unwrap();
+        api::add_nod(&storage, &scope, &parent, &usd, entry).unwrap();
+        api::add_nod(&storage, &scope, &parent, &eur, entry).unwrap();
 
         let nod = NodContract::new(storage.clone());
         let call_price = nod
@@ -239,11 +240,7 @@ fn same_day_and_floor_in_two_currencies_are_two_buckets_in_two_bins() {
 #[test]
 fn qualification_skips_days_before_first_full_day() {
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
-    let body = item(
-        Address::repeat_byte(0x11),
-        U256::from(500_000_000_000_000_000u128),
-        USD,
-    );
+    let body = item(Address::repeat_byte(0x11), U256::from(5), USD);
     let issuance_day = timestamp_to_date_key(body.issued_at);
     let full_day = first_full_day(body.issued_at);
     assert_ne!(
@@ -272,7 +269,7 @@ fn qualification_skips_days_before_first_full_day() {
 #[test]
 fn zero_reference_currency_is_rejected_at_issuance() {
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
-    let body = item(Address::repeat_byte(0x66), U256::from(13), 0);
+    let body = item(Address::repeat_byte(0x66), U256::from(5), 0);
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
@@ -296,8 +293,8 @@ fn zero_reference_currency_is_rejected_at_issuance() {
 #[test]
 fn a_bucket_key_that_does_not_match_its_inputs_is_rejected() {
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
-    let mut body = item(Address::repeat_byte(0x66), U256::from(13), EUR);
-    body.bucket_key = NodContract::bucket_key(body.worldwide_day, U256::from(13), USD);
+    let mut body = item(Address::repeat_byte(0x66), U256::from(5), EUR);
+    body.bucket_key = NodContract::bucket_key(body.worldwide_day, U256::from(5), USD);
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
@@ -324,7 +321,7 @@ fn settled_state_is_exposed_in_nod_data_and_metadata() {
     StorageHandle::enter(&mut provider, |storage| {
         seed_compressed_entities_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
-        let item = item(Address::repeat_byte(0x86), U256::from(13), USD);
+        let item = item(Address::repeat_byte(0x86), U256::from(20), USD);
         api::add_nod(&storage, &scope, &parent, &item, U256::from(20)).unwrap();
         qualify(&storage, &item);
         let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
@@ -402,7 +399,7 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
         StorageHandle::enter(&mut provider, |storage| {
             seed_compressed_entities_genesis(&storage);
             begin_block(storage.clone(), &scope).unwrap();
-            let item = item(Address::repeat_byte(0x87), U256::from(13), USD);
+            let item = item(Address::repeat_byte(0x87), U256::from(20), USD);
             api::add_nod(&storage, &scope, &parent, &item, U256::from(20)).unwrap();
             let mut nod = NodContract::new(storage.clone());
             nod.seal_bucket_call_terms(
@@ -609,8 +606,8 @@ fn qualification_announces_nothing_and_settlement_updates_the_nod() {
     StorageHandle::enter(&mut provider, |storage| {
         seed_compressed_entities_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
-        for body in [&first, &second] {
-            api::add_nod(&storage, &scope, &parent, body, U256::from(5)).unwrap();
+        for (body, entry) in [(&first, 500_000u64), (&second, 600_000)] {
+            api::add_nod(&storage, &scope, &parent, body, U256::from(entry)).unwrap();
         }
         close_day_above(
             &storage,
@@ -655,7 +652,7 @@ fn transfer_logs_announce_issuance_and_removal() {
 
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
     let owner = Address::repeat_byte(0x61);
-    let body = item(owner, U256::from(500_000), USD);
+    let body = item(owner, U256::from(5), USD);
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
@@ -779,7 +776,7 @@ fn token_uri_renders_the_nod_image_and_metadata() {
 
     let engine = base64::engine::general_purpose::STANDARD;
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
-    let mut body = item(Address::repeat_byte(0x71), U256::from(500_000), USD);
+    let mut body = item(Address::repeat_byte(0x71), U256::from(400_000), USD);
     body.gratis_load_minor = U256::from(1_250_123_456u64);
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
@@ -845,7 +842,7 @@ fn token_uri_renders_the_nod_image_and_metadata() {
         assert_eq!(value(&json, "Worldwide Day").unwrap(), 20_260_715);
         assert_eq!(value(&json, "League").unwrap(), 4);
         assert_eq!(value(&json, "Entry Price").unwrap(), 0.4);
-        assert_eq!(value(&json, "Floor Price").unwrap(), 0.5);
+        assert_eq!(value(&json, "Floor Price").unwrap(), 0.432);
         assert_eq!(value(&json, "Call Price").unwrap(), 1.424);
         assert_eq!(value(&json, "Gratis Load").unwrap(), 1250.12);
         assert!(value(&json, "Settlement Deadline").is_none());
@@ -874,7 +871,7 @@ fn nod_card_hides_call_rows_it_cannot_honour() {
     let json = StorageHandle::enter(&mut provider, |storage| {
         seed_compressed_entities_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
-        let item = item(Address::repeat_byte(0x88), U256::from(13), USD);
+        let item = item(Address::repeat_byte(0x88), U256::from(20), USD);
         api::add_nod(&storage, &scope, &parent, &item, U256::from(20)).unwrap();
         let mut nod = NodContract::new(storage.clone());
         nod.seal_bucket_call_terms(

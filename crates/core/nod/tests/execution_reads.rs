@@ -166,15 +166,15 @@ fn qualification_reads_the_finalized_day_and_writes_nothing() {
 fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
     let (mut provider, scope, parent) = active_world();
     let day = WorldwideDay::new(20_260_716);
-    // (owner byte, reference currency, floor price).
+    // (owner byte, reference currency, entry price) for floors 1000, 1200, 1250, 1300, 1300, 1299.
     let specs = [
-        (0x51u8, 840u16, 1000u64),
-        (0x52, 978, 1200),
-        (0x53, 840, 1250),
-        (0x54, 840, 1300),
-        (0x55, 978, 1300),
+        (0x51u8, 840u16, 926u64),
+        (0x52, 978, 1112),
+        (0x53, 840, 1158),
+        (0x54, 840, 1204),
+        (0x55, 978, 1204),
         // Shares the rate's bin, so it exercises the tail-bin exact compare.
-        (0x56, 840, 1299),
+        (0x56, 840, 1203),
     ];
     // Only the 840 buckets strictly below 1299 qualify: 1299/1300 are at or
     // above the day price and the 978 buckets are priced in another currency.
@@ -183,13 +183,14 @@ fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
     StorageHandle::enter(&mut provider, |storage| {
         let bucket_ids: Vec<WwdEntityId> = specs
             .iter()
-            .map(|&(owner_byte, currency, floor)| {
-                let floor = U256::from(floor);
+            .map(|&(owner_byte, currency, entry)| {
+                let entry = U256::from(entry);
+                let floor = NodContract::floor_price_minor(entry).unwrap();
                 let mut body = item(Address::repeat_byte(owner_byte), day);
                 body.floor_price_minor = floor;
                 body.reference_currency = currency;
                 body.bucket_key = NodContract::bucket_key(day, floor, currency);
-                api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap();
+                api::add_nod(&storage, &scope, &parent, &body, entry).unwrap();
                 WwdEntityId::from_day_and_digest(day, body.bucket_key.0)
             })
             .collect();
