@@ -61,6 +61,7 @@ use std::{
 
 mod boundary_promotion;
 mod configuration;
+mod continuity;
 mod dkg_persistence;
 mod epoch_handoff;
 mod epoch_transition_harness;
