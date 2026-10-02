@@ -170,7 +170,7 @@ interface IIntexFactory {
 
     /// @notice The series' settlement window closed. Both are zero when every unit
     ///         was realized in time.
-    event SeriesExpired(bytes14 indexed seriesId, uint32 forfeitedUnits, uint256 returnedPromis);
+    event SeriesExpired(bytes14 indexed seriesId, uint32 forfeitedUnits, uint256 returnedPromisMinor);
 
     /// @notice The expiry sweep left members of a called group unretired and
     ///         parked it for another pass at `retryAt`.

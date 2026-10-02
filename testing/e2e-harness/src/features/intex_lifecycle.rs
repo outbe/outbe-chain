@@ -623,7 +623,7 @@ impl Lifecycle for IntexLifecycle {
                 eth::IIntexFactory::SeriesExpired {
                     seriesId: series,
                     forfeitedUnits: unrealized,
-                    returnedPromis: returned,
+                    returnedPromisMinor: returned,
                 },
             );
         }

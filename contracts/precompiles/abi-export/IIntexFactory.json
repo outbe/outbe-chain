@@ -677,7 +677,7 @@
         "internalType": "uint32"
       },
       {
-        "name": "returnedPromis",
+        "name": "returnedPromisMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
