@@ -1792,48 +1792,57 @@ fn consensus_metadata_verify_rejects_missing_marshal_mapping() {
 
 #[test]
 fn resolve_for_verify_timeout_logs_full_context() {
+    use tracing::instrument::WithSubscriber as _;
+    // With a sole registered dispatcher, tracing-core registers a new callsite
+    // against the first visiting thread's default subscriber. Parallel tests
+    // without this capture can therefore cache Never for the start event.
+    // Keep an independent disabled dispatcher alive to use the registry path.
+    let _other_test_dispatch = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
+    let log_writer = CapturedLogWriter::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_writer(log_writer.clone())
+        .with_ansi(false)
+        .finish();
+
     // Deterministic runtime (TC-6): avoids marshal teardown leaky false-positives.
     let (resolved_as_timeout, logs) = commonware_runtime::deterministic::Runner::timed(
         Duration::from_secs(30),
     )
-    .start(|context| async move {
-        use commonware_runtime::Supervisor as _;
-        let log_writer = CapturedLogWriter::default();
-        let subscriber = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::DEBUG)
-            .with_writer(log_writer.clone())
-            .with_ansi(false)
-            .finish();
-        let _guard = tracing::subscriber::set_default(subscriber);
+    .start(move |context| {
+        async move {
+            use commonware_runtime::Supervisor as _;
+            let clock = context.child("verify");
+            let (marshal_mailbox, resolver_keepalive, actor_handle) =
+                start_marshal_without_available_block(context).await;
+            let shared =
+                finalizer_test_shared(marshal_mailbox, HybridSchemeProvider::<MinSig>::new());
 
-        let clock = context.child("verify");
-        let (marshal_mailbox, resolver_keepalive, actor_handle) =
-            start_marshal_without_available_block(context).await;
-        let shared = finalizer_test_shared(marshal_mailbox, HybridSchemeProvider::<MinSig>::new());
+            let round = Round::new(Epoch::new(0), View::new(1201));
+            let digest = Digest(B256::repeat_byte(0xA7));
+            let result = crate::application::verify_resolution::resolve_for_verify(
+                &shared.block_cache,
+                &shared.marshal_mailbox,
+                &clock,
+                round,
+                digest,
+                crate::application::verify_resolution::VerifyResolveTarget::Block,
+            )
+            .await;
 
-        let round = Round::new(Epoch::new(0), View::new(1201));
-        let digest = Digest(B256::repeat_byte(0xA7));
-        let result = crate::application::verify_resolution::resolve_for_verify(
-            &shared.block_cache,
-            &shared.marshal_mailbox,
-            &clock,
-            round,
-            digest,
-            crate::application::verify_resolution::VerifyResolveTarget::Block,
-        )
-        .await;
+            drop(resolver_keepalive);
+            actor_handle.abort();
+            let _ = actor_handle.await;
 
-        drop(resolver_keepalive);
-        actor_handle.abort();
-        let _ = actor_handle.await;
-
-        (
-            matches!(
-                result,
-                Err(crate::application::verify_resolution::VerifyResolveError::Timeout)
-            ),
-            log_writer.contents(),
-        )
+            (
+                matches!(
+                    result,
+                    Err(crate::application::verify_resolution::VerifyResolveError::Timeout)
+                ),
+                log_writer.contents(),
+            )
+        }
+        .with_subscriber(subscriber)
     });
 
     assert!(
