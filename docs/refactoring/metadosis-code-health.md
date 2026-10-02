@@ -11,7 +11,7 @@ Public commands, read APIs, Solidity ABI and protocol economics stay unchanged.
 - [x] Decompose aggregate validation by index invariant.
 - [x] Separate request, finality and voting.
 - [x] Isolate completion and expiry.
-- [ ] Separate worldwide-day advancement and effects.
+- [x] Separate worldwide-day advancement and effects.
 - [ ] Decompose activation fixtures by domain responsibility.
 - [ ] Extract precompile queries; run final verification and static analysis.
 
@@ -69,3 +69,9 @@ permit binding, conservation, applied evidence, persistence and ordered events.
 The one-shot permit still commits last, and the generation write still precedes
 the finalized-record check inside the existing rollback boundary. Failed expiry
 checks preserve fallible read order and split identity/membership/evidence policy.
+
+Step 6: 252 library tests and 60 lifecycle tests after the final context cleanup
+passed. Advancement keeps a single retained-count snapshot and admission budget
+for the tick. Effects preserve the distinct Tribute/Promis mutation order of
+capacity forfeiture and missed offering. Only the existing VWAP overflow prefix
+is tolerated; every other snapshot error still propagates.

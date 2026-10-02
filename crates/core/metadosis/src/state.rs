@@ -26,6 +26,23 @@ pub enum DayLimitFormationReceipt {
 }
 
 impl MetadosisContract<'_> {
+    pub(crate) fn validate_day_limit_binding(
+        &self,
+        current: &crate::aggregate::WwdProjection,
+        reason: &'static str,
+    ) -> Result<()> {
+        match self.ocomp_day_limit_formation(current.worldwide_day)? {
+            Some(formation) if formation.day_limit == current.metadosis_limit_amount => Ok(()),
+            Some(_) => Err(crate::errors::storage_corruption(format!(
+                "{reason} formed day limit does not match WWD state"
+            ))),
+            None if current.metadosis_limit_amount.is_zero() => Ok(()),
+            None => Err(crate::errors::storage_corruption(format!(
+                "{reason} has a day limit with no formation"
+            ))),
+        }
+    }
+
     // --- WorldwideDay Management ---
 
     pub(crate) fn commit_create_worldwide_day(
