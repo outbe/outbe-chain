@@ -645,7 +645,7 @@
         "internalType": "uint32"
       },
       {
-        "name": "entryPrice",
+        "name": "entryPriceMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

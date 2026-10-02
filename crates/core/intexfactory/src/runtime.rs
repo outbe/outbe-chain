@@ -132,7 +132,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
         crate::precompile::IIntexFactory::SeriesIssued {
             seriesId: params.series_id.into(),
             issuedUnits: params.issued_units,
-            entryPrice: params.entry_price_minor,
+            entryPriceMinor: params.entry_price_minor,
         },
     )?;
 

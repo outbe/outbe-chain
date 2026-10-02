@@ -133,7 +133,7 @@ interface IIntexFactory {
     function seriesUnitCounts(bytes14 seriesId) external view returns (UnitCounts memory);
 
     /// @notice A new series was created from a cleared auction.
-    event SeriesIssued(bytes14 indexed seriesId, uint32 issuedUnits, uint256 entryPrice);
+    event SeriesIssued(bytes14 indexed seriesId, uint32 issuedUnits, uint256 entryPriceMinor);
 
     /// @notice `amount` Issued Intexes of `seriesId` were settled.
     event Settled(bytes14 indexed seriesId, address indexed intexOwner, uint256 amount);
