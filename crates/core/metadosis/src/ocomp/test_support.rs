@@ -1724,8 +1724,7 @@ impl ActivationFixture {
                 tribute_nominal: totals.tribute_nominal_amount,
                 tribute_total_supply: tribute.total_supply.read().unwrap(),
                 carry_over: outbe_promislimit::PromisLimitContract::new(storage)
-                    .total_unallocated
-                    .read()
+                    .get_total_unallocated()
                     .unwrap(),
                 owner_events,
             }

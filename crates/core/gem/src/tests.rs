@@ -1270,9 +1270,9 @@ fn forfeit_fails_once(call: fn(&StorageHandle, U256, u64)) -> (HashMapStoragePro
         call(&storage, gem_id, T_NOW);
         let hour = GemContract::deadline_hour(T_NOW + 7 * 86_400);
         // The credit overflows, so the forfeit reverts as a whole.
-        outbe_promislimit::PromisLimitContract::new(storage.clone())
-            .set_total_unallocated(U256::MAX)
-            .unwrap();
+        let mut limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
+        limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
+        limit.checked_add_carry_over(U256::MAX).unwrap();
 
         let now = GemContract::hour_end(hour);
         let ctx = block_ctx_at(&storage, now);
@@ -1292,7 +1292,7 @@ fn forfeit_fails_once(call: fn(&StorageHandle, U256, u64)) -> (HashMapStoragePro
 
     StorageHandle::enter(&mut provider, |storage| {
         outbe_promislimit::PromisLimitContract::new(storage.clone())
-            .set_total_unallocated(U256::ZERO)
+            .checked_take_carry_over_up_to(U256::MAX)
             .unwrap();
         let ctx = block_ctx_at(&storage, GemContract::hour_end(retry));
         <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
@@ -1348,8 +1348,9 @@ fn a_member_that_cannot_burn_does_not_hold_back_its_bucket() {
         let now = first_due_block(storage, gems[0]);
         // Room for the small load's credit only.
         let mut limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
+        limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
         limit
-            .set_total_unallocated(U256::MAX - U256::from(500u64))
+            .checked_add_carry_over(U256::MAX - U256::from(500u64))
             .unwrap();
 
         // The failing member sits on top, where the sweep starts.
@@ -1358,7 +1359,7 @@ fn a_member_that_cannot_burn_does_not_hold_back_its_bucket() {
         assert_eq!(gem_state(storage, gems[1]), GemState::Called as u8);
         assert!(bucket_of(storage, gems[1]).is_zero(), "queued on its own");
 
-        limit.set_total_unallocated(U256::ZERO).unwrap();
+        limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
         begin_block_at(
             storage,
             GemContract::hour_end(GemContract::deadline_hour(now) + 1),

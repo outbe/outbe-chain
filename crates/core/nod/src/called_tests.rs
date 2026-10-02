@@ -1323,7 +1323,8 @@ fn mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exerci
         finalize_through(storage, past);
         // A failed Promis credit must restore every unpaid body and index before retry.
         let mut limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
-        limit.set_total_unallocated(U256::MAX).unwrap();
+        limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
+        limit.checked_add_carry_over(U256::MAX).unwrap();
         assert_eq!(scan(storage, scope, parent, past), 0);
         assert_eq!(nod.total_supply().unwrap(), 3);
         assert_eq!(nod.bucket_nod_count.read(&key).unwrap(), 2);
@@ -1334,7 +1335,7 @@ fn mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exerci
             .unwrap()
             .is_some());
         assert_eq!(reserve(storage), U256::MAX);
-        limit.set_total_unallocated(U256::ZERO).unwrap();
+        limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
         assert_eq!(scan(storage, scope, parent, past), 2);
         let expected = items[0].gratis_load_minor + items[2].gratis_load_minor;
         assert_eq!(reserve(storage), expected);
