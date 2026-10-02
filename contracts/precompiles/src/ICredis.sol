@@ -87,7 +87,8 @@ interface ICredis {
         uint64 lastSettledAt;
         /// 0 until the position is called.
         uint64 calledAt;
-        /// See {State}.
+        /// See {State}. Read-time: a Called position past its settlement deadline reads
+        /// Void before the void sweep reaches it.
         uint8 state;
         /// Lifetime interest collected, in asset minor units. The sum of successful
         /// `SettlementApplied.interestPaid` deltas. Current-period accrual is

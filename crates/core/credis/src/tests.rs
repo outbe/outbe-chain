@@ -1902,6 +1902,10 @@ fn a_called_position_past_its_deadline_shows_void() {
         assert_eq!(trait_value(&json, "State").unwrap(), "Void");
         assert_eq!(trait_value(&json, "Settlement Deadline").unwrap(), deadline);
         assert!(svg.contains(">VOID</text>"));
+        let data = ICredis::getPositionCall { positionId: id }.abi_encode();
+        let out = dispatch(storage.clone(), &data, alice(), U256::ZERO).unwrap();
+        let read = ICredis::getPositionCall::abi_decode_returns(&out).unwrap();
+        assert_eq!(read.state, CredisState::Void as u8);
         assert_eq!(
             CredisContract::new(storage)
                 .get_position(id)
