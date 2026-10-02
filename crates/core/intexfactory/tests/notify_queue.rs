@@ -7,7 +7,9 @@
 use alloy_primitives::U256;
 use alloy_sol_types::SolEvent;
 use outbe_intex::SeriesId;
-use outbe_intexfactory::constants::{MAX_CALLED_NOTICE_ATTEMPTS, MAX_ROUTER_CALLS_PER_FIRING};
+use outbe_intexfactory::constants::{
+    MAX_CALLED_NOTICE_ATTEMPTS, MAX_REFUSED_RUNS_PER_FIRING, MAX_ROUTER_CALLS_PER_FIRING,
+};
 use outbe_intexfactory::notify::{called_notice_attempts, drain_notices, pack_called_notice};
 use outbe_intexfactory::precompile::IIntexFactory::CalledNoticeDropped;
 use outbe_intexfactory::IntexFactoryContract;
@@ -57,7 +59,7 @@ fn drain(handle: &StorageHandle<'_>) {
         BlockContext::empty_for_tests(1, NOW, CHAIN_ID),
         handle.clone(),
     );
-    drain_notices(&ctx).expect("a dropped notice never fails the drain");
+    drain_notices(&ctx).expect("a refused notice never fails the drain");
 }
 
 fn queue_bounds(handle: &StorageHandle<'_>) -> (u32, u32) {
@@ -217,4 +219,28 @@ fn a_refused_notice_does_not_hold_back_the_rest() {
         assert_eq!(queue_bounds(&handle), (0, 0));
     });
     assert!(dropped_notices(&storage).is_empty());
+}
+
+#[test]
+fn a_router_refusing_every_run_ends_the_firing_early() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |handle| {
+        let queued_runs = MAX_REFUSED_RUNS_PER_FIRING + 2;
+        seed(&handle, queued_runs);
+        drain(&handle);
+
+        assert_eq!(
+            queue_bounds(&handle),
+            (
+                MAX_REFUSED_RUNS_PER_FIRING,
+                queued_runs + MAX_REFUSED_RUNS_PER_FIRING
+            ),
+            "the firing stops after the refusals in a row"
+        );
+        assert_eq!(
+            called_notice_attempts(queued(&handle, MAX_REFUSED_RUNS_PER_FIRING)),
+            0,
+            "an entry the firing never reached keeps its count"
+        );
+    });
 }

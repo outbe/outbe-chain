@@ -7,7 +7,8 @@ use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::StorageHandle};
 
 use crate::constants::{
-    MAX_CALLED_NOTICE_ATTEMPTS, MAX_ROUTER_CALLS_PER_FIRING, MAX_SERIES_PER_MARK,
+    MAX_CALLED_NOTICE_ATTEMPTS, MAX_REFUSED_RUNS_PER_FIRING, MAX_ROUTER_CALLS_PER_FIRING,
+    MAX_SERIES_PER_MARK,
 };
 use crate::precompile::IIntexFactory::CalledNoticeDropped;
 use crate::schema::IntexFactoryContract;
@@ -65,10 +66,14 @@ pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     let stop = tail;
     let mut index = head;
     let mut messages: u32 = 0;
-    while index < stop && messages < MAX_ROUTER_CALLS_PER_FIRING {
+    let mut refused_runs: u32 = 0;
+    while index < stop
+        && messages < MAX_ROUTER_CALLS_PER_FIRING
+        && refused_runs < MAX_REFUSED_RUNS_PER_FIRING
+    {
         let entry = factory.notify_at.read(&index)?;
         let calls_left = MAX_ROUTER_CALLS_PER_FIRING - messages;
-        index += drain_called_run(
+        let (consumed, refused) = drain_called_run(
             &factory,
             &storage,
             index,
@@ -77,6 +82,8 @@ pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
             &mut messages,
             calls_left,
         )?;
+        index += consumed;
+        refused_runs = if refused { refused_runs + 1 } else { 0 };
     }
     if index >= factory.notify_tail.read()? {
         factory.notify_head.write(0)?;
@@ -89,6 +96,7 @@ pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
 
 /// Send the run of Called entries starting at `at` that shares its day and call time. `stop` bounds the
 /// look-ahead to this firing's entries; `notify_called` splits the run where the wire's cap forces it.
+/// Returns the entries consumed and whether the router refused all of them.
 fn drain_called_run(
     factory: &IntexFactoryContract,
     storage: &StorageHandle<'_>,
@@ -97,7 +105,7 @@ fn drain_called_run(
     first: U256,
     messages: &mut u32,
     calls_left: u32,
-) -> Result<u32> {
+) -> Result<(u32, bool)> {
     let (first_id, called_at) = unpack_called_notice(first);
     let worldwide_day = first_id.worldwide_day();
     let mut run = vec![first_id];
@@ -123,13 +131,14 @@ fn drain_called_run(
     }
     *messages = messages.saturating_add(router_calls(run.len()));
     let refused = crate::called::notify_called(storage, worldwide_day, called_at, &run);
+    let all_refused = refused.len() == run.len();
     // A refused entry goes behind this firing's window, so it never wedges the drain.
     for entry in entries {
         if refused.contains(&unpack_called_notice(entry).0) {
             requeue_refused(factory, storage, entry)?;
         }
     }
-    Ok(index - at)
+    Ok((index - at, all_refused))
 }
 
 fn requeue_refused(

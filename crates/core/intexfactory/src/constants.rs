@@ -35,8 +35,12 @@ pub const CALL_SWEEP: u8 = 1;
 /// leaving CycleTick its block headroom.
 pub const MAX_ROUTER_CALLS_PER_FIRING: u32 = 64;
 
-/// Router calls a Called notice gets before it is dropped: about an hour of drain firings.
+/// Router calls a Called notice gets before it is dropped, one per drain firing that reaches it.
 pub const MAX_CALLED_NOTICE_ATTEMPTS: u8 = 12;
+
+/// Consecutive wholly refused runs that end a drain firing: a router that refuses every send
+/// would otherwise spend the whole budget on calls that cannot land.
+pub const MAX_REFUSED_RUNS_PER_FIRING: u32 = 3;
 
 /// Router calls one `intex_drain_parked` firing may make; each is a view read plus a cross-chain send.
 pub const MAX_PARKED_CALLS_PER_FIRING: u32 = 16;
