@@ -135,7 +135,7 @@ pub struct ClearingResult {
     /// `(issuance, reference)` ISO pair of each winning bid (parallel to `winners`);
     /// the day issues one series per distinct pair.
     pub winner_currencies: Vec<(u16, u16)>,
-    /// Index into `winners` of the one bid filled in part, where supply ran out.
+    /// Index into `winners` of the one bid filled in part, where the Desis Limit ran out.
     pub partial_winner: Option<usize>,
     pub all_bidders: Vec<Address>,
     pub refunded_amounts: Vec<u128>,
@@ -178,9 +178,9 @@ pub struct DesisContract {
     pub bid_packed: outbe_primitives::storage::dsl::Map<B256, U256>,
 
     // --- Pending clearing ---
-    /// worldwide_day -> supply (Intex units) pending at clearing stage.
+    /// worldwide_day -> Desis Limit in whole Intex units, pending at clearing stage.
     #[attribute(order = 7)]
-    pub pending_supply_intex: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
+    pub pending_desis_limit_units: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 
     // --- Global clearing state ---
     /// Most recently cleared worldwide_day (for minBidQty 4% derivation).
@@ -191,7 +191,7 @@ pub struct DesisContract {
     pub last_clearing_issued_count: outbe_primitives::storage::dsl::Value<u32>,
 
     /// worldwide_day -> 1 once `arm_clearing` has run; lets `force_clear` tell a
-    /// genuine zero supply from a clearing that was never initiated.
+    /// genuine zero Desis Limit from a clearing that was never initiated.
     #[attribute(order = 10)]
     pub clearing_initiated: outbe_primitives::storage::dsl::Map<WorldwideDay, u8>,
 

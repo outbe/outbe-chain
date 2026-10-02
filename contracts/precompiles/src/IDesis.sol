@@ -81,8 +81,8 @@ interface IDesis {
     event ReferenceCurrencyLetterTaken(uint32 indexed worldwideDay, uint16 indexed isoCode, uint16 indexed takenBy);
     /// @notice The only committed auction-brief rejection. Technical and
     /// invariant failures revert instead of being converted to business state.
-    /// `reasonCode == 1` means the supply exceeds Desis' uint128 auction domain.
+    /// `reasonCode == 1` means the Desis Limit exceeds Desis' uint128 auction domain.
     event AuctionBriefRejectedToCarryOver(
-        uint32 indexed worldwideDay, uint256 supply, uint256 maxAccepted, uint8 reasonCode
+        uint32 indexed worldwideDay, uint256 desisLimitMinor, uint256 maxAccepted, uint8 reasonCode
     );
 }

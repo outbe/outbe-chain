@@ -775,7 +775,7 @@ fn dispatch_auction_brief_oversized_limit_returns_typed_full_carry_over() {
             )
             .unwrap(),
             AuctionBriefReceipt::RejectedToCarryOver {
-                reason: AuctionBriefRejectionReason::SupplyExceedsAuctionDomain,
+                reason: AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
                 desis_limit_minor: U256::MAX,
                 max_accepted: U256::from(u128::MAX),
             }
@@ -793,11 +793,11 @@ fn dispatch_auction_brief_oversized_limit_returns_typed_full_carry_over() {
     assert_eq!(logs.len(), 1);
     let event = IDesis::AuctionBriefRejectedToCarryOver::decode_log_data(&logs[0]).unwrap();
     assert_eq!(event.worldwideDay, WORLDWIDE_DAY.value());
-    assert_eq!(event.supply, U256::MAX);
+    assert_eq!(event.desisLimitMinor, U256::MAX);
     assert_eq!(event.maxAccepted, U256::from(u128::MAX));
     assert_eq!(
         event.reasonCode,
-        AuctionBriefRejectionReason::SupplyExceedsAuctionDomain.code()
+        AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain.code()
     );
 }
 
@@ -832,7 +832,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
             )
             .unwrap(),
             AuctionBriefReceipt::RejectedToCarryOver {
-                reason: AuctionBriefRejectionReason::SupplyExceedsAuctionDomain,
+                reason: AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
                 desis_limit_minor: supply,
                 max_accepted: U256::from(u128::MAX),
             }
@@ -846,11 +846,11 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
         crate::precompile::IDesis::AuctionBriefRejectedToCarryOver::decode_log_data(&logs[0])
             .unwrap();
     assert_eq!(event.worldwideDay, WORLDWIDE_DAY.value());
-    assert_eq!(event.supply, supply);
+    assert_eq!(event.desisLimitMinor, supply);
     assert_eq!(event.maxAccepted, U256::from(u128::MAX));
     assert_eq!(
         event.reasonCode,
-        AuctionBriefRejectionReason::SupplyExceedsAuctionDomain.code()
+        AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain.code()
     );
 }
 
@@ -1220,7 +1220,10 @@ fn schedule_arms_the_clearing_gate_at_reveal_end() {
         );
         assert_eq!(contract.clearing_initiated.read(&WORLDWIDE_DAY).unwrap(), 1);
         assert_eq!(
-            contract.pending_supply_intex.read(&WORLDWIDE_DAY).unwrap(),
+            contract
+                .pending_desis_limit_units
+                .read(&WORLDWIDE_DAY)
+                .unwrap(),
             10
         );
         assert_eq!(contract.gate_active_count.read().unwrap(), 1);
@@ -1352,7 +1355,7 @@ fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
         );
         assert_eq!(
             contract
-                .pending_supply_intex
+                .pending_desis_limit_units
                 .read(&NEXT_WORLDWIDE_DAY)
                 .unwrap(),
             1_000,

@@ -344,7 +344,7 @@ fn dispatch_brief(
                 )
             }),
         outbe_desis::api::AuctionBriefReceipt::RejectedToCarryOver {
-            reason: outbe_desis::api::AuctionBriefRejectionReason::SupplyExceedsAuctionDomain,
+            reason: outbe_desis::api::AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
             desis_limit_minor: rejected_desis_limit_minor,
             max_accepted,
         } => {

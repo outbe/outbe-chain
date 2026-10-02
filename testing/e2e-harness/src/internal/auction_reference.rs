@@ -49,7 +49,7 @@ fn payment(quantity: u32, load: u128, rate: u32) -> U256 {
 /// Stable sorting preserves that order when rate and reveal timestamp tie.
 pub(crate) fn clear(
     mut bids: Vec<Bid>,
-    supply: u32,
+    desis_limit_units: u32,
     load: u128,
     min_rate: u32,
     min_qty: u16,
@@ -58,7 +58,7 @@ pub(crate) fn clear(
     assert!(load > 0);
     let demand = bids.iter().map(|b| u64::from(b.quantity)).sum();
     bids.sort_by_key(|bid| (std::cmp::Reverse(bid.rate), bid.timestamp));
-    let mut remaining = supply;
+    let mut remaining = desis_limit_units;
     let mut rate = min_rate;
     let mut allocations = Vec::new();
     for bid in bids {
@@ -93,7 +93,7 @@ pub(crate) fn clear(
     }
     Clearing {
         rate,
-        units: supply - remaining,
+        units: desis_limit_units - remaining,
         demand,
         allocations,
     }

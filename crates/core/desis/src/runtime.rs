@@ -576,13 +576,13 @@ fn arm_clearing(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u
     let desis_limit_minor =
         u128::try_from(contract.pending_desis_limit_minor.read(&worldwide_day)?)
             .map_err(|_| DesisError::InvalidWorldwideDay(worldwide_day))?;
-    let supply_intex =
+    let desis_limit_units =
         (desis_limit_minor / config.promis_load_minor).min(u128::from(u32::MAX)) as u32;
 
     contract.clearing_initiated.write(&worldwide_day, 1u8)?;
     contract
-        .pending_supply_intex
-        .write(&worldwide_day, supply_intex)?;
+        .pending_desis_limit_units
+        .write(&worldwide_day, desis_limit_units)?;
     contract
         .clearing_deadline
         .write(&worldwide_day, now.saturating_add(BIDS_FANIN_TIMEOUT_SECS))?;
@@ -968,7 +968,7 @@ fn clear_inner(
     let mut contract = storage.contract::<DesisContract>();
     require_stage(&contract, worldwide_day, AuctionStage::Clearing)?;
 
-    let supply = contract.pending_supply_intex.read(&worldwide_day)?;
+    let desis_limit_units = contract.pending_desis_limit_units.read(&worldwide_day)?;
     if contract.clearing_initiated.read(&worldwide_day)? == 0 {
         return Err(DesisError::PendingClearingDataMissing(worldwide_day).into());
     }
@@ -983,7 +983,7 @@ fn clear_inner(
     let mut sorted = bids;
     sort_bids(&mut sorted);
 
-    let result = calculate_clearing(&sorted, &config, supply, min_bid_qty);
+    let result = calculate_clearing(&sorted, &config, desis_limit_units, min_bid_qty);
 
     // Persist clearing outcome and transition.
     contract.write_stage(worldwide_day, AuctionStage::Cleared)?;
@@ -996,7 +996,9 @@ fn clear_inner(
         contract.reset_chain_intake(worldwide_day, chain_id)?;
     }
     contract.day_bid_count.write(&worldwide_day, 0)?;
-    contract.pending_supply_intex.write(&worldwide_day, 0)?;
+    contract
+        .pending_desis_limit_units
+        .write(&worldwide_day, 0)?;
     contract
         .pending_desis_limit_minor
         .write(&worldwide_day, U256::ZERO)?;
@@ -1136,12 +1138,12 @@ pub(crate) fn rate_lock(qty: u64, basis: u128, rate: u32) -> u128 {
     u128::try_from(amount).unwrap_or(u128::MAX)
 }
 
-/// Uniform-rate clearing: allocate sorted bids until `supply` runs out; the
+/// Uniform-rate clearing: allocate sorted bids until `desis_limit_units` runs out; the
 /// clearing rate is the last allocated bid's. lock/pay uses the shared scale-1e6 denominator.
 fn calculate_clearing(
     bids: &[(u32, BidData)],
     config: &AuctionConfig,
-    supply: u32,
+    desis_limit_units: u32,
     min_qty: u16,
 ) -> ClearingResult {
     let len = bids.len();
@@ -1157,7 +1159,7 @@ fn calculate_clearing(
     let mut clearing_rate: u32 = config.min_intex_bid_rate;
 
     for (i, (chain_id, bid)) in bids.iter().enumerate() {
-        if total_allocated >= supply {
+        if total_allocated >= desis_limit_units {
             break;
         }
         if bid.intex_bid_rate < config.min_intex_bid_rate {
@@ -1167,7 +1169,7 @@ fn calculate_clearing(
             continue;
         }
 
-        let allocatable = supply - total_allocated;
+        let allocatable = desis_limit_units - total_allocated;
         let allocated = (bid.intex_quantity as u32).min(allocatable);
 
         if allocated > 0 {
