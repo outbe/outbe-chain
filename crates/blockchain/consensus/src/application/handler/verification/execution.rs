@@ -1,7 +1,7 @@
 //! Parent and proposed-block execution adapters; retries belong to the shared driver.
 use super::{
     ApplicationShared, ConsensusBlock, ExecutionReadBudget, OutbeExecutionData,
-    PayloadVerification, ResolvedVerifyBlocks, VerifyRequest,
+    PayloadValidationRequest, PayloadVerification, ResolvedVerifyBlocks, VerifyRequest,
 };
 use crate::finalization::state::FinalizationViewAccess;
 use commonware_consensus::types::Height;
@@ -39,11 +39,13 @@ impl ApplicationShared {
                 match self
                     .verify_payload_with_syncing_retry(
                         clock,
-                        "parent",
-                        parent_digest,
-                        execution_data,
-                        response,
-                        execution_read_budget,
+                        PayloadValidationRequest {
+                            kind: "parent",
+                            digest: parent_digest,
+                            execution_data,
+                            response,
+                            execution_read_budget,
+                        },
                     )
                     .await?
                 {
@@ -110,11 +112,13 @@ impl ApplicationShared {
         } else {
             self.verify_payload_with_syncing_retry(
                 clock,
-                "block",
-                payload_digest,
-                execution_data,
-                response,
-                execution_read_budget,
+                PayloadValidationRequest {
+                    kind: "block",
+                    digest: payload_digest,
+                    execution_data,
+                    response,
+                    execution_read_budget,
+                },
             )
             .await
         }

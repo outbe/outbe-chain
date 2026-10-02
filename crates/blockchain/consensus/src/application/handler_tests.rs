@@ -1,43 +1,43 @@
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::{Address, B256, Bytes};
 use alloy_rpc_types_engine::{PayloadStatus, PayloadStatusEnum};
 use commonware_actor::Feedback;
 use commonware_codec::Encode as _;
 use commonware_consensus::{
-    marshal::{self, core::Buffer, resolver::handler, Start, Update},
+    Reporter,
+    marshal::{self, Start, Update, core::Buffer, resolver::handler},
     simplex::types::{Activity, Finalization, Finalize, Proposal},
     types::{Epoch, FixedEpocher, Round, View, ViewDelta},
-    Reporter,
 };
 use commonware_cryptography::{
+    Signer as _,
     bls12381::{self, primitives::variant::MinSig},
     certificate::{Scheme as _, Verifier as _},
-    Signer as _,
 };
 use commonware_p2p::Recipients;
 use commonware_parallel::Sequential;
 use commonware_resolver::Resolver;
 use commonware_resolver::TargetedResolver;
-use commonware_runtime::{buffer::paged::CacheRef, Clock as _, Runner as _, Supervisor as _};
+use commonware_runtime::{Clock as _, Runner as _, Supervisor as _, buffer::paged::CacheRef};
 use commonware_storage::archive::immutable;
 use commonware_utils::{
+    TryCollect as _,
     acknowledgement::Acknowledgement,
     channel::oneshot,
     ordered::{Quorum, Set},
     vec::NonEmptyVec,
-    TryCollect as _,
 };
 use outbe_primitives::projection::{
-    projection_readiness, ProjectionCheckpoint, ProjectionFailure, ProjectionFailureClass,
-    ProjectionReadinessPublisher, ProjectionStatus,
+    ProjectionCheckpoint, ProjectionFailure, ProjectionFailureClass, ProjectionReadinessPublisher,
+    ProjectionStatus, projection_readiness,
 };
-use outbe_primitives::{consensus_metadata::CertifiedParentAccountingMetadata, OutbeHeader};
-use reth_ethereum::{primitives::SealedBlock, Block};
+use outbe_primitives::{OutbeHeader, consensus_metadata::CertifiedParentAccountingMetadata};
+use reth_ethereum::{Block, primitives::SealedBlock};
 use std::{
     io,
     num::{NonZeroU16, NonZeroU64, NonZeroUsize},
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc, Mutex as StdMutex,
+        atomic::{AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -45,7 +45,7 @@ use std::{
 use crate::ancestry_readiness::AncestryReadiness;
 use crate::dkg_manager::Mailbox as DkgManagerMailbox;
 use crate::finalization::attestation::{
-    validate_consensus_metadata_for_verify, AttestationValidationContext, AttestationVerdict,
+    AttestationValidationContext, AttestationVerdict, validate_consensus_metadata_for_verify,
 };
 use crate::finalization::state::FinalizationViewAccess;
 use crate::finalization::util::build_signer_bitmap;
@@ -56,7 +56,7 @@ use crate::vrf_safety::VrfSafetyGate;
 
 use super::{ApplicationShared, CommitteeProvider, ConsensusBlock, Digest};
 use crate::application::epoch_boundary::{
-    resolve_epoch_boundary_parent, ApplicationEpochFence, EpochBoundaryParentError,
+    ApplicationEpochFence, EpochBoundaryParentError, resolve_epoch_boundary_parent,
 };
 
 #[path = "handler/tests/verify_stages.rs"]
@@ -88,24 +88,9 @@ static MARSHAL_TEST_ID: AtomicU64 = AtomicU64::new(0);
 async fn metadata_verify_verdict(
     clock: &impl commonware_runtime::Clock,
     metadata: &CertifiedParentAccountingMetadata,
-    provider: &HybridSchemeProvider<MinSig>,
-    elector_provider: &HybridElectorConfigProvider<MinSig>,
-    committee_provider: &CommitteeProvider,
-    marshal_mailbox: &crate::marshal_types::MarshalMailbox,
-    proposed_block_number: u64,
+    context: &AttestationValidationContext<'_>,
 ) -> AttestationVerdict {
-    validate_consensus_metadata_for_verify(
-        clock,
-        Some(metadata),
-        &AttestationValidationContext {
-            certificate_scheme_provider: provider,
-            elector_config_provider: elector_provider,
-            committee_provider,
-            marshal_mailbox,
-            proposed_block_number,
-        },
-    )
-    .await
+    validate_consensus_metadata_for_verify(clock, Some(metadata), context).await
 }
 
 #[derive(Clone, Default)]
@@ -1133,8 +1118,12 @@ fn finalization_metadata_fixture_with_parent(
         verifier,
         committee,
     } = finalization_metadata_context(round.epoch());
-    let (metadata, finalization) =
-        finalization_metadata_from_context(block, round, parent, &signers, &verifier, committee);
+    let (metadata, finalization) = finalization_metadata_from_context(
+        block,
+        round,
+        parent,
+        FinalizationSigningContext::new(&signers, &verifier, committee),
+    );
 
     (scheme_provider, committee_provider, metadata, finalization)
 }
@@ -1198,17 +1187,41 @@ fn finalization_metadata_context(epoch: Epoch) -> FinalizationMetadataContext {
     }
 }
 
+/// Signing material for an independently constructed finalization fixture.
+struct FinalizationSigningContext<'a> {
+    signers: &'a [HybridScheme<MinSig>],
+    verifier: &'a HybridScheme<MinSig>,
+    committee: Vec<Address>,
+}
+
+impl<'a> FinalizationSigningContext<'a> {
+    fn new(
+        signers: &'a [HybridScheme<MinSig>],
+        verifier: &'a HybridScheme<MinSig>,
+        committee: Vec<Address>,
+    ) -> Self {
+        Self {
+            signers,
+            verifier,
+            committee,
+        }
+    }
+}
+
 fn finalization_metadata_from_context(
     block: &ConsensusBlock,
     round: Round,
     parent: View,
-    signers: &[HybridScheme<MinSig>],
-    verifier: &HybridScheme<MinSig>,
-    committee: Vec<Address>,
+    signing: FinalizationSigningContext<'_>,
 ) -> (
     CertifiedParentAccountingMetadata,
     Finalization<HybridScheme<MinSig>, Digest>,
 ) {
+    let FinalizationSigningContext {
+        signers,
+        verifier,
+        committee,
+    } = signing;
     let proposal = Proposal::new(round, parent, block.digest());
     let finalizes = signers
         .iter()
@@ -1295,11 +1308,13 @@ fn consensus_metadata_verify_accepts_canonical_marshal_mapping() {
                 && metadata_verify_verdict(
                     &clock,
                     &metadata,
-                    &provider,
-                    &elector_provider,
-                    &committee_provider,
-                    &marshal_mailbox,
-                    6,
+                    &AttestationValidationContext {
+                        certificate_scheme_provider: &provider,
+                        elector_config_provider: &elector_provider,
+                        committee_provider: &committee_provider,
+                        marshal_mailbox: &marshal_mailbox,
+                        proposed_block_number: 6,
+                    },
                 )
                 .await
                     == AttestationVerdict::AcceptValid;
@@ -1519,9 +1534,7 @@ fn consensus_metadata_verify_accepts_canonical_missed_proposers() {
                 &previous_block,
                 previous_round,
                 View::new(4),
-                &signers,
-                &verifier,
-                committee.clone(),
+                FinalizationSigningContext::new(&signers, &verifier, committee.clone()),
             );
 
             let current_round = Round::new(epoch, View::new(8));
@@ -1531,9 +1544,7 @@ fn consensus_metadata_verify_accepts_canonical_missed_proposers() {
                 &current_block,
                 current_round,
                 View::new(5),
-                &signers,
-                &verifier,
-                committee,
+                FinalizationSigningContext::new(&signers, &verifier, committee),
             );
             metadata.missed_proposers = vec![
                 outbe_primitives::consensus_metadata::MissedProposerEvent {
@@ -1572,11 +1583,13 @@ fn consensus_metadata_verify_accepts_canonical_missed_proposers() {
                 && metadata_verify_verdict(
                     &clock,
                     &metadata,
-                    &provider,
-                    &elector_provider,
-                    &committee_provider,
-                    &marshal_mailbox,
-                    6,
+                    &AttestationValidationContext {
+                        certificate_scheme_provider: &provider,
+                        elector_config_provider: &elector_provider,
+                        committee_provider: &committee_provider,
+                        marshal_mailbox: &marshal_mailbox,
+                        proposed_block_number: 6,
+                    },
                 )
                 .await
                     == AttestationVerdict::AcceptValid;
@@ -1618,9 +1631,7 @@ fn consensus_metadata_verify_rejects_forged_missed_proposers() {
                 &previous_block,
                 previous_round,
                 View::new(4),
-                &signers,
-                &verifier,
-                committee.clone(),
+                FinalizationSigningContext::new(&signers, &verifier, committee.clone()),
             );
 
             let current_round = Round::new(epoch, View::new(8));
@@ -1630,9 +1641,7 @@ fn consensus_metadata_verify_rejects_forged_missed_proposers() {
                 &current_block,
                 current_round,
                 View::new(5),
-                &signers,
-                &verifier,
-                committee,
+                FinalizationSigningContext::new(&signers, &verifier, committee),
             );
             metadata.missed_proposers = vec![
                 outbe_primitives::consensus_metadata::MissedProposerEvent {
@@ -1671,11 +1680,13 @@ fn consensus_metadata_verify_rejects_forged_missed_proposers() {
                 && metadata_verify_verdict(
                     &clock,
                     &metadata,
-                    &provider,
-                    &elector_provider,
-                    &committee_provider,
-                    &marshal_mailbox,
-                    6,
+                    &AttestationValidationContext {
+                        certificate_scheme_provider: &provider,
+                        elector_config_provider: &elector_provider,
+                        committee_provider: &committee_provider,
+                        marshal_mailbox: &marshal_mailbox,
+                        proposed_block_number: 6,
+                    },
                 )
                 .await
                     != AttestationVerdict::AcceptValid;
@@ -1724,11 +1735,13 @@ fn consensus_metadata_verify_rejects_inflated_finalized_number() {
                 && metadata_verify_verdict(
                     &clock,
                     &metadata,
-                    &provider,
-                    &elector_provider,
-                    &committee_provider,
-                    &marshal_mailbox,
-                    7,
+                    &AttestationValidationContext {
+                        certificate_scheme_provider: &provider,
+                        elector_config_provider: &elector_provider,
+                        committee_provider: &committee_provider,
+                        marshal_mailbox: &marshal_mailbox,
+                        proposed_block_number: 7,
+                    },
                 )
                 .await
                     != AttestationVerdict::AcceptValid;
@@ -1768,11 +1781,13 @@ fn consensus_metadata_verify_rejects_missing_marshal_mapping() {
             let rejected = metadata_verify_verdict(
                 &clock,
                 &metadata,
-                &provider,
-                &elector_provider,
-                &committee_provider,
-                &marshal_mailbox,
-                6,
+                &AttestationValidationContext {
+                    certificate_scheme_provider: &provider,
+                    elector_config_provider: &elector_provider,
+                    committee_provider: &committee_provider,
+                    marshal_mailbox: &marshal_mailbox,
+                    proposed_block_number: 6,
+                },
             )
             .await
                 != AttestationVerdict::AcceptValid;

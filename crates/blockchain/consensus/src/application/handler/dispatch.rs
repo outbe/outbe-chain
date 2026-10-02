@@ -1,4 +1,5 @@
 use super::*;
+use crate::application::handler::verification::VerifyTask;
 use commonware_utils::channel::oneshot;
 
 struct ProposalReply {
@@ -139,10 +140,12 @@ impl ApplicationShared {
         match self
             .handle_verify(
                 clock,
-                verify.context,
-                verify.payload,
-                response,
-                execution_read_budget,
+                VerifyTask {
+                    context: verify.context,
+                    payload_digest: verify.payload,
+                    response,
+                    execution_read_budget,
+                },
             )
             .await
         {

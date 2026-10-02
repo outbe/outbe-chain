@@ -33,6 +33,23 @@ mod prechecks;
 mod resolution;
 mod verdict;
 
+/// Owned inputs and cancellation budget for one spawned verification task.
+pub(super) struct VerifyTask {
+    pub(super) context: SimplexContext,
+    pub(super) payload_digest: Digest,
+    pub(super) response: oneshot::Sender<bool>,
+    pub(super) execution_read_budget: ExecutionReadBudget,
+}
+
+/// One immutable payload target and the borrowed cancellation state for retries.
+struct PayloadValidationRequest<'a> {
+    kind: &'static str,
+    digest: Digest,
+    execution_data: OutbeExecutionData,
+    response: &'a mut oneshot::Sender<bool>,
+    execution_read_budget: &'a ExecutionReadBudget,
+}
+
 /// Request identity stays in the canonical Simplex context throughout every stage.
 struct VerifyRequest {
     context: SimplexContext,
@@ -172,12 +189,15 @@ impl ApplicationShared {
     async fn verify_payload_with_syncing_retry(
         &self,
         clock: &impl commonware_runtime::Clock,
-        kind: &'static str,
-        digest: Digest,
-        execution_data: OutbeExecutionData,
-        response: &mut oneshot::Sender<bool>,
-        execution_read_budget: &ExecutionReadBudget,
+        request: PayloadValidationRequest<'_>,
     ) -> eyre::Result<PayloadVerification> {
+        let PayloadValidationRequest {
+            kind,
+            digest,
+            execution_data,
+            response,
+            execution_read_budget,
+        } = request;
         let mut saw_syncing = false;
         loop {
             if response.is_closed() {
@@ -238,11 +258,14 @@ impl ApplicationShared {
     pub(super) async fn handle_verify(
         &self,
         clock: &(impl commonware_runtime::Clock + commonware_runtime::Supervisor),
-        context: super::ingress::SimplexContext,
-        payload_digest: Digest,
-        mut response: oneshot::Sender<bool>,
-        execution_read_budget: ExecutionReadBudget,
+        task: VerifyTask,
     ) -> eyre::Result<()> {
+        let VerifyTask {
+            context,
+            payload_digest,
+            mut response,
+            execution_read_budget,
+        } = task;
         let round = context.round;
         let (parent_view, parent) = context.parent;
         let parent_digest = Digest(parent.0);
