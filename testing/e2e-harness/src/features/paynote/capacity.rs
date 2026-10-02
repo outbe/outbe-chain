@@ -262,7 +262,7 @@ fn settle_gems(world: &mut World, notes_count: u32) {
             &eth::IGemFactory::GemSettled {
                 gemId: gem_id,
                 owner,
-                amountPaid: note.amount,
+                amountMinor: note.amount,
                 settlementCurrency: USD_ISO,
             },
         );
@@ -478,7 +478,7 @@ fn issue_gems(world: &mut World, notes_count: u32) -> Vec<U256> {
                 &eth::IGemFactory::issueGemCall {
                     positionId: position,
                     owner,
-                    promisLoad: U256::from(load),
+                    promisLoadMinor: U256::from(load),
                 },
             );
             assert_mined_success(&issued, &format!("issue GEM {}", gems.len()));
@@ -486,7 +486,10 @@ fn issue_gems(world: &mut World, notes_count: u32) -> Vec<U256> {
                 &issued.receipt,
                 addresses::GEM_FACTORY_ADDR,
             );
-            assert_eq!((event.owner, event.promisLoad), (owner, U256::from(load)));
+            assert_eq!(
+                (event.owner, event.promisLoadMinor),
+                (owner, U256::from(load))
+            );
             gems.push(event.gemId);
         }
         assert_eq!(
@@ -497,7 +500,7 @@ fn issue_gems(world: &mut World, notes_count: u32) -> Vec<U256> {
                     positionId: position
                 }
             )
-            .remainingCapacity,
+            .remainingCapacityMinor,
             U256::ZERO
         );
         if gems.len() % 100 == 0 {
@@ -518,12 +521,12 @@ fn issue_gems(world: &mut World, notes_count: u32) -> Vec<U256> {
         .collect();
     let floor = statuses
         .iter()
-        .map(|g| g.floorPrice)
+        .map(|g| g.floorPriceMinor)
         .max()
         .expect("GEM floors");
     let call = statuses
         .iter()
-        .map(|g| g.callPrice)
+        .map(|g| g.callPriceMinor)
         .min()
         .expect("GEM call prices");
     let quote = floor.checked_add(U256::ONE).expect("qualifying price");

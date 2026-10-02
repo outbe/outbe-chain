@@ -8,7 +8,7 @@ interface IGemFactory {
     function issueGemPosition(bytes14 sourceIntexId, uint256 amount) external returns (uint256 positionId);
     /// @notice Issue one Merchant gem to `owner`, draining the position's
     ///         capacity. Only the position's merchant (the caller) may call.
-    function issueGem(uint256 positionId, address owner, uint256 promisLoad) external returns (uint256 gemId);
+    function issueGem(uint256 positionId, address owner, uint256 promisLoadMinor) external returns (uint256 gemId);
 
     /// @notice Settle a gem paying its cost in `asset`. Any caller may pay; the
     ///         gem stays with its owner.
@@ -37,10 +37,10 @@ interface IGemFactory {
     /// @dev    `nonce` solves SHA256("OUTBE_GEM_MINING_V1" || `gemId` || owner || uint64(0) ||
     ///         `nonce`) to the protocol difficulty; the owner is the gem's, not the caller's.
     function minePromis(uint256 gemId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
-    /// @notice Cumulative totals since genesis. `totalGemFactoryUnits` counts every
-    ///         Promis unit ever sent there; it is not reduced when a position drains
+    /// @notice Cumulative totals since genesis. `totalCapacityMinor` counts all Promis
+    ///         capacity ever sent there; it is not reduced when a position drains
     ///         or expires.
-    function getStatistics() external view returns (uint256 totalGemsIssued, uint256 totalGemFactoryUnits);
+    function getStatistics() external view returns (uint256 totalGemsIssued, uint256 totalCapacityMinor);
 
     /// @notice What settling `gemId` with `asset` costs, and which of the gem's
     ///         two currencies that asset settles on. Reverts for an asset the
@@ -71,9 +71,9 @@ interface IGemFactory {
         uint256 positionId;
         address merchant;
         bytes14 sourceIntexId;
-        uint256 remainingCapacity;
-        uint256 sourceEntryPrice;
-        uint256 sourceFloorPrice;
+        uint256 remainingCapacityMinor;
+        uint256 sourceEntryPriceMinor;
+        uint256 sourceFloorPriceMinor;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         /// @notice When the position was issued.
@@ -90,13 +90,13 @@ interface IGemFactory {
         uint256 indexed gemId,
         uint8 gemType,
         address owner,
-        uint256 promisLoad,
-        uint256 entryPrice,
-        uint256 floorPrice,
+        uint256 promisLoadMinor,
+        uint256 entryPriceMinor,
+        uint256 floorPriceMinor,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
         uint64 issuedAt,
-        uint256 callPrice,
+        uint256 callPriceMinor,
         uint32 callWindow,
         uint32 callThreshold,
         uint32 callNoticePeriod,
@@ -108,20 +108,20 @@ interface IGemFactory {
         uint256 indexed positionId,
         address indexed merchant,
         bytes14 sourceIntexId,
-        uint256 capacity,
-        uint256 sourceEntryPrice,
-        uint256 sourceFloorPrice,
+        uint256 capacityMinor,
+        uint256 sourceEntryPriceMinor,
+        uint256 sourceFloorPriceMinor,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
         uint64 issuedAt,
         uint64 expiresAt
     );
     /// @notice A gem's Cost Amount was settled into the Reserve.
-    event GemSettled(uint256 indexed gemId, address owner, uint256 amountPaid, uint16 settlementCurrency);
+    event GemSettled(uint256 indexed gemId, address owner, uint256 amountMinor, uint16 settlementCurrency);
     /// @notice A settled gem right was exercised: it burned to mine confidential Promis.
-    event GemExercised(uint256 indexed gemId, address owner, uint256 promisLoad);
+    event GemExercised(uint256 indexed gemId, address owner, uint256 promisLoadMinor);
     /// @notice A position ended its validity with capacity it never issued.
     event GemPositionExpired(
-        uint256 indexed positionId, address indexed merchant, bytes14 sourceIntexId, uint256 returnedCapacity
+        uint256 indexed positionId, address indexed merchant, bytes14 sourceIntexId, uint256 returnedCapacityMinor
     );
 }

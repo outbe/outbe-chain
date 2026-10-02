@@ -49,7 +49,13 @@ pub fn dispatch(
                 )
             }),
             issueGem(c) => mutate(c, caller, |sender, c| {
-                runtime::issue_merchant_gem(&storage, sender, c.positionId, c.owner, c.promisLoad)
+                runtime::issue_merchant_gem(
+                    &storage,
+                    sender,
+                    c.positionId,
+                    c.owner,
+                    c.promisLoadMinor,
+                )
             }),
             settleGem(c) => mutate_void(c, caller, |sender, c| {
                 runtime::settle_gem(&storage, sender, c.gemId, c.asset, c.snapshotId)
@@ -68,7 +74,7 @@ pub fn dispatch(
                 let factory = GemFactoryContract::new(storage.clone());
                 Ok(IGemFactory::getStatisticsReturn {
                     totalGemsIssued: factory.total_gems_issued.read()?,
-                    totalGemFactoryUnits: factory.total_gem_factory_units.read()?,
+                    totalCapacityMinor: factory.total_capacity_minor.read()?,
                 })
             }),
 

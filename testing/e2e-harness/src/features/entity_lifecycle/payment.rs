@@ -306,7 +306,7 @@ fn assert_paid_event(
                 (
                     settled.gemId,
                     settled.owner,
-                    settled.amountPaid,
+                    settled.amountMinor,
                     settled.settlementCurrency
                 ),
                 (*id, target.owner, payable, currency),

@@ -719,7 +719,7 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
 
     let event = settled_event(&provider);
     assert_eq!(event.settlementCurrency, 978);
-    assert_eq!(event.amountPaid, U256::from(10u64) * six_decimal_unit());
+    assert_eq!(event.amountMinor, U256::from(10u64) * six_decimal_unit());
 }
 
 #[test]
@@ -742,7 +742,7 @@ fn the_issuance_rail_floors_the_whole_obligation_in_the_payers_favour() {
         runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
     });
 
-    assert_eq!(settled_event(&provider).amountPaid, U256::from(2u64));
+    assert_eq!(settled_event(&provider).amountMinor, U256::from(2u64));
 }
 
 #[test]
@@ -765,7 +765,7 @@ fn a_wider_asset_keeps_what_the_six_decimal_cost_dropped() {
     });
 
     assert_eq!(
-        settled_event(&provider).amountPaid,
+        settled_event(&provider).amountMinor,
         U256::from(1_500_001_000_000u64)
     );
 }
@@ -812,7 +812,7 @@ fn a_dust_gem_settles_for_one_minor_unit() {
         runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
     });
 
-    assert_eq!(settled_event(&provider).amountPaid, U256::ONE);
+    assert_eq!(settled_event(&provider).amountMinor, U256::ONE);
 }
 
 #[test]
@@ -879,7 +879,7 @@ fn the_reference_currency_settles_without_reading_any_issuance_rate() {
 
     let event = settled_event(&provider);
     assert_eq!(event.settlementCurrency, 840);
-    assert_eq!(event.amountPaid, U256::from(20u64) * six_decimal_unit());
+    assert_eq!(event.amountMinor, U256::from(20u64) * six_decimal_unit());
 }
 
 #[test]
@@ -938,7 +938,7 @@ fn settlement_scales_the_cost_to_the_asset_decimals() {
 
     let event = settled_event(&provider);
     assert_eq!(
-        event.amountPaid,
+        event.amountMinor,
         U256::from(20u64) * six_decimal_unit() * U256::from(1_000_000_000_000u64)
     );
 }
@@ -969,7 +969,7 @@ fn an_unassigned_issuance_code_mints_and_settles_on_the_reference_rail() {
 
     let event = settled_event(&provider);
     assert_eq!(event.settlementCurrency, 840);
-    assert_eq!(event.amountPaid, U256::from(20u64) * six_decimal_unit());
+    assert_eq!(event.amountMinor, U256::from(20u64) * six_decimal_unit());
 }
 
 #[test]
@@ -1050,7 +1050,7 @@ fn the_quote_agrees_with_what_settling_charges_on_both_rails() {
         iss_amount
     });
 
-    assert_eq!(settled_event(&provider).amountPaid, quoted);
+    assert_eq!(settled_event(&provider).amountMinor, quoted);
 }
 
 #[test]
@@ -1238,13 +1238,16 @@ fn a_position_reports_its_full_terms() {
         );
         let data = runtime::position_data(storage, id).unwrap();
         assert_eq!(data.merchant, ALICE);
-        assert_eq!(data.sourceEntryPrice, six_decimal_unit());
-        assert_eq!(data.sourceFloorPrice, six_decimal_unit());
+        assert_eq!(data.sourceEntryPriceMinor, six_decimal_unit());
+        assert_eq!(data.sourceFloorPriceMinor, six_decimal_unit());
         assert_eq!(data.issuanceCurrency, 840);
         assert_eq!(data.referenceCurrency, 840);
         assert_eq!(data.issuedAt, T_NOW);
         assert_eq!(data.expiresAt, T_NOW + POSITION_VALIDITY_SECONDS);
-        assert_eq!(data.remainingCapacity, sent_capacity(six_decimal_u128()));
+        assert_eq!(
+            data.remainingCapacityMinor,
+            sent_capacity(six_decimal_u128())
+        );
     });
 }
 
@@ -1608,9 +1611,9 @@ fn issue_gem_position_burns_sends_and_issues_nft() {
         let rec = factory.positions.get(id).unwrap().unwrap();
         assert_eq!(rec.merchant, ALICE);
         assert_eq!(rec.source_intex_id, source_intex_id());
-        assert_eq!(rec.remaining_capacity, capacity);
-        assert_eq!(rec.source_entry_price, six_decimal_unit());
-        assert_eq!(factory.total_gem_factory_units.read().unwrap(), capacity);
+        assert_eq!(rec.remaining_capacity_minor, capacity);
+        assert_eq!(rec.source_entry_price_minor, six_decimal_unit());
+        assert_eq!(factory.total_capacity_minor.read().unwrap(), capacity);
 
         // Position NFT issued to the merchant.
         assert_eq!(factory.owner_of(id).unwrap(), ALICE);
@@ -1660,7 +1663,7 @@ fn an_expired_position_returns_its_remainder() {
 
         let factory = GemFactoryContract::new(storage.clone());
         let record = factory.positions.get(id).unwrap().unwrap();
-        assert_eq!(record.remaining_capacity, U256::ZERO);
+        assert_eq!(record.remaining_capacity_minor, U256::ZERO);
         assert_eq!(factory.owner_of(id).unwrap(), ALICE);
     });
 }
@@ -1743,7 +1746,7 @@ fn issue_merchant_gem_mints_issued_and_drains_capacity() {
 
         let factory = GemFactoryContract::new(storage.clone());
         let rec = factory.positions.get(id).unwrap().unwrap();
-        assert_eq!(rec.remaining_capacity, capacity - load);
+        assert_eq!(rec.remaining_capacity_minor, capacity - load);
         assert_eq!(factory.total_gems_issued.read().unwrap(), U256::from(1u64));
     });
 }
@@ -1822,9 +1825,9 @@ fn issue_merchant_gem_after_expiry_rejects() {
                 position_id,
                 merchant: ALICE,
                 source_intex_id: source_intex_id(),
-                remaining_capacity: U256::from(100u64) * six_decimal_unit(),
-                source_entry_price: six_decimal_unit(),
-                source_floor_price: six_decimal_unit(),
+                remaining_capacity_minor: U256::from(100u64) * six_decimal_unit(),
+                source_entry_price_minor: six_decimal_unit(),
+                source_floor_price_minor: six_decimal_unit(),
                 issuance_currency: 840,
                 reference_currency: 840,
                 issued_at: T_NOW - POSITION_VALIDITY_SECONDS - 1,
@@ -2083,7 +2086,7 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_bucket() {
     assert_eq!(issued.len(), 2);
     for (event, (item, position_id, bucket)) in issued.iter().zip(&expected) {
         assert_eq!(event.gemId, item.gem_id);
-        assert_eq!(event.callPrice, item.call_price_minor);
+        assert_eq!(event.callPriceMinor, item.call_price_minor);
         assert_eq!(event.callWindow, item.call_window_seconds);
         assert_eq!(event.callThreshold, item.call_threshold_seconds);
         assert_eq!(event.callNoticePeriod, item.call_notice_period_seconds);
@@ -2100,6 +2103,6 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_bucket() {
     assert_eq!(opened.len(), 1);
     assert_eq!(opened[0].positionId, position);
     assert_eq!(opened[0].merchant, ALICE);
-    assert_eq!(opened[0].capacity, sent_capacity(six_decimal_u128()));
+    assert_eq!(opened[0].capacityMinor, sent_capacity(six_decimal_u128()));
     assert_eq!(opened[0].expiresAt, T_NOW + POSITION_VALIDITY_SECONDS);
 }

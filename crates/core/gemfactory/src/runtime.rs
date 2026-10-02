@@ -93,13 +93,13 @@ fn emit_gem_issued(storage: &StorageHandle<'_>, gem_id: U256, position_id: U256)
             gemId: gem_id,
             gemType: item.gem_type,
             owner: item.owner,
-            promisLoad: item.promis_load_minor,
-            entryPrice: item.entry_price_minor,
-            floorPrice: item.floor_price_minor,
+            promisLoadMinor: item.promis_load_minor,
+            entryPriceMinor: item.entry_price_minor,
+            floorPriceMinor: item.floor_price_minor,
             issuanceCurrency: item.issuance_currency,
             referenceCurrency: item.reference_currency,
             issuedAt: item.issued_at,
-            callPrice: item.call_price_minor,
+            callPriceMinor: item.call_price_minor,
             callWindow: item.call_window_seconds,
             callThreshold: item.call_threshold_seconds,
             callNoticePeriod: item.call_notice_period_seconds,
@@ -158,9 +158,9 @@ pub fn issue_gem_position(
         position_id,
         merchant: caller,
         source_intex_id,
-        remaining_capacity: capacity,
-        source_entry_price: series.entry_price_minor,
-        source_floor_price: series.floor_price_minor,
+        remaining_capacity_minor: capacity,
+        source_entry_price_minor: series.entry_price_minor,
+        source_floor_price_minor: series.floor_price_minor,
         issuance_currency: series.issuance_currency,
         reference_currency: series.reference_currency,
         issued_at,
@@ -170,11 +170,11 @@ pub fn issue_gem_position(
 
     factory.push_live_position(position_id)?;
 
-    let prev_sent = factory.total_gem_factory_units.read()?;
+    let prev_sent = factory.total_capacity_minor.read()?;
     let new_sent = prev_sent
         .checked_add(capacity)
         .ok_or(GemFactoryError::Overflow)?;
-    factory.total_gem_factory_units.write(new_sent)?;
+    factory.total_capacity_minor.write(new_sent)?;
 
     emit_event(
         storage,
@@ -182,9 +182,9 @@ pub fn issue_gem_position(
             positionId: position_id,
             merchant: caller,
             sourceIntexId: source_intex_id.into(),
-            capacity,
-            sourceEntryPrice: position.source_entry_price,
-            sourceFloorPrice: position.source_floor_price,
+            capacityMinor: capacity,
+            sourceEntryPriceMinor: position.source_entry_price_minor,
+            sourceFloorPriceMinor: position.source_floor_price_minor,
             issuanceCurrency: position.issuance_currency,
             referenceCurrency: position.reference_currency,
             issuedAt: issued_at,
@@ -249,15 +249,16 @@ pub fn issue_merchant_gem(
         return Err(GemFactoryError::PositionExpired.into());
     }
     let remaining = record
-        .remaining_capacity
+        .remaining_capacity_minor
         .checked_sub(promis_load)
         .ok_or(GemFactoryError::InsufficientCapacity)?;
 
     // Both maxima are an anti-dilution floor, not a price: never below the source Intex.
     let market_price = read_market_price(storage, record.reference_currency, now)?;
-    let entry_price = market_price.max(record.source_entry_price);
+    let entry_price = market_price.max(record.source_entry_price_minor);
     let terms = outbe_gem::config::read(storage)?;
-    let floor_price = derived_floor(entry_price, terms.floor_rate)?.max(record.source_floor_price);
+    let floor_price =
+        derived_floor(entry_price, terms.floor_rate)?.max(record.source_floor_price_minor);
     let call_price = derived_call_price(entry_price, terms.call_rate)?;
 
     let gem_id = gem_api::add_gem(
@@ -276,7 +277,7 @@ pub fn issue_merchant_gem(
         },
     )?;
 
-    record.remaining_capacity = remaining;
+    record.remaining_capacity_minor = remaining;
     factory.positions.update(&record)?;
     // Nothing left to return: it leaves the queue instead of sitting at the head.
     if remaining.is_zero() {
@@ -396,7 +397,7 @@ fn settle<Q>(
             GemSettled {
                 gemId: gem_id,
                 owner: item.owner,
-                amountPaid: amount_paid,
+                amountMinor: amount_paid,
                 settlementCurrency: settlement_currency,
             },
         )
@@ -652,9 +653,9 @@ pub fn position_data(
         positionId: record.position_id,
         merchant: record.merchant,
         sourceIntexId: record.source_intex_id.into(),
-        remainingCapacity: record.remaining_capacity,
-        sourceEntryPrice: record.source_entry_price,
-        sourceFloorPrice: record.source_floor_price,
+        remainingCapacityMinor: record.remaining_capacity_minor,
+        sourceEntryPriceMinor: record.source_entry_price_minor,
+        sourceFloorPriceMinor: record.source_floor_price_minor,
         issuanceCurrency: record.issuance_currency,
         referenceCurrency: record.reference_currency,
         issuedAt: record.issued_at,
@@ -688,7 +689,7 @@ pub fn mine_promis(
         GemExercised {
             gemId: gem_id,
             owner: item.owner,
-            promisLoad: item.promis_load_minor,
+            promisLoadMinor: item.promis_load_minor,
         },
     )?;
 

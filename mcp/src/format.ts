@@ -31,11 +31,10 @@ const SIX_DECIMAL_AMOUNT_RE = /(minor$|amount|stake|balance|pledged|reward)/i;
 const SIX_DECIMAL_RATE_RE = /currencyrate/i;
 const DIMENSIONLESS_FP18_RE = /(rewardband|minvalidperwindow|slashfraction)/i;
 const GENERIC_FP18_RE = /(vwap|twap|rate|price|volume|peakprice|currentvalue|nominalprice|maxscurve)/i;
-/// Gem and Credis prices are six-decimal. Scoped to those structs: the same
-/// field names on other instruments are 1e18.
-const GEM_SIX_DECIMAL_RE =
-  /^(entryPrice|floorPrice|callPrice|callAnchorPrice|sourceEntryPrice|sourceFloorPrice|promisLoad|remainingCapacity)$/;
-const GEM_STRUCT_RE = /^struct I(?:Gem(?:Factory)?|Credis)\./;
+/// Credis prices are six-decimal. Scoped to that struct: the same field names
+/// on other instruments are 1e18.
+const CREDIS_SIX_DECIMAL_RE = /^(entryPrice|callPrice|callAnchorPrice)$/;
+const CREDIS_STRUCT_RE = /^struct ICredis\./;
 const TIME_RE = /(at$|time$|timestamp$|start$|end$|date$|duedate$|paidat$)/i;
 
 function isIsoCurrencyAddress(value: unknown): boolean {
@@ -247,8 +246,8 @@ function formatScalar(
   }
   if (
     type === "uint256" &&
-    GEM_SIX_DECIMAL_RE.test(n) &&
-    GEM_STRUCT_RE.test(context.enclosingTupleType ?? "")
+    CREDIS_SIX_DECIMAL_RE.test(n) &&
+    CREDIS_STRUCT_RE.test(context.enclosingTupleType ?? "")
   ) {
     const v = value as bigint;
     return { raw: v.toString(), value: formatUnits(v, 6) };

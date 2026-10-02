@@ -68,9 +68,9 @@ fn expire_position(ctx: &BlockRuntimeContext, record: &GemPosition) -> Result<()
     let mut factory = GemFactoryContract::new(storage.clone());
     let position_id = record.position_id;
 
-    let returned = record.remaining_capacity;
+    let returned = record.remaining_capacity_minor;
     factory.positions.update(&GemPosition {
-        remaining_capacity: U256::ZERO,
+        remaining_capacity_minor: U256::ZERO,
         ..*record
     })?;
     factory.remove_live_position(position_id)?;
@@ -85,7 +85,7 @@ fn expire_position(ctx: &BlockRuntimeContext, record: &GemPosition) -> Result<()
             positionId: position_id,
             merchant: record.merchant,
             sourceIntexId: record.source_intex_id.into(),
-            returnedCapacity: returned,
+            returnedCapacityMinor: returned,
         },
     )
 }

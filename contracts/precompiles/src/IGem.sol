@@ -7,13 +7,13 @@ interface IGem {
         address owner;
         uint8 gemType;
         uint8 state;
-        uint256 promisLoad;
-        uint256 entryPrice;
-        uint256 floorPrice;
+        uint256 promisLoadMinor;
+        uint256 entryPriceMinor;
+        uint256 floorPriceMinor;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint64 issuedAt;
-        uint256 callPrice;
+        uint256 callPriceMinor;
         uint64 calledAt;
         uint32 callNoticePeriod;
     }
@@ -63,7 +63,7 @@ interface IGem {
     /// @notice Every gem in the bucket was force-called by the daily Call scan.
     event GemBucketCalled(bytes32 indexed bucketKey, uint64 calledAt, uint64 settlementDeadline);
     /// @notice Called gem forfeit-burned after its notice period lapsed.
-    event GemExpired(uint256 indexed gemId, address owner, uint256 promisLoad);
+    event GemExpired(uint256 indexed gemId, address owner, uint256 promisLoadMinor);
     /// @notice A due Called gem was not forfeited; the expiry sweep tries it again at `retryAt`.
     event GemExpiryDeferred(uint256 indexed gemId, uint64 retryAt);
     /// @notice A due Called bucket was not fully forfeited; the expiry sweep tries its

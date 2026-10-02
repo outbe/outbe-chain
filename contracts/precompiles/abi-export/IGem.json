@@ -92,17 +92,17 @@
             "internalType": "uint8"
           },
           {
-            "name": "promisLoad",
+            "name": "promisLoadMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "entryPrice",
+            "name": "entryPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "floorPrice",
+            "name": "floorPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -122,7 +122,7 @@
             "internalType": "uint64"
           },
           {
-            "name": "callPrice",
+            "name": "callPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -564,7 +564,7 @@
         "internalType": "address"
       },
       {
-        "name": "promisLoad",
+        "name": "promisLoadMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

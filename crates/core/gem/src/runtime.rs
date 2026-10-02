@@ -51,7 +51,7 @@ impl GemContract<'_> {
         self.emit(GemExpired {
             gemId: gem_id,
             owner: item.owner,
-            promisLoad: item.promis_load_minor,
+            promisLoadMinor: item.promis_load_minor,
         })?;
         Ok(true)
     }
