@@ -32,6 +32,23 @@ pub fn issue_nod(
     parent: &impl ParentBodySource,
     params: &NodIssueParams,
 ) -> Result<WwdEntityId> {
+    issue_nod_at(
+        storage,
+        scope,
+        parent,
+        params,
+        storage.timestamp()?.to::<u64>(),
+    )
+}
+
+/// [`issue_nod`] stamped with `issued_at` instead of the block time.
+pub fn issue_nod_at(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    params: &NodIssueParams,
+    issued_at: u64,
+) -> Result<WwdEntityId> {
     if params.owner.is_zero() {
         return Err(NodFactoryError::InvalidOwner.into());
     }
@@ -41,7 +58,7 @@ pub fn issue_nod(
         return Err(NodFactoryError::NodAlreadyExists.into());
     }
 
-    issue_nod_inner(storage, params, |item| {
+    issue_nod_inner(storage, params, issued_at, |item| {
         nod_api::add_nod(storage, scope, parent, item, params.entry_price_minor)
     })
 }
@@ -49,6 +66,7 @@ pub fn issue_nod(
 fn issue_nod_inner(
     storage: &StorageHandle<'_>,
     params: &NodIssueParams,
+    issued_at: u64,
     add: impl FnOnce(&NodItemState) -> Result<()>,
 ) -> Result<WwdEntityId> {
     let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day)?;
@@ -60,8 +78,6 @@ fn issue_nod_inner(
         floor_price_minor,
         params.reference_currency,
     );
-
-    let issued_at = storage.timestamp()?.to::<u64>();
 
     let item = NodItemState {
         is_settled: false,

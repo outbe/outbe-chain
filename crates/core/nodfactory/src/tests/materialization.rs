@@ -474,8 +474,20 @@ fn multiple_batches_create_ordinary_nods_and_advance_fifo_atomically() {
         })
         .unwrap()
         .unwrap();
-    assert_eq!(first_item.issued_at, 1_700_000_000);
-    assert_ne!(first_item.issued_at, population.actions[0].issued_at);
+    assert_eq!(first_item.issued_at, 1_600_000_000);
+    assert_ne!(first_item.issued_at, 1_700_000_000);
+    let last_item = world
+        .enter(|storage, scope, parent| {
+            nod_api::get_item(
+                &storage,
+                scope,
+                parent,
+                ledger_entity(population.actions[9].nod_id),
+            )
+        })
+        .unwrap()
+        .unwrap();
+    assert_eq!(last_item.issued_at, 1_600_000_000);
     assert_eq!(
         world
             .enter(|storage, scope, parent| {
