@@ -316,7 +316,7 @@ pub fn settle_gem(
         quote,
         |_, (settlement_currency, amount_paid)| {
             deposit_payment(storage, caller, asset, amount_paid)?;
-            Ok((settlement_currency, amount_paid))
+            Ok((asset, settlement_currency, amount_paid))
         },
     )
 }
@@ -357,19 +357,23 @@ pub fn settle_gem_with_paynote(
                 }
                 .into());
             }
-            Ok((settlement_currency(item, currency), amount_paid))
+            Ok((
+                claim.asset,
+                settlement_currency(item, currency),
+                amount_paid,
+            ))
         },
     )
 }
 
 /// `quote` prices and authorizes the payment before any state changes; `pay`
-/// then moves it after the transition and returns the settlement currency and
-/// the amount it charged.
+/// then moves it after the transition and returns the asset, the settlement
+/// currency and the amount it charged.
 fn settle<Q>(
     storage: &StorageHandle<'_>,
     gem_id: U256,
     quote: impl FnOnce(&outbe_gem::GemData) -> Result<Q>,
-    pay: impl FnOnce(&outbe_gem::GemData, Q) -> Result<(u16, U256)>,
+    pay: impl FnOnce(&outbe_gem::GemData, Q) -> Result<(Address, u16, U256)>,
 ) -> Result<()> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     // Anyone may pay for a gem; the payment is bound to the caller, the gem is not.
@@ -391,12 +395,13 @@ fn settle<Q>(
         // Settled before payment so a token callback cannot settle the gem twice;
         // a failed payment rolls the state back.
         gem_api::set_state(storage, gem_id, GemState::Settled)?;
-        let (settlement_currency, amount_paid) = pay(&item, quoted)?;
+        let (asset, settlement_currency, amount_paid) = pay(&item, quoted)?;
         emit_event(
             storage,
             GemSettled {
                 gemId: gem_id,
                 owner: item.owner,
+                asset,
                 paymentMinor: amount_paid,
                 settlementCurrency: settlement_currency,
             },

@@ -116,8 +116,10 @@ interface IGemFactory {
         uint64 issuedAt,
         uint64 expiresAt
     );
-    /// @notice A gem's Cost Amount was settled into the Reserve.
-    event GemSettled(uint256 indexed gemId, address owner, uint256 paymentMinor, uint16 settlementCurrency);
+    /// @notice A gem's Cost Amount was settled into the Reserve: `paymentMinor` of `asset`.
+    event GemSettled(
+        uint256 indexed gemId, address owner, address asset, uint256 paymentMinor, uint16 settlementCurrency
+    );
     /// @notice A settled gem right was exercised: it burned to mine confidential Promis.
     event GemExercised(uint256 indexed gemId, address owner, uint256 promisLoadMinor);
     /// @notice A position ended its validity with capacity it never issued.

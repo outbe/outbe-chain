@@ -262,6 +262,7 @@ fn settle_gems(world: &mut World, notes_count: u32) {
             &eth::IGemFactory::GemSettled {
                 gemId: gem_id,
                 owner,
+                asset: note.asset,
                 paymentMinor: note.amount,
                 settlementCurrency: USD_ISO,
             },

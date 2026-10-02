@@ -718,6 +718,7 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
     });
 
     let event = settled_event(&provider);
+    assert_eq!(event.asset, STABLE_EUR);
     assert_eq!(event.settlementCurrency, 978);
     assert_eq!(event.paymentMinor, U256::from(10u64) * six_decimal_unit());
 }

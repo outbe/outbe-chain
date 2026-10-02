@@ -411,6 +411,7 @@ impl World {
                     .collect();
                 assert_eq!(settled.len(), 1);
                 assert_eq!(settled[0].owner, OWNER);
+                assert_eq!(settled[0].asset, ASSET);
                 assert_eq!(settled[0].paymentMinor, self.cost);
             }
         }

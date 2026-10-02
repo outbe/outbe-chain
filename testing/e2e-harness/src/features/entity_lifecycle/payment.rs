@@ -306,10 +306,11 @@ fn assert_paid_event(
                 (
                     settled.gemId,
                     settled.owner,
+                    settled.asset,
                     settled.paymentMinor,
                     settled.settlementCurrency
                 ),
-                (*id, target.owner, payable, currency),
+                (*id, target.owner, asset, payable, currency),
                 "GemSettled does not record this payment"
             );
         }
