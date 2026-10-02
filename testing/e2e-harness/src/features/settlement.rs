@@ -577,7 +577,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         addresses::PROMIS_FACTORY_ADDR,
         500_000,
         &eth::IPromisFactory::mineCoenCall {
-            amount: gem.promisLoadMinor,
+            promisMinor: gem.promisLoadMinor,
             mac: B256::from(burn_mac),
             opNonce: burn_nonce,
         },
@@ -859,7 +859,7 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
             addresses::PROMIS_FACTORY_ADDR,
             &key,
             &eth::IPromisFactory::mineCoenCall {
-                amount: gem.promisLoadMinor,
+                promisMinor: gem.promisLoadMinor,
                 mac: B256::from(mac),
                 opNonce: nonce,
             },
@@ -874,7 +874,7 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
         addresses::PROMIS_FACTORY_ADDR,
         &eth::IPromisFactory::CoenMined {
             sender: owner,
-            amount: native_mint,
+            coenMinor: native_mint,
         },
     );
     let fee = crate::world::rpc::Rpc::receipt_gas_cost(&burn.receipt).expect("paid COEN mint fee");
@@ -1172,7 +1172,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         addresses::GRATIS_FACTORY_ADDR,
         &key,
         &eth::IGratisFactory::mineCoenCall {
-            amount: body.gratisLoadMinor,
+            gratisMinor: body.gratisLoadMinor,
             mac: B256::from(burn_mac),
             opNonce: burn_nonce,
         },
@@ -1688,7 +1688,7 @@ mod tests {
         let emitter = addresses::PROMIS_FACTORY_ADDR;
         let event = eth::IPromisFactory::CoenMined {
             sender: Address::repeat_byte(1),
-            amount: U256::from(123),
+            coenMinor: U256::from(123),
         };
         let encoded = event.encode_log_data();
         let log = serde_json::json!({

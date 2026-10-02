@@ -4,8 +4,8 @@ pragma solidity ^0.8.30;
 /// @title IGratisFactory - Gratis orchestration entry point.
 interface IGratisFactory {
     /// @notice Emitted when `sender` converts protocol-6 gratis to native-18 COEN.
-    /// @param amount Native COEN atomic units minted to `sender`.
-    event CoenMined(address indexed sender, uint256 amount);
+    /// @param coenMinor Native COEN atomic units minted to `sender`.
+    event CoenMined(address indexed sender, uint256 coenMinor);
 
     /// @notice Emitted when a user pledges gratis as credis collateral.
     event GratisPledged(
@@ -36,11 +36,11 @@ interface IGratisFactory {
     ///         quoted for and must match the one sealed in the ticket.
     function unpledgeGratis(uint256 principalMinor, bytes32 pledgeNote, bytes32 mac, uint64 opNonce) external;
 
-    /// @notice Convert `amount` protocol-6 gratis to the same whole-token amount of
-    ///         native-18 COEN (burns gratis). The return value and
-    ///         `CoenMined.amount` are native COEN atomic units. Authorized by the
+    /// @notice Convert `gratisMinor` protocol-6 gratis to the same whole-token amount of
+    ///         native-18 COEN (burns gratis). The returned `coenMinor` and
+    ///         `CoenMined.coenMinor` are native COEN atomic units. Authorized by the
     ///         caller's modify key.
-    function mineCoen(uint256 amount, bytes32 mac, uint64 opNonce) external returns (uint256);
+    function mineCoen(uint256 gratisMinor, bytes32 mac, uint64 opNonce) external returns (uint256 coenMinor);
 
     /// @notice ERC-165 conformance check.
     function supportsInterface(bytes4 interfaceId) external view returns (bool);

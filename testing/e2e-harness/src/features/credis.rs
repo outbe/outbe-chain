@@ -172,7 +172,7 @@ fn prepare(world: &mut World) {
         addresses::PROMIS_FACTORY_ADDR,
         DEPLOYER_KEY,
         &eth::IPromisFactory::mineGratisCall {
-            amount: INITIAL_GRATIS,
+            promisMinor: INITIAL_GRATIS,
             promisMac: outbe_tee_enclave::promis::modify_mac(
                 &promis_keys.modify,
                 user,
