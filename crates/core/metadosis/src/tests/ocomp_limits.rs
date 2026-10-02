@@ -239,8 +239,8 @@ fn strict_desis_refusal_leaves_the_existing_brief_and_carry_over_unchanged() {
             logical_anchor: 1_699_920_005,
         };
 
-        // The request itself only credits; the refusal comes when the auction tries to brief a day
-        // Desis already holds.
+        // The request credits and reserves without touching Desis; the refusal comes when the
+        // auction tries to brief a day Desis already holds.
         let receipt = apply_fresh_request_limit_effect(storage.clone(), request.clone())
             .expect("the request credits without touching Desis");
         let credited = PromisLimitContract::new(storage.clone())

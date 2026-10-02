@@ -96,8 +96,9 @@ pub(crate) fn fail_worldwide_day(
 /// Completes an OCOMP expiry as the same atomic FAILED contract
 /// used by every other exact-WWD business failure. The expiry transition has
 /// already written immutable `Expired` attempt evidence, but the live FSM and
-/// outer WWD remain active until this function credits the retained Lysis Limit,
-/// retires Tribute as the final CE mutation, and commits the terminal state.
+/// outer WWD remain active until this function credits the Lysis and Desis Limits
+/// the request retained, retires Tribute as the final CE mutation, and commits the
+/// terminal state.
 pub(crate) fn fail_expired_ocomp_day(
     storage: StorageHandle<'_>,
     failure: ExpiredFailure<'_>,
