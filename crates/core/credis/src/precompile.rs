@@ -122,5 +122,8 @@ fn abi_position(p: &crate::schema::Position) -> ICredis::Position {
         } else {
             crate::runtime::settlement_deadline(p)
         },
+        callNoticePeriod: p.call_notice_period_seconds,
+        callWindow: p.call_window_seconds,
+        callThreshold: p.call_threshold_seconds,
     }
 }

@@ -344,7 +344,7 @@ contract IntexNFT1155Test is Test {
     function test_Events() public {
         uint256 quantity = 10;
         uint32 customCallPeriod = uint32(14 days);
-        uint32 callDeadlineAt = uint32(block.timestamp + 14 days);
+        uint32 settlementDeadline = uint32(block.timestamp + 14 days);
 
         vm.startPrank(bridger);
         vm.expectEmit();
@@ -362,7 +362,7 @@ contract IntexNFT1155Test is Test {
             IIntexNFT1155.IntexState.Issued,
             IIntexNFT1155.IntexState.Called,
             uint32(block.timestamp),
-            callDeadlineAt
+            settlementDeadline
         );
         nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
         vm.stopPrank();

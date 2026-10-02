@@ -1351,6 +1351,18 @@ fn precompile_get_position_returns_the_full_record() {
         assert_eq!(decoded.policyRate, policy_rate());
         assert_eq!(decoded.state, CredisState::Open as u8);
         assert_eq!(decoded.eoaCiphertext.to_vec(), eoa_ct());
+        assert_eq!(
+            (
+                decoded.callNoticePeriod,
+                decoded.callWindow,
+                decoded.callThreshold
+            ),
+            (
+                crate::constants::CALL_NOTICE_PERIOD,
+                crate::constants::CALL_WINDOW,
+                crate::constants::CALL_THRESHOLD
+            )
+        );
     });
 }
 

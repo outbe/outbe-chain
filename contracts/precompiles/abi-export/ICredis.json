@@ -199,6 +199,21 @@
             "name": "settlementDeadline",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "callNoticePeriod",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "callWindow",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "callThreshold",
+            "type": "uint32",
+            "internalType": "uint32"
           }
         ]
       }
@@ -438,6 +453,21 @@
             "name": "settlementDeadline",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "callNoticePeriod",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "callWindow",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "callThreshold",
+            "type": "uint32",
+            "internalType": "uint32"
           }
         ]
       }
@@ -569,6 +599,21 @@
             "name": "settlementDeadline",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "callNoticePeriod",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "callWindow",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "callThreshold",
+            "type": "uint32",
+            "internalType": "uint32"
           }
         ]
       }

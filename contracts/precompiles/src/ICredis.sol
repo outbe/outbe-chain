@@ -95,6 +95,10 @@ interface ICredis {
         uint256 interestPaidMinor;
         /// Inclusive deadline: 0 when uncalled.
         uint64 settlementDeadline;
+        /// Call terms sealed at issuance, in seconds.
+        uint32 callNoticePeriod;
+        uint32 callWindow;
+        uint32 callThreshold;
     }
 
     function name() external view returns (string memory);

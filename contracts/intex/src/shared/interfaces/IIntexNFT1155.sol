@@ -111,14 +111,14 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param fromState Lifecycle state before the transition.
     /// @param toState Lifecycle state after the transition.
     /// @param at Timestamp of the state change.
-    /// @param callDeadlineAt Effective settlement deadline (`calledAt + callNoticePeriod`, 0 if not applicable).
+    /// @param settlementDeadline Effective settlement deadline (`calledAt + callNoticePeriod`, 0 if not applicable).
     event IntexStatusUpdated(
         address indexed operator,
         uint256 indexed tokenId,
         IntexState fromState,
         IntexState toState,
         uint32 at,
-        uint32 callDeadlineAt
+        uint32 settlementDeadline
     );
 
     /// @notice Emitted when token metadata is updated (ERC-4906; `tokenId` is non-indexed per the EIP).
