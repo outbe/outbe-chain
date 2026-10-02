@@ -4,6 +4,9 @@
 //! checkpoints for finalized network-key provisioning and binding transitions.
 //! A separate legacy checkpoint supports copying an existing MRSIGNER seal.
 
+mod preparation;
+mod submission;
+
 use std::{
     fs::{self, DirBuilder, File, OpenOptions},
     io::{Read as _, Write as _},
@@ -1038,131 +1041,17 @@ pub async fn run_upgrade_submission_v1(
     binding_id: B256,
     requested_valid_until: u64,
 ) -> Result<UpgradeSubmissionOutcomeV1> {
-    let replayed = inspect_upgrade_journal_v1(node_data_dir)?.is_some();
-    loop {
-        let snapshot = inspect_upgrade_journal_v1(node_data_dir)?
-            .ok_or_else(|| eyre::eyre!("upgrade candidate is not prepared"))?;
-        if matches!(
-            snapshot.lifecycle,
-            UpgradeJournalStateV1::CandidateKeyReady { .. }
-                | UpgradeJournalStateV1::SubmissionPrepared { .. }
-                | UpgradeJournalStateV1::Submitted { .. }
-        ) && reset_expired_upgrade_submission_v1(rpc, node_data_dir, selector, &snapshot).await?
-        {
-            continue;
-        }
-        match snapshot.lifecycle {
-            UpgradeJournalStateV1::CandidatePrepared { .. } => {
-                eyre::bail!("candidate key is not provisioned; run upgrade-provision");
-            }
-            UpgradeJournalStateV1::KeyProvisioned { .. } => {
-                prepare_candidate_key_ready_v1(
-                    rpc,
-                    candidate,
-                    node_signer,
-                    node_data_dir,
-                    selector,
-                    binding_id,
-                    requested_valid_until,
-                )
-                .await?;
-            }
-            UpgradeJournalStateV1::CandidateKeyReady { .. } => {
-                prepare_upgrade_relay_v1(rpc, relay, node_data_dir, selector).await?;
-            }
-            UpgradeJournalStateV1::SubmissionPrepared { ref submission, .. } => {
-                let transaction_hash = last_transaction_hash(submission)?;
-                if finalized_transition_matches_v1(rpc, selector, node_data_dir, submission).await?
-                {
-                    let finalized = read_finalized_bound_renewal_view_v1(rpc, selector).await?;
-                    record_upgrade_submitted_v1(
-                        node_data_dir,
-                        finalized.schedule.finalized_height,
-                    )?;
-                    return Ok(UpgradeSubmissionOutcomeV1::AlreadySubmitted { transaction_hash });
-                }
-                let raw = submission
-                    .relay_variants
-                    .last()
-                    .ok_or_else(|| eyre::eyre!("upgrade submission has no relay bytes"))?;
-                let returned_hash = match rpc.send_raw_transaction(&raw.raw_transaction).await {
-                    Ok(returned) => returned
-                        .parse::<B256>()
-                        .wrap_err("parse transition transaction hash")?,
-                    Err(error) if transaction_is_already_known(&error) => raw.transaction_hash,
-                    Err(error) => {
-                        return Err(error)
-                            .wrap_err("submit exact measurement-transition transaction")
-                    }
-                };
-                if returned_hash != raw.transaction_hash {
-                    eyre::bail!(
-                        "RPC returned a transaction hash different from the signed transition bytes"
-                    );
-                }
-                let finalized = read_finalized_bound_renewal_view_v1(rpc, selector).await?;
-                record_upgrade_submitted_v1(node_data_dir, finalized.schedule.finalized_height)?;
-                return Ok(UpgradeSubmissionOutcomeV1::Submitted {
-                    transaction_hash: returned_hash,
-                    replayed,
-                });
-            }
-            UpgradeJournalStateV1::Submitted { ref submission, .. } => {
-                let transaction_hash = last_transaction_hash(submission)?;
-                if !finalized_transition_matches_v1(rpc, selector, node_data_dir, submission)
-                    .await?
-                    && rpc
-                        .transaction_receipt(&format!("{transaction_hash:#x}"))
-                        .await?
-                        .is_none()
-                {
-                    let raw = submission
-                        .relay_variants
-                        .last()
-                        .expect("validated relay variants");
-                    match rpc.send_raw_transaction(&raw.raw_transaction).await {
-                        Ok(hash) if hash.parse::<B256>()? == transaction_hash => {}
-                        Ok(_) => eyre::bail!("RPC returned a different replay transaction hash"),
-                        Err(error) if transaction_is_already_known(&error) => {}
-                        Err(error) => {
-                            return Err(error)
-                                .wrap_err("replay exact measurement-transition transaction")
-                        }
-                    }
-                }
-                return Ok(UpgradeSubmissionOutcomeV1::AlreadySubmitted { transaction_hash });
-            }
-            UpgradeJournalStateV1::Finalized {
-                ref submission,
-                finalized_height,
-                ..
-            } => {
-                return Ok(UpgradeSubmissionOutcomeV1::Finalized {
-                    transaction_hash: last_transaction_hash(submission)?,
-                    finalized_height,
-                });
-            }
-            UpgradeJournalStateV1::Promoted {
-                ref submission,
-                finalized_height,
-                ..
-            } => {
-                return Ok(UpgradeSubmissionOutcomeV1::Promoted {
-                    transaction_hash: last_transaction_hash(submission)?,
-                    finalized_height,
-                });
-            }
-            UpgradeJournalStateV1::TerminalMissedCutoff {
-                finalized_height,
-                activation_height,
-                ..
-            } => {
-                eyre::bail!(
-                    "upgrade missed successor activation cutoff {activation_height} at finalized height {finalized_height}"
-                );
-            }
-        }
-    }
+    let mut service = submission::UpgradeSubmissionService {
+        rpc,
+        relay,
+        candidate,
+        node_signer,
+        node_data_dir,
+        selector,
+        binding_id,
+        requested_valid_until,
+    };
+    submission::run(&mut service).await
 }
 
 async fn reset_expired_upgrade_submission_v1(
@@ -1211,145 +1100,6 @@ fn last_transaction_hash(submission: &PreparedUpgradeSubmissionV1) -> Result<B25
 fn transaction_is_already_known(error: &eyre::Report) -> bool {
     let message = format!("{error:#}").to_ascii_lowercase();
     message.contains("already known") || message.contains("known transaction")
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn prepare_candidate_key_ready_v1(
-    rpc: &(impl RenewalRpc + Sync),
-    candidate: &mut ReplacementCandidateEnclaveV1,
-    node_signer: &impl UpgradeNodeSignerV1,
-    node_data_dir: &Path,
-    selector: &NodeBindingSelectorV1,
-    binding_id: B256,
-    requested_valid_until: u64,
-) -> Result<()> {
-    let checkpoint = inspect_upgrade_journal_v1(node_data_dir)?
-        .ok_or_else(|| eyre::eyre!("upgrade candidate is not prepared"))?;
-    let UpgradeJournalStateV1::KeyProvisioned { ref context, .. } = checkpoint.lifecycle else {
-        eyre::bail!("candidate key readiness requires the key-provisioned checkpoint");
-    };
-    let candidate_manifest_hash = candidate
-        .manifest()
-        .authorization_hash()
-        .map_err(|error| eyre::eyre!("hash candidate manifest: {error}"))?;
-    if candidate_manifest_hash != context.candidate_manifest_hash {
-        eyre::bail!("connected candidate differs from the journaled candidate manifest");
-    }
-    let active = read_finalized_bound_renewal_view_v1(rpc, selector).await?;
-    let successor = read_finalized_upgrade_policy_v1(rpc)
-        .await?
-        .ok_or_else(|| eyre::eyre!("no successor TEE policy is staged at finalized state"))?;
-    if active.schedule.finalized_height != successor.finalized_height
-        || active.schedule.finalized_hash != successor.finalized_hash
-    {
-        eyre::bail!("finalized active binding and staged policy were read at different heads");
-    }
-    let active_policy_hash = active
-        .policy
-        .policy_hash()
-        .map_err(|error| eyre::eyre!("hash active finalized policy: {error}"))?;
-    if successor.policy.chain_id != active.policy.chain_id
-        || successor.policy.genesis_hash != active.policy.genesis_hash
-        || (successor.policy.predecessor_policy_hash != active_policy_hash
-            && successor
-                .policy
-                .policy_hash()
-                .map_err(|e| eyre::eyre!("invalid successor: {e}"))?
-                != active_policy_hash)
-        || successor
-            .policy
-            .policy_hash()
-            .map_err(|error| eyre::eyre!("hash staged successor policy: {error}"))?
-            != context.successor_policy_hash
-        || successor.policy.activation_height != context.activation_height
-    {
-        eyre::bail!("staged successor is not the direct successor of the finalized active policy");
-    }
-    validate_candidate_identity_v1(candidate, selector, &active)?;
-
-    if let Some(durable) = load_replacement_candidate_submission(node_data_dir)
-        .map_err(|error| eyre::eyre!("reload durable candidate submission: {error}"))?
-    {
-        let evidence = AttestationEvidenceV1::decode_canonical(durable.evidence())
-            .map_err(|e| eyre::eyre!("invalid durable transition: {e}"))?;
-        if active.schedule.finalized_timestamp >= evidence.intent().requested_valid_until {
-            ensure_transition_source_or_target_v1(&active.binding, evidence.intent())?;
-            if transition_target_matches_v1(&active.binding, evidence.intent()) {
-                eyre::bail!("expired transition already executed; finalize it before renewing");
-            }
-            outbe_tee::node_host::clear_expired_transition_submission_v1(
-                node_data_dir,
-                evidence
-                    .intent()
-                    .intent_hash()
-                    .map_err(|e| eyre::eyre!("invalid intent: {e}"))?,
-                active.schedule.finalized_timestamp,
-            )?;
-        } else {
-            recover_candidate_key_ready_v1(
-                node_data_dir,
-                &durable,
-                &successor.policy,
-                active.tribute_offer_public,
-            )?;
-            return Ok(());
-        }
-    }
-
-    let desired = transition_intent_v1(
-        candidate,
-        &active,
-        &successor.policy,
-        binding_id,
-        requested_valid_until,
-    )?;
-    let mut prepared = generate_transition_evidence_v1(candidate, desired, &successor.policy)?;
-    let ceiling = prepared
-        .collateral_expiration
-        .checked_sub(successor.policy.collateral_margin)
-        .ok_or_else(|| eyre::eyre!("transition collateral margin underflows"))?;
-    if prepared.intent.requested_valid_until > ceiling {
-        let minimum = active
-            .schedule
-            .finalized_timestamp
-            .checked_add(successor.policy.minimum_lease)
-            .ok_or_else(|| eyre::eyre!("minimum transition lease overflows"))?;
-        if ceiling < minimum {
-            eyre::bail!("fresh Intel collateral cannot satisfy the successor minimum lease");
-        }
-        prepared.intent.requested_valid_until = ceiling;
-        prepared = generate_transition_evidence_v1(candidate, prepared.intent, &successor.policy)?;
-    }
-    validate_transition_time_window_v1(
-        &prepared,
-        &successor.policy,
-        active.schedule.finalized_timestamp,
-    )?;
-    let intent_hash = prepared
-        .intent
-        .intent_hash()
-        .map_err(|error| eyre::eyre!("hash transition intent: {error}"))?;
-    let node_signature = node_signer
-        .sign_node_hash(intent_hash)
-        .wrap_err("sign transition intent with node authority")?;
-    let evidence = prepared.evidence;
-    persist_replacement_candidate_submission(
-        node_data_dir,
-        &evidence,
-        &node_signature,
-        &prepared.enclave_signature,
-    )
-    .map_err(|error| eyre::eyre!("persist exact candidate submission: {error}"))?;
-    let proof = evidence
-        .transition_key_ready_proof()
-        .ok_or_else(|| eyre::eyre!("candidate transition evidence has no key-ready proof"))?;
-    record_candidate_key_ready_v1(
-        node_data_dir,
-        evidence.intent(),
-        proof,
-        active.tribute_offer_public.into(),
-    )?;
-    Ok(())
 }
 
 pub struct PreparedTransitionEvidenceV1 {
