@@ -618,11 +618,14 @@ impl OracleContract<'_> {
         let hours = self.hourly_vwap_hour.get_nested(&pair);
         let pv_sum = self.hourly_pv_sum.get_nested(&pair);
         let vol_sum = self.hourly_vol_sum.get_nested(&pair);
+        let count = self.hourly_snapshot_count.get_nested(&pair);
         if hours.read(&cell)? != hour_start {
             hours.write(&cell, hour_start)?;
             pv_sum.write(&cell, pv)?;
+            count.write(&cell, 1)?;
             return vol_sum.write(&cell, volume);
         }
+        count.write(&cell, count.read(&cell)?.saturating_add(1))?;
         add_vwap_aggregate(
             pair,
             cell,
@@ -632,6 +635,16 @@ impl OracleContract<'_> {
             &vol_sum,
             ("hourly sum accumulation", "hourly volume sum"),
         )
+    }
+
+    /// Records the first block of the UTC hour containing `timestamp`; called
+    /// every block so the window's block span is known even without votes.
+    pub fn record_hour_block(&mut self, timestamp: u64, block_number: u64) -> Result<()> {
+        let hour_start = timestamp - timestamp % VWAP_HOUR_SECONDS;
+        if self.hour_first_block.read(&hour_start)? == 0 {
+            self.hour_first_block.write(&hour_start, block_number)?;
+        }
+        Ok(())
     }
 
     /// Evicts snapshots older than the retention window.
