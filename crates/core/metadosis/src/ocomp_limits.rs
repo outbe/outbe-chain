@@ -61,9 +61,6 @@ impl RequestLimitSplit {
             green,
         )
         .ok_or_else(invalid)?;
-        if !green && !desis_limit_minor.is_zero() {
-            return Err(invalid().into());
-        }
         Self::assemble(
             base_limit,
             lysis_limit_minor,
@@ -171,7 +168,7 @@ pub(crate) fn apply_auction_brief(
 }
 
 /// What the auction draws from the accumulator. A red day opens no auction, so a
-/// receipt that gives it a Desis Limit fails the day instead of drawing.
+/// receipt that gives it a Desis Limit is rejected.
 pub(crate) fn auction_draw(receipt: &RequestLimitSplitReceiptV1) -> Result<U256> {
     if receipt.day_type != DayType::Green && !receipt.desis_limit_minor.is_zero() {
         return Err(MetadosisError::InvalidOcompLimitSplit {
