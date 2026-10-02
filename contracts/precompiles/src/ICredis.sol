@@ -142,7 +142,10 @@ interface ICredis {
     function interestPaidMinor(uint256 positionId) external view returns (uint256);
 
     /// @notice Sum of `principalMinor` and `outstandingPrincipalMinor` across the account's positions.
-    function credisPrincipalAndOutstandingOf(address smartAccount) external view returns (uint256, uint256);
+    function credisPrincipalAndOutstandingOf(address smartAccount)
+        external
+        view
+        returns (uint256 principalMinor, uint256 outstandingPrincipalMinor);
 
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }

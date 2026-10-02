@@ -48,12 +48,12 @@
     ],
     "outputs": [
       {
-        "name": "",
+        "name": "principalMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "",
+        "name": "outstandingPrincipalMinor",
         "type": "uint256",
         "internalType": "uint256"
       }

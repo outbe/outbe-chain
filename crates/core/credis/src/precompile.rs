@@ -84,8 +84,8 @@ pub fn dispatch(
                 let (principal, outstanding) =
                     contract.principal_and_outstanding_of(c.smartAccount)?;
                 Ok(ICredis::credisPrincipalAndOutstandingOfReturn {
-                    _0: principal,
-                    _1: outstanding,
+                    principalMinor: principal,
+                    outstandingPrincipalMinor: outstanding,
                 })
             }),
             supportsInterface(c) => {

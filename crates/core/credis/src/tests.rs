@@ -1471,8 +1471,11 @@ fn precompile_reports_principal_and_outstanding_together() {
         let decoded =
             ICredis::credisPrincipalAndOutstandingOfCall::abi_decode_returns(&out).unwrap();
 
-        assert_eq!(decoded._0, U256::from(PRINCIPAL) * U256::from(2u64));
-        assert_eq!(decoded._1, U256::from(PRINCIPAL));
+        assert_eq!(
+            decoded.principalMinor,
+            U256::from(PRINCIPAL) * U256::from(2u64)
+        );
+        assert_eq!(decoded.outstandingPrincipalMinor, U256::from(PRINCIPAL));
     });
 }
 
