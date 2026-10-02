@@ -39,14 +39,14 @@ interface ICredisFactory {
     ///        is independent of spot and the pledge entry price, even when the
     ///        reference and issuance currencies match. It does not denominate the position.
     /// @return positionId Derived from `pledgeNote` and `smartAccount`.
-    /// @return amountStables Stablecoin amount disbursed, as quoted at pledge time.
+    /// @return principalMinor Stablecoin amount disbursed, as quoted at pledge time.
     function issueCredis(
         address smartAccount,
         bytes32 pledgeNote,
         bytes32 spendAuth,
         uint16 referenceCurrency,
         uint256 reservationId
-    ) external payable returns (uint256 positionId, uint256 amountStables);
+    ) external payable returns (uint256 positionId, uint256 principalMinor);
 
     /// @notice Settle `amountMinor` against a position and release the matching share of
     ///         collateral from the pledged lock ledger back to its balance.

@@ -46,13 +46,13 @@ interface IGemFactory {
     ///         two currencies that asset settles on. Reverts for an asset the
     ///         gem does not accept.
     /// @return settlementCurrency ISO 4217 code the payment is denominated in.
-    /// @return payableUnits Amount to pay, in `asset`'s own minor units.
+    /// @return amountMinor Amount to pay, in `asset`'s own minor units.
     /// @return snapshotId Trailing VWAP snapshot the amount converts at; zero on
     ///         the reference rail. It goes stale at the next update cutoff.
     function quoteSettlement(uint256 gemId, address asset)
         external
         view
-        returns (uint16 settlementCurrency, uint256 payableUnits, uint256 snapshotId);
+        returns (uint16 settlementCurrency, uint256 amountMinor, uint256 snapshotId);
 
     // --- GemPosition NFT (ERC-721-style, non-transferable; owner = merchant) ---
     /// @notice Number of GemPositions owned by `owner`.

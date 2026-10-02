@@ -36,7 +36,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "amountStables",
+        "name": "principalMinor",
         "type": "uint256",
         "internalType": "uint256"
       }

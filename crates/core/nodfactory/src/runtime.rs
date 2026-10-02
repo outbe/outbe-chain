@@ -236,7 +236,7 @@ fn settle<Q>(
                 nodId: nod_id.to_u256(),
                 asset: paid.asset,
                 nullifier: paid.nullifier,
-                amountCovered: paid.spend_amount,
+                amountMinor: paid.spend_amount,
             },
         )
     })

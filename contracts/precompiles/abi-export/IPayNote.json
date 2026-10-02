@@ -191,7 +191,7 @@
         "internalType": "bytes32"
       },
       {
-        "name": "spendAmount",
+        "name": "amountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

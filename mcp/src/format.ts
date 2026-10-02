@@ -236,6 +236,10 @@ function formatScalar(
     const v = value as bigint;
     return { raw: v.toString(), value: formatUnits(v, 6) };
   }
+  // A settlement quote is in the paying asset's own minor units, whose decimals vary.
+  if (context.functionName === "quoteSettlement" && n === "amountMinor") {
+    return (value as bigint).toString();
+  }
   if (type === "uint256" && SIX_DECIMAL_AMOUNT_RE.test(n)) {
     const v = value as bigint;
     return { raw: v.toString(), value: formatUnits(v, 6) };

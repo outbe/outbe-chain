@@ -9,32 +9,32 @@ interface IGratisFactory {
 
     /// @notice Emitted when a user pledges gratis as credis collateral.
     event GratisPledged(
-        address indexed account, uint256 amountStables, address indexed asset, uint256 gratisAmount, bytes32 pledgeNote
+        address indexed account, uint256 principalMinor, address indexed asset, uint256 collateral, bytes32 pledgeNote
     );
 
     /// @notice Emitted when an unspent pledge is returned to the caller.
-    ///         `gratisAmount` is the collateral credited back.
-    event GratisUnpledged(address indexed account, uint256 gratisAmount);
+    ///         `collateral` is the Gratis credited back.
+    event GratisUnpledged(address indexed account, uint256 collateral);
 
-    /// @notice Pledge enough gratis to collateralize `amountStables`.
+    /// @notice Pledge enough gratis to collateralize `principalMinor`.
     ///         Authorized by the caller's Gratis modify key:
-    ///         `mac = HMAC(modifyKey, op-preimage over amountStables)` where `opNonce`
+    ///         `mac = HMAC(modifyKey, op-preimage over principalMinor)` where `opNonce`
     ///         MUST equal the caller's current on-chain gratis op-nonce (fetch via
     ///         `outbe_deriveKeys` + `opNonceOf`).
-    /// @param amountStables Stablecoin minor units this pledge must cover.
+    /// @param principalMinor Stablecoin minor units this pledge must cover.
     /// @param asset         Stablecoin address.
     /// @param maxGratis     Slippage cap.
     /// @return pledgeNote The confidential pledge record id. Hand it (and the
     ///         derived pledge secret) to the CCA to request credis.
-    function pledgeGratis(uint256 amountStables, address asset, uint256 maxGratis, bytes32 mac, uint64 opNonce)
+    function pledgeGratis(uint256 principalMinor, address asset, uint256 maxGratis, bytes32 mac, uint64 opNonce)
         external
         returns (bytes32 pledgeNote);
 
     /// @notice Directly unpledge an UNSPENT pledge (e.g. credis rejected),
     ///         releasing the full collateral back to `msg.sender`. Authorized by
-    ///         the caller's modify key. `amountStables` is the figure the pledge was
+    ///         the caller's modify key. `principalMinor` is the figure the pledge was
     ///         quoted for and must match the one sealed in the ticket.
-    function unpledgeGratis(uint256 amountStables, bytes32 pledgeNote, bytes32 mac, uint64 opNonce) external;
+    function unpledgeGratis(uint256 principalMinor, bytes32 pledgeNote, bytes32 mac, uint64 opNonce) external;
 
     /// @notice Convert `amount` protocol-6 gratis to the same whole-token amount of
     ///         native-18 COEN (burns gratis). The return value and

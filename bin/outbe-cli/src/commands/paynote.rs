@@ -223,7 +223,7 @@ async fn quote_settlement(
                 "nod",
                 B256::from(id),
                 U256::ONE,
-                quote.payableUnits,
+                quote.amountMinor,
                 quote.snapshotId,
                 SettlementDomain::Nod,
             )
@@ -242,7 +242,7 @@ async fn quote_settlement(
                 "gem",
                 B256::from(id),
                 U256::ONE,
-                quote.payableUnits,
+                quote.amountMinor,
                 quote.snapshotId,
                 SettlementDomain::Gem,
             )
@@ -262,7 +262,7 @@ async fn quote_settlement(
                 "intex",
                 outbe_paynote::api::intex_series_target(&series),
                 units,
-                quote.payableUnits,
+                quote.amountMinor,
                 quote.snapshotId,
                 SettlementDomain::Intex,
             )

@@ -137,7 +137,7 @@ pub fn dispatch(
                 )?;
                 Ok(INodFactory::quoteSettlementReturn {
                     settlementCurrency: settlement_currency,
-                    payableUnits: amount,
+                    amountMinor: amount,
                     snapshotId: snapshot_id,
                 })
             }),

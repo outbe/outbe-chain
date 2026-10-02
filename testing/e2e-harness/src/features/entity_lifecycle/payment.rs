@@ -42,7 +42,7 @@ pub(crate) fn quote(world: &World, target: &Target, asset: Address) -> Quote {
             .unwrap_or_else(|| panic!("gem {id} does not quote a payment in {asset}"));
             Quote {
                 currency: quote.settlementCurrency,
-                payable: quote.payableUnits,
+                payable: quote.amountMinor,
                 snapshot: quote.snapshotId,
             }
         }
@@ -59,7 +59,7 @@ pub(crate) fn quote(world: &World, target: &Target, asset: Address) -> Quote {
             .unwrap_or_else(|| panic!("series {id} does not quote a payment in {asset}"));
             Quote {
                 currency: quote.settlementCurrency,
-                payable: quote.payableUnits,
+                payable: quote.amountMinor,
                 snapshot: quote.snapshotId,
             }
         }
@@ -72,7 +72,7 @@ pub(crate) fn quote(world: &World, target: &Target, asset: Address) -> Quote {
             .unwrap_or_else(|| panic!("Nod {id} does not quote a payment in {asset}"));
             Quote {
                 currency: quote.settlementCurrency,
-                payable: quote.payableUnits,
+                payable: quote.amountMinor,
                 snapshot: quote.snapshotId,
             }
         }
@@ -331,7 +331,7 @@ fn assert_paid_event(
                 addresses::NOD_FACTORY_ADDR,
             );
             assert_eq!(
-                (paid.owner, paid.nodId, paid.asset, paid.amountCovered),
+                (paid.owner, paid.nodId, paid.asset, paid.amountMinor),
                 (target.owner, *id, asset, payable),
                 "NodPaid does not record this payment"
             );

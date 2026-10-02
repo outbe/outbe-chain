@@ -95,7 +95,7 @@ sol! {
     interface IPromisMining {
         function minePromis(bytes14 seriesId, address owner, uint256 amount, uint64 nonce, bytes32 mac, uint64 opNonce)
             external
-            returns (uint256 promisAmount);
+            returns (uint256 promisMinor);
     }
 
     struct SendParam {

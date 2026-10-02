@@ -39,13 +39,13 @@ interface IIntexFactory {
     ///         exactly as `settleIntex` charges it. Reverts for a token the series does
     ///         not accept.
     /// @return settlementCurrency ISO 4217 code the payment is denominated in.
-    /// @return payableUnits Amount to pay, in `paymentToken`'s own minor units.
+    /// @return amountMinor Amount to pay, in `paymentToken`'s own minor units.
     /// @return snapshotId Trailing VWAP snapshot the amount converts at; zero on the
     ///         reference rail. It goes stale at the next update cutoff.
     function quoteSettlement(bytes14 seriesId, address paymentToken, uint256 amount)
         external
         view
-        returns (uint16 settlementCurrency, uint256 payableUnits, uint256 snapshotId);
+        returns (uint16 settlementCurrency, uint256 amountMinor, uint256 snapshotId);
 
     /// @notice Derived from finalized daily VWAPs on every call, never stored.
     function isSeriesQualified(bytes14 seriesId) external view returns (bool);
@@ -60,10 +60,10 @@ interface IIntexFactory {
     ///         where `opNonce` MUST equal the owner's current on-chain promis
     ///         op-nonce (fetch via `outbe_deriveKeys` + `IPromis.opNonceOf`) and the
     ///         bound amount is `promis_load_minor * amount`. Returns the minted
-    ///         Promis amount.
+    ///         Promis.
     function minePromis(bytes14 seriesId, address owner, uint256 amount, uint64 nonce, bytes32 mac, uint64 opNonce)
         external
-        returns (uint256 promisAmount);
+        returns (uint256 promisMinor);
 
     /// @notice Credit auction proceeds (native COEN, sent as msg.value) from
     ///         `srcChainId` into the day's pot. Callable only by the OriginRouter.
@@ -138,8 +138,8 @@ interface IIntexFactory {
     /// @notice `amount` Issued Intexes of `seriesId` were settled.
     event Settled(bytes14 indexed seriesId, address indexed intexOwner, uint256 amount);
 
-    /// @notice Settled Intexes were burned and `promisAmount` Promis minted.
-    event PromisMined(bytes14 indexed seriesId, address indexed owner, uint256 amount, uint256 promisAmount);
+    /// @notice Settled Intexes were burned and `promisMinor` Promis minted.
+    event PromisMined(bytes14 indexed seriesId, address indexed owner, uint256 amount, uint256 promisMinor);
 
     /// @notice The series was force-called.
     event SeriesCalled(bytes14 indexed seriesId, uint32 calledAt);

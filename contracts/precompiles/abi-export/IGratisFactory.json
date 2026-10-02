@@ -33,7 +33,7 @@
     "name": "pledgeGratis",
     "inputs": [
       {
-        "name": "amountStables",
+        "name": "principalMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -91,7 +91,7 @@
     "name": "unpledgeGratis",
     "inputs": [
       {
-        "name": "amountStables",
+        "name": "principalMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -144,7 +144,7 @@
         "internalType": "address"
       },
       {
-        "name": "amountStables",
+        "name": "principalMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -156,7 +156,7 @@
         "internalType": "address"
       },
       {
-        "name": "gratisAmount",
+        "name": "collateral",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -181,7 +181,7 @@
         "internalType": "address"
       },
       {
-        "name": "gratisAmount",
+        "name": "collateral",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

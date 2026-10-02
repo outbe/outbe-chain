@@ -43,7 +43,7 @@ use crate::sol_ext::IERC20;
 /// The pledger EOA is never in calldata: the enclave recovers it from the ticket and
 /// returns it sealed (`eoa_ct`). `caller` is the CCA and is recorded on the position -
 /// authorization to spend the pledge is `spend_auth`, verified inside the enclave.
-/// Returns `(position_id, amount_stables)`.
+/// Returns `(position_id, principal_minor)`.
 #[allow(clippy::too_many_arguments)]
 pub fn issue_credis(
     storage: StorageHandle<'_>,

@@ -301,14 +301,14 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     series: Hex,
     token: `0x${string}`,
     units: bigint,
-  ): Promise<{ settlementCurrency: number; payableUnits: bigint; snapshotId: bigint }> {
-    const [settlementCurrency, payableUnits, snapshotId] = (await n.client.readContract({
+  ): Promise<{ settlementCurrency: number; amountMinor: bigint; snapshotId: bigint }> {
+    const [settlementCurrency, amountMinor, snapshotId] = (await n.client.readContract({
       address: addr(n, "factory"),
       abi: FACTORY_ABI,
       functionName: "quoteSettlement",
       args: [series, token, units],
     })) as [number, bigint, bigint];
-    return { settlementCurrency: Number(settlementCurrency), payableUnits, snapshotId };
+    return { settlementCurrency: Number(settlementCurrency), amountMinor, snapshotId };
   }
 
   /** Bid rate as a fraction of strike ("0.8" = 80%) to the uint32 1e6 fixed-point the contract expects. */
@@ -1193,7 +1193,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           const base = { token, symbol: symbol as string, decimals: Number(decimals) };
           // A refused issuance-currency quote is this token's answer, not the list's.
           try {
-            const { settlementCurrency, payableUnits, snapshotId } = await quoteSettlement(
+            const { settlementCurrency, amountMinor, snapshotId } = await quoteSettlement(
               n,
               series,
               token,
@@ -1203,7 +1203,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
               ...base,
               settlementCurrency,
               snapshotId: snapshotId.toString(),
-              cost: { raw: payableUnits.toString(), value: formatUnits(payableUnits, Number(decimals)) },
+              cost: { raw: amountMinor.toString(), value: formatUnits(amountMinor, Number(decimals)) },
             };
           } catch (error) {
             return { ...base, unavailable: (error as Error).message };

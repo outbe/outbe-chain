@@ -322,7 +322,7 @@ impl World {
                         amount: U256::from(UNITS),
                     },
                 )
-                .payableUnits
+                .amountMinor
             }
             Factory::Gem => {
                 self.view(
@@ -332,7 +332,7 @@ impl World {
                         asset: ASSET,
                     },
                 )
-                .payableUnits
+                .amountMinor
             }
         }
     }

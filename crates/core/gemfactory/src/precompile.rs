@@ -83,7 +83,7 @@ pub fn dispatch(
                     runtime::quote_settlement(&storage, c.gemId, c.asset)?;
                 Ok(IGemFactory::quoteSettlementReturn {
                     settlementCurrency: settlement_currency,
-                    payableUnits: amount,
+                    amountMinor: amount,
                     snapshotId: snapshot_id,
                 })
             }),

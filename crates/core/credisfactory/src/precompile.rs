@@ -42,7 +42,7 @@ pub fn dispatch(
             match call {
                 issueCredis(c) => {
                     mutate_payable(c, PAYABLE_SELECTORS, caller, value, |sender, c, val| {
-                        let (position_id, amount_stables) = runtime::issue_credis(
+                        let (position_id, principal_minor) = runtime::issue_credis(
                             storage.clone(),
                             sender,
                             c.smartAccount,
@@ -54,7 +54,7 @@ pub fn dispatch(
                         )?;
                         Ok(ICredisFactory::issueCredisReturn {
                             positionId: position_id,
-                            amountStables: amount_stables,
+                            principalMinor: principal_minor,
                         })
                     })
                 }

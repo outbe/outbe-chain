@@ -518,7 +518,7 @@ fn unpledge_returns_collateral_to_pledger() {
         let call = Bytes::from(
             IGratisFactory::IGratisFactoryCalls::unpledgeGratis(
                 IGratisFactory::unpledgeGratisCall {
-                    amountStables: pledge_stables(),
+                    principalMinor: pledge_stables(),
                     pledgeNote: handle,
                     mac: FixedBytes(auth(GratisOp::Unpledge, alice(), pledge_stables(), 2).mac),
                     opNonce: 2,
@@ -700,7 +700,7 @@ fn rejects_msg_value() {
     StorageHandle::enter(&mut storage, |storage| {
         let call = Bytes::from(
             IGratisFactory::IGratisFactoryCalls::pledgeGratis(IGratisFactory::pledgeGratisCall {
-                amountStables: U256::from(1u64),
+                principalMinor: U256::from(1u64),
                 asset: asset(),
                 maxGratis: U256::MAX,
                 mac: FixedBytes([0u8; 32]),
@@ -766,7 +766,7 @@ fn pledge_rejects_invalid_metadata_missing_vault_or_unavailable_price_before_loc
             .unwrap();
             let before = outbe_gratis::api::balance_ct(storage.clone(), alice()).unwrap();
             let call = IGratisFactory::pledgeGratisCall {
-                amountStables: pledge_stables(),
+                principalMinor: pledge_stables(),
                 asset: asset(),
                 maxGratis: U256::MAX,
                 mac: FixedBytes(auth(GratisOp::Pledge, alice(), pledge_stables(), 1).mac),

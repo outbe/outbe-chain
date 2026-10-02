@@ -317,7 +317,7 @@ fn pledge(world: &mut World) {
         addresses::GRATIS_FACTORY_ADDR,
         DEPLOYER_KEY,
         &eth::IGratisFactory::pledgeGratisCall {
-            amountStables: PRINCIPAL,
+            principalMinor: PRINCIPAL,
             asset: f.currency.asset,
             maxGratis: INITIAL_GRATIS,
             mac: mac.into(),
@@ -329,14 +329,14 @@ fn pledge(world: &mut World) {
         event::<eth::IGratisFactory::GratisPledged>(&receipt, addresses::GRATIS_FACTORY_ADDR);
     assert_eq!(pledged.account, f.user);
     assert_eq!(pledged.asset, f.currency.asset);
-    assert_eq!(pledged.amountStables, PRINCIPAL);
+    assert_eq!(pledged.principalMinor, PRINCIPAL);
     // Both the stablecoin and the live 1 USD/COEN quote use six decimals.
-    assert_eq!(pledged.gratisAmount, PRINCIPAL);
+    assert_eq!(pledged.collateral, PRINCIPAL);
     let f = world.state.credis.as_mut().expect("fixture");
     f.pledge = pledged.pledgeNote;
-    f.collateral = pledged.gratisAmount;
+    f.collateral = pledged.collateral;
     let state = snapshot(world);
-    assert_eq!(state.liquid, INITIAL_GRATIS - pledged.gratisAmount);
+    assert_eq!(state.liquid, INITIAL_GRATIS - pledged.collateral);
     // The pending ticket enters the pledged ledger only when consumed at issuance.
     assert_eq!(state.pledged, U256::ZERO);
 }

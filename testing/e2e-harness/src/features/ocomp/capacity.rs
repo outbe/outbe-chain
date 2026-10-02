@@ -365,14 +365,14 @@ fn mine_succeeds_after_materialization_completion(world: &mut World) {
         },
     )
     .expect("quote capacity nod settlement");
-    assert_eq!(quote.payableUnits, body.settlementCostMinor);
+    assert_eq!(quote.amountMinor, body.settlementCostMinor);
     let proof = crate::features::paynote::deposit_and_prove(
         world,
         port,
         &private_key,
         owner,
         fixture.asset,
-        quote.payableUnits,
+        quote.amountMinor,
         crate::features::paynote::nod_context(nod_word, quote.snapshotId),
     );
     world

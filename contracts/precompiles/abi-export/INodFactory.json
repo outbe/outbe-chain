@@ -86,7 +86,7 @@
         "internalType": "uint16"
       },
       {
-        "name": "payableUnits",
+        "name": "amountMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -413,7 +413,7 @@
         "internalType": "bytes32"
       },
       {
-        "name": "amountCovered",
+        "name": "amountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

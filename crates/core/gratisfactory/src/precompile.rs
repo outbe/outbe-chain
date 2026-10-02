@@ -42,7 +42,7 @@ pub fn dispatch(
                     let (handle, gratis_amount) = runtime::pledge_gratis(
                         storage.clone(),
                         sender,
-                        c.amountStables,
+                        c.principalMinor,
                         c.asset,
                         c.maxGratis,
                         auth,
@@ -58,7 +58,7 @@ pub fn dispatch(
                     let gratis_amount = runtime::unpledge_gratis(
                         storage.clone(),
                         sender,
-                        c.amountStables,
+                        c.principalMinor,
                         c.pledgeNote,
                         auth,
                     )?;
@@ -91,9 +91,9 @@ fn emit_pledged(
         GRATIS_FACTORY_ADDRESS,
         SolEvent::encode_log_data(&IGratisFactory::GratisPledged {
             account,
-            amountStables: call.amountStables,
+            principalMinor: call.principalMinor,
             asset: call.asset,
-            gratisAmount: gratis_amount,
+            collateral: gratis_amount,
             pledgeNote: pledge_note,
         }),
     )
@@ -108,7 +108,7 @@ fn emit_unpledged(
         GRATIS_FACTORY_ADDRESS,
         SolEvent::encode_log_data(&IGratisFactory::GratisUnpledged {
             account,
-            gratisAmount: gratis_amount,
+            collateral: gratis_amount,
         }),
     )
 }

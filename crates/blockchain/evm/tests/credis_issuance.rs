@@ -374,7 +374,7 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
         if failure == 8 {
             assert!(String::from_utf8_lossy(&retry.returndata).contains("pledge note expired"));
             let cancel = IGratisFactory::unpledgeGratisCall {
-                amountStables: U256::from(2_000_000),
+                principalMinor: U256::from(2_000_000),
                 pledgeNote: note,
                 mac: B256::from(modify_mac(
                     &key,
@@ -398,7 +398,7 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
                 .collect();
             assert_eq!(returned.len(), 1);
             assert_eq!(returned[0].account, OWNER);
-            assert_eq!(returned[0].gratisAmount, U256::from(1_000_000));
+            assert_eq!(returned[0].collateral, U256::from(1_000_000));
             // Even a fresh authorization cannot return the same collateral twice.
             assert!(!matches!(
                 call!(

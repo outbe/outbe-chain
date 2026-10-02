@@ -152,6 +152,28 @@ test("MCP formats Credis prices at six decimals", () => {
   );
 });
 
+test("MCP leaves a settlement quote in the asset's own minor units", () => {
+  const quoteSettlement = {
+    type: "function",
+    name: "quoteSettlement",
+    stateMutability: "view",
+    inputs: [
+      { name: "gemId", type: "uint256" },
+      { name: "asset", type: "address" },
+    ],
+    outputs: [
+      { name: "settlementCurrency", type: "uint16" },
+      { name: "amountMinor", type: "uint256" },
+      { name: "snapshotId", type: "uint256" },
+    ],
+  } as AbiFunction;
+  const quote = humanizeReturn(quoteSettlement, [840, 2_000_000_000_000_000_000n, 0n]) as Record<
+    string,
+    unknown
+  >;
+  assert.equal(quote.amountMinor, "2000000000000000000");
+});
+
 test("MCP formats Credis and Oracle annual rates with six decimals", () => {
   const position = {
     name: "position",

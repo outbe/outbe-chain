@@ -404,7 +404,7 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
                 asset: claim.asset,
                 context: claim.context,
                 nullifier: nullifier_word,
-                spendAmount: claim.spend_amount,
+                amountMinor: claim.spend_amount,
             }),
         )?;
         if let Some((index, root_after)) = change_receipt {

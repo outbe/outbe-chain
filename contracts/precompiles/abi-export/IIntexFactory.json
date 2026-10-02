@@ -162,7 +162,7 @@
     ],
     "outputs": [
       {
-        "name": "promisAmount",
+        "name": "promisMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -241,7 +241,7 @@
         "internalType": "uint16"
       },
       {
-        "name": "payableUnits",
+        "name": "amountMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -576,7 +576,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "promisAmount",
+        "name": "promisMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

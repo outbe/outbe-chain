@@ -296,7 +296,7 @@ impl BenchmarkScenario for CredisScenario {
         if position.smart_account != ALICE
             || revealed_owner != ALICE
             || pledged != pledge_cost()
-            || decoded.amountStables != pledge_stables()
+            || decoded.principalMinor != pledge_stables()
         {
             return Err("Credis request postcondition does not match the sealed pledge".to_owned());
         }

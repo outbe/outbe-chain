@@ -1088,7 +1088,7 @@ pub fn mine_promis(
                 seriesId: series_id.into(),
                 owner,
                 amount,
-                promisAmount: promis_amount,
+                promisMinor: promis_amount,
             },
         )?;
         Ok(promis_amount)
