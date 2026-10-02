@@ -244,3 +244,22 @@ pub(super) fn security_material(state: &UpgradeJournalStateV1) -> Option<Securit
         )),
     }
 }
+
+fn validate_root(sealed_root_hash: B256) -> Result<()> {
+    if sealed_root_hash.is_zero() {
+        eyre::bail!("upgrade checkpoint has a zero sealed-root hash");
+    }
+    Ok(())
+}
+
+pub(super) fn validate_key_ready(
+    sealed_root_hash: B256,
+    resident_offer_public: B256,
+    proof_hash: B256,
+) -> Result<()> {
+    validate_root(sealed_root_hash)?;
+    if resident_offer_public.is_zero() || proof_hash.is_zero() {
+        eyre::bail!("key-ready checkpoint has a zero offer key or proof hash");
+    }
+    Ok(())
+}

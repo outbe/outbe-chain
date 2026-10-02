@@ -1,14 +1,16 @@
 //! Owner-only, crash-consistent journal for one manual TEE renewal intent.
 
+use super::journal_storage::{sync_directory, JournalPaths};
+
 mod validation;
 
 use std::{
     fs::{self, DirBuilder, File, OpenOptions},
-    io::{Read as _, Write as _},
+    io::Read as _,
     os::unix::fs::{
         DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _,
     },
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use alloy_primitives::{keccak256, Address, B256};
@@ -28,9 +30,6 @@ use crate::tx::RawRelayTransactionV1;
 use super::registry::RenewalBindingV1;
 
 const DIRECTORY: &str = "tee-renewal-v1";
-const JOURNAL: &str = "journal.json";
-const NEXT: &str = "journal.next";
-const LOCK: &str = "state.lock";
 const DIRECTORY_MODE: u32 = 0o700;
 const FILE_MODE: u32 = 0o600;
 const MAX_JOURNAL_BYTES: u64 = 4 * 1024 * 1024;
@@ -133,7 +132,7 @@ pub(crate) struct RenewalJournalGuard {
 
 impl RenewalJournalGuard {
     pub(crate) fn acquire(node_data_dir: &Path) -> Result<Self> {
-        let paths = JournalPaths::new(node_data_dir);
+        let paths = JournalPaths::new(node_data_dir, DIRECTORY);
         create_or_validate_directory(&paths.root)?;
         let lock = open_private_file(&paths.lock, true)?;
         if let Err(error) =
@@ -161,51 +160,21 @@ impl RenewalJournalGuard {
                 .ok_or_else(|| eyre::eyre!("renewal journal generation exhausted"))?;
         }
         snapshot.validate()?;
-        let encoded = serde_json::to_vec(&snapshot).wrap_err("encode renewal journal")?;
-        if encoded.len() as u64 > MAX_JOURNAL_BYTES {
-            eyre::bail!("renewal journal exceeds its size cap");
-        }
-        let mut next = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(FILE_MODE)
-            .open(&self.paths.next)
-            .wrap_err("create renewal journal scratch")?;
-        next.write_all(&encoded)
-            .wrap_err("write renewal journal scratch")?;
-        next.sync_all().wrap_err("fsync renewal journal scratch")?;
-        fs::rename(&self.paths.next, &self.paths.journal).wrap_err("commit renewal journal")?;
-        sync_directory(&self.paths.root)
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true).mode(FILE_MODE);
+        self.paths
+            .commit("renewal")
+            .commit_json(&snapshot, &options, MAX_JOURNAL_BYTES)
     }
 }
 
 pub(crate) fn inspect_journal(node_data_dir: &Path) -> Result<Option<RenewalJournalSnapshotV1>> {
-    let paths = JournalPaths::new(node_data_dir);
+    let paths = JournalPaths::new(node_data_dir, DIRECTORY);
     if !paths.root.exists() {
         return Ok(None);
     }
     validate_directory(&paths.root)?;
     read_snapshot(&paths.journal)
-}
-
-#[derive(Clone)]
-struct JournalPaths {
-    root: PathBuf,
-    journal: PathBuf,
-    next: PathBuf,
-    lock: PathBuf,
-}
-
-impl JournalPaths {
-    fn new(node_data_dir: &Path) -> Self {
-        let root = node_data_dir.join(DIRECTORY);
-        Self {
-            journal: root.join(JOURNAL),
-            next: root.join(NEXT),
-            lock: root.join(LOCK),
-            root,
-        }
-    }
 }
 
 fn create_or_validate_directory(path: &Path) -> Result<()> {
@@ -233,12 +202,7 @@ fn validate_directory(path: &Path) -> Result<()> {
 }
 
 fn open_private_file(path: &Path, create: bool) -> Result<File> {
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(create)
-        .mode(FILE_MODE)
-        .custom_flags(libc::O_NOFOLLOW)
+    let file = crate::tee::journal_storage::private_file_options(create)
         .open(path)
         .wrap_err_with(|| format!("open private renewal file {}", path.display()))?;
     validate_private_file(path)?;
@@ -287,13 +251,6 @@ fn read_snapshot(path: &Path) -> Result<Option<RenewalJournalSnapshotV1>> {
         serde_json::from_slice(&bytes).wrap_err("decode renewal journal")?;
     snapshot.validate()?;
     Ok(Some(snapshot))
-}
-
-fn sync_directory(path: &Path) -> Result<()> {
-    File::open(path)
-        .wrap_err_with(|| format!("open directory {} for fsync", path.display()))?
-        .sync_all()
-        .wrap_err_with(|| format!("fsync directory {}", path.display()))
 }
 
 #[cfg(test)]
@@ -521,7 +478,7 @@ mod tests {
         });
         guard.store(second).unwrap();
         assert_eq!(guard.load().unwrap().unwrap().generation, 2);
-        let metadata = fs::metadata(root.path().join(DIRECTORY).join(JOURNAL)).unwrap();
+        let metadata = fs::metadata(root.path().join(DIRECTORY).join("journal.json")).unwrap();
         assert_eq!(metadata.permissions().mode() & 0o777, FILE_MODE);
     }
 
@@ -551,12 +508,16 @@ mod tests {
                 .unwrap();
         }
         let directory = root.path().join(DIRECTORY);
-        fs::write(directory.join(NEXT), b"partial").unwrap();
-        fs::set_permissions(directory.join(NEXT), fs::Permissions::from_mode(FILE_MODE)).unwrap();
+        fs::write(directory.join("journal.next"), b"partial").unwrap();
+        fs::set_permissions(
+            directory.join("journal.next"),
+            fs::Permissions::from_mode(FILE_MODE),
+        )
+        .unwrap();
         let guard = RenewalJournalGuard::acquire(root.path()).unwrap();
-        assert!(!directory.join(NEXT).exists());
+        assert!(!directory.join("journal.next").exists());
         drop(guard);
-        fs::write(directory.join(JOURNAL), b"corrupt").unwrap();
+        fs::write(directory.join("journal.json"), b"corrupt").unwrap();
         assert!(inspect_journal(root.path()).is_err());
     }
 

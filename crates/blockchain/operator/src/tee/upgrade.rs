@@ -4,6 +4,13 @@
 //! checkpoints for finalized network-key provisioning and binding transitions.
 //! A separate legacy checkpoint supports copying an existing MRSIGNER seal.
 
+use super::journal_storage::{sync_directory, JournalPaths};
+
+mod storage;
+use storage::{
+    read_private_bounded_file, read_snapshot, validate_directory, validate_private_file,
+};
+
 mod context;
 mod identity;
 mod journal_validation;
@@ -56,9 +63,6 @@ use super::{
 };
 
 const DIRECTORY: &str = "tee-upgrade-v1";
-const JOURNAL: &str = "journal.json";
-const NEXT: &str = "journal.next";
-const LOCK: &str = "state.lock";
 const SEALED_ROOT: &str = "sealed_root.bin";
 const DIRECTORY_MODE: u32 = 0o700;
 const FILE_MODE: u32 = 0o600;
@@ -206,25 +210,6 @@ impl UpgradeJournalStateV1 {
     }
 }
 
-fn validate_root(sealed_root_hash: B256) -> Result<()> {
-    if sealed_root_hash.is_zero() {
-        eyre::bail!("upgrade checkpoint has a zero sealed-root hash");
-    }
-    Ok(())
-}
-
-fn validate_key_ready(
-    sealed_root_hash: B256,
-    resident_offer_public: B256,
-    proof_hash: B256,
-) -> Result<()> {
-    validate_root(sealed_root_hash)?;
-    if resident_offer_public.is_zero() || proof_hash.is_zero() {
-        eyre::bail!("key-ready checkpoint has a zero offer key or proof hash");
-    }
-    Ok(())
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UpgradeJournalSnapshotV1 {
@@ -255,63 +240,6 @@ pub struct UpgradeJournalGuardV1 {
     _lock: File,
 }
 
-impl UpgradeJournalGuardV1 {
-    pub fn acquire(node_data_dir: &Path) -> Result<Self> {
-        let paths = JournalPaths::new(node_data_dir);
-        create_or_validate_directory(&paths.root)?;
-        let lock = open_private_file(&paths.lock, true, MAX_JOURNAL_BYTES)?;
-        if let Err(error) =
-            rustix::fs::flock(&lock, rustix::fs::FlockOperation::NonBlockingLockExclusive)
-        {
-            let error = std::io::Error::from(error);
-            if error.kind() == std::io::ErrorKind::WouldBlock {
-                eyre::bail!("another upgrade operator owns the journal lock");
-            }
-            return Err(error).wrap_err("lock upgrade journal");
-        }
-        reconcile_scratch(&paths)?;
-        Ok(Self { paths, _lock: lock })
-    }
-
-    pub fn load(&self) -> Result<Option<UpgradeJournalSnapshotV1>> {
-        read_snapshot(&self.paths.journal)
-    }
-
-    pub fn store(&self, mut snapshot: UpgradeJournalSnapshotV1) -> Result<()> {
-        if let Some(current) = self.load()? {
-            if is_next_upgrade(&current.lifecycle, &snapshot.lifecycle) {
-                // A completed rollout may be followed by the next exact successor.
-            } else {
-                if snapshot.lifecycle.context() != current.lifecycle.context() {
-                    eyre::bail!("upgrade journal context cannot change after preparation");
-                }
-                validate_checkpoint_transition(&current.lifecycle, &snapshot.lifecycle)?;
-            }
-            snapshot.generation = current
-                .generation
-                .checked_add(1)
-                .ok_or_else(|| eyre::eyre!("upgrade journal generation exhausted"))?;
-        }
-        snapshot.validate()?;
-        let encoded = serde_json::to_vec(&snapshot).wrap_err("encode upgrade journal")?;
-        if encoded.len() as u64 > MAX_JOURNAL_BYTES {
-            eyre::bail!("upgrade journal exceeds its size cap");
-        }
-        let mut next = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(FILE_MODE)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(&self.paths.next)
-            .wrap_err("create upgrade journal scratch")?;
-        next.write_all(&encoded)
-            .wrap_err("write upgrade journal scratch")?;
-        next.sync_all().wrap_err("fsync upgrade journal scratch")?;
-        fs::rename(&self.paths.next, &self.paths.journal).wrap_err("commit upgrade journal")?;
-        sync_directory(&self.paths.root)
-    }
-}
-
 fn is_next_upgrade(current: &UpgradeJournalStateV1, next: &UpgradeJournalStateV1) -> bool {
     let (
         UpgradeJournalStateV1::Promoted { context: old, .. },
@@ -328,7 +256,7 @@ fn is_next_upgrade(current: &UpgradeJournalStateV1, next: &UpgradeJournalStateV1
 pub fn inspect_upgrade_journal_v1(
     node_data_dir: &Path,
 ) -> Result<Option<UpgradeJournalSnapshotV1>> {
-    let paths = JournalPaths::new(node_data_dir);
+    let paths = JournalPaths::new(node_data_dir, DIRECTORY);
     if !paths.root.exists() {
         return Ok(None);
     }
@@ -932,57 +860,6 @@ pub fn transition_intent_v1(
     Ok(intent)
 }
 
-fn validate_transition_time_window_v1(
-    prepared: &PreparedTransitionEvidenceV1,
-    policy: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
-    finalized_timestamp: u64,
-) -> Result<()> {
-    let lease = prepared
-        .intent
-        .requested_valid_until
-        .checked_sub(finalized_timestamp)
-        .ok_or_else(|| eyre::eyre!("transition lease is already expired at finalized time"))?;
-    let ceiling = prepared
-        .collateral_expiration
-        .checked_sub(policy.collateral_margin)
-        .ok_or_else(|| eyre::eyre!("transition collateral margin underflows"))?;
-    let lease_matches = prepared.collateral_issue_floor <= finalized_timestamp
-        && lease >= policy.minimum_lease
-        && lease <= policy.maximum_lease;
-    if !lease_matches || prepared.intent.requested_valid_until > ceiling {
-        eyre::bail!("candidate evidence cannot satisfy the staged successor lease window");
-    }
-    Ok(())
-}
-
-fn recover_candidate_key_ready_v1(
-    node_data_dir: &Path,
-    durable: &ReplacementCandidateSubmissionV1,
-    successor: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
-    expected_offer_public: B256,
-) -> Result<()> {
-    let evidence = AttestationEvidenceV1::decode_canonical(durable.evidence())
-        .map_err(|error| eyre::eyre!("decode durable transition evidence: {error}"))?;
-    if evidence.intent().operation != AttestationOperationV1::TransitionEnclaveMeasurement
-        || evidence.intent().policy_hash
-            != successor
-                .policy_hash()
-                .map_err(|error| eyre::eyre!("hash staged successor policy: {error}"))?
-    {
-        eyre::bail!("durable candidate submission targets another transition policy");
-    }
-    let proof = evidence
-        .transition_key_ready_proof()
-        .ok_or_else(|| eyre::eyre!("durable transition evidence has no key-ready proof"))?;
-    record_candidate_key_ready_v1(
-        node_data_dir,
-        evidence.intent(),
-        proof,
-        expected_offer_public.into(),
-    )?;
-    Ok(())
-}
-
 /// Copy exactly `sealed_root.bin` from active A to prepared candidate B.
 /// A byte-identical destination is an idempotent crash retry; any other
 /// pre-existing destination fails closed.
@@ -1021,125 +898,6 @@ pub fn copy_same_platform_sealed_root_v1(context: &UpgradeContextV1) -> Result<B
     output.sync_all().wrap_err("fsync candidate sealed root")?;
     sync_directory(&context.candidate_tee_dir)?;
     Ok(hash)
-}
-
-#[derive(Clone)]
-struct JournalPaths {
-    root: PathBuf,
-    journal: PathBuf,
-    next: PathBuf,
-    lock: PathBuf,
-}
-
-impl JournalPaths {
-    fn new(node_data_dir: &Path) -> Self {
-        let root = node_data_dir.join(DIRECTORY);
-        Self {
-            journal: root.join(JOURNAL),
-            next: root.join(NEXT),
-            lock: root.join(LOCK),
-            root,
-        }
-    }
-}
-
-fn create_or_validate_directory(path: &Path) -> Result<()> {
-    let mut builder = DirBuilder::new();
-    builder.mode(DIRECTORY_MODE);
-    match builder.create(path) {
-        Ok(()) => sync_directory(
-            path.parent()
-                .ok_or_else(|| eyre::eyre!("upgrade directory has no parent"))?,
-        ),
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => validate_directory(path),
-        Err(error) => Err(error).wrap_err("create upgrade journal directory"),
-    }
-}
-
-fn validate_directory(path: &Path) -> Result<()> {
-    let metadata = fs::symlink_metadata(path)
-        .wrap_err_with(|| format!("stat private directory {}", path.display()))?;
-    if !metadata.file_type().is_dir()
-        || metadata.uid() != rustix::process::geteuid().as_raw()
-        || metadata.permissions().mode() & 0o777 != DIRECTORY_MODE
-    {
-        eyre::bail!(
-            "private directory {} is not owner-only 0700",
-            path.display()
-        );
-    }
-    Ok(())
-}
-
-fn open_private_file(path: &Path, create: bool, max_bytes: u64) -> Result<File> {
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(create)
-        .mode(FILE_MODE)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)
-        .wrap_err_with(|| format!("open private file {}", path.display()))?;
-    validate_private_file(path, max_bytes)?;
-    Ok(file)
-}
-
-fn validate_private_file(path: &Path, max_bytes: u64) -> Result<()> {
-    let metadata = fs::symlink_metadata(path)
-        .wrap_err_with(|| format!("stat private file {}", path.display()))?;
-    if !private_file_within_bounds(&metadata, max_bytes) {
-        eyre::bail!(
-            "private file {} violates owner or size bounds",
-            path.display()
-        );
-    }
-    Ok(())
-}
-
-fn read_private_bounded_file(path: &Path, max_bytes: u64) -> Result<Vec<u8>> {
-    let file = open_private_file(path, false, max_bytes)?;
-    let mut bytes = Vec::new();
-    file.take(max_bytes + 1)
-        .read_to_end(&mut bytes)
-        .wrap_err_with(|| format!("read private file {}", path.display()))?;
-    if bytes.len() as u64 > max_bytes {
-        eyre::bail!("private file {} exceeds its size cap", path.display());
-    }
-    Ok(bytes)
-}
-
-fn reconcile_scratch(paths: &JournalPaths) -> Result<()> {
-    if paths.next.exists() {
-        validate_private_file(&paths.next, MAX_JOURNAL_BYTES)?;
-        fs::remove_file(&paths.next).wrap_err("discard incomplete upgrade journal scratch")?;
-        sync_directory(&paths.root)?;
-    }
-    Ok(())
-}
-
-fn read_snapshot(path: &Path) -> Result<Option<UpgradeJournalSnapshotV1>> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    let bytes = read_private_bounded_file(path, MAX_JOURNAL_BYTES)?;
-    let snapshot: UpgradeJournalSnapshotV1 =
-        serde_json::from_slice(&bytes).wrap_err("decode upgrade journal")?;
-    snapshot.validate()?;
-    Ok(Some(snapshot))
-}
-
-fn sync_directory(path: &Path) -> Result<()> {
-    File::open(path)
-        .wrap_err_with(|| format!("open directory {} for fsync", path.display()))?
-        .sync_all()
-        .wrap_err_with(|| format!("fsync directory {}", path.display()))
-}
-
-fn private_file_within_bounds(metadata: &fs::Metadata, max_bytes: u64) -> bool {
-    metadata.file_type().is_file()
-        && metadata.uid() == rustix::process::geteuid().as_raw()
-        && metadata.permissions().mode() & 0o777 == FILE_MODE
-        && metadata.len() <= max_bytes
 }
 
 #[cfg(test)]
@@ -1355,7 +1113,7 @@ mod tests {
         let snapshot = guard.load().unwrap().unwrap();
         assert_eq!(snapshot.generation, 7);
         assert_eq!(snapshot.lifecycle.label(), "promoted");
-        let metadata = fs::metadata(root.path().join(DIRECTORY).join(JOURNAL)).unwrap();
+        let metadata = fs::metadata(root.path().join(DIRECTORY).join("journal.json")).unwrap();
         assert_eq!(metadata.permissions().mode() & 0o777, FILE_MODE);
     }
 
@@ -1422,7 +1180,7 @@ mod tests {
             ))
             .is_err());
         drop(guard);
-        fs::write(root.path().join(DIRECTORY).join(JOURNAL), b"corrupt").unwrap();
+        fs::write(root.path().join(DIRECTORY).join("journal.json"), b"corrupt").unwrap();
         assert!(inspect_upgrade_journal_v1(root.path()).is_err());
     }
 

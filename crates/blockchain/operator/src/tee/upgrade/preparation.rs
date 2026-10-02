@@ -207,3 +207,54 @@ fn persist_key_ready<R, N: UpgradeNodeSignerV1>(
     )?;
     Ok(())
 }
+
+fn validate_transition_time_window_v1(
+    prepared: &PreparedTransitionEvidenceV1,
+    policy: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
+    finalized_timestamp: u64,
+) -> Result<()> {
+    let lease = prepared
+        .intent
+        .requested_valid_until
+        .checked_sub(finalized_timestamp)
+        .ok_or_else(|| eyre::eyre!("transition lease is already expired at finalized time"))?;
+    let ceiling = prepared
+        .collateral_expiration
+        .checked_sub(policy.collateral_margin)
+        .ok_or_else(|| eyre::eyre!("transition collateral margin underflows"))?;
+    let lease_matches = prepared.collateral_issue_floor <= finalized_timestamp
+        && lease >= policy.minimum_lease
+        && lease <= policy.maximum_lease;
+    if !lease_matches || prepared.intent.requested_valid_until > ceiling {
+        eyre::bail!("candidate evidence cannot satisfy the staged successor lease window");
+    }
+    Ok(())
+}
+
+fn recover_candidate_key_ready_v1(
+    node_data_dir: &Path,
+    durable: &ReplacementCandidateSubmissionV1,
+    successor: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
+    expected_offer_public: B256,
+) -> Result<()> {
+    let evidence = AttestationEvidenceV1::decode_canonical(durable.evidence())
+        .map_err(|error| eyre::eyre!("decode durable transition evidence: {error}"))?;
+    if evidence.intent().operation != AttestationOperationV1::TransitionEnclaveMeasurement
+        || evidence.intent().policy_hash
+            != successor
+                .policy_hash()
+                .map_err(|error| eyre::eyre!("hash staged successor policy: {error}"))?
+    {
+        eyre::bail!("durable candidate submission targets another transition policy");
+    }
+    let proof = evidence
+        .transition_key_ready_proof()
+        .ok_or_else(|| eyre::eyre!("durable transition evidence has no key-ready proof"))?;
+    record_candidate_key_ready_v1(
+        node_data_dir,
+        evidence.intent(),
+        proof,
+        expected_offer_public.into(),
+    )?;
+    Ok(())
+}
