@@ -12,7 +12,7 @@ Public commands, read APIs, Solidity ABI and protocol economics stay unchanged.
 - [x] Separate request, finality and voting.
 - [x] Isolate completion and expiry.
 - [x] Separate worldwide-day advancement and effects.
-- [ ] Decompose activation fixtures by domain responsibility.
+- [x] Decompose activation fixtures by domain responsibility.
 - [ ] Extract precompile queries; run final verification and static analysis.
 
 ## Baseline
@@ -75,3 +75,8 @@ passed. Advancement keeps a single retained-count snapshot and admission budget
 for the tick. Effects preserve the distinct Tribute/Promis mutation order of
 capacity forfeiture and missed offering. Only the existing VWAP overflow prefix
 is tolerated; every other snapshot error still propagates.
+
+Step 7: 252 library tests, 2 compile-fail harnesses (6 UI cases), 5 FSM model
+tests and 5 semantic facade tests passed. Fixture artifacts, committee signing,
+parent tree, raw WWD setup and activation stages now have separate modules.
+Constructor stages retain real command transitions and deterministic vote bytes.
