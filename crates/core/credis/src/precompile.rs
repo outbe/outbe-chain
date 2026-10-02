@@ -117,5 +117,10 @@ fn abi_position(p: &crate::schema::Position) -> ICredis::Position {
         state: p.state,
         callAnchorPriceMinor: p.call_anchor_price_minor,
         interestPaidMinor: p.interest_paid_minor,
+        settlementDeadline: if p.called_at == 0 {
+            0
+        } else {
+            crate::runtime::settlement_deadline(p)
+        },
     }
 }

@@ -429,12 +429,13 @@ pub(crate) fn try_call_group(
     for &series_id in &group.members {
         outbe_intex::api::mark_called(storage, series_id, called_at)?;
     }
+    let settlement_deadline = u64::from(called_at) + u64::from(series.call_notice_period_seconds);
     // Park it with its members: the expiry sweep has no other way back to them.
     factory.remove_call_bin_group(group.iso_code, group.worldwide_day)?;
     factory.push_called_group(
         group.iso_code,
         group.worldwide_day,
-        u64::from(called_at) + u64::from(series.call_notice_period_seconds),
+        settlement_deadline,
         &group.members,
     )?;
 
@@ -453,6 +454,7 @@ pub(crate) fn try_call_group(
             crate::precompile::IIntexFactory::SeriesCalled {
                 seriesId: series_id.into(),
                 calledAt: called_at,
+                settlementDeadline: settlement_deadline,
             },
         )?;
     }

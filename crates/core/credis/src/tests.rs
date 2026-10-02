@@ -1295,6 +1295,25 @@ fn invalid_state_bytes_are_rejected_rather_than_silently_reinterpreted() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn precompile_get_position_reports_the_settlement_deadline_once_called() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage.clone());
+        let id = open_pos(&mut credis);
+        let deadline = |storage: &StorageHandle| {
+            let data = ICredis::getPositionCall { positionId: id }.abi_encode();
+            let out = dispatch(storage.clone(), &data, alice(), U256::ZERO).unwrap();
+            ICredis::getPositionCall::abi_decode_returns(&out)
+                .unwrap()
+                .settlementDeadline
+        };
+        assert_eq!(deadline(&storage), 0);
+
+        assert!(credis.mark_called(id, at(458)).unwrap());
+        assert_eq!(deadline(&storage), at(465));
+    });
+}
+
+#[test]
 fn precompile_get_position_returns_the_full_record() {
     with_credis(|storage| {
         let id = {

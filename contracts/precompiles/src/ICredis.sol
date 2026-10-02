@@ -93,6 +93,8 @@ interface ICredis {
         /// `SettlementApplied.interestPaidMinor` deltas. Current-period accrual is
         /// {interestAccruedMinor}.
         uint256 interestPaidMinor;
+        /// Inclusive deadline: 0 when uncalled.
+        uint64 settlementDeadline;
     }
 
     function name() external view returns (string memory);

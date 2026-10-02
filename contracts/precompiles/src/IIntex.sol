@@ -43,6 +43,8 @@ interface IIntex {
         uint32 exercisedUnits;
         /// @notice Units sent to the Gem Factory; their load moved with them.
         uint32 gemFactoryUnits;
+        /// @notice Inclusive deadline: 0 when uncalled.
+        uint64 settlementDeadline;
     }
 
     /// @notice Full identity + lifecycle record for a series. Reverts if the

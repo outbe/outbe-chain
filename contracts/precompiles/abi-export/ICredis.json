@@ -194,6 +194,11 @@
             "name": "interestPaidMinor",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "settlementDeadline",
+            "type": "uint64",
+            "internalType": "uint64"
           }
         ]
       }
@@ -428,6 +433,11 @@
             "name": "interestPaidMinor",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "settlementDeadline",
+            "type": "uint64",
+            "internalType": "uint64"
           }
         ]
       }
@@ -554,6 +564,11 @@
             "name": "interestPaidMinor",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "settlementDeadline",
+            "type": "uint64",
+            "internalType": "uint64"
           }
         ]
       }

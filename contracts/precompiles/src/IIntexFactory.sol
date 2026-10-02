@@ -140,8 +140,8 @@ interface IIntexFactory {
     /// @notice Settled Intexes were burned and `promisMinor` Promis minted.
     event PromisMined(bytes14 indexed seriesId, address indexed owner, uint256 units, uint256 promisMinor);
 
-    /// @notice The series was force-called.
-    event SeriesCalled(bytes14 indexed seriesId, uint32 calledAt);
+    /// @notice The series was force-called; it settles until `settlementDeadline`, inclusive.
+    event SeriesCalled(bytes14 indexed seriesId, uint32 calledAt, uint64 settlementDeadline);
 
     /// @notice A reference currency was left out of one day's Call scan because its
     ///         window price could not be indexed. The next day's pass tries it again.
