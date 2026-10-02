@@ -93,13 +93,23 @@ pub enum SweepFailure {
 impl PrecompileError {
     /// A failure of this node's own storage or readers, which another node would not hit.
     pub fn is_node_local(&self) -> bool {
-        matches!(
-            self,
+        match self {
             Self::Storage(_)
-                | Self::BodyReadUnavailable(_)
-                | Self::BodyReadRequestDeadline
-                | Self::TreeUnavailable(_)
-        )
+            | Self::BodyReadUnavailable(_)
+            | Self::BodyReadRequestDeadline
+            | Self::TreeUnavailable(_)
+            | Self::SubCall(SubCallError::DatabaseError(_)) => true,
+            Self::OutOfGas
+            | Self::BodyReadCorruption(_)
+            | Self::TransactionCeWorkLimitExceeded
+            | Self::BlockCeWorkCapacityExhausted
+            | Self::WriteProtection
+            | Self::Revert(_)
+            | Self::RevertBytes(_)
+            | Self::SubCall(_)
+            | Self::Unsupported
+            | Self::Fatal(_) => false,
+        }
     }
 
     pub fn sweep_failure(&self) -> SweepFailure {
@@ -173,6 +183,11 @@ mod tests {
                 PrecompileError::SubCall(SubCallError::OutOfGas),
                 false,
                 SweepFailure::Skip,
+            ),
+            (
+                PrecompileError::SubCall(SubCallError::DatabaseError("x".into())),
+                true,
+                SweepFailure::Propagate,
             ),
             (PrecompileError::Unsupported, false, SweepFailure::Skip),
             (
