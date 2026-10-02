@@ -35,6 +35,50 @@ pub(super) struct DkgDealerRetrySnapshot {
     pub(super) accepted_acks: BTreeMap<bls12381::PublicKey, PlayerAck<bls12381::PublicKey>>,
 }
 
+/// Load the ceremony-scoped dealer seed or save a new one before networking.
+pub(super) fn load_or_create_dealer_snapshot(
+    retry_store: Option<&DkgRetryStore>,
+    ceremony_id: DkgCeremonyId,
+    round: u64,
+    restored_message: &'static str,
+) -> Result<DkgDealerRetrySnapshot> {
+    if let Some(store) = retry_store {
+        if let Some(snapshot) = store.load_dealer(ceremony_id)? {
+            tracing::info!(round, "{restored_message}");
+            return Ok(snapshot);
+        }
+    }
+    use rand_commonware::Rng as _;
+    let mut seed = [0u8; 32];
+    rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng).fill_bytes(&mut seed);
+    let snapshot = DkgDealerRetrySnapshot {
+        ceremony_id,
+        seed,
+        accepted_acks: BTreeMap::new(),
+    };
+    if let Some(store) = retry_store {
+        store.save_dealer(&snapshot)?;
+    }
+    Ok(snapshot)
+}
+
+/// Record a newly accepted ACK before the actor advances delivery or sealing.
+pub(super) fn persist_dealer_ack(
+    snapshot: Option<&mut DkgDealerRetrySnapshot>,
+    retry_store: Option<&DkgRetryStore>,
+    player: bls12381::PublicKey,
+    ack: PlayerAck<bls12381::PublicKey>,
+) -> Result<()> {
+    let Some(snapshot) = snapshot else {
+        return Ok(());
+    };
+    snapshot.accepted_acks.insert(player, ack);
+    if let Some(store) = retry_store {
+        store.save_dealer(snapshot)?;
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug)]
 struct AcceptedPlayerDealing {
     pub_msg: DealerPubMsg<MinSig>,

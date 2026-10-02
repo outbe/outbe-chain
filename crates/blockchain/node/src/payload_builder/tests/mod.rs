@@ -1,5 +1,6 @@
 mod carrier_admission;
 mod size_budget;
+mod stages;
 
 use std::{
     collections::BTreeMap,
@@ -8,9 +9,9 @@ use std::{
 };
 
 use super::*;
-use alloy_consensus::{SignableTransaction as _, TxEip1559};
+use alloy_consensus::{SignableTransaction as _, Transaction as _, TxEip1559};
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{address, keccak256, Bytes, Signature, TxKind};
+use alloy_primitives::{address, keccak256, Bytes, Signature, TxKind, U256};
 use alloy_rpc_types_engine::PayloadId;
 use outbe_compressed_entities::{
     CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity, ExactParentIdentity,
@@ -38,13 +39,15 @@ use outbe_primitives::{
     storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag, StorageHandle},
     tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID,
     units::SCALE_1E6_U256,
+    OutbePrimitives,
 };
 use reth_chainspec::{ChainSpecBuilder, EthereumHardfork, ForkCondition};
-use reth_evm::execute::Executor as _;
+use reth_evm::{execute::Executor as _, RecoveredTx};
 use reth_payload_primitives::BuiltPayload as _;
 use reth_primitives_traits::{SealedHeader, SignedTransaction as _};
 use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
 use reth_transaction_pool::{
+    error::InvalidPoolTransactionError,
     identifier::{SenderId, TransactionId},
     noop::NoopTransactionPool,
     EthPooledTransaction, TransactionOrigin,

@@ -22,15 +22,13 @@ use outbe_primitives::{
     reshare_artifact::ConsensusHeaderArtifact,
 };
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 use crate::{config, util::rate_limit::LogRateLimiter, validators::ValidatorSet};
 
 /// Explicit DKG ceremony state machine + non-consensus dealer-log gossip buffer.
 pub(crate) mod ceremony;
-use ceremony::{
-    DealerLogGossip, DkgCeremony, FinalizedLogOutcome, PendingDealerLogOutcome, ReconstructOutcome,
-};
+use ceremony::{DealerLogGossip, DkgCeremony, PendingDealerLogOutcome};
 
 /// Header-artifact admission: one rule table for proposer and verifier.
 mod admission;
@@ -38,6 +36,10 @@ pub use admission::{ArtifactAdmissionError, ArtifactPlan, ProposalForfeit};
 
 /// Parent-ancestry DKG boundary resolution and its boundary-status cache.
 mod boundary;
+
+/// Finalized artifact effects and fenced ceremony replay.
+mod finalized;
+pub use finalized::CeremonyReplayRequest;
 
 /// The ODKO boundary-outcome record codec.
 mod odko;
@@ -398,98 +400,16 @@ impl Mailbox {
     ) {
         self.with_state(|state| match artifact {
             Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) => {
-                match Self::boundary_artifact_hash(boundary) {
-                    Ok(artifact_hash) => {
-                        let committed = CommittedDkgBoundary {
-                            artifact: boundary.clone(),
-                            artifact_hash,
-                            block_number,
-                            block_hash,
-                        };
-                        if state.pending_boundary.as_ref() == Some(boundary) {
-                            state.committed_boundary = Some(committed.clone());
-                        }
-                        if block_hash != B256::ZERO {
-                            Self::cache_boundary_status(
-                                state,
-                                block_hash,
-                                artifact_hash,
-                                BoundaryStatus::BoundaryCommitted(committed),
-                            );
-                        }
-                    }
-                    Err(error) => {
-                        warn!(%error, "failed to record finalized DKG boundary status");
-                    }
-                }
-                if let Some(ceremony) = state.ceremony.as_mut() {
-                    ceremony.gossip.clear();
-                }
+                Self::commit_finalized_boundary(state, block_number, block_hash, boundary);
             }
             Some(ConsensusHeaderArtifact::DealerLog(bytes)) => {
                 if let Some(ceremony) = state.ceremony.as_mut() {
-                    let verified = match ceremony.canonical.verify_dealer_log(bytes.as_ref()) {
-                        Ok(verified) => verified,
-                        Err(error) => {
-                            warn!(%error, "ignoring finalized DKG dealer log");
-                            return;
-                        }
-                    };
-                    // Stop re-gossiping a dealer log that is now chain-finalized.
-                    ceremony.gossip.prune_finalized(&verified.dealer, bytes);
-
-                    match ceremony.canonical.apply_finalized_dealer_log(verified) {
-                        FinalizedLogOutcome::DuplicateFinalized { dealer } => {
-                            debug!(
-                                dealer = ?dealer,
-                                "ignoring duplicate chain-finalized DKG dealer log"
-                            );
-                        }
-                        FinalizedLogOutcome::Recorded { dealer, logs_len } => {
-                            debug!(
-                                dealer = ?dealer,
-                                logs = logs_len,
-                                "recorded finalized DKG dealer log"
-                            );
-                            // Effect: notify the local DKG actor (best-effort),
-                            // preserving the historical insert -> send -> reconstruct
-                            // ordering.
-                            if let Some(tx) = &ceremony.finalized_dealer_log_tx {
-                                if tx.send(bytes.clone()).is_err() {
-                                    debug!(
-                                        "active DKG actor is no longer accepting finalized dealer logs"
-                                    );
-                                }
-                            }
-                            match ceremony.canonical.try_reconstruct_if_needed() {
-                                ReconstructOutcome::Reconstructed(output) => {
-                                    info!(
-                                        output_hash = %dkg_output_hash(&output),
-                                        polynomial_hash = %public_polynomial_hash(output.public()),
-                                        logs = logs_len,
-                                        dealers = output.dealers().len(),
-                                        players = output.players().len(),
-                                        "canonical DKG output reconstructed from finalized dealer logs"
-                                    );
-                                }
-                                ReconstructOutcome::Pending(error) => {
-                                    debug!(
-                                        %error,
-                                        logs = logs_len,
-                                        "finalized DKG dealer logs do not yet produce an output"
-                                    );
-                                }
-                                ReconstructOutcome::AlreadyReconstructed => {}
-                            }
-                        }
-                    }
+                    ceremony.note_finalized_dealer_log(bytes);
                 }
             }
-            // A committee pre-announce is a follower-facing carrier of an already-
-            // reconstructed outcome; it does not commit a boundary or feed the local
-            // DKG ceremony, so the boundary/dealer-log tracker ignores it.
-            Some(ConsensusHeaderArtifact::CommitteePreAnnounce { .. }) => {}
-            None => {}
+            // A pre-announce carries a reconstructed outcome for followers;
+            // it neither commits a boundary nor feeds the local ceremony.
+            Some(ConsensusHeaderArtifact::CommitteePreAnnounce { .. }) | None => {}
         });
     }
 
@@ -523,36 +443,6 @@ impl Default for Mailbox {
             finalized_replay_gate: Arc::new(Mutex::new(())),
             duplicate_dealer_log_limiter: Arc::new(LogRateLimiter::new(Duration::from_secs(5))),
         }
-    }
-}
-
-impl FinalizedReplayGuard<'_> {
-    #[allow(clippy::too_many_arguments)]
-    pub fn restart_ceremony_with_finalized_logs(
-        &self,
-        epoch: Epoch,
-        round: u64,
-        previous_output: Option<Output<MinSig, bls12381::PublicKey>>,
-        participants: Set<bls12381::PublicKey>,
-        finalized_dealer_log_tx: Option<mpsc::UnboundedSender<Bytes>>,
-        finalized_logs: impl IntoIterator<Item = (u64, B256, Bytes)>,
-    ) -> Result<()> {
-        self.mailbox.note_ceremony_started_with_finalized_log_tx(
-            epoch,
-            round,
-            previous_output,
-            participants,
-            finalized_dealer_log_tx,
-        )?;
-        for (block_number, block_hash, bytes) in finalized_logs {
-            let artifact = ConsensusHeaderArtifact::DealerLog(bytes);
-            self.mailbox.note_finalized_header_artifact_at_inner(
-                block_number,
-                block_hash,
-                Some(&artifact),
-            );
-        }
-        Ok(())
     }
 }
 

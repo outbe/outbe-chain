@@ -1,4 +1,5 @@
 //! Recover threshold authority against the exact committed DKG committee.
+use super::super::dkg::startup::{StartupDkgRequest, ThresholdMaterialRequest};
 use super::super::*;
 use super::transport::ChannelMux;
 
@@ -63,11 +64,13 @@ where
         node,
         args,
         key_backend,
-        local_consensus_key.clone(),
-        validator_set,
-        genesis_hash,
-        dkg_rotation_params,
-        last_consensus_finalized.get(),
+        StartupDkgRequest {
+            local_pk: &local_consensus_key,
+            validator_set,
+            genesis_hash,
+            dkg_rotation_params,
+            last_consensus_finalized_height: last_consensus_finalized.get(),
+        },
     )
     .await?;
     let last_execution_height = startup_snapshot.last_execution_height;
@@ -132,11 +135,13 @@ where
     } else {
         obtain_threshold_material(
             ctx.child("initial_dkg_material"),
-            args,
             key_backend,
-            signing_key.clone(),
-            validator_set,
-            startup_dkg_context,
+            ThresholdMaterialRequest {
+                args,
+                signing_key: signing_key.clone(),
+                validator_set,
+                context: startup_dkg_context,
+            },
             dkg_init_tx,
             dkg_init_rx,
         )
