@@ -132,10 +132,11 @@ interface IIntexFactory {
     function seriesUnitCounts(bytes14 seriesId) external view returns (UnitCounts memory);
 
     /// @notice One owner's units of a series. `issuedUnits` and `settledUnits` are the
-    ///         owner's current balances, with Issued units counted only while the series
-    ///         has not expired. `exercisedUnits` and `gemFactoryUnits` are the owner's own
-    ///         history and do not move with a transfer. `ownerUnits` is
-    ///         `issuedUnits + settledUnits`, derived on every call, never stored.
+    ///         owner's current balances on this, the origin chain, with Issued units counted
+    ///         only while the series has not expired; units held on a target chain are not
+    ///         counted. `exercisedUnits` and `gemFactoryUnits` are the owner's history across
+    ///         chains, since both happen only here, and do not move with a transfer.
+    ///         `ownerUnits` is `issuedUnits + settledUnits`, derived on every call, never stored.
     struct OwnerBalances {
         uint32 issuedUnits;
         uint32 settledUnits;

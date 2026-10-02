@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
+/// @notice Principal and interest amounts are in the position asset's atomic units; Gratis
+///         amounts and prices are at scale 1e6.
 interface ICredis {
     /// Emitted once, when a position opens: positions are never burned.
     event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);

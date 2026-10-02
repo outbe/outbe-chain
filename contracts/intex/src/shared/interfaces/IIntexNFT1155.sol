@@ -288,7 +288,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return The full series data for the Issued token id.
     function readData(bytes14 seriesId) external view returns (SeriesData memory);
 
-    /// @notice Issued and Settled balances for an owner in a given series.
+    /// @notice Issued and Settled balances for an owner in a given series: this chain's raw
+    ///         ERC-1155 balances, with no expiry applied and no other chain counted.
     /// @param seriesId Series identifier.
     /// @param owner Owner address to read.
     /// @return The owner's Issued and Settled balance pair.
