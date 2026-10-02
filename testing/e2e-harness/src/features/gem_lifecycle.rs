@@ -383,7 +383,11 @@ impl Lifecycle for GemLifecycle {
         let url = world_url(world);
         let id = gem(world, FORFEITED);
         let called = read_gem(world, id);
-        assert!(matches!(called.state, CALLED | FORFEITED_STATE));
+        assert!(
+            matches!(called.state, CALLED | FORFEITED_STATE),
+            "gem {id} reads state {} after its call",
+            called.state
+        );
         let notice = u64::from(called.callNoticePeriod);
         assert!(
             notice <= EXPIRY_BUCKET_SECS,
@@ -396,15 +400,19 @@ impl Lifecycle for GemLifecycle {
             || format!("gem {id} never reached its call deadline {notice_end}"),
             || head_time(world) >= notice_end,
         );
-        if let Some(lapsed) = eth::read_call(
+        match eth::read_call(
             &url,
             addresses::GEM_ADDR,
             &eth::IGem::getGemStatusCall { gemId: id },
         ) {
-            assert_eq!(
+            Some(lapsed) => assert_eq!(
                 lapsed.state, FORFEITED_STATE,
                 "gem {id} past its call deadline must read Forfeited until the sweep burns it"
-            );
+            ),
+            None => assert!(
+                gem_count(&url, owner_address(FORFEITED)).is_zero(),
+                "gem {id} is unreadable past its call deadline but was not burned"
+            ),
         }
         eth::send_call(
             &url,
