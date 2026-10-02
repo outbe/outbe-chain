@@ -205,3 +205,95 @@ fn the_parked_sweep_is_a_no_op_without_a_router() {
         assert_eq!(factory.parked_proceeds_cursor.read().unwrap(), 0);
     });
 }
+
+fn parked_router(
+    provider: &mut HashMapStorageProvider,
+    count: [u8; 4],
+    entry: [u8; 4],
+    ret: Vec<u8>,
+) {
+    let router = crate::constants::ORIGIN_ROUTER_ADDRESS;
+    provider.stub_sub_call_at_selector(router, count, word(1));
+    provider.stub_sub_call_at_selector(router, entry, ret.into());
+}
+
+fn drain_parked(provider: &mut HashMapStorageProvider) -> outbe_primitives::error::Result<()> {
+    StorageHandle::enter(provider, |s| {
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, ISSUED_AT as u64, CHAIN_ID),
+            s,
+        );
+        crate::parked::drain(&ctx)
+    })
+}
+
+#[test]
+fn a_node_local_failure_while_draining_parked_messages_fails_the_sweep() {
+    use crate::sol_ext::IOriginRouter;
+
+    let mut provider = factory_provider();
+    parked_router(
+        &mut provider,
+        IOriginRouter::parkedMessageCountCall::SELECTOR,
+        IOriginRouter::parkedMessageCall::SELECTOR,
+        IOriginRouter::parkedMessageCall::abi_encode_returns(&IOriginRouter::ParkedMessage {
+            dstChainId: 56,
+            gasLimit: 1,
+            sent: false,
+            payload: vec![1].into(),
+        }),
+    );
+    provider.fail_mutation_at(0);
+    let result = drain_parked(&mut provider);
+    provider.clear_mutation_failure();
+    assert!(matches!(
+        result,
+        Err(outbe_primitives::error::PrecompileError::Storage(_))
+    ));
+    StorageHandle::enter(&mut provider, |s| {
+        let factory = IntexFactoryContract::new(s);
+        assert_eq!(factory.parked_message_cursor.read().unwrap(), 0);
+    });
+
+    drain_parked(&mut provider).unwrap();
+    StorageHandle::enter(&mut provider, |s| {
+        let factory = IntexFactoryContract::new(s);
+        assert_eq!(factory.parked_message_cursor.read().unwrap(), 1);
+    });
+}
+
+#[test]
+fn a_node_local_failure_while_draining_parked_proceeds_fails_the_sweep() {
+    use crate::sol_ext::IOriginRouter;
+
+    let mut provider = factory_provider();
+    parked_router(
+        &mut provider,
+        IOriginRouter::parkedProceedsCountCall::SELECTOR,
+        IOriginRouter::parkedProceedsCall::SELECTOR,
+        IOriginRouter::parkedProceedsCall::abi_encode_returns(&IOriginRouter::ParkedProceeds {
+            worldwideDay: 2026_0301,
+            srcChainId: 56,
+            amount: 5,
+            settled: false,
+        }),
+    );
+    // The message cursor is written first, even with nothing parked.
+    provider.fail_mutation_at(1);
+    let result = drain_parked(&mut provider);
+    provider.clear_mutation_failure();
+    assert!(matches!(
+        result,
+        Err(outbe_primitives::error::PrecompileError::Storage(_))
+    ));
+    StorageHandle::enter(&mut provider, |s| {
+        let factory = IntexFactoryContract::new(s);
+        assert_eq!(factory.parked_proceeds_cursor.read().unwrap(), 0);
+    });
+
+    drain_parked(&mut provider).unwrap();
+    StorageHandle::enter(&mut provider, |s| {
+        let factory = IntexFactoryContract::new(s);
+        assert_eq!(factory.parked_proceeds_cursor.read().unwrap(), 1);
+    });
+}

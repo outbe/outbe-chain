@@ -123,6 +123,57 @@ fn call_scan_does_not_halt_on_overflow_vwap() {
     });
 }
 
+#[test]
+fn a_node_local_failure_while_calling_fails_the_scan() {
+    let mut provider = factory_provider();
+    let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+    let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+    StorageHandle::enter(&mut provider, |s| {
+        select_prod_profile(&s);
+        runtime::issue(&s, sample(7)).unwrap();
+        let oracle = OracleContract::new(s.clone());
+        let pair = setup_pair(&oracle);
+        fill_days(
+            &oracle,
+            last_closed_day,
+            pair,
+            30,
+            U256::from(EXPECTED_TRIGGER) + U256::from(1),
+        );
+        IntexFactoryContract::new(s)
+            .call_sweep_day
+            .write(last_closed_day)
+            .unwrap();
+    });
+    provider.fail_after_mutation_at(0);
+    let result = StorageHandle::enter(&mut provider, |s| {
+        let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID), s);
+        called::run_call_slice(&ctx)
+    });
+    provider.clear_mutation_failure();
+    assert!(matches!(
+        result,
+        Err(outbe_primitives::error::PrecompileError::Storage(_))
+    ));
+    StorageHandle::enter(&mut provider, |s| {
+        assert_eq!(
+            outbe_intex::api::read_series(&s, sid(7))
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            outbe_intex::IntexState::Issued
+        );
+        let f = IntexFactoryContract::new(s);
+        assert_eq!(
+            f.call_bin_group(REFERENCE_ISO, WorldwideDay::new(7))
+                .unwrap()
+                .members,
+            vec![sid(7)]
+        );
+        assert_eq!(f.call_sweep_day.read().unwrap(), last_closed_day);
+    });
+}
+
 /// Seed a series directly in the registry + call-price index, bypassing issue()
 /// so tests can omit the OriginRouter stub.
 fn seed_issued(s: &StorageHandle<'_>, id: u32) {
@@ -444,6 +495,47 @@ fn a_node_local_failure_while_expiring_fails_the_sweep() {
             Some(IntexFactoryContract::deadline_bucket(now + DAY))
         );
     });
+}
+
+#[test]
+fn a_node_local_failure_while_deferring_fails_the_sweep() {
+    use alloy_sol_types::SolEvent;
+
+    let mut provider = factory_provider();
+    let now = ISSUED_AT as u64;
+    let day = WorldwideDay::new(20260101);
+    let key = IntexFactoryContract::scoped(REFERENCE_ISO, day.value());
+    let bucket = IntexFactoryContract::deadline_bucket(now + DAY);
+    StorageHandle::enter(&mut provider, |s| {
+        select_prod_profile(&s);
+        IntexFactoryContract::new(s)
+            .push_called_group(REFERENCE_ISO, day, now + DAY, &[sid(1)])
+            .unwrap();
+    });
+    // The unissued member stays, so its group is rewritten in two writes and then deferred.
+    provider.fail_after_mutation_at(2);
+    let result = StorageHandle::enter(&mut provider, |s| {
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, IntexFactoryContract::bucket_end(bucket), CHAIN_ID),
+            s,
+        );
+        crate::expired::sweep_expiry_deadlines(&ctx)
+    });
+    provider.clear_mutation_failure();
+    assert!(matches!(
+        result,
+        Err(outbe_primitives::error::PrecompileError::Storage(_))
+    ));
+    StorageHandle::enter(&mut provider, |s| {
+        let f = IntexFactoryContract::new(s);
+        assert_eq!(f.called_group_count.read(&key).unwrap(), 1);
+        assert_eq!(f.expiry_bucket_live.read(&bucket).unwrap(), 1);
+        assert_eq!(f.first_expiry_day().unwrap(), Some(bucket));
+    });
+    assert!(provider
+        .get_events(INTEX_FACTORY_ADDRESS)
+        .iter()
+        .all(|log| IIntexFactory::ExpiryDeferred::decode_log_data(log).is_err()));
 }
 
 #[test]
