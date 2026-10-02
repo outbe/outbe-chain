@@ -21,7 +21,7 @@ import {IVwapSource} from "./interfaces/IVwapSource.sol";
  * @dev State transitions affect the entire series simultaneously (O(1) gas).
  * @dev Series lifecycle: Issued -> Called. Qualification is derived from daily VWAPs, never stored.
  *      Expiry is not an on-chain state: it is derived from `calledAt + callNoticePeriod`
- *      against the clock (settle/bridge gates, metadata rendering).
+ *      against the clock (issue/settle/bridge gates, metadata rendering).
  * @dev Each series has two token ids: issued = `uint112(seriesId)`,
  *      settled = the same with bit 112 set.
  */
@@ -327,7 +327,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
         // CEI ok: update both Issued and Settled totalSupply mirrors before the external _mint
         // callback fires - keeps (totalSupply == sum balanceOf) consistent mid-callback.
-        // Burn `amount` of the owner's Issued and mint the same `amount` of Settled back to the owner.
         // forge-lint: disable-next-line(unsafe-typecast) -- amount <= issued balance <= totalSupply (uint32); _burn reverts otherwise
         data.totalSupply -= uint32(amount);
         _burn(owner, iTok, amount);
