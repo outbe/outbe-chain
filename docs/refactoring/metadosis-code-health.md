@@ -223,3 +223,25 @@ and fail-fast setup `unwrap`s, actual duplication, and parameter warnings.
 Qlty excludes receivers when counting method arguments (completion/finality
 11/6); Repowise includes them (12/7). No exported signature was changed to remove
 either warning.
+
+## Whole-module closure, second pass
+
+Authorized scope: all Metadosis Repowise and Qlty findings, including extracted
+helpers and tests. Baseline `8a1103ee`: 58 Qlty rows and 941 Repowise rows.
+`metadosis-findings.json` accounts for every baseline row. 197 git-history rows
+are retained as non-editable history signals; the remaining rows must be fixed
+or receive a code-grounded disposition, without blanket analyzer suppression.
+
+- [x] Response-window policy and ordered capacity effect decomposition.
+- [x] ABI missing-receipt, missing-artifact and successful metadata characterization.
+- [ ] FSM state invariants and persisted equivalences.
+- [ ] Commit/reducer and genesis domain operations.
+- [ ] OCOMP voting, admission, expiry, request and activation.
+- [ ] Private argument contexts, shared fixture setup and duplicated test assertions.
+- [ ] Coverage gaps, complete analyzer rerun and per-finding reconciliation.
+
+First slice: 255 library tests passed. Missing terminal/capacity receipts return
+canonical NONE tuples; missing OCOMP artifacts retain their record-specific
+Revert identities. Response-window policy distinguishes voting from completed
+quorum windows. Capacity preflight, ordered Tribute/Promis effects, receipt,
+transition and event projection are separate responsibilities.

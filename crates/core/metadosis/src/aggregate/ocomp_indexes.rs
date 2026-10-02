@@ -173,28 +173,12 @@ fn validate_response_windows(
             .ok_or_else(|| {
                 storage_corruption_message("OCOMP response index points to a missing job")
             })?;
-        let finalized = record.finalized.as_ref().ok_or_else(|| {
-            storage_corruption_message("OCOMP response index job is not finalized")
-        })?;
-        if finalized.job_id != key.job_id || finalized.deadline_height != key.deadline_height {
+        if response_window_requires_live_fsm(&record, &key)?
+            && !unmatched_voting_windows.remove(&key)
+        {
             return Err(storage_corruption_message(
-                "OCOMP response index/job deadline mismatch",
+                "OCOMP response index has no matching live voting FSM",
             ));
-        }
-        match record.status {
-            OcompJobStatus::VotingOpen => {
-                if !unmatched_voting_windows.remove(&key) {
-                    return Err(storage_corruption_message(
-                        "OCOMP response index has no matching live voting FSM",
-                    ));
-                }
-            }
-            OcompJobStatus::Completed if finalized.quorum.is_some() => {}
-            _ => {
-                return Err(storage_corruption_message(
-                    "OCOMP response index points to a job without an open window",
-                ));
-            }
         }
     }
     if !unmatched_voting_windows.is_empty() {
@@ -203,6 +187,28 @@ fn validate_response_windows(
         ));
     }
     Ok(())
+}
+
+fn response_window_requires_live_fsm(
+    record: &outbe_ocomp_protocol::state::OcompJobRecordV1,
+    key: &ResponseDeadlineKey,
+) -> Result<bool> {
+    let finalized = record
+        .finalized
+        .as_ref()
+        .ok_or_else(|| storage_corruption_message("OCOMP response index job is not finalized"))?;
+    if finalized.job_id != key.job_id || finalized.deadline_height != key.deadline_height {
+        return Err(storage_corruption_message(
+            "OCOMP response index/job deadline mismatch",
+        ));
+    }
+    match record.status {
+        OcompJobStatus::VotingOpen => Ok(true),
+        OcompJobStatus::Completed if finalized.quorum.is_some() => Ok(false),
+        _ => Err(storage_corruption_message(
+            "OCOMP response index points to a job without an open window",
+        )),
+    }
 }
 
 fn validate_ready_membership(

@@ -212,6 +212,7 @@ mod ocomp_semantic_migrations;
 mod ocomp_snapshot_views;
 mod ocomp_storage;
 mod pre_admission;
+mod precompile;
 mod reducer;
 mod state;
 mod wwd_vwap_overflow;

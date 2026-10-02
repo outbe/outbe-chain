@@ -73,14 +73,24 @@ pub(super) fn apply_capacity_forfeiture(
     effect: WwdEffect<'_, '_>,
     retained_count: usize,
 ) -> Result<()> {
-    let WwdEffect {
-        ctx,
-        scope,
-        current,
-        transition,
-        rate_resolution,
-    } = effect;
+    let counts = prepare_capacity_forfeiture(metadosis, &effect, retained_count)?;
+    let receipt = forfeit_and_credit_capacity(metadosis.storage.clone(), &effect, counts)?;
+    metadosis.write_capacity_forfeiture_receipt(receipt)?;
+    commit_outer_transition_with_rate(
+        metadosis,
+        effect.current.worldwide_day,
+        effect.transition,
+        effect.ctx.block.block_number,
+        effect.rate_resolution,
+    )?;
+    metadosis.emit(capacity_forfeiture_event(&receipt))
+}
 
+fn prepare_capacity_forfeiture(
+    metadosis: &MetadosisContract<'_>,
+    effect: &WwdEffect<'_, '_>,
+    retained_count: usize,
+) -> Result<(u32, u32)> {
     if retained_count != MAX_RETAINED_WWDS {
         return Err(crate::errors::storage_corruption(
             "CapacityForfeiture requires the exact retained admission cap".into(),
@@ -88,7 +98,7 @@ pub(super) fn apply_capacity_forfeiture(
     }
     if !metadosis
         .ocomp_fsm_states
-        .get_bytes(&current.worldwide_day)
+        .get_bytes(&effect.current.worldwide_day)
         .is_empty()?
     {
         return Err(crate::errors::storage_corruption(
@@ -96,68 +106,66 @@ pub(super) fn apply_capacity_forfeiture(
         ));
     }
     if metadosis
-        .read_capacity_forfeiture_receipt(current.worldwide_day)?
+        .read_capacity_forfeiture_receipt(effect.current.worldwide_day)?
         .is_some()
     {
         return Err(crate::errors::storage_corruption(
             "active CapacityForfeiture victim already has a receipt".into(),
         ));
     }
-    metadosis.validate_day_limit_binding(current, "CapacityForfeiture")?;
+    metadosis.validate_day_limit_binding(effect.current, "CapacityForfeiture")?;
 
     let max_retained_wwds = u32::try_from(MAX_RETAINED_WWDS)
         .map_err(|_| crate::errors::storage_corruption("retained WWD cap exceeds u32".into()))?;
     let retained_count_before = u32::try_from(retained_count)
         .map_err(|_| crate::errors::storage_corruption("retained WWD count exceeds u32".into()))?;
-    let storage = metadosis.storage.clone();
-    let result = (|| {
-        let tribute = TributeContract::new(storage.clone())
-            .forfeit_sealed_partition(scope, current.worldwide_day)?;
-        let credit = PromisLimitContract::new(storage.clone())
-            .checked_add_carry_over(current.metadosis_limit_amount)?;
-        let receipt = CapacityForfeitureReceipt {
-            worldwide_day: current.worldwide_day,
-            max_retained_wwds,
-            retained_count_before,
-            value_routed: credit.credited,
-            carry_over_before: credit.before,
-            carry_over_after: credit.after,
-            sealed_collection_root: tribute.sealed_root,
-            forfeited_count: tribute.forfeited_count,
-            forfeited_nominal: tribute.forfeited_nominal,
-            source_generation: tribute.source_generation,
-            retired_generation: tribute.retired_generation,
-            retirement: tribute.retirement_outcome,
-            block_number: ctx.block.block_number,
-        };
-        metadosis.write_capacity_forfeiture_receipt(receipt)?;
-        commit_outer_transition_with_rate(
-            metadosis,
-            current.worldwide_day,
-            transition,
-            ctx.block.block_number,
-            rate_resolution,
-        )?;
-        metadosis.emit(IMetadosis::WorldwideDayCapacityForfeited {
-            worldwideDay: current.worldwide_day.into(),
-            maxRetainedWorldwideDays: max_retained_wwds,
-            retainedCountBefore: retained_count_before,
-            dayMetadosisLimit: receipt.value_routed,
-            carryOverBefore: receipt.carry_over_before,
-            carryOverAfter: receipt.carry_over_after,
-            sealedCollectionRoot: receipt.sealed_collection_root,
-            forfeitedTributeCount: receipt.forfeited_count,
-            forfeitedTributeNominal: receipt.forfeited_nominal,
-            sourceGeneration: receipt.source_generation,
-            retiredGeneration: receipt.retired_generation,
-            retirementOutcome: match receipt.retirement {
-                outbe_compressed_entities::RetirementOutcome::NotPresent => 1,
-                outbe_compressed_entities::RetirementOutcome::Requested => 2,
-            },
-            blockNumber: receipt.block_number,
-        })
-    })();
-    result
+    Ok((max_retained_wwds, retained_count_before))
+}
+
+fn forfeit_and_credit_capacity(
+    storage: outbe_primitives::storage::StorageHandle<'_>,
+    effect: &WwdEffect<'_, '_>,
+    (max_retained_wwds, retained_count_before): (u32, u32),
+) -> Result<CapacityForfeitureReceipt> {
+    let tribute = TributeContract::new(storage.clone())
+        .forfeit_sealed_partition(effect.scope, effect.current.worldwide_day)?;
+    let credit = PromisLimitContract::new(storage.clone())
+        .checked_add_carry_over(effect.current.metadosis_limit_amount)?;
+    Ok(CapacityForfeitureReceipt {
+        worldwide_day: effect.current.worldwide_day,
+        max_retained_wwds,
+        retained_count_before,
+        value_routed: credit.credited,
+        carry_over_before: credit.before,
+        carry_over_after: credit.after,
+        sealed_collection_root: tribute.sealed_root,
+        forfeited_count: tribute.forfeited_count,
+        forfeited_nominal: tribute.forfeited_nominal,
+        source_generation: tribute.source_generation,
+        retired_generation: tribute.retired_generation,
+        retirement: tribute.retirement_outcome,
+        block_number: effect.ctx.block.block_number,
+    })
+}
+
+fn capacity_forfeiture_event(
+    receipt: &CapacityForfeitureReceipt,
+) -> IMetadosis::WorldwideDayCapacityForfeited {
+    IMetadosis::WorldwideDayCapacityForfeited {
+        worldwideDay: receipt.worldwide_day.into(),
+        maxRetainedWorldwideDays: receipt.max_retained_wwds,
+        retainedCountBefore: receipt.retained_count_before,
+        dayMetadosisLimit: receipt.value_routed,
+        carryOverBefore: receipt.carry_over_before,
+        carryOverAfter: receipt.carry_over_after,
+        sealedCollectionRoot: receipt.sealed_collection_root,
+        forfeitedTributeCount: receipt.forfeited_count,
+        forfeitedTributeNominal: receipt.forfeited_nominal,
+        sourceGeneration: receipt.source_generation,
+        retiredGeneration: receipt.retired_generation,
+        retirementOutcome: crate::terminal::encode_retirement(receipt.retirement),
+        blockNumber: receipt.block_number,
+    }
 }
 
 pub(super) fn apply_missed_offering(
