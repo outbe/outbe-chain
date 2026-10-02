@@ -23,7 +23,23 @@ pub(crate) struct FailureSettlement<'scope> {
 pub(crate) struct ExpiredFailure<'attempt> {
     pub(crate) settlement: FailureSettlement<'attempt>,
     pub(crate) intent_id: B256,
+    pub(crate) retained_lysis_limit_minor: U256,
     pub(crate) outer_transition: &'attempt OuterWwdTransition,
+}
+
+impl MetadosisContract<'_> {
+    /// What a failed day routes to the accumulator: its whole limit when no request took effect,
+    /// otherwise what the request retained.
+    pub(crate) fn failure_value_routed(
+        &self,
+        worldwide_day: WorldwideDay,
+        day_limit: U256,
+    ) -> Result<U256> {
+        match self.request_limit_receipt(worldwide_day, &poc_schema_limits())? {
+            Some(receipt) => crate::ocomp_limits::retained_request_limit(&receipt),
+            None => Ok(day_limit),
+        }
+    }
 }
 
 /// Atomically closes one deterministic Metadosis protocol failure without
@@ -40,11 +56,8 @@ pub(crate) fn fail_worldwide_day(
     })?;
     let mut metadosis = MetadosisContract::new(storage.clone());
     let limits = poc_schema_limits();
-    let unused_limit = metadosis
-        .request_limit_receipt(worldwide_day, &limits)?
-        .map_or(current.metadosis_limit_amount, |receipt| {
-            receipt.lysis_limit_minor
-        });
+    let unused_limit =
+        metadosis.failure_value_routed(worldwide_day, current.metadosis_limit_amount)?;
 
     if current.status == WwdStatus::Failed {
         metadosis
@@ -92,12 +105,12 @@ pub(crate) fn fail_expired_ocomp_day(
     let ExpiredFailure {
         settlement,
         intent_id,
+        retained_lysis_limit_minor,
         outer_transition,
     } = failure;
     let FailureSettlement {
         block_number,
         worldwide_day,
-        unused_limit,
         ..
     } = settlement;
     if !matches!(
@@ -110,7 +123,12 @@ pub(crate) fn fail_expired_ocomp_day(
     }
 
     let mut metadosis = MetadosisContract::new(storage);
-    validate_expired_failure(&metadosis, worldwide_day, intent_id, unused_limit)?;
+    validate_expired_failure(
+        &metadosis,
+        worldwide_day,
+        intent_id,
+        retained_lysis_limit_minor,
+    )?;
     let forfeited_nominal = route_failure(&mut metadosis, &settlement)?;
     commit_outer_transition(
         &mut metadosis,
@@ -132,10 +150,10 @@ fn expired_prestate_error() -> outbe_primitives::error::PrecompileError {
 fn expired_job_binding(
     record: &outbe_ocomp_protocol::state::OcompJobRecordV1,
     worldwide_day: WorldwideDay,
-    unused_limit: U256,
+    retained_lysis_limit_minor: U256,
 ) -> bool {
     record.intent.wwd == worldwide_day.value()
-        && record.intent.frozen_metadosis_values.lysis_limit_minor == unused_limit
+        && record.intent.frozen_metadosis_values.lysis_limit_minor == retained_lysis_limit_minor
 }
 fn expired_evidence(record: &outbe_ocomp_protocol::state::OcompJobRecordV1) -> bool {
     record.status == outbe_ocomp_protocol::state::OcompJobStatus::Expired
@@ -200,13 +218,13 @@ fn validate_expired_failure(
     metadosis: &MetadosisContract<'_>,
     worldwide_day: WorldwideDay,
     intent_id: B256,
-    unused_limit: U256,
+    retained_lysis_limit_minor: U256,
 ) -> Result<()> {
     let limits = poc_schema_limits();
     let record = metadosis
         .ocomp_job_record(intent_id, &limits)?
         .ok_or_else(|| crate::errors::storage_corruption("expired OCOMP job is missing".into()))?;
-    if !expired_job_binding(&record, worldwide_day, unused_limit) {
+    if !expired_job_binding(&record, worldwide_day, retained_lysis_limit_minor) {
         return Err(expired_prestate_error());
     }
     if metadosis.terminal_intent_count(worldwide_day)? != 1

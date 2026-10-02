@@ -180,6 +180,11 @@ pub(crate) fn auction_draw(receipt: &RequestLimitSplitReceiptV1) -> Result<U256>
     Ok(receipt.desis_limit_minor)
 }
 
+/// What a request keeps outside the accumulator until its day completes or fails.
+pub(crate) fn retained_request_limit(receipt: &RequestLimitSplitReceiptV1) -> Result<U256> {
+    Ok(receipt.lysis_limit_minor)
+}
+
 fn expected_receipt(
     request: &RequestLimitEffect,
     split: RequestLimitSplit,
