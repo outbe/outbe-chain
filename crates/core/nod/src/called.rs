@@ -343,6 +343,9 @@ fn try_call(
     if !breached_enough(window, &terms, first_full_day(issued_at)) {
         return Ok(Some(false));
     }
+    if materializing(nod, bucket_key)? {
+        return Ok(Some(false));
+    }
     // A deterministic failure rolls this bucket back alone; a node-local one fails the block.
     match ctx
         .storage
@@ -482,6 +485,12 @@ fn breached_enough(window: &[(u32, Option<U256>)], terms: &CallTerms, start_day:
         }
     }
     false
+}
+
+/// Whether the certified generation of the bucket's Worldwide Day still has Nods to land.
+fn materializing(nod: &NodContract<'_>, bucket_key: B256) -> Result<bool> {
+    let worldwide_day = nod.bucket_worldwide_day.read(&bucket_key)?;
+    Ok(nod.ocomp_target_generation.read(&worldwide_day)? != 0)
 }
 
 /// The bucket's sealed notice period. Read on its own in the forfeit arm, which

@@ -1480,6 +1480,39 @@ fn a_running_call_sweep_keeps_its_day() {
 }
 
 #[test]
+fn a_bucket_is_not_called_while_its_generation_is_materializing() {
+    harness(|storage, scope, parent| {
+        let item = issue_qualified(storage, scope, parent, Address::repeat_byte(0x91), ISO);
+        let nod = NodContract::new(storage.clone());
+        nod.ocomp_target_generation
+            .write(&item.worldwide_day, 1)
+            .unwrap();
+        let at = START + 30 * DAY;
+        fill_days(
+            storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
+        assert_eq!(scan(storage, scope, parent, at), 0);
+        assert_eq!(called_at(storage, item.bucket_key), 0);
+
+        nod.ocomp_target_generation
+            .write(&item.worldwide_day, 0)
+            .unwrap();
+        let next = at + DAY;
+        fill_days(
+            storage,
+            last_closed_day(next),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
+        assert_eq!(scan(storage, scope, parent, next), 1);
+        assert_eq!(called_at(storage, item.bucket_key), next);
+    });
+}
+
+#[test]
 fn a_node_local_failure_while_calling_a_bucket_fails_the_slice() {
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
