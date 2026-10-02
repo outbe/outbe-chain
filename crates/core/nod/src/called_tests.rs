@@ -2001,7 +2001,7 @@ fn a_call_pass_announces_one_batch_metadata_update() {
 }
 
 #[test]
-fn token_uri_stays_called_past_the_settlement_deadline() {
+fn token_uri_turns_forfeited_past_the_settlement_deadline() {
     use crate::precompile::{dispatch, INod};
     use alloy_sol_types::SolCall;
     use base64::Engine;
@@ -2039,5 +2039,8 @@ fn token_uri_stays_called_past_the_settlement_deadline() {
         r#"{{"trait_type":"Settlement Deadline","value":{deadline},"display_type":"date"}}"#
     )));
     let json = json_at(&mut provider, deadline + 1);
-    assert!(json.contains(r#"{"trait_type":"State","value":"Called"}"#));
+    assert!(json.contains(r#"{"trait_type":"State","value":"Forfeited"}"#));
+    assert!(json.contains(&format!(
+        r#"{{"trait_type":"Settlement Deadline","value":{deadline},"display_type":"date"}}"#
+    )));
 }
