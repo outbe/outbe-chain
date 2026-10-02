@@ -1570,9 +1570,13 @@ fn sent_capacity(promis_load: u128) -> U256 {
     U256::from(promis_load) * U256::from(SENT_UNITS)
 }
 
-/// Seed an Intex series and send the merchant's whole holding into a GemPosition
-/// NFT (burn stubbed via `with_storage`). Returns the `position_id`.
-fn seed_and_send(storage: &StorageHandle, entry: U256, floor: U256, promis_load: u128) -> U256 {
+fn seed_source_series(
+    storage: &StorageHandle,
+    entry: U256,
+    floor: U256,
+    promis_load: u128,
+    call_trigger: outbe_intex::IntexCallTrigger,
+) {
     outbe_intex::api::create_series(
         storage,
         outbe_intex::CreateSeriesParams {
@@ -1583,14 +1587,75 @@ fn seed_and_send(storage: &StorageHandle, entry: U256, floor: U256, promis_load:
             entry_price_minor: entry,
             floor_price_minor: floor,
             call_price_minor: U256::ZERO,
-            call_trigger: outbe_intex::IntexCallTrigger::default(),
+            call_trigger,
             issued_at: T_NOW as u32,
             issuance_currency: 840,
             reference_currency: 840,
         },
     )
     .unwrap();
+}
+
+/// Seed an Intex series and send the merchant's whole holding into a GemPosition
+/// NFT (burn stubbed via `with_storage`). Returns the `position_id`.
+fn seed_and_send(storage: &StorageHandle, entry: U256, floor: U256, promis_load: u128) -> U256 {
+    seed_source_series(
+        storage,
+        entry,
+        floor,
+        promis_load,
+        outbe_intex::IntexCallTrigger::default(),
+    );
     runtime::issue_gem_position(storage, ALICE, source_intex_id(), U256::from(SENT_UNITS)).unwrap()
+}
+
+const SOURCE_NOTICE_SECONDS: u32 = 3_600;
+
+/// Seeds a source series with a notice period and calls it at `called_at`.
+fn seed_called_source(storage: &StorageHandle, called_at: u64) {
+    seed_source_series(
+        storage,
+        six_decimal_unit(),
+        six_decimal_unit(),
+        six_decimal_u128(),
+        outbe_intex::IntexCallTrigger {
+            call_notice_period_seconds: SOURCE_NOTICE_SECONDS,
+            ..Default::default()
+        },
+    );
+    outbe_intex::api::mark_called(storage, source_intex_id(), called_at as u32).unwrap();
+}
+
+fn send_whole_holding(storage: &StorageHandle) -> outbe_primitives::error::Result<U256> {
+    runtime::issue_gem_position(storage, ALICE, source_intex_id(), U256::from(SENT_UNITS))
+}
+
+#[test]
+fn a_series_called_in_the_same_block_cannot_be_sent() {
+    with_storage(None, |storage| {
+        seed_called_source(storage, T_NOW);
+        assert!(err_msg(send_whole_holding(storage)).contains("source intex is not issued"));
+        assert_eq!(
+            outbe_intex::api::gem_factory_units(storage, source_intex_id()).unwrap(),
+            0
+        );
+    });
+}
+
+#[test]
+fn a_called_series_at_its_deadline_cannot_be_sent() {
+    with_storage(None, |storage| {
+        seed_called_source(storage, T_NOW - u64::from(SOURCE_NOTICE_SECONDS));
+        assert!(err_msg(send_whole_holding(storage)).contains("source intex is not issued"));
+    });
+}
+
+#[test]
+fn a_series_past_its_deadline_cannot_be_sent() {
+    with_storage(None, |storage| {
+        seed_called_source(storage, T_NOW - u64::from(SOURCE_NOTICE_SECONDS) - 1);
+        assert!(err_msg(send_whole_holding(storage)).contains("source intex is not issued"));
+    });
 }
 
 #[test]
