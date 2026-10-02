@@ -14,7 +14,7 @@ use crate::runtime::emit_event;
 use crate::schema::IntexFactoryContract;
 
 /// Park a group in a later bucket. False means it is still in this bucket and
-/// the caller must stop the pass, or the tail sweep retires it without credit.
+/// the caller must stop the pass, or the tail sweep requeues it.
 fn defer_group(
     storage: &StorageHandle<'_>,
     iso_code: u16,
