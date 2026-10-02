@@ -7,6 +7,7 @@ use crate::{
         ingress::SimplexContext,
         validation::{
             validate_rewards_beneficiary, validate_system_tx_leader_binding_for_activation,
+            SystemTxLeaderValidationContext,
         },
     },
     block::ConsensusBlock,
@@ -138,12 +139,14 @@ pub(super) async fn validate_header_consensus_artifacts_for_activation(
     validate_rewards_beneficiary(block).map_err(ArtifactAdmissionError::Rejected)?;
     validate_system_tx_leader_binding_for_activation(
         block,
-        round,
-        proposer,
-        chain_id,
-        ocomp_lifecycle_activation,
-        certificate_scheme_provider,
-        committee_provider,
+        SystemTxLeaderValidationContext {
+            round,
+            proposer,
+            chain_id,
+            ocomp_lifecycle_activation,
+            certificate_scheme_provider,
+            committee_provider,
+        },
     )
     .map_err(ArtifactAdmissionError::Rejected)?;
 
