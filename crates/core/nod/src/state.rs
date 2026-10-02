@@ -266,11 +266,9 @@ impl NodContract<'_> {
             .transpose()?
             .map_or(0, |bucket| bucket.settled_nods);
         if current_bucket.is_some() != (member_count > 0 || settled_count > 0) {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "Nod bucket {bucket_id} existence disagrees with member count {member_count}"
-                )),
-            );
+            return Err(outbe_primitives::error::PrecompileError::Revert(format!(
+                "Nod bucket {bucket_id} existence disagrees with member count {member_count}"
+            )));
         }
         let new_bucket = match current_bucket {
             Some(_) => None,
@@ -299,7 +297,7 @@ impl NodContract<'_> {
         };
 
         let supply = self.total_supply.read()?.checked_add(1).ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(
+            outbe_primitives::error::PrecompileError::Revert(
                 "Nod total supply overflow during issuance".into(),
             )
         })?;
@@ -338,14 +336,14 @@ impl NodContract<'_> {
         self.check_loaded_bucket(&item, &current_bucket)?;
         let bucket_id = current_bucket.entity_id();
         let supply = self.total_supply.read()?.checked_sub(1).ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(
+            outbe_primitives::error::PrecompileError::Revert(
                 "Nod total supply underflow during removal".into(),
             )
         })?;
         self.total_supply.write(supply)?;
         let remaining = if item.is_settled {
             bucket.settled_nods = bucket.settled_nods.checked_sub(1).ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                outbe_primitives::error::PrecompileError::Revert(format!(
                     "Nod bucket {bucket_id} settled count underflow"
                 ))
             })?;
@@ -391,9 +389,7 @@ impl NodContract<'_> {
             ));
         }
         bucket.settled_nods = bucket.settled_nods.checked_add(1).ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                "Nod settled count overflow".into(),
-            )
+            outbe_primitives::error::PrecompileError::Revert("Nod settled count overflow".into())
         })?;
         self.remove_bucket_member(item.bucket_key, item.nod_id)?;
         item.is_settled = true;
@@ -426,12 +422,10 @@ impl NodContract<'_> {
     fn check_loaded_bucket(&self, item: &NodItemState, current: &VerifiedBody) -> Result<()> {
         let expected = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
         if current.entity_id() != expected {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "loaded Nod bucket {} does not match item bucket {expected}",
-                    current.entity_id()
-                )),
-            );
+            return Err(outbe_primitives::error::PrecompileError::Revert(format!(
+                "loaded Nod bucket {} does not match item bucket {expected}",
+                current.entity_id()
+            )));
         }
         Ok(())
     }
@@ -511,11 +505,9 @@ impl NodContract<'_> {
             .read(&Self::bin_index_key(iso, bin_id, index))?
             != bucket_key
         {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "Nod call bin {iso}:{bin_id} does not hold bucket {bucket_key} at {index}"
-                )),
-            );
+            return Err(outbe_primitives::error::PrecompileError::Revert(format!(
+                "Nod call bin {iso}:{bin_id} does not hold bucket {bucket_key} at {index}"
+            )));
         }
         let scoped = Self::scoped(iso, bin_id);
         let last = self
@@ -524,7 +516,7 @@ impl NodContract<'_> {
             .checked_sub(1)
             .filter(|last| index <= *last)
             .ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                outbe_primitives::error::PrecompileError::Revert(format!(
                     "Nod call bin {iso}:{bin_id} does not hold bucket {bucket_key} at {index}"
                 ))
             })?;
@@ -591,7 +583,7 @@ impl NodContract<'_> {
             .read(&bucket_key)?
             .checked_sub(1)
             .ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                outbe_primitives::error::PrecompileError::Revert(format!(
                     "Nod bucket {bucket_key} member count underflow during removal"
                 ))
             })?;
@@ -601,21 +593,17 @@ impl NodContract<'_> {
                 .read(&Self::bucket_nod_key(bucket_key, index))?
                 != nod_id
         {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "Nod {nod_id} is not indexed in bucket {bucket_key}"
-                )),
-            );
+            return Err(outbe_primitives::error::PrecompileError::Revert(format!(
+                "Nod {nod_id} is not indexed in bucket {bucket_key}"
+            )));
         }
         let last_key = Self::bucket_nod_key(bucket_key, last);
         if index != last {
             let moved = self.bucket_nods.read(&last_key)?;
             if moved.is_zero() {
-                return Err(
-                    outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                        "Nod bucket {bucket_key} member slot {last} is empty during removal"
-                    )),
-                );
+                return Err(outbe_primitives::error::PrecompileError::Revert(format!(
+                    "Nod bucket {bucket_key} member slot {last} is empty during removal"
+                )));
             }
             self.bucket_nods
                 .write(&Self::bucket_nod_key(bucket_key, index), moved)?;
@@ -693,13 +681,13 @@ impl NodContract<'_> {
                 .is_some_and(|listed| listed == bucket_key);
         if listed {
             let last = len.checked_sub(1).ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                outbe_primitives::error::PrecompileError::Revert(format!(
                     "Nod called list underflow removing bucket {bucket_key}"
                 ))
             })?;
             if index != last {
                 let moved = self.called_buckets.get(last)?.ok_or_else(|| {
-                    outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                    outbe_primitives::error::PrecompileError::Revert(format!(
                         "Nod called list slot {last} is empty during removal"
                     ))
                 })?;

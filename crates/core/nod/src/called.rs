@@ -517,29 +517,25 @@ pub(crate) fn forfeit_members(
             .bucket_nods
             .read(&NodContract::bucket_nod_key(bucket_key, last))?;
         if nod_id.is_zero() {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "Nod bucket {bucket_key} member slot {last} is empty during forfeit"
-                )),
-            );
+            return Err(outbe_primitives::error::PrecompileError::Revert(format!(
+                "Nod bucket {bucket_key} member slot {last} is empty during forfeit"
+            )));
         }
         let item = api::load_item(storage, scope, parent, nod_id)?.ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+            outbe_primitives::error::PrecompileError::Revert(format!(
                 "Nod bucket {bucket_key} member {nod_id} has no body during forfeit"
             ))
         })?;
         if item.body().is_settled || item.body().bucket_key != bucket_key {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "Nod bucket {bucket_key} indexes an ineligible member {nod_id}"
-                )),
-            );
+            return Err(outbe_primitives::error::PrecompileError::Revert(format!(
+                "Nod bucket {bucket_key} indexes an ineligible member {nod_id}"
+            )));
         }
         let owner = item.body().owner;
         let gratis_load_minor = item.body().gratis_load_minor;
         let bucket_id = WwdEntityId::from_day_and_digest(worldwide_day, bucket_key.0);
         let bucket = api::load_bucket(storage, scope, parent, bucket_id)?.ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+            outbe_primitives::error::PrecompileError::Revert(format!(
                 "Nod bucket {bucket_key} has no body during forfeit"
             ))
         })?;
