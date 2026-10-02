@@ -243,7 +243,7 @@ fn settlement_quote_dispatch() {
         .unwrap();
         let ret = IIntexFactory::quoteSettlementCall::abi_decode_returns(&out).unwrap();
         assert_eq!(ret.settlementCurrency, 840);
-        assert_eq!(ret.amountMinor, U256::from(2_000_000_000_000_000_000u64));
+        assert_eq!(ret.paymentMinor, U256::from(2_000_000_000_000_000_000u64));
     });
 }
 

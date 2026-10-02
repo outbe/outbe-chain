@@ -188,7 +188,7 @@ impl World {
             },
         );
         assert_eq!(quote.settlementCurrency, 840);
-        assert_eq!(quote.amountMinor, cost);
+        assert_eq!(quote.paymentMinor, cost);
         assert_eq!(quote.snapshotId, U256::ZERO);
         world.ok(
             owner,
@@ -349,7 +349,7 @@ fn erc20_settlement_moves_exact_full_width_cost_and_preserves_mining() {
     assert_eq!(paid[0].owner, OWNER);
     assert_eq!(paid[0].asset, ASSET);
     assert_eq!(paid[0].nullifier, B256::ZERO);
-    assert_eq!(paid[0].amountMinor, cost);
+    assert_eq!(paid[0].paymentMinor, cost);
     let balances = world.balances();
     assert!(!matches!(world.settle().status, SubCallStatus::Success));
     assert_eq!(world.balances(), balances);

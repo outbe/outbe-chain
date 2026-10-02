@@ -31,7 +31,7 @@ interface INodFactory {
 
     /// @notice Emitted when a Nod is paid. ERC20 payments use a zero nullifier;
     /// PayNote payments identify the spent note by its nullifier.
-    event NodPaid(address indexed owner, uint256 nodId, address asset, bytes32 nullifier, uint256 amountMinor);
+    event NodPaid(address indexed owner, uint256 nodId, address asset, bytes32 nullifier, uint256 paymentMinor);
 
     /// @notice Constant-size owner event for one certified OCOMP generation.
     /// There is deliberately no matching public installation selector.
@@ -73,13 +73,13 @@ interface INodFactory {
     /// two currencies that asset settles on. Reverts for an asset the Nod
     /// does not accept.
     /// @return settlementCurrency ISO 4217 code the payment is denominated in.
-    /// @return amountMinor Amount to pay, in `asset`'s own minor units.
+    /// @return paymentMinor Amount to pay, in `asset`'s own minor units.
     /// @return snapshotId Trailing VWAP snapshot the amount converts at; zero on
     /// the reference rail. It goes stale at the next update cutoff.
     function quoteSettlement(uint256 nodId, address asset)
         external
         view
-        returns (uint16 settlementCurrency, uint256 amountMinor, uint256 snapshotId);
+        returns (uint16 settlementCurrency, uint256 paymentMinor, uint256 snapshotId);
 
     /// @notice Exercise a paid Nod and mint its Gratis load to the Nod owner.
     /// @param nonce PoW over

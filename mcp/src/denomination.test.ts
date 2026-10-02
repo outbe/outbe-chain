@@ -163,7 +163,7 @@ test("MCP leaves a settlement quote in the asset's own minor units", () => {
     ],
     outputs: [
       { name: "settlementCurrency", type: "uint16" },
-      { name: "amountMinor", type: "uint256" },
+      { name: "paymentMinor", type: "uint256" },
       { name: "snapshotId", type: "uint256" },
     ],
   } as AbiFunction;
@@ -171,7 +171,7 @@ test("MCP leaves a settlement quote in the asset's own minor units", () => {
     string,
     unknown
   >;
-  assert.equal(quote.amountMinor, "2000000000000000000");
+  assert.equal(quote.paymentMinor, "2000000000000000000");
 });
 
 test("MCP formats Credis and Oracle annual rates with six decimals", () => {

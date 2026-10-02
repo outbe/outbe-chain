@@ -436,7 +436,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         },
     )
     .expect("quote settling the reward Gem");
-    let payable = quote.amountMinor;
+    let payable = quote.paymentMinor;
     // The vault is credited here, not at settle time. Before the drain: this is an
     // ordinary transaction and pays its own gas.
     let paynote_proof = paynote::deposit_and_prove(
@@ -696,7 +696,7 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
         },
     )
     .expect("quote reward Gem settlement");
-    let payable = quote.amountMinor;
+    let payable = quote.paymentMinor;
     assert!(!payable.is_zero());
     let reserve_before = eth::read_call(
         &url,
@@ -1074,14 +1074,14 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         },
     )
     .expect("quote settling the materialized Nod");
-    assert_eq!(quote.amountMinor, body.settlementCostMinor);
+    assert_eq!(quote.paymentMinor, body.settlementCostMinor);
     let paynote_proof = paynote::deposit_and_prove(
         world,
         port,
         &key,
         owner,
         fixture.asset,
-        quote.amountMinor,
+        quote.paymentMinor,
         paynote::nod_context(nod_word, quote.snapshotId),
     );
     assert_eq!(

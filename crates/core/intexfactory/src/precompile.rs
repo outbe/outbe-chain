@@ -239,7 +239,7 @@ pub fn dispatch(
                     )?;
                     Ok(IIntexFactory::quoteSettlementReturn {
                         settlementCurrency: settlement_currency,
-                        amountMinor: amount,
+                        paymentMinor: amount,
                         snapshotId: snapshot_id,
                     })
                 }),

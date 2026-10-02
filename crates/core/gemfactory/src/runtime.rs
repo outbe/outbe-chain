@@ -397,7 +397,7 @@ fn settle<Q>(
             GemSettled {
                 gemId: gem_id,
                 owner: item.owner,
-                amountMinor: amount_paid,
+                paymentMinor: amount_paid,
                 settlementCurrency: settlement_currency,
             },
         )

@@ -33,10 +33,10 @@ interface IGemFactory {
     ///         by the owner's Promis modify key: `mac = HMAC(modifyKey, op-preimage)`
     ///         where `opNonce` MUST equal the owner's current on-chain promis op-nonce (fetch via
     ///         `outbe_deriveKeys` + `IPromis.opNonceOf`) and the bound amount is the
-    ///         gem's load. Returns the minted Promis amount.
+    ///         gem's load. Returns the minted Promis.
     /// @dev    `nonce` solves SHA256("OUTBE_GEM_MINING_V1" || `gemId` || owner || uint64(0) ||
     ///         `nonce`) to the protocol difficulty; the owner is the gem's, not the caller's.
-    function minePromis(uint256 gemId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
+    function minePromis(uint256 gemId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256 promisMinor);
     /// @notice Cumulative totals since genesis. `totalCapacityMinor` counts all Promis
     ///         capacity ever sent there; it is not reduced when a position drains
     ///         or expires.
@@ -46,13 +46,13 @@ interface IGemFactory {
     ///         two currencies that asset settles on. Reverts for an asset the
     ///         gem does not accept.
     /// @return settlementCurrency ISO 4217 code the payment is denominated in.
-    /// @return amountMinor Amount to pay, in `asset`'s own minor units.
+    /// @return paymentMinor Amount to pay, in `asset`'s own minor units.
     /// @return snapshotId Trailing VWAP snapshot the amount converts at; zero on
     ///         the reference rail. It goes stale at the next update cutoff.
     function quoteSettlement(uint256 gemId, address asset)
         external
         view
-        returns (uint16 settlementCurrency, uint256 amountMinor, uint256 snapshotId);
+        returns (uint16 settlementCurrency, uint256 paymentMinor, uint256 snapshotId);
 
     // --- GemPosition NFT (ERC-721-style, non-transferable; owner = merchant) ---
     /// @notice Number of GemPositions owned by `owner`.
@@ -117,7 +117,7 @@ interface IGemFactory {
         uint64 expiresAt
     );
     /// @notice A gem's Cost Amount was settled into the Reserve.
-    event GemSettled(uint256 indexed gemId, address owner, uint256 amountMinor, uint16 settlementCurrency);
+    event GemSettled(uint256 indexed gemId, address owner, uint256 paymentMinor, uint16 settlementCurrency);
     /// @notice A settled gem right was exercised: it burned to mine confidential Promis.
     event GemExercised(uint256 indexed gemId, address owner, uint256 promisLoadMinor);
     /// @notice A position ended its validity with capacity it never issued.

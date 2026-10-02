@@ -343,7 +343,7 @@ fn nod_target() -> SettlementTarget {
 fn quote_return(payable: U256) -> Vec<u8> {
     INodFactory::quoteSettlementCall::abi_encode_returns(&INodFactory::quoteSettlementReturn {
         settlementCurrency: 840,
-        amountMinor: payable,
+        paymentMinor: payable,
         snapshotId: U256::ZERO,
     })
 }

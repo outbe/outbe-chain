@@ -66,13 +66,13 @@ fn settle_gems(world: &mut World, notes_count: u32) {
                     asset: currency.asset,
                 },
             );
-            assert!(!quote.amountMinor.is_zero(), "zero quote for GEM {gem_id}");
+            assert!(!quote.paymentMinor.is_zero(), "zero quote for GEM {gem_id}");
             quote
         })
         .collect();
     let notes: Vec<_> = quotes
         .iter()
-        .map(|quote| Note::new(chain_id, currency.asset, quote.amountMinor))
+        .map(|quote| Note::new(chain_id, currency.asset, quote.paymentMinor))
         .collect();
     assert_eq!(notes.len(), notes_count as usize);
     let commitments: BTreeSet<_> = notes.iter().map(|n| word(&n.commitment)).collect();
@@ -262,7 +262,7 @@ fn settle_gems(world: &mut World, notes_count: u32) {
             &eth::IGemFactory::GemSettled {
                 gemId: gem_id,
                 owner,
-                amountMinor: note.amount,
+                paymentMinor: note.amount,
                 settlementCurrency: USD_ISO,
             },
         );

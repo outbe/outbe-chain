@@ -719,7 +719,7 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
 
     let event = settled_event(&provider);
     assert_eq!(event.settlementCurrency, 978);
-    assert_eq!(event.amountMinor, U256::from(10u64) * six_decimal_unit());
+    assert_eq!(event.paymentMinor, U256::from(10u64) * six_decimal_unit());
 }
 
 #[test]
@@ -742,7 +742,7 @@ fn the_issuance_rail_floors_the_whole_obligation_in_the_payers_favour() {
         runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
     });
 
-    assert_eq!(settled_event(&provider).amountMinor, U256::from(2u64));
+    assert_eq!(settled_event(&provider).paymentMinor, U256::from(2u64));
 }
 
 #[test]
@@ -765,7 +765,7 @@ fn a_wider_asset_keeps_what_the_six_decimal_cost_dropped() {
     });
 
     assert_eq!(
-        settled_event(&provider).amountMinor,
+        settled_event(&provider).paymentMinor,
         U256::from(1_500_001_000_000u64)
     );
 }
@@ -812,7 +812,7 @@ fn a_dust_gem_settles_for_one_minor_unit() {
         runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
     });
 
-    assert_eq!(settled_event(&provider).amountMinor, U256::ONE);
+    assert_eq!(settled_event(&provider).paymentMinor, U256::ONE);
 }
 
 #[test]
@@ -879,7 +879,7 @@ fn the_reference_currency_settles_without_reading_any_issuance_rate() {
 
     let event = settled_event(&provider);
     assert_eq!(event.settlementCurrency, 840);
-    assert_eq!(event.amountMinor, U256::from(20u64) * six_decimal_unit());
+    assert_eq!(event.paymentMinor, U256::from(20u64) * six_decimal_unit());
 }
 
 #[test]
@@ -938,7 +938,7 @@ fn settlement_scales_the_cost_to_the_asset_decimals() {
 
     let event = settled_event(&provider);
     assert_eq!(
-        event.amountMinor,
+        event.paymentMinor,
         U256::from(20u64) * six_decimal_unit() * U256::from(1_000_000_000_000u64)
     );
 }
@@ -969,7 +969,7 @@ fn an_unassigned_issuance_code_mints_and_settles_on_the_reference_rail() {
 
     let event = settled_event(&provider);
     assert_eq!(event.settlementCurrency, 840);
-    assert_eq!(event.amountMinor, U256::from(20u64) * six_decimal_unit());
+    assert_eq!(event.paymentMinor, U256::from(20u64) * six_decimal_unit());
 }
 
 #[test]
@@ -1050,7 +1050,7 @@ fn the_quote_agrees_with_what_settling_charges_on_both_rails() {
         iss_amount
     });
 
-    assert_eq!(settled_event(&provider).amountMinor, quoted);
+    assert_eq!(settled_event(&provider).paymentMinor, quoted);
 }
 
 #[test]

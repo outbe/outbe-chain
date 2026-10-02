@@ -322,7 +322,7 @@ impl World {
                         units: U256::from(UNITS),
                     },
                 )
-                .amountMinor
+                .paymentMinor
             }
             Factory::Gem => {
                 self.view(
@@ -332,7 +332,7 @@ impl World {
                         asset: ASSET,
                     },
                 )
-                .amountMinor
+                .paymentMinor
             }
         }
     }
@@ -411,7 +411,7 @@ impl World {
                     .collect();
                 assert_eq!(settled.len(), 1);
                 assert_eq!(settled[0].owner, OWNER);
-                assert_eq!(settled[0].amountMinor, self.cost);
+                assert_eq!(settled[0].paymentMinor, self.cost);
             }
         }
     }
