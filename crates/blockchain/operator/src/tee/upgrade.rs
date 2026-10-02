@@ -905,6 +905,33 @@ mod tests {
     use super::*;
     use alloy_primitives::U256;
 
+    fn store_checkpoint(guard: &UpgradeJournalGuardV1, state: UpgradeJournalStateV1) {
+        guard.store(UpgradeJournalSnapshotV1::new(state)).unwrap();
+    }
+    fn store_candidate_prepared(guard: &UpgradeJournalGuardV1, context: &UpgradeContextV1) {
+        store_checkpoint(
+            guard,
+            UpgradeJournalStateV1::CandidatePrepared {
+                context: context.clone(),
+            },
+        );
+    }
+
+    fn key_provisioned(context: UpgradeContextV1, sealed_root_hash: B256) -> UpgradeJournalStateV1 {
+        UpgradeJournalStateV1::KeyProvisioned {
+            context,
+            sealed_root_hash,
+        }
+    }
+    fn key_ready(context: UpgradeContextV1, sealed_root_hash: B256) -> UpgradeJournalStateV1 {
+        UpgradeJournalStateV1::CandidateKeyReady {
+            context,
+            sealed_root_hash,
+            resident_offer_public: B256::repeat_byte(7),
+            proof_hash: B256::repeat_byte(8),
+        }
+    }
+
     #[test]
     fn software_seal_checkpoint_is_explicitly_feature_and_network_gated() {
         use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
@@ -1035,81 +1062,58 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let context = context(root.path());
         let guard = UpgradeJournalGuardV1::acquire(root.path()).unwrap();
-        guard
-            .store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::CandidatePrepared {
-                    context: context.clone(),
-                },
-            ))
-            .unwrap();
-        guard
-            .store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::KeyProvisioned {
-                    context: context.clone(),
-                    sealed_root_hash: B256::repeat_byte(6),
-                },
-            ))
-            .unwrap();
-        guard
-            .store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::CandidateKeyReady {
-                    context: context.clone(),
-                    sealed_root_hash: B256::repeat_byte(6),
-                    resident_offer_public: B256::repeat_byte(7),
-                    proof_hash: B256::repeat_byte(8),
-                },
-            ))
-            .unwrap();
-        guard
-            .store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::SubmissionPrepared {
-                    context: context.clone(),
-                    sealed_root_hash: B256::repeat_byte(6),
-                    resident_offer_public: B256::repeat_byte(7),
-                    proof_hash: B256::repeat_byte(8),
-                    submission: submission(),
-                },
-            ))
-            .unwrap();
-        guard
-            .store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::Submitted {
-                    context: context.clone(),
-                    sealed_root_hash: B256::repeat_byte(6),
-                    resident_offer_public: B256::repeat_byte(7),
-                    proof_hash: B256::repeat_byte(8),
-                    submission: submission(),
-                    submitted_at_finalized_height: 90,
-                    transaction_hashes: vec![submission().relay_variants[0].transaction_hash],
-                },
-            ))
-            .unwrap();
-        guard
-            .store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::Finalized {
-                    context: context.clone(),
-                    sealed_root_hash: B256::repeat_byte(6),
-                    resident_offer_public: B256::repeat_byte(7),
-                    proof_hash: B256::repeat_byte(8),
-                    submission: submission(),
-                    finalized_height: 91,
-                    finalized_hash: B256::repeat_byte(9),
-                },
-            ))
-            .unwrap();
-        guard
-            .store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::Promoted {
-                    context,
-                    sealed_root_hash: B256::repeat_byte(6),
-                    resident_offer_public: B256::repeat_byte(7),
-                    proof_hash: B256::repeat_byte(8),
-                    submission: submission(),
-                    finalized_height: 91,
-                    finalized_hash: B256::repeat_byte(9),
-                },
-            ))
-            .unwrap();
+        store_candidate_prepared(&guard, &context);
+        store_checkpoint(
+            &guard,
+            key_provisioned(context.clone(), B256::repeat_byte(6)),
+        );
+        store_checkpoint(&guard, key_ready(context.clone(), B256::repeat_byte(6)));
+        store_checkpoint(
+            &guard,
+            UpgradeJournalStateV1::SubmissionPrepared {
+                context: context.clone(),
+                sealed_root_hash: B256::repeat_byte(6),
+                resident_offer_public: B256::repeat_byte(7),
+                proof_hash: B256::repeat_byte(8),
+                submission: submission(),
+            },
+        );
+        store_checkpoint(
+            &guard,
+            UpgradeJournalStateV1::Submitted {
+                context: context.clone(),
+                sealed_root_hash: B256::repeat_byte(6),
+                resident_offer_public: B256::repeat_byte(7),
+                proof_hash: B256::repeat_byte(8),
+                submission: submission(),
+                submitted_at_finalized_height: 90,
+                transaction_hashes: vec![submission().relay_variants[0].transaction_hash],
+            },
+        );
+        store_checkpoint(
+            &guard,
+            UpgradeJournalStateV1::Finalized {
+                context: context.clone(),
+                sealed_root_hash: B256::repeat_byte(6),
+                resident_offer_public: B256::repeat_byte(7),
+                proof_hash: B256::repeat_byte(8),
+                submission: submission(),
+                finalized_height: 91,
+                finalized_hash: B256::repeat_byte(9),
+            },
+        );
+        store_checkpoint(
+            &guard,
+            UpgradeJournalStateV1::Promoted {
+                context,
+                sealed_root_hash: B256::repeat_byte(6),
+                resident_offer_public: B256::repeat_byte(7),
+                proof_hash: B256::repeat_byte(8),
+                submission: submission(),
+                finalized_height: 91,
+                finalized_hash: B256::repeat_byte(9),
+            },
+        );
         let snapshot = guard.load().unwrap().unwrap();
         assert_eq!(snapshot.generation, 7);
         assert_eq!(snapshot.lifecycle.label(), "promoted");
@@ -1146,16 +1150,8 @@ mod tests {
             &completed,
             &UpgradeJournalStateV1::CandidatePrepared { context: next }
         ));
-        let pending = UpgradeJournalStateV1::CandidateKeyReady {
-            context: old.clone(),
-            sealed_root_hash: B256::repeat_byte(6),
-            resident_offer_public: B256::repeat_byte(7),
-            proof_hash: B256::repeat_byte(8),
-        };
-        let retry = UpgradeJournalStateV1::KeyProvisioned {
-            context: old,
-            sealed_root_hash: B256::repeat_byte(6),
-        };
+        let pending = key_ready(old.clone(), B256::repeat_byte(6));
+        let retry = key_provisioned(old, B256::repeat_byte(6));
         assert!(validate_checkpoint_transition(&pending, &retry).is_ok());
         assert!(validate_checkpoint_transition(&completed, &retry).is_err());
     }
@@ -1165,13 +1161,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let guard = UpgradeJournalGuardV1::acquire(root.path()).unwrap();
         let context = context(root.path());
-        guard
-            .store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::CandidatePrepared {
-                    context: context.clone(),
-                },
-            ))
-            .unwrap();
+        store_candidate_prepared(&guard, &context);
         let mut different = context;
         different.candidate_manifest_hash = B256::repeat_byte(9);
         assert!(guard
@@ -1189,40 +1179,22 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let guard = UpgradeJournalGuardV1::acquire(root.path()).unwrap();
         let context = context(root.path());
-        guard
-            .store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::CandidatePrepared {
-                    context: context.clone(),
-                },
-            ))
-            .unwrap();
+        store_candidate_prepared(&guard, &context);
         assert!(guard
-            .store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::CandidateKeyReady {
-                    context: context.clone(),
-                    sealed_root_hash: B256::repeat_byte(6),
-                    resident_offer_public: B256::repeat_byte(7),
-                    proof_hash: B256::repeat_byte(8),
-                },
-            ))
+            .store(UpgradeJournalSnapshotV1::new(key_ready(
+                context.clone(),
+                B256::repeat_byte(6)
+            ),))
             .is_err());
-        guard
-            .store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::KeyProvisioned {
-                    context: context.clone(),
-                    sealed_root_hash: B256::repeat_byte(6),
-                },
-            ))
-            .unwrap();
+        store_checkpoint(
+            &guard,
+            key_provisioned(context.clone(), B256::repeat_byte(6)),
+        );
         assert!(guard
-            .store(UpgradeJournalSnapshotV1::new(
-                UpgradeJournalStateV1::CandidateKeyReady {
-                    context,
-                    sealed_root_hash: B256::repeat_byte(9),
-                    resident_offer_public: B256::repeat_byte(7),
-                    proof_hash: B256::repeat_byte(8),
-                },
-            ))
+            .store(UpgradeJournalSnapshotV1::new(key_ready(
+                context,
+                B256::repeat_byte(9)
+            ),))
             .is_err());
     }
 }
