@@ -183,11 +183,11 @@ fn every_cleanup_write_boundary_rolls_back_the_complete_end_block_cleanup() {
 }
 
 #[test]
-fn maximum_v1_body_footprint_and_storage_tail_cleanup_are_exact() {
+fn the_body_reserve_spans_the_widest_v1_body_and_tail_cleanup_is_exact() {
     let day = WorldwideDay::new(u32::MAX);
     let id = WwdEntityId::from_day_and_digest(day, [0xff; 32]);
     let maximum = NodItemBodyV1 {
-        is_settled: false,
+        is_settled: true,
         nod_id: id,
         owner: Address::repeat_byte(0xff),
         gratis_load_minor: U256::MAX,
@@ -201,9 +201,8 @@ fn maximum_v1_body_footprint_and_storage_tail_cleanup_are_exact() {
     let maximum_stored = StoredBody::new_v1(encode_nod_item_v1(&maximum).unwrap())
         .unwrap()
         .encode();
-    assert!(maximum_stored.len() <= MAX_STORED_BODY_BYTES_V1);
 
-    // The reserve only covers the tail it prepays for, so every v1 body has to fit it.
+    // The reserve prepays the storage tail of the widest v1 body, in whole slots.
     let widest_tribute = TributeBodyV1 {
         tribute_id: id,
         owner: Address::repeat_byte(0xff),
@@ -215,13 +214,20 @@ fn maximum_v1_body_footprint_and_storage_tail_cleanup_are_exact() {
         tribute_price_minor: U256::MAX,
         exclude_from_intex_issuance: true,
     };
-    assert!(stored_tribute(&widest_tribute).encode().len() <= MAX_STORED_BODY_BYTES_V1);
-    assert!(
+    let widest_stored = [
+        stored_tribute(&widest_tribute).encode().len(),
+        maximum_stored.len(),
         StoredBody::new_v1(encode_nod_bucket_v1(&widest_bucket(day)).unwrap())
             .unwrap()
             .encode()
-            .len()
-            <= MAX_STORED_BODY_BYTES_V1
+            .len(),
+    ]
+    .into_iter()
+    .max()
+    .unwrap();
+    assert_eq!(
+        widest_stored.div_ceil(32),
+        MAX_STORED_BODY_BYTES_V1.div_ceil(32)
     );
 
     let scope = ExecutionScope::new();
@@ -278,7 +284,7 @@ fn maximum_v1_body_footprint_and_storage_tail_cleanup_are_exact() {
 
 fn widest_bucket(day: WorldwideDay) -> NodBucketBodyV1 {
     NodBucketBodyV1 {
-        settled_nods: 0,
+        settled_nods: u64::MAX,
         bucket_key: B256::repeat_byte(0xff),
         worldwide_day: day,
         entry_price_minor: U256::MAX,
