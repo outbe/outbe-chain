@@ -1,5 +1,7 @@
 //! Owner-only, crash-consistent journal for one manual TEE renewal intent.
 
+mod validation;
+
 use std::{
     fs::{self, DirBuilder, File, OpenOptions},
     io::{Read as _, Write as _},
@@ -53,153 +55,6 @@ pub struct PreparedRenewalV1 {
     pub relay_variants: Vec<RawRelayTransactionV1>,
 }
 
-impl PreparedRenewalV1 {
-    fn validate(&self) -> Result<()> {
-        if self.intent.is_empty()
-            || self.evidence.is_empty()
-            || self.calldata.is_empty()
-            || self.node_signature.len() != 65
-            || self.enclave_signature.len() != 64
-            || self.relay_variants.is_empty()
-            || self.relay_variants.len() > MAX_RELAY_VARIANTS
-        {
-            eyre::bail!("renewal journal contains invalid bounded material");
-        }
-        let intent = RegistrationIntentV1::decode_canonical(&self.intent)
-            .map_err(|error| eyre::eyre!("decode renewal journal intent: {error}"))?;
-        let intent_hash = intent
-            .intent_hash()
-            .map_err(|error| eyre::eyre!("hash renewal journal intent: {error}"))?;
-        let node_signature: &[u8; 65] = self
-            .node_signature
-            .as_slice()
-            .try_into()
-            .map_err(|_| eyre::eyre!("renewal journal node signature length changed"))?;
-        let enclave_signature: &[u8; 64] = self
-            .enclave_signature
-            .as_slice()
-            .try_into()
-            .map_err(|_| eyre::eyre!("renewal journal enclave signature length changed"))?;
-        let next_registration_version = self
-            .source
-            .registration_version
-            .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("renewal journal source registration version exhausted"))?;
-        let next_renewal_nonce = self
-            .source
-            .renewal_nonce
-            .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("renewal journal source nonce exhausted"))?;
-        let node_id_hash = intent
-            .node_id
-            .node_id_hash()
-            .map_err(|error| eyre::eyre!("hash renewal journal NodeHost identity: {error}"))?;
-        let derived_enclave_id = intent
-            .derived_enclave_id()
-            .map_err(|error| eyre::eyre!("derive renewal journal enclave identity: {error}"))?;
-        if intent.operation != AttestationOperationV1::RenewEnclave
-            || node_id_hash != self.source.node_id_hash
-            || intent.enclave_id != self.source.enclave_id
-            || derived_enclave_id != intent.enclave_id
-            || intent.binding_id != self.source.binding_id
-            || intent.policy_hash != self.source.policy_hash
-            || intent.binding_version != self.source.binding_version
-            || intent.registration_version != next_registration_version
-            || intent.renewal_nonce != next_renewal_nonce
-            || intent.transition_nonce != self.source.transition_nonce
-            || intent.requested_valid_until != self.requested_valid_until
-            || B256::from(intent.recipient_x25519) != self.source.recipient_x25519
-            || B256::from(intent.attestation_ed25519) != self.source.attestation_ed25519
-            || B256::from(intent.noise_responder_x25519) != self.source.noise_responder_x25519
-            || intent.node_host_authorization_hash != self.source.node_host_authorization_hash
-            || !intent.verify_node_signature(node_signature)
-            || !intent.verify_enclave_signature(enclave_signature)
-        {
-            eyre::bail!("renewal journal intent is not the exact next binding transition");
-        }
-        let evidence = AttestationEvidenceV1::decode_canonical(&self.evidence)
-            .map_err(|error| eyre::eyre!("decode renewal journal evidence: {error}"))?;
-        let (evidence_intent, evidence_hash) = match &evidence {
-            AttestationEvidenceV1::Dcap(value) => {
-                if intent.attestation_mode != AttestationMode::DcapRequired {
-                    eyre::bail!("renewal journal evidence variant does not match intent mode");
-                }
-                (
-                    &value.intent,
-                    dcap_evidence_hash_v1(&self.evidence).map_err(|code| {
-                        eyre::eyre!("hash renewal journal DCAP evidence: {code:?}")
-                    })?,
-                )
-            }
-            AttestationEvidenceV1::GramineDirectDev(value) => {
-                if intent.attestation_mode != AttestationMode::GramineDirectDev
-                    || value.dev_attestation_public != value.intent.attestation_ed25519
-                    || value.dev_signature.as_slice() != self.enclave_signature.as_slice()
-                    || !value.intent.verify_enclave_signature(&value.dev_signature)
-                {
-                    eyre::bail!("renewal journal contains invalid GramineDirectDev evidence");
-                }
-                (
-                    &value.intent,
-                    evidence
-                        .evidence_hash()
-                        .map_err(|error| eyre::eyre!("hash renewal journal evidence: {error}"))?,
-                )
-            }
-        };
-        if intent_hash != self.intent_hash
-            || evidence_intent != &intent
-            || evidence_hash != self.evidence_hash
-            || keccak256(&self.calldata) != self.calldata_hash
-        {
-            eyre::bail!("renewal journal hash commitment mismatch");
-        }
-        let canonical_calldata = ITeeRegistryV1::renewEnclaveCall {
-            evidence: self.evidence.clone().into(),
-            nodeSignature: self.node_signature.clone().into(),
-            enclaveSignature: self.enclave_signature.clone().into(),
-        }
-        .abi_encode();
-        if self.calldata != canonical_calldata {
-            eyre::bail!("renewal journal calldata is not the canonical renewal call");
-        }
-        let first = &self.relay_variants[0];
-        if first.relay != self.relay || first.calldata_hash != self.calldata_hash {
-            eyre::bail!("renewal journal relay binding mismatch");
-        }
-        for variant in &self.relay_variants {
-            if variant.relay != self.relay
-                || variant.chain_id != first.chain_id
-                || variant.account_nonce != first.account_nonce
-                || variant.gas_limit != first.gas_limit
-                || variant.calldata_hash != self.calldata_hash
-                || keccak256(&variant.raw_transaction) != variant.transaction_hash
-            {
-                eyre::bail!("renewal journal contains a competing relay variant");
-            }
-        }
-        match evidence {
-            AttestationEvidenceV1::Dcap(_) => {
-                let ceiling = self
-                    .collateral_valid_until
-                    .checked_sub(self.collateral_margin)
-                    .ok_or_else(|| eyre::eyre!("renewal collateral margin underflow"))?;
-                if self.requested_valid_until > ceiling {
-                    eyre::bail!("renewal journal lease exceeds collateral ceiling");
-                }
-            }
-            AttestationEvidenceV1::GramineDirectDev(_) => {
-                if self.collateral_valid_until != u64::MAX || self.collateral_margin != 0 {
-                    eyre::bail!(
-                        "renewal journal has non-canonical GramineDirectDev collateral fields"
-                    );
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "camelCase", deny_unknown_fields)]
 #[allow(clippy::large_enum_variant)]
@@ -243,46 +98,6 @@ impl RenewalJournalStateV1 {
             Self::Finalized { .. } => "finalized",
             Self::Abandoned { .. } => "abandoned",
         }
-    }
-
-    fn validate(&self) -> Result<()> {
-        self.attempt().validate()?;
-        if let Self::Submitted {
-            attempt,
-            transaction_hashes,
-            ..
-        } = self
-        {
-            if transaction_hashes.is_empty()
-                || transaction_hashes.len() > attempt.relay_variants.len()
-                || transaction_hashes
-                    .iter()
-                    .enumerate()
-                    .any(|(index, hash)| attempt.relay_variants[index].transaction_hash != *hash)
-            {
-                eyre::bail!("submitted renewal journal transaction list is non-canonical");
-            }
-        }
-        if let Self::Finalized {
-            attempt,
-            finalized_binding,
-            finalized_hash,
-            ..
-        } = self
-        {
-            if finalized_hash.is_zero()
-                || finalized_binding.intent_hash != attempt.intent_hash
-                || finalized_binding.evidence_hash != attempt.evidence_hash
-            {
-                eyre::bail!("finalized renewal journal binding mismatch");
-            }
-        }
-        if let Self::Abandoned { reason, .. } = self {
-            if reason.is_empty() || reason.len() > 512 {
-                eyre::bail!("abandoned renewal journal reason is invalid");
-            }
-        }
-        Ok(())
     }
 }
 
