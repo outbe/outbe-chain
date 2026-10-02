@@ -398,7 +398,7 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
                 .collect();
             assert_eq!(returned.len(), 1);
             assert_eq!(returned[0].account, OWNER);
-            assert_eq!(returned[0].collateral, U256::from(1_000_000));
+            assert_eq!(returned[0].gratisMinor, U256::from(1_000_000));
             // Even a fresh authorization cannot return the same collateral twice.
             assert!(!matches!(
                 call!(

@@ -86,17 +86,17 @@ pub fn burn_with_fidelity(
 }
 
 /// Pledge the gratis that covers `terms.stables_amount` from `caller` into a new
-/// pending `PledgeLockTicket`, sealing `terms` alongside it. `amount_stables` is the
+/// pending `PledgeLockTicket`, sealing `terms` alongside it. `principal_minor` is the
 /// MAC-bound figure and must equal `terms.stables_amount`. Returns the pledge note
 /// to present at `requestCredis`.
 pub fn pledge(
     storage: StorageHandle<'_>,
     caller: Address,
-    amount_stables: U256,
+    principal_minor: U256,
     terms: PledgeTerms,
     auth: ModifyAuth,
 ) -> Result<B256> {
-    runtime::pledge(storage, caller, amount_stables, terms, auth)
+    runtime::pledge(storage, caller, principal_minor, terms, auth)
 }
 
 /// Pledge gratis AND carry a co-located fidelity **probe** in ONE round-trip.
@@ -106,25 +106,25 @@ pub fn pledge(
 pub fn pledge_with_fidelity(
     storage: StorageHandle<'_>,
     caller: Address,
-    amount_stables: U256,
+    principal_minor: U256,
     terms: PledgeTerms,
     auth: ModifyAuth,
     fidelity: FidelityOpSection,
 ) -> Result<(B256, FidelityOpOutcome)> {
-    runtime::pledge_with_fidelity(storage, caller, amount_stables, terms, auth, fidelity)
+    runtime::pledge_with_fidelity(storage, caller, principal_minor, terms, auth, fidelity)
 }
 
 /// Directly unpledge an unspent (pending) pledge (`pledge_note`) back to `caller`.
-/// `amount_stables` is the stables figure the pledge was quoted for - the enclave
+/// `principal_minor` is the stables figure the pledge was quoted for - the enclave
 /// matches it against the ticket. Returns the gratis collateral credited back.
 pub fn unpledge(
     storage: StorageHandle<'_>,
     caller: Address,
-    amount_stables: U256,
+    principal_minor: U256,
     pledge_note: B256,
     auth: ModifyAuth,
 ) -> Result<U256> {
-    runtime::unpledge(storage, caller, amount_stables, pledge_note, auth)
+    runtime::unpledge(storage, caller, principal_minor, pledge_note, auth)
 }
 
 // --- Credis-driven ---

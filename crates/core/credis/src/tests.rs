@@ -115,7 +115,7 @@ fn params(owner: Address) -> OpenPositionParams {
         principal_minor: U256::from(PRINCIPAL),
         entry_price_minor: entry_price(),
         call_anchor_price_minor: call_anchor_price(),
-        collateral: collateral(),
+        gratis_minor: collateral(),
         issued_at: ORIGINATED_AT,
     }
 }
@@ -198,7 +198,7 @@ fn open_position_seals_the_call_price_from_the_call_anchor() {
 
         // Collateral starts fully locked; accrual anchors at origination.
         assert_eq!(p.outstanding_principal_minor, p.principal_minor);
-        assert_eq!(p.collateral_locked, p.collateral);
+        assert_eq!(p.outstanding_gratis_minor, p.gratis_minor);
         assert_eq!(p.last_settled_at, p.issued_at);
         assert_eq!(p.called_at, 0);
         assert_eq!(p.lifecycle_state().unwrap(), CredisState::Open);
@@ -224,7 +224,7 @@ fn open_position_rejects_duplicates_and_zero_amounts() {
         assert!(credis.open_position(zero_principal).is_err());
 
         let mut zero_collateral = params(alice());
-        zero_collateral.collateral = U256::ZERO;
+        zero_collateral.gratis_minor = U256::ZERO;
         assert!(credis.open_position(zero_collateral).is_err());
     });
 }
@@ -248,12 +248,12 @@ fn worked_example_ledger_closes_exactly() {
         assert_eq!(first.principal_paid, U256::from(389_041_096u64));
         assert_eq!(first.total_paid, U256::from(400_000_000u64));
         // deltaG = 2e9 x 389_041_096 / 1e9 = 778.082192 Gratis
-        assert_eq!(first.gratis_released, U256::from(778_082_192u64));
+        assert_eq!(first.gratis_returned_minor, U256::from(778_082_192u64));
         assert!(!first.closed);
 
         let p = credis.get_position(id).unwrap();
         assert_eq!(p.outstanding_principal_minor, U256::from(610_958_904u64));
-        assert_eq!(p.collateral_locked, U256::from(1_221_917_808u64));
+        assert_eq!(p.outstanding_gratis_minor, U256::from(1_221_917_808u64));
         assert_eq!(p.last_settled_at, at(100), "accrual restarts");
 
         // --- Day 458: the call. ---------------------------------------------
@@ -269,17 +269,17 @@ fn worked_example_ledger_closes_exactly() {
         // d = 365 exactly, so I = P_out x 4%.
         assert_eq!(second.interest, U256::from(24_438_356u64));
         assert_eq!(second.principal_paid, U256::from(375_561_644u64));
-        assert_eq!(second.gratis_released, U256::from(751_123_288u64));
+        assert_eq!(second.gratis_returned_minor, U256::from(751_123_288u64));
 
         let p = credis.get_position(id).unwrap();
         assert_eq!(p.outstanding_principal_minor, U256::from(235_397_260u64));
-        assert_eq!(p.collateral_locked, U256::from(470_794_520u64));
+        assert_eq!(p.outstanding_gratis_minor, U256::from(470_794_520u64));
         let collected = first.interest + second.interest;
         assert_eq!(p.interest_paid_minor, collected);
 
         // --- Day 472: the window lapses. ------------------------------------
         let void = credis.void_position(id, at(472)).unwrap();
-        assert_eq!(void.gratis_burned, U256::from(470_794_520u64));
+        assert_eq!(void.gratis_burned_minor, U256::from(470_794_520u64));
         assert_eq!(void.principal_written_off, U256::from(235_397_260u64));
         // Unpaid fraction 235_397_260 / 1_000_000_000 = 23.5397260%, at scale 1e6.
         assert_eq!(void.unpaid_share, U256::from(235_397u64));
@@ -287,7 +287,8 @@ fn worked_example_ledger_closes_exactly() {
         assert_eq!(void.eoa_ct, eoa_ct());
 
         // --- The paper's ledger check. ---------------------------------------
-        let released = first.gratis_released + second.gratis_released + void.gratis_burned;
+        let released =
+            first.gratis_returned_minor + second.gratis_returned_minor + void.gratis_burned_minor;
         assert_eq!(released, collateral(), "collateral closes on G");
 
         let principal = first.principal_paid + second.principal_paid + void.principal_written_off;
@@ -299,7 +300,7 @@ fn worked_example_ledger_closes_exactly() {
         let p = credis.get_position(id).unwrap();
         assert_eq!(p.lifecycle_state().unwrap(), CredisState::Void);
         assert!(p.outstanding_principal_minor.is_zero());
-        assert!(p.collateral_locked.is_zero());
+        assert!(p.outstanding_gratis_minor.is_zero());
         assert_eq!(
             p.interest_paid_minor, collected,
             "void leaves collected interest"
@@ -350,11 +351,11 @@ fn settle_of_exactly_the_interest_leaves_principal_and_restarts_accrual() {
 
         assert_eq!(paid.interest, interest);
         assert!(paid.principal_paid.is_zero());
-        assert!(paid.gratis_released.is_zero());
+        assert!(paid.gratis_returned_minor.is_zero());
 
         let p = credis.get_position(id).unwrap();
         assert_eq!(p.outstanding_principal_minor, U256::from(PRINCIPAL));
-        assert_eq!(p.collateral_locked, collateral());
+        assert_eq!(p.outstanding_gratis_minor, collateral());
         // d resets to 0, so nothing is owed a moment later.
         assert_eq!(
             CredisContract::accrued_interest(&p, at(100)).unwrap(),
@@ -381,7 +382,7 @@ fn settle_takes_only_what_the_position_needs() {
         assert_eq!(p.lifecycle_state().unwrap(), CredisState::Settled);
         assert!(p.outstanding_principal_minor.is_zero());
         assert!(
-            p.collateral_locked.is_zero(),
+            p.outstanding_gratis_minor.is_zero(),
             "the final settlement leaves no dust locked"
         );
     });
@@ -425,8 +426,11 @@ fn settle_covers_the_accrued_interest_before_any_principal() {
         );
         // Collateral tracks the principal covered, not the gross payment:
         // deltaG = 2e9 x 1e8 / 1e9 = 2e8.
-        assert_eq!(paid.gratis_released, U256::from(200_000_000u64));
-        assert_eq!(p.collateral_locked, collateral() - paid.gratis_released);
+        assert_eq!(paid.gratis_returned_minor, U256::from(200_000_000u64));
+        assert_eq!(
+            p.outstanding_gratis_minor,
+            collateral() - paid.gratis_returned_minor
+        );
         // Principal, not the payment, is what the position is measured against.
         assert_eq!(
             p.principal_minor,
@@ -498,7 +502,7 @@ fn sequential_settlements_recompute_interest_on_the_reduced_principal() {
                 "period {period}"
             );
             assert_eq!(
-                paid.gratis_released,
+                paid.gratis_returned_minor,
                 U256::from(released),
                 "period {period}"
             );
@@ -520,7 +524,7 @@ fn sequential_settlements_recompute_interest_on_the_reduced_principal() {
 
             interest_collected += paid.interest;
             principal_settled += paid.principal_paid;
-            collateral_released += paid.gratis_released;
+            collateral_released += paid.gratis_returned_minor;
         }
 
         // The three ledgers close exactly.
@@ -531,7 +535,7 @@ fn sequential_settlements_recompute_interest_on_the_reduced_principal() {
         let p = credis.get_position(id).unwrap();
         assert_eq!(p.lifecycle_state().unwrap(), CredisState::Settled);
         assert!(p.outstanding_principal_minor.is_zero());
-        assert!(p.collateral_locked.is_zero());
+        assert!(p.outstanding_gratis_minor.is_zero());
     });
 }
 
@@ -554,7 +558,10 @@ fn settle_below_the_accrued_interest_reverts_and_changes_nothing() {
             after.outstanding_principal_minor,
             before.outstanding_principal_minor
         );
-        assert_eq!(after.collateral_locked, before.collateral_locked);
+        assert_eq!(
+            after.outstanding_gratis_minor,
+            before.outstanding_gratis_minor
+        );
         assert_eq!(after.last_settled_at, before.last_settled_at);
         assert_eq!(after.state, before.state);
         assert_eq!(after.interest_paid_minor, before.interest_paid_minor);
@@ -764,16 +771,20 @@ fn repeated_partials_release_exactly_the_collateral() {
                 let paid = credis
                     .settle(id, interest + U256::from(chunk), at(day))
                     .unwrap();
-                released += paid.gratis_released;
+                released += paid.gratis_returned_minor;
                 // Every unit of collateral is either released or still locked -
                 // never double-counted, never stranded mid-flight.
                 let after = credis.get_position(id).unwrap();
-                assert_eq!(released + after.collateral_locked, collateral());
+                assert_eq!(released + after.outstanding_gratis_minor, collateral());
                 day += 1;
             }
 
             assert_eq!(released, collateral(), "chunk={chunk}");
-            assert!(credis.get_position(id).unwrap().collateral_locked.is_zero());
+            assert!(credis
+                .get_position(id)
+                .unwrap()
+                .outstanding_gratis_minor
+                .is_zero());
         });
     }
 }
@@ -798,7 +809,7 @@ fn interest_rounds_down_to_asset_minor_units() {
             .settle(id, U256::from(109_589u64) + U256::from(3u64), at(1))
             .unwrap();
         assert_eq!(paid.principal_paid, U256::from(3u64));
-        assert_eq!(paid.gratis_released, U256::from(6u64));
+        assert_eq!(paid.gratis_returned_minor, U256::from(6u64));
     });
 }
 
@@ -812,7 +823,7 @@ fn rounded_up_returns_are_capped_and_final_settlement_returns_the_remainder() {
             let mut credis = CredisContract::new(storage);
             let mut terms = params(alice());
             terms.principal_minor = U256::from(10u64);
-            terms.collateral = U256::from(6u64);
+            terms.gratis_minor = U256::from(6u64);
             let id = credis.open_position(terms).unwrap();
             // A positive fractional interest obligation also floors to zero.
             assert_eq!(
@@ -824,13 +835,13 @@ fn rounded_up_returns_are_capped_and_final_settlement_returns_the_remainder() {
             let mut total_paid = U256::ZERO;
             for (&payment, &returned) in payments.iter().zip(expected) {
                 let result = credis.settle(id, U256::from(payment), at(0)).unwrap();
-                assert_eq!(result.gratis_released, U256::from(returned));
-                total_returned += result.gratis_released;
+                assert_eq!(result.gratis_returned_minor, U256::from(returned));
+                total_returned += result.gratis_returned_minor;
                 total_paid += result.principal_paid;
                 let position = credis.get_position(id).unwrap();
                 assert_eq!(
-                    total_returned + position.collateral_locked,
-                    position.collateral
+                    total_returned + position.outstanding_gratis_minor,
+                    position.gratis_minor
                 );
                 assert_eq!(
                     total_paid + position.outstanding_principal_minor,
@@ -977,8 +988,8 @@ fn called_repayment_and_void_have_complementary_deadline_boundaries() {
                 assert_eq!(credis.active_len().unwrap(), 1);
                 assert!(credis.has_called_position(alice()).unwrap());
                 assert_eq!(
-                    credis.void_position(id, now).unwrap().gratis_burned,
-                    before.collateral_locked
+                    credis.void_position(id, now).unwrap().gratis_burned_minor,
+                    before.outstanding_gratis_minor
                 );
                 assert_eq!(credis.active_len().unwrap(), 0);
             }
@@ -1029,7 +1040,7 @@ fn a_fully_unpaid_void_burns_all_collateral_and_scores_a_full_unpaid_share() {
         credis.mark_called(id, at(10)).unwrap();
 
         let void = credis.void_position(id, at(24)).unwrap();
-        assert_eq!(void.gratis_burned, collateral());
+        assert_eq!(void.gratis_burned_minor, collateral());
         assert_eq!(void.principal_written_off, U256::from(PRINCIPAL));
         assert_eq!(void.unpaid_share, SCALE_1E6_U256, "100% unpaid");
         assert!(credis
@@ -1052,7 +1063,7 @@ fn a_fully_unpaid_void_burns_all_collateral_and_scores_a_full_unpaid_share() {
     assert_eq!(voids.len(), 1);
     assert_eq!(voids[0].positionId, id);
     assert_eq!(voids[0].principalWrittenOffMinor, U256::from(PRINCIPAL));
-    assert_eq!(voids[0].gratisBurned, collateral());
+    assert_eq!(voids[0].gratisBurnedMinor, collateral());
 }
 
 #[test]
@@ -1332,7 +1343,7 @@ fn precompile_get_position_returns_the_full_record() {
         assert_eq!(decoded.issuanceCurrency, 840);
         assert_eq!(decoded.referenceCurrency, 978);
         assert_eq!(decoded.principalMinor, U256::from(PRINCIPAL));
-        assert_eq!(decoded.collateral, collateral());
+        assert_eq!(decoded.gratisMinor, collateral());
         assert_eq!(decoded.entryPriceMinor, entry_price());
         assert_eq!(decoded.callAnchorPriceMinor, call_anchor_price());
         assert_eq!(decoded.callPriceMinor, U256::from(1_640_000u64));
@@ -1570,7 +1581,7 @@ fn cca_weight_tracks_opening_and_only_the_collateral_burned_on_void() {
         let void = credis.void_position(id, deadline + 1).unwrap();
         assert_eq!(
             outbe_ccaregistry::api::reward_weight(&storage, cca(), void_day).unwrap(),
-            initial - void.gratis_burned
+            initial - void.gratis_burned_minor
         );
         assert_eq!(
             outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
@@ -1579,7 +1590,7 @@ fn cca_weight_tracks_opening_and_only_the_collateral_burned_on_void() {
         assert!(credis.void_position(id, deadline + 1).is_err());
         assert_eq!(
             outbe_ccaregistry::api::reward_weight(&storage, cca(), void_day).unwrap(),
-            initial - void.gratis_burned
+            initial - void.gratis_burned_minor
         );
     });
 }

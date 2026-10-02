@@ -39,15 +39,15 @@ pub fn dispatch(
                         mac: c.mac.0,
                         op_nonce: c.opNonce,
                     };
-                    let (handle, gratis_amount) = runtime::pledge_gratis(
+                    let (handle, gratis_minor) = runtime::pledge_gratis(
                         storage.clone(),
                         sender,
                         c.principalMinor,
                         c.asset,
-                        c.maxGratis,
+                        c.maxGratisMinor,
                         auth,
                     )?;
-                    emit_pledged(&storage, sender, &c, gratis_amount, handle)?;
+                    emit_pledged(&storage, sender, &c, gratis_minor, handle)?;
                     Ok(handle)
                 }),
                 unpledgeGratis(c) => mutate_void(c, caller, |sender, c| {
@@ -55,14 +55,14 @@ pub fn dispatch(
                         mac: c.mac.0,
                         op_nonce: c.opNonce,
                     };
-                    let gratis_amount = runtime::unpledge_gratis(
+                    let gratis_minor = runtime::unpledge_gratis(
                         storage.clone(),
                         sender,
                         c.principalMinor,
                         c.pledgeNote,
                         auth,
                     )?;
-                    emit_unpledged(&storage, sender, gratis_amount)
+                    emit_unpledged(&storage, sender, gratis_minor)
                 }),
                 mineCoen(c) => mutate(c, caller, |sender, c| {
                     let auth = ModifyAuth {
@@ -84,7 +84,7 @@ fn emit_pledged(
     storage: &StorageHandle<'_>,
     account: Address,
     call: &IGratisFactory::pledgeGratisCall,
-    gratis_amount: U256,
+    gratis_minor: U256,
     pledge_note: B256,
 ) -> Result<()> {
     storage.emit_event(
@@ -93,22 +93,18 @@ fn emit_pledged(
             account,
             principalMinor: call.principalMinor,
             asset: call.asset,
-            collateral: gratis_amount,
+            gratisMinor: gratis_minor,
             pledgeNote: pledge_note,
         }),
     )
 }
 
-fn emit_unpledged(
-    storage: &StorageHandle<'_>,
-    account: Address,
-    gratis_amount: U256,
-) -> Result<()> {
+fn emit_unpledged(storage: &StorageHandle<'_>, account: Address, gratis_minor: U256) -> Result<()> {
     storage.emit_event(
         GRATIS_FACTORY_ADDRESS,
         SolEvent::encode_log_data(&IGratisFactory::GratisUnpledged {
             account,
-            collateral: gratis_amount,
+            gratisMinor: gratis_minor,
         }),
     )
 }

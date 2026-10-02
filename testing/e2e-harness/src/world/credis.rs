@@ -56,7 +56,7 @@ pub(crate) struct CredisFixture {
     pub keys: eth::ConfidentialAccountKeys,
     pub reservation: U256,
     pub pledge: B256,
-    pub collateral: U256,
+    pub gratis_minor: U256,
     pub position_id: U256,
     pub initial_native: U256,
     pub interest_paid: U256,

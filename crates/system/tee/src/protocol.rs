@@ -266,7 +266,7 @@ pub struct PledgeTerms {
     /// a `Pledge` (the enclave cross-checks it, since that is the MAC-bound figure).
     pub stables_amount: U256,
     /// Gratis debited from the pledger's balance, derived host-side from the oracle
-    /// rate and capped by the caller's `maxGratis`.
+    /// rate and capped by the caller's `maxGratisMinor`.
     pub gratis_amount: U256,
     /// The stablecoin the credis is disbursed in.
     pub asset: Address,

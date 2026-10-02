@@ -174,7 +174,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   // --- Credis ----------------------------------------------------------------
   server.tool(
     "credis_position_get",
-    "Credis position by id (decoded: principal, outstanding, collateral, prices, state) " +
+    "Credis position by id (decoded: principal, outstanding, Gratis, prices, state) " +
       "plus parsed tokenURI metadata.",
     { id: z.string().describe("Position id (decimal or 0x hex)") },
     handler(async ({ id }) => {

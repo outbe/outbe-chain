@@ -174,7 +174,7 @@ fn pledge_quoted(
     caller: Address,
     stables_amount: U256,
     asset: Address,
-    max_gratis: U256,
+    max_gratis_minor: U256,
     auth: ModifyAuth,
 ) -> outbe_primitives::error::Result<(B256, U256)> {
     let valuation_price = oracle_rate();
@@ -191,7 +191,7 @@ fn pledge_quoted(
             asset_decimals: 6,
             valuation_price,
         },
-        max_gratis,
+        max_gratis_minor,
         auth,
     )
 }
@@ -373,7 +373,7 @@ fn pledge_rounds_collateral_down_before_checking_the_cap() {
     });
 }
 
-/// `maxGratis` is the pledger's slippage protection: the MAC only covers the stables
+/// `maxGratisMinor` is the pledger's slippage protection: the MAC only covers the stables
 /// figure, so a rate move that makes the credit cost more gratis than they accepted
 /// must revert rather than quietly draining the extra.
 #[test]
@@ -398,7 +398,7 @@ fn pledge_rejects_when_derived_gratis_exceeds_max() {
             auth(GratisOp::Pledge, alice(), pledge_stables(), 1),
         )
         .unwrap_err();
-        assert!(err.to_string().contains("maxGratis"), "got: {err}");
+        assert!(err.to_string().contains("maxGratisMinor"), "got: {err}");
 
         // Nothing moved.
         assert_eq!(view_balance(&storage, alice()), seed);
@@ -702,7 +702,7 @@ fn rejects_msg_value() {
             IGratisFactory::IGratisFactoryCalls::pledgeGratis(IGratisFactory::pledgeGratisCall {
                 principalMinor: U256::from(1u64),
                 asset: asset(),
-                maxGratis: U256::MAX,
+                maxGratisMinor: U256::MAX,
                 mac: FixedBytes([0u8; 32]),
                 opNonce: 0,
             })
@@ -768,7 +768,7 @@ fn pledge_rejects_invalid_metadata_missing_vault_or_unavailable_price_before_loc
             let call = IGratisFactory::pledgeGratisCall {
                 principalMinor: pledge_stables(),
                 asset: asset(),
-                maxGratis: U256::MAX,
+                maxGratisMinor: U256::MAX,
                 mac: FixedBytes(auth(GratisOp::Pledge, alice(), pledge_stables(), 1).mac),
                 opNonce: 1,
             }

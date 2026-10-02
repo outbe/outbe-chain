@@ -59,10 +59,10 @@ pub(crate) fn token_uri(position: &Position, now: u64) -> Result<String> {
         ),
         Trait::amount("Call Price", position.call_price_minor, PRICE_PRECISION),
         Trait::amount("Policy Rate", position.policy_rate, PRICE_PRECISION),
-        Trait::amount("Collateral", position.collateral, AMOUNT_PRECISION),
+        Trait::amount("Collateral", position.gratis_minor, AMOUNT_PRECISION),
         Trait::amount(
             "Collateral Locked",
-            position.collateral_locked,
+            position.outstanding_gratis_minor,
             AMOUNT_PRECISION,
         ),
         Trait::integer("Issuance Currency", position.issuance_currency),

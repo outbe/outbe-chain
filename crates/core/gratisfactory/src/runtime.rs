@@ -68,10 +68,10 @@ fn asset_metadata(storage: &StorageHandle<'_>, asset: Address) -> Result<(u16, u
     Ok((iso, decimals))
 }
 
-/// Pledge the gratis that collateralizes `amount_stables` of credit in `asset` into a
+/// Pledge the gratis that collateralizes `principal_minor` of credit in `asset` into a
 /// pending pledge-lock ticket (authorized by the caller's modify key, which binds the
 /// STABLES figure). The gratis cost is derived from the oracle rate and rejected if it
-/// exceeds `max_gratis` - that cap is the pledger's slippage protection, authenticated
+/// exceeds `max_gratis_minor` - that cap is the pledger's slippage protection, authenticated
 /// by their transaction signature rather than the MAC. Returns
 /// `(pledge_note, gratis_cost)`; the handle is what the CCA presents at
 /// `issueCredis`. The loan's own terms - the policy rate, the floor and call prices -
@@ -79,30 +79,30 @@ fn asset_metadata(storage: &StorageHandle<'_>, asset: Address) -> Result<(u16, u
 pub fn pledge_gratis(
     storage: StorageHandle<'_>,
     caller: Address,
-    stables_amount: U256,
+    principal_minor: U256,
     asset: Address,
-    max_gratis: U256,
+    max_gratis_minor: U256,
     auth: ModifyAuth,
 ) -> Result<(B256, U256)> {
-    if stables_amount.is_zero() {
+    if principal_minor.is_zero() {
         return Err(GratisFactoryError::InvalidAmount.into());
     }
     let (issuance_currency, asset_decimals) = asset_metadata(&storage, asset)?;
     let snapshot = current_vwap_snapshot(storage.clone())?;
     let valuation_price = get_finalized_window_vwap(storage.clone(), issuance_currency, snapshot)?
         .ok_or(GratisFactoryError::PledgePriceUnavailable)?;
-    let (gratis_amount, entry_price) =
-        checked_quote(stables_amount, asset_decimals, valuation_price)?;
+    let (gratis_minor, entry_price) =
+        checked_quote(principal_minor, asset_decimals, valuation_price)?;
     let terms = PledgeTerms {
-        stables_amount,
-        gratis_amount,
+        stables_amount: principal_minor,
+        gratis_amount: gratis_minor,
         asset,
         entry_price,
         issuance_currency,
         asset_decimals,
         valuation_price,
     };
-    pledge_priced(storage, caller, terms, max_gratis, auth)
+    pledge_priced(storage, caller, terms, max_gratis_minor, auth)
 }
 
 /// Commit a fully quoted pledge after applying the transaction's slippage cap.
@@ -110,11 +110,11 @@ pub(super) fn pledge_priced(
     storage: StorageHandle<'_>,
     caller: Address,
     terms: PledgeTerms,
-    max_gratis: U256,
+    max_gratis_minor: U256,
     auth: ModifyAuth,
 ) -> Result<(B256, U256)> {
-    let gratis_amount = terms.gratis_amount;
-    if gratis_amount > max_gratis {
+    let gratis_minor = terms.gratis_amount;
+    if gratis_minor > max_gratis_minor {
         return Err(GratisFactoryError::GratisCapExceeded.into());
     }
     // Fold a read-only league probe into the pledge round-trip (no separate
@@ -128,20 +128,20 @@ pub(super) fn pledge_priced(
     if outcome.league == u16::MAX {
         return Err(GratisFactoryError::FidelityNotEligible.into());
     }
-    Ok((handle, gratis_amount))
+    Ok((handle, gratis_minor))
 }
 
 /// Directly unpledge an unspent pledge back to `caller` (e.g. credis rejected).
-/// `amount_stables` is the figure the pledge was quoted for; returns the gratis
+/// `principal_minor` is the figure the pledge was quoted for; returns the gratis
 /// collateral credited back.
 pub fn unpledge_gratis(
     storage: StorageHandle<'_>,
     caller: Address,
-    amount_stables: U256,
+    principal_minor: U256,
     pledge_note: B256,
     auth: ModifyAuth,
 ) -> Result<U256> {
-    gratis::unpledge(storage, caller, amount_stables, pledge_note, auth)
+    gratis::unpledge(storage, caller, principal_minor, pledge_note, auth)
 }
 
 /// Mint `amount` gratis to `account` (authorized by the account owner's modify

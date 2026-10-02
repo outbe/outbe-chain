@@ -40,7 +40,7 @@ impl CredisState {
 /// Position record. Keyed by `keccak256(cca || smart_account || asset || block_number)`.
 ///
 /// Every term - both currency codes included - is sealed at opening and never
-/// changes afterwards; only `outstanding_principal_minor`, `collateral_locked`,
+/// changes afterwards; only `outstanding_principal_minor`, `outstanding_gratis_minor`,
 /// `interest_paid_minor`, `last_settled_at`, `called_at` and `state` move over the
 /// position's life.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,11 +87,11 @@ pub struct Position {
     /// `G` - pledged Gratis, valued 1:1 against principal at the pledge quote
     /// rate (COEN/`issuance_currency`, sealed into the ticket). Fixed.
     #[attribute(order = 7)]
-    pub collateral: U256,
+    pub gratis_minor: U256,
 
     /// The share of `G` still locked. Released principal-proportionally.
     #[attribute(order = 8)]
-    pub collateral_locked: U256,
+    pub outstanding_gratis_minor: U256,
 
     /// `r` - the currency's annual official policy rate (scale `1e6`) times the
     /// policy-rate factor, pinned at opening for the position's life.

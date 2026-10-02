@@ -43,7 +43,7 @@
         "internalType": "address"
       },
       {
-        "name": "maxGratis",
+        "name": "maxGratisMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -156,7 +156,7 @@
         "internalType": "address"
       },
       {
-        "name": "collateral",
+        "name": "gratisMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -181,7 +181,7 @@
         "internalType": "address"
       },
       {
-        "name": "collateral",
+        "name": "gratisMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

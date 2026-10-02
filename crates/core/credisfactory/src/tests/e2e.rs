@@ -216,7 +216,7 @@ fn issuance_checks_note_and_liquidity_expiry_independently() {
                 let position = CredisContract::new(storage.clone())
                     .get_position(id)
                     .unwrap();
-                assert_eq!(position.collateral, pledge_cost());
+                assert_eq!(position.gratis_minor, pledge_cost());
                 assert_eq!(position.entry_price_minor, oracle_rate());
                 assert_eq!(position.issued_at, CREATED_AT + delay);
                 assert!(
@@ -273,8 +273,8 @@ fn issue_credis_seals_the_position_geometry_from_the_pledge_quote() {
 
         assert_eq!(position.principal_minor, amount_stables);
         assert_eq!(position.outstanding_principal_minor, amount_stables);
-        assert_eq!(position.collateral, pledge_cost());
-        assert_eq!(position.collateral_locked, pledge_cost());
+        assert_eq!(position.gratis_minor, pledge_cost());
+        assert_eq!(position.outstanding_gratis_minor, pledge_cost());
         // Entry price is principal / gratis, sealed on the pledge (2.00 here).
         // The call anchor is the previous-day VWAP, seeded at 2.00,
         // so the call price is 3.28. See
@@ -344,7 +344,10 @@ fn settlement_releases_collateral_proportionally_and_closes_without_dust() {
             .get_position(position_id)
             .unwrap();
         assert_eq!(position.outstanding_principal_minor, half);
-        assert_eq!(position.collateral_locked, pledge_cost() / U256::from(2u64));
+        assert_eq!(
+            position.outstanding_gratis_minor,
+            pledge_cost() / U256::from(2u64)
+        );
         // The two components are reported separately: the principal is exactly
         // what was asked for, and the interest rode on top of it.
         assert_eq!(principal_paid, half);
@@ -371,7 +374,7 @@ fn settlement_releases_collateral_proportionally_and_closes_without_dust() {
             .get_position(position_id)
             .unwrap();
         assert_eq!(position.lifecycle_state().unwrap(), CredisState::Settled);
-        assert!(position.collateral_locked.is_zero());
+        assert!(position.outstanding_gratis_minor.is_zero());
         assert_eq!(view_balance(&storage, alice()), pledge_cost());
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
     });
@@ -441,7 +444,7 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
                 .get_position(id)
                 .unwrap();
             assert_eq!(position.outstanding_principal_minor, U256::from(3u64));
-            assert_eq!(position.collateral_locked, U256::ZERO);
+            assert_eq!(position.outstanding_gratis_minor, U256::ZERO);
             assert_eq!(position.lifecycle_state().unwrap(), CredisState::Open);
             let fidelity_before = outbe_fidelity::FidelityContract::new(storage.clone())
                 .cohorts_ct_of(alice())
@@ -698,7 +701,7 @@ fn oracle_call_survives_half_repayment_then_voids_the_unpaid_share() {
         let credis = CredisContract::new(storage.clone());
         let issued = credis.get_position(position_id).unwrap();
         assert_eq!(issued.lifecycle_state().unwrap(), CredisState::Open);
-        assert_eq!(view_pledged(&storage, alice()), issued.collateral);
+        assert_eq!(view_pledged(&storage, alice()), issued.gratis_minor);
 
         let mut oracle = OracleContract::new(storage.clone());
         oracle.config_is_initialized.write(true).unwrap();
@@ -774,14 +777,14 @@ fn oracle_call_survives_half_repayment_then_voids_the_unpaid_share() {
             (half, interest)
         );
         let repaid = credis.get_position(position_id).unwrap();
-        let unpaid_collateral = issued.collateral / U256::from(2u64);
-        let released = issued.collateral - unpaid_collateral;
+        let unpaid_collateral = issued.gratis_minor / U256::from(2u64);
+        let released = issued.gratis_minor - unpaid_collateral;
         assert_eq!(repaid.lifecycle_state().unwrap(), CredisState::Called);
         assert_eq!(
             repaid.outstanding_principal_minor,
             issued.principal_minor - half
         );
-        assert_eq!(repaid.collateral_locked, unpaid_collateral);
+        assert_eq!(repaid.outstanding_gratis_minor, unpaid_collateral);
         assert_eq!(repaid.called_at, called.called_at);
         assert_eq!(outbe_credis::settlement_deadline(&repaid), deadline);
         assert!(credis.has_called_position(alice()).unwrap());
@@ -801,7 +804,7 @@ fn oracle_call_survives_half_repayment_then_voids_the_unpaid_share() {
         };
         let before = ledger();
         assert_eq!(
-            before.2, issued.collateral,
+            before.2, issued.gratis_minor,
             "repayment releases without burning"
         );
         assert_eq!(before.3, unpaid_collateral);
@@ -829,7 +832,7 @@ fn oracle_call_survives_half_repayment_then_voids_the_unpaid_share() {
         let position = credis.get_position(position_id).unwrap();
         assert_eq!(position.lifecycle_state().unwrap(), CredisState::Void);
         assert!(position.outstanding_principal_minor.is_zero());
-        assert!(position.collateral_locked.is_zero());
+        assert!(position.outstanding_gratis_minor.is_zero());
         assert_eq!(credis.active_len().unwrap(), 0);
         assert!(!credis.has_called_position(alice()).unwrap());
         // Burn only the pledged remainder; preserve the returned liquid half
@@ -1133,7 +1136,7 @@ fn entry_price_stays_on_the_pledge_when_the_reference_price_moves() {
         let position = CredisContract::new(storage.clone())
             .get_position(position_id)
             .unwrap();
-        assert_eq!(position.collateral, pledge_cost());
+        assert_eq!(position.gratis_minor, pledge_cost());
         assert_eq!(position.principal_minor, pledge_stables());
         assert_eq!(position.asset, asset());
         assert_eq!(position.issuance_currency, ISSUANCE_ISO);

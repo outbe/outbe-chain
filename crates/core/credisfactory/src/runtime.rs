@@ -154,7 +154,7 @@ pub fn issue_credis(
         principal_minor: terms.stables_amount,
         entry_price_minor: entry_price,
         call_anchor_price_minor: call_anchor_price,
-        collateral: terms.gratis_amount,
+        gratis_minor: terms.gratis_amount,
         issued_at: current_time,
     })?;
 
@@ -293,11 +293,11 @@ pub fn settle(
 
     // 4) Release the collateral share freed by this settlement from the pledger's own
     //    pledged ledger back to its liquid Gratis balance.
-    if !settlement.gratis_released.is_zero() {
+    if !settlement.gratis_returned_minor.is_zero() {
         outbe_gratis::api::release_to_eoa(
             storage.clone(),
             eoa_account,
-            settlement.gratis_released,
+            settlement.gratis_returned_minor,
         )?;
     }
 
@@ -321,7 +321,7 @@ pub fn void_position(storage: StorageHandle<'_>, position_id: U256) -> Result<()
 
     // Rounded-up partial returns can exhaust collateral before the debt. The
     // write-off still completes, but there is no burn, Fidelity sale or credit.
-    if void.gratis_burned.is_zero() {
+    if void.gratis_burned_minor.is_zero() {
         return Ok(());
     }
 
@@ -342,14 +342,14 @@ pub fn void_position(storage: StorageHandle<'_>, position_id: U256) -> Result<()
     let (_, outcome) = outbe_gratis::api::burn_pledged_with_fidelity(
         storage.clone(),
         eoa,
-        void.gratis_burned,
+        void.gratis_burned_minor,
         section,
     )?;
     outbe_fidelity::api::apply_fidelity_outcome(storage.clone(), eoa, &outcome)?;
 
     // The equivalent value is deposited 1:1 into the Promis Reserve.
     outbe_promislimit::PromisLimitContract::new(storage.clone())
-        .add_to_total_unallocated(void.gratis_burned)?;
+        .add_to_total_unallocated(void.gratis_burned_minor)?;
 
     Ok(())
 }

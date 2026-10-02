@@ -17,7 +17,7 @@ interface ICredis {
         address indexed smartAccount,
         address indexed cca,
         uint256 principalMinor,
-        uint256 collateral
+        uint256 gratisMinor
     );
 
     event PositionCalled(uint256 indexed positionId, uint64 calledAt, uint64 settlementDeadline);
@@ -30,7 +30,7 @@ interface ICredis {
         uint256 indexed positionId,
         uint256 interestPaidMinor,
         uint256 principalPaidMinor,
-        uint256 gratisReleased,
+        uint256 gratisReturnedMinor,
         uint256 outstandingPrincipalMinor
     );
 
@@ -39,7 +39,7 @@ interface ICredis {
     /// @notice Forfeiture of a called position. Records the principal written off.
     ///         Unpaid interest is left out of this event and out of `interestPaidMinor`.
     event PositionVoided(
-        uint256 indexed positionId, address indexed cca, uint256 gratisBurned, uint256 principalWrittenOffMinor
+        uint256 indexed positionId, address indexed cca, uint256 gratisBurnedMinor, uint256 principalWrittenOffMinor
     );
 
     /// @notice Lifecycle state of a position, mirroring the Rust `CredisState`.
@@ -70,9 +70,9 @@ interface ICredis {
         /// P_out - decreases with each settlement; the position closes at zero.
         uint256 outstandingPrincipalMinor;
         /// G - the pledged Gratis, valued 1:1 against principal at the pledge quote rate.
-        uint256 collateral;
+        uint256 gratisMinor;
         /// The share of G still locked. Released principal-proportionally.
-        uint256 collateralLocked;
+        uint256 outstandingGratisMinor;
         /// r - the annual policy rate of the issuance currency, scale 1e6, fixed at opening.
         uint256 policyRate;
         /// Entry price in the issuance currency, scale 1e6, sealed on the pledge.

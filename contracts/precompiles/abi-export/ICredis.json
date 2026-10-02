@@ -141,12 +141,12 @@
             "internalType": "uint256"
           },
           {
-            "name": "collateral",
+            "name": "gratisMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "collateralLocked",
+            "name": "outstandingGratisMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -380,12 +380,12 @@
             "internalType": "uint256"
           },
           {
-            "name": "collateral",
+            "name": "gratisMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "collateralLocked",
+            "name": "outstandingGratisMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -511,12 +511,12 @@
             "internalType": "uint256"
           },
           {
-            "name": "collateral",
+            "name": "gratisMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "collateralLocked",
+            "name": "outstandingGratisMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -867,7 +867,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "collateral",
+        "name": "gratisMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -905,7 +905,7 @@
         "internalType": "address"
       },
       {
-        "name": "gratisBurned",
+        "name": "gratisBurnedMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -942,7 +942,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "gratisReleased",
+        "name": "gratisReturnedMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

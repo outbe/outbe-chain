@@ -242,13 +242,13 @@ pub(crate) fn burn_with_fidelity(
 /// Lock the gratis that covers `terms.stables_amount` into a new pending
 /// `PledgeLockTicket`, sealing the loan terms alongside it. The gratis leaves the
 /// liquid balance but is NOT yet credited to the pledged ledger (that happens at
-/// `consume_pledge`). `amount_stables` is the MAC-bound figure; the gratis actually
+/// `consume_pledge`). `principal_minor` is the MAC-bound figure; the gratis actually
 /// debited comes from `terms`. Returns the pledge note the CCA later presents at
 /// `requestCredis`.
 fn pledge_impl(
     storage: StorageHandle<'_>,
     caller: Address,
-    amount_stables: U256,
+    principal_minor: U256,
     terms: PledgeTerms,
     auth: ModifyAuth,
     fidelity: Option<FidelityOpSection>,
@@ -259,7 +259,7 @@ fn pledge_impl(
         GratisOp::Pledge,
         chain_id_b256(&storage)?,
         caller,
-        amount_stables,
+        principal_minor,
     );
     req.block_timestamp = pledge_timestamp(&storage)?;
     req.current_balance = gratis.balance_ct_of(caller)?;
@@ -291,11 +291,11 @@ fn pledge_impl(
 pub(crate) fn pledge(
     storage: StorageHandle<'_>,
     caller: Address,
-    amount_stables: U256,
+    principal_minor: U256,
     terms: PledgeTerms,
     auth: ModifyAuth,
 ) -> Result<B256> {
-    Ok(pledge_impl(storage, caller, amount_stables, terms, auth, None)?.0)
+    Ok(pledge_impl(storage, caller, principal_minor, terms, auth, None)?.0)
 }
 
 /// Pledge and carry a co-located fidelity **probe** (read-only league) in the
@@ -304,24 +304,30 @@ pub(crate) fn pledge(
 pub(crate) fn pledge_with_fidelity(
     storage: StorageHandle<'_>,
     caller: Address,
-    amount_stables: U256,
+    principal_minor: U256,
     terms: PledgeTerms,
     auth: ModifyAuth,
     fidelity: FidelityOpSection,
 ) -> Result<(B256, FidelityOpOutcome)> {
-    let (handle, outcome) =
-        pledge_impl(storage, caller, amount_stables, terms, auth, Some(fidelity))?;
+    let (handle, outcome) = pledge_impl(
+        storage,
+        caller,
+        principal_minor,
+        terms,
+        auth,
+        Some(fidelity),
+    )?;
     Ok((handle, require_fidelity_outcome(outcome)?))
 }
 
 /// Return a still-pending pledge (e.g. credis rejected): credit the ticket's gratis
-/// back to `caller`'s balance and delete the ticket. `amount_stables` is the stables
+/// back to `caller`'s balance and delete the ticket. `principal_minor` is the stables
 /// figure the pledge was quoted for; the enclave cross-checks it against the ticket
 /// and returns the matching gratis.
 pub(crate) fn unpledge(
     storage: StorageHandle<'_>,
     caller: Address,
-    amount_stables: U256,
+    principal_minor: U256,
     pledge_note: B256,
     auth: ModifyAuth,
 ) -> Result<U256> {
@@ -331,7 +337,7 @@ pub(crate) fn unpledge(
         GratisOp::Unpledge,
         chain_id_b256(&storage)?,
         caller,
-        amount_stables,
+        principal_minor,
     );
     req.current_balance = gratis.balance_ct_of(caller)?;
     req.current_pledge_record = gratis.pledge_ticket_ct_of(pledge_note)?;

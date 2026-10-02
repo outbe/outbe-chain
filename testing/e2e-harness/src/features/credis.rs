@@ -205,7 +205,7 @@ fn prepare(world: &mut World) {
         keys,
         reservation: U256::ZERO,
         pledge: B256::ZERO,
-        collateral: U256::ZERO,
+        gratis_minor: U256::ZERO,
         position_id: U256::ZERO,
         initial_native: U256::ZERO,
         interest_paid: U256::ZERO,
@@ -319,7 +319,7 @@ fn pledge(world: &mut World) {
         &eth::IGratisFactory::pledgeGratisCall {
             principalMinor: PRINCIPAL,
             asset: f.currency.asset,
-            maxGratis: INITIAL_GRATIS,
+            maxGratisMinor: INITIAL_GRATIS,
             mac: mac.into(),
             opNonce: nonce,
         },
@@ -331,12 +331,12 @@ fn pledge(world: &mut World) {
     assert_eq!(pledged.asset, f.currency.asset);
     assert_eq!(pledged.principalMinor, PRINCIPAL);
     // Both the stablecoin and the live 1 USD/COEN quote use six decimals.
-    assert_eq!(pledged.collateral, PRINCIPAL);
+    assert_eq!(pledged.gratisMinor, PRINCIPAL);
     let f = world.state.credis.as_mut().expect("fixture");
     f.pledge = pledged.pledgeNote;
-    f.collateral = pledged.collateral;
+    f.gratis_minor = pledged.gratisMinor;
     let state = snapshot(world);
-    assert_eq!(state.liquid, INITIAL_GRATIS - pledged.collateral);
+    assert_eq!(state.liquid, INITIAL_GRATIS - pledged.gratisMinor);
     // The pending ticket enters the pledged ledger only when consumed at issuance.
     assert_eq!(state.pledged, U256::ZERO);
 }
@@ -347,7 +347,7 @@ fn issue(world: &mut World) {
     let f = world.state.credis.as_ref().expect("fixture");
     let secret = outbe_tee_enclave::gratis::pledge_secret(&f.keys.modify, f.pledge);
     let spend = outbe_tee_enclave::gratis::spend_auth_mac(&secret, f.account);
-    let stake = outbe_primitives::units::checked_protocol_to_native(f.collateral)
+    let stake = outbe_primitives::units::checked_protocol_to_native(f.gratis_minor)
         .expect("fixture stake fits native units");
     let receipt = send(
         &url,
@@ -380,7 +380,7 @@ fn issue(world: &mut World) {
             smartAccount: f.account,
             cca: f.cca,
             principalMinor: PRINCIPAL,
-            collateral: f.collateral,
+            gratisMinor: f.gratis_minor,
         },
     );
     assert_receipt_event(
@@ -411,8 +411,8 @@ fn issued(world: &mut World) {
         (PRINCIPAL, PRINCIPAL)
     );
     assert_eq!(
-        (p.collateral, p.collateralLocked),
-        (f.collateral, f.collateral)
+        (p.gratisMinor, p.outstandingGratisMinor),
+        (f.gratis_minor, f.gratis_minor)
     );
     assert_eq!(p.state, 0);
     assert_eq!(p.lastSettledAt, p.issuedAt);
@@ -439,13 +439,13 @@ fn issued(world: &mut World) {
     assert_eq!(
         state.native,
         f.initial_native
-            + outbe_primitives::units::checked_protocol_to_native(f.collateral).expect("stake")
+            + outbe_primitives::units::checked_protocol_to_native(f.gratis_minor).expect("stake")
     );
     assert_eq!(state.vault_stables, LIQUIDITY - PRINCIPAL);
     assert_eq!(state.shares, LIQUIDITY - PRINCIPAL);
     assert_eq!(state.router_stables, U256::ZERO);
-    assert_eq!(state.liquid, INITIAL_GRATIS - f.collateral);
-    assert_eq!(state.pledged, f.collateral);
+    assert_eq!(state.liquid, INITIAL_GRATIS - f.gratis_minor);
+    assert_eq!(state.pledged, f.gratis_minor);
 }
 
 #[when("the user makes three daily payments through the smart account")]
@@ -528,11 +528,11 @@ fn repay(world: &mut World) {
             "interest changed before inclusion"
         );
         let released = if principal == p.outstandingPrincipalMinor {
-            p.collateralLocked
+            p.outstandingGratisMinor
         } else {
-            (p.collateral * principal)
+            (p.gratisMinor * principal)
                 .div_ceil(p.principalMinor)
-                .min(p.collateralLocked)
+                .min(p.outstandingGratisMinor)
         };
         assert_receipt_event(
             &receipt,
@@ -541,7 +541,7 @@ fn repay(world: &mut World) {
                 positionId: f.position_id,
                 interestPaidMinor: interest,
                 principalPaidMinor: principal,
-                gratisReleased: released,
+                gratisReturnedMinor: released,
                 outstandingPrincipalMinor: p.outstandingPrincipalMinor - principal,
             },
         );
@@ -560,7 +560,10 @@ fn repay(world: &mut World) {
             a.outstandingPrincipalMinor,
             p.outstandingPrincipalMinor - principal
         );
-        assert_eq!(a.collateralLocked, p.collateralLocked - released);
+        assert_eq!(
+            a.outstandingGratisMinor,
+            p.outstandingGratisMinor - released
+        );
         assert_eq!(a.lastSettledAt, p.lastSettledAt + DAY);
         assert_eq!(a.state, if payment_index == 2 { 2 } else { 0 });
         assert_eq!(
@@ -598,7 +601,7 @@ fn fully_repaid(world: &mut World) {
     assert_eq!(
         (
             position.outstandingPrincipalMinor,
-            position.collateralLocked
+            position.outstandingGratisMinor
         ),
         (U256::ZERO, U256::ZERO)
     );
