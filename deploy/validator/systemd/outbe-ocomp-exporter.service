@@ -17,6 +17,7 @@ Environment=OUTBE_OCOMP_STORAGE_CONFIG=/opt/outbe-chain/offchain-storage.toml
 ExecStart=/opt/outbe-chain/outbe-ocomp snapshot-exporter \
   --supervisor-address 127.0.0.1:30401
 Restart=on-failure
+RestartMode=direct
 RestartSec=5
 RestartSteps=5
 RestartMaxDelaySec=60
