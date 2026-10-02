@@ -317,6 +317,21 @@ impl ApplicationHandler {
 }
 
 impl ApplicationShared {
+    fn initial_epoch_genesis_digest(&self) -> Digest {
+        if self.trust_el_head {
+            let anchor = self.finalization_view.finalized_anchor();
+            if anchor.number > 0 && anchor.finalized_head_hash != B256::ZERO {
+                debug!(
+                    finalized_number = anchor.number,
+                    finalized_hash = %anchor.finalized_head_hash,
+                    "handle_genesis(epoch=0): using execution head as anchor (--testnet.trust-el-head)"
+                );
+                return Digest(anchor.finalized_head_hash);
+            }
+        }
+        Digest(self.genesis_hash)
+    }
+
     /// Handle genesis request - return the parent digest for `view = 1` of
     /// `genesis.epoch`.
     ///
@@ -348,19 +363,7 @@ impl ApplicationShared {
         debug!(epoch = %genesis.epoch, "genesis requested");
         let epoch = genesis.epoch;
         if epoch.get() == 0 {
-            if self.trust_el_head {
-                let anchor = self.finalization_view.finalized_anchor();
-                if anchor.number > 0 && anchor.finalized_head_hash != B256::ZERO {
-                    debug!(
-                        finalized_number = anchor.number,
-                        finalized_hash = %anchor.finalized_head_hash,
-                        "handle_genesis(epoch=0): using execution head as anchor (--testnet.trust-el-head)"
-                    );
-                    let _ = genesis.response.send(Digest(anchor.finalized_head_hash));
-                    return;
-                }
-            }
-            let _ = genesis.response.send(Digest(self.genesis_hash));
+            let _ = genesis.response.send(self.initial_epoch_genesis_digest());
             return;
         }
 
