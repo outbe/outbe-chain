@@ -31,7 +31,6 @@ pub(crate) struct ProgramExecutionV1 {
     fractions: BTreeMap<u16, U256>,
     total_nominal: U256,
     lysis_limit_minor: U256,
-    logical_evaluation_time: u64,
     next_ordinal: usize,
     remaining: U256,
     nod_actions: Vec<NodActionV1>,
@@ -78,7 +77,6 @@ pub fn execute(mut input: ProgramInputV1) -> Result<ProgramResultV1, ProgramErro
         tributes,
         first_leagues,
         input.lysis_limit_minor,
-        input.logical_evaluation_time,
     )?;
 
     for observed in &input.tributes {
@@ -116,7 +114,6 @@ pub(crate) fn prepare(
     tributes: Vec<TributeInputV1>,
     first_leagues: Vec<u16>,
     lysis_limit_minor: U256,
-    logical_evaluation_time: u64,
 ) -> Result<ProgramExecutionV1, ProgramErrorV1> {
     if tributes.is_empty() {
         return Err(ProgramErrorV1::EmptyInput);
@@ -157,7 +154,6 @@ pub(crate) fn prepare(
         fractions,
         total_nominal,
         lysis_limit_minor,
-        logical_evaluation_time,
         next_ordinal: 0,
         remaining: lysis_limit_minor,
         nod_actions: Vec::new(),
@@ -208,12 +204,11 @@ impl ProgramExecutionV1 {
             entry_price_minor,
         });
 
-        let floor_price_minor =
-            NodContract::floor_price_minor(entry_price_minor).ok_or_else(|| {
-                ProgramErrorV1::Arithmetic {
-                    message: format!("Nod floor overflow at {ordinal}"),
-                }
-            })?;
+        if NodContract::floor_price_minor(entry_price_minor).is_none() {
+            return Err(ProgramErrorV1::Arithmetic {
+                message: format!("Nod floor overflow at {ordinal}"),
+            });
+        }
         let first_league = self.first_leagues[ordinal];
         self.observations.push(SemanticObservationV1::Fidelity {
             ordinal,
@@ -236,11 +231,6 @@ impl ProgramExecutionV1 {
                     message: error.to_string(),
                 }
             })?;
-        let bucket_key = NodContract::bucket_key(
-            tribute.worldwide_day,
-            entry_price_minor,
-            tribute.reference_currency,
-        );
         if !nod_target_available || tribute.owner.is_zero() {
             return Err(ProgramErrorV1::InvalidNodTarget { ordinal });
         }
@@ -250,14 +240,11 @@ impl ProgramExecutionV1 {
             owner: tribute.owner,
             worldwide_day: tribute.worldwide_day,
             league_id: second_league,
-            floor_price_minor,
             gratis_load_minor: pending.gratis_load_minor,
             entry_price_minor,
             settlement_cost_minor,
             issuance_currency: tribute.issuance_currency,
             reference_currency: tribute.reference_currency,
-            bucket_key,
-            issued_at: self.logical_evaluation_time,
         };
 
         if !tribute.exclude_from_intex_issuance {

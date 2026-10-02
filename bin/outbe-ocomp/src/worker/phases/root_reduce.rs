@@ -59,6 +59,9 @@ use outbe_ocomp_protocol::ListKind;
 
 use outbe_ocomp_protocol::SchemaLimits;
 
+use outbe_nod::NodContract;
+use outbe_primitives::time::WorldwideDay;
+
 use std::sync::atomic::AtomicBool;
 
 pub(in super::super) fn execute_root_reduce_unit(
@@ -306,20 +309,21 @@ fn execute_root_reduce_leaf(
             owner: record.nod_action.owner,
             wwd: record.nod_action.worldwide_day.value(),
             league_id: record.nod_action.league_id,
-            floor_price_minor: record.nod_action.floor_price_minor,
             gratis_load_minor: record.nod_action.gratis_load_minor,
             entry_price_minor: record.nod_action.entry_price_minor,
             settlement_cost_minor: record.nod_action.settlement_cost_minor,
             issuance_currency: record.nod_action.issuance_currency,
             reference_currency: record.nod_action.reference_currency,
-            issued_at: record.nod_action.issued_at,
-            bucket_key: record.nod_action.bucket_key,
         })
         .collect::<Vec<_>>();
     let mut buckets = nod_actions
         .iter()
         .map(|action| ShuffleBucketRecordV1 {
-            bucket_key: action.bucket_key,
+            bucket_key: NodContract::bucket_key(
+                WorldwideDay::new(action.wwd),
+                action.entry_price_minor,
+                action.reference_currency,
+            ),
             raw_ordinal: action.raw_ordinal,
             tribute_id: action.tribute_id,
             nod_id: action.nod_id,

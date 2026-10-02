@@ -495,7 +495,6 @@ pub fn encode_amount_run(
         encoded.write_u256(record.gratis_fraction_fp)?;
         encoded.write_u256(record.gratis_load_minor)?;
         encoded.write_u256(record.entry_price_minor)?;
-        encoded.write_u256(record.floor_price_minor)?;
         encoded.write_u256(record.settlement_cost_minor)?;
         encoded.write_u16(record.issuance_currency)?;
         encoded.write_u16(record.reference_currency)?;
@@ -534,7 +533,6 @@ pub fn decode_amount_run(
             gratis_fraction_fp: input.read_u256()?,
             gratis_load_minor: input.read_u256()?,
             entry_price_minor: input.read_u256()?,
-            floor_price_minor: input.read_u256()?,
             settlement_cost_minor: input.read_u256()?,
             issuance_currency: input.read_u16()?,
             reference_currency: input.read_u16()?,
@@ -695,14 +693,11 @@ pub fn encode_finalized_output_run(
         encoded.write_address20(nod.owner)?;
         encoded.write_u32(nod.worldwide_day.value())?;
         encoded.write_u16(nod.league_id)?;
-        encoded.write_u256(nod.floor_price_minor)?;
         encoded.write_u256(nod.gratis_load_minor)?;
         encoded.write_u256(nod.entry_price_minor)?;
         encoded.write_u256(nod.settlement_cost_minor)?;
         encoded.write_u16(nod.issuance_currency)?;
         encoded.write_u16(nod.reference_currency)?;
-        encoded.write_b256(nod.bucket_key)?;
-        encoded.write_u64(nod.issued_at)?;
         encoded.write_option(record.contributor_action.as_ref(), |writer, contributor| {
             writer.write_address20(contributor.owner)?;
             writer.write_b256(*contributor.source_tribute_id)?;
@@ -740,14 +735,11 @@ pub fn decode_finalized_output_run(
         let owner = input.read_address20()?;
         let worldwide_day = WorldwideDay::new(input.read_u32()?);
         let league_id = input.read_u16()?;
-        let floor_price_minor = input.read_u256()?;
         let gratis_load_minor = input.read_u256()?;
         let entry_price_minor = input.read_u256()?;
         let settlement_cost_minor = input.read_u256()?;
         let issuance_currency = input.read_u16()?;
         let reference_currency = input.read_u16()?;
-        let bucket_key = input.read_b256()?;
-        let issued_at = input.read_u64()?;
         let contributor_action = input.read_option(|reader| {
             Ok(FinalizedContributorV1 {
                 owner: reader.read_address20()?,
@@ -763,14 +755,11 @@ pub fn decode_finalized_output_run(
                 owner,
                 worldwide_day,
                 league_id,
-                floor_price_minor,
                 gratis_load_minor,
                 entry_price_minor,
                 settlement_cost_minor,
                 issuance_currency,
                 reference_currency,
-                bucket_key,
-                issued_at,
             },
             contributor_action,
         });
@@ -1183,6 +1172,7 @@ fn validate_amount_run(run: &AmountRunV1) -> Result<(), LysisArtifactErrorV1> {
             || record.gratis_fraction_fp.is_zero()
             || record.gratis_load_minor.is_zero()
             || record.entry_price_minor.is_zero()
+            || NodContract::floor_price_minor(record.entry_price_minor).is_none()
         {
             return Err(LysisArtifactErrorV1::InvalidEncoding(
                 "amount run record order",
@@ -1281,14 +1271,8 @@ fn validate_finalized_output_run(run: &FinalizedOutputRunV1) -> Result<(), Lysis
             || nod.worldwide_day.value() == 0
             || nod.gratis_load_minor.is_zero()
             || nod.entry_price_minor.is_zero()
+            || NodContract::floor_price_minor(nod.entry_price_minor).is_none()
             || nod.reference_currency == 0
-            || nod.bucket_key
-                != NodContract::bucket_key(
-                    nod.worldwide_day,
-                    nod.entry_price_minor,
-                    nod.reference_currency,
-                )
-            || nod.issued_at == 0
             || derive_poseidon_entity_id(nod.owner, nod.worldwide_day)
                 .map_err(|_| LysisArtifactErrorV1::InvalidEncoding("finalized Nod identity"))?
                 != nod.nod_id

@@ -372,8 +372,7 @@ pub fn replay_output_finalize_artifact(
         return Err(LysisPhaseReplayError::BindingMismatch);
     }
 
-    let output = output_finalize(&amount, &prefix, plan.logical_evaluation_time)
-        .map_err(LysisArtifactErrorV1::from)?;
+    let output = output_finalize(&amount, &prefix).map_err(LysisArtifactErrorV1::from)?;
     UnitArtifactV1::from_canonical_output(
         spec,
         WorkOutputHeaderV1 {

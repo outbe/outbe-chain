@@ -19,7 +19,6 @@ fn root_reduce_rejects_finalized_payload_that_no_longer_matches_coverage_header(
                 gratis_fraction_fp: U256::ZERO,
                 gratis_load_minor: U256::from(1),
                 entry_price_minor: U256::from(2),
-                floor_price_minor: U256::from(3),
                 settlement_cost_minor: U256::from(4),
                 issuance_currency: 840,
                 reference_currency: 978,
@@ -33,7 +32,6 @@ fn root_reduce_rejects_finalized_payload_that_no_longer_matches_coverage_header(
             outgoing_remaining: U256::from(1),
             first_error_ordinal: None,
         },
-        2_026_072_500,
     )
     .unwrap();
     let coverage_root = finalized.coverage_root().unwrap();

@@ -418,7 +418,11 @@ pub(super) fn verify_complete_present_results<'a>(
                     // Same native record projection as Lysis finalizer::stream_result_chunks.
                     // Scratch sorting replaces its external globally ordered record input.
                     let record = ShuffleBucketRecordV1 {
-                        bucket_key: action.bucket_key,
+                        bucket_key: outbe_nod::NodContract::bucket_key(
+                            WorldwideDay::new(action.wwd),
+                            action.entry_price_minor,
+                            action.reference_currency,
+                        ),
                         raw_ordinal: action.raw_ordinal,
                         tribute_id: action.tribute_id,
                         nod_id: action.nod_id,

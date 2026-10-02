@@ -1235,10 +1235,6 @@ fn real_worker_processes_execute_through_output_finalize() {
         tribute.nominal_amount_minor
     );
     assert_eq!(
-        finalized.ordered_records[0].nod_action.issued_at,
-        plan.logical_evaluation_time
-    );
-    assert_eq!(
         finalized.ordered_records[0].nod_action.source_tribute_id,
         tribute.tribute_id
     );
@@ -1709,7 +1705,11 @@ fn real_worker_processes_execute_through_output_finalize() {
         .encode_canonical(&limits)
         .expect("canonical finalization chunk");
     let bucket_record = ShuffleBucketRecordV1 {
-        bucket_key: chunk.ordered_nod_actions[0].bucket_key,
+        bucket_key: outbe_nod::NodContract::bucket_key(
+            WorldwideDay::new(chunk.ordered_nod_actions[0].wwd),
+            chunk.ordered_nod_actions[0].entry_price_minor,
+            chunk.ordered_nod_actions[0].reference_currency,
+        ),
         raw_ordinal: chunk.ordered_nod_actions[0].raw_ordinal,
         tribute_id: chunk.ordered_nod_actions[0].tribute_id,
         nod_id: chunk.ordered_nod_actions[0].nod_id,
@@ -1988,7 +1988,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
                     gratis_fraction_fp: U256::ZERO,
                     gratis_load_minor: U256::from(1),
                     entry_price_minor: U256::from(2),
-                    floor_price_minor: U256::from(3),
                     settlement_cost_minor: U256::from(4),
                     issuance_currency: 840,
                     reference_currency: 978,
@@ -2011,7 +2010,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
                 outgoing_remaining: incoming_remaining - U256::from(shard_count),
                 first_error_ordinal: None,
             },
-            plan.logical_evaluation_time,
         )
         .expect("finalize merge shard");
         let interval = EntityIdHalfOpenRange {

@@ -6,6 +6,7 @@
 //! arithmetic commitment.
 
 use alloy_primitives::{keccak256, B256, U256};
+use outbe_nod::NodContract;
 use outbe_ocomp_protocol::{
     hash_framed,
     input::InputManifestV1,
@@ -19,6 +20,7 @@ use outbe_ocomp_protocol::{
     unit::{PlanCommitmentV1, UnitArtifactV1, UnitPhase},
     CanonicalWriter, ListKind, ObjectKind, ProtocolError, SchemaLimits, StreamingOrderedListRoot,
 };
+use outbe_primitives::time::WorldwideDay;
 
 use super::{
     artifacts::{
@@ -546,11 +548,18 @@ where
                 ));
             }
             previous_tribute = Some(action.tribute_id);
+            if NodContract::floor_price_minor(action.entry_price_minor).is_none() {
+                return Err(LysisFinalizationErrorV1::Authority("Nod entry price bound"));
+            }
             let record = action.encode_canonical_record(limits)?;
             nod_root.push(&record, limits.max_bounded_bytes)?;
             nod_records.push(record);
             bucket_records.push(ShuffleBucketRecordV1 {
-                bucket_key: action.bucket_key,
+                bucket_key: NodContract::bucket_key(
+                    WorldwideDay::new(action.wwd),
+                    action.entry_price_minor,
+                    action.reference_currency,
+                ),
                 raw_ordinal: action.raw_ordinal,
                 tribute_id: action.tribute_id,
                 nod_id: action.nod_id,
