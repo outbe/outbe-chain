@@ -47,7 +47,7 @@ contract FactorySettlement {
             callbackRejected = true;
         }
         allowance[from][msg.sender] -= amount;
-        balances[from] -= amount;
+        balances[from] -= mode == 10 && msg.sender == ROUTER ? amount - 1 : amount;
         balances[to] += mode == 9 ? amount - 1 : amount;
         if (mode == 7) assembly { return(0, 0) }
         return true;

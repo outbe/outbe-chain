@@ -495,6 +495,34 @@ fn a_token_that_does_not_deliver_the_amount_deposits_nothing() {
 }
 
 #[test]
+fn a_router_pull_that_leaves_tokens_in_the_pool_deposits_nothing() {
+    // Mode 10: the router's pull debits the pool one unit short while the vault
+    // still receives the full amount.
+    let mut ctx = evm_ctx(seeded_db(true, true));
+    configure_asset(&mut ctx, 10);
+    let before = asset_balances(&mut ctx);
+
+    let result = run_call!(
+        &mut ctx,
+        PAYNOTE_ADDRESS,
+        deposit_calldata(ASSET, DEPOSIT_AMOUNT),
+        false
+    );
+    assert!(
+        !matches!(result.status, SubCallStatus::Success),
+        "a pool left off its starting balance must not deposit"
+    );
+    assert!(
+        String::from_utf8_lossy(&result.returndata)
+            .contains("PayNote token moved an unexpected amount"),
+        "0x{}",
+        alloy_primitives::hex::encode(&result.returndata)
+    );
+    assert_eq!(asset_balances(&mut ctx), before);
+    assert_pristine!(&mut ctx);
+}
+
+#[test]
 fn a_token_that_returns_nothing_still_deposits() {
     let mut ctx = evm_ctx(seeded_db(true, true));
     configure_asset(&mut ctx, 7);
