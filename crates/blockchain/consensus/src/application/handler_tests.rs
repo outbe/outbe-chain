@@ -1073,14 +1073,19 @@ fn forfeited_build_does_not_advance_retry_timestamp_source() {
                 let outcome = shared
                     .build_block(
                         &clock,
-                        round,
-                        commonware_consensus::types::Height::new(parent.number()),
-                        parent_digest,
-                        Some(parent.clone()),
-                        Some(proof_key),
-                        std::time::SystemTime::now(),
-                        outbe_primitives::projection::ExecutionReadBudget::default(),
-                        super::ProposalPayloadTrace::default(),
+                        super::proposal::BlockBuildRequest {
+                            round,
+                            parent: super::proposal::ProposalParent {
+                                height: commonware_consensus::types::Height::new(parent.number()),
+                                digest: parent_digest,
+                                block: Some(parent.clone()),
+                                proof_key: Some(proof_key),
+                            },
+                            propose_start: std::time::SystemTime::now(),
+                            execution_read_budget:
+                                outbe_primitives::projection::ExecutionReadBudget::default(),
+                            payload_trace: super::ProposalPayloadTrace::default(),
+                        },
                     )
                     .await
                     .expect("missing parent proof must forfeit without a handler failure");
