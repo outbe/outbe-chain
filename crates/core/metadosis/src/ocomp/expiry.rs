@@ -263,7 +263,6 @@ fn expire_exact(
                 unused_limit: value_routed,
             },
             intent_id,
-            retained_lysis_limit_minor,
             outer_transition,
         },
     )?;
