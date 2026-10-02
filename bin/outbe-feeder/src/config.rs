@@ -23,8 +23,8 @@ pub struct FeederConfig {
     /// Finalized EVM pool readers; independent of the destination Outbe RPC.
     #[serde(default)]
     pub dex_providers: Vec<crate::provider::dex::DexProviderConfig>,
-    /// `AggregatorV3Interface` feed readers (Chainlink, RedStone push) per EVM
-    /// network; independent of the destination Outbe RPC.
+    /// `AggregatorV3Interface` feed readers (Chainlink, RedStone push); each
+    /// section is a provider named by the operator, with its own EVM RPC.
     #[serde(default)]
     pub aggregator_v3_providers: Vec<crate::provider::aggregator_v3::AggregatorV3ProviderConfig>,
     /// Health/status HTTP server configuration.
@@ -147,7 +147,6 @@ impl FeederConfig {
     const KNOWN_PROVIDERS: &'static [&'static str] = &[
         "mock",
         "pyth",
-        "aggregator_v3",
         "binance",
         "kraken",
         "okx",
@@ -226,9 +225,11 @@ impl FeederConfig {
                         pair.quote
                     ));
                 }
-                if !Self::KNOWN_PROVIDERS.contains(&source.provider.as_str()) {
+                if !Self::KNOWN_PROVIDERS.contains(&source.provider.as_str())
+                    && !crate::provider::aggregator_v3::is_section_name(self, &source.provider)
+                {
                     return Err(eyre::eyre!(
-                        "unknown provider '{}' for pair {}/{}. Known: {:?}",
+                        "unknown provider '{}' for pair {}/{}. Known: {:?} or an aggregator_v3_providers name",
                         source.provider,
                         pair.base,
                         pair.quote,
@@ -294,7 +295,7 @@ impl FeederConfig {
         }
 
         crate::provider::dex::validate_config(self)?;
-        crate::provider::aggregator_v3::validate_config(self)?;
+        crate::provider::aggregator_v3::validate_config(self, Self::KNOWN_PROVIDERS)?;
         Ok(())
     }
 

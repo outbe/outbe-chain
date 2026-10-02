@@ -89,7 +89,7 @@ threshold = "2.0"
 | `provider_endpoints[].rest` | only endpoint-backed providers | Provider REST base URL |
 | `provider_endpoints[].websocket` | no | Exchange market-stream endpoint override (`ws://`, `wss://`, or a host); omitted uses the exchange default |
 | `dex_providers` | only DEX sources | Explicit RPC, network and pool configuration; see [DEX providers](#dex-providers) |
-| `aggregator_v3_providers` | only `aggregator_v3` sources | Per-network RPC and `AggregatorV3` feeds (Chainlink, RedStone push); see [AggregatorV3 providers](#aggregatorv3-providers) |
+| `aggregator_v3_providers[].name` | only `AggregatorV3` sources | Provider name for `currency_pairs.sources`; one section per vendor and network, see [AggregatorV3 providers](#aggregatorv3-providers) |
 | `deviation_thresholds[].base` | no | Asset to apply threshold to |
 | `deviation_thresholds[].threshold` | no | Max sigma deviation as an exact decimal string (default: `"2.0"`) |
 
@@ -101,7 +101,7 @@ At startup, the feeder validates:
 - `validator_address` is a valid 20-byte hex address
 - Each on-chain pair has at least 1 external source market
 - ISO markets use `COEN/ISO`; reverse `ISO/COEN` configuration is rejected
-- All provider names are known: `mock`, `mock_http`, `pyth`, `aggregator_v3`, `binance`, `kraken`, `okx`, `gate`, `huobi`, `mexc`, `coinbase`, `uniswap`, `pancakeswap`
+- All provider names are known: `mock`, `mock_http`, `pyth`, `binance`, `kraken`, `okx`, `gate`, `huobi`, `mexc`, `coinbase`, `uniswap`, `pancakeswap`, or the `name` of an `[[aggregator_v3_providers]]` section
 - WebSocket endpoints are only accepted for streaming exchange providers
 - Provider endpoint names are unique
 
@@ -120,7 +120,7 @@ volume-weighted mean rounded down.
 | `mock` | Working | Hardcoded COEN=1.0, ETH=2500.0 |
 | `mock_http` | Working | Configured REST endpoint compatible with the migrated Cosmos test price server |
 | `pyth` | Working | Pyth Hermes REST API for supported BTC/ETH feeds |
-| `aggregator_v3` | Implemented | On-chain `AggregatorV3Interface` feeds (Chainlink, RedStone push) read over EVM JSON-RPC at `latest` |
+| `<aggregator_v3_providers[].name>` | Implemented | On-chain `AggregatorV3Interface` feeds (Chainlink, RedStone push) read over EVM JSON-RPC at `latest`; name chosen in config |
 | `binance` | Working | Binance WebSocket ticker/candle streams with REST bootstrap fallback |
 | `kraken` | Working | Kraken WebSocket ticker/candle streams with REST bootstrap fallback |
 | `okx` | Working | OKX WebSocket ticker/candle streams with REST bootstrap fallback |
@@ -141,46 +141,54 @@ used as bootstrap fallback.
 
 ### AggregatorV3 providers
 
-`aggregator_v3` reads any on-chain feed exposing Chainlink's
+`[[aggregator_v3_providers]]` sections read on-chain feeds exposing Chainlink's
 `AggregatorV3Interface`: Chainlink Data Feeds, RedStone push feeds, and other
-vendors using that ABI. The vendor is identified by the feed's `description()`.
-Reads are `eth_call` against the `latest` block: rounds are signed by the
-vendor network, so no finality wait applies; freshness comes from the round's
-`updatedAt`. Feeds report no volume, so the observation weighs one unit in the
-source mean.
+vendors using that ABI. Each section is one provider instance; its `name` is
+the provider name used in `currency_pairs.sources`, so a feeder can hold the
+same market from several vendors as separate sources and let the deviation
+filter and source mean work across them. Reads are `eth_call` against the
+`latest` block: rounds are signed by the vendor network, so no finality wait
+applies; freshness comes from the round's `updatedAt`. Feeds report no volume,
+so the observation weighs one unit in the source mean.
 
 ```toml
 [[currency_pairs.sources]]
-provider = "aggregator_v3"
-base = "USDC"
+provider = "chainlink"
+base = "ETH"
 quote = "840"
 
 [[currency_pairs.sources]]
-provider = "aggregator_v3"
-base = "BTC"
+provider = "redstone"
+base = "ETH"
 quote = "840"
 
 [[aggregator_v3_providers]]
+name = "chainlink"
 chain_id = 1
 rpc_endpoint = "https://ethereum-rpc.example.invalid"
 
-[[aggregator_v3_providers.feeds]]          # Chainlink
-base = "USDC"
+[[aggregator_v3_providers.feeds]]
+base = "ETH"
 quote = "840"
-aggregator = "0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6"
-description = "USDC / USD"
+aggregator = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419"
+description = "ETH / USD"
 
-[[aggregator_v3_providers.feeds]]          # RedStone push
-base = "BTC"
+[[aggregator_v3_providers]]
+name = "redstone"
+chain_id = 1
+rpc_endpoint = "https://ethereum-rpc.example.invalid"
+
+[[aggregator_v3_providers.feeds]]
+base = "ETH"
 quote = "840"
-aggregator = "0xAB7f623fb2F6fea6601D4350FA0E2290663C28Fc"
-description = "RedStone Price Feed for BTC"
+aggregator = "0x67F6838e58859d612E4ddF04dA396d6DABB66Dc4"
+description = "RedStone Price Feed for ETH"
 ```
 
-One `[[aggregator_v3_providers]]` section per EVM network (`chain_id` unique);
-every `aggregator_v3` source needs a matching `feeds` entry by `base`/`quote`
-in some section, and feed keys are unique across sections. Take `aggregator`
-(the proxy address) and `description` from the vendor registry:
+Section names are unique and may not reuse a built-in provider name; feed
+keys and aggregator addresses are unique within a section. A source whose
+provider is a section name must match a `feeds` entry by `base`/`quote`. Take
+`aggregator` (the proxy address) and `description` from the vendor registry:
 [docs.chain.link](https://docs.chain.link/data-feeds/price-feeds/addresses) or
 [app.redstone.finance](https://app.redstone.finance/). On first use the feeder
 verifies `eth_chainId`, reads `description()` and rejects a feed whose text

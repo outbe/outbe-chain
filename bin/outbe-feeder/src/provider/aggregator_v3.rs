@@ -1,6 +1,10 @@
 //! On-chain price feeds exposing Chainlink's `AggregatorV3Interface`: Chainlink
 //! Data Feeds, RedStone push feeds, and any other vendor using that ABI.
 //!
+//! Every `[[aggregator_v3_providers]]` section is one provider instance whose
+//! `name` is the provider name used in `currency_pairs.sources`, so one
+//! feeder can hold the same market from several vendors as separate sources.
+//!
 //! Feeds are read with `eth_call` at the `latest` block. Vendors sign each
 //! round, so reorg protection adds nothing; freshness comes from the round's
 //! own `updatedAt`. Feeds carry no volume: the observation weighs one unit in
@@ -11,7 +15,8 @@ use alloy_sol_types::sol;
 use async_trait::async_trait;
 use eyre::{ensure, eyre, Result};
 use serde::Deserialize;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
@@ -36,10 +41,13 @@ sol! {
 pub(crate) const MAX_FEED_AGE_SECS: u64 = 90_000;
 const MAX_FUTURE_SECS: u64 = 60;
 
-/// One EVM network with the feeds read from it.
+/// One provider instance: a vendor label, an EVM network and its feeds.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AggregatorV3ProviderConfig {
+    /// Provider name referenced by `currency_pairs.sources`, e.g. `chainlink`
+    /// or `redstone`; must not collide with a built-in provider name.
+    pub name: String,
     pub chain_id: u64,
     pub rpc_endpoint: String,
     pub feeds: Vec<FeedConfig>,
@@ -66,6 +74,10 @@ impl FeedConfig {
 
 impl AggregatorV3ProviderConfig {
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            !self.name.trim().is_empty() && !self.name.contains(char::is_whitespace),
+            "aggregator_v3 provider name must be a single non-empty word"
+        );
         ensure!(self.chain_id > 0, "aggregator_v3 chain_id must be positive");
         let url = reqwest::Url::parse(&self.rpc_endpoint)
             .map_err(|_| eyre!("invalid aggregator_v3 RPC URL"))?;
@@ -77,6 +89,8 @@ impl AggregatorV3ProviderConfig {
             !self.feeds.is_empty(),
             "aggregator_v3 provider has no feeds"
         );
+        let mut keys = BTreeSet::new();
+        let mut addresses = BTreeSet::new();
         for feed in &self.feeds {
             ensure!(
                 !feed.base.trim().is_empty() && !feed.quote.trim().is_empty(),
@@ -92,120 +106,126 @@ impl AggregatorV3ProviderConfig {
                 "aggregator_v3 feed {} has no description",
                 feed.key()
             );
+            ensure!(
+                keys.insert(feed.key()),
+                "duplicate feed {} in aggregator_v3 provider {}",
+                feed.key(),
+                self.name
+            );
+            ensure!(
+                addresses.insert(feed.aggregator),
+                "aggregator {} configured twice in aggregator_v3 provider {}",
+                feed.aggregator,
+                self.name
+            );
         }
         Ok(())
     }
 }
 
-/// Cross-checks `aggregator_v3` sources against `[[aggregator_v3_providers]]`.
-pub(crate) fn validate_config(config: &FeederConfig) -> Result<()> {
-    let mut keys = BTreeSet::new();
-    let mut addresses = BTreeSet::new();
-    let mut chains = BTreeSet::new();
-    for network in &config.aggregator_v3_providers {
-        network.validate()?;
+/// Validates `[[aggregator_v3_providers]]` sections and the sources that
+/// reference them by name. Built-in provider names are reserved.
+pub(crate) fn validate_config(config: &FeederConfig, builtin: &[&str]) -> Result<()> {
+    let mut names = BTreeSet::new();
+    for section in &config.aggregator_v3_providers {
+        section.validate()?;
         ensure!(
-            chains.insert(network.chain_id),
-            "duplicate aggregator_v3 chain_id {}",
-            network.chain_id
+            !builtin.contains(&section.name.as_str()),
+            "aggregator_v3 provider name '{}' is a built-in provider",
+            section.name
         );
-        for feed in &network.feeds {
-            ensure!(
-                keys.insert(feed.key()),
-                "duplicate aggregator_v3 feed {}",
-                feed.key()
-            );
-            ensure!(
-                addresses.insert((network.chain_id, feed.aggregator)),
-                "aggregator_v3 contract {} configured more than once",
-                feed.aggregator
-            );
-        }
+        ensure!(
+            names.insert(section.name.as_str()),
+            "duplicate aggregator_v3 provider '{}'",
+            section.name
+        );
+        ensure!(
+            !config
+                .provider_endpoints
+                .iter()
+                .any(|e| e.name == section.name),
+            "configure aggregator_v3 RPC in aggregator_v3_providers, not provider_endpoints"
+        );
     }
-    ensure!(
-        !config
-            .provider_endpoints
-            .iter()
-            .any(|e| e.name == "aggregator_v3"),
-        "configure aggregator_v3 RPC in aggregator_v3_providers, not provider_endpoints"
-    );
     for pair in &config.currency_pairs {
-        for source in pair
-            .sources
-            .iter()
-            .filter(|s| s.provider == "aggregator_v3")
-        {
+        for source in &pair.sources {
+            let Some(section) = config
+                .aggregator_v3_providers
+                .iter()
+                .find(|s| s.name == source.provider)
+            else {
+                continue;
+            };
             ensure!(
-                keys.contains(&format!("{}/{}", source.base, source.quote)),
-                "missing aggregator_v3 feed {}/{}",
+                section
+                    .feeds
+                    .iter()
+                    .any(|f| f.base == source.base && f.quote == source.quote),
+                "missing feed {}/{} in aggregator_v3 provider {}",
                 source.base,
-                source.quote
+                source.quote,
+                section.name
             );
         }
     }
     Ok(())
 }
 
-struct Network {
-    rpc: Rpc,
-    chain_id: u64,
+/// Whether `name` is an `[[aggregator_v3_providers]]` section.
+pub(crate) fn is_section_name(config: &FeederConfig, name: &str) -> bool {
+    config
+        .aggregator_v3_providers
+        .iter()
+        .any(|s| s.name == name)
 }
 
 pub(crate) struct AggregatorV3Provider {
-    networks: Vec<Network>,
-    /// Feed key -> (network index, feed).
-    feeds: HashMap<String, (usize, FeedConfig)>,
-    /// Networks whose `eth_chainId` has been confirmed.
-    verified_chains: RwLock<HashSet<usize>>,
+    name: String,
+    rpc: Rpc,
+    chain_id: u64,
+    feeds: HashMap<String, FeedConfig>,
+    /// Set once `eth_chainId` has been confirmed.
+    chain_verified: AtomicBool,
     /// Feed key -> `decimals()`, cached after `description()` is verified.
     decimals: RwLock<HashMap<String, u8>>,
 }
 
 impl AggregatorV3Provider {
-    pub fn new(networks: &[AggregatorV3ProviderConfig]) -> Result<Self> {
-        ensure!(
-            !networks.is_empty(),
-            "provider aggregator_v3 requires a [[aggregator_v3_providers]] entry"
-        );
-        let mut feeds = HashMap::new();
-        let mut rpcs = Vec::with_capacity(networks.len());
-        for (index, network) in networks.iter().enumerate() {
-            network.validate()?;
-            rpcs.push(Network {
-                rpc: Rpc::new(&network.rpc_endpoint)?,
-                chain_id: network.chain_id,
-            });
-            for feed in &network.feeds {
-                feeds.insert(feed.key(), (index, feed.clone()));
-            }
-        }
+    pub fn new(section: &AggregatorV3ProviderConfig) -> Result<Self> {
+        section.validate()?;
         Ok(Self {
-            networks: rpcs,
-            feeds,
-            verified_chains: RwLock::new(HashSet::new()),
+            name: section.name.clone(),
+            rpc: Rpc::new(&section.rpc_endpoint)?,
+            chain_id: section.chain_id,
+            feeds: section
+                .feeds
+                .iter()
+                .map(|feed| (feed.key(), feed.clone()))
+                .collect(),
+            chain_verified: AtomicBool::new(false),
             decimals: RwLock::new(HashMap::new()),
         })
     }
 
-    async fn verify_chain(&self, index: usize) -> Result<()> {
-        if self.verified_chains.read().await.contains(&index) {
+    async fn verify_chain(&self) -> Result<()> {
+        if self.chain_verified.load(Ordering::Relaxed) {
             return Ok(());
         }
-        let network = &self.networks[index];
         ensure!(
-            network.rpc.chain_id().await? == network.chain_id,
-            "aggregator_v3 RPC chain ID mismatch for chain {}",
-            network.chain_id
+            self.rpc.chain_id().await? == self.chain_id,
+            "RPC chain ID mismatch for chain {}",
+            self.chain_id
         );
-        self.verified_chains.write().await.insert(index);
+        self.chain_verified.store(true, Ordering::Relaxed);
         Ok(())
     }
 
-    async fn feed_decimals(&self, rpc: &Rpc, feed: &FeedConfig) -> Result<u8> {
+    async fn feed_decimals(&self, feed: &FeedConfig) -> Result<u8> {
         if let Some(decimals) = self.decimals.read().await.get(&feed.key()) {
             return Ok(*decimals);
         }
-        let description = rpc
+        let description = self
+            .rpc
             .call_latest(feed.aggregator, AggregatorV3::descriptionCall {})
             .await?;
         ensure!(
@@ -214,7 +234,8 @@ impl AggregatorV3Provider {
             feed.key(),
             feed.description
         );
-        let decimals = rpc
+        let decimals = self
+            .rpc
             .call_latest(feed.aggregator, AggregatorV3::decimalsCall {})
             .await?;
         ensure!(decimals <= 77, "unsupported feed decimals (>77)");
@@ -222,11 +243,11 @@ impl AggregatorV3Provider {
         Ok(decimals)
     }
 
-    async fn read_feed(&self, index: usize, feed: &FeedConfig, now: u64) -> Result<FixedValue> {
-        self.verify_chain(index).await?;
-        let rpc = &self.networks[index].rpc;
-        let decimals = self.feed_decimals(rpc, feed).await?;
-        let round = rpc
+    async fn read_feed(&self, feed: &FeedConfig, now: u64) -> Result<FixedValue> {
+        self.verify_chain().await?;
+        let decimals = self.feed_decimals(feed).await?;
+        let round = self
+            .rpc
             .call_latest(feed.aggregator, AggregatorV3::latestRoundDataCall {})
             .await?;
         ensure!(round.answer.is_positive(), "feed answer is not positive");
@@ -246,7 +267,7 @@ impl AggregatorV3Provider {
 #[async_trait]
 impl Provider for AggregatorV3Provider {
     fn name(&self) -> &str {
-        "aggregator_v3"
+        &self.name
     }
 
     async fn get_ticker_prices(
@@ -257,10 +278,10 @@ impl Provider for AggregatorV3Provider {
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         for (base, quote) in pairs {
             let key = format!("{base}/{quote}");
-            let Some((index, feed)) = self.feeds.get(&key) else {
+            let Some(feed) = self.feeds.get(&key) else {
                 continue;
             };
-            match self.read_feed(*index, feed, now).await {
+            match self.read_feed(feed, now).await {
                 Ok(price) => {
                     if let Some(ticker) =
                         checked_ticker("aggregator_v3", &key, Some(price), VolumeInput::Unavailable)
@@ -269,7 +290,7 @@ impl Provider for AggregatorV3Provider {
                     }
                 }
                 Err(error) => {
-                    tracing::warn!(provider = "aggregator_v3", feed = %key, error = %error, "feed skipped");
+                    tracing::warn!(provider = %self.name, feed = %key, error = %error, "aggregator_v3 feed skipped");
                 }
             }
         }
@@ -364,6 +385,7 @@ mod tests {
 
     fn config(endpoint: &str) -> AggregatorV3ProviderConfig {
         AggregatorV3ProviderConfig {
+            name: "chainlink".into(),
             chain_id: 1,
             rpc_endpoint: endpoint.to_owned(),
             feeds: vec![FeedConfig {
@@ -379,7 +401,7 @@ mod tests {
         let fixture = Arc::new(Fixture::default());
         let state = Arc::clone(&fixture);
         let server = test_server::start(Arc::new(move |request| state.response(request))).await;
-        let provider = AggregatorV3Provider::new(&[config(&server.endpoint)]).unwrap();
+        let provider = AggregatorV3Provider::new(&config(&server.endpoint)).unwrap();
         (fixture, server, provider)
     }
 
@@ -458,6 +480,9 @@ mod tests {
         let mut bad = config("http://localhost:8545");
         bad.feeds[0].description.clear();
         assert!(bad.validate().is_err());
+        let mut bad = config("http://localhost:8545");
+        bad.feeds.push(bad.feeds[0].clone());
+        assert!(bad.validate().is_err(), "duplicate feed in one section");
         let mut bad = config("ws://localhost:8545");
         bad.feeds.clear();
         assert!(bad.validate().is_err());
@@ -476,7 +501,7 @@ mod tests {
             base = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
             quote = "840"
             [[currency_pairs.sources]]
-            provider = "aggregator_v3"
+            provider = "chainlink"
             base = "ETH"
             quote = "840"
         "#,
@@ -484,24 +509,38 @@ mod tests {
         .unwrap();
         assert!(
             feeder.validate().is_err(),
-            "source without aggregator_v3_providers"
+            "source without a matching section"
         );
         feeder
             .aggregator_v3_providers
             .push(config("http://localhost:8545"));
         feeder.validate().unwrap();
 
-        // A second network may not repeat a chain id or a feed key.
-        feeder
-            .aggregator_v3_providers
-            .push(config("http://localhost:8546"));
-        assert!(feeder.validate().is_err(), "duplicate chain id");
-        feeder.aggregator_v3_providers[1].chain_id = 56;
-        assert!(feeder.validate().is_err(), "duplicate feed key");
-        feeder.aggregator_v3_providers[1].feeds[0].base = "BTC".into();
+        // The same market from a second vendor is a second source.
+        let mut redstone = config("http://localhost:8545");
+        redstone.name = "redstone".into();
+        redstone.feeds[0].aggregator = address!("0x67F6838e58859d612E4ddF04dA396d6DABB66Dc4");
+        redstone.feeds[0].description = "RedStone Price Feed for ETH".into();
+        feeder.aggregator_v3_providers.push(redstone);
+        feeder.currency_pairs[0]
+            .sources
+            .push(crate::config::CurrencyPairSource {
+                provider: "redstone".into(),
+                base: "ETH".into(),
+                quote: "840".into(),
+            });
         feeder.validate().unwrap();
+        let providers = crate::provider::create_providers(&feeder).unwrap();
+        let mut names: Vec<&str> = providers.iter().map(|p| p.name()).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["chainlink", "redstone"]);
 
-        feeder.aggregator_v3_providers[0].feeds[0].quote = "USD".into();
+        feeder.aggregator_v3_providers[1].name = "chainlink".into();
+        assert!(feeder.validate().is_err(), "duplicate section name");
+        feeder.aggregator_v3_providers[1].name = "binance".into();
+        assert!(feeder.validate().is_err(), "built-in name is reserved");
+        feeder.aggregator_v3_providers[1].name = "redstone".into();
+        feeder.aggregator_v3_providers[1].feeds[0].quote = "USD".into();
         assert!(feeder.validate().is_err(), "source without matching feed");
     }
 
@@ -523,7 +562,7 @@ mod tests {
             aggregator: address!("0xAB7f623fb2F6fea6601D4350FA0E2290663C28Fc"),
             description: "RedStone Price Feed for BTC".into(),
         });
-        let provider = AggregatorV3Provider::new(&[cfg]).unwrap();
+        let provider = AggregatorV3Provider::new(&cfg).unwrap();
         let pairs = vec![
             ("ETH".into(), "840".into()),
             ("USDC".into(), "840".into()),
