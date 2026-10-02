@@ -60,10 +60,10 @@ pub fn dispatch(
                 }
                 settle(c) => mutate(c, caller, |sender, c| {
                     let (principal, interest) =
-                        runtime::settle(storage.clone(), sender, c.positionId, c.amount)?;
+                        runtime::settle(storage.clone(), sender, c.positionId, c.amountMinor)?;
                     Ok(ICredisFactory::settleReturn {
-                        principal,
-                        interest,
+                        principalPaidMinor: principal,
+                        interestPaidMinor: interest,
                     })
                 }),
                 supportsInterface(c) => view(c, |c| {

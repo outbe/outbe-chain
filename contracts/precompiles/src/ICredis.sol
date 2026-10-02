@@ -16,22 +16,22 @@ interface ICredis {
         uint256 indexed positionId,
         address indexed smartAccount,
         address indexed cca,
-        uint256 principal,
+        uint256 principalMinor,
         uint256 collateral
     );
 
     event PositionCalled(uint256 indexed positionId, uint64 calledAt, uint64 settlementDeadline);
 
-    /// @notice One successful settlement. `interestPaid` is this payment's interest
+    /// @notice One successful settlement. `interestPaidMinor` is this payment's interest
     ///         delta. The position's `interestPaidMinor` is the sum of these deltas
     ///         across successful settlements. A reverted settlement emits nothing
     ///         and leaves that total unchanged.
     event SettlementApplied(
         uint256 indexed positionId,
-        uint256 interestPaid,
-        uint256 principalPaid,
+        uint256 interestPaidMinor,
+        uint256 principalPaidMinor,
         uint256 gratisReleased,
-        uint256 outstanding
+        uint256 outstandingPrincipalMinor
     );
 
     event PositionSettled(uint256 indexed positionId);
@@ -39,7 +39,7 @@ interface ICredis {
     /// @notice Forfeiture of a called position. Records the principal written off.
     ///         Unpaid interest is left out of this event and out of `interestPaidMinor`.
     event PositionVoided(
-        uint256 indexed positionId, address indexed cca, uint256 gratisBurned, uint256 principalWrittenOff
+        uint256 indexed positionId, address indexed cca, uint256 gratisBurned, uint256 principalWrittenOffMinor
     );
 
     /// @notice Lifecycle state of a position, mirroring the Rust `CredisState`.
@@ -66,9 +66,9 @@ interface ICredis {
         // the plaintext EOA on-chain via a RevealOwner round-trip.
         bytes eoaCiphertext;
         /// P - the stablecoin amount disbursed. Never changes.
-        uint256 principal;
+        uint256 principalMinor;
         /// P_out - decreases with each settlement; the position closes at zero.
-        uint256 outstanding;
+        uint256 outstandingPrincipalMinor;
         /// G - the pledged Gratis, valued 1:1 against principal at the pledge quote rate.
         uint256 collateral;
         /// The share of G still locked. Released principal-proportionally.
@@ -76,11 +76,11 @@ interface ICredis {
         /// r - the annual policy rate of the issuance currency, scale 1e6, fixed at opening.
         uint256 policyRate;
         /// Entry price in the issuance currency, scale 1e6, sealed on the pledge.
-        uint256 entryPrice;
+        uint256 entryPriceMinor;
         /// Call anchor price in the reference currency, scale 1e6, sealed at issuance.
-        uint256 callAnchorPrice;
-        /// callAnchorPrice * 1.64, in the reference currency.
-        uint256 callPrice;
+        uint256 callAnchorPriceMinor;
+        /// callAnchorPriceMinor * 1.64, in the reference currency.
+        uint256 callPriceMinor;
         /// Issuance timestamp.
         uint64 issuedAt;
         /// Anchor of the interest day count: origination until the first settlement.
@@ -90,7 +90,7 @@ interface ICredis {
         /// See {State}.
         uint8 state;
         /// Lifetime interest collected, in asset minor units. The sum of successful
-        /// `SettlementApplied.interestPaid` deltas. Current-period accrual is
+        /// `SettlementApplied.interestPaidMinor` deltas. Current-period accrual is
         /// {interestAccruedMinor}.
         uint256 interestPaidMinor;
     }
@@ -129,11 +129,11 @@ interface ICredis {
     function interestAccruedMinor(uint256 positionId) external view returns (uint256);
 
     /// @notice Lifetime interest collected on this position, in asset minor units.
-    ///         Equals the sum of `SettlementApplied.interestPaid` over successful
+    ///         Equals the sum of `SettlementApplied.interestPaidMinor` over successful
     ///         settlements. Forfeiture does not add unpaid interest.
     function interestPaidMinor(uint256 positionId) external view returns (uint256);
 
-    /// @notice Sum of `principal` and `outstanding` across the account's positions.
+    /// @notice Sum of `principalMinor` and `outstandingPrincipalMinor` across the account's positions.
     function credisPrincipalAndOutstandingOf(address smartAccount) external view returns (uint256, uint256);
 
     function supportsInterface(bytes4 interfaceId) external view returns (bool);

@@ -120,7 +120,7 @@ fn duplicate_issuance_preserves_a_different_pledge_for_the_next_block() {
         let credis = CredisContract::new(storage.clone());
         assert_eq!(credis.total_positions().unwrap(), 2);
         assert_eq!(
-            credis.get_position(first).unwrap().principal,
+            credis.get_position(first).unwrap().principal_minor,
             pledge_stables()
         );
         assert_ne!(
@@ -217,7 +217,7 @@ fn issuance_checks_note_and_liquidity_expiry_independently() {
                     .get_position(id)
                     .unwrap();
                 assert_eq!(position.collateral, pledge_cost());
-                assert_eq!(position.entry_price, oracle_rate());
+                assert_eq!(position.entry_price_minor, oracle_rate());
                 assert_eq!(position.issued_at, CREATED_AT + delay);
                 assert!(
                     outbe_gratis::api::consume_pledge(storage.clone(), note, alice(), spend)
@@ -271,17 +271,17 @@ fn issue_credis_seals_the_position_geometry_from_the_pledge_quote() {
             alice()
         );
 
-        assert_eq!(position.principal, amount_stables);
-        assert_eq!(position.outstanding, amount_stables);
+        assert_eq!(position.principal_minor, amount_stables);
+        assert_eq!(position.outstanding_principal_minor, amount_stables);
         assert_eq!(position.collateral, pledge_cost());
         assert_eq!(position.collateral_locked, pledge_cost());
         // Entry price is principal / gratis, sealed on the pledge (2.00 here).
         // The call anchor is the previous-day VWAP, seeded at 2.00,
         // so the call price is 3.28. See
         // `entry_price_stays_on_the_pledge_when_the_reference_price_moves`.
-        assert_eq!(position.entry_price, oracle_rate());
-        assert_eq!(position.call_anchor_price, oracle_rate());
-        assert_eq!(position.call_price, U256::from(3_280_000u64));
+        assert_eq!(position.entry_price_minor, oracle_rate());
+        assert_eq!(position.call_anchor_price_minor, oracle_rate());
+        assert_eq!(position.call_price_minor, U256::from(3_280_000u64));
         assert_eq!(position.policy_rate, policy_rate());
         // Both codes are sealed, and the policy rate follows the ISSUANCE one.
         assert_eq!(position.issuance_currency, ISSUANCE_ISO);
@@ -310,12 +310,18 @@ fn settle_runs_immediately_after_opening() {
         let position = CredisContract::new(storage.clone())
             .get_position(position_id)
             .unwrap();
-        assert_eq!(position.outstanding, U256::from(1_000_000u64));
+        assert_eq!(
+            position.outstanding_principal_minor,
+            U256::from(1_000_000u64)
+        );
         assert_eq!(position.lifecycle_state().unwrap(), CredisState::Open);
         // Settlement does not reprice a live position.
-        assert_eq!(position.entry_price, sealed.entry_price);
-        assert_eq!(position.call_anchor_price, sealed.call_anchor_price);
-        assert_eq!(position.call_price, sealed.call_price);
+        assert_eq!(position.entry_price_minor, sealed.entry_price_minor);
+        assert_eq!(
+            position.call_anchor_price_minor,
+            sealed.call_anchor_price_minor
+        );
+        assert_eq!(position.call_price_minor, sealed.call_price_minor);
         assert_eq!(position.issued_at, sealed.issued_at);
     });
     teardown();
@@ -337,7 +343,7 @@ fn settlement_releases_collateral_proportionally_and_closes_without_dust() {
         let position = CredisContract::new(storage.clone())
             .get_position(position_id)
             .unwrap();
-        assert_eq!(position.outstanding, half);
+        assert_eq!(position.outstanding_principal_minor, half);
         assert_eq!(position.collateral_locked, pledge_cost() / U256::from(2u64));
         // The two components are reported separately: the principal is exactly
         // what was asked for, and the interest rode on top of it.
@@ -410,7 +416,7 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
             let accepted = CredisContract::new(storage.clone())
                 .get_position(id)
                 .unwrap();
-            assert_eq!(accepted.entry_price, U256::from(2_166_666));
+            assert_eq!(accepted.entry_price_minor, U256::from(2_166_666));
             assert_eq!(accepted.issuance_currency, ISSUANCE_ISO);
             assert_eq!(view_pledged(&storage, alice()), collateral);
 
@@ -434,7 +440,7 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
             let position = CredisContract::new(storage.clone())
                 .get_position(id)
                 .unwrap();
-            assert_eq!(position.outstanding, U256::from(3u64));
+            assert_eq!(position.outstanding_principal_minor, U256::from(3u64));
             assert_eq!(position.collateral_locked, U256::ZERO);
             assert_eq!(position.lifecycle_state().unwrap(), CredisState::Open);
             let fidelity_before = outbe_fidelity::FidelityContract::new(storage.clone())
@@ -460,7 +466,7 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
                 .get_position(id)
                 .unwrap();
             assert_eq!(position.lifecycle_state().unwrap(), expected_state);
-            assert_eq!(position.outstanding, U256::ZERO);
+            assert_eq!(position.outstanding_principal_minor, U256::ZERO);
             assert_eq!(view_balance(&storage, alice()), collateral);
             assert_eq!(view_balance(&storage, bob()), U256::ZERO);
             assert_eq!(
@@ -508,21 +514,21 @@ fn the_settle_abi_returns_the_principal_and_interest_split() {
         // encoding and decoding rather than only as a Rust tuple.
         let data = ICredisFactory::settleCall {
             positionId: position_id,
-            amount: interest + principal,
+            amountMinor: interest + principal,
         }
         .abi_encode();
         let out = crate::precompile::dispatch(storage.clone(), &data, alice(), U256::ZERO).unwrap();
         let decoded = ICredisFactory::settleCall::abi_decode_returns(&out).unwrap();
 
         // Order matters: principal first, interest second.
-        assert_eq!(decoded.principal, principal);
-        assert_eq!(decoded.interest, interest);
+        assert_eq!(decoded.principalPaidMinor, principal);
+        assert_eq!(decoded.interestPaidMinor, interest);
 
         let after = CredisContract::new(storage.clone())
             .get_position(position_id)
             .unwrap();
         assert_eq!(
-            after.outstanding,
+            after.outstanding_principal_minor,
             pledge_stables() - principal,
             "only the principal component reduces the balance"
         );
@@ -699,7 +705,7 @@ fn oracle_call_survives_half_repayment_then_voids_the_unpaid_share() {
         // Snapshots are supplied directly; no validator vote tally is needed.
         oracle.config_vote_period.write(0).unwrap();
         let pair = AddressPair::new_coen_to(issued.reference_currency);
-        let price = issued.call_price + U256::ONE;
+        let price = issued.call_price_minor + U256::ONE;
         let threshold_days = u64::from(issued.call_threshold) / DAY;
         assert!(threshold_days > 1);
         assert!(issued.call_threshold <= issued.call_window);
@@ -760,7 +766,7 @@ fn oracle_call_survives_half_repayment_then_voids_the_unpaid_share() {
         assert_eq!(called.called_at, now_of(&storage));
         assert!(credis.has_called_position(alice()).unwrap());
         let deadline = outbe_credis::settlement_deadline(&called);
-        let half = issued.principal / U256::from(2u64);
+        let half = issued.principal_minor / U256::from(2u64);
         let interest = CredisContract::accrued_interest(&called, now_of(&storage)).unwrap();
         assert!(!interest.is_zero());
         assert_eq!(
@@ -771,7 +777,10 @@ fn oracle_call_survives_half_repayment_then_voids_the_unpaid_share() {
         let unpaid_collateral = issued.collateral / U256::from(2u64);
         let released = issued.collateral - unpaid_collateral;
         assert_eq!(repaid.lifecycle_state().unwrap(), CredisState::Called);
-        assert_eq!(repaid.outstanding, issued.principal - half);
+        assert_eq!(
+            repaid.outstanding_principal_minor,
+            issued.principal_minor - half
+        );
         assert_eq!(repaid.collateral_locked, unpaid_collateral);
         assert_eq!(repaid.called_at, called.called_at);
         assert_eq!(outbe_credis::settlement_deadline(&repaid), deadline);
@@ -819,7 +828,7 @@ fn oracle_call_survives_half_repayment_then_voids_the_unpaid_share() {
         tick(deadline + 1);
         let position = credis.get_position(position_id).unwrap();
         assert_eq!(position.lifecycle_state().unwrap(), CredisState::Void);
-        assert!(position.outstanding.is_zero());
+        assert!(position.outstanding_principal_minor.is_zero());
         assert!(position.collateral_locked.is_zero());
         assert_eq!(credis.active_len().unwrap(), 0);
         assert!(!credis.has_called_position(alice()).unwrap());
@@ -1125,13 +1134,13 @@ fn entry_price_stays_on_the_pledge_when_the_reference_price_moves() {
             .get_position(position_id)
             .unwrap();
         assert_eq!(position.collateral, pledge_cost());
-        assert_eq!(position.principal, pledge_stables());
+        assert_eq!(position.principal_minor, pledge_stables());
         assert_eq!(position.asset, asset());
         assert_eq!(position.issuance_currency, ISSUANCE_ISO);
-        assert_eq!(position.entry_price, oracle_rate());
+        assert_eq!(position.entry_price_minor, oracle_rate());
         // Yesterday's 2.0 VWAP * 1.64 = 3.28, regardless of spot.
-        assert_eq!(position.call_anchor_price, U256::from(2_000_000u64));
-        assert_eq!(position.call_price, U256::from(3_280_000u64));
+        assert_eq!(position.call_anchor_price_minor, U256::from(2_000_000u64));
+        assert_eq!(position.call_price_minor, U256::from(3_280_000u64));
     });
     teardown();
 }
@@ -1198,10 +1207,10 @@ fn call_anchor_uses_the_previous_day_vwap_when_it_is_higher() {
         let position = CredisContract::new(storage.clone())
             .get_position(position_id)
             .unwrap();
-        assert_eq!(position.entry_price, oracle_rate());
+        assert_eq!(position.entry_price_minor, oracle_rate());
         // 2.50 * 1.64 = 4.10, regardless of the lower spot price.
-        assert_eq!(position.call_anchor_price, U256::from(2_500_000u64));
-        assert_eq!(position.call_price, U256::from(4_100_000u64));
+        assert_eq!(position.call_anchor_price_minor, U256::from(2_500_000u64));
+        assert_eq!(position.call_price_minor, U256::from(4_100_000u64));
     });
     teardown();
 }
@@ -1251,9 +1260,9 @@ fn worked_example_keeps_entry_and_call_in_different_currencies() {
         let position = CredisContract::new(storage.clone())
             .get_position(position_id)
             .unwrap();
-        assert_eq!(position.entry_price, U256::from(2_000_000u64));
-        assert_eq!(position.call_anchor_price, U256::from(1_800_000u64));
-        assert_eq!(position.call_price, U256::from(2_952_000u64));
+        assert_eq!(position.entry_price_minor, U256::from(2_000_000u64));
+        assert_eq!(position.call_anchor_price_minor, U256::from(1_800_000u64));
+        assert_eq!(position.call_price_minor, U256::from(2_952_000u64));
         assert_eq!(position.issuance_currency, ISSUANCE_ISO);
         assert_eq!(position.reference_currency, REFERENCE_ISO);
     });
@@ -1324,7 +1333,7 @@ fn unavailable_previous_day_vwap_preserves_the_pledge_for_retry() {
                 CredisContract::new(storage.clone())
                     .get_position(id)
                     .unwrap()
-                    .call_anchor_price,
+                    .call_anchor_price_minor,
                 oracle_rate()
             );
             assert_eq!(view_pledged(&storage, alice()), pledge_cost());
@@ -1366,8 +1375,8 @@ fn issue_credis_ignores_stale_or_missing_spot() {
             )
             .unwrap();
             let position = CredisContract::new(storage).get_position(id).unwrap();
-            assert_eq!(position.call_anchor_price, oracle_rate());
-            assert_eq!(position.call_price, U256::from(3_280_000u64));
+            assert_eq!(position.call_anchor_price_minor, oracle_rate());
+            assert_eq!(position.call_price_minor, U256::from(3_280_000u64));
         });
         teardown();
     }
@@ -1441,7 +1450,7 @@ fn failed_origination_preserves_the_pledge_and_cca_weight_and_exit_freezes_new_p
             CredisContract::new(storage.clone())
                 .get_position(id)
                 .unwrap()
-                .outstanding,
+                .outstanding_principal_minor,
             pledge_stables()
         );
     });
@@ -1567,7 +1576,7 @@ fn issue_credis_accepts_a_larger_reservation() {
             CredisContract::new(storage.clone())
                 .get_position(position_id)
                 .unwrap()
-                .principal,
+                .principal_minor,
             pledge_stables()
         );
     });
@@ -1590,7 +1599,7 @@ fn repayment_deadline_is_enforced_before_cleanup_through_the_abi() {
             let interest = CredisContract::accrued_interest(&position, now).unwrap();
             let data = ICredisFactory::settleCall {
                 positionId: id,
-                amount: principal + interest,
+                amountMinor: principal + interest,
             }
             .abi_encode();
             let result =
@@ -1598,7 +1607,7 @@ fn repayment_deadline_is_enforced_before_cleanup_through_the_abi() {
             assert_eq!(
                 ICredisFactory::settleCall::abi_decode_returns(&result)
                     .unwrap()
-                    .principal,
+                    .principalPaidMinor,
                 principal
             );
         }
@@ -1609,7 +1618,7 @@ fn repayment_deadline_is_enforced_before_cleanup_through_the_abi() {
         advance_to(&storage, deadline + 1);
         let data = ICredisFactory::settleCall {
             positionId: id,
-            amount: U256::MAX,
+            amountMinor: U256::MAX,
         }
         .abi_encode();
         let error =

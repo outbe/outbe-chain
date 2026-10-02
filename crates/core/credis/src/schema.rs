@@ -40,8 +40,8 @@ impl CredisState {
 /// Position record. Keyed by `keccak256(cca || smart_account || asset || block_number)`.
 ///
 /// Every term - both currency codes included - is sealed at opening and never
-/// changes afterwards; only `outstanding`, `collateral_locked`,
-/// `interest_paid`, `last_settled_at`, `called_at` and `state` move over the
+/// changes afterwards; only `outstanding_principal_minor`, `collateral_locked`,
+/// `interest_paid_minor`, `last_settled_at`, `called_at` and `state` move over the
 /// position's life.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[storage_record(exists_field = smart_account)]
@@ -78,11 +78,11 @@ pub struct Position {
 
     /// `P` - stablecoin minor units disbursed. Fixed.
     #[attribute(order = 5)]
-    pub principal: U256,
+    pub principal_minor: U256,
 
     /// `P_out` - outstanding principal. Reaching zero closes the position.
     #[attribute(order = 6)]
-    pub outstanding: U256,
+    pub outstanding_principal_minor: U256,
 
     /// `G` - pledged Gratis, valued 1:1 against principal at the pledge quote
     /// rate (COEN/`issuance_currency`, sealed into the ticket). Fixed.
@@ -101,13 +101,13 @@ pub struct Position {
     /// Principal / Gratis, in the issuance currency (scale `1e6`). Sealed on the
     /// pledge and copied here. Not an oracle quote and not the call anchor.
     #[attribute(order = 10)]
-    pub entry_price: U256,
+    pub entry_price_minor: U256,
 
-    /// `call_anchor_price * 164 / 100`, in the reference currency (scale `1e6`).
+    /// `call_anchor_price_minor * 164 / 100`, in the reference currency (scale `1e6`).
     /// The daily scan calls the position when 21 of the last 28 finalized
     /// COEN/`reference_currency` VWAPs are strictly above this price. Immutable.
     #[attribute(order = 11)]
-    pub call_price: U256,
+    pub call_price_minor: U256,
 
     /// Issuance timestamp. The interest anchor starts here, and the call scan
     /// ignores daily VWAPs from before this instant's UTC day.
@@ -130,9 +130,9 @@ pub struct Position {
     pub state: u8,
 
     /// ISO 4217 numeric code of the reference currency elected at issuance
-    /// and fixed for the position's life. `call_anchor_price` and `call_price`
+    /// and fixed for the position's life. `call_anchor_price_minor` and `call_price_minor`
     /// are quoted here, and the daily breach scan reads the
-    /// COEN/`reference_currency` series. It does not denominate `entry_price`.
+    /// COEN/`reference_currency` series. It does not denominate `entry_price_minor`.
     #[attribute(order = 16)]
     pub reference_currency: u16,
 
@@ -143,7 +143,7 @@ pub struct Position {
     pub call_notice_period: u32,
 
     /// Call-price markup percent (snapshot of `CALL_RATE_PCT` at issuance).
-    /// Applied to `call_anchor_price`, not to `entry_price` (64 => 1.64x).
+    /// Applied to `call_anchor_price_minor`, not to `entry_price_minor` (64 => 1.64x).
     #[attribute(order = 18, default = 0)]
     pub call_rate: u16,
 
@@ -160,15 +160,15 @@ pub struct Position {
 
     /// COEN price in `reference_currency` (scale `1e6`) sealed at issuance:
     /// the previous closed UTC-day VWAP, independent of spot.
-    /// Immutable. `call_price` is this value times 1.64.
+    /// Immutable. `call_price_minor` is this value times 1.64.
     #[attribute(order = 21)]
-    pub call_anchor_price: U256,
+    pub call_anchor_price_minor: U256,
 
     /// Lifetime interest collected, in the asset's minor units. The sum of
     /// successful settlement interest deltas. Unpaid interest is left out,
     /// including when the remainder is voided.
     #[attribute(order = 22)]
-    pub interest_paid: U256,
+    pub interest_paid_minor: U256,
 }
 
 impl Position {

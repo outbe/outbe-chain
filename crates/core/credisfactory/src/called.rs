@@ -232,7 +232,7 @@ fn visit_price_path(
         // lapsed, and reading the deadline off the record loaded before that
         // would compare `now` against `0 + call_notice_period`.
         void_due: entry_state == CredisState::Called
-            && !position.outstanding.is_zero()
+            && !position.outstanding_principal_minor.is_zero()
             && now > outbe_credis::settlement_deadline(position),
     })
 }
@@ -269,7 +269,7 @@ fn breached_enough(window: &[(u32, Option<U256>)], position: &Position) -> bool 
         if *day < issued_day {
             break;
         }
-        if vwap.is_some_and(|value| value > position.call_price) {
+        if vwap.is_some_and(|value| value > position.call_price_minor) {
             breaches = breaches.saturating_add(1);
         }
     }

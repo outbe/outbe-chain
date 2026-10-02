@@ -3,7 +3,7 @@ pragma solidity ^0.8.30;
 
 /// @title ICredisFactory - credis lifecycle orchestrator.
 interface ICredisFactory {
-    event CredisIssued(address indexed smartAccount, address indexed cca, uint256 amount);
+    event CredisIssued(address indexed smartAccount, address indexed cca, uint256 principalMinor);
 
     /// @notice Open a credis position against a confidential Gratis pledge. Called by
     ///         the CCA, which presents `pledgeNote` (the public id returned by
@@ -48,28 +48,30 @@ interface ICredisFactory {
         uint256 reservationId
     ) external payable returns (uint256 positionId, uint256 amountStables);
 
-    /// @notice Settle `amount` against a position and release the matching share of
+    /// @notice Settle `amountMinor` against a position and release the matching share of
     ///         collateral from the pledged lock ledger back to its balance.
     ///         A position is settleable from the moment it opens through its call
     ///         settlement deadline, inclusive. Payment is applied
-    ///         interest first, principal second, so an `amount` below the interest accrued
+    ///         interest first, principal second, so an `amountMinor` below the interest accrued
     ///         since the last settlement is rejected - query
     ///         `ICredis.interestAccruedMinor` for that floor. Collateral is released in
     ///         proportion to the principal covered, and the settlement that clears
     ///         the last of the outstanding principal releases exactly the remainder,
     ///         leaving no dust.
-    ///         When `amount` exceeds what the position still needs, only the required
+    ///         When `amountMinor` exceeds what the position still needs, only the required
     ///         part is pulled from the caller. Any caller may settle, including on
     ///         behalf of another account: the debt is pulled from the caller's own
     ///         balance while the freed collateral is always released to the original
     ///         pledger, so a payer can never redirect value to themselves.
-    /// @return principal Principal covered by this settlement. Drives the collateral
+    /// @return principalPaidMinor Principal covered by this settlement. Drives the collateral
     ///         released and the reduction in the position's outstanding balance.
-    /// @return interest Accrued interest collected by this settlement. Taken in full
+    /// @return interestPaidMinor Accrued interest collected by this settlement. Taken in full
     ///         before any principal, and never carried between settlements. This is
     ///         the payment delta; the position's `interestPaidMinor` is the sum of
     ///         these deltas across successful settlements.
-    function settle(uint256 positionId, uint256 amount) external returns (uint256 principal, uint256 interest);
+    function settle(uint256 positionId, uint256 amountMinor)
+        external
+        returns (uint256 principalPaidMinor, uint256 interestPaidMinor);
 
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }

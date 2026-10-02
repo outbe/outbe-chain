@@ -379,7 +379,7 @@ fn issue(world: &mut World) {
             positionId: id,
             smartAccount: f.account,
             cca: f.cca,
-            principal: PRINCIPAL,
+            principalMinor: PRINCIPAL,
             collateral: f.collateral,
         },
     );
@@ -389,7 +389,7 @@ fn issue(world: &mut World) {
         &ICredisFactory::CredisIssued {
             smartAccount: f.account,
             cca: f.cca,
-            amount: PRINCIPAL,
+            principalMinor: PRINCIPAL,
         },
     );
     world.state.credis.as_mut().expect("fixture").position_id = id;
@@ -406,16 +406,19 @@ fn issued(world: &mut World) {
         (f.account, f.cca, f.currency.asset)
     );
     assert_eq!((p.issuanceCurrency, p.referenceCurrency), (USD, USD));
-    assert_eq!((p.principal, p.outstanding), (PRINCIPAL, PRINCIPAL));
+    assert_eq!(
+        (p.principalMinor, p.outstandingPrincipalMinor),
+        (PRINCIPAL, PRINCIPAL)
+    );
     assert_eq!(
         (p.collateral, p.collateralLocked),
         (f.collateral, f.collateral)
     );
     assert_eq!(p.state, 0);
     assert_eq!(p.lastSettledAt, p.issuedAt);
-    assert_eq!(p.entryPrice, U256::from(1_000_000));
-    assert_eq!(p.callAnchorPrice, U256::from(1_000_000));
-    assert_eq!(p.callPrice, U256::from(1_640_000));
+    assert_eq!(p.entryPriceMinor, U256::from(1_000_000));
+    assert_eq!(p.callAnchorPriceMinor, U256::from(1_000_000));
+    assert_eq!(p.callPriceMinor, U256::from(1_640_000));
     assert!(p.policyRate > U256::ZERO);
     // Credis currently pins the issuance currency's official rate with a 1x multiplier.
     assert_eq!(p.policyRate, state.policy_rate);
@@ -493,7 +496,7 @@ fn repay(world: &mut World) {
             Some(interest)
         );
         let principal = if payment_index == 2 {
-            p.outstanding
+            p.outstandingPrincipalMinor
         } else {
             U256::from(100_000_000)
         };
@@ -515,7 +518,7 @@ fn repay(world: &mut World) {
             CREDIS_FACTORY_ADDRESS,
             &ICredisFactory::settleCall {
                 positionId: f.position_id,
-                amount,
+                amountMinor: amount,
             },
         );
         let paid_at = receipt_timestamp(&url, &receipt);
@@ -524,11 +527,11 @@ fn repay(world: &mut World) {
             interest,
             "interest changed before inclusion"
         );
-        let released = if principal == p.outstanding {
+        let released = if principal == p.outstandingPrincipalMinor {
             p.collateralLocked
         } else {
             (p.collateral * principal)
-                .div_ceil(p.principal)
+                .div_ceil(p.principalMinor)
                 .min(p.collateralLocked)
         };
         assert_receipt_event(
@@ -536,10 +539,10 @@ fn repay(world: &mut World) {
             CREDIS_ADDRESS,
             &ICredis::SettlementApplied {
                 positionId: f.position_id,
-                interestPaid: interest,
-                principalPaid: principal,
+                interestPaidMinor: interest,
+                principalPaidMinor: principal,
                 gratisReleased: released,
-                outstanding: p.outstanding - principal,
+                outstandingPrincipalMinor: p.outstandingPrincipalMinor - principal,
             },
         );
         if payment_index == 2 {
@@ -553,13 +556,26 @@ fn repay(world: &mut World) {
         }
         let after = snapshot(world);
         let a = after.position.as_ref().expect("position after payment");
-        assert_eq!(a.outstanding, p.outstanding - principal);
+        assert_eq!(
+            a.outstandingPrincipalMinor,
+            p.outstandingPrincipalMinor - principal
+        );
         assert_eq!(a.collateralLocked, p.collateralLocked - released);
         assert_eq!(a.lastSettledAt, p.lastSettledAt + DAY);
         assert_eq!(a.state, if payment_index == 2 { 2 } else { 0 });
         assert_eq!(
-            (a.principal, a.policyRate, a.entryPrice, a.callAnchorPrice),
-            (p.principal, p.policyRate, p.entryPrice, p.callAnchorPrice)
+            (
+                a.principalMinor,
+                a.policyRate,
+                a.entryPriceMinor,
+                a.callAnchorPriceMinor
+            ),
+            (
+                p.principalMinor,
+                p.policyRate,
+                p.entryPriceMinor,
+                p.callAnchorPriceMinor
+            )
         );
         assert_eq!(after.account_stables, before.account_stables - amount);
         assert_eq!(after.vault_stables, before.vault_stables + amount);
@@ -580,7 +596,10 @@ fn fully_repaid(world: &mut World) {
     let f = world.state.credis.as_ref().expect("fixture");
     let position = state.position.expect("retained settled position");
     assert_eq!(
-        (position.outstanding, position.collateralLocked),
+        (
+            position.outstandingPrincipalMinor,
+            position.collateralLocked
+        ),
         (U256::ZERO, U256::ZERO)
     );
     assert_eq!(position.state, 2);
@@ -599,7 +618,8 @@ fn fully_repaid(world: &mut World) {
 
 fn expected_interest(position: &ICredis::Position, timestamp: u64) -> U256 {
     let days = (timestamp - position.lastSettledAt) / DAY;
-    position.outstanding * position.policyRate * U256::from(days) / U256::from(365_000_000)
+    position.outstandingPrincipalMinor * position.policyRate * U256::from(days)
+        / U256::from(365_000_000)
 }
 
 fn receipt_timestamp(url: &str, receipt: &serde_json::Value) -> u64 {

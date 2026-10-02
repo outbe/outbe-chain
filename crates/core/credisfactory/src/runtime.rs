@@ -151,9 +151,9 @@ pub fn issue_credis(
         issuance_currency,
         reference_currency,
         policy_rate,
-        principal: terms.stables_amount,
-        entry_price,
-        call_anchor_price,
+        principal_minor: terms.stables_amount,
+        entry_price_minor: entry_price,
+        call_anchor_price_minor: call_anchor_price,
         collateral: terms.gratis_amount,
         issued_at: current_time,
     })?;
@@ -179,7 +179,7 @@ pub fn issue_credis(
         alloy_sol_types::SolEvent::encode_log_data(&ICredisFactory::CredisIssued {
             smartAccount: smart_account,
             cca: caller,
-            amount: terms.stables_amount,
+            principalMinor: terms.stables_amount,
         }),
     )?;
 

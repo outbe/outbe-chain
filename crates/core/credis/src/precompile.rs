@@ -78,7 +78,7 @@ pub fn dispatch(
                 CredisContract::accrued_interest(&position, timestamp)
             }),
             interestPaidMinor(c) => view(c, |c| {
-                Ok(contract.get_position(c.positionId)?.interest_paid)
+                Ok(contract.get_position(c.positionId)?.interest_paid_minor)
             }),
             credisPrincipalAndOutstandingOf(c) => view(c, |c| {
                 let (principal, outstanding) =
@@ -104,18 +104,18 @@ fn abi_position(p: &crate::schema::Position) -> ICredis::Position {
         issuanceCurrency: p.issuance_currency,
         referenceCurrency: p.reference_currency,
         eoaCiphertext: p.eoa_ct.clone().into(),
-        principal: p.principal,
-        outstanding: p.outstanding,
+        principalMinor: p.principal_minor,
+        outstandingPrincipalMinor: p.outstanding_principal_minor,
         collateral: p.collateral,
         collateralLocked: p.collateral_locked,
         policyRate: p.policy_rate,
-        entryPrice: p.entry_price,
-        callPrice: p.call_price,
+        entryPriceMinor: p.entry_price_minor,
+        callPriceMinor: p.call_price_minor,
         issuedAt: p.issued_at,
         lastSettledAt: p.last_settled_at,
         calledAt: p.called_at,
         state: p.state,
-        callAnchorPrice: p.call_anchor_price,
-        interestPaidMinor: p.interest_paid,
+        callAnchorPriceMinor: p.call_anchor_price_minor,
+        interestPaidMinor: p.interest_paid_minor,
     }
 }

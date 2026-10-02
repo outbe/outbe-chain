@@ -112,9 +112,9 @@ fn params(owner: Address) -> OpenPositionParams {
         issuance_currency: 840,
         reference_currency: 978,
         policy_rate: policy_rate(),
-        principal: U256::from(PRINCIPAL),
-        entry_price: entry_price(),
-        call_anchor_price: call_anchor_price(),
+        principal_minor: U256::from(PRINCIPAL),
+        entry_price_minor: entry_price(),
+        call_anchor_price_minor: call_anchor_price(),
         collateral: collateral(),
         issued_at: ORIGINATED_AT,
     }
@@ -181,11 +181,14 @@ fn open_position_seals_the_call_price_from_the_call_anchor() {
         let p = credis.get_position(id).unwrap();
 
         // Entry stays 0.50. The anchor is 1.00, and 1.00 * 1.64 = 1.64.
-        assert_eq!(p.entry_price, entry_price());
-        assert_eq!(p.call_anchor_price, call_anchor_price());
-        assert_eq!(p.call_price, U256::from(1_640_000u64));
-        assert_eq!(p.call_price, calc_call_price(call_anchor_price()).unwrap());
-        assert_ne!(p.call_price, calc_call_price(entry_price()).unwrap());
+        assert_eq!(p.entry_price_minor, entry_price());
+        assert_eq!(p.call_anchor_price_minor, call_anchor_price());
+        assert_eq!(p.call_price_minor, U256::from(1_640_000u64));
+        assert_eq!(
+            p.call_price_minor,
+            calc_call_price(call_anchor_price()).unwrap()
+        );
+        assert_ne!(p.call_price_minor, calc_call_price(entry_price()).unwrap());
 
         // Both codes are sealed, and they are distinct: the threshold anchor is
         // the reference currency, never the issuance one the position is
@@ -194,7 +197,7 @@ fn open_position_seals_the_call_price_from_the_call_anchor() {
         assert_eq!(p.reference_currency, 978);
 
         // Collateral starts fully locked; accrual anchors at origination.
-        assert_eq!(p.outstanding, p.principal);
+        assert_eq!(p.outstanding_principal_minor, p.principal_minor);
         assert_eq!(p.collateral_locked, p.collateral);
         assert_eq!(p.last_settled_at, p.issued_at);
         assert_eq!(p.called_at, 0);
@@ -217,7 +220,7 @@ fn open_position_rejects_duplicates_and_zero_amounts() {
         assert!(err.contains("already exists"), "got: {err}");
 
         let mut zero_principal = params(alice());
-        zero_principal.principal = U256::ZERO;
+        zero_principal.principal_minor = U256::ZERO;
         assert!(credis.open_position(zero_principal).is_err());
 
         let mut zero_collateral = params(alice());
@@ -249,7 +252,7 @@ fn worked_example_ledger_closes_exactly() {
         assert!(!first.closed);
 
         let p = credis.get_position(id).unwrap();
-        assert_eq!(p.outstanding, U256::from(610_958_904u64));
+        assert_eq!(p.outstanding_principal_minor, U256::from(610_958_904u64));
         assert_eq!(p.collateral_locked, U256::from(1_221_917_808u64));
         assert_eq!(p.last_settled_at, at(100), "accrual restarts");
 
@@ -269,10 +272,10 @@ fn worked_example_ledger_closes_exactly() {
         assert_eq!(second.gratis_released, U256::from(751_123_288u64));
 
         let p = credis.get_position(id).unwrap();
-        assert_eq!(p.outstanding, U256::from(235_397_260u64));
+        assert_eq!(p.outstanding_principal_minor, U256::from(235_397_260u64));
         assert_eq!(p.collateral_locked, U256::from(470_794_520u64));
         let collected = first.interest + second.interest;
-        assert_eq!(p.interest_paid, collected);
+        assert_eq!(p.interest_paid_minor, collected);
 
         // --- Day 472: the window lapses. ------------------------------------
         let void = credis.void_position(id, at(472)).unwrap();
@@ -295,9 +298,12 @@ fn worked_example_ledger_closes_exactly() {
 
         let p = credis.get_position(id).unwrap();
         assert_eq!(p.lifecycle_state().unwrap(), CredisState::Void);
-        assert!(p.outstanding.is_zero());
+        assert!(p.outstanding_principal_minor.is_zero());
         assert!(p.collateral_locked.is_zero());
-        assert_eq!(p.interest_paid, collected, "void leaves collected interest");
+        assert_eq!(
+            p.interest_paid_minor, collected,
+            "void leaves collected interest"
+        );
     });
 }
 
@@ -323,9 +329,12 @@ fn settle_rejects_a_payment_below_the_accrued_interest() {
 
         // Nothing moved.
         let after = credis.get_position(id).unwrap();
-        assert_eq!(after.outstanding, position.outstanding);
+        assert_eq!(
+            after.outstanding_principal_minor,
+            position.outstanding_principal_minor
+        );
         assert_eq!(after.last_settled_at, position.last_settled_at);
-        assert_eq!(after.interest_paid, position.interest_paid);
+        assert_eq!(after.interest_paid_minor, position.interest_paid_minor);
     });
 }
 
@@ -344,7 +353,7 @@ fn settle_of_exactly_the_interest_leaves_principal_and_restarts_accrual() {
         assert!(paid.gratis_released.is_zero());
 
         let p = credis.get_position(id).unwrap();
-        assert_eq!(p.outstanding, U256::from(PRINCIPAL));
+        assert_eq!(p.outstanding_principal_minor, U256::from(PRINCIPAL));
         assert_eq!(p.collateral_locked, collateral());
         // d resets to 0, so nothing is owed a moment later.
         assert_eq!(
@@ -370,7 +379,7 @@ fn settle_takes_only_what_the_position_needs() {
 
         let p = credis.get_position(id).unwrap();
         assert_eq!(p.lifecycle_state().unwrap(), CredisState::Settled);
-        assert!(p.outstanding.is_zero());
+        assert!(p.outstanding_principal_minor.is_zero());
         assert!(
             p.collateral_locked.is_zero(),
             "the final settlement leaves no dust locked"
@@ -410,13 +419,20 @@ fn settle_covers_the_accrued_interest_before_any_principal() {
         assert!(!paid.closed);
 
         let p = credis.get_position(id).unwrap();
-        assert_eq!(p.outstanding, U256::from(PRINCIPAL) - principal_target);
+        assert_eq!(
+            p.outstanding_principal_minor,
+            U256::from(PRINCIPAL) - principal_target
+        );
         // Collateral tracks the principal covered, not the gross payment:
         // deltaG = 2e9 x 1e8 / 1e9 = 2e8.
         assert_eq!(paid.gratis_released, U256::from(200_000_000u64));
         assert_eq!(p.collateral_locked, collateral() - paid.gratis_released);
         // Principal, not the payment, is what the position is measured against.
-        assert_eq!(p.principal, U256::from(PRINCIPAL), "principal never moves");
+        assert_eq!(
+            p.principal_minor,
+            U256::from(PRINCIPAL),
+            "principal never moves"
+        );
     });
 }
 
@@ -435,7 +451,7 @@ fn one_minor_unit_above_the_interest_pays_exactly_one_of_principal() {
         assert_eq!(paid.interest, U256::from(8_000_000u64));
         assert_eq!(paid.principal_paid, U256::from(1u64));
         assert_eq!(
-            credis.get_position(id).unwrap().outstanding,
+            credis.get_position(id).unwrap().outstanding_principal_minor,
             U256::from(PRINCIPAL) - U256::from(1u64)
         );
     });
@@ -489,7 +505,7 @@ fn sequential_settlements_recompute_interest_on_the_reduced_principal() {
 
             let p = credis.get_position(id).unwrap();
             assert_eq!(
-                p.outstanding,
+                p.outstanding_principal_minor,
                 U256::from(outstanding_after),
                 "period {period}"
             );
@@ -514,7 +530,7 @@ fn sequential_settlements_recompute_interest_on_the_reduced_principal() {
 
         let p = credis.get_position(id).unwrap();
         assert_eq!(p.lifecycle_state().unwrap(), CredisState::Settled);
-        assert!(p.outstanding.is_zero());
+        assert!(p.outstanding_principal_minor.is_zero());
         assert!(p.collateral_locked.is_zero());
     });
 }
@@ -534,11 +550,14 @@ fn settle_below_the_accrued_interest_reverts_and_changes_nothing() {
         assert!(err.contains("below the interest"), "got: {err}");
 
         let after = credis.get_position(id).unwrap();
-        assert_eq!(after.outstanding, before.outstanding);
+        assert_eq!(
+            after.outstanding_principal_minor,
+            before.outstanding_principal_minor
+        );
         assert_eq!(after.collateral_locked, before.collateral_locked);
         assert_eq!(after.last_settled_at, before.last_settled_at);
         assert_eq!(after.state, before.state);
-        assert_eq!(after.interest_paid, before.interest_paid);
+        assert_eq!(after.interest_paid_minor, before.interest_paid_minor);
 
         // Paying the coupon exactly is accepted, so the boundary is `< I`.
         credis
@@ -553,7 +572,7 @@ fn settle_below_the_accrued_interest_reverts_and_changes_nothing() {
             .settle(id, U256::from(500_000_000u64), at(FIFTH_YEAR))
             .unwrap();
         let mid = credis.get_position(id).unwrap();
-        assert_eq!(mid.outstanding, U256::from(500_000_000u64));
+        assert_eq!(mid.outstanding_principal_minor, U256::from(500_000_000u64));
 
         let err = credis
             .settle(id, U256::from(3_999_999u64), at(2 * FIFTH_YEAR))
@@ -562,12 +581,12 @@ fn settle_below_the_accrued_interest_reverts_and_changes_nothing() {
         assert!(err.contains("below the interest"), "got: {err}");
         let rejected = credis.get_position(id).unwrap();
         assert_eq!(
-            rejected.outstanding,
+            rejected.outstanding_principal_minor,
             U256::from(500_000_000u64),
             "a rejected settlement leaves the balance untouched"
         );
         assert_eq!(
-            rejected.interest_paid,
+            rejected.interest_paid_minor,
             U256::from(8_000_000u64),
             "a rejected settlement leaves lifetime interest untouched"
         );
@@ -590,7 +609,7 @@ fn lifetime_interest_paid_sums_interest_only_and_principal_deltas() {
         assert_eq!(first.interest, U256::from(8_000_000u64));
         assert!(first.principal_paid.is_zero());
         assert_eq!(
-            credis.get_position(id).unwrap().interest_paid,
+            credis.get_position(id).unwrap().interest_paid_minor,
             first.interest
         );
 
@@ -604,7 +623,7 @@ fn lifetime_interest_paid_sums_interest_only_and_principal_deltas() {
         assert_eq!(second.interest, U256::from(8_000_000u64));
         assert_eq!(second.principal_paid, U256::from(100_000_000u64));
         assert_eq!(
-            credis.get_position(id).unwrap().interest_paid,
+            credis.get_position(id).unwrap().interest_paid_minor,
             first.interest + second.interest
         );
         id
@@ -617,10 +636,10 @@ fn lifetime_interest_paid_sums_interest_only_and_principal_deltas() {
         .collect();
     assert_eq!(applied.len(), 2);
     assert_eq!(applied[0].positionId, id);
-    assert_eq!(applied[0].interestPaid, U256::from(8_000_000u64));
-    assert!(applied[0].principalPaid.is_zero());
-    assert_eq!(applied[1].interestPaid, U256::from(8_000_000u64));
-    assert_eq!(applied[1].principalPaid, U256::from(100_000_000u64));
+    assert_eq!(applied[0].interestPaidMinor, U256::from(8_000_000u64));
+    assert!(applied[0].principalPaidMinor.is_zero());
+    assert_eq!(applied[1].interestPaidMinor, U256::from(8_000_000u64));
+    assert_eq!(applied[1].principalPaidMinor, U256::from(100_000_000u64));
 }
 
 #[test]
@@ -637,12 +656,16 @@ fn rejected_settlement_leaves_lifetime_interest_and_emits_nothing() {
             .unwrap_err()
             .to_string();
         assert!(err.contains("below the interest"), "got: {err}");
-        assert!(credis.get_position(id).unwrap().interest_paid.is_zero());
+        assert!(credis
+            .get_position(id)
+            .unwrap()
+            .interest_paid_minor
+            .is_zero());
 
         credis
             .settle(id, U256::from(8_000_000u64), at(FIFTH_YEAR))
             .unwrap();
-        let paid = credis.get_position(id).unwrap().interest_paid;
+        let paid = credis.get_position(id).unwrap().interest_paid_minor;
         assert_eq!(paid, U256::from(8_000_000u64));
 
         let err = credis
@@ -650,7 +673,7 @@ fn rejected_settlement_leaves_lifetime_interest_and_emits_nothing() {
             .unwrap_err()
             .to_string();
         assert!(err.contains("below the interest"), "got: {err}");
-        assert_eq!(credis.get_position(id).unwrap().interest_paid, paid);
+        assert_eq!(credis.get_position(id).unwrap().interest_paid_minor, paid);
     });
 
     let applied: Vec<_> = provider
@@ -659,7 +682,7 @@ fn rejected_settlement_leaves_lifetime_interest_and_emits_nothing() {
         .filter_map(|log| ICredis::SettlementApplied::decode_log_data(log).ok())
         .collect();
     assert_eq!(applied.len(), 1);
-    assert_eq!(applied[0].interestPaid, U256::from(8_000_000u64));
+    assert_eq!(applied[0].interestPaidMinor, U256::from(8_000_000u64));
 }
 
 #[test]
@@ -734,7 +757,7 @@ fn repeated_partials_release_exactly_the_collateral() {
             let mut day = 1u64;
             loop {
                 let position = credis.get_position(id).unwrap();
-                if position.outstanding.is_zero() {
+                if position.outstanding_principal_minor.is_zero() {
                     break;
                 }
                 let interest = CredisContract::accrued_interest(&position, at(day)).unwrap();
@@ -788,7 +811,7 @@ fn rounded_up_returns_are_capped_and_final_settlement_returns_the_remainder() {
         with_credis(|storage| {
             let mut credis = CredisContract::new(storage);
             let mut terms = params(alice());
-            terms.principal = U256::from(10u64);
+            terms.principal_minor = U256::from(10u64);
             terms.collateral = U256::from(6u64);
             let id = credis.open_position(terms).unwrap();
             // A positive fractional interest obligation also floors to zero.
@@ -809,7 +832,10 @@ fn rounded_up_returns_are_capped_and_final_settlement_returns_the_remainder() {
                     total_returned + position.collateral_locked,
                     position.collateral
                 );
-                assert_eq!(total_paid + position.outstanding, position.principal);
+                assert_eq!(
+                    total_paid + position.outstanding_principal_minor,
+                    position.principal_minor
+                );
             }
             assert_eq!(
                 credis.get_position(id).unwrap().lifecycle_state().unwrap(),
@@ -870,7 +896,10 @@ fn dust_settlements_cannot_evade_the_coupon() {
         // unit of principal the dust settlement retired:
         // floor(999_999_999 x 4%) = 39_999_999.
         let position = credis.get_position(id).unwrap();
-        assert_eq!(position.outstanding, U256::from(PRINCIPAL - 1));
+        assert_eq!(
+            position.outstanding_principal_minor,
+            U256::from(PRINCIPAL - 1)
+        );
         assert_eq!(
             CredisContract::accrued_interest(&position, at(365)).unwrap(),
             U256::from(39_999_999u64)
@@ -1003,7 +1032,11 @@ fn a_fully_unpaid_void_burns_all_collateral_and_scores_a_full_unpaid_share() {
         assert_eq!(void.gratis_burned, collateral());
         assert_eq!(void.principal_written_off, U256::from(PRINCIPAL));
         assert_eq!(void.unpaid_share, SCALE_1E6_U256, "100% unpaid");
-        assert!(credis.get_position(id).unwrap().interest_paid.is_zero());
+        assert!(credis
+            .get_position(id)
+            .unwrap()
+            .interest_paid_minor
+            .is_zero());
         id
     });
 
@@ -1018,7 +1051,7 @@ fn a_fully_unpaid_void_burns_all_collateral_and_scores_a_full_unpaid_share() {
         .collect();
     assert_eq!(voids.len(), 1);
     assert_eq!(voids[0].positionId, id);
-    assert_eq!(voids[0].principalWrittenOff, U256::from(PRINCIPAL));
+    assert_eq!(voids[0].principalWrittenOffMinor, U256::from(PRINCIPAL));
     assert_eq!(voids[0].gratisBurned, collateral());
 }
 
@@ -1279,11 +1312,11 @@ fn precompile_get_position_returns_the_full_record() {
         assert_eq!(decoded.asset, asset());
         assert_eq!(decoded.issuanceCurrency, 840);
         assert_eq!(decoded.referenceCurrency, 978);
-        assert_eq!(decoded.principal, U256::from(PRINCIPAL));
+        assert_eq!(decoded.principalMinor, U256::from(PRINCIPAL));
         assert_eq!(decoded.collateral, collateral());
-        assert_eq!(decoded.entryPrice, entry_price());
-        assert_eq!(decoded.callAnchorPrice, call_anchor_price());
-        assert_eq!(decoded.callPrice, U256::from(1_640_000u64));
+        assert_eq!(decoded.entryPriceMinor, entry_price());
+        assert_eq!(decoded.callAnchorPriceMinor, call_anchor_price());
+        assert_eq!(decoded.callPriceMinor, U256::from(1_640_000u64));
         assert_eq!(decoded.issuedAt, ORIGINATED_AT);
         assert_eq!(decoded.policyRate, policy_rate());
         assert_eq!(decoded.state, CredisState::Open as u8);

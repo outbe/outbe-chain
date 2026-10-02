@@ -133,21 +133,21 @@ test("MCP formats Credis prices at six decimals", () => {
     type: "tuple",
     internalType: "struct ICredis.Position",
     components: [
-      { name: "entryPrice", type: "uint256" },
-      { name: "callAnchorPrice", type: "uint256" },
-      { name: "callPrice", type: "uint256" },
+      { name: "entryPriceMinor", type: "uint256" },
+      { name: "callAnchorPriceMinor", type: "uint256" },
+      { name: "callPriceMinor", type: "uint256" },
     ],
   } as AbiParameter;
   assert.deepEqual(
     formatParam(position, {
-      entryPrice: 2_000_000n,
-      callAnchorPrice: 1_900_000n,
-      callPrice: 3_116_000n,
+      entryPriceMinor: 2_000_000n,
+      callAnchorPriceMinor: 1_900_000n,
+      callPriceMinor: 3_116_000n,
     }),
     {
-      entryPrice: { raw: "2000000", value: "2" },
-      callAnchorPrice: { raw: "1900000", value: "1.9" },
-      callPrice: { raw: "3116000", value: "3.116" },
+      entryPriceMinor: { raw: "2000000", value: "2" },
+      callAnchorPriceMinor: { raw: "1900000", value: "1.9" },
+      callPriceMinor: { raw: "3116000", value: "3.116" },
     },
   );
 });

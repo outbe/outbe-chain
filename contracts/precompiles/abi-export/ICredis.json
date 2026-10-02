@@ -131,12 +131,12 @@
             "internalType": "bytes"
           },
           {
-            "name": "principal",
+            "name": "principalMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "outstanding",
+            "name": "outstandingPrincipalMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -156,17 +156,17 @@
             "internalType": "uint256"
           },
           {
-            "name": "entryPrice",
+            "name": "entryPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "callAnchorPrice",
+            "name": "callAnchorPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "callPrice",
+            "name": "callPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -365,12 +365,12 @@
             "internalType": "bytes"
           },
           {
-            "name": "principal",
+            "name": "principalMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "outstanding",
+            "name": "outstandingPrincipalMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -390,17 +390,17 @@
             "internalType": "uint256"
           },
           {
-            "name": "entryPrice",
+            "name": "entryPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "callAnchorPrice",
+            "name": "callAnchorPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "callPrice",
+            "name": "callPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -491,12 +491,12 @@
             "internalType": "bytes"
           },
           {
-            "name": "principal",
+            "name": "principalMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "outstanding",
+            "name": "outstandingPrincipalMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -516,17 +516,17 @@
             "internalType": "uint256"
           },
           {
-            "name": "entryPrice",
+            "name": "entryPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "callAnchorPrice",
+            "name": "callAnchorPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "callPrice",
+            "name": "callPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -846,7 +846,7 @@
         "internalType": "address"
       },
       {
-        "name": "principal",
+        "name": "principalMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -896,7 +896,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "principalWrittenOff",
+        "name": "principalWrittenOffMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -915,13 +915,13 @@
         "internalType": "uint256"
       },
       {
-        "name": "interestPaid",
+        "name": "interestPaidMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "principalPaid",
+        "name": "principalPaidMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -933,7 +933,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "outstanding",
+        "name": "outstandingPrincipalMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
