@@ -9,7 +9,7 @@ Public commands, read APIs, Solidity ABI and protocol economics stay unchanged.
 - [x] Unify terminal receipt storage and proof/genesis bindings.
 - [x] Normalize the live job index to identity keys.
 - [x] Decompose aggregate validation by index invariant.
-- [ ] Separate request, finality and voting.
+- [x] Separate request, finality and voting.
 - [ ] Isolate completion and expiry.
 - [ ] Separate worldwide-day advancement and effects.
 - [ ] Decompose activation fixtures by domain responsibility.
@@ -58,3 +58,8 @@ authoritative. The fresh-chain layout hash now commits OMLI2.
 Step 3: 249 library tests passed. Aggregate validation is split into profile
 presence, pending/live membership, job deadlines, response windows and READY keys.
 Both directions of index equivalence and completed quorum windows remain checked.
+
+Step 4: 251 library tests passed. Request binding is named identity/limit/hash
+policy, voting selects all due jobs before committing the unique candidate, and
+finality pins inclusive admission heights plus checked open/deadline arithmetic.
+Private tests preserve retained receipt nonce semantics and reject overflow.

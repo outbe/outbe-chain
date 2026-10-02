@@ -1,30 +1,31 @@
+mod finality;
+mod request;
+mod voting;
+
 use alloy_primitives::{B256, U256};
 use outbe_lysis::activation_v1::LysisTerminalPermitV1;
 use outbe_ocomp_protocol::{
-    intent::{intent_storage_key, JobIntentV1},
-    receipts::{ActivationOutcome, AggregateActivationReceiptV1, RequestLimitSplitReceiptV1},
+    receipts::{ActivationOutcome, AggregateActivationReceiptV1},
     state::{
-        ActiveGenerationV1, LysisTerminalV1, OcompCompletedBindingV1, OcompFinalizedJobV1,
-        OcompJobRecordV1, OcompJobStatus, OcompTerminalOutcome, RESULT_VOTE_MIN_FINALITY_DEPTH,
+        ActiveGenerationV1, LysisTerminalV1, OcompCompletedBindingV1, OcompJobStatus,
+        OcompTerminalOutcome,
     },
-    vote::OcompVoteAccountabilityV1,
     SchemaLimits,
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::time::WorldwideDay;
 
 use crate::{
-    aggregate::WwdStatus,
     commit::commit_outer_transition,
     errors::storage_corruption_message,
     precompile::IMetadosis,
     reducer::{OuterWwdTransition, OuterWwdTransitionKind},
-    schema::{MetadosisContract, WorldwideDayEntryExt},
+    schema::MetadosisContract,
 };
 
 use super::{
-    index::{insert_response_deadline_key, remove_ready_key, ReadyIndexKey, ResponseDeadlineKey},
-    state::{JobFsmCommand, OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS},
+    index::{remove_ready_key, ReadyIndexKey},
+    state::JobFsmCommand,
 };
 
 impl MetadosisContract<'_> {
@@ -54,298 +55,6 @@ impl MetadosisContract<'_> {
         remove_ready_key(&mut ready_index, ready_key)?;
         self.write_ready_index(&ready_index)?;
         self.ocomp_fsm_states.get_bytes(&wwd).clear()
-    }
-
-    /// Commits one canonical live job and all Metadosis-owned indexes.
-    ///
-    /// The caller has already applied or replay-validated the owner limit
-    /// effect. This method nevertheless requires and stores the exact receipt,
-    /// closing the persisted receipt/state equivalence.
-    pub(crate) fn commit_ocomp_request(
-        &mut self,
-        outer_transition: &OuterWwdTransition,
-        intent: &JobIntentV1,
-        receipt: &RequestLimitSplitReceiptV1,
-        schema_limits: &SchemaLimits,
-    ) -> Result<()> {
-        (|| {
-            super::authority::require_current_ocomp_attempt_snapshot(self.storage.clone(), intent)?;
-            if !matches!(
-                outer_transition.kind(),
-                OuterWwdTransitionKind::OcompRequestCommitted
-            ) {
-                return Err(storage_corruption_message(
-                    "OCOMP request requires the typed outer request transition",
-                ));
-            }
-            intent.validate_semantics().map_err(|error| {
-                storage_corruption_message(format!("invalid OCOMP intent: {error}"))
-            })?;
-            receipt.validate_semantics().map_err(|error| {
-                storage_corruption_message(format!("invalid OCOMP request receipt: {error}"))
-            })?;
-            let wwd = WorldwideDay::new(intent.wwd);
-            if WwdStatus::try_from(self.worldwide_days.entry(wwd).status().read()?)?
-                != WwdStatus::Ready
-            {
-                return Err(storage_corruption_message(
-                    "OCOMP request requires READY WorldwideDay",
-                ));
-            }
-
-            let receipt_hash = receipt.receipt_hash(schema_limits).map_err(|error| {
-                storage_corruption_message(format!("hash OCOMP request receipt: {error}"))
-            })?;
-            if receipt_hash
-                != intent
-                    .frozen_metadosis_values
-                    .request_limit_split_receipt_hash
-                || receipt.wwd != intent.wwd
-                || receipt.pending_nonce > intent.pending_nonce
-                || receipt.protocol_bundle_hash != intent.protocol_bundle_hash
-                || receipt.lysis_limit_minor != intent.frozen_metadosis_values.lysis_limit_minor
-            {
-                return Err(storage_corruption_message(
-                    "OCOMP intent/request receipt binding mismatch",
-                ));
-            }
-            let mut state = self.ocomp_fsm_state(wwd, schema_limits)?;
-            let ready_key = ReadyIndexKey::from_projection(state.projection())?;
-            let existing_receipt = self.request_limit_receipt(wwd, schema_limits)?;
-            if matches!(existing_receipt, Some(ref existing) if existing != receipt) {
-                return Err(storage_corruption_message(
-                    "immutable OCOMP request receipt changed",
-                ));
-            }
-            let intent_id = intent.intent_id(schema_limits).map_err(|error| {
-                storage_corruption_message(format!("hash OCOMP intent: {error}"))
-            })?;
-            let awaiting_finality_deadline = intent
-                .logical_evaluation_height
-                .checked_add(OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS)
-                .ok_or_else(|| {
-                    storage_corruption_message("OCOMP awaiting-finality deadline overflow")
-                })?;
-            let storage_key = intent_storage_key(intent_id).map_err(|error| {
-                storage_corruption_message(format!("derive OCOMP intent storage key: {error}"))
-            })?;
-            if !self.ocomp_job_records.get_bytes(&storage_key).is_empty()? {
-                return Err(storage_corruption_message(
-                    "OCOMP IntentId already has a job record",
-                ));
-            }
-            state
-                .apply(JobFsmCommand::Request {
-                    at_height: intent.logical_evaluation_height,
-                    deadline_height: awaiting_finality_deadline,
-                    intent_id,
-                    lysis_limit_minor: intent.frozen_metadosis_values.lysis_limit_minor,
-                    request_limit_receipt_hash: receipt_hash,
-                })
-                .map_err(|error| storage_corruption_message(error.to_string()))?;
-
-            if existing_receipt.is_none() {
-                self.ocomp_request_limit_receipts.get_bytes(&wwd).write(
-                    &receipt.encode_canonical(schema_limits).map_err(|error| {
-                        storage_corruption_message(format!("encode request receipt: {error}"))
-                    })?,
-                )?;
-            }
-            let record = OcompJobRecordV1 {
-                intent: intent.clone(),
-                intent_height: intent.logical_evaluation_height,
-                status: OcompJobStatus::AwaitingFinality,
-                finalized: None,
-                terminal: None,
-            };
-            self.write_ocomp_job_record(intent_id, &record, schema_limits)?;
-            commit_outer_transition(
-                self,
-                wwd,
-                outer_transition,
-                intent.logical_evaluation_height,
-            )?;
-            let mut ready_index = self.read_ready_index()?;
-            remove_ready_key(&mut ready_index, ready_key)?;
-            self.write_ready_index(&ready_index)?;
-            self.write_ocomp_state(&state)?;
-            self.write_live_scheduler(&state)
-        })()
-    }
-
-    /// Records the consensus-certified request block and derives the voting
-    /// window. The request itself carries no deadline.
-    pub fn record_ocomp_finality(
-        &mut self,
-        intent_id: B256,
-        finalized_request_block_hash: B256,
-        finalized_request_state_root: B256,
-        finality_recorded_height: u64,
-        response_window_blocks: u64,
-        schema_limits: &SchemaLimits,
-    ) -> Result<OcompFinalizedJobV1> {
-        (|| {
-            let mut record = self
-                .ocomp_job_record(intent_id, schema_limits)?
-                .ok_or_else(|| {
-                    storage_corruption_message("OCOMP finality record has no matching intent")
-                })?;
-            if record.status != OcompJobStatus::AwaitingFinality || record.terminal.is_some() {
-                return Err(storage_corruption_message(
-                    "OCOMP finality requires AWAITING_FINALITY",
-                ));
-            }
-            let awaiting_finality_deadline = record
-                .intent_height
-                .checked_add(OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS)
-                .ok_or_else(|| {
-                    storage_corruption_message("OCOMP awaiting-finality deadline overflow")
-                })?;
-            let profile = self
-                .read_ocomp_request_profile(schema_limits)?
-                .ok_or_else(|| {
-                    storage_corruption_message("OCOMP finality has no request profile")
-                })?;
-            if finality_recorded_height < record.intent_height
-                || finality_recorded_height > awaiting_finality_deadline
-                || response_window_blocks != profile.capacity_profile.result_deadline_blocks
-            {
-                return Err(storage_corruption_message(
-                    "OCOMP finality/window height is invalid",
-                ));
-            }
-            let open_height = finality_recorded_height
-                .checked_add(RESULT_VOTE_MIN_FINALITY_DEPTH)
-                .ok_or_else(|| storage_corruption_message("OCOMP voting open height overflow"))?;
-            let deadline_height = open_height
-                .checked_add(response_window_blocks)
-                .ok_or_else(|| storage_corruption_message("OCOMP response deadline overflow"))?;
-            let finalized = OcompFinalizedJobV1 {
-                job_id: record
-                    .intent
-                    .job_id(
-                        finalized_request_block_hash,
-                        finalized_request_state_root,
-                        schema_limits,
-                    )
-                    .map_err(|error| {
-                        storage_corruption_message(format!("derive finalized OCOMP JobId: {error}"))
-                    })?,
-                finalized_request_block_hash,
-                finalized_request_state_root,
-                finality_recorded_height,
-                open_height,
-                deadline_height,
-                quorum: None,
-            };
-            finalized.validate_semantics().map_err(|error| {
-                storage_corruption_message(format!("invalid finalized OCOMP job: {error}"))
-            })?;
-            if let Some(existing) = &record.finalized {
-                if existing == &finalized {
-                    return Ok(existing.clone());
-                }
-                return Err(storage_corruption_message("OCOMP finality binding changed"));
-            }
-            record.finalized = Some(finalized.clone());
-            self.write_ocomp_job_record(intent_id, &record, schema_limits)?;
-            Ok(finalized)
-        })()
-    }
-
-    /// Opens a finalized job once its open height has been reached while
-    /// preserving the immutable response deadline.
-    ///
-    /// A delayed lifecycle tick may catch up before that deadline. At or after
-    /// the deadline the caller must retire the still-unopened job as Expired.
-    pub(crate) fn open_due_ocomp_voting(
-        &mut self,
-        at_height: u64,
-        schema_limits: &SchemaLimits,
-    ) -> Result<bool> {
-        (|| {
-            let mut selected = None;
-            for state in self.live_ocomp_fsm_states(schema_limits)? {
-                let intent_id = state.projection().live_intent_id.ok_or_else(|| {
-                    storage_corruption_message("OCOMP live scheduler has no IntentId")
-                })?;
-                let record = self
-                    .ocomp_job_record(intent_id, schema_limits)?
-                    .ok_or_else(|| {
-                        storage_corruption_message("OCOMP live scheduler job is missing")
-                    })?;
-                if record.status != OcompJobStatus::AwaitingFinality {
-                    continue;
-                }
-                let Some(finalized) = record.finalized.clone() else {
-                    continue;
-                };
-                if at_height < finalized.open_height {
-                    continue;
-                }
-                if at_height >= finalized.deadline_height {
-                    return Err(storage_corruption_message(
-                        "OCOMP voting cannot open at or after its deadline",
-                    ));
-                }
-                if selected
-                    .replace((state, intent_id, record, finalized))
-                    .is_some()
-                {
-                    return Err(storage_corruption_message(
-                        "multiple OCOMP jobs are due at one bounded open height",
-                    ));
-                }
-            }
-            let Some((mut state, intent_id, mut record, finalized)) = selected else {
-                return Ok(false);
-            };
-            state
-                .apply(JobFsmCommand::OpenVoting {
-                    at_height,
-                    deadline_height: finalized.deadline_height,
-                })
-                .map_err(|error| storage_corruption_message(error.to_string()))?;
-            let accountability = OcompVoteAccountabilityV1::empty(
-                finalized.job_id,
-                record.intent.result_validator_set_epoch,
-                record.intent.result_committee_set_hash,
-                record.intent.result_ocomp_binding_hash,
-                record.intent.result_member_count,
-                record.intent.result_quorum_threshold,
-            )
-            .map_err(|error| {
-                storage_corruption_message(format!("create OCOMP vote slots: {error}"))
-            })?;
-            let slot = self.ocomp_vote_accountability.get_bytes(&finalized.job_id);
-            if !slot.is_empty()? {
-                return Err(storage_corruption_message(
-                    "OCOMP vote accountability already exists",
-                ));
-            }
-            slot.write(
-                &accountability
-                    .encode_canonical(schema_limits)
-                    .map_err(|error| {
-                        storage_corruption_message(format!("encode OCOMP vote slots: {error}"))
-                    })?,
-            )?;
-            let mut response_index = self.read_response_deadline_index()?;
-            insert_response_deadline_key(
-                &mut response_index,
-                ResponseDeadlineKey {
-                    deadline_height: finalized.deadline_height,
-                    job_id: finalized.job_id,
-                    intent_id,
-                },
-            )?;
-            record.status = OcompJobStatus::VotingOpen;
-            self.write_ocomp_job_record(intent_id, &record, schema_limits)?;
-            self.write_ocomp_state(&state)?;
-            self.write_live_scheduler(&state)?;
-            self.write_response_deadline_index(&response_index)?;
-            Ok(true)
-        })()
     }
 
     /// Applies the exclusive begin-zone expiry to the exact live index.
