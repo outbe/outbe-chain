@@ -445,8 +445,7 @@ mod tests {
             }
             AttestationMode::GramineDirectDev => InitialTeeProfileV1::GramineDirectDev,
         };
-        let policy = initial_tee_policy_v1(profile, DEVNET_CHAIN_ID, genesis_hash).unwrap();
-        policy
+        initial_tee_policy_v1(profile, DEVNET_CHAIN_ID, genesis_hash).unwrap()
     }
 
     fn replay_identity(mode: AttestationMode) -> ReplayIdentity {
@@ -503,7 +502,7 @@ mod tests {
             }
             AttestationMode::GramineDirectDev => u64::MAX,
         };
-        let source = RenewalBindingV1 {
+        RenewalBindingV1 {
             node_id_hash: node_id.node_id_hash().unwrap(),
             enclave_id,
             binding_id: B256::repeat_byte(0x8b),
@@ -527,8 +526,7 @@ mod tests {
             platform_tcb_status: 0,
             verdict_hash: B256::repeat_byte(0x8e),
             node_host_authorization_hash,
-        };
-        source
+        }
     }
 
     fn replay_intent(identity: &ReplayIdentity) -> RegistrationIntentV1 {
@@ -545,7 +543,7 @@ mod tests {
         let enclave_id = source.enclave_id;
         let node_host_authorization_hash = source.node_host_authorization_hash;
         let requested_valid_until = source.valid_until + policy.maximum_lease;
-        let intent = RegistrationIntentV1 {
+        RegistrationIntentV1 {
             chain_id: policy.chain_id,
             genesis_hash,
             operation: AttestationOperationV1::RenewEnclave,
@@ -563,8 +561,7 @@ mod tests {
             attestation_ed25519: manifest.attestation_ed25519,
             noise_responder_x25519: manifest.noise_responder_x25519,
             node_host_authorization_hash,
-        };
-        intent
+        }
     }
 
     fn replay_evidence(
@@ -624,7 +621,7 @@ mod tests {
                 U256::from(2_000_000_000_u64),
                 gas_limit,
                 TEE_REGISTRY_ADDRESS,
-                &calldata,
+                calldata,
             )
             .unwrap();
         (relay, raw)
@@ -969,7 +966,7 @@ mod tests {
         attempt: &PreparedRenewalV1,
         previous: RenewalBindingV1,
     ) -> RenewalJournalStateV1 {
-        let lifecycle = match case {
+        match case {
             1 => RenewalJournalStateV1::Abandoned {
                 attempt: attempt.clone(),
                 abandoned_at_finalized_height: 99,
@@ -984,8 +981,7 @@ mod tests {
                 finalized_height: 99,
                 finalized_hash: B256::repeat_byte(5),
             },
-        };
-        lifecycle
+        }
     }
 
     #[tokio::test]

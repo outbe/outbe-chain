@@ -4,7 +4,17 @@
 //! checkpoints for finalized network-key provisioning and binding transitions.
 //! A separate legacy checkpoint supports copying an existing MRSIGNER seal.
 
+mod context;
+mod identity;
+mod journal_validation;
 mod preparation;
+mod relay;
+use identity::{
+    ensure_transition_source_or_target_v1, transition_target_matches_v1,
+    validate_candidate_identity_v1,
+};
+use journal_validation::{security_material, validate_checkpoint_transition};
+use relay::{finalized_transition_matches_v1, prepare_upgrade_relay_v1};
 mod submission;
 
 use std::{
@@ -67,23 +77,6 @@ pub struct UpgradeContextV1 {
     pub candidate_tee_dir: PathBuf,
 }
 
-impl UpgradeContextV1 {
-    fn validate(&self) -> Result<()> {
-        if self.predecessor_manifest_hash.is_zero()
-            || self.candidate_manifest_hash.is_zero()
-            || self.predecessor_manifest_hash == self.candidate_manifest_hash
-            || self.successor_policy_hash.is_zero()
-            || self.activation_height == 0
-            || self.active_tee_dir.as_os_str().is_empty()
-            || self.candidate_tee_dir.as_os_str().is_empty()
-            || self.active_tee_dir == self.candidate_tee_dir
-        {
-            eyre::bail!("upgrade context is incomplete or self-referential");
-        }
-        Ok(())
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PreparedUpgradeSubmissionV1 {
@@ -124,36 +117,6 @@ pub enum UpgradeSubmissionOutcomeV1 {
         transaction_hash: B256,
         finalized_height: u64,
     },
-}
-
-impl PreparedUpgradeSubmissionV1 {
-    fn validate(&self) -> Result<()> {
-        if self.intent_hash.is_zero()
-            || self.evidence_hash.is_zero()
-            || self.calldata_hash.is_zero()
-            || self.relay.is_zero()
-            || self.relay_variants.is_empty()
-            || self.relay_variants.len() > MAX_RELAY_VARIANTS
-        {
-            eyre::bail!("upgrade submission is incomplete or exceeds its variant cap");
-        }
-        let first = &self.relay_variants[0];
-        if first.relay != self.relay || first.calldata_hash != self.calldata_hash {
-            eyre::bail!("upgrade submission relay binding mismatch");
-        }
-        for variant in &self.relay_variants {
-            if variant.relay != self.relay
-                || variant.chain_id != first.chain_id
-                || variant.account_nonce != first.account_nonce
-                || variant.gas_limit != first.gas_limit
-                || variant.calldata_hash != self.calldata_hash
-                || keccak256(&variant.raw_transaction) != variant.transaction_hash
-            {
-                eyre::bail!("upgrade submission contains a competing relay variant");
-            }
-        }
-        Ok(())
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -239,85 +202,6 @@ impl UpgradeJournalStateV1 {
             | Self::Finalized { context, .. }
             | Self::Promoted { context, .. }
             | Self::TerminalMissedCutoff { context, .. } => context,
-        }
-    }
-
-    fn validate(&self) -> Result<()> {
-        self.context().validate()?;
-        match self {
-            Self::CandidatePrepared { .. } => Ok(()),
-            Self::KeyProvisioned {
-                sealed_root_hash, ..
-            } => validate_root(*sealed_root_hash),
-            Self::CandidateKeyReady {
-                sealed_root_hash,
-                resident_offer_public,
-                proof_hash,
-                ..
-            } => validate_key_ready(*sealed_root_hash, *resident_offer_public, *proof_hash),
-            Self::SubmissionPrepared {
-                sealed_root_hash,
-                resident_offer_public,
-                proof_hash,
-                submission,
-                ..
-            } => {
-                validate_key_ready(*sealed_root_hash, *resident_offer_public, *proof_hash)?;
-                submission.validate()
-            }
-            Self::Submitted {
-                sealed_root_hash,
-                resident_offer_public,
-                proof_hash,
-                submission,
-                transaction_hashes,
-                ..
-            } => {
-                validate_key_ready(*sealed_root_hash, *resident_offer_public, *proof_hash)?;
-                submission.validate()?;
-                if transaction_hashes.is_empty()
-                    || transaction_hashes.len() > submission.relay_variants.len()
-                    || transaction_hashes.iter().enumerate().any(|(index, hash)| {
-                        submission.relay_variants[index].transaction_hash != *hash
-                    })
-                {
-                    eyre::bail!("submitted upgrade transaction list is non-canonical");
-                }
-                Ok(())
-            }
-            Self::Finalized {
-                sealed_root_hash,
-                resident_offer_public,
-                proof_hash,
-                submission,
-                finalized_hash,
-                ..
-            }
-            | Self::Promoted {
-                sealed_root_hash,
-                resident_offer_public,
-                proof_hash,
-                submission,
-                finalized_hash,
-                ..
-            } => {
-                validate_key_ready(*sealed_root_hash, *resident_offer_public, *proof_hash)?;
-                submission.validate()?;
-                if finalized_hash.is_zero() {
-                    eyre::bail!("finalized upgrade checkpoint has a zero block hash");
-                }
-                Ok(())
-            }
-            Self::TerminalMissedCutoff {
-                finalized_height,
-                activation_height,
-                ..
-            } => {
-                if *activation_height == 0 || finalized_height < activation_height {
-                    eyre::bail!("terminal cutoff checkpoint precedes policy activation");
-                }
-                Ok(())
-            }
         }
     }
 }
@@ -439,127 +323,6 @@ fn is_next_upgrade(current: &UpgradeJournalStateV1, next: &UpgradeJournalStateV1
     new.predecessor_manifest_hash == old.candidate_manifest_hash
         && new.activation_height > old.activation_height
         && new.successor_policy_hash != old.successor_policy_hash
-}
-
-fn validate_checkpoint_transition(
-    current: &UpgradeJournalStateV1,
-    next: &UpgradeJournalStateV1,
-) -> Result<()> {
-    use UpgradeJournalStateV1::{
-        CandidateKeyReady, CandidatePrepared, Finalized, KeyProvisioned, Promoted,
-        SubmissionPrepared, Submitted, TerminalMissedCutoff,
-    };
-    if let (
-        CandidateKeyReady {
-            sealed_root_hash: before,
-            ..
-        }
-        | SubmissionPrepared {
-            sealed_root_hash: before,
-            ..
-        }
-        | Submitted {
-            sealed_root_hash: before,
-            ..
-        },
-        KeyProvisioned {
-            sealed_root_hash: after,
-            ..
-        },
-    ) = (current, next)
-    {
-        if before == after {
-            return Ok(());
-        }
-        eyre::bail!("expired submission recovery changed the sealed root");
-    }
-    let allowed = matches!(
-        (current, next),
-        (CandidatePrepared { .. }, KeyProvisioned { .. })
-            | (CandidatePrepared { .. }, TerminalMissedCutoff { .. })
-            | (KeyProvisioned { .. }, CandidateKeyReady { .. })
-            | (CandidateKeyReady { .. }, SubmissionPrepared { .. })
-            | (SubmissionPrepared { .. }, Submitted { .. })
-            | (Submitted { .. }, Submitted { .. })
-            | (Submitted { .. }, Finalized { .. })
-            | (Finalized { .. }, Promoted { .. })
-            | (Promoted { .. }, Promoted { .. })
-            | (TerminalMissedCutoff { .. }, TerminalMissedCutoff { .. })
-            | (KeyProvisioned { .. }, TerminalMissedCutoff { .. })
-            | (CandidateKeyReady { .. }, TerminalMissedCutoff { .. })
-            | (SubmissionPrepared { .. }, TerminalMissedCutoff { .. })
-            | (Submitted { .. }, TerminalMissedCutoff { .. })
-    );
-    if !allowed {
-        eyre::bail!(
-            "invalid upgrade checkpoint transition {} -> {}",
-            current.label(),
-            next.label()
-        );
-    }
-    if let (Some(current), Some(next)) = (security_material(current), security_material(next)) {
-        if current.0 != next.0
-            || (!current.1.is_zero() && current.1 != next.1)
-            || (!current.2.is_zero() && current.2 != next.2)
-            || current
-                .3
-                .is_some_and(|submission| Some(submission) != next.3)
-        {
-            eyre::bail!("upgrade security material changed across checkpoints");
-        }
-    }
-    Ok(())
-}
-
-fn security_material(
-    state: &UpgradeJournalStateV1,
-) -> Option<(B256, B256, B256, Option<&PreparedUpgradeSubmissionV1>)> {
-    match state {
-        UpgradeJournalStateV1::CandidatePrepared { .. }
-        | UpgradeJournalStateV1::TerminalMissedCutoff { .. } => None,
-        UpgradeJournalStateV1::KeyProvisioned {
-            sealed_root_hash, ..
-        } => Some((*sealed_root_hash, B256::ZERO, B256::ZERO, None)),
-        UpgradeJournalStateV1::CandidateKeyReady {
-            sealed_root_hash,
-            resident_offer_public,
-            proof_hash,
-            ..
-        } => Some((*sealed_root_hash, *resident_offer_public, *proof_hash, None)),
-        UpgradeJournalStateV1::SubmissionPrepared {
-            sealed_root_hash,
-            resident_offer_public,
-            proof_hash,
-            submission,
-            ..
-        }
-        | UpgradeJournalStateV1::Submitted {
-            sealed_root_hash,
-            resident_offer_public,
-            proof_hash,
-            submission,
-            ..
-        }
-        | UpgradeJournalStateV1::Finalized {
-            sealed_root_hash,
-            resident_offer_public,
-            proof_hash,
-            submission,
-            ..
-        }
-        | UpgradeJournalStateV1::Promoted {
-            sealed_root_hash,
-            resident_offer_public,
-            proof_hash,
-            submission,
-            ..
-        } => Some((
-            *sealed_root_hash,
-            *resident_offer_public,
-            *proof_hash,
-            Some(submission),
-        )),
-    }
 }
 
 pub fn inspect_upgrade_journal_v1(
@@ -728,54 +491,7 @@ pub struct NetworkUpgradeSubmissionV1 {
     pub calldata: Vec<u8>,
     pub transaction: RawRelayTransactionV1,
 }
-impl NetworkUpgradeSubmissionV1 {
-    fn validate(&self) -> Result<()> {
-        let evidence = AttestationEvidenceV1::decode_canonical(&self.evidence)
-            .map_err(|e| eyre::eyre!("saved prepare evidence: {e}"))?;
-        let intent = evidence.intent();
-        let context =
-            outbe_tee::dcap_protocol::DcapOnboardingContextV1::decode_canonical(&self.context)
-                .map_err(|e| eyre::eyre!("saved prepare context: {e:?}"))?;
-        let call = ITeeRegistryV1::prepareEnclaveUpgradeCall::abi_decode(&self.calldata)?;
-        let node_sig: [u8; 65] = call
-            .nodeSignature
-            .as_ref()
-            .try_into()
-            .map_err(|_| eyre::eyre!("saved node signature length"))?;
-        let enclave_sig: [u8; 64] = call
-            .enclaveSignature
-            .as_ref()
-            .try_into()
-            .map_err(|_| eyre::eyre!("saved enclave signature length"))?;
-        if self.candidate_manifest_hash.is_zero()
-            || intent.operation != AttestationOperationV1::PrepareEnclaveUpgrade
-            || call.evidence.as_ref() != self.evidence
-            || self.calldata != call.abi_encode()
-            || !intent.verify_node_signature(&node_sig)
-            || !intent.verify_enclave_signature(&enclave_sig)
-            || context.intent_hash
-                != intent
-                    .intent_hash()
-                    .map_err(|e| eyre::eyre!("saved intent: {e}"))?
-            || context.chain_id != intent.chain_id
-            || context.genesis_hash != intent.genesis_hash
-            || context.node_id_hash
-                != intent
-                    .node_id
-                    .node_id_hash()
-                    .map_err(|e| eyre::eyre!("saved node: {e}"))?
-            || context.enclave_id != intent.enclave_id
-            || context.binding_id != intent.binding_id
-            || context.policy_hash != intent.policy_hash
-            || context.recipient_x25519 != intent.recipient_x25519
-            || keccak256(&self.calldata) != self.transaction.calldata_hash
-            || keccak256(&self.transaction.raw_transaction) != self.transaction.transaction_hash
-        {
-            eyre::bail!("saved network upgrade commitments or signatures are inconsistent");
-        }
-        Ok(())
-    }
-}
+
 impl UpgradeJournalGuardV1 {
     pub fn load_network_submission(&self) -> Result<Option<NetworkUpgradeSubmissionV1>> {
         let path = self.paths.root.join("network-submission.json");
@@ -1164,39 +880,6 @@ pub fn generate_transition_evidence_v1(
     })
 }
 
-fn validate_candidate_identity_v1(
-    candidate: &ReplacementCandidateEnclaveV1,
-    selector: &NodeBindingSelectorV1,
-    active: &super::registry::FinalizedRenewalChainViewV1,
-) -> Result<()> {
-    let manifest = candidate.manifest();
-    let node_id_hash = manifest
-        .node_id
-        .node_id_hash()
-        .map_err(|error| eyre::eyre!("hash candidate node identity: {error}"))?;
-    let enclave_id = manifest
-        .enclave_id()
-        .map_err(|error| eyre::eyre!("derive candidate enclave identity: {error}"))?;
-    let node_host_authorization_hash = manifest
-        .node_host_authorization_hash()
-        .map_err(|error| eyre::eyre!("derive candidate NodeHost authorization: {error}"))?;
-    if manifest.chain_id != active.policy.chain_id
-        || manifest.genesis_hash != active.policy.genesis_hash
-        || node_id_hash != active.binding.node_id_hash
-        || enclave_id == active.binding.enclave_id
-        || node_host_authorization_hash != active.binding.node_host_authorization_hash
-    {
-        eyre::bail!("candidate manifest is not a same-NodeHost successor of finalized A");
-    }
-    match selector {
-        NodeBindingSelectorV1::NodeHost(public) if public == &manifest.node_id.reth_p2p_public => {}
-        _ => {
-            eyre::bail!("upgrade selector does not match the candidate node identity");
-        }
-    }
-    Ok(())
-}
-
 pub fn transition_intent_v1(
     candidate: &ReplacementCandidateEnclaveV1,
     active: &super::registry::FinalizedRenewalChainViewV1,
@@ -1263,11 +946,10 @@ fn validate_transition_time_window_v1(
         .collateral_expiration
         .checked_sub(policy.collateral_margin)
         .ok_or_else(|| eyre::eyre!("transition collateral margin underflows"))?;
-    if prepared.collateral_issue_floor > finalized_timestamp
-        || lease < policy.minimum_lease
-        || lease > policy.maximum_lease
-        || prepared.intent.requested_valid_until > ceiling
-    {
+    let lease_matches = prepared.collateral_issue_floor <= finalized_timestamp
+        && lease >= policy.minimum_lease
+        && lease <= policy.maximum_lease;
+    if !lease_matches || prepared.intent.requested_valid_until > ceiling {
         eyre::bail!("candidate evidence cannot satisfy the staged successor lease window");
     }
     Ok(())
@@ -1299,202 +981,6 @@ fn recover_candidate_key_ready_v1(
         expected_offer_public.into(),
     )?;
     Ok(())
-}
-
-async fn prepare_upgrade_relay_v1(
-    rpc: &(impl RenewalRpc + Sync),
-    relay: &RelaySignerV1,
-    node_data_dir: &Path,
-    selector: &NodeBindingSelectorV1,
-) -> Result<()> {
-    let snapshot = inspect_upgrade_journal_v1(node_data_dir)?
-        .ok_or_else(|| eyre::eyre!("upgrade candidate is not prepared"))?;
-    let UpgradeJournalStateV1::CandidateKeyReady {
-        ref context,
-        resident_offer_public,
-        proof_hash,
-        ..
-    } = snapshot.lifecycle
-    else {
-        eyre::bail!("upgrade relay requires candidate-key-ready checkpoint");
-    };
-    let durable = load_replacement_candidate_submission(node_data_dir)
-        .map_err(|error| eyre::eyre!("reload exact candidate submission: {error}"))?
-        .ok_or_else(|| eyre::eyre!("candidate-key-ready checkpoint has no durable submission"))?;
-    let evidence = AttestationEvidenceV1::decode_canonical(durable.evidence())
-        .map_err(|error| eyre::eyre!("decode durable transition evidence: {error}"))?;
-    let proof = evidence
-        .transition_key_ready_proof()
-        .ok_or_else(|| eyre::eyre!("durable transition evidence has no key-ready proof"))?;
-    let encoded_proof = proof
-        .encode_canonical()
-        .map_err(|error| eyre::eyre!("encode durable key-ready proof: {error}"))?;
-    if keccak256(encoded_proof) != proof_hash
-        || B256::from(proof.resident_offer_public) != resident_offer_public
-    {
-        eyre::bail!("durable transition proof differs from the journaled key-ready checkpoint");
-    }
-
-    let active = read_finalized_bound_renewal_view_v1(rpc, selector).await?;
-    let successor = read_finalized_upgrade_policy_v1(rpc)
-        .await?
-        .ok_or_else(|| eyre::eyre!("no successor TEE policy is staged at finalized state"))?;
-    if active.schedule.finalized_height != successor.finalized_height
-        || active.schedule.finalized_hash != successor.finalized_hash
-    {
-        eyre::bail!("finalized active binding and staged policy were read at different heads");
-    }
-    let policy_hash = successor
-        .policy
-        .policy_hash()
-        .map_err(|error| eyre::eyre!("hash staged successor policy: {error}"))?;
-    if policy_hash != context.successor_policy_hash
-        || successor.policy.activation_height != context.activation_height
-        || evidence.intent().policy_hash != policy_hash
-        || evidence.intent().operation != AttestationOperationV1::TransitionEnclaveMeasurement
-    {
-        eyre::bail!("durable candidate submission targets another transition policy");
-    }
-    proof
-        .verify_for_transition(evidence.intent(), active.tribute_offer_public.into())
-        .map_err(|error| eyre::eyre!("durable key-ready proof is invalid: {error}"))?;
-    ensure_transition_source_or_target_v1(&active.binding, evidence.intent())?;
-
-    let calldata = ITeeRegistryV1::transitionEnclaveMeasurementCall {
-        evidence: durable.evidence().to_vec().into(),
-        nodeSignature: durable.node_signature().to_vec().into(),
-        enclaveSignature: durable.enclave_signature().to_vec().into(),
-    }
-    .abi_encode();
-    let gas_limit = TeeRegistryGasScheduleV1::normative()
-        .maximum_transaction_gas(
-            RegistryMutatorV1::TransitionEnclaveMeasurement,
-            calldata.len(),
-            durable.evidence().len(),
-            successor.policy.measurement_rules.len(),
-            successor.policy.attestation_mode,
-        )
-        .map_err(|error| eyre::eyre!("calculate normative transition gas: {error}"))?;
-    let chain_id = rpc.chain_id().await?;
-    let account_nonce = rpc.transaction_count(relay.address()).await?;
-    let gas_price = buffered_gas_price(rpc.gas_price().await?);
-    let required_balance = gas_price.saturating_mul(U256::from(gas_limit));
-    let balance = rpc.balance(relay.address()).await?;
-    if balance < required_balance {
-        eyre::bail!(
-            "upgrade relay {} has {balance} but needs at least {required_balance}",
-            relay.address()
-        );
-    }
-    let raw = relay.sign_renewal(
-        chain_id,
-        account_nonce,
-        gas_price,
-        gas_limit,
-        TEE_REGISTRY_ADDRESS,
-        &calldata,
-    )?;
-    let intent_hash = evidence
-        .intent()
-        .intent_hash()
-        .map_err(|error| eyre::eyre!("hash durable transition intent: {error}"))?;
-    let evidence_hash = AttestationEvidenceV1::decode_canonical(durable.evidence())
-        .and_then(|e| e.evidence_hash())
-        .map_err(|code| eyre::eyre!("hash durable transition evidence: {code:?}"))?;
-    record_upgrade_submission_prepared_v1(
-        node_data_dir,
-        PreparedUpgradeSubmissionV1 {
-            intent_hash,
-            evidence_hash,
-            calldata_hash: keccak256(&calldata),
-            relay: relay.address(),
-            relay_variants: vec![raw],
-        },
-    )?;
-    Ok(())
-}
-
-fn ensure_transition_source_or_target_v1(
-    current: &super::registry::RenewalBindingV1,
-    intent: &RegistrationIntentV1,
-) -> Result<()> {
-    if transition_target_matches_v1(current, intent) {
-        return Ok(());
-    }
-    let source_matches = current.node_id_hash
-        == intent
-            .node_id
-            .node_id_hash()
-            .map_err(|error| eyre::eyre!("hash transition node identity: {error}"))?
-        && current.binding_version.checked_add(1) == Some(intent.binding_version)
-        && current.registration_version.checked_add(1) == Some(intent.registration_version)
-        && current.renewal_nonce == intent.renewal_nonce
-        && current.transition_nonce.checked_add(1) == Some(intent.transition_nonce)
-        && current.node_host_authorization_hash == intent.node_host_authorization_hash
-        && current.enclave_id != intent.enclave_id
-        && current.binding_id != intent.binding_id;
-    if !source_matches {
-        eyre::bail!("finalized Registry binding matches neither transition source nor target");
-    }
-    Ok(())
-}
-
-fn transition_target_matches_v1(
-    current: &super::registry::RenewalBindingV1,
-    intent: &RegistrationIntentV1,
-) -> bool {
-    current.node_id_hash == intent.node_id.node_id_hash().unwrap_or(B256::ZERO)
-        && current.enclave_id == intent.enclave_id
-        && current.binding_id == intent.binding_id
-        && current.intent_hash == intent.intent_hash().unwrap_or(B256::ZERO)
-        && current.policy_hash == intent.policy_hash
-        && current.binding_version == intent.binding_version
-        && current.registration_version == intent.registration_version
-        && current.renewal_nonce == intent.renewal_nonce
-        && current.transition_nonce == intent.transition_nonce
-        && current.valid_until == intent.requested_valid_until
-        && current.recipient_x25519 == B256::from(intent.recipient_x25519)
-        && current.attestation_ed25519 == B256::from(intent.attestation_ed25519)
-        && current.noise_responder_x25519 == B256::from(intent.noise_responder_x25519)
-        && current.node_host_authorization_hash == intent.node_host_authorization_hash
-}
-
-async fn finalized_transition_matches_v1(
-    rpc: &(impl RenewalRpc + Sync),
-    selector: &NodeBindingSelectorV1,
-    node_data_dir: &Path,
-    submission: &PreparedUpgradeSubmissionV1,
-) -> Result<bool> {
-    let durable = load_replacement_candidate_submission(node_data_dir)
-        .map_err(|error| eyre::eyre!("reload exact candidate submission: {error}"))?
-        .ok_or_else(|| eyre::eyre!("submission checkpoint has no durable NodeHost material"))?;
-    let durable_evidence = AttestationEvidenceV1::decode_canonical(durable.evidence())
-        .map_err(|error| eyre::eyre!("decode durable transition evidence: {error}"))?;
-    let intent_hash = durable_evidence
-        .intent()
-        .intent_hash()
-        .map_err(|error| eyre::eyre!("hash durable transition intent: {error}"))?;
-    let evidence_hash = AttestationEvidenceV1::decode_canonical(durable.evidence())
-        .and_then(|e| e.evidence_hash())
-        .map_err(|code| eyre::eyre!("hash durable transition evidence: {code:?}"))?;
-    let calldata = ITeeRegistryV1::transitionEnclaveMeasurementCall {
-        evidence: durable.evidence().to_vec().into(),
-        nodeSignature: durable.node_signature().to_vec().into(),
-        enclaveSignature: durable.enclave_signature().to_vec().into(),
-    }
-    .abi_encode();
-    if intent_hash != submission.intent_hash
-        || evidence_hash != submission.evidence_hash
-        || keccak256(calldata) != submission.calldata_hash
-    {
-        eyre::bail!("NodeHost transition material differs from the relay checkpoint");
-    }
-    let view = read_finalized_bound_renewal_view_v1(rpc, selector).await?;
-    ensure_transition_source_or_target_v1(&view.binding, durable_evidence.intent())?;
-    Ok(transition_target_matches_v1(
-        &view.binding,
-        durable_evidence.intent(),
-    ))
 }
 
 /// Copy exactly `sealed_root.bin` from active A to prepared candidate B.
@@ -1601,11 +1087,7 @@ fn open_private_file(path: &Path, create: bool, max_bytes: u64) -> Result<File> 
 fn validate_private_file(path: &Path, max_bytes: u64) -> Result<()> {
     let metadata = fs::symlink_metadata(path)
         .wrap_err_with(|| format!("stat private file {}", path.display()))?;
-    if !metadata.file_type().is_file()
-        || metadata.uid() != rustix::process::geteuid().as_raw()
-        || metadata.permissions().mode() & 0o777 != FILE_MODE
-        || metadata.len() > max_bytes
-    {
+    if !private_file_within_bounds(&metadata, max_bytes) {
         eyre::bail!(
             "private file {} violates owner or size bounds",
             path.display()
@@ -1651,6 +1133,13 @@ fn sync_directory(path: &Path) -> Result<()> {
         .wrap_err_with(|| format!("open directory {} for fsync", path.display()))?
         .sync_all()
         .wrap_err_with(|| format!("fsync directory {}", path.display()))
+}
+
+fn private_file_within_bounds(metadata: &fs::Metadata, max_bytes: u64) -> bool {
+    metadata.file_type().is_file()
+        && metadata.uid() == rustix::process::geteuid().as_raw()
+        && metadata.permissions().mode() & 0o777 == FILE_MODE
+        && metadata.len() <= max_bytes
 }
 
 #[cfg(test)]
