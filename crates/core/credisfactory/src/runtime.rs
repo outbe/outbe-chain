@@ -96,11 +96,6 @@ pub fn issue_credis(
             call_anchor_price: r.call_anchor_price,
             collateral: r.collateral,
             issued_at: now,
-            call_price: r.call_price,
-            call_notice_period: r.call_notice_period,
-            call_rate: r.call_rate,
-            call_window: r.call_window,
-            call_threshold: r.call_threshold,
         })?;
         let opened = credis.get_position(id)?;
         storage.transfer_balance(CREDIS_FACTORY_ADDRESS, r.smart_account, stake)?;

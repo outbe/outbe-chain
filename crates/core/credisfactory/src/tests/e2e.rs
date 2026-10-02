@@ -32,7 +32,7 @@ fn issue_binds_complete_reservation_and_rolls_back_failed_claims() {
                 3 => altered.snapshot_id += U256::ONE,
                 4 => altered.policy_rate += U256::ONE,
                 5 => altered.reference_currency += 1,
-                6 => altered.call_price += U256::ONE,
+                6 => altered.call_anchor_price += U256::ONE,
                 7 => altered.expires_at += 1,
                 _ => altered.cca = bob(),
             }
@@ -77,8 +77,14 @@ fn issue_binds_complete_reservation_and_rolls_back_failed_claims() {
             .get_position(position_id)
             .unwrap();
         assert_eq!(position.policy_rate, reservation.policy_rate);
-        assert_eq!(position.call_price, reservation.call_price);
-        assert_eq!(position.call_notice_period, reservation.call_notice_period);
+        assert_eq!(
+            position.call_price,
+            outbe_credis::calc_call_price(reservation.call_anchor_price).unwrap()
+        );
+        assert_eq!(
+            position.call_notice_period,
+            outbe_credis::constants::CALL_NOTICE_PERIOD
+        );
         assert!(runtime::issue_credis(storage.clone(), cca(), id, &proof, pledge_stake()).is_err());
     });
     teardown();
@@ -307,7 +313,10 @@ fn issuance_uses_reserved_terms_across_midnight_and_oracle_changes() {
         assert_eq!(position.entry_price, reservation.entry_price);
         assert_eq!(position.policy_rate, reservation.policy_rate);
         assert_eq!(position.call_anchor_price, reservation.call_anchor_price);
-        assert_eq!(position.call_price, reservation.call_price);
+        assert_eq!(
+            position.call_price,
+            outbe_credis::calc_call_price(reservation.call_anchor_price).unwrap()
+        );
         assert_eq!(position.issued_at, midnight + 300);
         assert_eq!(position.last_settled_at, position.issued_at);
     });

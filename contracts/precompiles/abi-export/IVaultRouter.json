@@ -551,31 +551,6 @@
             "name": "callAnchorPrice",
             "type": "uint256",
             "internalType": "uint256"
-          },
-          {
-            "name": "callPrice",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "callNoticePeriod",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "callRate",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "callWindow",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "callThreshold",
-            "type": "uint32",
-            "internalType": "uint32"
           }
         ]
       }

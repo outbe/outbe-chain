@@ -2230,7 +2230,7 @@ fn a_reservation_holds_then_releases_once() {
         assert_eq!(held.issuance_currency, USD_ISO_CODE);
         assert_eq!(held.reference_currency, USD_ISO_CODE);
         assert_eq!(held.policy_rate, U256::from(43_000));
-        assert_eq!(held.call_price, U256::from(3_280_000));
+        assert_eq!(held.call_anchor_price, U256::from(2_000_000));
         assert!(!held.snapshot_id.is_zero());
         assert_eq!(held.expires_at, 1_700_000_000 + 15 * 60);
 

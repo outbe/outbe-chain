@@ -255,11 +255,6 @@ pub fn seed_reservation_at(
             asset_decimals: 6,
             reference_currency: REFERENCE_ISO,
             call_anchor_price: oracle_rate(),
-            call_price: at_call(),
-            call_notice_period: outbe_credis::constants::CALL_NOTICE_PERIOD,
-            call_rate: outbe_credis::constants::CALL_RATE_PCT,
-            call_window: outbe_credis::constants::CALL_WINDOW,
-            call_threshold: outbe_credis::constants::CALL_THRESHOLD,
         })
         .unwrap();
     id

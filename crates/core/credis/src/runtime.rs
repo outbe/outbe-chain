@@ -12,7 +12,9 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{timestamp_to_date_key, SECONDS_PER_DAY};
 use outbe_primitives::units::SCALE_1E6_U256;
 
-use crate::constants::{CALL_RATE_PCT, DAYS_PER_YEAR, PRICE_RATE_DEN};
+use crate::constants::{
+    CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, DAYS_PER_YEAR, PRICE_RATE_DEN,
+};
 use crate::errors::CredisError;
 use crate::precompile::ICredis;
 use crate::schema::{CredisContract, CredisState, Position};
@@ -50,11 +52,6 @@ pub struct OpenPositionParams {
     /// `G` - pledged Gratis collateral.
     pub collateral: U256,
     pub issued_at: u64,
-    pub call_price: U256,
-    pub call_notice_period: u32,
-    pub call_rate: u16,
-    pub call_window: u32,
-    pub call_threshold: u32,
 }
 
 /// Outcome of [`CredisContract::settle`]. The caller moves the money: it pulls
@@ -187,15 +184,15 @@ impl CredisContract<'_> {
                 collateral_locked: params.collateral,
                 policy_rate: params.policy_rate,
                 entry_price: params.entry_price,
-                call_price: params.call_price,
+                call_price: calc_call_price(params.call_anchor_price)?,
                 issued_at: params.issued_at,
                 last_settled_at: params.issued_at,
                 called_at: 0,
                 state: CredisState::Open as u8,
-                call_notice_period: params.call_notice_period,
-                call_rate: params.call_rate,
-                call_window: params.call_window,
-                call_threshold: params.call_threshold,
+                call_notice_period: CALL_NOTICE_PERIOD,
+                call_rate: CALL_RATE_PCT,
+                call_window: CALL_WINDOW,
+                call_threshold: CALL_THRESHOLD,
                 call_anchor_price: params.call_anchor_price,
                 interest_paid: U256::ZERO,
             };

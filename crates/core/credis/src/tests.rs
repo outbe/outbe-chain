@@ -116,11 +116,6 @@ fn params(owner: Address) -> OpenPositionParams {
         entry_price: entry_price(),
         call_anchor_price: call_anchor_price(),
         collateral: collateral(),
-        call_price: crate::calc_call_price(call_anchor_price()).unwrap(),
-        call_notice_period: crate::constants::CALL_NOTICE_PERIOD,
-        call_rate: crate::constants::CALL_RATE_PCT,
-        call_window: crate::constants::CALL_WINDOW,
-        call_threshold: crate::constants::CALL_THRESHOLD,
         issued_at: ORIGINATED_AT,
     }
 }
@@ -191,6 +186,10 @@ fn open_position_seals_the_call_price_from_the_call_anchor() {
         assert_eq!(p.call_price, U256::from(1_640_000u64));
         assert_eq!(p.call_price, calc_call_price(call_anchor_price()).unwrap());
         assert_ne!(p.call_price, calc_call_price(entry_price()).unwrap());
+        assert_eq!(p.call_notice_period, crate::constants::CALL_NOTICE_PERIOD);
+        assert_eq!(p.call_rate, crate::constants::CALL_RATE_PCT);
+        assert_eq!(p.call_window, crate::constants::CALL_WINDOW);
+        assert_eq!(p.call_threshold, crate::constants::CALL_THRESHOLD);
 
         // Both codes are sealed, and they are distinct: the threshold anchor is
         // the reference currency, never the issuance one the position is

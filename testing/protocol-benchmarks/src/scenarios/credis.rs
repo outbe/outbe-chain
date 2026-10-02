@@ -179,11 +179,6 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(Bytes, U256), String> {
             asset_decimals: 6,
             reference_currency: REFERENCE_ISO,
             call_anchor_price: oracle_rate(),
-            call_price: U256::from(3_280_000),
-            call_notice_period: outbe_credis::constants::CALL_NOTICE_PERIOD,
-            call_rate: outbe_credis::constants::CALL_RATE_PCT,
-            call_window: outbe_credis::constants::CALL_WINDOW,
-            call_threshold: outbe_credis::constants::CALL_THRESHOLD,
         })
         .map_err(|error| error.to_string())?;
     let commitment = outbe_gratisfactory::runtime::pledge_gratis(

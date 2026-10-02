@@ -33,11 +33,6 @@ interface IVaultRouter {
         uint8 assetDecimals;
         uint16 referenceCurrency;
         uint256 callAnchorPrice;
-        uint256 callPrice;
-        uint32 callNoticePeriod;
-        uint16 callRate;
-        uint32 callWindow;
-        uint32 callThreshold;
     }
 
     error TokenOperationFailed();

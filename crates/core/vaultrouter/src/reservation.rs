@@ -5,7 +5,7 @@ use crate::{
 };
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
-use outbe_credis::constants::*;
+use outbe_credis::constants::{BP_DEN, POLICY_RATE_FACTOR_BP};
 use outbe_oracle::{
     api::{self, current_vwap_snapshot, get_finalized_window_vwap},
     schema::OracleContract,
@@ -77,11 +77,6 @@ pub(crate) fn quote(
         asset_decimals: decimals,
         reference_currency,
         call_anchor_price: anchor,
-        call_price: outbe_credis::runtime::calc_call_price(anchor)?,
-        call_notice_period: CALL_NOTICE_PERIOD,
-        call_rate: CALL_RATE_PCT,
-        call_window: CALL_WINDOW,
-        call_threshold: CALL_THRESHOLD,
         ..Default::default()
     })
 }

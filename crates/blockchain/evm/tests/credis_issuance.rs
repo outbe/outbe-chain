@@ -146,11 +146,6 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
                     asset_decimals: 6,
                     reference_currency: 840,
                     call_anchor_price: U256::from(2_000_000),
-                    call_price: U256::from(3_280_000),
-                    call_notice_period: outbe_credis::constants::CALL_NOTICE_PERIOD,
-                    call_rate: outbe_credis::constants::CALL_RATE_PCT,
-                    call_window: outbe_credis::constants::CALL_WINDOW,
-                    call_threshold: outbe_credis::constants::CALL_THRESHOLD,
                 })
                 .unwrap();
             let price = U256::from(2_000_000);
