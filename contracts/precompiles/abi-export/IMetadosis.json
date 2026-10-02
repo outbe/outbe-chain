@@ -71,17 +71,17 @@
         "internalType": "uint32"
       },
       {
-        "name": "valueRouted",
+        "name": "unusedMetadosisLimitMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "carryOverBefore",
+        "name": "promisLimitBeforeMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "carryOverAfter",
+        "name": "promisLimitAfterMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -96,7 +96,7 @@
         "internalType": "uint32"
       },
       {
-        "name": "forfeitedTributeNominal",
+        "name": "forfeitedTributeNominalMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -227,12 +227,12 @@
         "internalType": "uint64"
       },
       {
-        "name": "previousVwap",
+        "name": "previousVwapMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "currentVwap",
+        "name": "currentVwapMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -256,17 +256,17 @@
         "internalType": "uint8"
       },
       {
-        "name": "valueRouted",
+        "name": "unusedMetadosisLimitMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "carryOverBefore",
+        "name": "promisLimitBeforeMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "carryOverAfter",
+        "name": "promisLimitAfterMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -369,13 +369,13 @@
         "internalType": "uint32"
       },
       {
-        "name": "dayMetadosisLimitAmount",
+        "name": "metadosisLimitMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "totalAccumulated",
+        "name": "totalAccumulatedMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -400,19 +400,19 @@
         "internalType": "uint32"
       },
       {
-        "name": "tributeTotals",
+        "name": "tributeNominalTotalMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "dayGratisDemand",
+        "name": "gratisDemandMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "dayGratisLimit",
+        "name": "dayGratisLimitMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -436,7 +436,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "dayMetadosisLimitRemainder",
+        "name": "unusedMetadosisLimitMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -498,13 +498,13 @@
         "internalType": "uint32"
       },
       {
-        "name": "dayMetadosisLimit",
+        "name": "metadosisLimitMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "dayMetadosisLimitRemainder",
+        "name": "unusedMetadosisLimitMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -541,31 +541,31 @@
         "internalType": "uint32"
       },
       {
-        "name": "baseLimit",
+        "name": "baseLimitMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "carryOverBefore",
+        "name": "promisLimitBeforeMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "carryOverTaken",
+        "name": "promisLimitTakenMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "carryOverAfter",
+        "name": "promisLimitAfterMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "formedDayLimit",
+        "name": "metadosisLimitMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -602,7 +602,7 @@
         "internalType": "uint64"
       },
       {
-        "name": "slashedBonded",
+        "name": "slashedBondedMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -707,19 +707,19 @@
         "internalType": "uint32"
       },
       {
-        "name": "dayMetadosisLimit",
+        "name": "unusedMetadosisLimitMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "carryOverBefore",
+        "name": "promisLimitBeforeMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "carryOverAfter",
+        "name": "promisLimitAfterMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -737,7 +737,7 @@
         "internalType": "uint32"
       },
       {
-        "name": "forfeitedTributeNominal",
+        "name": "forfeitedTributeNominalMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -799,19 +799,19 @@
         "internalType": "uint32"
       },
       {
-        "name": "dayMetadosisLimit",
+        "name": "unusedMetadosisLimitMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "carryOverBefore",
+        "name": "promisLimitBeforeMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "carryOverAfter",
+        "name": "promisLimitAfterMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

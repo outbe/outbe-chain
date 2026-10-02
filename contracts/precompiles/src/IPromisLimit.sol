@@ -11,5 +11,5 @@ interface IPromisLimit {
         bytes32 stateEventDigest
     );
 
-    function totalUnallocated() external view returns (uint256);
+    function totalUnallocated() external view returns (uint256 promisLimitMinor);
 }

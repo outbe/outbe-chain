@@ -397,7 +397,7 @@ fn missing_vote_slashes_bonded_once_and_opens_recovery() {
     assert_eq!(missed.validator, Address::repeat_byte(0xB3));
     assert_eq!(missed.jobId, finalized.job_id);
     assert_eq!(missed.missCount, 1);
-    assert_eq!(missed.slashedBonded, U256::from(100));
+    assert_eq!(missed.slashedBondedMinor, U256::from(100));
     assert_eq!(missed.recoveryDeadline, finalized.deadline_height + 43_200);
     assert!(missed.firstInWindow);
 

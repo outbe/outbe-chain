@@ -184,13 +184,13 @@ impl MetadosisContract<'_> {
         let frozen = &record.intent.frozen_metadosis_values;
         self.emit(IMetadosis::MetadosisExecuted {
             worldwideDay: record.intent.wwd,
-            tributeTotals: record.intent.authenticated_day_nominal,
-            dayGratisDemand: frozen.gratis_demand,
-            dayGratisLimit: frozen.day_gratis_limit_minor,
+            tributeNominalTotalMinor: record.intent.authenticated_day_nominal,
+            gratisDemandMinor: frozen.gratis_demand,
+            dayGratisLimitMinor: frozen.day_gratis_limit_minor,
             lysisLimitMinor: frozen.lysis_limit_minor,
             unusedLysisLimitMinor: unused_lysis_limit_minor,
             lysisAllocationMinor: lysis_allocation_minor,
-            dayMetadosisLimitRemainder: unused_lysis_limit_minor,
+            unusedMetadosisLimitMinor: unused_lysis_limit_minor,
             status: "COMPLETED".into(),
             blockNumber: activated_at_height,
         })?;

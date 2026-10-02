@@ -6,16 +6,16 @@ interface IMetadosis {
     error OcompResultVoteRejected(uint16 code);
 
     event MetadosisAccumulation(
-        uint32 indexed date, uint256 dayMetadosisLimitAmount, uint256 totalAccumulated, uint64 blockNumber
+        uint32 indexed date, uint256 metadosisLimitMinor, uint256 totalAccumulatedMinor, uint64 blockNumber
     );
 
     event OcompDayLimitFormed(
         uint32 indexed worldwideDay,
-        uint256 baseLimit,
-        uint256 carryOverBefore,
-        uint256 carryOverTaken,
-        uint256 carryOverAfter,
-        uint256 formedDayLimit,
+        uint256 baseLimitMinor,
+        uint256 promisLimitBeforeMinor,
+        uint256 promisLimitTakenMinor,
+        uint256 promisLimitAfterMinor,
+        uint256 metadosisLimitMinor,
         uint64 blockNumber
     );
 
@@ -32,9 +32,9 @@ interface IMetadosis {
 
     event WorldwideDayMissedOffering(
         uint32 indexed worldwideDay,
-        uint256 dayMetadosisLimit,
-        uint256 carryOverBefore,
-        uint256 carryOverAfter,
+        uint256 unusedMetadosisLimitMinor,
+        uint256 promisLimitBeforeMinor,
+        uint256 promisLimitAfterMinor,
         uint8 retirementOutcome,
         uint64 blockNumber
     );
@@ -43,12 +43,12 @@ interface IMetadosis {
         uint32 indexed worldwideDay,
         uint32 maxRetainedWorldwideDays,
         uint32 retainedCountBefore,
-        uint256 dayMetadosisLimit,
-        uint256 carryOverBefore,
-        uint256 carryOverAfter,
+        uint256 unusedMetadosisLimitMinor,
+        uint256 promisLimitBeforeMinor,
+        uint256 promisLimitAfterMinor,
         bytes32 sealedCollectionRoot,
         uint32 forfeitedTributeCount,
-        uint256 forfeitedTributeNominal,
+        uint256 forfeitedTributeNominalMinor,
         uint64 sourceGeneration,
         uint64 retiredGeneration,
         uint8 retirementOutcome,
@@ -59,21 +59,21 @@ interface IMetadosis {
 
     event MetadosisExecuted(
         uint32 indexed worldwideDay,
-        uint256 tributeTotals,
-        uint256 dayGratisDemand,
-        uint256 dayGratisLimit,
+        uint256 tributeNominalTotalMinor,
+        uint256 gratisDemandMinor,
+        uint256 dayGratisLimitMinor,
         uint256 lysisLimitMinor,
         uint256 unusedLysisLimitMinor,
         uint256 lysisAllocationMinor,
-        uint256 dayMetadosisLimitRemainder,
+        uint256 unusedMetadosisLimitMinor,
         string status,
         uint64 blockNumber
     );
 
     event MetadosisWorldwideDayProcessed(
         uint32 indexed worldwideDay,
-        uint256 dayMetadosisLimit,
-        uint256 dayMetadosisLimitRemainder,
+        uint256 metadosisLimitMinor,
+        uint256 unusedMetadosisLimitMinor,
         string status,
         string dayState,
         string action
@@ -98,7 +98,7 @@ interface IMetadosis {
         address indexed validator,
         bytes32 indexed jobId,
         uint64 missCount,
-        uint256 slashedBonded,
+        uint256 slashedBondedMinor,
         uint64 recoveryDeadline,
         bool firstInWindow
     );
@@ -123,8 +123,8 @@ interface IMetadosis {
             uint64 lookbackEnd,
             uint64 offeringEnd,
             uint64 scheduledProcessTime,
-            uint256 previousVwap,
-            uint256 currentVwap
+            uint256 previousVwapMinor,
+            uint256 currentVwapMinor
         );
 
     function getActiveWorldwideDays() external view returns (uint32[] memory wwds);
@@ -138,9 +138,9 @@ interface IMetadosis {
         view
         returns (
             uint8 outcome,
-            uint256 valueRouted,
-            uint256 carryOverBefore,
-            uint256 carryOverAfter,
+            uint256 unusedMetadosisLimitMinor,
+            uint256 promisLimitBeforeMinor,
+            uint256 promisLimitAfterMinor,
             uint8 retirementOutcome,
             uint64 blockNumber
         );
@@ -152,12 +152,12 @@ interface IMetadosis {
             uint8 outcome,
             uint32 maxRetainedWorldwideDays,
             uint32 retainedCountBefore,
-            uint256 valueRouted,
-            uint256 carryOverBefore,
-            uint256 carryOverAfter,
+            uint256 unusedMetadosisLimitMinor,
+            uint256 promisLimitBeforeMinor,
+            uint256 promisLimitAfterMinor,
             bytes32 sealedCollectionRoot,
             uint32 forfeitedTributeCount,
-            uint256 forfeitedTributeNominal,
+            uint256 forfeitedTributeNominalMinor,
             uint64 sourceGeneration,
             uint64 retiredGeneration,
             uint8 retirementOutcome,

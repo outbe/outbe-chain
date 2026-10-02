@@ -240,8 +240,8 @@ fn settle_empty_day(
     TributeContract::new(metadosis.storage.clone()).retire_completed_partition(scope, wwd)?;
     metadosis.emit(IMetadosis::MetadosisWorldwideDayProcessed {
         worldwideDay: wwd.into(),
-        dayMetadosisLimit: day_limit,
-        dayMetadosisLimitRemainder: returned,
+        metadosisLimitMinor: day_limit,
+        unusedMetadosisLimitMinor: returned,
         status: "COMPLETED".into(),
         dayState: wwd_state_label(day_type).into(),
         action: "no tributes".into(),
@@ -301,13 +301,13 @@ fn settle_zero_allocation(
     TributeContract::new(metadosis.storage.clone()).forfeit_sealed_partition(scope, wwd)?;
     metadosis.emit(IMetadosis::MetadosisExecuted {
         worldwideDay: wwd.into(),
-        tributeTotals: tribute_nominal_total,
-        dayGratisDemand: calculation.gratis_demand,
-        dayGratisLimit: calculation.day_gratis_limit_minor,
+        tributeNominalTotalMinor: tribute_nominal_total,
+        gratisDemandMinor: calculation.gratis_demand,
+        dayGratisLimitMinor: calculation.day_gratis_limit_minor,
         lysisLimitMinor: U256::ZERO,
         unusedLysisLimitMinor: U256::ZERO,
         lysisAllocationMinor: U256::ZERO,
-        dayMetadosisLimitRemainder: returned,
+        unusedMetadosisLimitMinor: returned,
         status: "COMPLETED".into(),
         blockNumber: ctx.block.block_number,
     })

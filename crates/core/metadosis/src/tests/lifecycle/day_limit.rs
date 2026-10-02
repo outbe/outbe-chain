@@ -239,11 +239,11 @@ fn ocomp_day_limit_rejection_and_every_mutation_failure_are_atomic() {
     )
     .unwrap();
     assert_eq!(event.data.worldwideDay, 20260727);
-    assert_eq!(event.data.baseLimit, U256::from(100));
-    assert_eq!(event.data.carryOverBefore, U256::from(9));
-    assert_eq!(event.data.carryOverTaken, U256::ZERO);
-    assert_eq!(event.data.carryOverAfter, U256::from(9));
-    assert_eq!(event.data.formedDayLimit, U256::from(100));
+    assert_eq!(event.data.baseLimitMinor, U256::from(100));
+    assert_eq!(event.data.promisLimitBeforeMinor, U256::from(9));
+    assert_eq!(event.data.promisLimitTakenMinor, U256::ZERO);
+    assert_eq!(event.data.promisLimitAfterMinor, U256::from(9));
+    assert_eq!(event.data.metadosisLimitMinor, U256::from(100));
     let replay_event_count = probe.get_ordered_events().len();
     apply_limit(&mut probe, U256::from(100)).unwrap();
     assert_eq!(probe.get_ordered_events().len(), replay_event_count);

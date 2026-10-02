@@ -781,7 +781,7 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
             decoded.outcome,
             crate::schema::terminal_outcome::CAPACITY_FORFEITURE
         );
-        assert_eq!(decoded.valueRouted, U256::from(100));
+        assert_eq!(decoded.unusedMetadosisLimitMinor, U256::from(100));
         assert_eq!(
             decoded.retirementOutcome,
             crate::schema::terminal_retirement::NOT_PRESENT
@@ -798,7 +798,7 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
             decoded.outcome,
             crate::schema::terminal_outcome::CAPACITY_FORFEITURE
         );
-        assert_eq!(decoded.valueRouted, U256::from(100));
+        assert_eq!(decoded.unusedMetadosisLimitMinor, U256::from(100));
     });
 
     assert_eq!(

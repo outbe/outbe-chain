@@ -157,7 +157,7 @@ pub(super) fn open_voting_with_pre_open_state() -> (VotingOpenScenario, PreOpenS
     );
     assert_eq!(accumulation.data.date, expected_cycle_day);
     assert!(
-        !accumulation.data.dayMetadosisLimitAmount.is_zero(),
+        !accumulation.data.metadosisLimitMinor.is_zero(),
         "production CycleTick must route a non-zero allocation"
     );
     let terminal_receipt = receipts.last().expect("terminal request receipt");

@@ -767,8 +767,8 @@ fn assert_populated_ready_day_fails_and_forfeits(
         .collect::<Vec<_>>();
     assert_eq!(executed.len(), 1);
     assert_eq!(executed[0].status, "FAILED");
-    assert_eq!(executed[0].tributeTotals, nominal);
-    assert_eq!(executed[0].dayMetadosisLimitRemainder, day_limit);
+    assert_eq!(executed[0].tributeNominalTotalMinor, nominal);
+    assert_eq!(executed[0].unusedMetadosisLimitMinor, day_limit);
 }
 
 #[test]
