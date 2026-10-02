@@ -71,8 +71,11 @@ fn issue_nod_inner(
 ) -> Result<WwdEntityId> {
     let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day)?;
 
+    if !NodContract::is_issuable_entry(params.entry_price_minor) {
+        return Err(NodFactoryError::EntryPriceOutOfBounds.into());
+    }
     let floor_price_minor = NodContract::floor_price_minor(params.entry_price_minor)
-        .ok_or(NodFactoryError::FloorPriceOverflow)?;
+        .ok_or(NodFactoryError::EntryPriceOutOfBounds)?;
     let bucket_key = NodContract::bucket_key(
         params.worldwide_day,
         params.entry_price_minor,

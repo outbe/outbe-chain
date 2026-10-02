@@ -401,6 +401,13 @@ impl<'storage> NodContract<'storage> {
             .map(|scaled| scaled / U256::from(100u64))
     }
 
+    /// Whether the floor and the call price at any `u16` call rate fit `U256` for this entry.
+    pub fn is_issuable_entry(entry_price_minor: U256) -> bool {
+        entry_price_minor
+            .checked_mul(U256::from(100 + u32::from(u16::MAX)))
+            .is_some()
+    }
+
     /// Computes the bucket key from
     /// `(worldwide_day, entry_price_minor, reference_currency)`.
     ///

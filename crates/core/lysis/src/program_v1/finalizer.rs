@@ -548,7 +548,7 @@ where
                 ));
             }
             previous_tribute = Some(action.tribute_id);
-            if NodContract::floor_price_minor(action.entry_price_minor).is_none() {
+            if !NodContract::is_issuable_entry(action.entry_price_minor) {
                 return Err(LysisFinalizationErrorV1::Authority("Nod entry price bound"));
             }
             let record = action.encode_canonical_record(limits)?;

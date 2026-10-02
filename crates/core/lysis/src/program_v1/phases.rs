@@ -439,9 +439,9 @@ pub fn amount_map(
                 ordinal: raw_ordinal as usize,
             });
         }
-        if NodContract::floor_price_minor(entry_price_minor).is_none() {
+        if !NodContract::is_issuable_entry(entry_price_minor) {
             return Err(ProgramErrorV1::Arithmetic {
-                message: format!("Nod floor overflow at {raw_ordinal}"),
+                message: format!("Nod entry price out of bounds at {raw_ordinal}"),
             });
         }
         let settlement_cost_minor =

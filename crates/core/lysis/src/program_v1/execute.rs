@@ -204,9 +204,9 @@ impl ProgramExecutionV1 {
             entry_price_minor,
         });
 
-        if NodContract::floor_price_minor(entry_price_minor).is_none() {
+        if !NodContract::is_issuable_entry(entry_price_minor) {
             return Err(ProgramErrorV1::Arithmetic {
-                message: format!("Nod floor overflow at {ordinal}"),
+                message: format!("Nod entry price out of bounds at {ordinal}"),
             });
         }
         let first_league = self.first_leagues[ordinal];

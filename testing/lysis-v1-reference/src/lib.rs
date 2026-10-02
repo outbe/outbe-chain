@@ -560,9 +560,9 @@ fn try_evaluate(case: &CorpusCase) -> Result<Value, ReferenceFailure> {
             "entry_price": entry_price.to_string(),
         }));
 
-        // Validated as input; the entry price alone bounds the floor.
+        // Validated as input; the entry bound keeps the floor and any u16-rate call price in U256.
         decimal(&tribute.tribute_price)?;
-        if &entry_price * 108_u16 >= u256_modulus() {
+        if &entry_price * (100_u32 + u32::from(u16::MAX)) >= u256_modulus() {
             return Err(ReferenceFailure::new("ARITHMETIC"));
         }
         let second = tribute

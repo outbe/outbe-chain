@@ -1172,10 +1172,14 @@ fn validate_amount_run(run: &AmountRunV1) -> Result<(), LysisArtifactErrorV1> {
             || record.gratis_fraction_fp.is_zero()
             || record.gratis_load_minor.is_zero()
             || record.entry_price_minor.is_zero()
-            || NodContract::floor_price_minor(record.entry_price_minor).is_none()
         {
             return Err(LysisArtifactErrorV1::InvalidEncoding(
                 "amount run record order",
+            ));
+        }
+        if !NodContract::is_issuable_entry(record.entry_price_minor) {
+            return Err(LysisArtifactErrorV1::InvalidEncoding(
+                "amount run Nod entry price bound",
             ));
         }
         previous_id = Some(record.tribute_id);
@@ -1271,7 +1275,7 @@ fn validate_finalized_output_run(run: &FinalizedOutputRunV1) -> Result<(), Lysis
             || nod.worldwide_day.value() == 0
             || nod.gratis_load_minor.is_zero()
             || nod.entry_price_minor.is_zero()
-            || NodContract::floor_price_minor(nod.entry_price_minor).is_none()
+            || !NodContract::is_issuable_entry(nod.entry_price_minor)
             || nod.reference_currency == 0
             || derive_poseidon_entity_id(nod.owner, nod.worldwide_day)
                 .map_err(|_| LysisArtifactErrorV1::InvalidEncoding("finalized Nod identity"))?
