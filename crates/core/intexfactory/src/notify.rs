@@ -63,7 +63,7 @@ pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
             calls_left,
         )?;
     }
-    if index >= tail {
+    if index >= factory.notify_tail.read()? {
         factory.notify_head.write(0)?;
         factory.notify_tail.write(0)?;
     } else {
