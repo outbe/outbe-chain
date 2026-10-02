@@ -307,7 +307,7 @@ fn the_last_gem_out_closes_its_bucket() {
 
         api::set_state(storage, gem_id, GemState::Settled).unwrap();
         assert_eq!(gem.bucket_gem_count.read(&bucket).unwrap(), 0);
-        assert!(gem.bucket_call_price.read(&bucket).unwrap().is_zero());
+        assert!(gem.bucket_call_price_minor.read(&bucket).unwrap().is_zero());
         assert_eq!(gem.bucket_bin_index.read(&bucket).unwrap(), 0);
         assert!(!tree_math::contains(&crate::state::BucketBins(&gem, 840), bin).unwrap());
     });

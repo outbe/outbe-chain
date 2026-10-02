@@ -71,7 +71,7 @@ fn breached_enough(window: &[(u32, Option<U256>)], terms: &BucketTerms) -> bool 
         if *day < terms.start_day {
             break;
         }
-        if vwap.is_some_and(|value| value > terms.call_price) {
+        if vwap.is_some_and(|value| value > terms.call_price_minor) {
             breaches += 1;
         }
     }

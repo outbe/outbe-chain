@@ -543,7 +543,7 @@ fn the_call_price_is_the_entry_price_times_the_call_rate() {
     harness(|storage, scope, parent| {
         let item = issue_qualified(storage, scope, parent, Address::repeat_byte(0x11), ISO);
         let stored = NodContract::new(storage.clone())
-            .callable_bucket_call_price
+            .callable_bucket_call_price_minor
             .read(&item.bucket_key)
             .unwrap();
         assert_eq!(
@@ -1230,7 +1230,7 @@ fn a_call_arm_out_of_visits_resumes_on_its_currency_before_any_forfeit() {
         for index in 1..=MAX_NOD_CALL_VISITS_PER_BLOCK {
             let key = B256::left_padding_from(&index.to_be_bytes());
             nod.callable_bucket_currency.write(&key, ISO).unwrap();
-            nod.callable_bucket_call_price
+            nod.callable_bucket_call_price_minor
                 .write(&key, at_call())
                 .unwrap();
             nod.insert_call_bin(key).unwrap();

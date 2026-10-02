@@ -180,7 +180,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             .unwrap());
         assert_eq!(
             NodContract::new(storage.clone())
-                .entry_price_value
+                .entry_price_minor
                 .get_nested(&wwd)
                 .read(&840)
                 .unwrap(),

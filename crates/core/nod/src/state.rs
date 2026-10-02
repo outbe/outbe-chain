@@ -41,7 +41,7 @@ pub(crate) fn derived_call_terms(
         })?
         / U256::from(100u64);
     Ok(Some(CallTerms {
-        call_price,
+        call_price_minor: call_price,
         reference_currency,
         call_rate: params.call_rate,
         call_window_seconds: params.call_window_seconds,
@@ -73,7 +73,7 @@ impl NodContract<'_> {
             return Err(NodError::InvalidEntryPriceSnapshot.into());
         }
         let currencies = self.entry_price_currency.get_nested(&day);
-        let values = self.entry_price_value.get_nested(&day);
+        let values = self.entry_price_minor.get_nested(&day);
         let mut prices = BTreeMap::new();
         let mut previous = 0;
         for index in 0..count {
@@ -116,7 +116,7 @@ impl NodContract<'_> {
                 return Err(NodError::EntryPricesAlreadyFrozen.into());
             }
             let currencies = self.entry_price_currency.get_nested(&day);
-            let values = self.entry_price_value.get_nested(&day);
+            let values = self.entry_price_minor.get_nested(&day);
             for (index, (iso, price)) in (0..count).zip(prices) {
                 currencies.write(&index, *iso)?;
                 values.write(iso, *price)?;
@@ -481,7 +481,7 @@ impl NodContract<'_> {
     /// Parks a new bucket in the bin of its sealed call price.
     pub(crate) fn insert_call_bin(&mut self, bucket_key: B256) -> Result<()> {
         let iso = self.callable_bucket_currency.read(&bucket_key)?;
-        let bin_id = Self::price_to_bin(self.callable_bucket_call_price.read(&bucket_key)?)?;
+        let bin_id = Self::price_to_bin(self.callable_bucket_call_price_minor.read(&bucket_key)?)?;
         let scoped = Self::scoped(iso, bin_id);
         let count = self.call_bin_count.read(&scoped)?;
         let next_count = count.checked_add(1).ok_or_else(|| {
@@ -636,8 +636,8 @@ impl NodContract<'_> {
         bucket_key: B256,
         terms: CallTerms,
     ) -> Result<()> {
-        self.callable_bucket_call_price
-            .write(&bucket_key, terms.call_price)?;
+        self.callable_bucket_call_price_minor
+            .write(&bucket_key, terms.call_price_minor)?;
         self.callable_bucket_currency
             .write(&bucket_key, terms.reference_currency)?;
         self.callable_bucket_call_rate
@@ -661,7 +661,7 @@ impl NodContract<'_> {
     /// Reads back the terms [`Self::seal_bucket_call_terms`] sealed at issuance.
     pub(crate) fn read_call_terms(&self, bucket_key: B256) -> Result<CallTerms> {
         Ok(CallTerms {
-            call_price: self.callable_bucket_call_price.read(&bucket_key)?,
+            call_price_minor: self.callable_bucket_call_price_minor.read(&bucket_key)?,
             reference_currency: self.callable_bucket_currency.read(&bucket_key)?,
             call_rate: self.callable_bucket_call_rate.read(&bucket_key)?,
             call_window_seconds: self.callable_bucket_call_window_seconds.read(&bucket_key)?,
@@ -723,7 +723,7 @@ impl NodContract<'_> {
     pub(crate) fn remove_callable_bucket(&mut self, bucket_key: B256) -> Result<()> {
         self.remove_call_bin(bucket_key)?;
         self.remove_called_bucket(bucket_key)?;
-        self.callable_bucket_call_price.clear(&bucket_key)?;
+        self.callable_bucket_call_price_minor.clear(&bucket_key)?;
         self.callable_bucket_currency.get(&bucket_key).delete()?;
         self.callable_bucket_call_rate.get(&bucket_key).delete()?;
         self.callable_bucket_call_window_seconds

@@ -437,7 +437,7 @@ impl GemContract<'_> {
         Ok(BucketTerms {
             start_day: self.bucket_start_day.read(&bucket)?,
             reference_currency: self.bucket_currency.read(&bucket)?,
-            call_price: self.bucket_call_price.read(&bucket)?,
+            call_price_minor: self.bucket_call_price_minor.read(&bucket)?,
             call_window_seconds: self.bucket_call_window_seconds.read(&bucket)?,
             call_threshold_seconds: self.bucket_call_threshold_seconds.read(&bucket)?,
             call_notice_period_seconds: self.bucket_call_notice_period_seconds.read(&bucket)?,
@@ -448,7 +448,8 @@ impl GemContract<'_> {
         self.bucket_start_day.write(&bucket, terms.start_day)?;
         self.bucket_currency
             .write(&bucket, terms.reference_currency)?;
-        self.bucket_call_price.write(&bucket, terms.call_price)?;
+        self.bucket_call_price_minor
+            .write(&bucket, terms.call_price_minor)?;
         self.bucket_call_window_seconds
             .write(&bucket, terms.call_window_seconds)?;
         self.bucket_call_threshold_seconds
@@ -512,7 +513,7 @@ impl GemContract<'_> {
         self.remove_called(bucket_entry(bucket))?;
         self.bucket_start_day.clear(&bucket)?;
         self.bucket_currency.clear(&bucket)?;
-        self.bucket_call_price.clear(&bucket)?;
+        self.bucket_call_price_minor.clear(&bucket)?;
         self.bucket_call_window_seconds.clear(&bucket)?;
         self.bucket_call_threshold_seconds.clear(&bucket)?;
         self.bucket_call_notice_period_seconds.clear(&bucket)?;
@@ -530,7 +531,7 @@ impl GemContract<'_> {
 
     fn insert_bucket_bin(&mut self, bucket: B256, terms: &BucketTerms) -> Result<()> {
         let iso = terms.reference_currency;
-        let bin = Self::price_to_bin(terms.call_price)?;
+        let bin = Self::price_to_bin(terms.call_price_minor)?;
         let scoped = Self::scoped(iso, bin);
         let index = self.bucket_bin_count.read(&scoped)?;
         self.bucket_bin_at
@@ -547,7 +548,7 @@ impl GemContract<'_> {
             return Ok(());
         };
         let iso = terms.reference_currency;
-        let bin = Self::price_to_bin(terms.call_price)?;
+        let bin = Self::price_to_bin(terms.call_price_minor)?;
         let scoped = Self::scoped(iso, bin);
         let last = self
             .bucket_bin_count

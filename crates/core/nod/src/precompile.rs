@@ -150,7 +150,7 @@ fn to_abi_data(
         calledAt: called_at,
         isSettled: item.is_settled,
         effectiveState: state as u8,
-        callPriceMinor: terms.call_price,
+        callPriceMinor: terms.call_price_minor,
         callRate: terms.call_rate,
         callWindow: terms.call_window_seconds,
         callThreshold: terms.call_threshold_seconds,

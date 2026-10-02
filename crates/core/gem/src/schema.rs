@@ -35,7 +35,7 @@ pub struct GemAddParams {
 pub(crate) struct BucketTerms {
     pub(crate) start_day: u32,
     pub(crate) reference_currency: u16,
-    pub(crate) call_price: U256,
+    pub(crate) call_price_minor: U256,
     pub(crate) call_window_seconds: u32,
     pub(crate) call_threshold_seconds: u32,
     pub(crate) call_notice_period_seconds: u32,
@@ -46,7 +46,7 @@ impl BucketTerms {
         Self {
             start_day: first_full_day(item.issued_at),
             reference_currency: item.reference_currency,
-            call_price: item.call_price_minor,
+            call_price_minor: item.call_price_minor,
             call_window_seconds: item.call_window_seconds,
             call_threshold_seconds: item.call_threshold_seconds,
             call_notice_period_seconds: item.call_notice_period_seconds,
@@ -57,7 +57,7 @@ impl BucketTerms {
         let mut buf = [0u8; 4 + 2 + 32 + 4 + 4 + 4];
         buf[0..4].copy_from_slice(&self.start_day.to_be_bytes());
         buf[4..6].copy_from_slice(&self.reference_currency.to_be_bytes());
-        buf[6..38].copy_from_slice(&self.call_price.to_be_bytes::<32>());
+        buf[6..38].copy_from_slice(&self.call_price_minor.to_be_bytes::<32>());
         buf[38..42].copy_from_slice(&self.call_window_seconds.to_be_bytes());
         buf[42..46].copy_from_slice(&self.call_threshold_seconds.to_be_bytes());
         buf[46..50].copy_from_slice(&self.call_notice_period_seconds.to_be_bytes());
@@ -247,7 +247,7 @@ pub struct GemContract {
     #[attribute(order = 39)]
     pub bucket_gem_index: outbe_primitives::storage::dsl::Map<U256, u32>,
     #[attribute(order = 40)]
-    pub bucket_call_price: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub bucket_call_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
     #[attribute(order = 41)]
     pub bucket_currency: outbe_primitives::storage::dsl::Map<B256, u16>,
     /// First UTC day whose price counts towards the bucket's call.

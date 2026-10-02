@@ -427,7 +427,7 @@ const fn unpack_cursor(packed: u64) -> (u32, u32) {
 }
 
 /// True when the bucket's trailing `call_window_seconds` carries at least its
-/// `call_threshold_seconds` of days strictly above its `call_price`.
+/// `call_threshold_seconds` of days strictly above its `call_price_minor`.
 ///
 /// Every term comes off the bucket, not from the constants, so a retune cannot
 /// re-term a bucket that is already armed. `window` is sized for the widest
@@ -451,7 +451,7 @@ fn breached_enough(window: &[(u32, Option<U256>)], terms: &CallTerms, start_day:
         if *day < start_day {
             break;
         }
-        if vwap.is_some_and(|value| value > terms.call_price) {
+        if vwap.is_some_and(|value| value > terms.call_price_minor) {
             breaches += 1;
             if breaches >= threshold_days {
                 return true;
