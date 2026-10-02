@@ -251,12 +251,16 @@ fn expire_exact(
     }
     crate::terminal::fail_expired_ocomp_day(
         ctx.storage.clone(),
-        ctx.block.block_number,
-        scope,
-        before.worldwide_day,
-        intent_id,
-        retained_lysis_limit_minor,
-        outer_transition,
+        crate::terminal::ExpiredFailure {
+            settlement: crate::terminal::FailureSettlement {
+                block_number: ctx.block.block_number,
+                scope,
+                worldwide_day: before.worldwide_day,
+                unused_limit: retained_lysis_limit_minor,
+            },
+            intent_id,
+            outer_transition,
+        },
     )?;
     validate_expired_post_state(metadosis, before, intent_id, expected_retained_limit_minor)?;
     metadosis.emit(IMetadosis::OffchainJobExpired {

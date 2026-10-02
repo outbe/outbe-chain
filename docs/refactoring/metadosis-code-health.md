@@ -236,8 +236,8 @@ or receive a code-grounded disposition, without blanket analyzer suppression.
 - [x] ABI missing-receipt, missing-artifact and successful metadata characterization.
 - [x] FSM state invariants and persisted equivalences.
 - [x] Commit/reducer and genesis domain operations.
-- [ ] OCOMP voting, admission, expiry, request and activation.
-- [ ] Private argument contexts, shared fixture setup and duplicated test assertions.
+- [x] OCOMP voting, admission, expiry, request and activation.
+- [x] Private argument contexts and shared fixture setup; independent assertion oracles retained.
 - [ ] Coverage gaps, complete analyzer rerun and per-finding reconciliation.
 
 First slice: 255 library tests passed. Missing terminal/capacity receipts return
@@ -263,4 +263,21 @@ Expiry separates response closure, exact unfinalized deadline selection and
 ordered post-state checks. Request prepares candidate/sealed admission, frozen
 limits and intent through private typed results. New admission tests preserve
 deferred-reason precedence and checked arithmetic. All Metadosis targets pass
-(257 library tests; the ABI genesis test requires test-utils as its builder does).
+(256 passed library tests plus one ignored matrix at this slice; the ABI genesis
+test requires test-utils as its builder does).
+
+
+Fourth slice: completion and expiry consume crate-private typed inputs; the
+public finality signature remains compatible and delegates to a bound anchor.
+Local settlement and terminal failure separate their ordered economic effects,
+receipt writes and event projection. Lifecycle uses an advance step, query
+bounds and codec phase validation have explicit policies, and fixture committee,
+Tribute issuance and CE predecessor setup share one local authority. Three API
+characterizations cover bootstrap/offering reads, exactly-one membership and
+corrupt/dangling index rejection. No additional storage format was changed.
+
+The remaining Qlty rows are the protected public finality signature and the
+canonical proof DTO test initializer also used by the protocol module. Changing
+a public signature or coupling independent protocol test fixtures solely to
+remove these rows would violate this refactor's boundaries. Raw analyzer counts
+are reported separately from these reviewed dispositions.

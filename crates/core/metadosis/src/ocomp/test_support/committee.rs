@@ -29,38 +29,15 @@ pub(crate) fn founder_registrations_for_validators(
         let index = u8::try_from(index).map_err(|_| {
             PrecompileError::Fatal("test founder validator index exceeds u8".into())
         })?;
-        let key = signing_key(index);
-        let mut registration = OcompKeyRegistrationV1 {
-            core: OcompKeyRegistrationCoreV1 {
+        let registration = registration_for_validator(
+            index,
+            (*validator, *consensus_pubkey),
+            &RegistrationAuthority {
                 chain_id,
                 genesis_hash,
-                validator_identity_hash: validator_identity_hash_v1(*validator, consensus_pubkey)
-                    .map_err(|error| {
-                    PrecompileError::Fatal(format!(
-                        "test founder validator identity failed: {error}"
-                    ))
-                })?,
-                ocomp_public_key_sec1: key
-                    .verifying_key()
-                    .to_encoded_point(true)
-                    .as_bytes()
-                    .try_into()
-                    .map_err(|_| {
-                        PrecompileError::Fatal("test founder OCOMP key is not 33 bytes".into())
-                    })?,
-                key_epoch: 1,
-                allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
+                limits,
             },
-            proof_of_possession: [0; 64],
-        };
-        registration.proof_of_possession = sign(
-            &key,
-            registration
-                .proof_of_possession_digest(limits)
-                .map_err(|error| {
-                    PrecompileError::Fatal(format!("test founder PoP digest failed: {error}"))
-                })?,
-        );
+        )?;
         registrations.push(registration);
     }
     Ok(registrations)
@@ -88,26 +65,16 @@ pub(crate) fn seed_validator_snapshot(
             .register_validator(owner, validator, &consensus_pubkey)
             .unwrap();
         validators.mark_pending(validator).unwrap();
-        let key = signing_key(index);
-        let mut registration = OcompKeyRegistrationV1 {
-            core: OcompKeyRegistrationCoreV1 {
+        let registration = registration_for_validator(
+            index,
+            (validator, consensus_pubkey),
+            &RegistrationAuthority {
                 chain_id,
                 genesis_hash,
-                validator_identity_hash: validator_identity_hash_v1(validator, &consensus_pubkey)
-                    .unwrap(),
-                ocomp_public_key_sec1: key
-                    .verifying_key()
-                    .to_encoded_point(true)
-                    .as_bytes()
-                    .try_into()
-                    .unwrap(),
-                key_epoch: 1,
-                allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
+                limits,
             },
-            proof_of_possession: [0; 64],
-        };
-        let digest = registration.proof_of_possession_digest(limits).unwrap();
-        registration.proof_of_possession = sign(&key, digest);
+        )
+        .unwrap();
         validators
             .confirm_validator_ready(validator, &registration.encode_canonical(limits).unwrap())
             .unwrap();
@@ -147,4 +114,56 @@ pub fn signed_result_vote_for_intent(
         vote.signing_digest(intent, limits).unwrap(),
     );
     vote
+}
+
+pub(super) struct RegistrationAuthority<'limits> {
+    pub(super) chain_id: u64,
+    pub(super) genesis_hash: B256,
+    pub(super) limits: &'limits SchemaLimits,
+}
+
+pub(super) fn registration_for_validator(
+    index: u8,
+    validator: (Address, [u8; 48]),
+    authority: &RegistrationAuthority<'_>,
+) -> PrecompileResult<OcompKeyRegistrationV1> {
+    let (validator, consensus_pubkey) = validator;
+    let RegistrationAuthority {
+        chain_id,
+        genesis_hash,
+        limits,
+    } = *authority;
+    let key = signing_key(index);
+    let mut registration = OcompKeyRegistrationV1 {
+        core: OcompKeyRegistrationCoreV1 {
+            chain_id,
+            genesis_hash,
+            validator_identity_hash: validator_identity_hash_v1(validator, &consensus_pubkey)
+                .map_err(|error| {
+                    PrecompileError::Fatal(format!(
+                        "test founder validator identity failed: {error}"
+                    ))
+                })?,
+            ocomp_public_key_sec1: key
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .try_into()
+                .map_err(|_| {
+                    PrecompileError::Fatal("test founder OCOMP key is not 33 bytes".into())
+                })?,
+            key_epoch: 1,
+            allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
+        },
+        proof_of_possession: [0; 64],
+    };
+    registration.proof_of_possession = sign(
+        &key,
+        registration
+            .proof_of_possession_digest(limits)
+            .map_err(|error| {
+                PrecompileError::Fatal(format!("test founder PoP digest failed: {error}"))
+            })?,
+    );
+    Ok(registration)
 }

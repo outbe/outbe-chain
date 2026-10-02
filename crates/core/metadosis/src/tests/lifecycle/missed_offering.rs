@@ -1,3 +1,4 @@
+use super::fixtures::begin_scope_with_persisted_parent;
 use super::*;
 
 fn run_missed_offering_command(
@@ -524,9 +525,11 @@ fn missed_offering_rejects_a_populated_partition_without_any_partial_effect() {
             &storage,
             &scope,
             &parent,
-            address!("7600000000000000000000000000000000000076"),
-            wwd,
-            U256::from(10),
+            FixtureTribute {
+                owner: address!("7600000000000000000000000000000000000076"),
+                wwd,
+                nominal: U256::from(10),
+            },
         );
     });
 
@@ -678,23 +681,7 @@ fn missed_offering_rolls_back_a_ce_lookup_failure_after_promis_then_retries_once
         tree.clone(),
         outbe_compressed_entities::CeWorkConfig::new(0, 0, u64::MAX),
     );
-    StorageHandle::enter(&mut provider, |storage| {
-        storage
-            .sstore(
-                outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-                U256::ZERO,
-                U256::from(4),
-            )
-            .unwrap();
-        storage
-            .sstore(
-                outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-                U256::from(1),
-                U256::from_be_slice(parent_root.as_slice()),
-            )
-            .unwrap();
-        begin_block(storage, &scope).unwrap();
-    });
+    begin_scope_with_persisted_parent(&mut provider, &scope, parent_root);
 
     let storage_before = provider.storage.clone();
     let events_before = provider.events.clone();

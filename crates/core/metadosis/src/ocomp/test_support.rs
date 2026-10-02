@@ -155,3 +155,22 @@ pub(crate) use committee::{founder_registrations_for_validators, seed_validator_
 use committee::{ocomp_key_hash, sign, signing_key};
 use parent_tree::begin_activation_scope;
 pub(crate) use wwd::FixtureKernelExt;
+
+/// Installs the persisted CE predecessor owned by the fixture kernel.
+#[cfg(test)]
+pub(crate) fn seed_ce_parent(storage: &StorageHandle<'_>, root: B256) -> PrecompileResult<()> {
+    for (slot, value) in [
+        (U256::ZERO, U256::from(4)),
+        (U256::from(1), U256::from_be_slice(root.as_slice())),
+    ] {
+        storage.sstore(COMPRESSED_ENTITIES_ADDRESS, slot, value)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn seed_ce_genesis(storage: &StorageHandle<'_>) -> PrecompileResult<()> {
+    let root = outbe_compressed_entities::sealed_root(B256::ZERO)
+        .map_err(|error| PrecompileError::Fatal(format!("fixture CE genesis root: {error}")))?;
+    seed_ce_parent(storage, root)
+}

@@ -206,9 +206,11 @@ impl MetadosisContract<'_> {
             &storage,
             input.scope,
             &completed_transition,
-            input.inclusion_height,
-            current_time,
-            input.limits,
+            super::super::activation::QuorumExecution {
+                current_height: input.inclusion_height,
+                current_time,
+                limits: input.limits,
+            },
         );
         super::super::activation::apply_quorum_result(
             apply_context,

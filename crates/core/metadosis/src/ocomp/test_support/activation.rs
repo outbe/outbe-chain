@@ -118,31 +118,16 @@ impl ActivationFixture {
                 .unwrap();
             validators.mark_pending(validator).unwrap();
 
-            let key = signing_key(index);
-            let mut registration = OcompKeyRegistrationV1 {
-                core: OcompKeyRegistrationCoreV1 {
+            let registration = super::committee::registration_for_validator(
+                index,
+                (validator, consensus_pubkey),
+                &super::committee::RegistrationAuthority {
                     chain_id,
                     genesis_hash,
-                    validator_identity_hash: validator_identity_hash_v1(
-                        validator,
-                        &consensus_pubkey,
-                    )
-                    .unwrap(),
-                    ocomp_public_key_sec1: key
-                        .verifying_key()
-                        .to_encoded_point(true)
-                        .as_bytes()
-                        .try_into()
-                        .unwrap(),
-                    key_epoch: 1,
-                    allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
+                    limits: &self.limits,
                 },
-                proof_of_possession: [0; 64],
-            };
-            let digest = registration
-                .proof_of_possession_digest(&self.limits)
-                .unwrap();
-            registration.proof_of_possession = sign(&key, digest);
+            )
+            .unwrap();
             validators
                 .confirm_validator_ready(
                     validator,

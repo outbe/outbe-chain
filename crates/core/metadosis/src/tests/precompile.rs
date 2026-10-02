@@ -122,7 +122,7 @@ fn worldwide_day_abi_preserves_genesis_windows_rates_and_membership() {
 }
 
 #[cfg(feature = "test-utils")]
-fn seed_offering_day(storage: StorageHandle<'_>) {
+pub(super) fn seed_offering_day(storage: StorageHandle<'_>) {
     use crate::genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay};
     FreshDevnetGenesisBuilder::new()
         .seed_active_worldwide_day(GenesisWorldwideDay {

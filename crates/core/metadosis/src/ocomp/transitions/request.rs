@@ -81,32 +81,12 @@ impl MetadosisContract<'_> {
         receipt: &RequestLimitSplitReceiptV1,
         schema_limits: &SchemaLimits,
     ) -> Result<PreparedRequest> {
-        super::super::authority::require_current_ocomp_attempt_snapshot(
-            self.storage.clone(),
+        self.validate_request_authorization(&RequestAuthorization {
+            outer_transition,
             intent,
-        )?;
-        if !matches!(
-            outer_transition.kind(),
-            OuterWwdTransitionKind::OcompRequestCommitted
-        ) {
-            return Err(storage_corruption_message(
-                "OCOMP request requires the typed outer request transition",
-            ));
-        }
-        intent.validate_semantics().map_err(|error| {
-            storage_corruption_message(format!("invalid OCOMP intent: {error}"))
-        })?;
-        receipt.validate_semantics().map_err(|error| {
-            storage_corruption_message(format!("invalid OCOMP request receipt: {error}"))
+            receipt,
         })?;
         let wwd = WorldwideDay::new(intent.wwd);
-        if WwdStatus::try_from(self.worldwide_days.entry(wwd).status().read()?)? != WwdStatus::Ready
-        {
-            return Err(storage_corruption_message(
-                "OCOMP request requires READY WorldwideDay",
-            ));
-        }
-
         let receipt_hash = validate_request_binding(intent, receipt, schema_limits)?;
         let mut state = self.ocomp_fsm_state(wwd, schema_limits)?;
         let ready_key = ReadyIndexKey::from_projection(state.projection())?;
@@ -151,6 +131,46 @@ impl MetadosisContract<'_> {
             intent_id,
         })
     }
+    fn validate_request_authorization(&self, request: &RequestAuthorization<'_>) -> Result<()> {
+        let RequestAuthorization {
+            outer_transition,
+            intent,
+            receipt,
+        } = *request;
+        super::super::authority::require_current_ocomp_attempt_snapshot(
+            self.storage.clone(),
+            intent,
+        )?;
+        if !matches!(
+            outer_transition.kind(),
+            OuterWwdTransitionKind::OcompRequestCommitted
+        ) {
+            return Err(storage_corruption_message(
+                "OCOMP request requires the typed outer request transition",
+            ));
+        }
+        intent.validate_semantics().map_err(|error| {
+            storage_corruption_message(format!("invalid OCOMP intent: {error}"))
+        })?;
+        receipt.validate_semantics().map_err(|error| {
+            storage_corruption_message(format!("invalid OCOMP request receipt: {error}"))
+        })?;
+        let wwd = WorldwideDay::new(intent.wwd);
+        if WwdStatus::try_from(self.worldwide_days.entry(wwd).status().read()?)? != WwdStatus::Ready
+        {
+            return Err(storage_corruption_message(
+                "OCOMP request requires READY WorldwideDay",
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+struct RequestAuthorization<'request> {
+    outer_transition: &'request OuterWwdTransition,
+    intent: &'request JobIntentV1,
+    receipt: &'request RequestLimitSplitReceiptV1,
 }
 
 fn validate_request_binding(

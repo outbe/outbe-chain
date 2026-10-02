@@ -16,17 +16,17 @@ use outbe_ocomp_protocol::{
     SchemaLimits,
 };
 use outbe_primitives::{error::Result, time::WorldwideDay};
-struct CompletionInput<'a> {
-    outer_transition: &'a OuterWwdTransition,
-    intent_id: B256,
-    active_generation: ActiveGenerationV1,
-    result_evidence_hash: B256,
-    lysis_allocation_minor: U256,
-    unused_lysis_limit_minor: U256,
-    activated_at_height: u64,
-    activated_at_time: u64,
-    quorum: &'a outbe_ocomp_protocol::vote::OcompQuorumV1,
-    schema_limits: &'a SchemaLimits,
+pub(crate) struct CompletionInput<'a> {
+    pub(crate) outer_transition: &'a OuterWwdTransition,
+    pub(crate) intent_id: B256,
+    pub(crate) active_generation: ActiveGenerationV1,
+    pub(crate) result_evidence_hash: B256,
+    pub(crate) lysis_allocation_minor: U256,
+    pub(crate) unused_lysis_limit_minor: U256,
+    pub(crate) activated_at_height: u64,
+    pub(crate) activated_at_time: u64,
+    pub(crate) quorum: &'a outbe_ocomp_protocol::vote::OcompQuorumV1,
+    pub(crate) schema_limits: &'a SchemaLimits,
 }
 impl MetadosisContract<'_> {
     /// Commits the certified terminal receipt and active generation after all
@@ -34,33 +34,11 @@ impl MetadosisContract<'_> {
     ///
     /// The one-shot terminal permit is advanced only after every consensus
     /// write and event succeeds.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn commit_ocomp_completed(
         &mut self,
-        outer_transition: &OuterWwdTransition,
-        intent_id: B256,
-        active_generation: ActiveGenerationV1,
-        result_evidence_hash: B256,
-        lysis_allocation_minor: U256,
-        unused_lysis_limit_minor: U256,
-        activated_at_height: u64,
-        activated_at_time: u64,
+        input: CompletionInput<'_>,
         permit: LysisTerminalPermitV1<'_, '_>,
-        quorum: &outbe_ocomp_protocol::vote::OcompQuorumV1,
-        schema_limits: &SchemaLimits,
     ) -> Result<OcompCompletedBindingV1> {
-        let input = CompletionInput {
-            outer_transition,
-            intent_id,
-            active_generation,
-            result_evidence_hash,
-            lysis_allocation_minor,
-            unused_lysis_limit_minor,
-            activated_at_height,
-            activated_at_time,
-            quorum,
-            schema_limits,
-        };
         self.complete_ocomp(input, permit)
     }
     fn complete_ocomp(

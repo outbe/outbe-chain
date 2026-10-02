@@ -60,38 +60,51 @@ pub fn fresh_devnet_sentinel_is_pristine(
     sentinel_day: WorldwideDay,
 ) -> Result<bool> {
     let contract = crate::schema::MetadosisContract::new(storage.clone());
-    Ok(crate::api::worldwide_days(storage.clone())?.is_empty()
-        && contract.ocomp_scheduler.is_empty()?
+    if !crate::api::worldwide_days(storage.clone())?.is_empty() {
+        return Ok(false);
+    }
+    let indexes_empty = contract.ocomp_scheduler.is_empty()?
         && contract.ocomp_ready_index.is_empty()?
-        && contract.ocomp_response_deadline_index.is_empty()?
-        && contract.terminal_intent_count(sentinel_day)? == 0
-        && contract
-            .ocomp_fsm_states
-            .get_bytes(&sentinel_day)
-            .is_empty()?
-        && contract
-            .ocomp_request_limit_receipts
-            .get_bytes(&sentinel_day)
-            .is_empty()?
-        && contract
-            .ocomp_pre_admission_envelopes
-            .get_bytes(&sentinel_day)
-            .is_empty()?
-        && contract
-            .ocomp_active_lysis_generations
-            .get_bytes(&sentinel_day)
-            .is_empty()?
-        && contract
-            .ocomp_job_records
-            .get_bytes(&B256::ZERO)
-            .is_empty()?
+        && contract.ocomp_response_deadline_index.is_empty()?;
+    if !indexes_empty || contract.terminal_intent_count(sentinel_day)? != 0 {
+        return Ok(false);
+    }
+    if !sentinel_day_artifacts_empty(&contract, sentinel_day)? {
+        return Ok(false);
+    }
+    let zero_intent_empty = contract
+        .ocomp_job_records
+        .get_bytes(&B256::ZERO)
+        .is_empty()?
         && contract
             .ocomp_vote_accountability
             .get_bytes(&B256::ZERO)
-            .is_empty()?
-        && crate::api::missed_offering_receipt(storage.clone(), sentinel_day)?.is_none()
-        && crate::api::capacity_forfeiture_receipt(storage.clone(), sentinel_day)?.is_none()
-        && crate::api::day_limit_formation_receipt(storage, sentinel_day)?.is_none())
+            .is_empty()?;
+    if !zero_intent_empty {
+        return Ok(false);
+    }
+    Ok(
+        crate::api::missed_offering_receipt(storage.clone(), sentinel_day)?.is_none()
+            && crate::api::capacity_forfeiture_receipt(storage.clone(), sentinel_day)?.is_none()
+            && crate::api::day_limit_formation_receipt(storage, sentinel_day)?.is_none(),
+    )
+}
+
+fn sentinel_day_artifacts_empty(
+    contract: &crate::schema::MetadosisContract<'_>,
+    day: WorldwideDay,
+) -> Result<bool> {
+    for bytes in [
+        contract.ocomp_fsm_states.get_bytes(&day),
+        contract.ocomp_request_limit_receipts.get_bytes(&day),
+        contract.ocomp_pre_admission_envelopes.get_bytes(&day),
+        contract.ocomp_active_lysis_generations.get_bytes(&day),
+    ] {
+        if !bytes.is_empty()? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 mod kernel {

@@ -806,11 +806,13 @@ mod tests {
             .unwrap();
     }
 
-    #[test]
-    fn invalid_pre_state_rejects_before_effect() {
+    fn assert_mutation_rejected_before_effect(
+        purpose: MetadosisMutationPurposeTag,
+        expected: &str,
+    ) {
         let mut provider = HashMapStorageProvider::new(1);
         seed_active(&mut provider, &record(255, day_type::UNKNOWN));
-        provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
+        provider.enable_metadosis_mutation_frame(purpose);
         let effect_called = Cell::new(false);
 
         let error = provider
@@ -826,8 +828,16 @@ mod tests {
             })
             .unwrap_err();
 
-        assert!(error.to_string().contains("unknown status tag"));
+        assert!(error.to_string().contains(expected));
         assert!(!effect_called.get());
+    }
+
+    #[test]
+    fn invalid_pre_state_rejects_before_effect() {
+        assert_mutation_rejected_before_effect(
+            MetadosisMutationPurposeTag::CycleLifecycle,
+            "unknown status tag",
+        );
     }
 
     #[test]
@@ -864,28 +874,10 @@ mod tests {
 
     #[test]
     fn wrong_purpose_rejects_before_aggregate_or_effect() {
-        let mut provider = HashMapStorageProvider::new(1);
-        seed_active(&mut provider, &record(255, day_type::UNKNOWN));
-        provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CertifiedFinality);
-        let effect_called = Cell::new(false);
-
-        let error = provider
-            .enter(|storage| {
-                commit_transition::<MetadosisCycleLifecycle, _>(
-                    storage,
-                    B256::repeat_byte(0x53),
-                    |_| {
-                        effect_called.set(true);
-                        Ok(())
-                    },
-                )
-            })
-            .unwrap_err();
-
-        assert!(error
-            .to_string()
-            .contains("no matching Metadosis mutation lease"));
-        assert!(!effect_called.get());
+        assert_mutation_rejected_before_effect(
+            MetadosisMutationPurposeTag::CertifiedFinality,
+            "no matching Metadosis mutation lease",
+        );
     }
 
     #[test]

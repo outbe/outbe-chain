@@ -400,6 +400,18 @@ mod tests {
         schema::MetadosisContract,
     };
 
+    fn signed_carrier_admission(
+        fixture: &mut ActivationFixture,
+        signer: Address,
+        height: u64,
+    ) -> ResultVoteCarrierAdmission {
+        let vote = fixture.signed_result_vote(1);
+        let calldata = encode_submit_lysis_result_calldata(&vote, &fixture.limits).unwrap();
+        StorageHandle::enter(&mut fixture.provider, |storage| {
+            verify_result_vote_carrier(storage, &calldata, signer, height, &fixture.limits)
+        })
+    }
+
     #[test]
     fn valid_full_vote_identifies_the_historical_validator() {
         let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
@@ -450,18 +462,7 @@ mod tests {
     #[test]
     fn unauthorized_outer_signer_is_permanent_carrier_invalidity() {
         let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
-        let vote = fixture.signed_result_vote(1);
-        let calldata = encode_submit_lysis_result_calldata(&vote, &fixture.limits).unwrap();
-
-        let admission = StorageHandle::enter(&mut fixture.provider, |storage| {
-            verify_result_vote_carrier(
-                storage,
-                &calldata,
-                Address::repeat_byte(0xEE),
-                14,
-                &fixture.limits,
-            )
-        });
+        let admission = signed_carrier_admission(&mut fixture, Address::repeat_byte(0xEE), 14);
 
         assert!(matches!(
             admission,
@@ -494,18 +495,7 @@ mod tests {
     #[test]
     fn pre_open_vote_still_requires_an_authorized_outer_signer() {
         let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
-        let vote = fixture.signed_result_vote(1);
-        let calldata = encode_submit_lysis_result_calldata(&vote, &fixture.limits).unwrap();
-
-        let admission = StorageHandle::enter(&mut fixture.provider, |storage| {
-            verify_result_vote_carrier(
-                storage,
-                &calldata,
-                Address::repeat_byte(0xEE),
-                11,
-                &fixture.limits,
-            )
-        });
+        let admission = signed_carrier_admission(&mut fixture, Address::repeat_byte(0xEE), 11);
 
         assert!(matches!(
             admission,

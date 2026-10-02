@@ -4,6 +4,8 @@ mod finality;
 mod request;
 mod voting;
 
+pub(crate) use completion::CompletionInput;
+
 use super::index::{remove_ready_key, ReadyIndexKey};
 use crate::{errors::storage_corruption_message, schema::MetadosisContract};
 use alloy_primitives::B256;

@@ -264,7 +264,6 @@ mod tests {
     use outbe_compressed_entities::{begin_block, mint, BodyInput, TributeBodyV1, WwdEntityId};
     use outbe_primitives::time::WorldwideDay;
     use outbe_primitives::{
-        addresses::COMPRESSED_ENTITIES_ADDRESS,
         block::{BlockContext, BlockRuntimeContext},
         storage::{
             hashmap::HashMapStorageProvider, MetadosisCycleLifecycle, MetadosisMutationPurposeTag,
@@ -515,20 +514,7 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(1);
         let scope = ExecutionScope::new();
         StorageHandle::enter(&mut provider, |storage| {
-            storage
-                .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-                .unwrap();
-            storage
-                .sstore(
-                    COMPRESSED_ENTITIES_ADDRESS,
-                    U256::from(1),
-                    U256::from_be_slice(
-                        outbe_compressed_entities::sealed_root(B256::ZERO)
-                            .unwrap()
-                            .as_slice(),
-                    ),
-                )
-                .unwrap();
+            crate::fixture_kernel::seed_ce_genesis(&storage).unwrap();
             begin_block(storage, &scope).unwrap();
         });
         let storage_before = provider.storage.clone();

@@ -187,9 +187,43 @@ pub(super) fn decode_scheduler(encoded: &[u8]) -> Result<JobFsmSnapshot> {
     let retained_effect = decode_retained_effect(&mut reader)?;
     reader.finish()?;
 
+    decode_scheduler_phase(SchedulerFields {
+        phase,
+        worldwide_day,
+        pending_nonce,
+        next_check_height,
+        intent_id,
+        requested_height,
+        deadline_height,
+        retained_effect,
+    })
+}
+
+struct SchedulerFields {
+    phase: u8,
+    worldwide_day: WorldwideDay,
+    pending_nonce: u64,
+    next_check_height: u64,
+    intent_id: B256,
+    requested_height: u64,
+    deadline_height: u64,
+    retained_effect: Option<RetainedRequestEffectSnapshot>,
+}
+
+fn decode_scheduler_phase(fields: SchedulerFields) -> Result<JobFsmSnapshot> {
+    let SchedulerFields {
+        phase,
+        worldwide_day,
+        pending_nonce,
+        next_check_height,
+        intent_id,
+        requested_height,
+        deadline_height,
+        retained_effect,
+    } = fields;
     let (ready, live) = match phase {
         SCHEDULER_PHASE_READY
-            if intent_id.is_zero() && requested_height == 0 && deadline_height == 0 =>
+            if (intent_id, requested_height, deadline_height) == (B256::ZERO, 0, 0) =>
         {
             (
                 Some(ReadyAttemptSnapshot {

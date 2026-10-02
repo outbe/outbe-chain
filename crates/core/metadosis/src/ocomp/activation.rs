@@ -80,15 +80,24 @@ pub(crate) struct QuorumApplyContext<'a, 'storage> {
     limits: &'a SchemaLimits,
 }
 
+pub(crate) struct QuorumExecution<'limits> {
+    pub(crate) current_height: u64,
+    pub(crate) current_time: u64,
+    pub(crate) limits: &'limits SchemaLimits,
+}
+
 impl<'a, 'storage> QuorumApplyContext<'a, 'storage> {
     pub(crate) const fn new(
         storage: &'a StorageHandle<'storage>,
         scope: &'a ExecutionScope,
         completed_transition: &'a OuterWwdTransition,
-        current_height: u64,
-        current_time: u64,
-        limits: &'a SchemaLimits,
+        execution: QuorumExecution<'a>,
     ) -> Self {
+        let QuorumExecution {
+            current_height,
+            current_time,
+            limits,
+        } = execution;
         Self {
             storage,
             scope,
@@ -488,17 +497,19 @@ fn apply_certified_result(
             .terminal_permit(capability)
             .map_err(|_| crate::errors::business_failure("Lysis terminal permit mismatch"))?;
         let completed = metadosis.commit_ocomp_completed(
-            outer_transition,
-            binding.intent_id,
-            active_generation,
-            result_evidence_hash,
-            plan.nod().lysis_allocation_minor(),
-            plan.carry_over().credited_unused_lysis_limit_minor(),
-            current_height,
-            current_time,
+            super::transitions::CompletionInput {
+                outer_transition,
+                intent_id: binding.intent_id,
+                active_generation,
+                result_evidence_hash,
+                lysis_allocation_minor: plan.nod().lysis_allocation_minor(),
+                unused_lysis_limit_minor: plan.carry_over().credited_unused_lysis_limit_minor(),
+                activated_at_height: current_height,
+                activated_at_time: current_time,
+                quorum,
+                schema_limits: limits,
+            },
             permit,
-            quorum,
-            limits,
         )?;
         Ok(encode_activation_return(
             completed.activation_call_id,

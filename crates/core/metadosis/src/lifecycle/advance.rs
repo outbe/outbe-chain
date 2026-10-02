@@ -70,65 +70,99 @@ impl<'storage> AdvanceTick<'_, 'storage> {
         current: &WwdProjection,
         transition: &OuterWwdTransition,
     ) -> Result<bool> {
-        let Self {
-            ctx,
-            scope: _,
-            aggregate,
-        } = self;
-        let retained_count = aggregate.retained_count();
         match transition.kind() {
-            OuterWwdTransitionKind::Noop => {}
+            OuterWwdTransitionKind::Noop => Ok(false),
             OuterWwdTransitionKind::MissedOffering { preceding_edges } => {
-                let rate_resolution = apply_wwd_advance_edges(
+                self.close_missed(
                     metadosis,
-                    current.worldwide_day,
-                    preceding_edges,
-                    "missed offering resolved one WWD rate more than once",
+                    AdvanceStep {
+                        current,
+                        transition,
+                        edges: preceding_edges,
+                    },
                 )?;
-                apply_missed_offering(
-                    metadosis,
-                    self.effect(current, transition, rate_resolution),
-                )?;
+                Ok(false)
             }
             OuterWwdTransitionKind::Advance(edges) => {
-                let rate_resolution = apply_wwd_advance_edges(
+                self.advance(
                     metadosis,
-                    current.worldwide_day,
-                    edges,
-                    "outer advance resolved one WWD rate more than once",
+                    AdvanceStep {
+                        current,
+                        transition,
+                        edges,
+                    },
                 )?;
-                commit_outer_transition_with_rate(
-                    metadosis,
-                    current.worldwide_day,
-                    transition,
-                    ctx.block.block_number,
-                    rate_resolution,
-                )?;
-                if edges.last() == Some(&WwdAdvanceEdge::BecomeReady) {
-                    return Ok(true);
-                }
+                Ok(edges.last() == Some(&WwdAdvanceEdge::BecomeReady))
             }
             OuterWwdTransitionKind::CapacityForfeiture { preceding_edges } => {
-                aggregate.validate_capacity_victim(current)?;
-                let rate_resolution = apply_wwd_advance_edges(
+                self.forfeit_capacity(
                     metadosis,
-                    current.worldwide_day,
-                    preceding_edges,
-                    "capacity forfeiture resolved one WWD rate more than once",
+                    AdvanceStep {
+                        current,
+                        transition,
+                        edges: preceding_edges,
+                    },
                 )?;
-                apply_capacity_forfeiture(
-                    metadosis,
-                    self.effect(current, transition, rate_resolution),
-                    retained_count,
-                )?;
-                return Ok(true);
+                Ok(true)
             }
-            unexpected => {
-                return Err(crate::errors::storage_corruption(format!(
-                    "AdvanceDue produced non-Cycle transition {unexpected:?}"
-                )));
-            }
+            unexpected => Err(crate::errors::storage_corruption(format!(
+                "AdvanceDue produced non-Cycle transition {unexpected:?}"
+            ))),
         }
-        Ok(false)
     }
+
+    fn close_missed(
+        &self,
+        metadosis: &mut MetadosisContract<'_>,
+        step: AdvanceStep<'_>,
+    ) -> Result<()> {
+        let rate = apply_wwd_advance_edges(
+            metadosis,
+            step.current.worldwide_day,
+            step.edges,
+            "missed offering resolved one WWD rate more than once",
+        )?;
+        apply_missed_offering(metadosis, self.effect(step.current, step.transition, rate))
+    }
+
+    fn advance(&self, metadosis: &mut MetadosisContract<'_>, step: AdvanceStep<'_>) -> Result<()> {
+        let rate = apply_wwd_advance_edges(
+            metadosis,
+            step.current.worldwide_day,
+            step.edges,
+            "outer advance resolved one WWD rate more than once",
+        )?;
+        commit_outer_transition_with_rate(
+            metadosis,
+            step.current.worldwide_day,
+            step.transition,
+            self.ctx.block.block_number,
+            rate,
+        )
+    }
+
+    fn forfeit_capacity(
+        &self,
+        metadosis: &mut MetadosisContract<'_>,
+        step: AdvanceStep<'_>,
+    ) -> Result<()> {
+        self.aggregate.validate_capacity_victim(step.current)?;
+        let rate = apply_wwd_advance_edges(
+            metadosis,
+            step.current.worldwide_day,
+            step.edges,
+            "capacity forfeiture resolved one WWD rate more than once",
+        )?;
+        apply_capacity_forfeiture(
+            metadosis,
+            self.effect(step.current, step.transition, rate),
+            self.aggregate.retained_count(),
+        )
+    }
+}
+
+struct AdvanceStep<'step> {
+    current: &'step WwdProjection,
+    transition: &'step OuterWwdTransition,
+    edges: &'step [WwdAdvanceEdge],
 }

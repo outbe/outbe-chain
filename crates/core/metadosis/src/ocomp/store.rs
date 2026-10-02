@@ -386,10 +386,8 @@ fn expected_live_deadline(record: &OcompJobRecordV1) -> Result<u64> {
             .as_ref()
             .ok_or_else(|| storage_corruption_message("live OCOMP job has no finalized binding"))?
             .deadline_height),
-        _ => {
-            return Err(storage_corruption_message(
-                "terminal OCOMP job remains in the live scheduler",
-            ))
-        }
+        _ => Err(storage_corruption_message(
+            "terminal OCOMP job remains in the live scheduler",
+        )),
     }
 }
