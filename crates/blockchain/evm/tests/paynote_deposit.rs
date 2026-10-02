@@ -45,6 +45,8 @@ sol! {
     interface IFixture {
         function mint(address account, uint256 amount) external;
         function approve(address spender, uint256 amount) external returns (bool);
+        function balanceOf(address account) external view returns (uint256);
+        function configure(uint256 mode, address factory, bytes reentry) external;
     }
 }
 
@@ -420,4 +422,98 @@ fn a_differing_amount_under_the_same_serial_is_a_distinct_leaf() {
             "the leaf for amount {amount} must be present"
         );
     }
+}
+
+fn asset_balances(ctx: &mut EvmCtx) -> [U256; 4] {
+    [ALICE, PAYNOTE_ADDRESS, VAULT_ROUTER_ADDRESS, VAULT].map(|account| {
+        let out = run_call!(
+            ctx,
+            ASSET,
+            Bytes::from(IFixture::balanceOfCall { account }.abi_encode()),
+            true
+        );
+        IFixture::balanceOfCall::abi_decode_returns(&out.returndata).unwrap()
+    })
+}
+
+fn configure_asset(ctx: &mut EvmCtx, mode: u64) {
+    fixture_call(
+        ctx,
+        ALICE,
+        ASSET,
+        IFixture::configureCall {
+            mode: U256::from(mode),
+            factory: PAYNOTE_ADDRESS,
+            reentry: Bytes::new(),
+        },
+    );
+}
+
+#[test]
+fn a_token_that_does_not_deliver_the_amount_deposits_nothing() {
+    // False transferFrom, false approve, malformed bool, success without
+    // movement, and fee-on-transfer.
+    for (mode, reason) in [
+        (1, "PayNote token call failed"),
+        (2, "PayNote token call failed"),
+        (6, "PayNote token call failed"),
+        (8, "PayNote token moved an unexpected amount"),
+        (9, "PayNote token moved an unexpected amount"),
+    ] {
+        let mut ctx = evm_ctx(seeded_db(true, true));
+        // Stray tokens in the pool must never pay for a deposit.
+        fixture_call(
+            &mut ctx,
+            ALICE,
+            ASSET,
+            IFixture::mintCall {
+                account: PAYNOTE_ADDRESS,
+                amount: U256::from(DEPOSIT_AMOUNT),
+            },
+        );
+        configure_asset(&mut ctx, mode);
+        let before = asset_balances(&mut ctx);
+
+        let result = run_call!(
+            &mut ctx,
+            PAYNOTE_ADDRESS,
+            deposit_calldata(ASSET, DEPOSIT_AMOUNT),
+            false
+        );
+        assert!(
+            !matches!(result.status, SubCallStatus::Success),
+            "mode {mode} must not deposit"
+        );
+        assert!(
+            String::from_utf8_lossy(&result.returndata).contains(reason),
+            "mode {mode}: 0x{}",
+            alloy_primitives::hex::encode(&result.returndata)
+        );
+        assert_eq!(asset_balances(&mut ctx), before, "mode {mode}");
+        assert_pristine!(&mut ctx);
+    }
+}
+
+#[test]
+fn a_token_that_returns_nothing_still_deposits() {
+    let mut ctx = evm_ctx(seeded_db(true, true));
+    configure_asset(&mut ctx, 7);
+    let [alice, ..] = asset_balances(&mut ctx);
+
+    let result = run_call!(
+        &mut ctx,
+        PAYNOTE_ADDRESS,
+        deposit_calldata(ASSET, DEPOSIT_AMOUNT),
+        false
+    );
+    assert!(
+        matches!(result.status, SubCallStatus::Success),
+        "{:?}",
+        result.status
+    );
+    let amount = U256::from(DEPOSIT_AMOUNT);
+    assert_eq!(
+        asset_balances(&mut ctx),
+        [alice - amount, U256::ZERO, U256::ZERO, amount]
+    );
 }
