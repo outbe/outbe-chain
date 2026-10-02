@@ -1,53 +1,40 @@
 use std::sync::Arc;
 
-use alloy_consensus::Transaction as _;
-use alloy_primitives::{B256, U256};
-use alloy_rlp::Encodable as _;
-use outbe_evm::{AccountedParentArtifact, OutbeEvmConfig, OutbeNextBlockEnvAttributes};
+use alloy_primitives::B256;
+use outbe_evm::OutbeEvmConfig;
 use outbe_primitives::{
-    consensus::OUTBE_MAX_BLOCK_SIZE,
     error::PrecompileError,
-    reshare_artifact::{decode_outbe_block_artifacts, sanitize_prefinal_outbe_block_artifacts},
-    runtime_audit_v1::{
-        process_instance_id, BODY_READ_REQUEST_DEADLINE, OTHER_PAYLOAD_EXECUTION_FAILURE,
-        PAYLOAD_EXECUTION_FAILED, SCHEMA_VERSION,
-    },
+    runtime_audit_v1::{BODY_READ_REQUEST_DEADLINE, OTHER_PAYLOAD_EXECUTION_FAILURE},
     system_tx::GENESIS_BOOTSTRAP_BLOCK_NUMBER,
-    OutbeBuiltPayload, OutbeHeader, OutbePayloadAttributes, OutbePrimitives, OutbeTxEnvelope,
+    OutbeBuiltPayload, OutbeHeader, OutbePayloadAttributes, OutbeTxEnvelope,
 };
 use reth_basic_payload_builder::{
     is_better_payload, BuildArguments, BuildOutcome, MissingPayloadBehaviour, PayloadBuilder,
     PayloadConfig,
 };
-use reth_chainspec::{ChainSpec, ChainSpecProvider, EthChainSpec, EthereumHardforks};
-use reth_consensus_common::validation::MAX_RLP_BLOCK_SIZE;
-use reth_errors::{BlockExecutionError, BlockValidationError, ConsensusError};
+use reth_chainspec::{ChainSpec, ChainSpecProvider, EthChainSpec};
+use reth_errors::BlockExecutionError;
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
-use reth_evm::{
-    execute::{BlockBuilder, BlockBuilderOutcome, BlockExecutionOutput},
-    ConfigureEvm, Evm, NextBlockEnvAttributes, RecoveredTx,
-};
-use reth_payload_builder::{BlobSidecars, EthBuiltPayload};
-use reth_payload_primitives::{BuiltPayloadExecutedBlock, PayloadBuilderError};
-use reth_primitives_traits::transaction::error::InvalidTransactionError;
+use reth_evm::{execute::BlockBuilder, ConfigureEvm, Evm};
+use reth_payload_primitives::PayloadBuilderError;
 use reth_primitives_traits::AlloyBlockHeader as _;
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_storage_api::StateProviderFactory;
 use reth_transaction_pool::{
-    error::{Eip4844PoolTransactionError, InvalidPoolTransactionError},
     BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionPool,
     ValidPoolTransaction,
 };
 use revm::context_interface::Block as _;
-use tracing::{debug, trace, warn};
+use tracing::{debug, warn};
 
 mod carrier_admission;
+mod execution;
+mod finalization;
+mod preparation;
+mod selection;
 mod size_budget;
 
-use carrier_admission::{
-    CarrierBlock, CarrierDecision, DeferredResultVoteCarrier, InvalidResultVoteCarrier,
-};
-use size_budget::{BlockSizeBudget, SizeRejection};
+use carrier_admission::CarrierBlock;
 
 #[derive(Debug, Clone)]
 pub struct OutbePayloadBuilder<Pool, Provider> {
@@ -153,106 +140,19 @@ where
             .build();
 
         let chain_spec = self.provider.chain_spec();
-        let inner = attributes.inner();
         let block_number = parent_header.number().saturating_add(1);
-        let prefinal_extra_data = sanitize_prefinal_outbe_block_artifacts(attributes.extra_data())
-            .map_err(PayloadBuilderError::other)?;
-
-        // / / prebuild and sign the Phase 1
-        // (CertifiedParentAccounting) body[0] tx BEFORE the executor enters
-        // `apply_pre_execution_changes`. The same `Recovered` is then handed
-        // to `build_begin_system_txs` for body[0] so the pre-exec commit
-        // witness and the body[0] tx are byte-identical (hash match). For
-        // `block_number <= OutbeProtocolSchedule.genesis_bootstrap_block_number`
-        // (greenfield: block 0 / block 1) the helper returns `None` and
-        // Phase 1 is skipped entirely.
-        let prebuilt_phase1_tx = self
-            .evm_config
-            .build_signed_phase1_tx(
-                block_number,
-                chain_spec.chain().id(),
-                parent_header.hash(),
-                attributes.parent_consensus_metadata().cloned(),
-                attributes.proposer_evm_address(),
-            )
-            .map_err(|err| {
-                warn!(target: "payload_builder", %err, "failed to prebuild Phase 1 system tx");
-                PayloadBuilderError::Internal(err.into())
-            })?;
-
-        // decode the parent's accounted-parent artifact from
-        // `parent_header.extra_data` so the executor has a fallback when the
-        // [`AccountedParentArtifactProvider`] cannot see the parent (e.g.,
-        // unfinalized side-chain whose header hasn't been indexed yet). The
-        // executor validates this hint against the Phase 1 metadata's
-        // `(finalized_block_number, finalized_block_hash)` before accepting it.
-        let parent_artifact_hint =
-            decode_outbe_block_artifacts(parent_header.extra_data().as_ref())
-                .ok()
-                .and_then(|artifacts| artifacts.execution_summary)
-                .map(|summary| AccountedParentArtifact {
-                    summary,
-                    timestamp: parent_header.timestamp(),
-                    state_root: Some(parent_header.state_root()),
-                });
-
-        // One-time TEE bootstrap: the consensus thread's TEE DKG coordination
-        // stashes the assembled `TeeBootstrapV2` in the bridge; the proposer
-        // clones it here and injects it into the begin-zone (slice 5.1). Only
-        // the proposer's bridge is read; validators verify the body-carried
-        // payload (slice 5.2). Candidate construction is retryable, so a rejected
-        // first candidate must not consume the only copy needed by later views.
-        //
-        // Guard to block 1 (the fixed `committee_snapshot_block` target): every
-        // node stashes its pending payload at startup, but only the block-1
-        // proposer must inject it. Without this guard a node that did not propose
-        // block 1 would still hold its pending payload and inject a stale
-        // `TeeBootstrap` when it later proposes block N > 1 - which the executor
-        // rejects (`committee_snapshot_block` mismatch / already bootstrapped),
-        // stalling that slot.
-        let pending_tee_bootstrap = if block_number == 1 {
-            self.evm_config
-                .bridge
-                .as_ref()
-                .and_then(|bridge| bridge.pending_tee_bootstrap())
-        } else {
-            None
+        let context = preparation::PayloadContext {
+            parent: &parent_header,
+            attributes: &attributes,
+            chain_spec: &chain_spec,
         };
-
+        let preparation::PreparedPayload { env, system_inputs } =
+            preparation::prepare(&self.evm_config, &context)?;
         let mut builder = self
             .evm_config
-            .builder_for_next_block(
-                &mut db,
-                &parent_header,
-                OutbeNextBlockEnvAttributes {
-                    inner: NextBlockEnvAttributes {
-                        timestamp: inner.timestamp,
-                        suggested_fee_recipient: inner.suggested_fee_recipient,
-                        prev_randao: inner.prev_randao,
-                        gas_limit: outbe_primitives::system_tx::protocol_block_gas_limit(
-                            block_number,
-                        ),
-                        parent_beacon_block_root: inner.parent_beacon_block_root,
-                        withdrawals: inner.withdrawals.clone().map(Into::into),
-                        extra_data: prefinal_extra_data.clone(),
-                        slot_number: inner.slot_number,
-                    },
-                    timestamp_millis_part: attributes.timestamp_millis_part(),
-                    parent_consensus_metadata: attributes.parent_consensus_metadata().cloned(),
-                    proposer_evm_address: attributes.proposer_evm_address(),
-                    execute_outbe_block_hooks: true,
-                    prebuilt_phase1_tx: prebuilt_phase1_tx.clone(),
-                    parent_artifact_hint,
-                    // Clone: the executor branch (expected begin-zone order /
-                    // `block_has_tee_bootstrap`) needs the same payload the body
-                    // builder injects below, so both deterministic paths agree.
-                    pending_tee_bootstrap: pending_tee_bootstrap.clone(),
-                    execution_read_budget: attributes.execution_read_budget().cloned(),
-                },
-            )
+            .builder_for_next_block(&mut db, &parent_header, env)
             .map_err(PayloadBuilderError::other)?;
         let compressed_tree_service = self.evm_config.compressed_tree_service();
-
         debug!(
             target: "payload_builder",
             id = %payload_id,
@@ -262,10 +162,8 @@ where
             "building Outbe payload"
         );
 
-        let mut cumulative_gas_used = 0u64;
         let block_gas_limit = builder.evm_mut().block().gas_limit();
         let base_fee = builder.evm_mut().block().basefee();
-
         let mut best_txs = best_txs(BestTransactionsAttributes::new(
             base_fee,
             builder
@@ -274,8 +172,6 @@ where
                 .blob_gasprice()
                 .map(|gasprice| gasprice as u64),
         ));
-        let mut total_fees = U256::ZERO;
-
         if let Some(handle) = state_root_handle.as_mut() {
             builder
                 .evm_mut()
@@ -283,114 +179,25 @@ where
                 .set_state_hook(Some(Box::new(handle.take_state_hook())));
         }
 
-        if let Err(err) = builder.apply_pre_execution_changes() {
-            if ce_local_readiness_error(&err) {
-                // This attempt raced finalization and cannot use the in-place
-                // materialization for its old parent. Report a retryable build
-                // failure: Reth reserves `BuildOutcome::Cancelled` for futures
-                // whose supplied cancel signal actually fired and treats any
-                // other use as an unreachable invariant violation.
-                debug!(target: "payload_builder", %err, "payload exact-parent data is no longer locally available; retrying on the next build tick");
-                return Err(PayloadBuilderError::Internal(err.into()));
-            }
-            warn!(target: "payload_builder", %err, "failed to apply pre-execution changes");
-            return Err(PayloadBuilderError::Internal(err.into()));
+        preparation::apply_pre_execution_changes(&mut builder)?;
+        let system_txs = preparation::SystemTransactions::build(
+            &self.evm_config,
+            &context,
+            block_gas_limit,
+            system_inputs,
+        )?;
+        let mut state = execution::PayloadBuildState::new(
+            &context,
+            &self.builder_config,
+            block_gas_limit,
+            base_fee,
+            &system_txs.end,
+        )?;
+        if state.execute_begin(&mut builder, system_txs.begin, &cancel)?
+            == execution::StageOutcome::Cancelled
+        {
+            return Ok(BuildOutcome::Cancelled);
         }
-
-        let mut blob_sidecars = BlobSidecars::Empty;
-        let mut block_blob_count = 0u64;
-        let blob_params = chain_spec.blob_params_at_timestamp(inner.timestamp);
-        let protocol_max_blob_count = blob_params
-            .as_ref()
-            .map(|params| params.max_blob_count)
-            .unwrap_or_default();
-        let max_blob_count = self
-            .builder_config
-            .max_blobs_per_block
-            .map(|user_limit| std::cmp::min(user_limit, protocol_max_blob_count).max(1))
-            .unwrap_or(protocol_max_blob_count);
-        let is_osaka = chain_spec.is_osaka_active_at_timestamp(inner.timestamp);
-        let withdrawals_rlp_length = inner
-            .withdrawals
-            .as_ref()
-            .map(|withdrawals| withdrawals.length())
-            .unwrap_or(0);
-
-        let begin_system_txs = self
-            .evm_config
-            .build_begin_system_txs(
-                block_number,
-                chain_spec.chain().id(),
-                block_gas_limit,
-                parent_header.hash(),
-                &prefinal_extra_data,
-                attributes.parent_consensus_metadata().cloned(),
-                attributes.proposer_evm_address(),
-                // reuse the prebuilt body[0] tx
-                // byte-for-byte. `build_begin_system_txs` validates
-                // calldata + signer match before substitution.
-                prebuilt_phase1_tx,
-                // The same bootstrap payload the executor branch above received,
-                // so the injected body matches the expected begin-zone order
-                // (TeeBootstrap at begin_order 3, before OracleSlashWindow).
-                pending_tee_bootstrap,
-            )
-            .map_err(|err| {
-                warn!(target: "payload_builder", %err, "failed to build begin system transactions");
-                PayloadBuilderError::Internal(err.into())
-            })?;
-        let begin_system_tx_count = begin_system_txs.len();
-        let end_system_txs = self
-            .evm_config
-            .build_end_system_txs(
-                block_number,
-                chain_spec.chain().id(),
-                begin_system_tx_count,
-                attributes.proposer_evm_address(),
-            )
-            .map_err(|err| {
-                warn!(target: "payload_builder", %err, "failed to build end system transactions");
-                PayloadBuilderError::Internal(err.into())
-            })?;
-        let reserved_end_gas = end_system_txs
-            .iter()
-            .try_fold(0u64, |total, tx| total.checked_add(tx.tx().gas_limit()))
-            .ok_or_else(|| {
-                PayloadBuilderError::other(std::io::Error::other(
-                    "end system transaction gas overflow",
-                ))
-            })?;
-        let reserved_end_rlp_length = end_system_txs
-            .iter()
-            .try_fold(0usize, |total, tx| total.checked_add(tx.inner().length()))
-            .ok_or_else(|| {
-                PayloadBuilderError::other(std::io::Error::other(
-                    "end system transaction size overflow",
-                ))
-            })?;
-        let mut size_budget =
-            BlockSizeBudget::new(reserved_end_rlp_length, withdrawals_rlp_length, is_osaka);
-        for tx in begin_system_txs {
-            if cancel.is_cancelled() {
-                return Ok(BuildOutcome::Cancelled);
-            }
-            let tx_rlp_len = tx.inner().length();
-            let gas_used = builder
-                .execute_transaction(tx)
-                .map_err(|err| {
-                    warn!(target: "payload_builder", %err, "failed to execute begin system transaction");
-                    PayloadBuilderError::Internal(err.into())
-                })?
-                .tx_gas_used();
-            size_budget.record(tx_rlp_len);
-            cumulative_gas_used = cumulative_gas_used.saturating_add(gas_used);
-            trace!(
-                target: "payload_builder",
-                gas_used,
-                "included begin system transaction"
-            );
-        }
-
         // Result-vote carriers are checked on the exact in-progress block state
         // before execution; see `carrier_admission`.
         let carrier_block = self
@@ -408,241 +215,30 @@ where
             });
 
         if block_number != GENESIS_BOOTSTRAP_BLOCK_NUMBER {
-            while let Some(pool_tx) = best_txs.next() {
-                if cumulative_gas_used
-                    .saturating_add(pool_tx.gas_limit())
-                    .saturating_add(reserved_end_gas)
-                    > block_gas_limit
-                {
-                    best_txs.mark_invalid(
-                        &pool_tx,
-                        InvalidPoolTransactionError::ExceedsGasLimit(
-                            pool_tx.gas_limit(),
-                            block_gas_limit,
-                        ),
-                    );
-                    continue;
-                }
-
-                if cancel.is_cancelled() {
-                    return Ok(BuildOutcome::Cancelled);
-                }
-
-                let tx = pool_tx.to_consensus();
-                let tx_rlp_len = tx.inner().length();
-                if let Err(SizeRejection { size, limit }) = size_budget.admit(tx_rlp_len) {
-                    best_txs.mark_invalid(
-                        &pool_tx,
-                        InvalidPoolTransactionError::OversizedData { size, limit },
-                    );
-                    continue;
-                }
-
-                let mut blob_tx_sidecar = None;
-                let tx_blob_count = tx.blob_count();
-                if let Some(tx_blob_count) = tx_blob_count {
-                    if block_blob_count + tx_blob_count > max_blob_count {
-                        best_txs.mark_invalid(
-                            &pool_tx,
-                            InvalidPoolTransactionError::Eip4844(
-                                Eip4844PoolTransactionError::TooManyEip4844Blobs {
-                                    have: block_blob_count + tx_blob_count,
-                                    permitted: max_blob_count,
-                                },
-                            ),
-                        );
-                        continue;
-                    }
-
-                    let sidecar = match self
-                        .pool
-                        .get_blob(*tx.hash())
-                        .map_err(PayloadBuilderError::other)?
-                    {
-                        Some(sidecar) if is_osaka && sidecar.is_eip7594() => Some(sidecar),
-                        Some(sidecar) if !is_osaka && sidecar.is_eip4844() => Some(sidecar),
-                        Some(sidecar) if is_osaka && !sidecar.is_eip7594() => {
-                            best_txs.mark_invalid(
-                                &pool_tx,
-                                InvalidPoolTransactionError::Eip4844(
-                                    Eip4844PoolTransactionError::UnexpectedEip4844SidecarAfterOsaka,
-                                ),
-                            );
-                            trace!(target: "payload_builder", ?sidecar, "skipping unexpected pre-Osaka sidecar");
-                            continue;
-                        }
-                        Some(_) => {
-                            best_txs.mark_invalid(
-                            &pool_tx,
-                            InvalidPoolTransactionError::Eip4844(
-                                Eip4844PoolTransactionError::UnexpectedEip7594SidecarBeforeOsaka,
-                            ),
-                        );
-                            continue;
-                        }
-                        None => {
-                            best_txs.mark_invalid(
-                                &pool_tx,
-                                InvalidPoolTransactionError::Eip4844(
-                                    Eip4844PoolTransactionError::MissingEip4844BlobSidecar,
-                                ),
-                            );
-                            continue;
-                        }
-                    };
-                    blob_tx_sidecar = sidecar;
-                }
-
-                if let Some(block) = carrier_block {
-                    match carrier_admission::admit(
-                        builder.evm_mut().db_mut(),
-                        block,
-                        tx.inner(),
-                        tx.signer(),
-                    ) {
-                        CarrierDecision::Execute => {}
-                        CarrierDecision::Skip => {
-                            debug!(
-                                target: "payload_builder",
-                                payload_id = %payload_id,
-                                tx_hash = ?tx.tx_hash(),
-                                "skipping result-vote carrier that is invalid on this block state"
-                            );
-                            best_txs.mark_invalid(
-                                &pool_tx,
-                                InvalidPoolTransactionError::Other(Box::new(
-                                    InvalidResultVoteCarrier,
-                                )),
-                            );
-                            continue;
-                        }
-                        CarrierDecision::Defer => {
-                            debug!(
-                                target: "payload_builder",
-                                payload_id = %payload_id,
-                                tx_hash = ?tx.tx_hash(),
-                                "deferring result-vote carrier whose due window is not closed yet"
-                            );
-                            best_txs.mark_invalid(
-                                &pool_tx,
-                                InvalidPoolTransactionError::Other(Box::new(
-                                    DeferredResultVoteCarrier,
-                                )),
-                            );
-                            continue;
-                        }
-                        CarrierDecision::Abort(reason) => {
-                            warn!(
-                                target: "payload_builder",
-                                payload_id = %payload_id,
-                                tx_hash = ?tx.tx_hash(),
-                                %reason,
-                                "result-vote carrier check cannot decide; abandoning this build"
-                            );
-                            return Err(PayloadBuilderError::other(reason));
-                        }
-                    }
-                }
-
-                let miner_fee = tx.effective_tip_per_gas(base_fee);
-                let tx_hash = *tx.tx_hash();
-                let gas_used = match builder.execute_transaction(tx) {
-                    Ok(gas_used) => gas_used.tx_gas_used(),
-                    Err(err)
-                        if matches!(
-                            ce_work_admission_error(&err),
-                            Some(PrecompileError::BlockCeWorkCapacityExhausted)
-                        ) =>
-                    {
-                        trace!(target: "payload_builder", ?tx_hash, "deferring transaction because the payload CE work budget is exhausted");
-                        continue;
-                    }
-                    Err(err)
-                        if matches!(
-                            ce_work_admission_error(&err),
-                            Some(PrecompileError::TransactionCeWorkLimitExceeded)
-                        ) =>
-                    {
-                        trace!(target: "payload_builder", ?tx_hash, "skipping transaction that cannot fit the full CE work limit");
-                        continue;
-                    }
-                    Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
-                        error,
-                        ..
-                    })) => {
-                        if !error.is_nonce_too_low() {
-                            best_txs.mark_invalid(
-                                &pool_tx,
-                                InvalidPoolTransactionError::Consensus(
-                                    InvalidTransactionError::TxTypeNotSupported,
-                                ),
-                            );
-                        }
-                        trace!(target: "payload_builder", %error, ?tx_hash, "skipping invalid transaction");
-                        continue;
-                    }
-                    Err(err) => {
-                        let failure_kind = payload_execution_failure_kind(&err);
-                        debug!(
-                            target: "payload_builder",
-                            audit_schema = SCHEMA_VERSION,
-                            audit_event = %PAYLOAD_EXECUTION_FAILED,
-                            process_instance = %process_instance_id(),
-                            payload_id = %payload_id,
-                            ?tx_hash,
-                            failure_kind = %failure_kind,
-                            %err,
-                            "payload transaction execution failed"
-                        );
-                        return Err(PayloadBuilderError::evm(err));
-                    }
-                };
-
-                if let Some(blob_count) = tx_blob_count {
-                    block_blob_count += blob_count;
-                    if block_blob_count == max_blob_count {
-                        best_txs.skip_blobs();
-                    }
-                }
-
-                size_budget.record(tx_rlp_len);
-                let miner_fee = miner_fee.unwrap_or_default();
-                total_fees += U256::from(miner_fee) * U256::from(gas_used);
-                cumulative_gas_used += gas_used;
-
-                if let Some(sidecar) = blob_tx_sidecar {
-                    blob_sidecars.push_sidecar_variant(sidecar.as_ref().clone());
-                }
+            let mut selection = selection::UserTransactions {
+                pool: &self.pool,
+                best_txs: &mut best_txs,
+                state: &mut state,
+                cancel: &cancel,
+                payload_id,
+                carrier_block,
+            };
+            if selection.execute(&mut builder)? == execution::StageOutcome::Cancelled {
+                return Ok(BuildOutcome::Cancelled);
             }
         }
-
-        if !is_better_payload(best_payload.as_ref(), total_fees) {
+        if !is_better_payload(best_payload.as_ref(), state.total_fees) {
             drop(builder);
             return Ok(BuildOutcome::Aborted {
-                fees: total_fees,
+                fees: state.total_fees,
                 cached_reads,
             });
         }
-
-        for tx in end_system_txs {
-            if cancel.is_cancelled() {
-                return Ok(BuildOutcome::Cancelled);
-            }
-            let gas_used = builder
-                .execute_transaction(tx)
-                .map_err(|err| {
-                    warn!(target: "payload_builder", %err, "failed to execute end system transaction");
-                    PayloadBuilderError::Internal(err.into())
-                })?
-                .tx_gas_used();
-            cumulative_gas_used = cumulative_gas_used.saturating_add(gas_used);
-            trace!(
-                target: "payload_builder",
-                gas_used,
-                "included end system transaction"
-            );
+        if state.execute_end(&mut builder, system_txs.end, &cancel)?
+            == execution::StageOutcome::Cancelled
+        {
+            return Ok(BuildOutcome::Cancelled);
         }
-
         let outcome = if let Some(mut handle) = state_root_handle {
             // CE end-block cleanup is consensus state. Deliver its zeroing
             // changes to the parallel trie task before detaching the hook and
@@ -675,78 +271,13 @@ where
             builder.finish(state_provider.as_ref(), None)?
         };
 
-        let BlockBuilderOutcome {
-            execution_result,
-            hashed_state,
-            trie_updates,
-            block,
-            block_access_list,
-        } = outcome;
-
-        let requests = chain_spec
-            .is_prague_active_at_timestamp(inner.timestamp)
-            .then_some(execution_result.requests.clone());
-
-        // capture the full execution result of the block we just built so
-        // the proposer does NOT re-execute and re-root it at finalize time.
-        // `builder` only borrowed `&mut db`, so after `finish` the merged
-        // post-state bundle is back on our local `db` and can be taken here.
-        // Reth's launch loop inserts `executed_block()` into the engine tree, so
-        // `ExecutorActor`'s finalize-time `new_payload` becomes a cache hit
-        // (validators already get this via their verify-time `new_payload`).
-        // This is the SAME execution that produced the sealed block below, so the
-        // cached state matches the sealed block hash exactly - no proposer/
-        // validator divergence.
-        let recovered_block = Arc::new(block);
-        let execution_output = Arc::new(BlockExecutionOutput {
-            state: db.take_bundle(),
-            result: execution_result,
-        });
-        let executed_block = BuiltPayloadExecutedBlock::<OutbePrimitives> {
-            recovered_block: recovered_block.clone(),
-            execution_output,
-            hashed_state: Arc::new(hashed_state),
-            trie_updates: Arc::new(trie_updates),
-        };
-
-        let sealed_block = Arc::new(recovered_block.sealed_block().clone());
-
-        if is_osaka && sealed_block.rlp_length() > MAX_RLP_BLOCK_SIZE {
-            discard_failed_payload_candidate(
-                compressed_tree_service.as_ref(),
-                recovered_block.header().inner.number,
-                recovered_block.hash(),
-            )?;
-            return Err(PayloadBuilderError::other(ConsensusError::BlockTooLarge {
-                rlp_length: sealed_block.rlp_length(),
-                max_rlp_length: MAX_RLP_BLOCK_SIZE,
-            }));
-        }
-
-        // Outbe transport cap (always on): the sealed block must fit one
-        // consensus P2P message. Final guard in case the per-tx estimate
-        // undershot (e.g. system txs / extra_data added after selection).
-        if sealed_block.rlp_length() > OUTBE_MAX_BLOCK_SIZE {
-            discard_failed_payload_candidate(
-                compressed_tree_service.as_ref(),
-                recovered_block.header().inner.number,
-                recovered_block.hash(),
-            )?;
-            return Err(PayloadBuilderError::other(ConsensusError::BlockTooLarge {
-                rlp_length: sealed_block.rlp_length(),
-                max_rlp_length: OUTBE_MAX_BLOCK_SIZE,
-            }));
-        }
-
-        let inner = EthBuiltPayload::<OutbePrimitives>::new(
-            recovered_block,
-            total_fees,
-            requests,
-            block_access_list.map(|bal| alloy_rlp::encode(&bal).into()),
-        )
-        .with_sidecars(blob_sidecars);
-        let payload = OutbeBuiltPayload::new(inner, Some(executed_block));
-
+        let payload = finalization::into_payload(
+            outcome,
+            &mut db,
+            state,
+            &context,
+            compressed_tree_service.as_ref(),
+        )?;
         Ok(BuildOutcome::Better {
             payload,
             cached_reads,

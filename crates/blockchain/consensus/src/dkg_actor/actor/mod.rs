@@ -114,6 +114,8 @@ use messaging::{
     take_restart_replay_shares,
 };
 
+mod ceremony;
+
 mod dealer_only;
 pub use dealer_only::run_reshare_dealer_only_durable;
 

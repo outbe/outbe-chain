@@ -514,12 +514,14 @@ pub(in crate::stack) fn restart_dkg_manager_from_finalized_history(
         verified_consensus_tip.height.get(),
     )?;
     replay_guard.restart_ceremony_with_finalized_logs(
-        spec.epoch,
-        spec.round,
-        spec.previous_output,
-        spec.participants,
-        spec.finalized_dealer_log_tx,
-        finalized_logs,
+        outbe_consensus::dkg_manager::CeremonyReplayRequest {
+            epoch: spec.epoch,
+            round: spec.round,
+            previous_output: spec.previous_output,
+            participants: spec.participants,
+            finalized_dealer_log_tx: spec.finalized_dealer_log_tx,
+            finalized_logs,
+        },
     )
 }
 
