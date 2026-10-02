@@ -8,8 +8,8 @@ use outbe_ocomp_protocol::{
 use outbe_primitives::error::PrecompileError;
 
 use crate::ocomp_limits::{
-    apply_auction_brief, apply_fresh_request_limit_effect, auction_draw, RequestLimitEffect,
-    RequestLimitSplit,
+    apply_auction_brief, apply_fresh_request_limit_effect, auction_draw, reserve_auction_draw,
+    RequestLimitEffect, RequestLimitSplit,
 };
 
 #[test]
@@ -503,6 +503,99 @@ fn an_auction_takes_what_the_accumulator_holds_when_demand_exceeds_it() {
                 .unwrap(),
             U256::ZERO,
             "the accumulator serves what it has and is left empty"
+        );
+    });
+}
+
+#[test]
+fn overlapping_requests_size_their_auctions_from_what_earlier_requests_left() {
+    with_storage(|storage| {
+        PromisLimitContract::new(storage.clone())
+            .checked_add_carry_over(U256::from(5_000))
+            .unwrap();
+        let first = RequestLimitEffect {
+            protocol_bundle_hash: B256::repeat_byte(0x41),
+            wwd: 20_260_115,
+            pending_nonce: 1,
+            day_type: DayType::Green,
+            day_limit: U256::from(1_000),
+            lysis_limit_minor: U256::from(320),
+            nominal_total: U256::from(5_000),
+            logical_anchor: 1_699_920_005,
+        };
+        let second = RequestLimitEffect {
+            wwd: 20_260_116,
+            ..first.clone()
+        };
+        let total = || {
+            PromisLimitContract::new(storage.clone())
+                .get_total_unallocated()
+                .unwrap()
+        };
+
+        let first_receipt = apply_fresh_request_limit_effect(storage.clone(), first)
+            .expect("the first day commits its limit split");
+        assert_eq!(first_receipt.desis_limit_minor, U256::from(4_680));
+        assert_eq!(
+            total(),
+            U256::from(1_000),
+            "the request reserves its auction before any brief"
+        );
+
+        let second_receipt = apply_fresh_request_limit_effect(storage.clone(), second)
+            .expect("the second day commits its limit split");
+        assert_eq!(
+            second_receipt.desis_limit_minor,
+            U256::from(1_680),
+            "the second auction is sized without what the first one reserved"
+        );
+        assert_eq!(total(), U256::ZERO);
+
+        for receipt in [&first_receipt, &second_receipt] {
+            apply_auction_brief(storage.clone(), receipt).expect("a reserved auction briefs");
+            assert_eq!(
+                DesisContract::new(storage.clone())
+                    .pending_desis_limit_minor
+                    .read(&receipt.wwd.into())
+                    .unwrap(),
+                receipt.desis_limit_minor
+            );
+        }
+        assert_eq!(total(), U256::ZERO, "a brief draws nothing more");
+    });
+}
+
+#[test]
+fn a_reservation_the_accumulator_cannot_cover_fails_the_day_and_takes_nothing() {
+    with_storage(|storage| {
+        PromisLimitContract::new(storage.clone())
+            .checked_add_carry_over(U256::from(5))
+            .unwrap();
+        let request = RequestLimitEffect {
+            protocol_bundle_hash: B256::repeat_byte(0x41),
+            wwd: 20_260_117,
+            pending_nonce: 1,
+            day_type: DayType::Green,
+            day_limit: U256::from(100),
+            lysis_limit_minor: U256::from(40),
+            nominal_total: U256::from(100),
+            logical_anchor: 1_699_920_005,
+        };
+        let mut receipt = apply_fresh_request_limit_effect(storage.clone(), request)
+            .expect("the day commits its limit split");
+        let held = PromisLimitContract::new(storage.clone())
+            .get_total_unallocated()
+            .unwrap();
+        assert_eq!(held, U256::from(5));
+
+        receipt.desis_limit_minor = held + U256::from(1);
+        let error = reserve_auction_draw(storage.clone(), &receipt).unwrap_err();
+        assert!(crate::errors::is_business_failure(&error), "{error}");
+        assert_eq!(
+            PromisLimitContract::new(storage)
+                .get_total_unallocated()
+                .unwrap(),
+            held
         );
     });
 }
