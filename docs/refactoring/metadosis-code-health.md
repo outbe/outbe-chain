@@ -254,3 +254,13 @@ validation now have separate policies. Commit binds permit/day/block to a
 private scope and separates creation, advance, terminal close and execution-owned
 events. Reducer admission and genesis operations are decomposed along their
 domain decisions. 255 library tests and all external/model/facade targets pass.
+
+Third slice: voting has distinct pinned identity/signature, accountability,
+new-quorum activation and response-close responsibilities. Penalty recovery
+still precedes ACTIVE-status re-evaluation and the miss event. Admission keeps
+state-unavailable/corrupt/invalid/deadline/not-yet-open decisions distinct.
+Expiry separates response closure, exact unfinalized deadline selection and
+ordered post-state checks. Request prepares candidate/sealed admission, frozen
+limits and intent through private typed results. New admission tests preserve
+deferred-reason precedence and checked arithmetic. All Metadosis targets pass
+(257 library tests; the ABI genesis test requires test-utils as its builder does).

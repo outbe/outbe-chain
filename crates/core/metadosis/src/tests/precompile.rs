@@ -78,6 +78,7 @@ fn missing_ocomp_artifacts_revert_with_their_record_identity() {
     });
 }
 
+#[cfg(feature = "test-utils")]
 #[test]
 fn worldwide_day_abi_preserves_genesis_windows_rates_and_membership() {
     with_storage(|storage| {
@@ -120,6 +121,7 @@ fn worldwide_day_abi_preserves_genesis_windows_rates_and_membership() {
     });
 }
 
+#[cfg(feature = "test-utils")]
 fn seed_offering_day(storage: StorageHandle<'_>) {
     use crate::genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay};
     FreshDevnetGenesisBuilder::new()

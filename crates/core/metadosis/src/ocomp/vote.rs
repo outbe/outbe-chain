@@ -9,7 +9,7 @@ use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use outbe_compressed_entities::ExecutionScope;
 use outbe_ocomp_protocol::{
     error::ProtocolError,
-    state::OcompJobStatus,
+    state::{OcompJobRecordV1, OcompJobStatus},
     vote::{OcompQuorumV1, RecordVoteOutcomeV1, ResultVotePrefixV1, ResultVoteV1},
     SchemaLimits,
 };
@@ -29,7 +29,10 @@ use crate::{
     schema::MetadosisContract,
 };
 
-use super::schema::remove_response_deadline_key;
+use super::{index::ResponseDeadlineKey, schema::remove_response_deadline_key};
+
+mod recording;
+mod response_close;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecordedResultVoteV1 {
@@ -194,56 +197,74 @@ pub fn deadline_passed_result_vote_revert_data() -> Bytes {
 /// an already-open attempt is immutable. Missing, evicted or mismatched
 /// caller-selected state is an ordinary `None`, never a fallback to the current
 /// snapshot.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(super) struct PinnedVoteBinding {
+    protocol_bundle_hash: B256,
+    attempt: u32,
+    committee: PinnedCommittee,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(super) struct PinnedCommittee {
+    epoch: u64,
+    set_hash: B256,
+    binding_hash: B256,
+}
+
+impl PinnedVoteBinding {
+    pub(super) fn from_prefix(prefix: &ResultVotePrefixV1) -> Self {
+        Self {
+            protocol_bundle_hash: prefix.protocol_bundle_hash,
+            attempt: prefix.attempt,
+            committee: PinnedCommittee::from_prefix(prefix),
+        }
+    }
+
+    pub(super) fn from_record(record: &OcompJobRecordV1) -> Self {
+        Self {
+            protocol_bundle_hash: record.intent.protocol_bundle_hash,
+            attempt: record.intent.attempt,
+            committee: PinnedCommittee {
+                epoch: record.intent.result_validator_set_epoch,
+                set_hash: record.intent.result_committee_set_hash,
+                binding_hash: record.intent.result_ocomp_binding_hash,
+            },
+        }
+    }
+}
+
+impl PinnedCommittee {
+    pub(super) fn from_prefix(prefix: &ResultVotePrefixV1) -> Self {
+        Self {
+            epoch: prefix.result_validator_set_epoch,
+            set_hash: prefix.result_committee_set_hash,
+            binding_hash: prefix.result_ocomp_binding_hash,
+        }
+    }
+
+    pub(super) fn from_accountability(
+        accountability: &outbe_ocomp_protocol::vote::OcompVoteAccountabilityV1,
+    ) -> Self {
+        Self {
+            epoch: accountability.result_validator_set_epoch,
+            set_hash: accountability.result_committee_set_hash,
+            binding_hash: accountability.result_ocomp_binding_hash,
+        }
+    }
+}
+
 pub fn resolve_historical_result_vote_participant(
     storage: StorageHandle<'_>,
     prefix: &ResultVotePrefixV1,
     limits: &SchemaLimits,
 ) -> Result<Option<Address>> {
     let contract = MetadosisContract::new(storage.clone());
-    let member_count = if let Some(response) = contract.response_window_for_job(prefix.job_id)? {
-        let Some(record) = contract.ocomp_job_record(response.intent_id, limits)? else {
-            return Err(storage_corruption_message(
-                "OCOMP response index points to a missing job",
-            ));
-        };
-        let Some(finalized) = record.finalized.as_ref() else {
-            return Err(storage_corruption_message(
-                "OCOMP response-window job is not finalized",
-            ));
-        };
-        if finalized.job_id != response.job_id
-            || finalized.deadline_height != response.deadline_height
-            || !matches!(
-                record.status,
-                OcompJobStatus::VotingOpen | OcompJobStatus::Completed
-            )
-        {
-            return Err(storage_corruption_message(
-                "OCOMP response index/job binding mismatch",
-            ));
-        }
-        if prefix.protocol_bundle_hash != record.intent.protocol_bundle_hash
-            || prefix.attempt != record.intent.attempt
-            || prefix.result_validator_set_epoch != record.intent.result_validator_set_epoch
-            || prefix.result_committee_set_hash != record.intent.result_committee_set_hash
-            || prefix.result_ocomp_binding_hash != record.intent.result_ocomp_binding_hash
-        {
-            return Ok(None);
-        }
-        record.intent.result_member_count
-    } else {
-        let Some(accountability) = contract.result_vote_accountability(prefix.job_id, limits)?
-        else {
-            return Ok(None);
-        };
-        if accountability.closed_summary.is_none()
-            || prefix.result_validator_set_epoch != accountability.result_validator_set_epoch
-            || prefix.result_committee_set_hash != accountability.result_committee_set_hash
-            || prefix.result_ocomp_binding_hash != accountability.result_ocomp_binding_hash
-        {
-            return Ok(None);
-        }
-        accountability.member_count
+    let member_count = match contract.response_window_for_job(prefix.job_id)? {
+        Some(response) => member_count_for_open_vote(&contract, prefix, response, limits)?,
+        None => member_count_for_closed_vote(&contract, prefix, limits)?,
+    };
+    let Some(member_count) = member_count else {
+        return Ok(None);
     };
     let Some(snapshot) = outbe_validatorset::read_ocomp_snapshot_extension_for_binding(
         storage.clone(),
@@ -269,6 +290,56 @@ pub fn resolve_historical_result_vote_participant(
         prefix.key_epoch,
     )?
     .map(|member| member.validator_address))
+}
+
+fn member_count_for_open_vote(
+    contract: &MetadosisContract<'_>,
+    prefix: &ResultVotePrefixV1,
+    response: ResponseDeadlineKey,
+    limits: &SchemaLimits,
+) -> Result<Option<u16>> {
+    let Some(record) = contract.ocomp_job_record(response.intent_id, limits)? else {
+        return Err(storage_corruption_message(
+            "OCOMP response index points to a missing job",
+        ));
+    };
+    let Some(finalized) = record.finalized.as_ref() else {
+        return Err(storage_corruption_message(
+            "OCOMP response-window job is not finalized",
+        ));
+    };
+    if finalized.job_id != response.job_id
+        || finalized.deadline_height != response.deadline_height
+        || !matches!(
+            record.status,
+            OcompJobStatus::VotingOpen | OcompJobStatus::Completed
+        )
+    {
+        return Err(storage_corruption_message(
+            "OCOMP response index/job binding mismatch",
+        ));
+    }
+    if PinnedVoteBinding::from_prefix(prefix) != PinnedVoteBinding::from_record(&record) {
+        return Ok(None);
+    }
+    Ok(Some(record.intent.result_member_count))
+}
+
+fn member_count_for_closed_vote(
+    contract: &MetadosisContract<'_>,
+    prefix: &ResultVotePrefixV1,
+    limits: &SchemaLimits,
+) -> Result<Option<u16>> {
+    let Some(accountability) = contract.result_vote_accountability(prefix.job_id, limits)? else {
+        return Ok(None);
+    };
+    if accountability.closed_summary.is_none()
+        || PinnedCommittee::from_prefix(prefix)
+            != PinnedCommittee::from_accountability(&accountability)
+    {
+        return Ok(None);
+    }
+    Ok(Some(accountability.member_count))
 }
 
 pub(super) fn resolve_historical_result_vote_member(
@@ -351,351 +422,6 @@ pub(super) fn authorize_historical_result_vote_carrier_signer(
         .get_nested(&role.id())
         .read(&signer)?;
     Ok((reverse == historical_validator).then_some(historical_validator))
-}
-
-impl MetadosisContract<'_> {
-    /// Verifies and records one direct result vote at its canonical inclusion
-    /// height. The response-window index, job record, vote slots and immutable
-    /// quorum transition are committed in one storage checkpoint.
-    pub fn record_ocomp_result_vote(
-        &mut self,
-        vote: &ResultVoteV1,
-        inclusion_height: u64,
-        scope: &ExecutionScope,
-        limits: &SchemaLimits,
-    ) -> Result<RecordedResultVoteV1> {
-        let storage = self.storage.clone();
-        let outcome = (|| {
-            let response = match self.response_window_for_job(vote.job_id)? {
-                Some(response) => response,
-                None => {
-                    let deadline_closed = self
-                        .result_vote_accountability(vote.job_id, limits)?
-                        .is_some_and(|accountability| accountability.closed_summary.is_some());
-                    if deadline_closed {
-                        return Err(vote_reject(DEADLINE_PASSED));
-                    }
-                    return Err(reject("OCOMP result vote has no open response window"));
-                }
-            };
-            let record = self
-                .ocomp_job_record(response.intent_id, limits)?
-                .ok_or_else(|| {
-                    storage_corruption_message("OCOMP response index points to a missing job")
-                })?;
-            let finalized = record.finalized.as_ref().ok_or_else(|| {
-                storage_corruption_message("OCOMP response-window job is not finalized")
-            })?;
-            if finalized.job_id != response.job_id
-                || finalized.deadline_height != response.deadline_height
-            {
-                return Err(storage_corruption_message(
-                    "OCOMP response index/job binding mismatch",
-                ));
-            }
-            if !matches!(
-                record.status,
-                OcompJobStatus::VotingOpen | OcompJobStatus::Completed
-            ) {
-                return Err(reject(
-                    "OCOMP result vote requires an open or quorum-certified job",
-                ));
-            }
-            if vote.protocol_bundle_hash != record.intent.protocol_bundle_hash
-                || vote.attempt != record.intent.attempt
-                || vote.result_validator_set_epoch != record.intent.result_validator_set_epoch
-                || vote.result_committee_set_hash != record.intent.result_committee_set_hash
-                || vote.result_ocomp_binding_hash != record.intent.result_ocomp_binding_hash
-            {
-                return Err(reject(
-                    "OCOMP result vote does not match pinned job binding",
-                ));
-            }
-            let snapshot = outbe_validatorset::read_ocomp_snapshot_extension_for_binding(
-                storage.clone(),
-                record.intent.result_validator_set_epoch,
-                record.intent.result_committee_set_hash,
-                record.intent.result_ocomp_binding_hash,
-            )?
-            .filter(|snapshot| snapshot.member_count == record.intent.result_member_count)
-            .ok_or_else(|| reject("OCOMP result vote historical snapshot is missing"))?;
-            let snapshot_key = outbe_validatorset::committee_snapshot_key(
-                record.intent.result_validator_set_epoch,
-                record.intent.result_committee_set_hash,
-            );
-            let member = resolve_historical_result_vote_member(
-                storage.clone(),
-                snapshot_key,
-                snapshot.member_count,
-                vote.ocomp_key_hash,
-                vote.key_epoch,
-            )?
-            .ok_or_else(|| reject("OCOMP result vote member is missing"))?;
-            vote.verify_historical_member(
-                &record.intent,
-                finalized.job_id,
-                snapshot.member_count,
-                member.key_epoch,
-                &member.ocomp_public_key_sec1,
-                inclusion_height,
-                finalized.open_height,
-                finalized.deadline_height,
-                limits,
-            )
-            .map_err(|error| reject(format!("invalid OCOMP result vote: {error}")))?;
-
-            let mut accountability = self
-                .result_vote_accountability(finalized.job_id, limits)?
-                .ok_or_else(|| {
-                    storage_corruption_message("OCOMP response-window vote slots are missing")
-                })?;
-            if accountability.quorum != finalized.quorum {
-                return Err(storage_corruption_message(
-                    "OCOMP job/accountability quorum mismatch",
-                ));
-            }
-            let had_quorum = accountability.quorum.is_some();
-            let outcome = accountability
-                .record_verified_vote(member.validator_index, vote, inclusion_height, limits)
-                .map_err(|error| reject(format!("invalid OCOMP vote transition: {error}")))?;
-            let quorum = accountability.quorum.clone();
-
-            if !had_quorum {
-                // Uncertified jobs still require their installed authority.
-                // Completed jobs may receive verified votes after retirement;
-                // those votes must not require or reapply that authority.
-                let authority = self
-                    .read_ocomp_activation_authority_for_bundle(
-                        record.intent.protocol_bundle_hash,
-                        limits,
-                    )?
-                    .ok_or_else(|| {
-                        storage_corruption_message("OCOMP activation authority is not installed")
-                    })?;
-                if let Some(formed) = &quorum {
-                    if record.status != OcompJobStatus::VotingOpen {
-                        return Err(storage_corruption_message(
-                            "OCOMP quorum formed outside the voting-open transition",
-                        ));
-                    }
-                    let current_time = storage.timestamp()?.try_into().map_err(|_| {
-                        storage_corruption_message("OCOMP block timestamp does not fit u64")
-                    })?;
-                    let worldwide_day =
-                        outbe_primitives::time::WorldwideDay::new(record.intent.wwd);
-                    let aggregate = ValidatedWwdAggregate::load_and_validate(storage.clone())?;
-                    let outer = aggregate.record(worldwide_day).ok_or_else(|| {
-                        storage_corruption_message(
-                            "OCOMP q-forming vote has no persisted outer WorldwideDay",
-                        )
-                    })?;
-                    let completed_transition =
-                        reduce_outer_wwd(Some(outer), OuterWwdEvent::OcompCompleted)?;
-                    let apply_context = super::activation::QuorumApplyContext::new(
-                        &storage,
-                        scope,
-                        &completed_transition,
-                        inclusion_height,
-                        current_time,
-                        limits,
-                    );
-                    super::activation::apply_quorum_result(
-                        apply_context,
-                        self,
-                        super::activation::QuorumResultInput::new(
-                            response.intent_id,
-                            &record,
-                            &vote.result,
-                            formed,
-                            &authority,
-                        ),
-                    )?;
-                    let applied = self
-                        .ocomp_job_record(response.intent_id, limits)?
-                        .ok_or_else(|| {
-                            storage_corruption_message("OCOMP q-forming apply removed the job")
-                        })?;
-                    if !matches!(applied.status, OcompJobStatus::Completed)
-                        || applied
-                            .finalized
-                            .as_ref()
-                            .and_then(|finalized| finalized.quorum.as_ref())
-                            != Some(formed)
-                    {
-                        return Err(storage_corruption_message(
-                            "OCOMP q-forming apply did not commit terminal quorum state",
-                        ));
-                    }
-                }
-            } else if finalized.quorum != quorum {
-                return Err(storage_corruption_message("OCOMP immutable quorum changed"));
-            }
-
-            self.write_result_vote_accountability(&accountability, limits)?;
-            Ok(RecordedResultVoteV1 { outcome, quorum })
-        })();
-        outcome
-    }
-
-    /// Closes the one due response window and persists the objective bounded
-    /// accountability summary for the pinned ValidatorSet. A timely quorum is
-    /// never erased; callers expire only the returned `NoQuorum` live attempt.
-    pub(crate) fn close_due_ocomp_response_window(
-        &mut self,
-        at_height: u64,
-        limits: &SchemaLimits,
-    ) -> Result<ResponseWindowCloseReport> {
-        (|| {
-            let mut index = self.read_response_deadline_index()?;
-            let Some(key) = index.first().copied() else {
-                return Ok(ResponseWindowCloseReport::not_due());
-            };
-            if at_height < key.deadline_height {
-                return Ok(ResponseWindowCloseReport::not_due());
-            }
-            let record = self
-                .ocomp_job_record(key.intent_id, limits)?
-                .ok_or_else(|| {
-                    storage_corruption_message("OCOMP response index points to a missing job")
-                })?;
-            let finalized = record.finalized.as_ref().ok_or_else(|| {
-                storage_corruption_message("OCOMP response-window job is not finalized")
-            })?;
-            if finalized.job_id != key.job_id || finalized.deadline_height != key.deadline_height {
-                return Err(storage_corruption_message(
-                    "OCOMP response deadline/job binding mismatch",
-                ));
-            }
-
-            let mut accountability = self
-                .result_vote_accountability(key.job_id, limits)?
-                .ok_or_else(|| {
-                    storage_corruption_message("OCOMP response-window vote slots are missing")
-                })?;
-            if accountability.quorum != finalized.quorum {
-                return Err(storage_corruption_message(
-                    "OCOMP job/accountability quorum mismatch at close",
-                ));
-            }
-            accountability.close(at_height, limits).map_err(|error| {
-                storage_corruption_message(format!("close OCOMP vote accountability: {error}"))
-            })?;
-            let snapshot = outbe_validatorset::read_ocomp_snapshot_extension_for_binding(
-                self.storage.clone(),
-                record.intent.result_validator_set_epoch,
-                record.intent.result_committee_set_hash,
-                record.intent.result_ocomp_binding_hash,
-            )?
-            .filter(|snapshot| snapshot.member_count == accountability.member_count)
-            .ok_or_else(|| {
-                storage_corruption_message("OCOMP deadline historical snapshot is missing")
-            })?;
-            let snapshot_key = outbe_validatorset::committee_snapshot_key(
-                snapshot.epoch,
-                snapshot.committee_set_hash,
-            );
-            let validators = outbe_validatorset::contract::ValidatorSet::new(self.storage.clone());
-            let mut staking = outbe_staking::contract::Staking::new(self.storage.clone());
-            let mut metrics = OcompPenaltyMetrics::default();
-            for (index, slot) in accountability.slots.iter().enumerate() {
-                if slot.is_some() {
-                    continue;
-                }
-                let participant_index = u16::try_from(index).map_err(|_| {
-                    storage_corruption_message("OCOMP missing participant index exceeds u16")
-                })?;
-                let member = outbe_validatorset::read_ocomp_snapshot_member_at(
-                    self.storage.clone(),
-                    snapshot_key,
-                    participant_index,
-                )?
-                .ok_or_else(|| {
-                    storage_corruption_message("OCOMP deadline snapshot member is missing")
-                })?;
-                let resolution = staking
-                    .resolve_due_ocomp_recovery_window(member.validator_address)
-                    .map_err(|error| match error {
-                        PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => {
-                            storage_corruption_message(format!(
-                                "resolve due OCOMP recovery for participant {participant_index}: {error}"
-                            ))
-                        }
-                        other => other,
-                    })?;
-                let outcome = match resolution {
-                    outbe_staking::logic::OcompRecoveryResolution::Restored { .. } => {
-                        Some("restored")
-                    }
-                    outbe_staking::logic::OcompRecoveryResolution::Jailed {
-                        observability, ..
-                    } => {
-                        metrics.punishments.push(observability);
-                        Some("jailed")
-                    }
-                    outbe_staking::logic::OcompRecoveryResolution::ClosedNonActive { .. } => {
-                        Some("non_active")
-                    }
-                    outbe_staking::logic::OcompRecoveryResolution::NotOpen
-                    | outbe_staking::logic::OcompRecoveryResolution::NotDue { .. } => None,
-                };
-                if let Some(outcome) = outcome {
-                    metrics
-                        .recovery_resolutions
-                        .push((member.validator_address, outcome));
-                }
-                let current = validators.get_validator(member.validator_address)?;
-                if current.is_some_and(|record| {
-                    record.status == outbe_validatorset::runtime::status::ACTIVE
-                }) {
-                    let penalty = staking
-                        .record_ocomp_miss(member.validator_address)
-                        .map_err(|error| match error {
-                            PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => {
-                                storage_corruption_message(format!(
-                                    "record ACTIVE missing OCOMP validator {participant_index}: {error}"
-                                ))
-                            }
-                            other => other,
-                        })?;
-                    self.emit(IMetadosis::OcompVoteMissed {
-                        validator: member.validator_address,
-                        jobId: key.job_id,
-                        missCount: penalty.miss_count,
-                        slashedBonded: penalty.slashed_bonded,
-                        recoveryDeadline: penalty.recovery_deadline,
-                        firstInWindow: penalty.first_in_window,
-                    })?;
-                    metrics.misses.push((
-                        member.validator_address,
-                        penalty.first_in_window,
-                        penalty.recovery_deadline,
-                    ));
-                }
-            }
-            self.write_result_vote_accountability(&accountability, limits)?;
-            remove_response_deadline_key(&mut index, key)?;
-            self.write_response_deadline_index(&index)?;
-
-            let close = match record.status {
-                OcompJobStatus::VotingOpen if finalized.quorum.is_none() => {
-                    ResponseWindowCloseV1::NoQuorum {
-                        intent_id: key.intent_id,
-                    }
-                }
-                OcompJobStatus::Completed if finalized.quorum.is_some() => {
-                    ResponseWindowCloseV1::QuorumPreserved {
-                        intent_id: key.intent_id,
-                    }
-                }
-                _ => {
-                    return Err(storage_corruption_message(
-                        "OCOMP response close found an invalid job status",
-                    ))
-                }
-            };
-            Ok(ResponseWindowCloseReport { close, metrics })
-        })()
-    }
 }
 
 #[cfg(test)]
