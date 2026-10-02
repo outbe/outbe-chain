@@ -41,8 +41,8 @@ pub fn issue_nod(
     )
 }
 
-/// [`issue_nod`] stamped with `issued_at` instead of the block time.
-pub fn issue_nod_at(
+/// [`issue_nod`] with an explicit `issued_at`.
+pub(crate) fn issue_nod_at(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
