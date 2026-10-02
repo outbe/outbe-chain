@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use outbe_offchain_storage::{
     AtomicWriteBatch, AtomicWriteOperation, Key, MemoryStorage, Namespace, PendingOverlayStorage,
-    ScanRequest, StorageReader, StorageReaderHandle, StorageWriter, Value,
+    ScanRequest, StorageReader, StorageWriter, Value,
 };
 
 #[test]
@@ -31,18 +31,19 @@ fn pending_batch_overrides_base_puts_and_deletes_without_copying_untouched_recor
     )
     .unwrap();
 
-    let base_reader: StorageReaderHandle = base.clone();
-    let overlay = PendingOverlayStorage::new(base_reader);
-    overlay
-        .apply_atomic(&AtomicWriteBatch::from_operations(vec![
-            AtomicWriteOperation::put(
-                namespace.clone(),
-                replaced.clone(),
-                Value::new(b"pending-replaced".to_vec()).unwrap(),
-            ),
-            AtomicWriteOperation::delete(namespace.clone(), deleted.clone()),
-        ]))
-        .unwrap();
+    let overlay = PendingOverlayStorage::new(base.clone(), base.clone());
+    drop(
+        overlay
+            .stage(AtomicWriteBatch::from_operations(vec![
+                AtomicWriteOperation::put(
+                    namespace.clone(),
+                    replaced.clone(),
+                    Value::new(b"pending-replaced".to_vec()).unwrap(),
+                ),
+                AtomicWriteOperation::delete(namespace.clone(), deleted.clone()),
+            ]))
+            .unwrap(),
+    );
 
     assert_eq!(
         overlay
@@ -82,23 +83,24 @@ fn pending_index_mutations_merge_with_base_order_and_pagination() {
             .unwrap();
     }
 
-    let base_reader: StorageReaderHandle = base;
-    let overlay = PendingOverlayStorage::new(base_reader);
-    overlay
-        .apply_atomic(&AtomicWriteBatch::from_operations(vec![
-            AtomicWriteOperation::delete(namespace.clone(), Key::new(vec![20]).unwrap()),
-            AtomicWriteOperation::put(
-                namespace.clone(),
-                Key::new(vec![15]).unwrap(),
-                Value::new(vec![15]).unwrap(),
-            ),
-            AtomicWriteOperation::put(
-                namespace.clone(),
-                Key::new(vec![30]).unwrap(),
-                Value::new(vec![99]).unwrap(),
-            ),
-        ]))
-        .unwrap();
+    let overlay = PendingOverlayStorage::new(base.clone(), base);
+    drop(
+        overlay
+            .stage(AtomicWriteBatch::from_operations(vec![
+                AtomicWriteOperation::delete(namespace.clone(), Key::new(vec![20]).unwrap()),
+                AtomicWriteOperation::put(
+                    namespace.clone(),
+                    Key::new(vec![15]).unwrap(),
+                    Value::new(vec![15]).unwrap(),
+                ),
+                AtomicWriteOperation::put(
+                    namespace.clone(),
+                    Key::new(vec![30]).unwrap(),
+                    Value::new(vec![99]).unwrap(),
+                ),
+            ]))
+            .unwrap(),
+    );
 
     let first = overlay
         .scan_prefix(namespace.clone(), ScanRequest::new(&[], None, 2).unwrap())
@@ -132,8 +134,7 @@ fn durable_ack_only_retires_overlay_mutations_through_its_generation() {
     let base = Arc::new(MemoryStorage::new());
     let namespace = Namespace::new("records").unwrap();
     let key = Key::new(b"same-key".to_vec()).unwrap();
-    let base_reader: StorageReaderHandle = base.clone();
-    let overlay = PendingOverlayStorage::new(base_reader);
+    let overlay = PendingOverlayStorage::new(base.clone(), base.clone());
     let first_batch = AtomicWriteBatch::from_operations(vec![AtomicWriteOperation::put(
         namespace.clone(),
         key.clone(),
@@ -145,13 +146,9 @@ fn durable_ack_only_retires_overlay_mutations_through_its_generation() {
         Value::new(b"second".to_vec()).unwrap(),
     )]);
 
-    overlay.apply_atomic(&first_batch).unwrap();
-    let first_generation = overlay.current_generation();
-    overlay.apply_atomic(&second_batch).unwrap();
-    let second_generation = overlay.current_generation();
-
-    base.apply_atomic(&first_batch).unwrap();
-    overlay.acknowledge(first_generation);
+    let first = overlay.stage(first_batch).unwrap();
+    let second = overlay.stage(second_batch).unwrap();
+    first.persist().unwrap().acknowledge();
     assert_eq!(
         overlay
             .get(namespace.clone(), &key)
@@ -162,8 +159,7 @@ fn durable_ack_only_retires_overlay_mutations_through_its_generation() {
         "ACK of N must not remove the newer N+1 value"
     );
 
-    base.apply_atomic(&second_batch).unwrap();
-    overlay.acknowledge(second_generation);
+    second.persist().unwrap().acknowledge();
     base.put(
         namespace.clone(),
         &key,

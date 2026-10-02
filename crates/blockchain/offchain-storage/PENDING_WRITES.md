@@ -1,0 +1,48 @@
+# Pending writes and durable acknowledgement
+
+`PendingOverlayStorage` is constructed with one reader and one durable writer.
+`stage` atomically applies one batch to the logical view and returns a
+`PendingWrite` owning the association with those exact mutations. The
+generation and the batch are private. There is no numeric acknowledgement
+interface or separate generation capture.
+
+`PendingWrite::persist` takes no writer. It passes the retained batch to the
+writer captured when that overlay was constructed. That writer is the durable
+writer for the overlay. Successful persistence returns a `PendingDurableReceipt`
+bound to the same handle. The receipt can be acknowledged once; it cannot be
+manufactured or paired with another pending batch.
+
+`PendingLogicalView` is a separate `pub(crate)` type in the same module,
+constructed with a reader only. It accepts `apply_atomic` and has no `stage`
+or `persist`. The Rocks prepared journal uses it and drops the resulting
+generation. `PendingOverlayStorage::apply_atomic` returns an error, so a
+durable overlay cannot enqueue a generation that no receipt can acknowledge.
+Projection state is written by the session writer before that overlay is
+opened. Durable projection uses `stage`.
+
+Pending writes persist in stage order. The module checks this before calling
+the writer. A commit gate covers persistence through receipt acknowledgement
+or release, while the logical view can continue accepting newer mutations.
+An acknowledged handle cannot be persisted again.
+
+The receipt acknowledges only its own mutations, preserving newer puts,
+deletes and partition retirements. A storage error, dropped receipt or dropped
+handle does not acknowledge or roll back pending data. The same live handle
+can retry its exact batch after an error or a dropped receipt. An abandoned
+unacknowledged handle keeps later writes blocked; process restart rebuilds the
+projection from its durable checkpoint through the existing node recovery.
+
+An empty batch contains no pending mutations and consumes no place in stage
+order.
+
+The node retains finality, absolute deadline, error classification and retry
+policy. Its production writer checks the deadline after persistence and before
+acknowledging the receipt. Late backend success therefore leaves pending intact
+and does not advance the durable checkpoint. The projector's injected batch
+consumer lets the node obtain the pending handle while applying the logical
+checkpoint, without a second generation read.
+
+Public pending tests cover receipt release/retry, ordering before backend I/O,
+newer mutations and retirements, and abandoned handles. Node tests exercise the
+production writer for ambiguous results and late success. Test orchestration
+may queue work, but delegates retry and ACK to the production implementation.

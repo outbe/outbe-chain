@@ -1,3 +1,4 @@
+use crate::snapshot::tests::projection_fixture::PartitionFixtureStore as RocksDbStorage;
 use std::fs;
 
 use alloy_consensus::{Header, Sealable};
@@ -226,7 +227,7 @@ fn stopped_stores_keep_ce_projection_and_sparse_ocomp_progress_distinct() {
     use alloy_primitives::B256;
     use outbe_compressed_entities::{CeMdbx, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME};
     use outbe_ocomp::discovery_spool::ContiguousCheckpointStoreV1;
-    use outbe_offchain_storage::{Key, Namespace, RocksDbStorage, StorageWriter, Value};
+    use outbe_offchain_storage::{Key, Namespace, StorageWriter, Value};
     use outbe_primitives::projection::ProjectionCheckpoint;
     use std::sync::Arc;
 

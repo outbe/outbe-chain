@@ -1,6 +1,7 @@
 //! Typed off-chain persistence boundary for Nod item and bucket bodies.
 
 mod day_store;
+mod partition_audit;
 
 use std::sync::Arc;
 

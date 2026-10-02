@@ -28,7 +28,6 @@ ocomp-finality-fixture = [
 ]
 tribute-day-directory = [
     "dep:outbe-nod",
-    "dep:outbe-offchain-data",
     "dep:outbe-tribute",
 ]
 ocomp-integration = [
@@ -40,7 +39,6 @@ ocomp-integration = [
     "dep:outbe-gemfactory",
     "dep:outbe-intexfactory",
     "dep:outbe-nodfactory",
-    "dep:outbe-offchain-data",
     "dep:outbe-paynote",
     "dep:outbe-tribute",
     "dep:outbe-tee-enclave",
@@ -103,8 +101,9 @@ outbe-node = { workspace = true, optional = true }
 outbe-ocomp = { workspace = true, optional = true }
 outbe-ocomp-protocol = { workspace = true, optional = true }
 outbe-ocompregistry = { workspace = true, optional = true }
-outbe-offchain-data = { workspace = true, optional = true }
+outbe-offchain-data.workspace = true
 outbe-offchain-storage.workspace = true
+mongodb.workspace = true
 outbe-oracle = { workspace = true, optional = true }
 outbe-tribute = { workspace = true, optional = true }
 outbe-tee-enclave = { workspace = true, optional = true }
