@@ -1794,6 +1794,24 @@ fn a_forfeit_out_of_gas_keeps_what_it_burned_and_resumes_on_the_bucket() {
 }
 
 #[test]
+fn a_body_corruption_in_a_nod_sweep_fails_the_block() {
+    use crate::called::sweep_failure;
+    use outbe_primitives::error::{PrecompileError, SweepFailure};
+    assert_eq!(
+        sweep_failure(&PrecompileError::BodyReadCorruption("x".into())),
+        SweepFailure::Propagate
+    );
+    assert_eq!(
+        sweep_failure(&PrecompileError::Revert("x".into())),
+        SweepFailure::Skip
+    );
+    assert_eq!(
+        sweep_failure(&PrecompileError::OutOfGas),
+        SweepFailure::Stop
+    );
+}
+
+#[test]
 fn a_node_local_failure_while_forfeiting_fails_the_slice() {
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);

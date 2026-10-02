@@ -34,7 +34,7 @@ use outbe_oracle::{api::get_all_reference_currencies, schema::OracleContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     daily_sweep::{Scheduled, SweepDays},
-    error::{Result, SweepFailure},
+    error::{PrecompileError, Result, SweepFailure},
     math::{constants::MAX_BIN_ID, tree_math},
     storage::StorageHandle,
     time::{first_full_day, previous_date_key, timestamp_to_date_key, WorldwideDay},
@@ -352,7 +352,7 @@ fn try_call(
         .with_checkpoint(|| mark_called(nod, bucket_key, now, terms.call_notice_period))
     {
         Ok(()) => Ok(Some(true)),
-        Err(error) => match error.sweep_failure() {
+        Err(error) => match sweep_failure(&error) {
             SweepFailure::Skip => Ok(Some(false)),
             SweepFailure::Stop => Ok(None),
             SweepFailure::Propagate => Err(error),
@@ -413,7 +413,7 @@ fn forfeit_arm(
                             break false;
                         }
                     }
-                    Err(error) => match error.sweep_failure() {
+                    Err(error) => match sweep_failure(&error) {
                         SweepFailure::Skip => {}
                         SweepFailure::Stop => break false,
                         SweepFailure::Propagate => return Err(error),
@@ -452,6 +452,15 @@ const fn pack_cursor(bin_id: u32, remaining: u32) -> u64 {
 
 const fn unpack_cursor(packed: u64) -> (u32, u32) {
     ((packed >> 32) as u32, packed as u32)
+}
+
+/// Nod's own index checks revert, so a body corruption reaching a sweep is this
+/// node's body store.
+pub(crate) fn sweep_failure(error: &PrecompileError) -> SweepFailure {
+    match error {
+        PrecompileError::BodyReadCorruption(_) => SweepFailure::Propagate,
+        other => other.sweep_failure(),
+    }
 }
 
 /// True when the bucket's trailing `call_window` carries at least its
@@ -552,7 +561,7 @@ pub(crate) fn forfeit_members(
         let gratis_load_minor = match member {
             Ok(Some(load)) => load,
             Ok(None) => break,
-            Err(error) if error.sweep_failure() == SweepFailure::Stop => break,
+            Err(error) if sweep_failure(&error) == SweepFailure::Stop => break,
             Err(error) => return Err(error),
         };
         credit = credit.checked_add(gratis_load_minor).ok_or_else(|| {
