@@ -56,7 +56,7 @@ fn a_subunit_purchase_charges_one_minor_unit_once() {
 }
 
 #[test]
-fn the_unit_minimum_precedes_asset_and_currency_conversion() {
+fn the_purchase_minimum_precedes_asset_and_currency_conversion() {
     let fx = |to: u64, from: u64| Some((U256::from(to), U256::from(from)));
     for (rate, decimals, expected) in [
         (None, 8, 100u64),
