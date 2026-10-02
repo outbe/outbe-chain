@@ -8,7 +8,7 @@ use outbe_ocomp_protocol::{
 use outbe_primitives::error::PrecompileError;
 
 use crate::ocomp_limits::{
-    apply_auction_brief, apply_fresh_request_limit_effect, auction_draw, reserve_auction_draw,
+    apply_auction_brief, apply_fresh_request_limit_effect, desis_reservation, reserve_desis_limit,
     RequestLimitEffect, RequestLimitSplit,
 };
 
@@ -390,13 +390,13 @@ fn a_red_receipt_with_a_desis_limit_fails_the_day_without_drawing() {
         };
         let mut receipt = apply_fresh_request_limit_effect(storage.clone(), request.clone())
             .expect("a RED day commits its limit split");
-        assert_eq!(auction_draw(&receipt).unwrap(), U256::ZERO);
+        assert_eq!(desis_reservation(&receipt).unwrap(), U256::ZERO);
         let credited = PromisLimitContract::new(storage.clone())
             .get_total_unallocated()
             .unwrap();
 
         receipt.desis_limit_minor = U256::from(7);
-        let error = auction_draw(&receipt).unwrap_err();
+        let error = desis_reservation(&receipt).unwrap_err();
         assert!(crate::errors::is_business_failure(&error), "{error}");
         let error = apply_auction_brief(storage.clone(), &receipt).unwrap_err();
         assert!(crate::errors::is_business_failure(&error), "{error}");
@@ -415,7 +415,7 @@ fn a_red_receipt_with_a_desis_limit_fails_the_day_without_drawing() {
         );
 
         receipt.day_type = DayType::Green;
-        assert_eq!(auction_draw(&receipt).unwrap(), U256::from(7));
+        assert_eq!(desis_reservation(&receipt).unwrap(), U256::from(7));
     });
 }
 
@@ -566,7 +566,7 @@ fn overlapping_requests_size_their_auctions_from_what_earlier_requests_left() {
 }
 
 #[test]
-fn a_reservation_the_accumulator_cannot_cover_fails_the_day_and_takes_nothing() {
+fn a_reservation_the_accumulator_cannot_cover_is_a_business_failure_and_takes_nothing() {
     with_storage(|storage| {
         PromisLimitContract::new(storage.clone())
             .checked_add_carry_over(U256::from(5))
@@ -589,7 +589,7 @@ fn a_reservation_the_accumulator_cannot_cover_fails_the_day_and_takes_nothing() 
         assert_eq!(held, U256::from(5));
 
         receipt.desis_limit_minor = held + U256::from(1);
-        let error = reserve_auction_draw(storage.clone(), &receipt).unwrap_err();
+        let error = reserve_desis_limit(storage.clone(), &receipt).unwrap_err();
         assert!(crate::errors::is_business_failure(&error), "{error}");
         assert_eq!(
             PromisLimitContract::new(storage)

@@ -116,7 +116,6 @@ pub(crate) fn apply_fresh_request_limit_effect(
     receipt
         .validate_semantics()
         .map_err(protocol_error_to_revert)?;
-    // The request credits what Lysis left of the day's own emission and reserves the Desis Limit.
     // The brief waits for the Lysis deadline: a day whose Lysis never completes opens no auction.
     if !split.carry_over_credit.is_zero() {
         let delta = PromisLimitContract::new(storage.clone())
@@ -125,17 +124,17 @@ pub(crate) fn apply_fresh_request_limit_effect(
             return Err(MetadosisError::OcompLimitReceiptMismatch.into());
         }
     }
-    reserve_auction_draw(storage, &receipt)?;
+    reserve_desis_limit(storage, &receipt)?;
     Ok(receipt)
 }
 
 /// Take the day's Desis Limit out of the accumulator, so later requests size their auctions
 /// without it. A shortfall fails the day rather than reserving less than the receipt promises.
-pub(crate) fn reserve_auction_draw(
+pub(crate) fn reserve_desis_limit(
     storage: StorageHandle<'_>,
     receipt: &RequestLimitSplitReceiptV1,
 ) -> Result<()> {
-    let draw = auction_draw(receipt)?;
+    let draw = desis_reservation(receipt)?;
     if draw.is_zero() {
         return Ok(());
     }
@@ -158,7 +157,7 @@ pub(crate) fn apply_auction_brief(
     receipt: &RequestLimitSplitReceiptV1,
 ) -> Result<()> {
     let green = receipt.day_type == DayType::Green;
-    auction_draw(receipt)?;
+    desis_reservation(receipt)?;
     storage.with_checkpoint(|| {
         let actual = outbe_desis::ocomp_limits::apply_request_desis_limit(
             storage.clone(),
@@ -177,7 +176,7 @@ pub(crate) fn apply_auction_brief(
 
 /// What the request reserves from the accumulator for the auction. A red day opens no auction,
 /// so a receipt that gives it a Desis Limit is rejected.
-pub(crate) fn auction_draw(receipt: &RequestLimitSplitReceiptV1) -> Result<U256> {
+pub(crate) fn desis_reservation(receipt: &RequestLimitSplitReceiptV1) -> Result<U256> {
     if receipt.day_type != DayType::Green && !receipt.desis_limit_minor.is_zero() {
         return Err(MetadosisError::InvalidOcompLimitSplit {
             day_limit: receipt.day_limit,
@@ -193,7 +192,7 @@ pub(crate) fn auction_draw(receipt: &RequestLimitSplitReceiptV1) -> Result<U256>
 pub(crate) fn retained_request_limit(receipt: &RequestLimitSplitReceiptV1) -> Result<U256> {
     receipt
         .lysis_limit_minor
-        .checked_add(auction_draw(receipt)?)
+        .checked_add(desis_reservation(receipt)?)
         .ok_or_else(|| {
             MetadosisError::InvalidOcompLimitSplit {
                 day_limit: receipt.day_limit,
