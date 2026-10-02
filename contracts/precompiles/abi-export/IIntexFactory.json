@@ -386,6 +386,25 @@
   },
   {
     "type": "event",
+    "name": "CalledNoticeDropped",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "bytes14",
+        "indexed": true,
+        "internalType": "bytes14"
+      },
+      {
+        "name": "calledAt",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "ContributorBatchPaid",
     "inputs": [
       {

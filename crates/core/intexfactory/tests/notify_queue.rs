@@ -1,15 +1,20 @@
 //! Queue mechanics of the lifecycle notices the `intex_drain_notices` trigger sends.
 //!
-//! The router accepts every send here, so these pin the queue walk itself: the
-//! chunk bound, the resume point, and that a drained entry is gone.
+//! The router accepts every send unless a test says otherwise, so these pin the
+//! queue walk itself: the chunk bound, the resume point, that a drained entry is
+//! gone, and where a refused one goes.
 
 use alloy_primitives::U256;
+use alloy_sol_types::SolEvent;
 use outbe_intex::SeriesId;
-use outbe_intexfactory::constants::MAX_ROUTER_CALLS_PER_FIRING;
-use outbe_intexfactory::notify::{drain_notices, pack_called_notice};
+use outbe_intexfactory::constants::{MAX_CALLED_NOTICE_ATTEMPTS, MAX_ROUTER_CALLS_PER_FIRING};
+use outbe_intexfactory::notify::{called_notice_attempts, drain_notices, pack_called_notice};
+use outbe_intexfactory::precompile::IIntexFactory::CalledNoticeDropped;
 use outbe_intexfactory::IntexFactoryContract;
+use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+use outbe_primitives::storage::types::Storable;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
 
@@ -36,11 +41,15 @@ fn seed(handle: &StorageHandle<'_>, count: u32) {
 /// A provider whose OriginRouter accepts sends.
 fn provider() -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    accept_sends(&mut storage);
+    storage
+}
+
+fn accept_sends(storage: &mut HashMapStorageProvider) {
     storage.stub_sub_call_at(
         outbe_intexfactory::constants::ORIGIN_ROUTER_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
-    storage
 }
 
 fn drain(handle: &StorageHandle<'_>) {
@@ -117,4 +126,95 @@ fn an_exactly_full_firing_rewinds_the_queue() {
         drain(&handle);
         assert_eq!(queue_bounds(&handle), (0, 0));
     });
+}
+
+fn queued(handle: &StorageHandle<'_>, index: u32) -> U256 {
+    IntexFactoryContract::new(handle.clone())
+        .notify_at
+        .read(&index)
+        .unwrap()
+}
+
+fn dropped_notices(storage: &HashMapStorageProvider) -> Vec<CalledNoticeDropped> {
+    storage
+        .get_events(INTEX_FACTORY_ADDRESS)
+        .iter()
+        .filter_map(|log| CalledNoticeDropped::decode_log_data(log).ok())
+        .collect()
+}
+
+#[test]
+fn a_refused_notice_is_requeued_with_one_more_attempt() {
+    // No OriginRouter: every send is refused.
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |handle| {
+        seed(&handle, 1);
+        drain(&handle);
+
+        assert_eq!(
+            queue_bounds(&handle),
+            (1, 2),
+            "the requeued entry outlives the firing that emptied the window"
+        );
+        assert_eq!(queued(&handle, 0), U256::ZERO);
+        let entry = queued(&handle, 1);
+        assert_eq!(called_notice_attempts(entry), 1);
+        assert_eq!(SeriesId::from_word(entry), series(0));
+        assert_eq!((entry & U256::from(u32::MAX)).to::<u32>(), CALLED_AT);
+    });
+    assert!(dropped_notices(&storage).is_empty());
+}
+
+#[test]
+fn a_notice_refused_at_the_cap_is_dropped_with_an_event() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |handle| {
+        seed(&handle, 1);
+        for _ in 1..MAX_CALLED_NOTICE_ATTEMPTS {
+            drain(&handle);
+        }
+        let (head, tail) = queue_bounds(&handle);
+        assert_eq!(tail - head, 1, "still queued below the cap");
+        assert_eq!(
+            called_notice_attempts(queued(&handle, head)),
+            MAX_CALLED_NOTICE_ATTEMPTS - 1
+        );
+    });
+    assert!(dropped_notices(&storage).is_empty());
+
+    StorageHandle::enter(&mut storage, |handle| {
+        drain(&handle);
+        assert_eq!(queue_bounds(&handle), (0, 0), "the last refusal drops it");
+    });
+    let dropped = dropped_notices(&storage);
+    assert_eq!(dropped.len(), 1);
+    assert_eq!(SeriesId::from(dropped[0].seriesId), series(0));
+    assert_eq!(dropped[0].calledAt, CALLED_AT);
+}
+
+#[test]
+fn a_refused_notice_does_not_hold_back_the_rest() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |handle| {
+        seed(&handle, 2);
+        drain(&handle);
+
+        assert_eq!(queue_bounds(&handle), (2, 4));
+        for (slot, index) in [(2, 0), (3, 1)] {
+            let entry = queued(&handle, slot);
+            assert_eq!(SeriesId::from_word(entry), series(index));
+            assert_eq!(
+                called_notice_attempts(entry),
+                1,
+                "every entry got its own call in the firing"
+            );
+        }
+    });
+
+    accept_sends(&mut storage);
+    StorageHandle::enter(&mut storage, |handle| {
+        drain(&handle);
+        assert_eq!(queue_bounds(&handle), (0, 0));
+    });
+    assert!(dropped_notices(&storage).is_empty());
 }
