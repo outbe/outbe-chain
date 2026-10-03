@@ -3,7 +3,7 @@
 
 use crate::constants::{
     reciprocal_scale, zero_volume_weight, DAY_TYPE_PAIR, MAX_VOTE_PRICE_WHOLE,
-    MAX_VOTE_VOLUME_WHOLE, VWAP_HOUR_SECONDS,
+    MAX_VOTE_VOLUME_WHOLE, MIN_WINDOW_COVERAGE, VWAP_HOUR_SECONDS,
 };
 use crate::errors::{OracleError, OracleOcompError};
 use crate::precompile::IOracle;
@@ -411,7 +411,8 @@ impl OracleContract<'_> {
     }
 
     /// VWAP over the snapshot's window once its cutoff has passed; `None` when the
-    /// window holds no observation or no positive price.
+    /// window holds no observation, no positive price, or too few snapshots for
+    /// its block span (see [`MIN_WINDOW_COVERAGE`]).
     pub fn finalized_window_vwap(
         &self,
         pair: AddressPair,
@@ -420,9 +421,88 @@ impl OracleContract<'_> {
         if snapshot.cutoff() > self.storage.timestamp()?.to::<u64>() {
             return Err(OracleError::InvalidVwapSnapshot.into());
         }
-        Ok(self
+        let vwap = self
             .try_calculate_vwap(pair, snapshot.start(), snapshot.cutoff())?
-            .filter(|vwap| !vwap.is_zero()))
+            .filter(|vwap| !vwap.is_zero());
+        if vwap.is_some() && !self.window_is_covered(pair, snapshot.start(), snapshot.cutoff())? {
+            return Ok(None);
+        }
+        Ok(vwap)
+    }
+
+    /// Whether the pair produced at least [`MIN_WINDOW_COVERAGE`] of the tally
+    /// rounds the window's blocks allowed. The block span runs from the first
+    /// block of the first hour with blocks to the first block of the cutoff
+    /// hour (or the current block when that hour has none yet). A window
+    /// without any recorded hour block cannot be judged and passes.
+    fn window_is_covered(&self, pair: AddressPair, start: u64, cutoff: u64) -> Result<bool> {
+        let vote_period = self.config_vote_period.read()?.max(1);
+        let mut hour = start - start % VWAP_HOUR_SECONDS;
+        let mut first_block = None;
+        while hour < cutoff && first_block.is_none() {
+            let block = self.hour_first_block.read(&hour)?;
+            if block != 0 {
+                first_block = Some(block);
+            }
+            hour += VWAP_HOUR_SECONDS;
+        }
+        let Some(first_block) = first_block else {
+            return Ok(true);
+        };
+        let end_block = match self.hour_first_block.read(&cutoff)? {
+            0 => self.storage.block_number()?,
+            block => block,
+        };
+        let possible = end_block.saturating_sub(first_block) / vote_period;
+        let actual = self.count_window_snapshots(pair, start, cutoff)?;
+        let (numerator, denominator) = MIN_WINDOW_COVERAGE;
+        Ok(actual.saturating_mul(denominator) >= possible.saturating_mul(numerator))
+    }
+
+    /// Snapshots carrying `pair` in `[start, end)`, from hourly cells where the
+    /// cell still holds the hour and from raw snapshots otherwise.
+    fn count_window_snapshots(&self, pair: AddressPair, start: u64, end: u64) -> Result<u64> {
+        let counts = self.hourly_snapshot_count.get_nested(&pair);
+        let hours = self.hourly_vwap_hour.get_nested(&pair);
+        let mut total = 0u64;
+        let mut hour = start - start % VWAP_HOUR_SECONDS;
+        while hour < end {
+            let cell = hourly_vwap_cell(hour);
+            let held = hours.read(&cell)?;
+            if held == hour {
+                total = total.saturating_add(counts.read(&cell)?);
+            } else if held > hour {
+                total = total.saturating_add(self.count_raw_snapshots(
+                    pair,
+                    hour.max(start),
+                    (hour + VWAP_HOUR_SECONDS).min(end),
+                )?);
+            }
+            hour += VWAP_HOUR_SECONDS;
+        }
+        Ok(total)
+    }
+
+    fn count_raw_snapshots(&self, pair: AddressPair, start: u64, end: u64) -> Result<u64> {
+        let write_idx = self.snapshot_write_idx.read()?;
+        let oldest_idx = self.snapshot_oldest_idx.read()?;
+        if write_idx <= oldest_idx {
+            return Ok(0);
+        }
+        let range_start = self.binary_search_snapshot_idx(start, oldest_idx, write_idx)?;
+        let range_end = self.binary_search_snapshot_idx(end, oldest_idx, write_idx)?;
+        let mut total = 0u64;
+        for idx in range_start..range_end {
+            let pair_count = self.snapshot_pair_count.read(&idx)?;
+            let pair_map = self.snapshot_pair.get_nested(&idx);
+            for entry in 0..pair_count {
+                if pair_map.read_pair(&entry)?.same_market(&pair) {
+                    total += 1;
+                    break;
+                }
+            }
+        }
+        Ok(total)
     }
 
     fn try_worldwide_day_vwap(&self, pair: AddressPair, start_time: u64) -> Result<Option<U256>> {
