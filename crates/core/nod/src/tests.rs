@@ -244,8 +244,6 @@ fn same_day_and_entry_in_two_currencies_are_two_buckets_in_two_bins() {
     });
 }
 
-/// A42: one day and currency at two entries are two buckets, each sealing the
-/// floor and call price of its own entry.
 #[test]
 fn same_day_and_currency_at_two_entries_are_two_buckets_with_their_own_terms() {
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));

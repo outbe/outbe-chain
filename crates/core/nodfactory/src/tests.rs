@@ -549,7 +549,6 @@ fn invalid_and_duplicate_issuance_leave_one_canonical_item() {
         .is_some());
 }
 
-/// A01: an entry past the issuable bound is refused before anything is written.
 #[test]
 fn direct_issuance_beyond_the_issuable_entry_writes_nothing() {
     let mut world = World::new();
