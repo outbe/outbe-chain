@@ -118,8 +118,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             revert TokenAlreadyExists(iTok);
         }
 
-        // The cap is part of the series's birth identity; a zero cap would mean "a series no
-        // one can mint into," which never matches an auction-cleared result.
+        // A series is born from an auction that cleared at least one unit.
         if (params.issuedUnits == 0) revert ZeroIssuedUnits();
 
         // Zero is how this contract reads "no such series"; a future stamp would
@@ -183,18 +182,14 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // `intexQuantity` (uint16); keeps the ERC1155 balance and `totalSupply` consistent.
         if (quantity > type(uint16).max) revert QuantityTooLarge(quantity);
 
-        // Cap is enforced against live `totalSupply`; a burn frees cap room. The intermediate
-        // is widened to uint256 so a series with `issuedUnits` near `type(uint32).max`
-        // surfaces the typed `SupplyCapExceeded` revert rather than a raw arithmetic panic.
         uint256 newTotal = uint256(data.totalSupply) + quantity;
-        if (newTotal > data.issuedUnits) {
-            revert SupplyCapExceeded(seriesId, newTotal, data.issuedUnits);
+        if (newTotal > type(uint32).max) {
+            revert SupplyCapExceeded(seriesId, newTotal, type(uint32).max);
         }
 
         // CEI ok: write totalSupply before _mint so the ERC1155 receiver callback observes a
-        // consistent (totalSupply == sum balanceOf) snapshot - closes the read-only-reentrancy
-        // window. Cast is safe because the cap check bounded `newTotal <= issuedUnits <= uint32.max`.
-        // forge-lint: disable-next-line(unsafe-typecast) -- bounded by cap check above
+        // consistent (totalSupply == sum balanceOf) snapshot - closes the read-only-reentrancy window.
+        // forge-lint: disable-next-line(unsafe-typecast) -- bounded by the uint32 check above
         data.totalSupply = uint32(newTotal);
         _mint(to, tokenId, quantity, "");
 
@@ -286,19 +281,13 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // A crosschainMinted balance can be an owner's full transferable balance (<= totalSupply, uint32).
         if (amount > type(uint32).max) revert QuantityTooLarge(amount);
 
-        // Bridge-in cap: enforce `totalSupply + amount <= issuedUnits` at all times. The
-        // live-supply invariant matches mint, which also caps on live `totalSupply`.
-        // Intermediate widened to uint256 so the cap revert surfaces as `SupplyCapExceeded`
-        // even at the `issuedUnits == type(uint32).max` boundary.
         uint256 newTotal = uint256(data.totalSupply) + amount;
-        // Only the Issued path reaches here: the status guard above already rejected Settled ids.
-        if (newTotal > data.issuedUnits) {
-            revert SupplyCapExceeded(bytes14(uint112(tokenId)), newTotal, data.issuedUnits);
+        if (newTotal > type(uint32).max) {
+            revert SupplyCapExceeded(bytes14(uint112(tokenId)), newTotal, type(uint32).max);
         }
 
-        // CEI ok: write totalSupply before _mint (see mint()). Cast is safe because the cap
-        // check bounded `newTotal <= issuedUnits <= uint32.max`.
-        // forge-lint: disable-next-line(unsafe-typecast) -- bounded by cap check above
+        // CEI ok: write totalSupply before _mint (see issue()).
+        // forge-lint: disable-next-line(unsafe-typecast) -- bounded by the uint32 check above
         data.totalSupply = uint32(newTotal);
         _mint(to, tokenId, amount, "");
     }

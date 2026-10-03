@@ -45,7 +45,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         Settled
     }
 
-    /// @notice Per-owner, per-series balance pair. Widths match the `uint32` supply cap so a
+    /// @notice Per-owner, per-series balance pair. Widths match the `uint32` supply counters so a
     ///         balance accumulated above `type(uint16).max` is reported without truncation.
     struct OwnerBalances {
         uint32 issued;
@@ -63,14 +63,12 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     }
 
     /// @notice Series-level data, stored once per series under its Issued token id.
-    /// @dev `issuedUnits` caps the current `totalSupply` minted via `mint` (a burn frees cap room).
     struct SeriesData {
         /// @notice Issuance currency (ISO numeric); single USD (840) until multi-currency.
         uint16 issuanceCurrency;
         /// @notice Reference currency (ISO numeric); single USD (840) until multi-currency.
         uint16 referenceCurrency;
-        /// @notice Auction-cleared cap on the Issued mint quantity. Set once at `createSeries`,
-        ///         never mutated; `mint` rejects pushing `totalSupply` past it.
+        /// @notice Auction-cleared units the series was issued with. Set once at `createSeries`, never mutated.
         uint32 issuedUnits;
         /// @notice PROMIS-units per Intex unit (1e6).
         uint128 promisLoadMinor;
@@ -150,7 +148,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     error NonexistentToken(uint256 tokenId);
     /// @notice Series already exists for this token id.
     error TokenAlreadyExists(uint256 tokenId);
-    /// @notice `createSeries` was called with a zero issued-intex count (the supply cap cannot be zero).
+    /// @notice `createSeries` was called with a zero issued-intex count.
     error ZeroIssuedUnits();
     /// @notice `issuedAt` is zero (the existence sentinel) or dated after this chain's clock.
     error InvalidIssuedAt(uint32 issuedAt);
@@ -175,7 +173,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     error IssueAfterDeadline(uint256 tokenId, uint32 deadline);
     /// @notice `markCalled` was given a call time of zero or one the destination clock has not reached.
     error CalledAtInvalid(uint32 calledAt, uint32 nowTs);
-    /// @notice A mint or batch sum would push `totalSupply` past `issuedUnits`.
+    /// @notice An issue or crosschainMint would push `totalSupply` past `type(uint32).max`.
     error SupplyCapExceeded(bytes14 seriesId, uint256 attempted, uint256 cap);
 
     // --- Writes ---
@@ -199,13 +197,13 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     }
 
     /// @notice Create a new Intex series (one per auction) with its identity fields.
-    /// @param params Series identity (id, currencies, cap, promis load, prices, call trigger).
+    /// @param params Series identity (id, currencies, issued units, promis load, prices, call trigger).
     function createSeries(CreateSeriesParams calldata params) external;
 
     /// @notice Mint Intex to a specific address.
     /// @dev A `Called` series takes no issuance past its settlement deadline.
     /// @param to Recipient of the minted Issued tokens.
-    /// @param quantity Amount to mint (bounded by `type(uint16).max` and the series supply cap).
+    /// @param quantity Amount to mint (bounded by `type(uint16).max`; `totalSupply` stays within `uint32`).
     /// @param seriesId Series identifier.
     function issue(address to, uint256 quantity, bytes14 seriesId) external;
 

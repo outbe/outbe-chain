@@ -64,9 +64,6 @@ contract IntexNFT1155Test is Test {
     uint256 constant TOKEN_ID_2 = uint256(uint112(SERIES_ID_2));
     uint256 constant TOKEN_ID_3 = uint256(uint112(SERIES_ID_3));
 
-    /// @dev Sized well above every per-mint quantity in this suite so existing tests
-    ///      exercise lifecycle and bridge behavior independently of the supply cap.
-    ///      Dedicated cap coverage lives in `IntexNFT1155.supply.t.sol`.
     uint32 constant ISSUED_UNITS = 10_000;
 
     function setUp() public {

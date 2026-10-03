@@ -8,9 +8,9 @@ import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 
-/// @dev Randomized mints and burns into a fixed series; the cap and parity invariants must always
-///      hold. A burn frees cap room, so totalSupply moves both ways while staying `<= cap`.
-contract NFT1155CapHandler is Test {
+/// @dev Randomized mints and burns into a fixed series; totalSupply moves both ways and the parity
+///      invariant must always hold.
+contract NFT1155SupplyHandler is Test {
     IntexNFT1155 internal intex;
     bytes14 internal seriesId;
     uint256 internal tokenId;
@@ -29,7 +29,6 @@ contract NFT1155CapHandler is Test {
         try intex.issue(to, qty, seriesId) {} catch {}
     }
 
-    /// @dev Burning Issued frees cap room: totalSupply must drop and the cap stays reusable.
     function burn(uint256 bidderSeed, uint256 qtySeed) external {
         address from = bidders[bound(bidderSeed, 0, bidders.length - 1)];
         uint256 bal = intex.balanceOf(from, tokenId);
@@ -39,42 +38,40 @@ contract NFT1155CapHandler is Test {
     }
 }
 
-contract IntexNFT1155CapInvariantTest is StdInvariant, Test {
+contract IntexNFT1155SupplyInvariantTest is StdInvariant, Test {
     IntexNFT1155 internal intex;
-    NFT1155CapHandler internal handler;
+    NFT1155SupplyHandler internal handler;
     address internal admin = address(this);
     address[] internal bidders;
 
     uint32 internal constant SERIES_ID_DAY = 20250101;
     bytes14 internal constant SERIES_ID = "20250101-USD-U";
-    uint32 internal constant CAP = 10_000;
+    uint32 internal constant ISSUED_UNITS = 10_000;
 
     function setUp() public {
         intex = DeployProxy.intexNFT1155(admin, admin);
-        intex.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, CAP, 0));
+        intex.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
 
         bidders.push(address(0xB1));
         bidders.push(address(0xB2));
         bidders.push(address(0xB3));
 
-        handler = new NFT1155CapHandler(intex, SERIES_ID, bidders);
+        handler = new NFT1155SupplyHandler(intex, SERIES_ID, bidders);
         // Handler drives mint/crosschainBurn directly; both are RELAYER_ROLE-gated.
         intex.grantRole(intex.RELAYER_ROLE(), address(handler));
 
         bytes4[] memory selectors = new bytes4[](2);
-        selectors[0] = NFT1155CapHandler.mint.selector;
-        selectors[1] = NFT1155CapHandler.burn.selector;
+        selectors[0] = NFT1155SupplyHandler.mint.selector;
+        selectors[1] = NFT1155SupplyHandler.burn.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
         targetContract(address(handler));
     }
 
-    /// @dev Cap is on LIVE supply: `totalSupply <= issuedUnits` at every step, and a burn frees
-    ///      room rather than permanently consuming the cap. Parity (sum balanceOf == totalSupply) holds.
-    function invariant_supplyCapAndParity() public view {
+    /// @dev `issuedUnits` never moves, and parity (sum balanceOf == totalSupply) holds.
+    function invariant_issuedUnitsAndParity() public view {
         uint256 iTok = intex.issuedTokenId(SERIES_ID);
         IIntexNFT1155.SeriesData memory d = intex.readData(SERIES_ID);
-        assertLe(d.totalSupply, d.issuedUnits, "totalSupply exceeds cap");
-        assertEq(d.issuedUnits, CAP, "cap is immutable");
+        assertEq(d.issuedUnits, ISSUED_UNITS, "issuedUnits is immutable");
         uint256 sum;
         for (uint256 i = 0; i < bidders.length; i++) {
             sum += intex.balanceOf(bidders[i], iTok);
