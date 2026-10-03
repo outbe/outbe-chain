@@ -271,7 +271,7 @@ pub(super) fn open_voting_with_pre_open_state() -> (VotingOpenScenario, PreOpenS
         let base_limit = outbe_metadosis::api::worldwide_day(storage.clone(), prepared.wwd)
             .unwrap()
             .unwrap()
-            .metadosis_limit_amount;
+            .metadosis_limit_minor;
         // The effective ceiling is the day's own emission plus what it drew from the accumulator.
         assert_eq!(
             frozen.day_limit,

@@ -344,7 +344,7 @@ fn limit_settled_earlier_in_the_opening_tick_opens_the_offering() {
             metadosis
                 .worldwide_days
                 .entry(wwd)
-                .metadosis_limit_amount()
+                .metadosis_limit_minor()
                 .read()
                 .unwrap(),
             settled_limit
@@ -774,7 +774,7 @@ fn missed_offering_rejects_a_day_limit_with_no_formation() {
         MetadosisContract::new(storage)
             .worldwide_days
             .entry(wwd)
-            .metadosis_limit_amount()
+            .metadosis_limit_minor()
             .write(U256::from(5))
             .unwrap();
     });

@@ -113,7 +113,7 @@ pub(crate) fn process_ocomp_ready_candidate(
 ) -> Result<()> {
     let ReadyOwners { scope, parent } = owners;
     let wwd = current.worldwide_day;
-    let limit_amount = current.metadosis_limit_amount;
+    let limit_amount = current.metadosis_limit_minor;
     let day_type = current.day_type;
     if limit_amount.is_zero() || day_type == WwdDayType::Unknown {
         return crate::terminal::fail_worldwide_day(
@@ -277,7 +277,7 @@ fn settle_zero_allocation(
     let desis_limit_minor = desis_limit(
         tribute_nominal_total,
         calculation.lysis_limit_minor,
-        current.metadosis_limit_amount,
+        current.metadosis_limit_minor,
         U256::ZERO,
         day_type == WwdDayType::Green,
     )
@@ -288,7 +288,7 @@ fn settle_zero_allocation(
     // The limit headroom above the day's own nominal is issued by nobody, so it stays on
     // the warehouse together with whatever the brief did not take.
     let returned = current
-        .metadosis_limit_amount
+        .metadosis_limit_minor
         .checked_sub(calculation.lysis_limit_minor)
         .and_then(|rest| rest.checked_sub(desis_limit_minor))
         .and_then(|headroom| headroom.checked_add(to_promis))

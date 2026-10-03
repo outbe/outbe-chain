@@ -42,7 +42,7 @@ pub(crate) fn fail_worldwide_day(
     let limits = poc_schema_limits();
     let unused_limit = metadosis
         .request_limit_receipt(worldwide_day, &limits)?
-        .map_or(current.metadosis_limit_amount, |receipt| {
+        .map_or(current.metadosis_limit_minor, |receipt| {
             receipt.lysis_limit_minor
         });
 

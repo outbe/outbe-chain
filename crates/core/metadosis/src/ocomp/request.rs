@@ -342,7 +342,7 @@ fn freeze_request_limits(
     let day_limit = metadosis
         .worldwide_days
         .entry(wwd)
-        .metadosis_limit_amount()
+        .metadosis_limit_minor()
         .read()?;
     let calculation = metadosis.calculate_metadosis(
         wwd,

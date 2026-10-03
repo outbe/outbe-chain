@@ -336,7 +336,7 @@ pub(in crate::world::ocomp) fn schedule_public_measurement_day(
                 lookback_end: genesis_timestamp,
                 offering_end,
                 scheduled_process_time: offering_end,
-                metadosis_limit_amount: day_limit,
+                metadosis_limit_minor: day_limit,
                 previous_vwap: stored_previous,
                 current_vwap: stored_current,
             })

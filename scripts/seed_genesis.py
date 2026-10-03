@@ -989,7 +989,7 @@ def seed_metadosis(storage: StorageBuilder, config: dict):
                      3 forming_start(u64)     4 forming_end(u64)
                      5 lookback_end(u64)      6 offering_end(u64)
                      7 scheduled_process_time(u64)
-                     8 metadosis_limit_amount(U256)
+                     8 metadosis_limit_minor(U256)
                      9 previous_vwap(U256)   10 current_vwap(U256)
       slot 11:     active_wwd_count (Value<u16>)
       slots 12-13: active_wwd (Set<WorldwideDayKey>) - OZ enumerable set:
@@ -1020,7 +1020,7 @@ def seed_metadosis(storage: StorageBuilder, config: dict):
         storage.set_mapping(6, wwd_key, entry.get("offering_end", 0))
         storage.set_mapping(7, wwd_key, entry.get("scheduled_process_time", 0))
 
-        # slot 8 = metadosis_limit_amount (per-day mint cap), 9 = previous_vwap,
+        # slot 8 = metadosis_limit_minor (per-day mint cap), 9 = previous_vwap,
         # 10 = current_vwap - schema field order.
         day_limit = parse_int(entry.get("day_limit", "0"))
         if day_limit > 0:

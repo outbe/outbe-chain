@@ -130,7 +130,7 @@ fn forfeit_and_credit_capacity(
     let tribute = TributeContract::new(storage.clone())
         .forfeit_sealed_partition(effect.scope, effect.current.worldwide_day)?;
     let credit = PromisLimitContract::new(storage.clone())
-        .checked_add_carry_over(effect.current.metadosis_limit_amount)?;
+        .checked_add_carry_over(effect.current.metadosis_limit_minor)?;
     Ok(CapacityForfeitureReceipt {
         worldwide_day: effect.current.worldwide_day,
         max_retained_wwds,
@@ -193,7 +193,7 @@ pub(super) fn apply_missed_offering(
     let storage = metadosis.storage.clone();
     let result = (|| {
         let credit = PromisLimitContract::new(storage.clone())
-            .checked_add_carry_over(current.metadosis_limit_amount)?;
+            .checked_add_carry_over(current.metadosis_limit_minor)?;
         let retirement = TributeContract::new(storage.clone())
             .retire_empty_missed_offering_partition(scope, current.worldwide_day)?;
         let receipt = MissedOfferingReceipt {

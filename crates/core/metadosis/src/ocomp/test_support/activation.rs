@@ -506,7 +506,7 @@ fn seed_requested_job(
             lookback_end: 3,
             offering_end: 4,
             scheduled_process_time: 5,
-            metadosis_limit_amount: U256::from(100),
+            metadosis_limit_minor: U256::from(100),
             previous_vwap: U256::from(8),
             current_vwap: U256::from(10),
         })

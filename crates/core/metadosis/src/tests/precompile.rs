@@ -134,7 +134,7 @@ pub(super) fn seed_offering_day(storage: StorageHandle<'_>) {
             lookback_end: 30,
             offering_end: 40,
             scheduled_process_time: 50,
-            metadosis_limit_amount: U256::from(100),
+            metadosis_limit_minor: U256::from(100),
             previous_vwap: U256::from(8),
             current_vwap: U256::from(9),
         })

@@ -126,7 +126,7 @@ impl FixtureKernelExt for MetadosisContract<'_> {
             lookback_end,
             offering_end,
             scheduled_process_time,
-            metadosis_limit_amount: U256::ZERO,
+            metadosis_limit_minor: U256::ZERO,
             previous_vwap: U256::ZERO,
             current_vwap: U256::ZERO,
         })
@@ -166,7 +166,7 @@ impl FixtureKernelExt for MetadosisContract<'_> {
         }
         self.worldwide_days
             .entry(wwd)
-            .metadosis_limit_amount()
+            .metadosis_limit_minor()
             .write(amount)
     }
 
@@ -198,7 +198,7 @@ impl FixtureKernelExt for MetadosisContract<'_> {
             lookback_end: 3,
             offering_end: 4,
             scheduled_process_time: 5,
-            metadosis_limit_amount: day_limit,
+            metadosis_limit_minor: day_limit,
             previous_vwap,
             current_vwap,
         })
@@ -219,14 +219,14 @@ impl FixtureKernelExt for MetadosisContract<'_> {
         let day_limit = self
             .worldwide_days
             .entry(wwd)
-            .metadosis_limit_amount()
+            .metadosis_limit_minor()
             .read()?;
         let receipt = self.day_limit_formation_receipts.entry(wwd);
-        receipt.base_limit().write(day_limit)?;
-        receipt.carry_over_before().write(U256::ZERO)?;
-        receipt.carry_over_taken().write(U256::ZERO)?;
-        receipt.carry_over_after().write(U256::ZERO)?;
-        receipt.formed_day_limit().write(day_limit)?;
+        receipt.base_limit_minor().write(day_limit)?;
+        receipt.promis_limit_before_minor().write(U256::ZERO)?;
+        receipt.promis_limit_taken_minor().write(U256::ZERO)?;
+        receipt.promis_limit_after_minor().write(U256::ZERO)?;
+        receipt.metadosis_limit_minor().write(day_limit)?;
         receipt.block_number().write(1)?;
         receipt.formed().write(true)
     }

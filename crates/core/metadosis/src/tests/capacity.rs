@@ -146,7 +146,7 @@ fn wwd_words(
         U256::from(record.lookback_end),
         U256::from(record.offering_end),
         U256::from(record.scheduled_process_time),
-        record.metadosis_limit_amount,
+        record.metadosis_limit_minor,
         record.previous_vwap,
         record.current_vwap,
     ]
