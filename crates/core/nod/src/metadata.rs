@@ -29,6 +29,7 @@ pub(crate) fn token_uri(
 
     let hex = format!("{:064x}", item.nod_id.to_u256());
     let id = format!("{}-{}", item.worldwide_day, &hex[8..16]);
+    let floor_price = bucket.floor_price_minor()?;
     let mut rows = vec![
         (
             "Gratis Load",
@@ -42,7 +43,7 @@ pub(crate) fn token_uri(
     if state == nft_card::ISSUED {
         rows.push((
             "Floor Price",
-            nft_card::amount_grouped(item.floor_price_minor, PRICE_PRECISION),
+            nft_card::amount_grouped(floor_price, PRICE_PRECISION),
         ));
     }
     rows.push((
@@ -54,7 +55,7 @@ pub(crate) fn token_uri(
         Trait::integer("Worldwide Day", item.worldwide_day.value()),
         Trait::integer("League", item.league_id),
         Trait::amount("Entry Price", bucket.entry_price_minor, PRICE_PRECISION),
-        Trait::amount("Floor Price", item.floor_price_minor, PRICE_PRECISION),
+        Trait::amount("Floor Price", floor_price, PRICE_PRECISION),
         Trait::amount("Call Price", call_price, PRICE_PRECISION),
         Trait::amount("Gratis Load", item.gratis_load_minor, AMOUNT_PRECISION),
         Trait::integer("Issuance Currency", item.issuance_currency),

@@ -1,7 +1,7 @@
 //! Genesis-selectable profile for the call terms a Nod bucket seals: `PROD` (real
 //! timings) and `DEV` (short timings). An unset `config_profile` byte resolves by
-//! network, so only mainnet runs PROD. The floor rate stays a constant: Lysis derives
-//! floors inside OCOMP.
+//! network, so only mainnet runs PROD. The floor rate stays a constant: every floor
+//! derives from its entry price.
 
 use outbe_primitives::chain::is_mainnet;
 use outbe_primitives::error::{PrecompileError, Result};

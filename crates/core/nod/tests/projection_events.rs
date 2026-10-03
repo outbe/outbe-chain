@@ -49,7 +49,6 @@ fn assert_item_roundtrip(record: NodItemState) {
     assert_eq!(reconstructed.gratis_load_minor, record.gratis_load_minor);
     assert_eq!(reconstructed.worldwide_day, record.worldwide_day);
     assert_eq!(reconstructed.league_id, record.league_id);
-    assert_eq!(reconstructed.floor_price_minor, record.floor_price_minor);
     assert_eq!(reconstructed.bucket_key, record.bucket_key);
     assert_eq!(reconstructed.issuance_currency, record.issuance_currency);
     assert_eq!(reconstructed.reference_currency, record.reference_currency);
@@ -91,7 +90,6 @@ fn assert_bucket_roundtrip(record: NodBucketState) {
     assert_eq!(decoded.canonicalPayload.as_ref(), payload);
     assert_eq!(reconstructed.bucket_key, record.bucket_key);
     assert_eq!(reconstructed.worldwide_day, record.worldwide_day);
-    assert_eq!(reconstructed.floor_price_minor, record.floor_price_minor);
     assert_eq!(reconstructed.settled_nods, record.settled_nods);
     assert_eq!(reconstructed.entry_price_minor, record.entry_price_minor);
     assert_eq!(reconstructed.reference_currency, record.reference_currency);
@@ -107,7 +105,6 @@ fn stored_events_carry_exact_canonical_nod_bodies_and_commitments() {
         gratis_load_minor: U256::ZERO,
         worldwide_day: zero_day,
         league_id: 0,
-        floor_price_minor: U256::ZERO,
         bucket_key: B256::ZERO,
         issuance_currency: 0,
         reference_currency: 0,
@@ -121,7 +118,6 @@ fn stored_events_carry_exact_canonical_nod_bodies_and_commitments() {
         gratis_load_minor: U256::MAX,
         worldwide_day: max_day,
         league_id: u16::MAX,
-        floor_price_minor: U256::MAX,
         bucket_key: B256::repeat_byte(u8::MAX),
         issuance_currency: u16::MAX,
         reference_currency: u16::MAX,
@@ -131,7 +127,6 @@ fn stored_events_carry_exact_canonical_nod_bodies_and_commitments() {
         settled_nods: 0,
         bucket_key: B256::ZERO,
         worldwide_day: WorldwideDay::new(0),
-        floor_price_minor: U256::ZERO,
         entry_price_minor: U256::ZERO,
         reference_currency: 0,
     });
@@ -139,7 +134,6 @@ fn stored_events_carry_exact_canonical_nod_bodies_and_commitments() {
         settled_nods: u64::MAX,
         bucket_key: B256::repeat_byte(u8::MAX),
         worldwide_day: WorldwideDay::new(u32::MAX),
-        floor_price_minor: U256::MAX,
         entry_price_minor: U256::MAX,
         reference_currency: u16::MAX,
     });
