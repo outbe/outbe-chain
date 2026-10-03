@@ -45,7 +45,7 @@ sol! {
             ReferenceCurrencyPrice[] prices; uint128 commitBondMinor;
         }
         struct AuctionResult {
-            uint64 auctionClearingRate; uint32 wonBidsCount; uint32 issuedUnits; uint128 issuedIntexLoadedPromis;
+            uint64 auctionClearingRate; uint32 wonBidsCount; uint32 issuedUnits; uint128 issuedPromisLoadMinor;
         }
         struct AuctionData {
             uint8 worldwideDayState; AuctionSchedule schedule; AuctionParams params; AuctionResult result;

@@ -100,7 +100,7 @@ interface IIntexAuction {
         /// @notice Number of Intex units issued.
         uint32 issuedUnits;
         /// @notice Total Promis loaded into the issued Intex (`issuedUnits * promisLoadMinor`); derived on-chain at clearing.
-        uint128 issuedIntexLoadedPromis;
+        uint128 issuedPromisLoadMinor;
     }
 
     /// @notice Live bid counters tracked while the auction runs.
@@ -252,7 +252,7 @@ interface IIntexAuction {
     function startClearingStage(uint32 worldwideDay) external;
 
     /// @notice Execute auction clearing with final data from Outbe.
-    /// @dev `issuedIntexLoadedPromis` is derived on-chain (`issuedUnits * promisLoadMinor`).
+    /// @dev `issuedPromisLoadMinor` is derived on-chain (`issuedUnits * promisLoadMinor`).
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param issuedUnits Final number of issued Intex units.
     /// @param auctionClearingRate Uniform clearing rate (`1e6` fixed-point) calculated by Outbe.

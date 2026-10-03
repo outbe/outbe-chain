@@ -334,7 +334,7 @@
                   "internalType": "uint32"
                 },
                 {
-                  "name": "issuedIntexLoadedPromis",
+                  "name": "issuedPromisLoadMinor",
                   "type": "uint128",
                   "internalType": "uint128"
                 }
@@ -522,7 +522,7 @@
                   "internalType": "uint32"
                 },
                 {
-                  "name": "issuedIntexLoadedPromis",
+                  "name": "issuedPromisLoadMinor",
                   "type": "uint128",
                   "internalType": "uint128"
                 }

@@ -590,7 +590,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           }[];
           commitBondMinor: bigint;
         };
-        result: { auctionClearingRate: bigint; wonBidsCount: number; issuedUnits: number; issuedIntexLoadedPromis: bigint };
+        result: { auctionClearingRate: bigint; wonBidsCount: number; issuedUnits: number; issuedPromisLoadMinor: bigint };
       };
       return ok({
         network: n.name,
@@ -633,7 +633,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           auctionClearingRate: { raw: d.result.auctionClearingRate.toString(), value: formatUnits(d.result.auctionClearingRate, 6) },
           wonBidsCount: Number(d.result.wonBidsCount),
           issuedUnits: Number(d.result.issuedUnits),
-          issuedIntexLoadedPromis: d.result.issuedIntexLoadedPromis.toString(),
+          issuedPromisLoadMinor: d.result.issuedPromisLoadMinor.toString(),
         },
       });
     }),
