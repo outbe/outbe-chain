@@ -98,3 +98,32 @@ consensus source-walker and Radicle voting-matrix parts were already delivered i
 Each implementation stage has its own verified commit and Telegram notification.
 Beads is the authoritative task record; this document records the delivered scope
 and its verification, not a new task queue.
+
+
+## R20 — Tempo durability contract, first functional slice
+
+The user approved the two-stage Outbe adapter on 2026-10-03 after three independent
+compatibility audits of Tempo `61c979a5` and Commonware `d476a23`. Epoch/DKG,
+continuity anchors and exact-parent accounting retain their existing owners.
+No upstream patches or block/wire changes are introduced.
+
+The first slice replaces unconditional certification with round-bound digest
+recovery and a `marshal.certified` durability barrier. It runs outside the bounded
+application mailbox and abandons cancelled/shutdown requests without a false
+validity vote. Locally built proposals are withheld if their existing durable
+acknowledgement is unavailable. Verification verdicts and canonicalization remain
+unchanged. The real-marshal restart test starts from a network-buffer-only block:
+certification itself must write the recoverable archive record.
+
+The second slice will stage proposals before releasing their digest and overlap
+storage with voting, while retaining the certification barrier. Beads
+`outbe-chain-dzch` and its two children are authoritative for delivery status.
+
+First-slice validation: all 451 consensus release unit tests and release Clippy
+for consensus/engine all targets passed. The two-axis review found no remaining
+Standards or Spec findings after correcting inherited relay documentation and
+strengthening the buffer-only crash test. Native diff health analyzed all eight
+changed Rust files with no skipped paths, introduced findings or worsened findings;
+33 inherited findings belong to the separately recorded larger tasks. Qlty
+includes the new tests and reports zero findings in the four targeted logic/test
+files. No findings were suppressed.

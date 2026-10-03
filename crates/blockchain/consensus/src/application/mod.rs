@@ -4,6 +4,7 @@
 //! by communicating with Reth via `beacon_engine_handle`.
 
 pub mod actor;
+mod certification;
 pub(crate) mod ancestry;
 pub(crate) mod epoch_boundary;
 pub mod handler;

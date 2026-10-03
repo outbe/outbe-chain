@@ -19,7 +19,7 @@ impl ApplicationShared {
             Err(e) => Err(eyre::eyre!("failed to build block for proposal: {e}")),
         }
     }
-    pub(super) async fn publish_built_proposal(
+    pub(in crate::application::handler) async fn publish_built_proposal(
         &self,
         round: Round,
         candidate: (Digest, ConsensusBlock),
@@ -43,21 +43,11 @@ impl ApplicationShared {
         // Relay::broadcast paths, so a dropped push remains recoverable by pull.
         let durable = self.marshal_mailbox.verified(round, block).await;
         if !durable {
-            // `verified()` returns false only when the marshal actor's ack
-            // channel is closed - i.e. marshal is gone/shutting down. The
-            // block is then NOT durably cached (not servable on pull, not
-            // stashed for `forward`), so this proposal cannot be resolved by
-            // verifiers (bp-1 pull-recovery does not help - nothing to serve).
-            // Surface it loudly rather than silently treating the proposal as
-            // durable. A persistent marshal failure is the supervisor's
-            // concern: the marshal handle is monitored (SSA-8) and a dead
-            // marshal fails the node fast.
-            warn!(
-                %round,
-                digest = %digest.0,
-                "marshal did not acknowledge proposed block (mailbox closed); \
-                 proposal is not durably cached"
-            );
+            // An unavailable acknowledgement or an aborted sync cannot authorize
+            // publication. Actual storage failures retain marshal's fatal policy.
+            return Err(eyre::eyre!(
+                "marshal did not durably acknowledge proposal {digest:?} at {round}"
+            ));
         }
         Ok(ProposeOutcome::Proposed(digest))
     }

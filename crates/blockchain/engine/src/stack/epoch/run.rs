@@ -415,8 +415,11 @@ where
     );
 
     // -- 12. Create application actor and handler ------------------------
-    let (application, application_rx) =
-        OutbeApplication::new(config::ENGINE_MAILBOX_SIZE, marshal_mailbox.clone());
+    let (application, application_rx) = OutbeApplication::new(
+        ctx.child("application"),
+        config::ENGINE_MAILBOX_SIZE,
+        marshal_mailbox.clone(),
+    );
 
     // -- 12d. Conditional bootstrap validation data ---------------------
     // Determined AFTER marshal init so we can use both execution height

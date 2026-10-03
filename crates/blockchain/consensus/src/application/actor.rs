@@ -6,7 +6,9 @@
 use commonware_consensus::{Automaton, CertifiableAutomaton, Relay};
 use commonware_cryptography::bls12381;
 use commonware_p2p::Recipients;
+use commonware_runtime::Spawner;
 use commonware_utils::channel::oneshot;
+use std::sync::Arc;
 
 use super::ingress::{Mailbox, Message, SimplexContext};
 use crate::digest::Digest;
@@ -18,21 +20,30 @@ use crate::marshal_types::MarshalMailbox;
 /// `propose()`, `verify()`, and `certify()` (the genesis digest now feeds
 /// `simplex::Config.floor` instead of an `Automaton::genesis` call).
 /// Implements [`Relay`] so Simplex can broadcast proposals.
-#[derive(Clone)]
-pub struct OutbeApplication {
+pub struct OutbeApplication<E> {
+    context: Arc<E>,
     mailbox: Mailbox,
     /// Marshal mailbox used to disseminate a proposed block directly.
     ///
-    /// The block is cached into marshal at propose time (`handle_propose` calls
-    /// `marshal.proposed`), so [`Relay::broadcast`] only needs the synchronous
-    /// `marshal.forward` wire-push - it does not hop through the bounded
-    /// application mailbox (which could drop the trigger under saturation).
+    /// Proposal construction awaits `marshal.verified` before releasing a digest.
+    /// Relay forwarding bypasses the bounded application mailbox.
     marshal_mailbox: MarshalMailbox,
 }
 
-impl OutbeApplication {
+impl<E> Clone for OutbeApplication<E> {
+    fn clone(&self) -> Self {
+        Self {
+            context: Arc::clone(&self.context),
+            mailbox: self.mailbox.clone(),
+            marshal_mailbox: self.marshal_mailbox.clone(),
+        }
+    }
+}
+
+impl<E> OutbeApplication<E> {
     /// Create a new application actor with its mailbox.
     pub fn new(
+        context: E,
         mailbox_size: usize,
         marshal_mailbox: MarshalMailbox,
     ) -> (Self, futures::channel::mpsc::Receiver<Message>) {
@@ -40,6 +51,7 @@ impl OutbeApplication {
         let mailbox = Mailbox::from_sender(tx);
         (
             Self {
+                context: Arc::new(context),
                 mailbox,
                 marshal_mailbox,
             },
@@ -53,7 +65,7 @@ impl OutbeApplication {
     }
 }
 
-impl Automaton for OutbeApplication {
+impl<E: Spawner> Automaton for OutbeApplication<E> {
     type Context = SimplexContext;
     type Digest = Digest;
 
@@ -66,30 +78,30 @@ impl Automaton for OutbeApplication {
     }
 }
 
-impl CertifiableAutomaton for OutbeApplication {
-    // Use default implementation - always certify.
+impl<E: Spawner> CertifiableAutomaton for OutbeApplication<E> {
+    async fn certify(
+        &mut self,
+        round: commonware_consensus::types::Round,
+        digest: Digest,
+    ) -> oneshot::Receiver<bool> {
+        let (response, receiver) = oneshot::channel();
+        let marshal = self.marshal_mailbox.clone();
+        self.context.child("certify").spawn(move |_| async move {
+            super::certification::certify(marshal, round, digest, response).await;
+        });
+        receiver
+    }
 }
 
-impl Relay for OutbeApplication {
+impl<E: Spawner> Relay for OutbeApplication<E> {
     type Digest = Digest;
     type PublicKey = bls12381::PublicKey;
     type Plan = commonware_consensus::simplex::Plan<bls12381::PublicKey>;
 
     /// Disseminate a proposed block to the network.
     ///
-    /// commonware 2026.5.0 made this trait method synchronous and split marshal
-    /// dissemination: `marshal.proposed` only caches the block locally;
-    /// `marshal.forward` performs the wire-push (`Buffer::send`). The block was
-    /// already cached at propose time (`handle_propose` -> `marshal.proposed`),
-    /// so here we call `marshal.forward` DIRECTLY - no hop through the bounded
-    /// application mailbox. This is drop-proof for the push trigger and keeps
-    /// the proposer's block servable on demand even if `forward` itself is
-    /// throttled (verifiers can pull it). Dissemination is networking, not a
-    /// consensus state transition, so this does not affect determinism.
-    ///
-    /// The Simplex engine runs with `ForwardPolicy::Disabled`, so `plan` is
-    /// always `Plan::Propose`; the relay forwards the proposer's own block to
-    /// all peers regardless of the plan variant.
+    /// Forward an already-persisted candidate directly through marshal. Honor
+    /// the relay plan's recipients without enqueueing an application message.
     fn broadcast(&mut self, payload: Self::Digest, plan: Self::Plan) -> commonware_actor::Feedback {
         // Honor the plan's intended recipients: `Propose` is a fresh broadcast to
         // all peers; `Forward` targets a specific subset (under ForwardPolicy

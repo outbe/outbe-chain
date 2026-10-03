@@ -1,43 +1,43 @@
 use crate::test_fixtures::marshal::MarshalArchiveFixture;
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_primitives::{Address, Bytes, B256};
 use alloy_rpc_types_engine::{PayloadStatus, PayloadStatusEnum};
 use commonware_actor::Feedback;
 use commonware_codec::Encode as _;
 use commonware_consensus::{
-    Reporter,
-    marshal::{self, Start, Update, core::Buffer, resolver::handler},
+    marshal::{self, core::Buffer, resolver::handler, Start, Update},
     simplex::types::{Activity, Finalization, Finalize, Proposal},
     types::{Epoch, FixedEpocher, Round, View, ViewDelta},
+    Reporter,
 };
 use commonware_cryptography::{
-    Signer as _,
     bls12381::{self, primitives::variant::MinSig},
     certificate::Scheme as _,
+    Signer as _,
 };
 use commonware_p2p::Recipients;
 use commonware_parallel::Sequential;
 use commonware_resolver::Resolver;
 use commonware_resolver::TargetedResolver;
-use commonware_runtime::{Clock as _, Runner as _, Supervisor as _, buffer::paged::CacheRef};
+use commonware_runtime::{buffer::paged::CacheRef, Clock as _, Runner as _, Supervisor as _};
 use commonware_utils::{
-    TryCollect as _,
     acknowledgement::Acknowledgement,
     channel::oneshot,
     ordered::{Quorum, Set},
     vec::NonEmptyVec,
+    TryCollect as _,
 };
 use outbe_primitives::projection::{
-    ProjectionCheckpoint, ProjectionFailure, ProjectionFailureClass, ProjectionReadinessPublisher,
-    ProjectionStatus, projection_readiness,
+    projection_readiness, ProjectionCheckpoint, ProjectionFailure, ProjectionFailureClass,
+    ProjectionReadinessPublisher, ProjectionStatus,
 };
-use outbe_primitives::{OutbeHeader, consensus_metadata::CertifiedParentAccountingMetadata};
-use reth_ethereum::{Block, primitives::SealedBlock};
+use outbe_primitives::{consensus_metadata::CertifiedParentAccountingMetadata, OutbeHeader};
+use reth_ethereum::{primitives::SealedBlock, Block};
 use std::{
     io,
     num::{NonZeroU16, NonZeroU64, NonZeroUsize},
     sync::{
-        Arc, Mutex as StdMutex,
         atomic::{AtomicU64, Ordering},
+        Arc, Mutex as StdMutex,
     },
     time::Duration,
 };
@@ -45,7 +45,7 @@ use std::{
 use crate::ancestry_readiness::AncestryReadiness;
 use crate::dkg_manager::Mailbox as DkgManagerMailbox;
 use crate::finalization::attestation::{
-    AttestationValidationContext, AttestationVerdict, validate_consensus_metadata_for_verify,
+    validate_consensus_metadata_for_verify, AttestationValidationContext, AttestationVerdict,
 };
 use crate::finalization::state::FinalizationViewAccess;
 use crate::finalization::util::build_signer_bitmap;
@@ -56,11 +56,14 @@ use crate::vrf_safety::VrfSafetyGate;
 
 use super::{ApplicationShared, CommitteeProvider, ConsensusBlock, Digest};
 use crate::application::epoch_boundary::{
-    ApplicationEpochFence, EpochBoundaryParentError, resolve_epoch_boundary_parent,
+    resolve_epoch_boundary_parent, ApplicationEpochFence, EpochBoundaryParentError,
 };
 
 #[path = "handler/tests/verify_stages.rs"]
 mod verify_stages;
+
+#[path = "handler/tests/certification.rs"]
+mod certification;
 
 #[path = "handler/tests/missed_proposers.rs"]
 mod missed_proposers;
@@ -209,33 +212,50 @@ impl Buffer<crate::marshal_types::Variant> for EmptyMarshalBuffer {
 struct RecordingMarshalBuffer {
     /// (round, block commitment, was Recipients::All) for each `send`.
     sends: Arc<StdMutex<Vec<(Round, Digest, bool)>>>,
+    /// Optional received candidate that exists only in the network buffer.
+    available: Option<Arc<ConsensusBlock>>,
+}
+
+impl RecordingMarshalBuffer {
+    fn lookup(&self, digest: Digest) -> Option<Arc<ConsensusBlock>> {
+        self.available
+            .as_ref()
+            .filter(|block| block.digest() == digest)
+            .cloned()
+    }
+
+    fn subscription(&self, digest: Digest) -> oneshot::Receiver<Arc<ConsensusBlock>> {
+        let (tx, rx) = oneshot::channel();
+        if let Some(block) = self.lookup(digest) {
+            let _ = tx.send(block);
+        }
+        rx
+    }
 }
 
 impl Buffer<crate::marshal_types::Variant> for RecordingMarshalBuffer {
     type PublicKey = bls12381::PublicKey;
 
-    async fn find_by_digest(&self, _digest: Digest) -> Option<Arc<ConsensusBlock>> {
-        None
+    async fn find_by_digest(&self, digest: Digest) -> Option<Arc<ConsensusBlock>> {
+        self.lookup(digest)
     }
 
-    async fn find_by_commitment(&self, _commitment: Digest) -> Option<Arc<ConsensusBlock>> {
-        None
+    async fn find_by_commitment(&self, commitment: Digest) -> Option<Arc<ConsensusBlock>> {
+        self.lookup(commitment)
     }
 
     fn subscribe_by_digest(
         &self,
-        _digest: Digest,
+        digest: Digest,
     ) -> Option<oneshot::Receiver<Arc<ConsensusBlock>>> {
-        let (_tx, rx) = oneshot::channel();
-        Some(rx)
+        Some(self.subscription(digest))
     }
 
     fn subscribe_by_commitment(
         &self,
-        _commitment: Digest,
+        commitment: Digest,
     ) -> Option<oneshot::Receiver<Arc<ConsensusBlock>>> {
-        let (_tx, rx) = oneshot::channel();
-        Some(rx)
+        Some(self.subscription(commitment))
     }
 
     fn retire(&self, _update: commonware_consensus::marshal::core::Retirement<Digest>) {}
@@ -351,13 +371,34 @@ async fn start_marshal_with_resolver<B>(
 where
     B: Buffer<crate::marshal_types::Variant, PublicKey = bls12381::PublicKey>,
 {
+    let test_id = MARSHAL_TEST_ID.fetch_add(1, Ordering::SeqCst);
+    start_marshal_in_partition(
+        context,
+        provider,
+        buffer,
+        format!("handler-finalized-regression-{test_id}"),
+    )
+    .await
+}
+
+async fn start_marshal_in_partition<B>(
+    context: commonware_runtime::deterministic::Context,
+    provider: HybridSchemeProvider<MinSig>,
+    buffer: B,
+    partition_prefix: String,
+) -> (
+    crate::marshal_types::MarshalMailbox,
+    handler::Handler<Digest>,
+    commonware_runtime::Handle<()>,
+)
+where
+    B: Buffer<crate::marshal_types::Variant, PublicKey = bls12381::PublicKey>,
+{
     let page_cache = CacheRef::from_pooler(
         &context,
         NonZeroU16::new(1024).expect("non-zero page size"),
         NonZeroUsize::new(10).expect("non-zero cache size"),
     );
-    let test_id = MARSHAL_TEST_ID.fetch_add(1, Ordering::SeqCst);
-    let partition_prefix = format!("handler-finalized-regression-{test_id}");
     let items_per_section = NonZeroU64::new(10).expect("non-zero items per section");
     let replay_buffer = NonZeroUsize::new(1024).expect("non-zero replay buffer");
     let write_buffer = NonZeroUsize::new(1024).expect("non-zero write buffer");
@@ -693,8 +734,11 @@ fn relay_broadcast_forwards_proposed_block_directly_to_all_peers() {
             let _durable = marshal_mailbox.verified(round, block).await;
 
             // Relay::broadcast must forward DIRECTLY to marshal (no app-mailbox hop).
-            let (mut app, _app_rx) =
-                crate::application::actor::OutbeApplication::new(16, marshal_mailbox.clone());
+            let (mut app, _app_rx) = crate::application::actor::OutbeApplication::new(
+                context.child("application"),
+                16,
+                marshal_mailbox.clone(),
+            );
             use commonware_consensus::Relay as _;
             let _feedback = app.broadcast(
                 digest,
@@ -742,8 +786,11 @@ fn forward_without_prior_proposed_is_safe_noop() {
             let sends = recorder.sends.clone();
             let (marshal_mailbox, _keepalive, _actor) =
                 start_marshal_with_resolver(context.child("marshal"), provider, recorder).await;
-            let (mut app, _app_rx) =
-                crate::application::actor::OutbeApplication::new(16, marshal_mailbox.clone());
+            let (mut app, _app_rx) = crate::application::actor::OutbeApplication::new(
+                context.child("application"),
+                16,
+                marshal_mailbox.clone(),
+            );
 
             let round = Round::new(Epoch::new(0), View::new(1));
             let block = consensus_block_with_number(0xCD, 9);
