@@ -35,7 +35,7 @@ pub(crate) fn derived_call_terms(
         return Ok(None);
     }
     let call_price = entry_price_minor
-        .checked_mul(U256::from(100 + params.call_rate))
+        .checked_mul(U256::from(100 + u32::from(params.call_rate)))
         .ok_or_else(|| {
             outbe_primitives::error::PrecompileError::Fatal("Nod call price overflow".into())
         })?
