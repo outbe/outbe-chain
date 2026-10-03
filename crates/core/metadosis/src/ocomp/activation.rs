@@ -323,7 +323,7 @@ fn target_preconditions_changed(
         tribute.source_generation,
         tribute.sealed_collection_root,
         tribute.tribute_count,
-        tribute.tribute_nominal_amount,
+        tribute.tribute_nominal_total_minor,
     ) == (
         expected.tribute.source_generation,
         expected.tribute.sealed_collection_root,

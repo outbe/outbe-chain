@@ -138,8 +138,11 @@ pub(crate) fn process_ocomp_ready_candidate(
         );
     }
 
-    let calculation =
-        metadosis.calculate_metadosis(wwd, tribute_totals.tribute_nominal_amount, limit_amount)?;
+    let calculation = metadosis.calculate_metadosis(
+        wwd,
+        tribute_totals.tribute_nominal_total_minor,
+        limit_amount,
+    )?;
     if calculation.lysis_limit_minor.is_zero() {
         return process_local_terminal_outcome(
             metadosis,
@@ -148,7 +151,7 @@ pub(crate) fn process_ocomp_ready_candidate(
             current,
             LocalTerminalOutcome::ZeroGratisAllocation {
                 day_type,
-                tribute_nominal_total: tribute_totals.tribute_nominal_amount,
+                tribute_nominal_total: tribute_totals.tribute_nominal_total_minor,
                 calculation,
             },
         );

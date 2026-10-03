@@ -326,7 +326,7 @@ pub(in crate::lifecycle) fn assert_provider_activated_ocomp_inputs(
     assert_eq!(projection.metadosis_limit_minor, U256::from(100));
     let totals = TributeContract::new(storage).get_day_totals(wwd).unwrap();
     assert_eq!(totals.tribute_count, 1);
-    assert_eq!(totals.tribute_nominal_amount, expected_nominal);
+    assert_eq!(totals.tribute_nominal_total_minor, expected_nominal);
 }
 
 pub(in crate::lifecycle) fn seed_ce_genesis(storage: &StorageHandle<'_>) {

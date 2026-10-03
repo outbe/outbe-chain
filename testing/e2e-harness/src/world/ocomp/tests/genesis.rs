@@ -411,7 +411,7 @@ fn public_recovery_fixture_seeds_two_empty_ordered_days() {
         assert!(totals.initialized);
         assert!(!totals.is_sealed);
         assert_eq!(totals.tribute_count, 0);
-        assert_eq!(totals.tribute_nominal_amount, U256::ZERO);
+        assert_eq!(totals.tribute_nominal_total_minor, U256::ZERO);
     });
     assert_eq!(
         prepared.install.request_profile.genesis_hash,

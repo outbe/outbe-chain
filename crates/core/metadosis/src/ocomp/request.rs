@@ -346,11 +346,11 @@ fn freeze_request_limits(
         .read()?;
     let calculation = metadosis.calculate_metadosis(
         wwd,
-        sealed_tribute_projection.tribute_nominal_amount,
+        sealed_tribute_projection.tribute_nominal_total_minor,
         day_limit,
     )?;
     let lysis_limit_minor = calculation.lysis_limit_minor;
-    let nominal_total = sealed_tribute_projection.tribute_nominal_amount;
+    let nominal_total = sealed_tribute_projection.tribute_nominal_total_minor;
     let protocol_day_type = protocol_day_type(metadosis.get_wwd_day_type(wwd)?)?;
     let effect = RequestLimitEffect {
         protocol_bundle_hash: profile.protocol_bundle_hash,
@@ -400,7 +400,7 @@ fn request_activation_preconditions(
             collection_key: B256::from_slice(collection_key.as_bytes()),
             sealed_collection_root: sealed_tribute_projection.sealed_collection_root,
             exact_count: sealed_tribute_projection.tribute_count,
-            exact_nominal_total: sealed_tribute_projection.tribute_nominal_amount,
+            exact_nominal_total: sealed_tribute_projection.tribute_nominal_total_minor,
         },
         nod: NodTargetPreconditionV1 {
             wwd: wwd.value(),
@@ -412,7 +412,7 @@ fn request_activation_preconditions(
             worldwide_day: wwd.value(),
             expected_series_version: contributor_target.expected_series_version,
             max_contributor_count: sealed_tribute_projection.tribute_count,
-            max_eligible_nominal_total: sealed_tribute_projection.tribute_nominal_amount,
+            max_eligible_nominal_total: sealed_tribute_projection.tribute_nominal_total_minor,
         },
         metadosis: MetadosisAttemptPreconditionV1 {
             wwd: wwd.value(),
@@ -467,7 +467,7 @@ fn build_request_intent(
         sealed_tribute_collection_key: B256::from_slice(collection_key.as_bytes()),
         sealed_tribute_collection_root: sealed_tribute_projection.sealed_collection_root,
         authenticated_day_count: sealed_tribute_projection.tribute_count,
-        authenticated_day_nominal: sealed_tribute_projection.tribute_nominal_amount,
+        authenticated_day_nominal: sealed_tribute_projection.tribute_nominal_total_minor,
         pre_admission_envelope_hash: envelope_hash,
         source_availability_policy_id: profile.source_availability_policy_id,
         frozen_metadosis_values: FrozenMetadosisValuesV1 {

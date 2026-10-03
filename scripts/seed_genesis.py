@@ -959,7 +959,7 @@ def seed_tribute_day_totals(storage: StorageBuilder, days: list[int]):
     `day_totals` lands at slot 1; Tribute bodies no longer occupy EVM storage).
     Within the `DayTotals` record the
     field offset is the cumulative slot index by `#[attribute(order)]`:
-    `initialized`@0, `tribute_count`@1, `tribute_nominal_amount`@2,
+    `initialized`@0, `tribute_count`@1, `tribute_nominal_total_minor`@2,
     `is_sealed`@3 (its `order = 4` only sorts; the gap at 3 is not reserved).
     So `day_totals[wwd].initialized` is `Mapping(base_slot=1).get(wwd)`; writing
     1 makes the record exist + initialized, with `is_sealed` left at its `false`

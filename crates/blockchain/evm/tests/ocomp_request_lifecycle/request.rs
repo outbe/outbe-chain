@@ -341,7 +341,7 @@ pub(super) fn open_voting_with_pre_open_state() -> (VotingOpenScenario, PreOpenS
         assert_eq!(tribute.total_supply().unwrap(), 1);
         let totals = tribute.get_day_totals(prepared.wwd).unwrap();
         assert_eq!(totals.tribute_count, 1);
-        assert_eq!(totals.tribute_nominal_amount, prepared.nominal);
+        assert_eq!(totals.tribute_nominal_total_minor, prepared.nominal);
     });
 
     let request_hash = payload.block().hash();

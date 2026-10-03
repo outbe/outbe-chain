@@ -48,7 +48,7 @@ pub struct DayTotals {
     pub tribute_count: u32,
 
     #[attribute(order = 2, default = U256::ZERO)]
-    pub tribute_nominal_amount: U256,
+    pub tribute_nominal_total_minor: U256,
 
     #[attribute(order = 4, default = false)]
     pub is_sealed: bool,
@@ -75,7 +75,7 @@ pub struct DayPreAdmission {
     pub sealed_tribute_count: u32,
 
     #[attribute(order = 4, default = U256::ZERO)]
-    pub sealed_tribute_nominal_amount: U256,
+    pub sealed_tribute_nominal_total_minor: U256,
 
     #[attribute(order = 5, default = 0)]
     pub canonical_body_bytes: u64,

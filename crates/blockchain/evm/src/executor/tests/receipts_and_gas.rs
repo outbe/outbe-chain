@@ -723,7 +723,7 @@ fn capacity_forfeiture_cycle_tick_keeps_twenty_percent_block_headroom() {
                         worldwide_day: victim,
                         initialized: true,
                         tribute_count: u32::MAX,
-                        tribute_nominal_amount: U256::MAX,
+                        tribute_nominal_total_minor: U256::MAX,
                         is_sealed: true,
                     })
                     .unwrap();
