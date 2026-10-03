@@ -137,16 +137,20 @@ where
             .committee_provider
             .register(self.state.current_epoch, ordered_addresses.clone());
 
-        let outbe_reporter = OutbeReporter::new(
+        let outbe_reporter = OutbeReporter::with_context(
             self.reporter_continuity.clone(),
-            ordered_addresses,
-            self.finalization_mailbox.clone(),
-            Some(self.bridge.clone()),
-            verifier_scheme,
-            reporter_elector,
-            self.state.current_epoch,
-            std::sync::Arc::new(self.finalized_parent_cert_store.clone()),
-            self.finalize_verify_mailbox.clone(),
+            outbe_consensus::reporter::ReporterCommittee {
+                validator_addresses: ordered_addresses,
+                verifier_scheme,
+                elector: reporter_elector,
+                epoch: self.state.current_epoch,
+            },
+            outbe_consensus::reporter::ReporterDependencies {
+                finalization_mailbox: self.finalization_mailbox.clone(),
+                bridge: Some(self.bridge.clone()),
+                witness_sink: std::sync::Arc::new(self.finalized_parent_cert_store.clone()),
+                finalize_verify_mailbox: self.finalize_verify_mailbox.clone(),
+            },
         );
 
         // Combine OutbeReporter + marshal mailbox as a joint Simplex reporter.
