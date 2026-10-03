@@ -531,15 +531,21 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     ) -> std::result::Result<SubCallOutput, SubCallError> {
         sub_call::run_with_ocomp_context(
             self.ctx,
-            self.self_address,
-            self.is_static,
-            self.spec,
-            self.genesis_hash,
-            self.runtime_body_readers.clone(),
-            self.execution_scope.clone(),
-            self.ocomp_finality_authority.clone(),
-            self.ocomp_activation_block_meter.clone(),
-            self.ocomp_lifecycle_active,
+            sub_call::SubCallContext {
+                self_address: self.self_address,
+                outer_is_static: self.is_static,
+                execution: crate::precompiles::OutbePrecompileExecutionContext::new(
+                    self.spec,
+                    self.genesis_hash,
+                ),
+                runtime: crate::precompiles::OutbePrecompileRuntime::new(
+                    self.runtime_body_readers.clone(),
+                    self.execution_scope.clone(),
+                    self.ocomp_finality_authority.clone(),
+                    self.ocomp_lifecycle_active,
+                ),
+                activation_meter: self.ocomp_activation_block_meter.clone(),
+            },
             input,
         )
     }
