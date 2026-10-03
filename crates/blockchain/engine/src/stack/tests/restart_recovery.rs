@@ -109,7 +109,6 @@ fn lead_beyond_bound_stays_fatal() {
 #[test]
 fn bounded_head_lead_membership_drift_uses_recovered_boundary_committee() {
     use commonware_cryptography::Signer as _;
-    use std::net::SocketAddr;
 
     let marshal_finalized_height = 100;
     let reth_head = marshal_finalized_height + MAX_UNFINALIZED_HEAD_LEAD;
@@ -195,37 +194,8 @@ fn bounded_head_lead_membership_drift_uses_recovered_boundary_committee() {
     .expect("bounded-head-lead recovery must use recovered boundary committee");
     assert_eq!(recovered_addresses, boundary_addresses);
 
-    let args = crate::args::ConsensusArgs {
-        is_validator: true,
-        signing_key: Some(temp.path().join("signing-key.hex")),
-        validator_evm_key: Some(evm_key_path),
-        signing_share: None,
-        public_polynomial: None,
-        dkg_output: None,
-        listen_address: "127.0.0.1:30400".parse::<SocketAddr>().unwrap(),
-        storage_dir: None,
-        keys_dir: None,
-        trust_el_head: false,
-        testnet_unix_time_offset_secs: None,
-        consensus_peers: Vec::new(),
-        use_local_defaults: true,
-        payload_resolve_time_ms: 200,
-        payload_return_time_ms: 450,
-        worker_threads: 1,
-        bls_key_backend: "plaintext".to_string(),
-        bls_passphrase: None,
-        tee_enclave_socket: None,
-        tee_session_mode: crate::args::TeeSessionMode::PolicyDefault,
-        tee_bootstrap_timeout_secs: 60,
-        tee_canary_interval_secs: 30,
-        tee_canary_failure_threshold: 3,
-        txpool_pending_staleness_secs: 600,
-        radicle_control_socket: None,
-        radicle_status_address: None,
-        upstream: None,
-        upstream_nocertify: false,
-        projection_storage_config: Some("/tmp/offchain-storage.toml".into()),
-    };
+    let args =
+        super::harness::validator_signer_args(temp.path().join("signing-key.hex"), evm_key_path);
     let signer_address = validate_validator_evm_signer(
         &args,
         ValidatorEvmIdentity {
@@ -442,44 +412,43 @@ pub(in crate::stack::tests) mod copied_native {
         recover_ce_at_reconciled_anchor(&recovery, processed, target)
     }
 
-    fn seed_reth(root: &Path, headers: &[OutbeHeader], through: u64) {
-        let db = init_db(root.join("db"), DatabaseArguments::test()).unwrap();
-        let tx = db.tx_mut().unwrap();
+    fn persist_fixture_headers(
+        tx: &impl DbTxMut,
+        headers: &[OutbeHeader],
+        through: u64,
+    ) -> eyre::Result<()> {
         // This fixture deliberately uses supported v1 routing: native MDBX
         // state, history and receipt tables. Never rely on an implicit default.
         tx.put::<tables::Metadata>(
             "storage_settings".into(),
-            serde_json::to_vec(&StorageSettings::v1()).unwrap(),
-        )
-        .unwrap();
+            serde_json::to_vec(&StorageSettings::v1())?,
+        )?;
         for header in &headers[..=through as usize] {
-            tx.put::<tables::CanonicalHeaders>(header.inner.number, header.hash_slow())
-                .unwrap();
-            tx.put::<tables::HeaderNumbers>(header.hash_slow(), header.inner.number)
-                .unwrap();
-            tx.put::<tables::Headers<OutbeHeader>>(header.inner.number, header.clone())
-                .unwrap();
+            tx.put::<tables::CanonicalHeaders>(header.inner.number, header.hash_slow())?;
+            tx.put::<tables::HeaderNumbers>(header.hash_slow(), header.inner.number)?;
+            tx.put::<tables::Headers<OutbeHeader>>(header.inner.number, header.clone())?;
             tx.put::<tables::BlockBodyIndices>(
                 header.inner.number,
                 reth_ethereum::provider::db::models::StoredBlockBodyIndices {
                     first_tx_num: 0,
                     tx_count: 0,
                 },
-            )
-            .unwrap();
+            )?;
         }
+        Ok(())
+    }
+
+    fn persist_genesis_ce_root(tx: &impl DbTxMut) -> eyre::Result<()> {
         // All fixture blocks leave CE unchanged, so this native genesis slot is
         // legitimately identical at every historical height; no rewind stubs.
-        tx.put::<tables::PlainAccountState>(COMPRESSED_ENTITIES_ADDRESS, Default::default())
-            .unwrap();
+        tx.put::<tables::PlainAccountState>(COMPRESSED_ENTITIES_ADDRESS, Default::default())?;
         tx.put::<tables::PlainStorageState>(
             COMPRESSED_ENTITIES_ADDRESS,
             StorageWord {
                 key: B256::with_last_byte(1),
                 value: U256::from_be_bytes(genesis_marker().new_root.0),
             },
-        )
-        .unwrap();
+        )?;
         // A nonzero genesis slot must also be indexed as previously written.
         // Otherwise native historical lookup classifies it as NotYetWritten.
         type HistoryKey = <tables::StoragesHistory as Table>::Key;
@@ -492,17 +461,23 @@ pub(in crate::stack::tests) mod copied_native {
                     highest_block_number: u64::MAX,
                 },
             },
-            HistoryBlocks::new(vec![0]).unwrap(),
-        )
-        .unwrap();
+            HistoryBlocks::new(vec![0])?,
+        )?;
         tx.put::<tables::StorageChangeSets>(
             (0, COMPRESSED_ENTITIES_ADDRESS).into(),
             StorageWord {
                 key: B256::with_last_byte(1),
                 value: U256::ZERO,
             },
-        )
-        .unwrap();
+        )?;
+        Ok(())
+    }
+
+    fn seed_reth(root: &Path, headers: &[OutbeHeader], through: u64) {
+        let db = init_db(root.join("db"), DatabaseArguments::test()).unwrap();
+        let tx = db.tx_mut().unwrap();
+        persist_fixture_headers(&tx, headers, through).expect("native fixture headers");
+        persist_genesis_ce_root(&tx).expect("native fixture CE root");
         for stage in ["Execution", "Finish"] {
             tx.put::<tables::StageCheckpoints>(stage.into(), Stage::new(through))
                 .unwrap();
@@ -628,6 +603,82 @@ pub(in crate::stack::tests) mod copied_native {
         delivered: Vec<u64>,
     }
 
+    async fn assert_heartbeat_only(
+        engine_rx: &mut tokio::sync::mpsc::UnboundedReceiver<
+            reth_ethereum::node::api::BeaconEngineMessage<OutbePayloadTypes>,
+        >,
+        hash: B256,
+    ) {
+        use alloy_rpc_types_engine::{PayloadStatus, PayloadStatusEnum};
+        use reth_ethereum::node::api::{BeaconEngineMessage, OnForkChoiceUpdated};
+        while let Some(message) = engine_rx.recv().await {
+            let BeaconEngineMessage::ForkchoiceUpdated {
+                state,
+                payload_attrs,
+                tx,
+            } = message
+            else {
+                panic!("exact recovered H caused payload execution");
+            };
+            assert!(
+                payload_attrs.is_none(),
+                "exact recovered H requested a payload build"
+            );
+            assert_eq!(state.head_block_hash, hash);
+            assert_eq!(state.safe_block_hash, hash);
+            assert_eq!(state.finalized_block_hash, hash);
+            tx.send(Ok(OnForkChoiceUpdated::valid(PayloadStatus::from_status(
+                PayloadStatusEnum::Valid,
+            ))))
+            .unwrap();
+        }
+    }
+
+    async fn archive_stage_reached(
+        mailbox: &mut outbe_consensus::marshal_types::MarshalMailbox,
+        reporter: &LimitedAck,
+        acknowledge_through: u64,
+        target: u64,
+    ) -> bool {
+        if mailbox
+            .get_processed_height()
+            .await
+            .map(|height| height.get())
+            != Some(acknowledge_through)
+        {
+            return false;
+        }
+        if mailbox.get_block(Height::new(target)).await.is_none() {
+            return false;
+        }
+        if mailbox
+            .get_finalization(Height::new(target))
+            .await
+            .is_none()
+        {
+            return false;
+        }
+        acknowledge_through == target || reporter.delivered.lock().unwrap().contains(&target)
+    }
+
+    async fn wait_for_archive_stage(
+        mailbox: &mut outbe_consensus::marshal_types::MarshalMailbox,
+        reporter: &LimitedAck,
+        acknowledge_through: u64,
+        target: u64,
+    ) {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if archive_stage_reached(mailbox, reporter, acknowledge_through, target).await {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("native archive/ACK progress did not reach the requested fixture stage");
+    }
+
     impl DiskFixture {
         pub(in crate::stack::tests) fn new(processed: u64) -> Self {
             Self::with_ce_height(processed, H)
@@ -717,9 +768,6 @@ pub(in crate::stack::tests) mod copied_native {
         }
 
         pub(in crate::stack::tests) fn ack_with_executor(&self, root: &Path, target: u64) {
-            use alloy_rpc_types_engine::{PayloadStatus, PayloadStatusEnum};
-            use reth_ethereum::node::api::{BeaconEngineMessage, OnForkChoiceUpdated};
-
             let config = commonware_tokio::Config::default()
                 .with_worker_threads(1)
                 .with_max_blocking_threads(1)
@@ -736,27 +784,7 @@ pub(in crate::stack::tests) mod copied_native {
                 let engine = context
                     .child("heartbeat_receiver")
                     .spawn(move |_| async move {
-                        while let Some(message) = engine_rx.recv().await {
-                            let BeaconEngineMessage::ForkchoiceUpdated {
-                                state,
-                                payload_attrs,
-                                tx,
-                            } = message
-                            else {
-                                panic!("exact recovered H caused payload execution");
-                            };
-                            assert!(
-                                payload_attrs.is_none(),
-                                "exact recovered H requested a payload build"
-                            );
-                            assert_eq!(state.head_block_hash, hash);
-                            assert_eq!(state.safe_block_hash, hash);
-                            assert_eq!(state.finalized_block_hash, hash);
-                            tx.send(Ok(OnForkChoiceUpdated::valid(PayloadStatus::from_status(
-                                PayloadStatusEnum::Valid,
-                            ))))
-                            .unwrap();
-                        }
+                        assert_heartbeat_only(&mut engine_rx, hash).await;
                     });
                 let checkpoint = ProjectionCheckpoint {
                     block_number: target,
@@ -899,32 +927,13 @@ pub(in crate::stack::tests) mod copied_native {
                     assert!(mailbox.verified(certificate.proposal.round, block).await);
                     let _ = mailbox.report(Activity::Finalization(certificate));
                 }
-                tokio::time::timeout(Duration::from_secs(10), async {
-                    loop {
-                        if mailbox
-                            .get_processed_height()
-                            .await
-                            .map(|height| height.get())
-                            == Some(acknowledge_through)
-                            && mailbox.get_block(Height::new(target)).await.is_some()
-                            && mailbox
-                                .get_finalization(Height::new(target))
-                                .await
-                                .is_some()
-                            && (acknowledge_through == target
-                                || reporter_keepalive
-                                    .delivered
-                                    .lock()
-                                    .unwrap()
-                                    .contains(&target))
-                        {
-                            break;
-                        }
-                        tokio::task::yield_now().await;
-                    }
-                })
-                .await
-                .expect("native archive/ACK progress did not reach the requested fixture stage");
+                wait_for_archive_stage(
+                    &mut mailbox,
+                    &reporter_keepalive,
+                    acknowledge_through,
+                    target,
+                )
+                .await;
                 let recovered = recover_application_finalized_round(
                     context.child("recovered"),
                     mailbox.clone(),
