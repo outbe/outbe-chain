@@ -48,6 +48,9 @@ pub struct ExecutorActor<E> {
     fcu_heartbeat_interval: Duration,
     next_fcu_heartbeat_deadline: SystemTime,
     pending_finalized_subscriptions: BTreeMap<Height, Vec<oneshot::Sender<()>>>,
+    // Futures are mutated exclusively by the actor. The wrapper preserves Sync
+    // for shared startup recovery references; get_mut never acquires a lock.
+    verification: parking_lot::Mutex<verification::VerificationWork>,
 }
 
 impl<E> ExecutorActor<E>
@@ -86,6 +89,7 @@ where
             fcu_heartbeat_interval,
             next_fcu_heartbeat_deadline,
             pending_finalized_subscriptions: BTreeMap::new(),
+            verification: Default::default(),
         };
         (actor, mailbox)
     }
@@ -153,6 +157,7 @@ where
         marshal: crate::marshal_types::MarshalMailbox,
         last_consensus_finalized: Height,
     ) -> eyre::Result<()> {
+        self.verification.get_mut().marshal = Some(marshal.clone());
         // Startup backfill: execution behind consensus.
         let execution_height = self.state.finalized_height;
         if let Some(readiness) = &self.ancestry_readiness {
@@ -230,6 +235,12 @@ where
         // Live event loop. Mailbox messages stay biased ahead of heartbeat so
         // queued marshal updates are not overtaken by timer work.
         loop {
+            let finalized = (
+                self.state.finalized_height,
+                crate::digest::Digest(self.state.forkchoice.finalized_block_hash),
+            );
+            self.verification.get_mut().reconcile(finalized);
+            self.verification.get_mut().schedule(&self.engine);
             let heartbeat = self.context.sleep_until(self.next_fcu_heartbeat_deadline);
             let mut heartbeat = std::pin::pin!(heartbeat);
 
@@ -248,6 +259,11 @@ where
                     self.handle_message(msg).await?;
                 },
 
+                event = self.verification.get_mut().next_event() => {
+                    if let Some((height, digest)) = self.verification.get_mut().handle_event(event, &self.context, finalized)? {
+                        self.commit_convergence(height, digest).await?;
+                    }
+                },
                 _ = &mut heartbeat => {
                     self.send_fcu_heartbeat().await;
                 },
@@ -257,6 +273,14 @@ where
 
     async fn handle_message(&mut self, msg: Message) -> eyre::Result<()> {
         match msg {
+            Message::ProjectionFailed(failure) => {
+                Err(eyre::eyre!("projection failed: {failure:?}"))
+            }
+            Message::PendingParent(parent) => self.follow_consensus_parent(parent).await,
+            Message::VerifyBlock(request) => {
+                self.verification.get_mut().queue(request);
+                Ok(())
+            }
             Message::CanonicalizeHead(req) => {
                 self.canonicalize(
                     HeadOrFinalized::Head,
@@ -321,3 +345,5 @@ pub use recovery::RecoveredForkchoiceAttempt;
 
 mod finalization;
 pub use finalization::{FinalizedCeBlock, FinalizedCeCommitter};
+
+mod verification;

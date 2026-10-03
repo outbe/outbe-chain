@@ -74,6 +74,7 @@ mod missed_proposers;
 struct TestApplicationShared {
     shared: ApplicationShared,
     _projection_publisher: ProjectionReadinessPublisher,
+    _executor_rx: futures::channel::mpsc::UnboundedReceiver<crate::executor::ingress::Message>,
 }
 
 struct FixedUnixTimeSource(u64);
@@ -558,6 +559,7 @@ fn finalizer_test_shared(
     TestApplicationShared {
         shared,
         _projection_publisher: projection_publisher,
+        _executor_rx,
     }
 }
 

@@ -193,6 +193,14 @@ impl ApplicationShared {
         if let Some(outcome) = self.proposal_parent_gate(round, &parent).await? {
             return Ok(outcome);
         }
+        self.executor_mailbox
+            .report_pending_parent(crate::executor::ingress::PendingParent {
+                round,
+                digest: parent.digest,
+                height: parent.height,
+                block: parent.block.as_ref().map(|block| Arc::new(block.clone())),
+                epoch_fence: self.epoch_fence.clone(),
+            })?;
         self.import_proposal_parent(&parent, execution_read_budget.clone())
             .await?;
         self.vrf_safety

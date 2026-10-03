@@ -267,6 +267,7 @@ where
                 }
             }
             commonware_consensus::marshal::Update::Tip(round, height, digest) => {
+                self.verification.get_mut().finalized(round, height, digest);
                 debug!(
                     %round, %height, %digest,
                     "marshal tip update"
