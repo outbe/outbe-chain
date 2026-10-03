@@ -46,6 +46,8 @@ pub use outbe_ocomp_protocol::abi::{
     OCOMP_LIFECYCLE_BEGIN_SELECTOR, OCOMP_TERMINAL_REQUEST_SELECTOR,
 };
 
+pub mod binding;
+
 mod envelope;
 mod gas;
 mod input;

@@ -4,6 +4,9 @@ use alloy_consensus::{BlockHeader as _, SignableTransaction as _, Transaction as
 use alloy_primitives::Address;
 use commonware_cryptography::certificate::Scheme as _;
 use commonware_utils::ordered::Quorum as _;
+use outbe_primitives::system_tx::binding::{
+    self, BoundaryBindingError, LayoutBindingError, ParentAccountingBindingError,
+};
 use outbe_primitives::{
     reshare_artifact::OutbeBlockArtifacts,
     system_tx::{OcompLifecycleActivation, SystemTxLayout},
@@ -61,59 +64,24 @@ pub(super) fn validate_parent_accounting(
     layout: &SystemTxLayout<'_>,
     header: &OutbeHeader,
 ) -> Result<(), String> {
-    if header.number() >= 2 {
-        let finalization_tx = *layout
-            .begin
-            .first()
-            .ok_or_else(|| "missing CertifiedParentAccounting system tx".to_string())?;
-        let input =
-            outbe_primitives::system_tx::SystemTxInputV2::decode(finalization_tx.input().as_ref())
-                .map_err(|error| {
-                    format!("decode CertifiedParentAccounting system tx input: {error}")
-                })?;
-        let outbe_primitives::system_tx::SystemTxInputV2::CertifiedParentAccounting { metadata } =
-            input
-        else {
-            return Err("expected CertifiedParentAccounting system tx at begin ordinal 0".into());
-        };
-        if metadata.finalized_block_hash != header.parent_hash() {
-            return Err(format!(
-                "CertifiedParentAccounting metadata hash must match block parent: expected {}, got {}",
-                header.parent_hash(),
-                metadata.finalized_block_hash
-            ));
+    binding::validate_parent_accounting_binding(layout, header).map_err(|error| match error {
+        ParentAccountingBindingError::Decode(source) => {
+            format!("decode CertifiedParentAccounting system tx input: {source}")
         }
-    }
-
-    Ok(())
+        error => error.to_string(),
+    })
 }
 
 pub(super) fn validate_boundary_outcome(
     layout: &SystemTxLayout<'_>,
     artifacts: &OutbeBlockArtifacts,
 ) -> Result<(), String> {
-    let Some(outbe_primitives::reshare_artifact::ConsensusHeaderArtifact::BoundaryOutcome(
-        header_artifact,
-    )) = artifacts.consensus_header_artifact.as_ref()
-    else {
-        return Ok(());
-    };
-    let mut found = false;
-    for tx in layout.begin.iter().chain(layout.end.iter()) {
-        let tx = *tx;
-        let input = outbe_primitives::system_tx::SystemTxInputV2::decode(tx.input().as_ref())
-            .map_err(|error| format!("decode system transaction input: {error}"))?;
-        if let outbe_primitives::system_tx::SystemTxInputV2::BoundaryOutcome { artifact } = input {
-            if &artifact != header_artifact {
-                return Err("BoundaryOutcome system tx artifact mismatch".into());
-            }
-            found = true;
+    binding::validate_boundary_outcome_binding(layout, artifacts).map_err(|error| match error {
+        BoundaryBindingError::Decode(source) => {
+            format!("decode system transaction input: {source}")
         }
-    }
-    if !found {
-        return Err("missing BoundaryOutcome system tx for header artifact".into());
-    }
-    Ok(())
+        error => error.to_string(),
+    })
 }
 
 pub(super) fn validate_envelopes(
@@ -192,27 +160,16 @@ pub(super) fn validate_layout<'a>(
     header: &OutbeHeader,
     activation: OcompLifecycleActivation,
 ) -> Result<(SystemTxLayout<'a>, OutbeBlockArtifacts), String> {
-    let artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(
-        header.extra_data().as_ref(),
-    )
-    .map_err(|error| format!("decode Outbe block artifacts for system tx validation: {error}"))?;
-
-    let layout = outbe_primitives::system_tx::split_system_layout(&body.transactions)
-        .map_err(|error| format!("invalid system tx layout for leader binding: {error}"))?;
-    let has_boundary_outcome = matches!(
-        &artifacts.consensus_header_artifact,
-        Some(outbe_primitives::reshare_artifact::ConsensusHeaderArtifact::BoundaryOutcome(_))
-    );
-    let has_tee_bootstrap =
-        layout.has_begin_kind(outbe_primitives::system_tx::SystemTxKind::TeeBootstrap);
-    outbe_primitives::system_tx::validate_system_tx_set_for_activation(
-        &layout,
-        header.number(),
-        has_boundary_outcome,
-        has_tee_bootstrap,
-        activation,
-    )
-    .map_err(|error| format!("invalid system tx set: {error}"))?;
-
-    Ok((layout, artifacts))
+    binding::validate_system_layout(body, header, activation).map_err(|error| match error {
+        LayoutBindingError::Artifacts(source) => {
+            format!("decode Outbe block artifacts for system tx validation: {source}")
+        }
+        LayoutBindingError::Layout(source) => {
+            format!("invalid system tx layout for leader binding: {source}")
+        }
+        error => error.to_string(),
+    })
 }
+
+#[cfg(test)]
+mod tests;
