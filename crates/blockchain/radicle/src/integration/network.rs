@@ -120,6 +120,18 @@ impl EndpointEvidenceHandle {
 
 pub struct EndpointNetwork;
 
+/// Owned send and receive halves of the endpoint transport.
+pub struct EndpointTransport<S, R> {
+    pub sender: S,
+    pub receiver: R,
+}
+
+/// Signing key and current local identity used for endpoint responses.
+pub struct EndpointSigningIdentity {
+    pub signer: bls12381::PrivateKey,
+    pub local: LocalEndpointIdentityHandle,
+}
+
 pub struct EndpointNetworkService {
     chain: ChainIdentity,
     actor: Option<EndpointActor<OsRequestIds>>,
@@ -220,16 +232,19 @@ impl EndpointResolver for EndpointNetworkResolver {
 impl EndpointNetworkService {
     pub async fn run<S, R>(
         mut self,
-        mut sender: S,
-        mut receiver: R,
-        signer: bls12381::PrivateKey,
-        local: LocalEndpointIdentityHandle,
+        transport: EndpointTransport<S, R>,
+        identity: EndpointSigningIdentity,
     ) -> Result<(), ManagerError>
     where
         S: LimitedSender<PublicKey = bls12381::PublicKey> + Send + 'static,
         R: Receiver<PublicKey = bls12381::PublicKey> + Send + 'static,
         R::Error: std::fmt::Display,
     {
+        let EndpointTransport {
+            mut sender,
+            mut receiver,
+        } = transport;
+        let EndpointSigningIdentity { signer, local } = identity;
         // Dropping or unwinding the network service also aborts its owned actor.
         let mut actor = JoinSet::new();
         actor.spawn(
@@ -599,10 +614,14 @@ mod shutdown_tests {
         });
         let (incoming, receiver) = mpsc::unbounded_channel();
         let task = tokio::spawn(service.run(
-            NoSend,
-            TestReceiver(receiver),
-            bls12381::PrivateKey::from_seed(1),
-            local,
+            EndpointTransport {
+                sender: NoSend,
+                receiver: TestReceiver(receiver),
+            },
+            EndpointSigningIdentity {
+                signer: bls12381::PrivateKey::from_seed(1),
+                local,
+            },
         ));
         Running {
             task,

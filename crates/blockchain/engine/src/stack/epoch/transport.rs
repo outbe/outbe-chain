@@ -1,5 +1,6 @@
 //! Authenticated transport admission and pre-registered startup channels.
 use super::super::*;
+use outbe_radicle::integration::{EndpointSigningIdentity, EndpointTransport};
 
 pub(super) type Channel<E> = (
     lookup::Sender<bls12381::PublicKey, E>,
@@ -185,7 +186,12 @@ where
     {
         let signer = signing_key.clone();
         if !owner.start(async move {
-            let result = endpoint.run(sender, receiver, signer, local).await;
+            let result = endpoint
+                .run(
+                    EndpointTransport { sender, receiver },
+                    EndpointSigningIdentity { signer, local },
+                )
+                .await;
             if let Err(error) = &result {
                 tracing::warn!(%error, "Radicle endpoint actor stopped");
             }

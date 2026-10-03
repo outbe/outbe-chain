@@ -122,7 +122,10 @@ fn application_drain_retains_transport_on_terminal_startup_and_panic_paths() {
                                         },
                                     );
                                     assert!(endpoint_owner
-                                        .start(endpoint.run(sender, receiver, signer, local))
+                                        .start(endpoint.run(
+                                            EndpointTransport { sender, receiver },
+                                            EndpointSigningIdentity { signer, local }
+                                        ))
                                         .unwrap());
                                     match outcome {
                                         0 => {
