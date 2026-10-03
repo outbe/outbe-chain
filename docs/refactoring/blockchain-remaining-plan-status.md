@@ -21,7 +21,7 @@
 | R37 | Проверено и оставлено: короткие journal initializers сохраняют отдельные OnceLock, paths и logging; исходный план допускает этот результат | Без изменения кода |
 | R38 | Удалены два лишних forwarding wrapper; потребители используют уже существующий общий bootstrap projection | `d1aff9ef` |
 | R39 | Общие canonical-result, EVM qualification/borrowed-code и marshal archive fixtures; независимые assertions сохранены | `2b96b598` |
-| R40 | Малый объём выполнен: source walker, общий trie-root projection и cycle genesis, локальные mint fixtures, явная Radicle voting matrix | Commit с этим отчётом |
+| R40 | Initial source-walker/root/cycle/mint/voting cleanup and the approved full lifecycle follow-up are complete; see the staged record below | `84aa1ae4`, `7e9e1aa6`, `0ea38ab0`, this follow-up report commit |
 | R41 | Rust test paths выделены в Qlty config; тесты проверяются с `--include-tests` | `835f7105` |
 | R42 | Проверено и оставлено: небольшие типизированные конструкторы понятны без искусственных Args structs; это соответствует исходному плану | Без изменения кода |
 
@@ -32,7 +32,6 @@
 | `outbe-chain-kjf2` | R36: публичное представление signer custody/factory |
 | `outbe-chain-50iq` | R32: удаление старых публичных reporter/mux API после решения о совместимости |
 | `outbe-chain-ug9o` | R34: удаление старых late-vote/resolve/recovered-record API после решения о совместимости |
-| `outbe-chain-d1rl` | R40: перестройка длинных lifecycle test harnesses и remaining structural fixture similarities; сохранить сценарную историю, fault injection и независимые expected values |
 | `outbe-chain-m4vd` | Отдельный baseline failure: IVote ABI golden hash в primitives integration test; test и ABI JSON не менялись этим рефакторингом |
 
 Ранее отложенные решения остаются вне этой очереди:
@@ -64,3 +63,38 @@ Qlty include-tests подтверждает удаление точных
 harnesses; существенные изменения перечислены отдельно выше.
 
 После каждого implementation commit отправлено сообщение в Telegram.
+
+## R40 lifecycle follow-up — 2026-10-03
+
+The user selected full implementation in three stages. Branch:
+`refactor/blockchain-r40-test-harnesses`, based on `84aa1ae4`.
+Beads: `outbe-chain-d1rl` and its three stage tasks. The other fourteen
+architecture/compatibility decisions remain deferred; the separate IVote ABI
+baseline failure is outside R40.
+
+| Stage | Delivered test-only seam | Commit and validation |
+|---|---|---|
+| A | Shutdown vote collection/consistency; native history persistence; missing-prerequisite and restart stages; shared signer arguments | `7e9e1aa6`: 267 engine lib tests with snapshot-integration, 6 shutdown tests, release Clippy; Repowise 6/6 files, 25 resolved, 0 introduced/worsened |
+| B | Prior DKG committee, player/dealer-only launch, signed log collection; metadata construction/publication/verification | `0ea38ab0`: 446 consensus lib tests, release Clippy; Repowise 4/4 files, 4 resolved, 0 introduced/worsened |
+| C | Issuance liquidity/oracle/note/proof/payout/retry/settlement stages; delegation call inputs and controls; block state/receipt/contract observations; CE and gas fixtures | This report's commit: 246 EVM lib tests, 11 delegation tests, real-proof issuance test, release Clippy for all EVM test targets; Repowise 4/4 files, 7 resolved, 0 introduced/worsened |
+
+All 304 original EVM assertions and the consensus-stage assertions remain.
+Unexpected delegation results and recoverable fixture failures now propagate to
+scenario boundaries, which still fail the test. Real proofs, independent
+expected values, fault injection, delivery/publication/transaction order and
+shutdown/root-hook lifetimes are preserved. The CE observer stores the last
+positive cleared-slot count atomically; zero is unset, and the original positive
+count assertion still runs before hook detachment.
+
+Fresh Qlty includes tests explicitly. Stage C has zero Qlty findings in its four
+files; stage B lowers removed-dealer complexity from 29 to 19. Residual scoped
+findings in earlier stages include independent scenario/setup similarities and
+cross-crate adapter shapes. Native health still flags some long scenario drivers
+that own a single EVM/service lifetime; no lint suppressions, test exclusions or
+production/API/protocol changes were used to clear the diff. The original
+consensus source-walker and Radicle voting-matrix parts were already delivered in
+`84aa1ae4` and required no repeated edits.
+
+Each implementation stage has its own verified commit and Telegram notification.
+Beads is the authoritative task record; this document records the delivered scope
+and its verification, not a new task queue.
