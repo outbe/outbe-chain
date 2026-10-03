@@ -309,6 +309,12 @@ library TargetInbound {
             _applySlottedMark($, payload.seriesId);
         }
 
+        // Past its deadline the series takes no units; parking each winner could never be applied.
+        if ($.intex.readData(payload.seriesId).state == IIntexNFT1155.IntexState.Expired) {
+            _ignore(srcChainId, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, payload.seriesId, InboundReason.LATE);
+            return;
+        }
+
         uint256 recipientsLen = payload.recipients.length;
         for (uint256 i = 0; i < recipientsLen; i++) {
             uint256 quantity = payload.quantities[i];

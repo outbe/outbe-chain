@@ -181,8 +181,7 @@ interface IOriginRouter {
     }
 
     /// @notice Issuance instructions parameters grouped to keep the calldata layout resilient against stack limits.
-    /// @dev `issuedUnits` is the auction-cleared cap that pins `mint` on the destination NFT
-    ///      contract. Must equal the auction's cleared count.
+    /// @dev `issuedUnits` must equal the auction's cleared count.
     struct IssuanceInstructionsParams {
         bytes14 seriesId;
         /// @notice Worldwide day the series was derived from (provenance; carried to the destination NFT).

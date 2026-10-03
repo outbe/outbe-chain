@@ -6,8 +6,8 @@
 //! provider cannot serve. This test drives the precompile through the actual
 //! EVM (`sub_call::run`, which installs the outbe precompile set in the child
 //! frame), so those sub-calls dispatch for real: the VaultRouter precompile
-//! runs its own liquidity-source gating and vault lookup, and only the two
-//! ERC20/ERC4626 counterparties are stubbed.
+//! runs its own liquidity-source gating and vault lookup, and the ERC20/ERC4626
+//! counterparties are the stateful `FactorySettlement` fixture.
 //!
 //! What this pins that unit tests cannot:
 //!   * `PAYNOTE_ADDRESS` must be a registered VaultRouter liquidity source —
@@ -22,12 +22,12 @@ use outbe_protocol::codec::field_to_b256;
 use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{sol, SolCall};
 use outbe_compressed_entities::ExecutionScope;
 use outbe_evm::sub_call;
 use outbe_paynote::hash::{note_commitment, note_sn};
 use outbe_paynote::precompile::IPayNote;
-use outbe_primitives::addresses::PAYNOTE_ADDRESS;
+use outbe_primitives::addresses::{PAYNOTE_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::{
     block::BlockContext,
     storage::{direct::DirectStorageProvider, StorageHandle, SubCallInput, SubCallStatus},
@@ -41,6 +41,15 @@ use revm::{
     Context,
 };
 
+sol! {
+    interface IFixture {
+        function mint(address account, uint256 amount) external;
+        function approve(address spender, uint256 amount) external returns (bool);
+        function balanceOf(address account) external view returns (uint256);
+        function configure(uint256 mode, address factory, bytes reentry) external;
+    }
+}
+
 const ALICE: Address = Address::new([0x11; 20]);
 const ASSET: Address = Address::new([0x33; 20]);
 const VAULT: Address = Address::new([0x55; 20]);
@@ -53,17 +62,12 @@ const PAYNOTE_DEPOSIT_SOURCE: u8 = 4;
 const DEPOSIT_AMOUNT: u128 = 1_000;
 const SPEND_KEY: u64 = 17;
 
-/// Minimal counterparty stub: returns 32 bytes of `1` for any calldata.
-///
-/// `PUSH1 0x01, PUSH1 0x00, MSTORE, PUSH1 0x20, PUSH1 0x00, RETURN`
-///
-/// That single answer satisfies every call this flow makes on the two
-/// counterparties: `transferFrom` and `approve` read it as `true`, and the
-/// vault's `deposit` reads it as one minted share.
-const ALWAYS_ONE: [u8; 10] = [0x60, 0x01, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3];
-
-fn stub_account() -> AccountInfo {
-    let bytecode = Bytecode::new_raw(Bytes::from(ALWAYS_ONE.to_vec()));
+/// The stateful token and vault: balances and allowances move for real.
+fn fixture_account() -> AccountInfo {
+    let bytecode = Bytecode::new_raw(Bytes::from(
+        alloy_primitives::hex::decode(include_str!("fixtures/FactorySettlement.hex").trim())
+            .unwrap(),
+    ));
     AccountInfo {
         code_hash: bytecode.hash_slow(),
         code: Some(bytecode),
@@ -90,15 +94,15 @@ fn note_serial_word() -> alloy_primitives::B256 {
     field_to_b256(&note_sn(Field::from(SPEND_KEY)).unwrap()).unwrap()
 }
 
-/// A database with the two counterparty stubs deployed and VaultRouter seeded
+/// A database with the counterparty fixture deployed and VaultRouter seeded
 /// as production genesis would: a vault registered for `ASSET`, and paynote
 /// authorized as a `PayNoteDeposit` liquidity source unless `authorize_paynote`
 /// says otherwise.
 fn seeded_db(register_vault: bool, authorize_paynote: bool) -> CacheDB<EmptyDB> {
     let mut database = CacheDB::new(EmptyDB::default());
-    database.insert_account_info(ASSET, stub_account());
-    database.insert_account_info(UNREGISTERED_ASSET, stub_account());
-    database.insert_account_info(VAULT, stub_account());
+    database.insert_account_info(ASSET, fixture_account());
+    database.insert_account_info(UNREGISTERED_ASSET, fixture_account());
+    database.insert_account_info(VAULT, fixture_account());
 
     let mut provider = DirectStorageProvider::new(&mut database, block());
     StorageHandle::enter(&mut provider, |storage| {
@@ -134,27 +138,14 @@ fn deposit_calldata_u256(asset: Address, amount: U256) -> Bytes {
     )
 }
 
-/// The EVM context the sub-call runs in. `Context::mainnet()` defaults to
-/// chain id 1; the runtime folds the live chain id into every note
-/// commitment, so the test would otherwise derive a leaf for the wrong chain.
-fn evm_ctx(
-    db: CacheDB<EmptyDB>,
-) -> revm::Context<
-    revm::context::BlockEnv,
-    revm::context::TxEnv,
-    revm::context::CfgEnv,
-    CacheDB<EmptyDB>,
-> {
-    Context::mainnet()
-        .with_db(db)
-        .modify_cfg_chained(|cfg| cfg.chain_id = outbe_primitives::chain::CHAIN_ID)
-}
-
 macro_rules! run_call {
     ($ctx:expr, $target:expr, $calldata:expr, $is_static:expr) => {
+        run_call!($ctx, ALICE, $target, $calldata, $is_static)
+    };
+    ($ctx:expr, $caller:expr, $target:expr, $calldata:expr, $is_static:expr) => {
         sub_call::run(
             $ctx,
-            ALICE,
+            $caller,
             false,
             SpecId::PRAGUE,
             None,
@@ -169,6 +160,64 @@ macro_rules! run_call {
         )
         .expect("sub-call must not fail fatally")
     };
+}
+
+type EvmCtx = revm::Context<
+    revm::context::BlockEnv,
+    revm::context::TxEnv,
+    revm::context::CfgEnv,
+    CacheDB<EmptyDB>,
+>;
+
+/// The EVM context the sub-call runs in. `Context::mainnet()` defaults to
+/// chain id 1; the runtime folds the live chain id into every note
+/// commitment, so the test would otherwise derive a leaf for the wrong chain.
+///
+/// `ALICE` holds and has approved both assets to the pool, and the router has
+/// approved the vault, as a live deployment would.
+fn evm_ctx(db: CacheDB<EmptyDB>) -> EvmCtx {
+    let mut ctx = Context::mainnet()
+        .with_db(db)
+        .modify_cfg_chained(|cfg| cfg.chain_id = outbe_primitives::chain::CHAIN_ID);
+    for asset in [ASSET, UNREGISTERED_ASSET] {
+        fixture_call(
+            &mut ctx,
+            ALICE,
+            asset,
+            IFixture::mintCall {
+                account: ALICE,
+                amount: U256::MAX,
+            },
+        );
+        fixture_call(
+            &mut ctx,
+            ALICE,
+            asset,
+            IFixture::approveCall {
+                spender: PAYNOTE_ADDRESS,
+                amount: U256::MAX,
+            },
+        );
+    }
+    fixture_call(
+        &mut ctx,
+        VAULT_ROUTER_ADDRESS,
+        ASSET,
+        IFixture::approveCall {
+            spender: VAULT,
+            amount: U256::MAX,
+        },
+    );
+    ctx
+}
+
+fn fixture_call(ctx: &mut EvmCtx, caller: Address, target: Address, call: impl SolCall) {
+    let out = run_call!(ctx, caller, target, Bytes::from(call.abi_encode()), false);
+    assert!(
+        matches!(out.status, SubCallStatus::Success),
+        "fixture setup reverted: {:?}",
+        out.status
+    );
 }
 
 /// The tree must be untouched: a VaultRouter revert has to roll the whole
@@ -373,4 +422,126 @@ fn a_differing_amount_under_the_same_serial_is_a_distinct_leaf() {
             "the leaf for amount {amount} must be present"
         );
     }
+}
+
+fn asset_balances(ctx: &mut EvmCtx) -> [U256; 4] {
+    [ALICE, PAYNOTE_ADDRESS, VAULT_ROUTER_ADDRESS, VAULT].map(|account| {
+        let out = run_call!(
+            ctx,
+            ASSET,
+            Bytes::from(IFixture::balanceOfCall { account }.abi_encode()),
+            true
+        );
+        IFixture::balanceOfCall::abi_decode_returns(&out.returndata).unwrap()
+    })
+}
+
+fn configure_asset(ctx: &mut EvmCtx, mode: u64) {
+    fixture_call(
+        ctx,
+        ALICE,
+        ASSET,
+        IFixture::configureCall {
+            mode: U256::from(mode),
+            factory: PAYNOTE_ADDRESS,
+            reentry: Bytes::new(),
+        },
+    );
+}
+
+#[test]
+fn a_token_that_does_not_deliver_the_amount_deposits_nothing() {
+    // False transferFrom, false approve, malformed bool, success without
+    // movement, and fee-on-transfer.
+    for (mode, reason) in [
+        (1, "PayNote token call failed"),
+        (2, "PayNote token call failed"),
+        (6, "PayNote token call failed"),
+        (8, "PayNote token moved an unexpected amount"),
+        (9, "PayNote token moved an unexpected amount"),
+    ] {
+        let mut ctx = evm_ctx(seeded_db(true, true));
+        // Stray tokens in the pool must never pay for a deposit.
+        fixture_call(
+            &mut ctx,
+            ALICE,
+            ASSET,
+            IFixture::mintCall {
+                account: PAYNOTE_ADDRESS,
+                amount: U256::from(DEPOSIT_AMOUNT),
+            },
+        );
+        configure_asset(&mut ctx, mode);
+        let before = asset_balances(&mut ctx);
+
+        let result = run_call!(
+            &mut ctx,
+            PAYNOTE_ADDRESS,
+            deposit_calldata(ASSET, DEPOSIT_AMOUNT),
+            false
+        );
+        assert!(
+            !matches!(result.status, SubCallStatus::Success),
+            "mode {mode} must not deposit"
+        );
+        assert!(
+            String::from_utf8_lossy(&result.returndata).contains(reason),
+            "mode {mode}: 0x{}",
+            alloy_primitives::hex::encode(&result.returndata)
+        );
+        assert_eq!(asset_balances(&mut ctx), before, "mode {mode}");
+        assert_pristine!(&mut ctx);
+    }
+}
+
+#[test]
+fn a_router_pull_that_leaves_tokens_in_the_pool_deposits_nothing() {
+    // Mode 10: the router's pull debits the pool one unit short while the vault
+    // still receives the full amount.
+    let mut ctx = evm_ctx(seeded_db(true, true));
+    configure_asset(&mut ctx, 10);
+    let before = asset_balances(&mut ctx);
+
+    let result = run_call!(
+        &mut ctx,
+        PAYNOTE_ADDRESS,
+        deposit_calldata(ASSET, DEPOSIT_AMOUNT),
+        false
+    );
+    assert!(
+        !matches!(result.status, SubCallStatus::Success),
+        "a pool left off its starting balance must not deposit"
+    );
+    assert!(
+        String::from_utf8_lossy(&result.returndata)
+            .contains("PayNote token moved an unexpected amount"),
+        "0x{}",
+        alloy_primitives::hex::encode(&result.returndata)
+    );
+    assert_eq!(asset_balances(&mut ctx), before);
+    assert_pristine!(&mut ctx);
+}
+
+#[test]
+fn a_token_that_returns_nothing_still_deposits() {
+    let mut ctx = evm_ctx(seeded_db(true, true));
+    configure_asset(&mut ctx, 7);
+    let [alice, ..] = asset_balances(&mut ctx);
+
+    let result = run_call!(
+        &mut ctx,
+        PAYNOTE_ADDRESS,
+        deposit_calldata(ASSET, DEPOSIT_AMOUNT),
+        false
+    );
+    assert!(
+        matches!(result.status, SubCallStatus::Success),
+        "{:?}",
+        result.status
+    );
+    let amount = U256::from(DEPOSIT_AMOUNT);
+    assert_eq!(
+        asset_balances(&mut ctx),
+        [alice - amount, U256::ZERO, U256::ZERO, amount]
+    );
 }
