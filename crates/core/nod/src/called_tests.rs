@@ -1785,6 +1785,86 @@ fn a_forfeit_out_of_gas_keeps_what_it_burned_and_resumes_on_the_bucket() {
     assert_eq!(forfeited_event_loads(&provider), U256::from(16u64));
 }
 
+/// CE gas CycleTick receives in a steady block: the block limit left after
+/// every other fixed-body system envelope.
+fn steady_cycle_tick_ce_gas_limit() -> u64 {
+    use outbe_primitives::system_tx::{
+        SystemTxInputV2, SystemTxVisibleGasPlan, STEADY_BLOCK_GAS_LIMIT,
+    };
+    let inputs: Vec<_> = [
+        SystemTxInputV2::LateFinalizeCredits {
+            artifact: Default::default(),
+        },
+        SystemTxInputV2::OcompLifecycleBegin,
+        SystemTxInputV2::CycleTick,
+        SystemTxInputV2::RewardsGemDelivery,
+        SystemTxInputV2::OracleSlashWindow,
+        SystemTxInputV2::HookEvents,
+        SystemTxInputV2::OcompTerminalRequest,
+    ]
+    .iter()
+    .map(|input| (input.kind(), input.encode().unwrap()))
+    .collect();
+    SystemTxVisibleGasPlan::new(STEADY_BLOCK_GAS_LIMIT, &inputs)
+        .unwrap()
+        .ce_gas_limit(2)
+        .unwrap()
+}
+
+/// A03/A15: a lapsed bucket of a full forfeit budget burns in one slice under
+/// the CycleTick CE gas window and credits every load exactly once.
+#[test]
+fn a_full_forfeit_budget_burns_in_one_slice_within_the_cycle_tick_gas_window() {
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let scope = ExecutionScope::new();
+    let at = START + 30 * DAY;
+    let past = at + NOTICE + 1;
+    let expected = StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        register(&storage, ISO);
+        let items: Vec<NodItemState> = (1..=MAX_NOD_FORFEITS_PER_BLOCK)
+            .map(|owner| {
+                let mut item = nod_item(Address::left_padding_from(&owner.to_be_bytes()), ISO);
+                item.gratis_load_minor = U256::from(owner);
+                api::add_nod(&storage, &scope, &parent, &item, entry_price()).unwrap();
+                item
+            })
+            .collect();
+        let bucket_key = items[0].bucket_key;
+        fill_days(
+            &storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
+        assert_eq!(scan(&storage, &scope, &parent, at), 1);
+        finalize_through(&storage, past);
+
+        let nod = NodContract::new(storage.clone());
+        {
+            let _window = scope
+                .begin_explicit_gas_window(steady_cycle_tick_ce_gas_limit())
+                .unwrap();
+            assert_eq!(
+                scan(&storage, &scope, &parent, past),
+                MAX_NOD_FORFEITS_PER_BLOCK
+            );
+        }
+        assert_eq!(nod.bucket_nod_count.read(&bucket_key).unwrap(), 0);
+        assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
+        assert_eq!(nod.total_supply().unwrap(), 0);
+        let expected: U256 = items
+            .iter()
+            .map(|item| item.gratis_load_minor)
+            .fold(U256::ZERO, |sum, load| sum + load);
+        assert_eq!(reserve(&storage), expected);
+        expected
+    });
+    assert_eq!(forfeited_event_loads(&provider), expected);
+}
+
 #[test]
 fn a_body_corruption_in_a_nod_sweep_fails_the_block() {
     use crate::called::sweep_failure;
