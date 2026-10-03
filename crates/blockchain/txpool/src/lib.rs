@@ -52,17 +52,6 @@ where
     ZeroFeeTransaction::from_transaction(tx, signer)
 }
 
-fn bootstrap_transaction<'a, T>(
-    tx: &'a T,
-    signer: Address,
-    network_chain_id: u64,
-) -> Option<BootstrapTransactionView<'a>>
-where
-    T: alloy_consensus::Transaction + ?Sized,
-{
-    BootstrapTransactionView::from_transaction(tx, signer, network_chain_id)
-}
-
 fn classify_ocomp_carrier<T>(
     tx: &T,
 ) -> Result<Option<OcompSystemCarrierCandidate>, OcompSystemCarrierError>
@@ -463,7 +452,7 @@ where
                 ),
             },
             Ok(None) => {
-                let bootstrap_candidate = bootstrap_transaction(
+                let bootstrap_candidate = BootstrapTransactionView::from_transaction(
                     parts.transaction.transaction(),
                     signer,
                     self.inner.chain_id(),

@@ -47,17 +47,6 @@ where
     ZeroFeeTransaction::from_transaction(tx, signer)
 }
 
-pub(in crate::executor) fn bootstrap_transaction<'a, T>(
-    tx: &'a T,
-    signer: Address,
-    network_chain_id: u64,
-) -> Option<BootstrapTransactionView<'a>>
-where
-    T: alloy_consensus::Transaction + ?Sized,
-{
-    BootstrapTransactionView::from_transaction(tx, signer, network_chain_id)
-}
-
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     /// Intrinsic gas accounted on the synthetic receipt that replaces a
     /// hard `BlockExecutionError` when the executor rejects a user transaction
