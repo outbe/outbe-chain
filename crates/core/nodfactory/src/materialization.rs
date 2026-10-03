@@ -169,6 +169,13 @@ pub(crate) fn materialize_after_attempt(
             .map_err(|_| PrecompileError::from(NodFactoryError::InvalidMaterializationProof))?;
 
     let worldwide_day = WorldwideDay::new(head.worldwide_day);
+    // Read before the last batch clears it: every Nod carries the certified evaluation time.
+    let issued_at = nod
+        .ocomp_certified_generation(worldwide_day)?
+        .ok_or_else(|| {
+            PrecompileError::Fatal("Nod materialization head projection is missing".into())
+        })?
+        .issued_at;
     for action in verified.actions() {
         let derived_nod_id = NodContract::generate_nod_id(action.owner, worldwide_day)?;
         let supplied_nod_id = WwdEntityId::try_from(action.nod_id.0.as_slice())
@@ -197,7 +204,7 @@ pub(crate) fn materialize_after_attempt(
             issuance_currency: action.issuance_currency,
             reference_currency: action.reference_currency,
         };
-        if let Err(error) = runtime::issue_nod(storage, scope, parent, &params) {
+        if let Err(error) = runtime::issue_nod_at(storage, scope, parent, &params, issued_at) {
             if matches!(
                 &error,
                 PrecompileError::Revert(reason)

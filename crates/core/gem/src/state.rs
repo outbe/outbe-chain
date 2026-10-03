@@ -80,7 +80,8 @@ impl GemContract<'_> {
     pub fn token_uri(&self, gem_id: U256) -> Result<String> {
         let item = self.get_gem(gem_id)?.ok_or(GemError::GemNotFound)?;
         let qualified = is_callable(item.state) && crate::api::is_qualified(&self.storage, &item)?;
-        Ok(crate::metadata::token_uri(&item, qualified))
+        let now = self.storage.timestamp()?.to::<u64>();
+        Ok(crate::metadata::token_uri(&item, qualified, now))
     }
 
     pub(crate) fn owner_index_key(owner: Address, index: u32) -> B256 {

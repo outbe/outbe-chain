@@ -1780,6 +1780,38 @@ fn erc20_settlement_enforces_eligibility_before_payment_and_accepts_zero_cost() 
 }
 
 #[test]
+fn settlement_over_a_broken_member_index_reverts() {
+    let mut world = World::new();
+    let mut input = params(Address::repeat_byte(0x93));
+    input.entry_price_minor = U256::ZERO;
+    let nod_id = world.issue(&input);
+    world.register_reference_currency_asset(NOTE_ASSET);
+    world.qualify(nod_id);
+    world.enter(|storage, _, _| {
+        NodContract::new(storage)
+            .bucket_nod_index
+            .write(&nod_id, 7)
+            .unwrap();
+    });
+    let error = world
+        .enter(|storage, scope, parent| {
+            api::settle_nod(
+                &storage,
+                scope,
+                parent,
+                input.owner,
+                nod_id,
+                NOTE_ASSET,
+                U256::ZERO,
+            )
+        })
+        .unwrap_err();
+    assert!(
+        matches!(error, PrecompileError::Revert(message) if message.contains("is not indexed"))
+    );
+}
+
+#[test]
 fn erc20_selector_has_no_zk_surcharge_and_old_paynote_selector_is_rejected() {
     assert_eq!(
         crate::precompile::base_gas(&INodFactory::settleNodCall::SELECTOR),

@@ -107,6 +107,16 @@ pub fn settlement_deadline(position: &Position) -> u64 {
         .saturating_add(u64::from(position.call_notice_period))
 }
 
+/// The state a reader sees at `now`: a Called position past its deadline is Void
+/// before the void sweep reaches it.
+pub fn effective_state(position: &Position, now: u64) -> Result<CredisState> {
+    let state = position.lifecycle_state()?;
+    if state == CredisState::Called && now > settlement_deadline(position) {
+        return Ok(CredisState::Void);
+    }
+    Ok(state)
+}
+
 impl CredisContract<'_> {
     /// Whole UTC days charged by a settlement at `now`, i.e. the day count the
     /// interest is computed over and the amount the accrual anchor advances by.

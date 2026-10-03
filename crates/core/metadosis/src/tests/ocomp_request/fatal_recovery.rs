@@ -758,3 +758,21 @@ fn malformed_persisted_request_receipt_remains_fatal_and_atomic() {
     assert!(matches!(error, PrecompileError::Fatal(_)));
     assert_eq!(fixture.rollback_snapshot(), before);
 }
+
+#[test]
+fn a_carry_over_that_misses_the_request_limit_is_a_business_failure() {
+    use crate::ocomp::activation::conserved_lysis_limit;
+
+    assert_eq!(
+        conserved_lysis_limit(U256::from(30), U256::from(10), U256::from(40)).unwrap(),
+        U256::from(40)
+    );
+    for (allocation, unused) in [
+        (U256::from(30), U256::from(9)),
+        (U256::from(30), U256::from(11)),
+        (U256::MAX, U256::ONE),
+    ] {
+        let error = conserved_lysis_limit(allocation, unused, U256::from(40)).unwrap_err();
+        assert!(crate::errors::is_business_failure(&error), "{error}");
+    }
+}

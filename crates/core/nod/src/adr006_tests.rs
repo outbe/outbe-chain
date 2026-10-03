@@ -264,7 +264,7 @@ fn member_count_overflow_and_underflow_roll_back_nod_mutations() {
             .unwrap();
         let error = api::remove_nod(&storage, &scope, loaded, bucket).unwrap_err();
         assert!(
-            matches!(error, PrecompileError::BodyReadCorruption(message) if message.contains("member count underflow"))
+            matches!(error, PrecompileError::Revert(message) if message.contains("member count underflow"))
         );
         assert_eq!(nod.total_supply().unwrap(), 1);
         assert!(api::get_item(&storage, &scope, &parent, first.nod_id)

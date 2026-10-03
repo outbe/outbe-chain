@@ -130,7 +130,7 @@ fn drain_called_run(
         factory.notify_at.clear(&slot)?;
     }
     *messages = messages.saturating_add(router_calls(run.len()));
-    let refused = crate::called::notify_called(storage, worldwide_day, called_at, &run);
+    let refused = crate::called::notify_called(storage, worldwide_day, called_at, &run)?;
     let all_refused = refused.len() == run.len();
     // A refused entry goes behind this firing's window, so it never wedges the drain.
     for entry in entries {

@@ -6,5 +6,5 @@ use outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS;
 #[contract(addr = PROMIS_LIMIT_ADDRESS)]
 pub struct PromisLimitContract {
     #[attribute(order = 0)]
-    pub total_unallocated: outbe_primitives::storage::dsl::Value<U256>,
+    pub(crate) total_unallocated: outbe_primitives::storage::dsl::Value<U256>,
 }

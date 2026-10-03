@@ -8,7 +8,8 @@ use outbe_ocomp_protocol::{
 use outbe_primitives::error::PrecompileError;
 
 use crate::ocomp_limits::{
-    apply_auction_brief, apply_fresh_request_limit_effect, RequestLimitEffect, RequestLimitSplit,
+    apply_auction_brief, apply_fresh_request_limit_effect, auction_draw, RequestLimitEffect,
+    RequestLimitSplit,
 };
 
 #[test]
@@ -368,6 +369,53 @@ fn a_weak_red_day_credits_its_base_together_with_the_headroom() {
             U256::from(996),
             "a RED day opens no auction, so its limit returns with the headroom"
         );
+    });
+}
+
+#[test]
+fn a_red_receipt_with_a_desis_limit_fails_the_day_without_drawing() {
+    with_storage(|storage| {
+        PromisLimitContract::new(storage.clone())
+            .checked_add_carry_over(U256::from(500))
+            .unwrap();
+        let request = RequestLimitEffect {
+            protocol_bundle_hash: B256::repeat_byte(0x41),
+            wwd: 20_260_112,
+            pending_nonce: 1,
+            day_type: DayType::Red,
+            day_limit: U256::from(1_000),
+            lysis_limit_minor: U256::from(4),
+            nominal_total: U256::from(100),
+            logical_anchor: 1_699_920_005,
+        };
+        let mut receipt = apply_fresh_request_limit_effect(storage.clone(), request.clone())
+            .expect("a RED day commits its limit split");
+        assert_eq!(auction_draw(&receipt).unwrap(), U256::ZERO);
+        let credited = PromisLimitContract::new(storage.clone())
+            .get_total_unallocated()
+            .unwrap();
+
+        receipt.desis_limit_minor = U256::from(7);
+        let error = auction_draw(&receipt).unwrap_err();
+        assert!(crate::errors::is_business_failure(&error), "{error}");
+        let error = apply_auction_brief(storage.clone(), &receipt).unwrap_err();
+        assert!(crate::errors::is_business_failure(&error), "{error}");
+        assert_eq!(
+            PromisLimitContract::new(storage.clone())
+                .get_total_unallocated()
+                .unwrap(),
+            credited
+        );
+        assert_eq!(
+            DesisContract::new(storage)
+                .auction_stage
+                .read(&request.wwd.into())
+                .unwrap(),
+            0
+        );
+
+        receipt.day_type = DayType::Green;
+        assert_eq!(auction_draw(&receipt).unwrap(), U256::from(7));
     });
 }
 

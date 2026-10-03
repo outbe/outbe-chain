@@ -2,13 +2,13 @@ use outbe_common::nft_card::{self, Card, Trait, AMOUNT_PRECISION, PRICE_PRECISIO
 use outbe_primitives::error::Result;
 
 use crate::constants::{TOKEN_DESCRIPTION, TOKEN_NAME};
-use crate::runtime::settlement_deadline;
+use crate::runtime::{effective_state, settlement_deadline};
 use crate::schema::{CredisContract, CredisState, Position};
 
 /// The position's `tokenURI` at block time `now`; accrued interest is evaluated then.
 pub(crate) fn token_uri(position: &Position, now: u64) -> Result<String> {
     let lifecycle = position.lifecycle_state()?;
-    let state = match lifecycle {
+    let state = match effective_state(position, now)? {
         CredisState::Open => nft_card::OPEN,
         CredisState::Called => nft_card::CALLED,
         CredisState::Settled => nft_card::SETTLED,

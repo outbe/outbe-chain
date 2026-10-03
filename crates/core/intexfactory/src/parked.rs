@@ -3,7 +3,11 @@
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
-use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::StorageHandle};
+use outbe_primitives::{
+    block::BlockRuntimeContext,
+    error::{PrecompileError, Result, SweepFailure},
+    storage::StorageHandle,
+};
 
 use crate::constants::{MAX_PARKED_CALLS_PER_FIRING, MAX_PARKED_FAILURES_PER_FIRING};
 use crate::schema::IntexFactoryContract;
@@ -14,9 +18,8 @@ use outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS;
 pub fn drain(ctx: &BlockRuntimeContext) -> Result<()> {
     let storage = ctx.storage.clone();
     let mut budget = MAX_PARKED_CALLS_PER_FIRING;
-    drain_messages(&storage, &mut budget);
-    drain_proceeds(&storage, &mut budget);
-    Ok(())
+    drain_messages(&storage, &mut budget)?;
+    drain_proceeds(&storage, &mut budget)
 }
 
 /// Where the next pass starts, and how far the resolved prefix reaches once it ends.
@@ -56,13 +59,15 @@ impl Cursor {
     }
 }
 
-fn drain_messages(storage: &StorageHandle<'_>, budget: &mut u32) {
+fn drain_messages(storage: &StorageHandle<'_>, budget: &mut u32) -> Result<()> {
     let factory = IntexFactoryContract::new(storage.clone());
-    let Ok(total) = message_count(storage) else {
-        return;
+    let total = match message_count(storage) {
+        Ok(total) => total,
+        Err(error) => return skip_unless_node_local(error),
     };
-    let Ok(start) = factory.parked_message_cursor.read() else {
-        return;
+    let start = match factory.parked_message_cursor.read() {
+        Ok(start) => start,
+        Err(error) => return skip_unless_node_local(error),
     };
 
     let mut cursor = Cursor::new(start);
@@ -76,9 +81,15 @@ fn drain_messages(storage: &StorageHandle<'_>, budget: &mut u32) {
             .abi_encode()
             .into(),
         );
-        let parked = read
-            .ok()
-            .and_then(|ret| IOriginRouter::parkedMessageCall::abi_decode_returns(&ret).ok());
+        let read = match read {
+            Ok(ret) => Some(ret),
+            Err(error) => {
+                skip_unless_node_local(error)?;
+                None
+            }
+        };
+        let parked =
+            read.and_then(|ret| IOriginRouter::parkedMessageCall::abi_decode_returns(&ret).ok());
         match parked {
             // An empty payload is an index the router never filled; `sent` is one we already pushed.
             Some(entry) if !entry.sent && !entry.payload.is_empty() => {
@@ -97,6 +108,9 @@ fn drain_messages(storage: &StorageHandle<'_>, budget: &mut u32) {
                 });
                 match sent {
                     Ok(()) => cursor.resolved(),
+                    Err(error) if error.sweep_failure() == SweepFailure::Propagate => {
+                        return Err(error);
+                    }
                     Err(error) => {
                         tracing::warn!(target: "outbe::intexfactory", idx, error = ?error, "parked message: leaving it");
                         cursor.stuck();
@@ -109,16 +123,21 @@ fn drain_messages(storage: &StorageHandle<'_>, budget: &mut u32) {
         cursor.at = cursor.at.saturating_add(1);
     }
 
-    let _ = factory.parked_message_cursor.write(cursor.head);
+    factory
+        .parked_message_cursor
+        .write(cursor.head)
+        .or_else(skip_unless_node_local)
 }
 
-fn drain_proceeds(storage: &StorageHandle<'_>, budget: &mut u32) {
+fn drain_proceeds(storage: &StorageHandle<'_>, budget: &mut u32) -> Result<()> {
     let factory = IntexFactoryContract::new(storage.clone());
-    let Ok(total) = proceeds_count(storage) else {
-        return;
+    let total = match proceeds_count(storage) {
+        Ok(total) => total,
+        Err(error) => return skip_unless_node_local(error),
     };
-    let Ok(start) = factory.parked_proceeds_cursor.read() else {
-        return;
+    let start = match factory.parked_proceeds_cursor.read() {
+        Ok(start) => start,
+        Err(error) => return skip_unless_node_local(error),
     };
 
     let mut cursor = Cursor::new(start);
@@ -132,9 +151,15 @@ fn drain_proceeds(storage: &StorageHandle<'_>, budget: &mut u32) {
             .abi_encode()
             .into(),
         );
-        let parked = read
-            .ok()
-            .and_then(|ret| IOriginRouter::parkedProceedsCall::abi_decode_returns(&ret).ok());
+        let read = match read {
+            Ok(ret) => Some(ret),
+            Err(error) => {
+                skip_unless_node_local(error)?;
+                None
+            }
+        };
+        let parked =
+            read.and_then(|ret| IOriginRouter::parkedProceedsCall::abi_decode_returns(&ret).ok());
         match parked {
             Some(entry) if !entry.settled && entry.amount > 0 => {
                 let idx = cursor.at;
@@ -152,6 +177,9 @@ fn drain_proceeds(storage: &StorageHandle<'_>, budget: &mut u32) {
                 });
                 match settled {
                     Ok(()) => cursor.resolved(),
+                    Err(error) if error.sweep_failure() == SweepFailure::Propagate => {
+                        return Err(error);
+                    }
                     Err(error) => {
                         tracing::warn!(target: "outbe::intexfactory", idx, error = ?error, "parked proceeds: leaving it");
                         cursor.stuck();
@@ -164,7 +192,18 @@ fn drain_proceeds(storage: &StorageHandle<'_>, budget: &mut u32) {
         cursor.at = cursor.at.saturating_add(1);
     }
 
-    let _ = factory.parked_proceeds_cursor.write(cursor.head);
+    factory
+        .parked_proceeds_cursor
+        .write(cursor.head)
+        .or_else(skip_unless_node_local)
+}
+
+/// A failure every node meets leaves the entry for a later pass; a node-local one fails the block.
+fn skip_unless_node_local(error: PrecompileError) -> Result<()> {
+    match error.sweep_failure() {
+        SweepFailure::Propagate => Err(error),
+        SweepFailure::Skip | SweepFailure::Stop => Ok(()),
+    }
 }
 
 fn message_count(storage: &StorageHandle<'_>) -> Result<u64> {

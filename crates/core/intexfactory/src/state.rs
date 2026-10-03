@@ -340,10 +340,15 @@ impl IntexFactoryContract<'_> {
         self.called_group_count.write(&key, members.len() as u32)
     }
 
-    /// Drop whatever is left of a bucket the sweep has finished.
-    pub(crate) fn force_retire_bucket(&mut self, day: u32) -> Result<u32> {
+    /// Retire a bucket the sweep has finished. Every group still in it moves to the
+    /// bucket its deadline falls in, never before the next hour; returns where each went.
+    pub(crate) fn force_retire_bucket(
+        &mut self,
+        day: u32,
+        now: u64,
+    ) -> Result<Vec<(u16, WorldwideDay, u32)>> {
         let len = self.expiry_bucket_len.read(&day)?;
-        let mut dropped = 0u32;
+        let mut requeued = Vec::new();
         for slot in 0..len {
             let slot_key = Self::bucket_slot_key(day, slot);
             let key = self.expiry_bucket_at.read(&slot_key)?;
@@ -351,8 +356,14 @@ impl IntexFactoryContract<'_> {
                 continue;
             }
             let (iso_code, worldwide_day) = Self::unscoped(key);
-            self.remove_called_group(iso_code, worldwide_day)?;
-            dropped += 1;
+            if self.called_group_count.read(&key)? == 0 {
+                self.remove_called_group(iso_code, worldwide_day)?;
+                continue;
+            }
+            let target = Self::deadline_bucket(self.called_group_deadline.read(&key)?)
+                .max(Self::deadline_bucket(now).saturating_add(1));
+            self.defer_called_group(iso_code, worldwide_day, target)?;
+            requeued.push((iso_code, worldwide_day, target));
         }
         self.expiry_bucket_len.clear(&day)?;
         self.expiry_bucket_live.clear(&day)?;
@@ -361,7 +372,7 @@ impl IntexFactoryContract<'_> {
             self.expiry_sweep_day.write(0)?;
             self.expiry_cursor.write(0)?;
         }
-        Ok(dropped)
+        Ok(requeued)
     }
 
     /// Free one bucket slot, retiring the bucket once nothing waits in it.

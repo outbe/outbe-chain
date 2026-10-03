@@ -118,7 +118,7 @@ pub fn dispatch(
             }),
             getGemStatus(c) => view(c, |c| {
                 let item = gem.get_gem(c.gemId)?.ok_or(GemError::GemNotFound)?;
-                Ok(to_abi_data(&item))
+                Ok(to_abi_data(&item, storage.timestamp()?.to::<u64>()))
             }),
             isQualified(c) => view(c, |c| {
                 let item = gem.get_gem(c.gemId)?.ok_or(GemError::GemNotFound)?;
@@ -145,12 +145,12 @@ pub fn dispatch(
     })
 }
 
-fn to_abi_data(item: &GemData) -> IGem::GemData {
+fn to_abi_data(item: &GemData, now: u64) -> IGem::GemData {
     IGem::GemData {
         gemId: item.gem_id,
         owner: item.owner,
         gemType: item.gem_type,
-        state: item.state,
+        state: item.effective_state(now),
         promisLoad: item.promis_load_minor,
         entryPrice: item.entry_price_minor,
         floorPrice: item.floor_price_minor,
