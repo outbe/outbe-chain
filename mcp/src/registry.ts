@@ -43,7 +43,7 @@ export const CONTRACTS: Record<string, ContractEntry> = {
 
   gratis: {
     address: A("0x0000000000000000000000000000000000001003"),
-    note: "Gratis - confidential (TEE-encrypted) balances; balanceOf/pledgedOf return the account's ciphertext blob (decrypt off-chain with the account's view key from outbe_deriveGratisKeys).",
+    note: "Gratis - confidential (TEE-encrypted) balances; balanceOf returns the account's ciphertext blob (decrypt off-chain with the account's view key from outbe_deriveGratisKeys).",
     abi: ABI.IGratis,
   },
 

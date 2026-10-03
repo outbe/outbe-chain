@@ -127,6 +127,7 @@ enum Command {
         passed: Vec<String>,
     },
     /// Execute one exact FAST or INT command plan and retain its receipt.
+    #[allow(clippy::enum_variant_names)]
     CommandLane {
         /// Registered ledger lane, `OCM-FAST` or `OCM-INT`.
         lane: String,

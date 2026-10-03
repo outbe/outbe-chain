@@ -5,7 +5,7 @@
 //! day count, and even that is evaluated lazily at settlement rather than
 //! accrued per block.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -33,8 +33,8 @@ fn reward_day(storage: &StorageHandle<'_>) -> Result<u32> {
 pub struct OpenPositionParams {
     pub smart_account: Address,
     pub cca: Address,
-    /// Sealed pledger EOA, opaque here.
-    pub eoa_ct: Vec<u8>,
+    /// Proof-authenticated return serial, opaque here.
+    pub return_note_serial: B256,
     pub asset: Address,
     /// ISO 4217 numeric code of the disbursed `asset`.
     pub issuance_currency: u16,
@@ -45,7 +45,7 @@ pub struct OpenPositionParams {
     pub policy_rate: U256,
     /// `P` - stablecoin minor units disbursed.
     pub principal: U256,
-    /// Entry price in the issuance currency, scale 1e6, sealed on the pledge.
+    /// Entry price in the issuance currency, scale 1e6, fixed by the reservation.
     pub entry_price: U256,
     /// Call anchor price in the reference currency, scale 1e6, sealed at issuance.
     pub call_anchor_price: U256,
@@ -85,8 +85,8 @@ pub struct Void {
     /// Unpaid share of the original principal, scale `1e6`. Scales the
     /// originating CCA's penalty.
     pub unpaid_share: U256,
-    /// Sealed pledger EOA - the caller opens it to key the confidential ledgers.
-    pub eoa_ct: Vec<u8>,
+    /// Return serial used when constructing repayment notes.
+    pub return_note_serial: B256,
 }
 
 /// `price x (100 + rate_pct) / 100`.
@@ -163,6 +163,8 @@ impl CredisContract<'_> {
                 || params.collateral.is_zero()
                 || params.entry_price.is_zero()
                 || params.call_anchor_price.is_zero()
+                || params.return_note_serial.is_zero()
+                || outbe_protocol::codec::field_from_b256(&params.return_note_serial).is_err()
             {
                 return Err(CredisError::InvalidAmount.into());
             }
@@ -185,7 +187,7 @@ impl CredisContract<'_> {
                 asset: params.asset,
                 issuance_currency: params.issuance_currency,
                 reference_currency: params.reference_currency,
-                eoa_ct: params.eoa_ct,
+                return_note_serial: params.return_note_serial,
                 principal: params.principal,
                 outstanding: params.principal,
                 collateral: params.collateral,
@@ -430,7 +432,7 @@ impl CredisContract<'_> {
                 smart_account: position.smart_account,
                 cca: position.cca,
                 unpaid_share,
-                eoa_ct: position.eoa_ct,
+                return_note_serial: position.return_note_serial,
             })
         })
     }

@@ -104,7 +104,7 @@ fn abi_position(p: &crate::schema::Position, now: u64) -> Result<ICredis::Positi
         asset: p.asset,
         issuanceCurrency: p.issuance_currency,
         referenceCurrency: p.reference_currency,
-        eoaCiphertext: p.eoa_ct.clone().into(),
+        returnNoteSerial: p.return_note_serial,
         principal: p.principal,
         outstanding: p.outstanding,
         collateral: p.collateral,

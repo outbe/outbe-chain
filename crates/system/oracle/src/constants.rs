@@ -22,6 +22,11 @@ pub(crate) const VWAP_HOUR_SECONDS: u64 = 60 * 60;
 /// Hourly cells kept per pair; a cell is reused for the same hour a day later.
 pub(crate) const HOURLY_VWAP_CELLS: u64 = 24;
 
+/// Minimum share of possible tally rounds that must have produced a snapshot
+/// for a pair before its finalized window VWAP is usable: two thirds. The
+/// possible rounds are the window's blocks divided by `vote_period`.
+pub(crate) const MIN_WINDOW_COVERAGE: (u64, u64) = (2, 3);
+
 /// Maximum number of closed UTC days the begin-block lifecycle finalizes in a
 /// single block. Normal operation finalizes exactly one day per UTC-midnight
 /// rollover; this cap only bounds catch-up after a long gap (cold start or

@@ -6,6 +6,10 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+serde.workspace = true
+outbe-protocol.workspace = true
+outbe-zk-canonical.workspace = true
+outbe-zk-backend.workspace = true
 outbe-macros.workspace = true
 outbe-primitives.workspace = true
 outbe-tee.workspace = true
