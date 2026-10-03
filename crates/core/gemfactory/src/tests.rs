@@ -1770,31 +1770,83 @@ fn send_whole_holding(storage: &StorageHandle) -> outbe_primitives::error::Resul
     runtime::issue_gem_position(storage, ALICE, source_intex_id(), U256::from(SENT_UNITS))
 }
 
+/// The refusal leaves storage and events as they were, before any burn.
+fn assert_called_source_cannot_be_sent(called_at: u64) {
+    let mut provider = test_storage(None);
+    // An empty burn answer fails to decode, so a burn before the state check would show.
+    provider.stub_sub_call_at(
+        outbe_primitives::addresses::INTEX_NFT1155_ADDRESS,
+        alloy_primitives::Bytes::new(),
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_called_source(&storage, called_at)
+    });
+    let before = provider.storage.clone();
+    let events = provider.get_ordered_events().to_vec();
+    StorageHandle::enter(&mut provider, |storage| {
+        assert!(err_msg(send_whole_holding(&storage)).contains("source intex is not issued"));
+    });
+    assert_eq!(provider.storage, before);
+    assert_eq!(provider.get_ordered_events(), events.as_slice());
+}
+
 #[test]
 fn a_series_called_in_the_same_block_cannot_be_sent() {
-    with_storage(None, |storage| {
-        seed_called_source(storage, T_NOW);
-        assert!(err_msg(send_whole_holding(storage)).contains("source intex is not issued"));
-        assert_eq!(
-            outbe_intex::api::gem_factory_units(storage, source_intex_id()).unwrap(),
-            0
-        );
-    });
+    assert_called_source_cannot_be_sent(T_NOW);
 }
 
 #[test]
 fn a_called_series_at_its_deadline_cannot_be_sent() {
-    with_storage(None, |storage| {
-        seed_called_source(storage, T_NOW - u64::from(SOURCE_NOTICE_SECONDS));
-        assert!(err_msg(send_whole_holding(storage)).contains("source intex is not issued"));
-    });
+    assert_called_source_cannot_be_sent(T_NOW - u64::from(SOURCE_NOTICE_SECONDS));
 }
 
 #[test]
 fn a_series_past_its_deadline_cannot_be_sent() {
-    with_storage(None, |storage| {
-        seed_called_source(storage, T_NOW - u64::from(SOURCE_NOTICE_SECONDS) - 1);
-        assert!(err_msg(send_whole_holding(storage)).contains("source intex is not issued"));
+    assert_called_source_cannot_be_sent(T_NOW - u64::from(SOURCE_NOTICE_SECONDS) - 1);
+}
+
+#[test]
+fn a_qualified_series_is_sent_once_without_a_promis_limit_credit() {
+    with_storage(Some(six_decimal_unit()), |storage| {
+        let floor = six_decimal_unit();
+        seed_source_series(
+            storage,
+            six_decimal_unit(),
+            floor,
+            six_decimal_u128(),
+            outbe_intex::IntexCallTrigger::default(),
+        );
+        let day = outbe_primitives::time::first_full_day(T_NOW);
+        let oracle = OracleContract::new(storage.clone());
+        let pair = oracle
+            .pair_index_of(outbe_oracle::api::AddressPair::new_coen_to(840))
+            .unwrap();
+        oracle
+            .record_utc_day_vwap(day, pair, floor + U256::ONE)
+            .unwrap();
+        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
+        assert!(outbe_oracle::api::closed_above_floor(storage.clone(), 840, floor, day).unwrap());
+        let promis_limit = unallocated(storage);
+
+        let id = send_whole_holding(storage).unwrap();
+
+        let capacity = sent_capacity(six_decimal_u128());
+        let factory = GemFactoryContract::new(storage.clone());
+        assert_eq!(
+            factory
+                .positions
+                .get(id)
+                .unwrap()
+                .unwrap()
+                .remaining_capacity,
+            capacity
+        );
+        assert_eq!(factory.total_gem_factory_units.read().unwrap(), capacity);
+        assert_eq!(
+            outbe_intex::api::gem_factory_units(storage, source_intex_id()).unwrap(),
+            SENT_UNITS as u32
+        );
+        assert_eq!(unallocated(storage), promis_limit);
     });
 }
 
@@ -2040,6 +2092,55 @@ fn issue_merchant_gem_after_expiry_rejects() {
         let r = runtime::issue_merchant_gem(storage, ALICE, position_id, BOB, six_decimal_unit());
         assert!(err_msg(r).contains("expired"));
     });
+}
+
+#[test]
+fn a_merchant_gem_issues_until_the_second_its_position_expires() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    let mut provider = test_storage(Some(rate));
+    let (id, expires_at) = StorageHandle::enter(&mut provider, |storage| {
+        let id = seed_and_send(
+            &storage,
+            six_decimal_unit(),
+            six_decimal_unit(),
+            six_decimal_u128(),
+        );
+        let expires_at = runtime::position_data(&storage, id).unwrap().expiresAt;
+        let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 840)
+            .unwrap()
+            .unwrap();
+        OracleContract::new(storage.clone())
+            .record_utc_day_vwap(
+                previous_date_key(timestamp_to_date_key(expires_at - 1)),
+                index,
+                rate,
+            )
+            .unwrap();
+        (id, expires_at)
+    });
+    let mut issue = |now: u64, load: U256| {
+        provider.set_timestamp(U256::from(now));
+        StorageHandle::enter(&mut provider, |storage| {
+            let issued = runtime::issue_merchant_gem(&storage, ALICE, id, BOB, load);
+            let remaining = runtime::position_data(&storage, id)
+                .unwrap()
+                .remainingCapacity;
+            (issued, remaining)
+        })
+    };
+    let capacity = sent_capacity(six_decimal_u128());
+
+    let (zero, remaining) = issue(expires_at - 1, U256::ZERO);
+    assert!(err_msg(zero).contains("promis load must be positive"));
+    assert_eq!(remaining, capacity);
+
+    let (issued, remaining) = issue(expires_at - 1, six_decimal_unit());
+    issued.unwrap();
+    assert_eq!(remaining, capacity - six_decimal_unit());
+
+    let (expired, after) = issue(expires_at, six_decimal_unit());
+    assert!(err_msg(expired).contains("position expired"));
+    assert_eq!(after, remaining);
 }
 
 /// Publishes `vwap` as the finalized COEN/`iso` VWAP of the UTC day before `T_NOW`
