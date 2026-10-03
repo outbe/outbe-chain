@@ -185,16 +185,17 @@ pub(in crate::stack) fn build_certified_follower_parent_record(
         .iter()
         .map(|entry| entry.address)
         .collect();
-    let record = outbe_consensus::finalization::resolver::build_finalization_record_from_recovered(
-        finalized_epoch,
-        finalization.proposal.round.view().get(),
-        finalization.proposal.parent.get(),
-        block.number(),
-        finalized_hash,
-        &ordered_addresses,
-        &finalization.certificate,
-        finalization.encode().into(),
-        scheme,
+    let record = outbe_consensus::finalization::resolver::build_recovered_finalization_record(
+        outbe_consensus::finalization::resolver::RecoveredFinalizedBlock::from_proposal(
+            block.number(),
+            &finalization.proposal,
+        ),
+        outbe_consensus::finalization::resolver::RecoveredFinalizationMaterial {
+            ordered_committee: &ordered_addresses,
+            certificate: &finalization.certificate,
+            encoded_certificate: finalization.encode().into(),
+            scheme,
+        },
     )?;
     let historical_hash = historical_snapshot.committee_set_hash_v2(finalized_epoch);
     ensure!(

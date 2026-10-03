@@ -29,6 +29,7 @@ use crate::block::ConsensusBlock;
 use crate::config::{FINALIZE_MAX_RETRIES, FINALIZE_RESOLUTION_TIMEOUT, FINALIZE_RETRY_DELAY};
 use crate::digest::Digest;
 use crate::finalization::ingress::{Finalized, Mailbox, Message};
+use crate::finalization::late_sig_store::{FinalizeVoteTarget, LateFinalizeCommittee};
 use crate::finalization::parent_cert_store::{
     CertifiedParentProofRecord, CertifiedParentProofStore, FinalizedParentCertStore, ProofKind,
     CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
@@ -417,12 +418,17 @@ impl FinalizationActor {
         // number and prune those outside the K-block inclusion window. No `view`
         // access.
         self.rekey_late_finalize_votes(
-            &finalized,
-            &consensus_data,
-            digest,
+            FinalizeVoteTarget {
+                epoch: finalized.round.epoch().get(),
+                view: finalized.round.view().get(),
+                parent_view: consensus_data.finalized_certificate.parent_view,
+                fb_hash: digest.0,
+            },
             block_number,
-            committee_set_hash,
-            committee_size,
+            LateFinalizeCommittee {
+                set_hash: committee_set_hash,
+                size: committee_size,
+            },
         );
 
         // Prune old parent-cert records and record store metrics. No `view` access.
@@ -552,26 +558,12 @@ impl FinalizationActor {
     /// (crediting nobody) and never stalls finalization. No `view` access.
     fn rekey_late_finalize_votes(
         &self,
-        finalized: &Finalized,
-        consensus_data: &ConsensusData,
-        digest: Digest,
+        target: FinalizeVoteTarget,
         block_number: u64,
-        committee_set_hash: alloy_primitives::B256,
-        committee_size: usize,
+        committee: LateFinalizeCommittee,
     ) {
         if let Ok(mut store) = self.deps.late_sig_store.lock() {
-            // Canonical (epoch, view, parent_view) from the finalized certificate
-            // so even a pure post-finalization vote (no pending entry) binds
-            // correctly.
-            store.resolve_finalized(
-                finalized.round.epoch().get(),
-                finalized.round.view().get(),
-                consensus_data.finalized_certificate.parent_view,
-                block_number,
-                digest.0,
-                committee_set_hash,
-                committee_size,
-            );
+            store.resolve_finalized_target(target, block_number, committee);
         }
     }
 
