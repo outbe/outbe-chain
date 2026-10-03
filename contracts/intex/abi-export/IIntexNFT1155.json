@@ -699,12 +699,7 @@
           "internalType": "bytes14"
         },
         {
-          "name": "from",
-          "type": "address",
-          "internalType": "address"
-        },
-        {
-          "name": "to",
+          "name": "owner",
           "type": "address",
           "internalType": "address"
         },
@@ -1229,6 +1224,22 @@
           "name": "actual",
           "type": "uint8",
           "internalType": "uint8"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "IssueAfterDeadline",
+      "inputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "deadline",
+          "type": "uint32",
+          "internalType": "uint32"
         }
       ]
     },

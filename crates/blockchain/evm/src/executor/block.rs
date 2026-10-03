@@ -109,25 +109,35 @@ pub struct OutbeBlockExecutor<'a, Evm> {
 }
 
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         inner: EthBlockExecutor<'a, Evm, &'a Arc<ChainSpec<OutbeHeader>>, &'a RethReceiptBuilder>,
-        bridge: Option<ConsensusExecutionBridge>,
-        block_extra_data: Bytes,
-        accounted_parent_artifact_provider: Option<Arc<dyn AccountedParentArtifactProvider>>,
-        validate_execution_summary: bool,
-        block_hash: Option<B256>,
-        parent_hash: B256,
-        evm_signer: Option<SharedOutbeEvmSigner>,
-        expected_begin_system_txs: Vec<Recovered<TransactionSigned>>,
-        expected_end_system_txs: Vec<Recovered<TransactionSigned>>,
-        system_layout_error: Option<String>,
-        parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
-        proposer_evm_address: Option<Address>,
-        execute_outbe_block_hooks: bool,
-        prebuilt_phase1_tx: Option<Recovered<TransactionSigned>>,
-        parent_artifact_hint: Option<AccountedParentArtifact>,
+        inputs: BlockExecutorInputs,
     ) -> Self {
+        let BlockExecutorInputs {
+            identity:
+                BlockExecutionIdentity {
+                    block_extra_data,
+                    validate_execution_summary,
+                    block_hash,
+                    parent_hash,
+                },
+            system_plan:
+                BlockSystemPlan {
+                    expected_begin_system_txs,
+                    expected_end_system_txs,
+                    system_layout_error,
+                    proposer_evm_address,
+                    execute_outbe_block_hooks,
+                    prebuilt_phase1_tx,
+                },
+            parent_accounting:
+                ParentAccountingInputs {
+                    accounted_parent_artifact_provider,
+                    parent_consensus_metadata,
+                    parent_artifact_hint,
+                },
+            dependencies: BlockExecutionDependencies { bridge, evm_signer },
+        } = inputs;
         let genesis_hash = inner.spec.genesis_hash();
         Self {
             inner,
@@ -405,26 +415,8 @@ where
         let current_summary = self.current_execution_summary();
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
         let block_timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
-        let block_artifacts = decode_outbe_block_artifacts(self.final_extra_data().as_ref())
-            .map_err(|error| BlockExecutionError::msg(error.to_string()))?;
-        if block_number > 0 {
-            let seal_output = self
-                .compressed_entities_seal_output
-                .as_ref()
-                .ok_or_else(|| {
-                    BlockExecutionError::msg("missing compressed-entities SealOutput")
-                })?;
-            validate_compressed_entities_root_after_seal(
-                block_artifacts.compressed_entities_root,
-                seal_output.new_root,
-            )?;
-        }
-        validate_execution_summary_artifact(
-            self.validate_execution_summary,
-            block_number,
-            block_artifacts.execution_summary,
-            current_summary,
-        )?;
+        let block_artifacts =
+            artifacts::validate_finish_artifacts(&self, block_number, current_summary)?;
 
         // OCOMP applies this phase before its terminal request so that the CE
         // seal remains the final semantic writer. The normal path applies the

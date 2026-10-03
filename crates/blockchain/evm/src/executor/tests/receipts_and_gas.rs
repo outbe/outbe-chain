@@ -57,21 +57,7 @@ fn priority_fees_credit_rewards_escrow_in_production_fee_path() {
     let ctx = execution_ctx(Some(1), Bytes::new());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        None,
-        Bytes::new(),
-        None,
-        false,
-        None,
-        ctx.inner.parent_hash,
-        None,
-        ctx.expected_begin_system_txs.clone(),
-        ctx.expected_end_system_txs.clone(),
-        ctx.system_layout_error.clone(),
-        ctx.parent_consensus_metadata.clone(),
-        ctx.proposer_evm_address,
-        ctx.execute_outbe_block_hooks,
-        ctx.prebuilt_phase1_tx.clone(),
-        ctx.parent_artifact_hint,
+        fixtures::executor_inputs_from_ctx(&ctx, None, false),
     );
 
     executor
@@ -113,21 +99,7 @@ fn apply_pre_execution_changes_executes_cycle_tick_system_tx_receipt() {
     let ctx = block_one_execution_ctx(Some(0), Bytes::new());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        None,
-        Bytes::new(),
-        None,
-        false,
-        None,
-        ctx.inner.parent_hash,
-        Some(signer.clone()),
-        ctx.expected_begin_system_txs.clone(),
-        ctx.expected_end_system_txs.clone(),
-        ctx.system_layout_error.clone(),
-        ctx.parent_consensus_metadata.clone(),
-        ctx.proposer_evm_address,
-        ctx.execute_outbe_block_hooks,
-        ctx.prebuilt_phase1_tx.clone(),
-        ctx.parent_artifact_hint,
+        fixtures::executor_inputs_from_ctx(&ctx, Some(signer.clone()), false),
     )
     .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
 
@@ -241,21 +213,7 @@ fn system_prefix_charges_visible_gas_and_receipt_cumulative_contract() {
     let ctx = block_one_execution_ctx(Some(3), Bytes::new());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        None,
-        Bytes::new(),
-        None,
-        false,
-        None,
-        ctx.inner.parent_hash,
-        Some(signer),
-        ctx.expected_begin_system_txs.clone(),
-        ctx.expected_end_system_txs.clone(),
-        ctx.system_layout_error.clone(),
-        ctx.parent_consensus_metadata.clone(),
-        ctx.proposer_evm_address,
-        ctx.execute_outbe_block_hooks,
-        ctx.prebuilt_phase1_tx.clone(),
-        ctx.parent_artifact_hint,
+        fixtures::executor_inputs_from_ctx(&ctx, Some(signer), false),
     )
     .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
 
@@ -1080,21 +1038,7 @@ fn gas_09_noncritical_system_oog_exhausts_aggregate_budget_atomically() {
     let ctx = block_one_execution_ctx(Some(3), Bytes::new());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        None,
-        Bytes::new(),
-        None,
-        true,
-        None,
-        ctx.inner.parent_hash,
-        Some(signer.clone()),
-        ctx.expected_begin_system_txs.clone(),
-        ctx.expected_end_system_txs.clone(),
-        ctx.system_layout_error.clone(),
-        ctx.parent_consensus_metadata.clone(),
-        ctx.proposer_evm_address,
-        ctx.execute_outbe_block_hooks,
-        ctx.prebuilt_phase1_tx.clone(),
-        ctx.parent_artifact_hint,
+        fixtures::executor_inputs_from_ctx(&ctx, Some(signer.clone()), true),
     )
     .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
 
@@ -1178,21 +1122,7 @@ fn gas_13_system_receipt_rpc_gas_delta_is_visible_envelope_gas() {
     let ctx = block_one_execution_ctx(Some(3), Bytes::new());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        None,
-        Bytes::new(),
-        None,
-        true,
-        None,
-        ctx.inner.parent_hash,
-        Some(signer.clone()),
-        ctx.expected_begin_system_txs.clone(),
-        ctx.expected_end_system_txs.clone(),
-        ctx.system_layout_error.clone(),
-        ctx.parent_consensus_metadata.clone(),
-        ctx.proposer_evm_address,
-        ctx.execute_outbe_block_hooks,
-        ctx.prebuilt_phase1_tx.clone(),
-        ctx.parent_artifact_hint,
+        fixtures::executor_inputs_from_ctx(&ctx, Some(signer.clone()), true),
     )
     .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
 
@@ -1334,21 +1264,7 @@ fn gas_14_executor_finish_sets_visible_system_gas_for_fee_history_input() {
     let ctx = block_one_execution_ctx(Some(2), Bytes::new());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        None,
-        Bytes::new(),
-        None,
-        true,
-        None,
-        ctx.inner.parent_hash,
-        Some(signer.clone()),
-        ctx.expected_begin_system_txs.clone(),
-        ctx.expected_end_system_txs.clone(),
-        ctx.system_layout_error.clone(),
-        ctx.parent_consensus_metadata.clone(),
-        ctx.proposer_evm_address,
-        ctx.execute_outbe_block_hooks,
-        ctx.prebuilt_phase1_tx.clone(),
-        ctx.parent_artifact_hint,
+        fixtures::executor_inputs_from_ctx(&ctx, Some(signer.clone()), true),
     )
     .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
 
@@ -1419,21 +1335,7 @@ fn gas_16_mixed_system_and_user_block_finish_uses_visible_system_gas() {
     let ctx = block_one_execution_ctx(Some(3), Bytes::new());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        None,
-        Bytes::new(),
-        None,
-        true,
-        None,
-        ctx.inner.parent_hash,
-        Some(signer.clone()),
-        ctx.expected_begin_system_txs.clone(),
-        ctx.expected_end_system_txs.clone(),
-        ctx.system_layout_error.clone(),
-        ctx.parent_consensus_metadata.clone(),
-        ctx.proposer_evm_address,
-        ctx.execute_outbe_block_hooks,
-        ctx.prebuilt_phase1_tx.clone(),
-        ctx.parent_artifact_hint,
+        fixtures::executor_inputs_from_ctx(&ctx, Some(signer.clone()), true),
     )
     .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
 

@@ -839,21 +839,26 @@ async fn spend_proof(
         .as_ref()
         .map(|note| save_note(dir, note))
         .transpose()?;
-    let output = json!({ "version": 1, "circuit": format!("{}@{}", Paynote::LABEL, Paynote::VERSION), "proof": format!("0x{}", hex::encode(&combined)),
-        "source_commitment": note.commitment, "chain_id": note.chain_id, "pool": PAYNOTE_ADDRESS,
-        "asset": note.asset, "context": quoted.context, "domain": quoted.domain,
-        "target": quoted.target, "series": quoted.series, "owner": quoted.owner, "units": quoted.units.to_string(),
-        "snapshotId": quoted.snapshot_id.to_string(), "spend_amount": amount.to_string(),
-        "root": public.root, "nullifier": public.nullifier, "change_commitment": public.change_commitment });
+    // This file alone can be sent to a relayer, so it never names the spent note.
+    let mut output = spend_artifact(&combined, &public, &quoted);
     let proof_path = save_json(
         &dir.join("proofs"),
         &format!("{:#x}.json", keccak256(&combined)),
         &output,
     )?;
-    let mut output = output;
+    output["source_commitment"] = json!(note.commitment);
     output["proof_file"] = json!(proof_path);
     output["change_note"] = json!(change_path);
     Ok(output)
+}
+
+fn spend_artifact(combined: &[u8], public: &PublicInputs, quoted: &QuotedSettlement) -> Value {
+    json!({ "version": 1, "circuit": format!("{}@{}", Paynote::LABEL, Paynote::VERSION), "proof": format!("0x{}", hex::encode(combined)),
+        "chain_id": public.chain_id, "pool": PAYNOTE_ADDRESS,
+        "asset": public.asset, "context": public.context, "domain": quoted.domain,
+        "target": quoted.target, "series": quoted.series, "owner": quoted.owner, "units": quoted.units.to_string(),
+        "snapshotId": quoted.snapshot_id.to_string(), "spend_amount": public.spend_amount.to_string(),
+        "root": public.root, "nullifier": public.nullifier, "change_commitment": public.change_commitment })
 }
 
 #[cfg(test)]

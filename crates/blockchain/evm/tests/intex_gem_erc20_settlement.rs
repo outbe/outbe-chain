@@ -5,7 +5,7 @@ use alloy_primitives::{Address, Bytes, FixedBytes, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use outbe_compressed_entities::ExecutionScope;
 use outbe_evm::sub_call;
-use outbe_gem::GemAddParams;
+use outbe_gem::{precompile::IGem, GemAddParams};
 use outbe_gemfactory::precompile::IGemFactory;
 use outbe_intex::{CreateSeriesParams, IntexCallTrigger, SeriesId};
 use outbe_intexfactory::precompile::IIntexFactory;
@@ -13,7 +13,8 @@ use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
     addresses::{
-        GEM_FACTORY_ADDRESS, INTEX_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
+        GEM_ADDRESS, GEM_FACTORY_ADDRESS, INTEX_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS,
+        VAULT_ROUTER_ADDRESS,
     },
     block::BlockContext,
     chain::CHAIN_ID,
@@ -451,10 +452,28 @@ fn erc20_settlement_moves_exactly_the_quoted_cost_into_the_reserve() {
 #[test]
 fn a_third_party_pays_and_the_units_stay_with_the_owner() {
     let payer = Address::new([0x77; 20]);
-    let mut world = World::new(Factory::Intex, payer, true);
-    assert!(matches!(world.settle().status, SubCallStatus::Success));
-    assert_eq!(world.balances(), world.paid_balances());
-    assert_eq!(world.settled_intex_units(), U256::from(UNITS));
+    for factory in FACTORIES {
+        let mut world = World::new(factory, payer, true);
+        assert!(
+            matches!(world.settle().status, SubCallStatus::Success),
+            "{factory:?}"
+        );
+        assert_eq!(world.balances(), world.paid_balances(), "{factory:?}");
+        world.assert_settled();
+        match factory {
+            Factory::Intex => assert_eq!(world.settled_intex_units(), U256::from(UNITS)),
+            Factory::Gem => {
+                let gem = world.view(
+                    GEM_ADDRESS,
+                    IGem::getGemStatusCall {
+                        gemId: world.gem_id,
+                    },
+                );
+                assert_eq!(gem.owner, OWNER);
+                assert_eq!(gem.state, outbe_gem::GemState::Settled as u8);
+            }
+        }
+    }
 }
 
 #[test]

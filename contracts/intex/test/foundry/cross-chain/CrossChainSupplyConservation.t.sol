@@ -10,9 +10,8 @@ import {BatchSendParam, IIntexNFT1155Bridge} from "@contracts/shared/interfaces/
 
 /// @dev Cross-chain conservation invariants for the IntexNFT1155 + IntexNFT1155Bridge pair:
 ///
-///   - SI-08: `sum totalSupply(issuedId)` across chains is never larger than the on-chain
-///     `issuedUnits` cap of the underlying series. Mint+bridge+round-trip moves balances
-///     between chains but cannot inflate the global pool.
+///   - SI-08: `sum totalSupply(issuedId)` across chains equals what was issued. Mint+bridge+round-trip
+///     moves balances between chains but cannot inflate the global pool.
 ///   - SI-09: a `crosschainBurn` of `amount` on the source mints exactly `amount` on the destination,
 ///     even when the inbound crosschainMint fails: the parked-amount `failedCrosschainMints[receiveId][idx].units`
 ///     holds the in-flight units until retry, so the source-burned amount equals
@@ -54,7 +53,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         tokenB.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
     }
 
-    function test_HopAToB_TotalSupplyPreservedAndBelowCap() public {
+    function test_HopAToB_TotalSupplyPreserved() public {
         uint256 minted = 100;
         tokenA.issueIntex(user, minted, SERIES_ID);
 
@@ -65,10 +64,9 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         assertEq(tokenA.totalSupply(TOKEN_ID), minted - bridged, "A.totalSupply -= bridged");
         assertEq(tokenB.totalSupply(TOKEN_ID), bridged, "B.totalSupply += bridged");
 
-        // SI-08: the global pool stays within the issuance cap and equals the original mint.
+        // SI-08: the global pool equals the original mint.
         uint256 totalAcrossChains = tokenA.totalSupply(TOKEN_ID) + tokenB.totalSupply(TOKEN_ID);
         assertEq(totalAcrossChains, minted, "SI-08: sum preserved");
-        assertLe(totalAcrossChains, ISSUED_UNITS, "SI-08: sum <= issuedUnits");
     }
 
     function test_RoundTripAToBToA_TotalSupplyPreserved() public {
@@ -85,7 +83,6 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
         uint256 totalAcrossChains = tokenA.totalSupply(TOKEN_ID) + tokenB.totalSupply(TOKEN_ID);
         assertEq(totalAcrossChains, minted, "SI-08: sum preserved end-to-end");
-        assertLe(totalAcrossChains, ISSUED_UNITS, "SI-08: sum <= issuedUnits");
     }
 
     function test_ParkBranch_ConservesAcrossCrosschainBurnAndPark() public {
@@ -103,8 +100,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
         bytes32 receiveId = _send(adapterA, adapterB, A_CHAIN_ID, user, parkTokenId, bridged);
 
-        // Source-side: the source intex burned the bridged amount; the cap-respecting supply on A
-        // is the remainder.
+        // Source-side: the source intex burned the bridged amount; the supply on A is the remainder.
         assertEq(tokenA.totalSupply(parkTokenId), minted - bridged, "A.totalSupply -= bridged");
         assertEq(tokenB.totalSupply(parkTokenId), 0, "B not minted (series missing)");
 
@@ -163,7 +159,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         adapterB.reclaimToSource(receiveId, 0);
     }
 
-    function testFuzz_Hop_TotalSupplyAlwaysAtCap(uint256 issuedSeed, uint256 bridgedSeed) public {
+    function testFuzz_Hop_TotalSupplyPreserved(uint256 issuedSeed, uint256 bridgedSeed) public {
         uint256 minted = bound(issuedSeed, 1, ISSUED_UNITS);
         uint256 bridged = bound(bridgedSeed, 0, minted);
 
@@ -174,7 +170,6 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
         uint256 totalAcrossChains = tokenA.totalSupply(TOKEN_ID) + tokenB.totalSupply(TOKEN_ID);
         assertEq(totalAcrossChains, minted, "SI-08: sum preserved");
-        assertLe(totalAcrossChains, ISSUED_UNITS, "SI-08: sum <= issuedUnits");
     }
 
     /// @dev Bridge a single tokenId to `recipient` on the destination and deliver the packet.

@@ -21,6 +21,9 @@ pub enum GemFactoryError {
     #[error("source intex not found")]
     SourceIntexNotFound,
 
+    #[error("source intex is not issued")]
+    SourceIntexNotIssued,
+
     #[error("position not found")]
     PositionNotFound,
 

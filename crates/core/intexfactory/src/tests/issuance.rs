@@ -551,6 +551,86 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
 }
 
 #[test]
+fn a_paynote_bound_to_an_earlier_snapshot_cannot_settle_after_rollover() {
+    let mut storage = dual_currency_series(EUR_ISO as u64);
+    StorageHandle::enter(&mut storage, |s| {
+        let oracle = OracleContract::new(s.clone());
+        write_day_rate(
+            &oracle,
+            REFERENCE_ISO,
+            PAIR_ID,
+            U256::from(2u64) * COEN_ISO_RATE_SCALE,
+        );
+        write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
+        seed_qualifying_day(&s);
+    });
+    let quote = |storage: &mut HashMapStorageProvider| {
+        StorageHandle::enter(storage, |s| {
+            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap()
+        })
+    };
+    let context = |snapshot: U256| {
+        outbe_paynote::api::settlement_context(
+            outbe_paynote::api::SettlementDomain::Intex,
+            outbe_paynote::api::intex_holding_target(sid(7).as_bytes(), owner()),
+            U256::ONE,
+            snapshot,
+        )
+        .unwrap()
+    };
+    let (_, amount, quoted) = quote(&mut storage);
+    let stale = outbe_paynote::test_support::note_and_spend_proof(
+        CHAIN_ID,
+        payment_token(),
+        context(quoted),
+        amount,
+        amount,
+    );
+    outbe_paynote::test_support::seed_pool(&mut storage, CHAIN_ID, &[stale.commitment]);
+    let nullifier = outbe_protocol::codec::field_to_b256(&stale.public.nullifier).unwrap();
+
+    let cutoff = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
+        .unwrap()
+        .cutoff();
+    storage.set_timestamp(U256::from(cutoff + 3_600));
+    let (_, next_amount, required) = quote(&mut storage);
+    assert_eq!(next_amount, amount, "the next window holds the same price");
+    let before = storage.storage.clone();
+    let error = StorageHandle::enter(&mut storage, |s| {
+        runtime::settle_intex_with_paynote(&s, sid(7), owner(), owner(), U256::ONE, &stale.proof)
+            .unwrap_err()
+    });
+    assert_eq!(
+        error.to_string(),
+        outbe_primitives::error::PrecompileError::from(
+            crate::errors::IntexFactoryError::PayNoteContextMismatch {
+                expected: context(required),
+                actual: context(quoted),
+            }
+        )
+        .to_string()
+    );
+    assert_eq!(
+        storage.storage, before,
+        "the note and the units are untouched"
+    );
+
+    let current = outbe_paynote::test_support::note_and_spend_proof(
+        CHAIN_ID,
+        payment_token(),
+        context(required),
+        amount,
+        amount,
+    );
+    StorageHandle::enter(&mut storage, |s| {
+        runtime::settle_intex_with_paynote(&s, sid(7), owner(), owner(), U256::ONE, &current.proof)
+            .unwrap();
+        assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 1);
+        assert!(outbe_paynote::api::is_spent(&s, nullifier).unwrap());
+    });
+}
+
+#[test]
 fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
     let mut storage = dual_currency_series(EUR_ISO as u64);
     stub_token_that_never_credits(&mut storage);

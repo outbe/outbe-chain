@@ -48,7 +48,7 @@ fn drain(handle: &StorageHandle<'_>) {
 }
 
 /// A provider whose OriginRouter accepts sends, so the drain exercises the path a live chain takes
-/// rather than the drop-and-log one a missing stub produces.
+/// rather than the requeue a missing stub produces.
 fn provider() -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.stub_sub_call_at(

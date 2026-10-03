@@ -1851,21 +1851,7 @@ fn finish_uses_final_extra_data_setter_for_summary_validation() {
     let ctx = execution_ctx(Some(0), Bytes::new());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        None,
-        Bytes::new(),
-        None,
-        true,
-        None,
-        ctx.inner.parent_hash,
-        None,
-        ctx.expected_begin_system_txs.clone(),
-        ctx.expected_end_system_txs.clone(),
-        ctx.system_layout_error.clone(),
-        ctx.parent_consensus_metadata.clone(),
-        ctx.proposer_evm_address,
-        ctx.execute_outbe_block_hooks,
-        ctx.prebuilt_phase1_tx.clone(),
-        ctx.parent_artifact_hint,
+        fixtures::executor_inputs_from_ctx(&ctx, None, true),
     );
     let final_extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
         execution_summary: Some(ExecutionSummaryArtifact {
@@ -1919,21 +1905,7 @@ fn finish_without_final_extra_data_setter_rejects_missing_summary() {
     let ctx = execution_ctx(Some(0), Bytes::new());
     let executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        None,
-        Bytes::new(),
-        None,
-        true,
-        None,
-        ctx.inner.parent_hash,
-        None,
-        ctx.expected_begin_system_txs.clone(),
-        ctx.expected_end_system_txs.clone(),
-        ctx.system_layout_error.clone(),
-        ctx.parent_consensus_metadata.clone(),
-        ctx.proposer_evm_address,
-        ctx.execute_outbe_block_hooks,
-        ctx.prebuilt_phase1_tx.clone(),
-        ctx.parent_artifact_hint,
+        fixtures::executor_inputs_from_ctx(&ctx, None, true),
     );
 
     let artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(

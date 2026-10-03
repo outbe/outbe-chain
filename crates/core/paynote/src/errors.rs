@@ -30,6 +30,10 @@ pub enum PayNoteError {
     TreeFull,
     #[error("PayNote commitment already exists")]
     CommitmentExists,
+    #[error("PayNote token call failed")]
+    TokenOperationFailed,
+    #[error("PayNote token moved an unexpected amount")]
+    DepositAmountMismatch,
     /// Fatal: the Poseidon2 sponge is total over field elements, so a failure
     /// here means the hasher itself is misconfigured, not bad user input.
     #[error("PayNote Poseidon2 hashing failed")]

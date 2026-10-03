@@ -286,7 +286,7 @@ pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
 const PRODUCT_DECIMALS: u32 = 2 * PROTOCOL_AMOUNT_DECIMALS as u32;
 
 /// Cost of `units` in payment-asset minor units, floored once above the
-/// per-unit minimum of one reference-currency minor unit. `rate` is
+/// purchase minimum of one reference-currency minor unit. `rate` is
 /// `(COEN/target, COEN/reference)` when the asset is not in the reference currency.
 pub(crate) fn settlement_units(
     product: U256,
@@ -295,14 +295,13 @@ pub(crate) fn settlement_units(
     payment_decimals: u8,
 ) -> Result<U256> {
     let overflow = || PrecompileError::Revert("settlement cost overflow".into());
-    // Per unit, so units batched into one call cannot share a single minimum.
-    // A priceless series stays free.
-    let product = if product.is_zero() {
-        product
-    } else {
-        product.max(SCALE_1E6_U256)
-    };
     let obligation = product.checked_mul(units).ok_or_else(overflow)?;
+    // A priceless series stays free.
+    let obligation = if obligation.is_zero() {
+        obligation
+    } else {
+        obligation.max(SCALE_1E6_U256)
+    };
     let (numerator, denominator) = match rate {
         Some((to, from)) => (obligation.checked_mul(to).ok_or_else(overflow)?, from),
         None => (obligation, U256::ONE),
@@ -783,8 +782,7 @@ fn settle<Q>(
             U256::ZERO,
             IIntexNFT1155::settleIntexCall {
                 seriesId: series_id.into(),
-                from: owner,
-                to: owner,
+                owner,
                 units,
             }
             .abi_encode()

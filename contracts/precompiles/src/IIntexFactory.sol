@@ -160,6 +160,10 @@ interface IIntexFactory {
     /// @notice The series was force-called; it settles until `settlementDeadline`, inclusive.
     event SeriesCalled(bytes14 indexed seriesId, uint32 calledAt, uint64 settlementDeadline);
 
+    /// @notice The router kept refusing the series' Called notice, so it was dropped
+    ///         and the targets were not told of the call.
+    event CalledNoticeDropped(bytes14 indexed seriesId, uint32 calledAt);
+
     /// @notice A reference currency was left out of one day's Call scan because its
     ///         window price could not be indexed. The next day's pass tries it again.
     event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);

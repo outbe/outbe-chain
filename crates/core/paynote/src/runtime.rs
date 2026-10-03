@@ -253,28 +253,31 @@ pub(crate) fn deposit(
         // Pull into the pool, then let the router pull from the pool: the
         // router's `deposit` is a `transferFrom(caller, SELF)`, so the pool
         // must both hold the tokens and approve the router.
-        storage.call(
+        let before = token_balance(&storage, asset)?;
+        checked_token_call(
+            &storage,
             asset,
-            U256::ZERO,
             IERC20::transferFromCall {
                 from: caller,
                 to: PAYNOTE_ADDRESS,
                 amount: units,
-            }
-            .abi_encode()
-            .into(),
+            },
         )?;
-        storage.call(
+        if token_balance(&storage, asset)?.checked_sub(before) != Some(units) {
+            return Err(PayNoteError::DepositAmountMismatch.into());
+        }
+        checked_token_call(
+            &storage,
             asset,
-            U256::ZERO,
             IERC20::approveCall {
                 spender: VAULT_ROUTER_ADDRESS,
                 amount: units,
-            }
-            .abi_encode()
-            .into(),
+            },
         )?;
         outbe_vaultrouter::api::deposit(&storage, asset, units)?;
+        if token_balance(&storage, asset)? != before {
+            return Err(PayNoteError::DepositAmountMismatch.into());
+        }
 
         if leaf_count == 0 {
             let empty_root = field_to_b256(&zeros[PAYNOTE_TREE_DEPTH])
@@ -299,6 +302,32 @@ pub(crate) fn deposit(
         )?;
         Ok(())
     })
+}
+
+/// An empty return counts as success: some tokens return nothing.
+fn checked_token_call(
+    storage: &StorageHandle<'_>,
+    asset: Address,
+    call: impl SolCall,
+) -> Result<()> {
+    let ret = storage.call(asset, U256::ZERO, call.abi_encode().into())?;
+    if !ret.is_empty() && ret.as_ref() != U256::ONE.to_be_bytes::<32>() {
+        return Err(PayNoteError::TokenOperationFailed.into());
+    }
+    Ok(())
+}
+
+fn token_balance(storage: &StorageHandle<'_>, asset: Address) -> Result<U256> {
+    let ret = storage.staticcall(
+        asset,
+        IERC20::balanceOfCall {
+            account: PAYNOTE_ADDRESS,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    IERC20::balanceOfCall::abi_decode_returns(&ret)
+        .map_err(|_| PayNoteError::TokenOperationFailed.into())
 }
 
 /// `consume(proof)` — verify a frozen `outbe.paynote@1.3.0` spend proof,

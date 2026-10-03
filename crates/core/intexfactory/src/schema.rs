@@ -88,8 +88,8 @@ pub struct IntexFactoryContract {
     pub notify_head: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 25)]
     pub notify_tail: outbe_primitives::storage::dsl::Value<u32>,
-    /// Queue index -> a Called series' word packed with its call time: the group has left the
-    /// index, so the notice carries its own.
+    /// Queue index -> a Called series' word packed with its call time and the router calls it
+    /// was refused: the group has left the index, so the notice carries its own.
     #[attribute(order = 26)]
     pub notify_at: outbe_primitives::storage::dsl::Map<u32, U256>,
 
