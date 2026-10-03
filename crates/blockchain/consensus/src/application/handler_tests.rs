@@ -65,6 +65,9 @@ mod verify_stages;
 #[path = "handler/tests/certification.rs"]
 mod certification;
 
+#[path = "handler/tests/publication.rs"]
+mod publication;
+
 #[path = "handler/tests/missed_proposers.rs"]
 mod missed_proposers;
 
@@ -480,6 +483,7 @@ async fn start_marshal_without_available_block(
 /// `crate::finalization::actor` (shared `FinalizationView` + actor
 /// handle_finalized).
 fn finalizer_test_shared(
+    context: &commonware_runtime::deterministic::Context,
     marshal_mailbox: crate::marshal_types::MarshalMailbox,
     provider: HybridSchemeProvider<MinSig>,
 ) -> TestApplicationShared {
@@ -526,6 +530,9 @@ fn finalizer_test_shared(
         chain_id: outbe_primitives::chain::CHAIN_ID,
         ocomp_lifecycle_activation: outbe_primitives::system_tx::OcompLifecycleActivation::Disabled,
         marshal_mailbox,
+        publication: crate::application::publication::ProposalPublication::new(
+            context.child("publication"),
+        ),
         certificate_scheme_provider: provider,
         elector_config_provider,
         committee_provider,
@@ -901,6 +908,7 @@ fn epoch_boundary_parent_uses_finalized_round_for_exact_proof_key() {
             let (marshal_mailbox, resolver_keepalive, actor_handle) =
                 start_marshal_without_available_block(context).await;
             let shared = finalizer_test_shared(
+                &clock,
                 marshal_mailbox.clone(),
                 HybridSchemeProvider::<MinSig>::new(),
             );
@@ -973,6 +981,7 @@ fn epoch_boundary_anchor_wait_miss_forfeits_slot_not_stall() {
             let (marshal_mailbox, resolver_keepalive, actor_handle) =
                 start_marshal_without_available_block(context).await;
             let shared = finalizer_test_shared(
+                &clock,
                 marshal_mailbox.clone(),
                 HybridSchemeProvider::<MinSig>::new(),
             );
@@ -1049,8 +1058,11 @@ fn forfeited_build_does_not_advance_retry_timestamp_source() {
             let clock = context.child("timestamp_retry");
             let (marshal_mailbox, resolver_keepalive, actor_handle) =
                 start_marshal_without_available_block(context).await;
-            let mut shared =
-                finalizer_test_shared(marshal_mailbox, HybridSchemeProvider::<MinSig>::new());
+            let mut shared = finalizer_test_shared(
+                &clock,
+                marshal_mailbox,
+                HybridSchemeProvider::<MinSig>::new(),
+            );
             shared.shared.unix_time_source = Arc::new(FixedUnixTimeSource(
                 parent_timestamp.saturating_add(10 * BAND),
             ));
@@ -1392,7 +1404,7 @@ fn parent_proof_recovered_from_marshal_archive_on_selection_miss() {
                 "marshal must hold the seeded parent finalization before recovery"
             );
 
-            let shared = finalizer_test_shared(marshal_mailbox.clone(), scheme_provider);
+            let shared = finalizer_test_shared(&clock, marshal_mailbox.clone(), scheme_provider);
             // Recovery resolves the committee for the finalization's epoch.
             let _ = shared.committee_provider.register(epoch, committee);
 
@@ -1484,7 +1496,7 @@ fn parent_proof_selector_recovers_from_marshal_after_empty_store_restart() {
                 "marshal must retain the finalized parent archive entry"
             );
 
-            let shared = finalizer_test_shared(marshal_mailbox.clone(), scheme_provider);
+            let shared = finalizer_test_shared(&clock, marshal_mailbox.clone(), scheme_provider);
             let _ = shared.committee_provider.register(epoch, committee);
             let key = CertifiedParentProofKey::new(
                 epoch.get(),
@@ -1701,8 +1713,11 @@ fn resolve_for_verify_timeout_logs_full_context() {
             let clock = context.child("verify");
             let (marshal_mailbox, resolver_keepalive, actor_handle) =
                 start_marshal_without_available_block(context).await;
-            let shared =
-                finalizer_test_shared(marshal_mailbox, HybridSchemeProvider::<MinSig>::new());
+            let shared = finalizer_test_shared(
+                &clock,
+                marshal_mailbox,
+                HybridSchemeProvider::<MinSig>::new(),
+            );
 
             let round = Round::new(Epoch::new(0), View::new(1201));
             let digest = Digest(B256::repeat_byte(0xA7));

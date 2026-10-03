@@ -8,11 +8,19 @@ use commonware_utils::channel::oneshot;
 /// A cache entry or an execution verdict alone never authorizes a finalize vote.
 pub(super) async fn certify(
     marshal: MarshalMailbox,
+    publication: super::publication::ProposalPublication,
     round: Round,
     digest: Digest,
     mut response: oneshot::Sender<bool>,
 ) {
     let persist = async {
+        if let Some(gate) = publication.certification_gate(&marshal, round, digest) {
+            if gate.await {
+                return true;
+            }
+        }
+        // A missing or abandoned gate is not evidence against the candidate.
+        // Recover by exact identity using the authenticated notarization.
         let Ok(block) = marshal
             .subscribe_by_digest(digest, DigestFallback::FetchByRound { round })
             .await

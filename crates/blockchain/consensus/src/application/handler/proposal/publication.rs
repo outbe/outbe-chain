@@ -38,16 +38,10 @@ impl ApplicationShared {
             );
             return Ok(ProposeOutcome::ExecutionUnavailable);
         }
-        // Persist before returning the proposal. The new `proposed` API also
-        // broadcasts; `verified` retains our separate durable-cache and
-        // Relay::broadcast paths, so a dropped push remains recoverable by pull.
-        let durable = self.marshal_mailbox.verified(round, block).await;
-        if !durable {
-            // An unavailable acknowledgement or an aborted sync cannot authorize
-            // publication. Actual storage failures retain marshal's fatal policy.
-            return Err(eyre::eyre!(
-                "marshal did not durably acknowledge proposal {digest:?} at {round}"
-            ));
+        // Register the block and barrier before releasing the digest. Relay
+        // starts persistence after dissemination; certify awaits its completion.
+        if !self.publication.stage(round, block) {
+            return Ok(ProposeOutcome::RoundAlreadyProposed);
         }
         Ok(ProposeOutcome::Proposed(digest))
     }

@@ -35,7 +35,7 @@
 | `outbe-chain-m4vd` | Отдельный baseline failure: IVote ABI golden hash в primitives integration test; test и ABI JSON не менялись этим рефакторингом |
 
 Ранее отложенные решения остаются вне этой очереди:
-`outbe-chain-9twy`, `outbe-chain-u8km`, `outbe-chain-dzch`,
+`outbe-chain-9twy`, `outbe-chain-u8km`,
 `outbe-chain-f9lc`, `outbe-chain-uwgz`, `outbe-chain-hiic`,
 `outbe-chain-i8z6`, `outbe-chain-zy2n`, `outbe-chain-pn9o`,
 `outbe-chain-noe4`, `outbe-chain-fka3`.
@@ -100,7 +100,7 @@ Beads is the authoritative task record; this document records the delivered scop
 and its verification, not a new task queue.
 
 
-## R20 — Tempo durability contract, first functional slice
+## R20 — Tempo durability contract
 
 The user approved the two-stage Outbe adapter on 2026-10-03 after three independent
 compatibility audits of Tempo `61c979a5` and Commonware `d476a23`. Epoch/DKG,
@@ -115,9 +115,8 @@ acknowledgement is unavailable. Verification verdicts and canonicalization remai
 unchanged. The real-marshal restart test starts from a network-buffer-only block:
 certification itself must write the recoverable archive record.
 
-The second slice will stage proposals before releasing their digest and overlap
-storage with voting, while retaining the certification barrier. Beads
-`outbe-chain-dzch` and its two children are authoritative for delivery status.
+The first slice is committed as `95b75219`. The second slice is delivered below.
+Beads `outbe-chain-dzch` and its two children are authoritative for delivery status.
 
 First-slice validation: all 451 consensus release unit tests and release Clippy
 for consensus/engine all targets passed. The two-axis review found no remaining
@@ -127,3 +126,45 @@ changed Rust files with no skipped paths, introduced findings or worsened findin
 33 inherited findings belong to the separately recorded larger tasks. Qlty
 includes the new tests and reports zero findings in the four targeted logic/test
 files. No findings were suppressed.
+
+
+### Second functional slice — staged publication
+
+Branch: `refactor/blockchain-r20-durability`, based on `bd8493a6`.
+The publication coordinator registers the candidate and its exact `(Round, Digest)`
+durability gate before releasing the proposal digest. Relay consumes the staged
+candidate atomically through public `marshal.proposed`, preserving the requested
+recipients. Repeated relays use digest forwarding. Certification flushes an
+unrelayed candidate through `verified_deferred`, waits for completed sync and
+falls back to exact notarized-candidate recovery if a gate is missing or abandoned.
+
+The gate and independent sync observer outlive response cancellation and
+same-process Simplex restarts. Storage failures retain the fatal policy; an unavailable acknowledgement or
+closed/aborted sync alone cannot authorize a vote. Exact recovery must establish
+durability before a positive vote; runtime shutdown abandons the request. Marshal finalized `Update::Tip` retires earlier gates; nullified or
+cancelled views do not. The pre-build persisted-round guard withholds a new
+candidate after recovery instead of rebuilding it under changed context.
+Epoch/DKG, execution validation, verification/canonicalization and pacing retain
+existing ownership. Speculative block-cache entries remain unrelated to durability.
+
+Final ordinary acceptance: 462 consensus and 258 engine release library tests
+passed (720 total), including the real delayed `certify` response/cancellation,
+identity, relay, absent-relay, shutdown, fatal-sync and unclean-restart scenarios.
+All-target release Clippy for consensus and engine passed with `-D warnings`.
+The Standards and Spec review axes each have zero remaining findings.
+All nine copied-native snapshot-recovery tests passed with `snapshot-integration`,
+using real release storage fixtures (729 passing tests across both acceptance runs).
+
+Fresh native Repowise diff health covered all 15 changed Rust paths, with no
+skips or worsened findings and 40 inherited markers. Simple interface, locking,
+dispatch and setup findings were corrected. Seven introduced static markers are
+recorded explicitly: two scenario-similarity markers, three fixture assertions,
+constructor-versus-instance LCOM4=2, and the required fatal-sync guard. Scenario
+assertions and the fatal failure policy were preserved; these results do not
+claim zero static findings. The old broad verification/startup refactors remain
+in their existing decision tasks.
+
+Qlty explicitly included all changed test files. The new publication seam has
+zero findings. Seven existing findings remain across the verification matrix,
+startup driver and independent scenario similarities in the inherited large
+handler test module. No checks, files, tests or findings were suppressed.

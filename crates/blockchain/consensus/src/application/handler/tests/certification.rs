@@ -3,19 +3,62 @@ use crate::application::actor::OutbeApplication;
 use commonware_consensus::CertifiableAutomaton as _;
 use commonware_runtime::deterministic::Runner;
 
-struct CertificationFixture {
-    marshal: crate::marshal_types::MarshalMailbox,
-    app: OutbeApplication<commonware_runtime::deterministic::Context>,
+pub(super) struct CertificationFixture {
+    pub(super) marshal: crate::marshal_types::MarshalMailbox,
+    pub(super) app: OutbeApplication<commonware_runtime::deterministic::Context>,
     _resolver: handler::Handler<Digest>,
     actor: commonware_runtime::Handle<()>,
 }
 
 impl CertificationFixture {
-    async fn open(context: &commonware_runtime::deterministic::Context, partition: &str) -> Self {
+    pub(super) fn stage_candidate(&self, round: Round, seed: u8) -> Digest {
+        let block = consensus_block_with_number(seed, 7);
+        let digest = block.digest();
+        assert!(self.app.publication().stage(round, block));
+        digest
+    }
+
+    /// Exercise execution validation and staging with a valid Engine response.
+    pub(super) async fn publish_valid_candidate(
+        &self,
+        context: &commonware_runtime::deterministic::Context,
+        round: Round,
+        block: ConsensusBlock,
+    ) -> (
+        TestApplicationShared,
+        eyre::Result<super::super::proposal::ProposeOutcome>,
+    ) {
+        use outbe_primitives::projection::ExecutionReadBudget;
+        use reth_ethereum::node::api::BeaconEngineMessage;
+        let mut shared =
+            finalizer_test_shared(context, self.marshal.clone(), HybridSchemeProvider::new());
+        shared.shared.publication = self.app.publication();
+        let (tx, mut engine) = tokio::sync::mpsc::unbounded_channel();
+        shared.shared.engine = super::super::EngineHandle::new(tx);
+        let publication = shared.publish_built_proposal(
+            round,
+            (block.digest(), block),
+            ExecutionReadBudget::new(),
+        );
+        let execution = async {
+            let BeaconEngineMessage::NewPayload { tx, .. } = engine.recv().await.unwrap() else {
+                panic!("candidate must be execution validated before staging");
+            };
+            tx.send(Ok(PayloadStatus::from_status(PayloadStatusEnum::Valid)))
+                .unwrap();
+        };
+        let (outcome, ()) = futures::join!(publication, execution);
+        (shared, outcome)
+    }
+
+    pub(super) async fn open(
+        context: &commonware_runtime::deterministic::Context,
+        partition: &str,
+    ) -> Self {
         Self::open_with_buffer(context, partition, EmptyMarshalBuffer::default()).await
     }
 
-    async fn open_with_buffer<B>(
+    pub(super) async fn open_with_buffer<B>(
         context: &commonware_runtime::deterministic::Context,
         partition: &str,
         buffer: B,
@@ -125,32 +168,19 @@ fn certified_candidate_survives_an_unclean_restart() {
 }
 
 #[test]
-fn a_closed_marshal_withholds_a_locally_built_proposal() {
+fn a_staged_proposal_with_a_closed_marshal_cannot_authorize_certification() {
     use crate::application::handler::proposal::ProposeOutcome;
-    use outbe_primitives::projection::ExecutionReadBudget;
-    use reth_ethereum::node::api::BeaconEngineMessage;
     Runner::timed(Duration::from_secs(30)).start(|context| async move {
-        let fixture = CertificationFixture::open(&context, "publication-closed").await;
+        let mut fixture = CertificationFixture::open(&context, "publication-closed").await;
         fixture.actor.abort();
-        let _ = fixture.actor.await;
-        let mut shared = finalizer_test_shared(fixture.marshal, HybridSchemeProvider::new());
-        let (tx, mut engine) = tokio::sync::mpsc::unbounded_channel();
-        shared.shared.engine = super::super::EngineHandle::new(tx);
+        let _ = (&mut fixture.actor).await;
         let block = consensus_block_with_number(0x15, 10);
-        let publication = shared.publish_built_proposal(
-            Round::new(Epoch::new(0), View::new(5)),
-            (block.digest(), block),
-            ExecutionReadBudget::new(),
-        );
-        let execution = async {
-            let BeaconEngineMessage::NewPayload { tx, .. } = engine.recv().await.unwrap() else {
-                panic!("candidate must be execution validated before publication");
-            };
-            tx.send(Ok(PayloadStatus::from_status(PayloadStatusEnum::Valid)))
-                .unwrap();
-        };
-        let (outcome, ()) = futures::join!(publication, execution);
-        assert!(outcome.is_err());
-        assert!(!matches!(outcome, Ok(ProposeOutcome::Proposed(_))));
+        let digest = block.digest();
+        let round = Round::new(Epoch::new(0), View::new(5));
+        let (_, outcome) = fixture
+            .publish_valid_candidate(&context, round, block)
+            .await;
+        assert_eq!(outcome.unwrap(), ProposeOutcome::Proposed(digest));
+        assert!(fixture.app.certify(round, digest).await.await.is_err());
     });
 }

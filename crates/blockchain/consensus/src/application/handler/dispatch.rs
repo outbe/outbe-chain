@@ -101,23 +101,7 @@ impl ApplicationShared {
                 // touches block bytes/hash/validation.
                 pace_and_send(clock, response, digest, self.min_block_time, propose_start).await;
             }
-            Ok(ProposeOutcome::ParentProofUnavailable) => {
-                debug!("proposal task completed without response: exact parent proof unavailable");
-            }
-            Ok(ProposeOutcome::EpochStale) => {
-                debug!("proposal task completed without response for stale epoch work");
-            }
-            Ok(ProposeOutcome::BoundaryUnavailable) => {
-                debug!("proposal task completed without response: DKG boundary requirement unavailable");
-            }
-            Ok(ProposeOutcome::ProjectionUnavailable) => {
-                debug!("proposal task completed without response: exact parent is not projected");
-            }
-            Ok(ProposeOutcome::ExecutionUnavailable) => {
-                debug!(
-                    "proposal task completed without response: candidate execution is not valid"
-                );
-            }
+            Ok(outcome) => debug!("{}", outcome.completion_message()),
             Err(error) => self.report_proposal_failure(error),
         }
     }

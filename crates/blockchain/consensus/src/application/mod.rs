@@ -4,11 +4,12 @@
 //! by communicating with Reth via `beacon_engine_handle`.
 
 pub mod actor;
-mod certification;
 pub(crate) mod ancestry;
+mod certification;
 pub(crate) mod epoch_boundary;
 pub mod handler;
 pub mod ingress;
+pub mod publication;
 pub(crate) mod validation;
 pub(crate) mod verify_resolution;
 

@@ -23,9 +23,11 @@ use crate::marshal_types::MarshalMailbox;
 pub struct OutbeApplication<E> {
     context: Arc<E>,
     mailbox: Mailbox,
+    publication: super::publication::ProposalPublication,
     /// Marshal mailbox used to disseminate a proposed block directly.
     ///
-    /// Proposal construction awaits `marshal.verified` before releasing a digest.
+    /// Proposal construction registers the block and its durability barrier
+    /// before releasing a digest. Certification awaits the barrier.
     /// Relay forwarding bypasses the bounded application mailbox.
     marshal_mailbox: MarshalMailbox,
 }
@@ -35,12 +37,13 @@ impl<E> Clone for OutbeApplication<E> {
         Self {
             context: Arc::clone(&self.context),
             mailbox: self.mailbox.clone(),
+            publication: self.publication.clone(),
             marshal_mailbox: self.marshal_mailbox.clone(),
         }
     }
 }
 
-impl<E> OutbeApplication<E> {
+impl<E: Spawner> OutbeApplication<E> {
     /// Create a new application actor with its mailbox.
     pub fn new(
         context: E,
@@ -49,10 +52,13 @@ impl<E> OutbeApplication<E> {
     ) -> (Self, futures::channel::mpsc::Receiver<Message>) {
         let (tx, rx) = futures::channel::mpsc::channel(mailbox_size);
         let mailbox = Mailbox::from_sender(tx);
+        let publication =
+            super::publication::ProposalPublication::new(context.child("publication"));
         (
             Self {
                 context: Arc::new(context),
                 mailbox,
+                publication,
                 marshal_mailbox,
             },
             rx,
@@ -62,6 +68,11 @@ impl<E> OutbeApplication<E> {
     /// Get a clone of the mailbox for use by the reporter.
     pub fn reporter_mailbox(&self) -> Mailbox {
         self.mailbox.clone()
+    }
+
+    /// Shared proposal lifetime for the handler and finalized-tip reporter.
+    pub fn publication(&self) -> super::publication::ProposalPublication {
+        self.publication.clone()
     }
 }
 
@@ -86,8 +97,9 @@ impl<E: Spawner> CertifiableAutomaton for OutbeApplication<E> {
     ) -> oneshot::Receiver<bool> {
         let (response, receiver) = oneshot::channel();
         let marshal = self.marshal_mailbox.clone();
+        let publication = self.publication.clone();
         self.context.child("certify").spawn(move |_| async move {
-            super::certification::certify(marshal, round, digest, response).await;
+            super::certification::certify(marshal, publication, round, digest, response).await;
         });
         receiver
     }
@@ -100,7 +112,7 @@ impl<E: Spawner> Relay for OutbeApplication<E> {
 
     /// Disseminate a proposed block to the network.
     ///
-    /// Forward an already-persisted candidate directly through marshal. Honor
+    /// Hand a staged candidate directly to marshal, or forward its digest. Honor
     /// the relay plan's recipients without enqueueing an application message.
     fn broadcast(&mut self, payload: Self::Digest, plan: Self::Plan) -> commonware_actor::Feedback {
         // Honor the plan's intended recipients: `Propose` is a fresh broadcast to
@@ -113,7 +125,8 @@ impl<E: Spawner> Relay for OutbeApplication<E> {
                 (round, recipients)
             }
         };
-        tracing::debug!(payload = %payload.0, %round, "relay forwarding proposed block");
-        self.marshal_mailbox.forward(round, payload, recipients)
+        tracing::debug!(payload = %payload.0, %round, "relay disseminating proposed block");
+        self.publication
+            .relay(&self.marshal_mailbox, (round, payload), recipients)
     }
 }
