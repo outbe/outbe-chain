@@ -244,6 +244,45 @@ fn same_day_and_entry_in_two_currencies_are_two_buckets_in_two_bins() {
     });
 }
 
+/// A42: one day and currency at two entries are two buckets, each sealing the
+/// floor and call price of its own entry.
+#[test]
+fn same_day_and_currency_at_two_entries_are_two_buckets_with_their_own_terms() {
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let low_entry = U256::from(2_000_000u64);
+    let high_entry = U256::from(3_000_000u64);
+    let low = item(Address::repeat_byte(0x11), low_entry, USD);
+    let high = item(Address::repeat_byte(0x22), high_entry, USD);
+    assert_eq!(low.worldwide_day, high.worldwide_day);
+    assert_ne!(low.bucket_key, high.bucket_key);
+
+    let mut provider = HashMapStorageProvider::new(1);
+    let scope = ExecutionScope::new();
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        api::add_nod(&storage, &scope, &parent, &low, low_entry).unwrap();
+        api::add_nod(&storage, &scope, &parent, &high, high_entry).unwrap();
+
+        let nod = NodContract::new(storage.clone());
+        for (body, entry, floor, call_price) in [
+            (&low, low_entry, 2_160_000u64, 7_120_000u64),
+            (&high, high_entry, 3_240_000, 10_680_000),
+        ] {
+            let bucket = bucket_of(&storage, &scope, &parent, body);
+            assert_eq!(bucket.entry_price_minor, entry);
+            assert_eq!(bucket.floor_price_minor().unwrap(), U256::from(floor));
+            assert_eq!(nod.bucket_nod_count.read(&body.bucket_key).unwrap(), 1);
+            assert_eq!(
+                nod.callable_bucket_call_price
+                    .read(&body.bucket_key)
+                    .unwrap(),
+                U256::from(call_price)
+            );
+        }
+    });
+}
+
 /// Q027: qualification uses the same `first_full_day(issued_at)` cutoff as the
 /// call scan. A VWAP on the partial issuance UTC day, or any earlier day,
 /// cannot qualify the bucket even when it stands strictly above the floor.
