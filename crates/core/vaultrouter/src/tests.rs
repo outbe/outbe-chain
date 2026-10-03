@@ -2142,8 +2142,42 @@ fn with_reservable_vault<R>(shares: U256, f: impl FnOnce(StorageHandle<'_>) -> R
     storage.set_timestamp(U256::from(1_700_000_000u64));
     storage.stub_sub_call_at(vault(), word(shares));
     storage.enable_sub_call_stub();
+    storage.stub_sub_call_at_selector(asset(), IERC20::decimalsCall::SELECTOR, word(U256::from(6)));
+    storage.stub_sub_call_at_selector(
+        asset(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(U256::from(USD_ISO_CODE)),
+    );
     StorageHandle::enter(&mut storage, |storage| {
         set_owner(&storage, owner());
+        storage
+            .set_code(asset(), Bytecode::new_raw(vec![0x00].into()))
+            .unwrap();
+        let pair = AddressPair::new_coen_to(USD_ISO_CODE);
+        outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
+        let mut oracle = OracleContract::new(storage.clone());
+        oracle.reference_currencies.push(USD_ISO_CODE).unwrap();
+        oracle
+            .policy_rate
+            .write(&USD_ISO_CODE, U256::from(43_000))
+            .unwrap();
+        let snapshot = outbe_oracle::api::current_vwap_snapshot(storage.clone()).unwrap();
+        oracle
+            .write_snapshot(
+                snapshot.cutoff() - 1,
+                &[(pair, U256::from(2_000_000), U256::ONE)],
+            )
+            .unwrap();
+        let day = outbe_primitives::time::previous_date_key(
+            outbe_primitives::time::timestamp_to_date_key(1_700_000_000),
+        );
+        let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), USD_ISO_CODE)
+            .unwrap()
+            .unwrap();
+        oracle
+            .record_utc_day_vwap(day, index, U256::from(2_000_000))
+            .unwrap();
+        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
         bond_cca(&storage);
         register_vault(&storage, asset(), vault());
         storage
@@ -2162,6 +2196,7 @@ fn reserve_stables_rejects_an_inactive_caller() {
             receiver(),
             asset(),
             U256::from(10),
+            USD_ISO_CODE,
         )
         .unwrap_err();
         assert!(err.to_string().contains("CCA is not active"), "{err}");
@@ -2175,15 +2210,28 @@ fn reserve_stables_rejects_an_inactive_caller() {
 #[test]
 fn a_reservation_holds_then_releases_once() {
     with_reservable_vault(U256::from(100u64), |storage| {
-        let id =
-            runtime::reserve_stables(storage.clone(), cca(), receiver(), asset(), U256::from(10))
-                .unwrap();
+        let id = runtime::reserve_stables(
+            storage.clone(),
+            cca(),
+            receiver(),
+            asset(),
+            U256::from(10),
+            USD_ISO_CODE,
+        )
+        .unwrap();
         let held = runtime::reservation_of(&storage, id).unwrap();
         assert_eq!(held.asset, asset());
         assert_eq!(held.amount, U256::from(10));
         assert_eq!(held.smart_account, receiver());
         assert_eq!(held.cca, cca());
         assert_eq!(held.vault, vault());
+        assert_eq!(held.collateral, U256::from(5));
+        assert_eq!(held.asset_decimals, 6);
+        assert_eq!(held.issuance_currency, USD_ISO_CODE);
+        assert_eq!(held.reference_currency, USD_ISO_CODE);
+        assert_eq!(held.policy_rate, U256::from(43_000));
+        assert_eq!(held.call_anchor_price, U256::from(2_000_000));
+        assert!(!held.snapshot_id.is_zero());
         assert_eq!(held.expires_at, 1_700_000_000 + 15 * 60);
 
         let delivered = runtime::release_reservation(
@@ -2215,9 +2263,15 @@ fn a_reservation_holds_then_releases_once() {
 #[test]
 fn release_rejects_a_different_receiver_and_returns_excess_to_the_origin_vault() {
     with_reservable_vault(U256::from(100u64), |storage| {
-        let id =
-            runtime::reserve_stables(storage.clone(), cca(), receiver(), asset(), U256::from(50))
-                .unwrap();
+        let id = runtime::reserve_stables(
+            storage.clone(),
+            cca(),
+            receiver(),
+            asset(),
+            U256::from(50),
+            USD_ISO_CODE,
+        )
+        .unwrap();
 
         let err = runtime::release_reservation(
             storage.clone(),
@@ -2256,9 +2310,15 @@ fn release_rejects_a_different_receiver_and_returns_excess_to_the_origin_vault()
 #[test]
 fn an_unspent_reservation_returns_to_the_origin_vault() {
     with_reservable_vault(U256::from(100u64), |storage| {
-        let id =
-            runtime::reserve_stables(storage.clone(), cca(), receiver(), asset(), U256::from(10))
-                .unwrap();
+        let id = runtime::reserve_stables(
+            storage.clone(),
+            cca(),
+            receiver(),
+            asset(),
+            U256::from(10),
+            USD_ISO_CODE,
+        )
+        .unwrap();
         let minted = runtime::return_reservation(storage.clone(), cca(), id).unwrap();
         assert_eq!(minted, U256::from(100));
         assert!(runtime::reservation_of(&storage, id)
@@ -2275,9 +2335,15 @@ fn an_unspent_reservation_returns_to_the_origin_vault() {
 #[test]
 fn a_stranger_cannot_return_a_live_reservation() {
     with_reservable_vault(U256::from(100u64), |storage| {
-        let id =
-            runtime::reserve_stables(storage.clone(), cca(), receiver(), asset(), U256::from(10))
-                .unwrap();
+        let id = runtime::reserve_stables(
+            storage.clone(),
+            cca(),
+            receiver(),
+            asset(),
+            U256::from(10),
+            USD_ISO_CODE,
+        )
+        .unwrap();
         let err = runtime::return_reservation(storage.clone(), stranger(), id).unwrap_err();
         assert!(err.to_string().contains("unauthorized"), "{err}");
         assert_eq!(
@@ -2299,6 +2365,7 @@ fn seed_expired_reservation(storage: &StorageHandle<'_>) -> U256 {
             cca: cca(),
             vault: vault(),
             expires_at: 1_700_000_000 - 1,
+            ..Default::default()
         })
         .unwrap();
     id
@@ -2341,6 +2408,7 @@ fn release_rejects_an_expired_reservation() {
 fn reservations_are_gated_like_a_withdrawal() {
     with_reservable_vault(U256::from(100u64), |storage| {
         let reserve_call = IVaultRouter::reserveStablesCall {
+            referenceCurrency: USD_ISO_CODE,
             smartAccount: receiver(),
             asset: asset(),
             amount: U256::from(10),
@@ -2391,9 +2459,15 @@ fn a_reservation_cannot_exceed_the_vaults_shares() {
         set_owner(&storage, owner());
         bond_cca(&storage);
         register_vault(&storage, asset(), vault());
-        let err =
-            runtime::reserve_stables(storage.clone(), cca(), receiver(), asset(), U256::from(10))
-                .unwrap_err();
+        let err = runtime::reserve_stables(
+            storage.clone(),
+            cca(),
+            receiver(),
+            asset(),
+            U256::from(10),
+            USD_ISO_CODE,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("insufficient shares"), "{err}");
         assert!(!runtime::has_liquidity(&storage, asset(), U256::from(10)).unwrap());
     });
@@ -2419,9 +2493,15 @@ fn bond_cca(storage: &StorageHandle<'_>) {
 #[test]
 fn reservation_expiry_boundary_and_repeated_permissionless_return() {
     with_reservable_vault(U256::from(100u64), |storage| {
-        let id =
-            runtime::reserve_stables(storage.clone(), cca(), receiver(), asset(), U256::from(10))
-                .unwrap();
+        let id = runtime::reserve_stables(
+            storage.clone(),
+            cca(),
+            receiver(),
+            asset(),
+            U256::from(10),
+            USD_ISO_CODE,
+        )
+        .unwrap();
         let expiry = runtime::reservation_of(&storage, id).unwrap().expires_at;
         storage.set_block_timestamp(U256::from(expiry)).unwrap();
         assert!(runtime::return_reservation(storage.clone(), stranger(), id).is_err());

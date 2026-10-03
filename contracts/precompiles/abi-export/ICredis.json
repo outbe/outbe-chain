@@ -126,9 +126,9 @@
             "internalType": "uint16"
           },
           {
-            "name": "eoaCiphertext",
-            "type": "bytes",
-            "internalType": "bytes"
+            "name": "returnNoteSerial",
+            "type": "bytes32",
+            "internalType": "bytes32"
           },
           {
             "name": "principal",
@@ -360,9 +360,9 @@
             "internalType": "uint16"
           },
           {
-            "name": "eoaCiphertext",
-            "type": "bytes",
-            "internalType": "bytes"
+            "name": "returnNoteSerial",
+            "type": "bytes32",
+            "internalType": "bytes32"
           },
           {
             "name": "principal",
@@ -486,9 +486,9 @@
             "internalType": "uint16"
           },
           {
-            "name": "eoaCiphertext",
-            "type": "bytes",
-            "internalType": "bytes"
+            "name": "returnNoteSerial",
+            "type": "bytes32",
+            "internalType": "bytes32"
           },
           {
             "name": "principal",
