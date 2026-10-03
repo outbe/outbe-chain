@@ -187,7 +187,9 @@ pub(crate) fn note_context(target: &Target, snapshot: U256) -> B256 {
     use crate::features::paynote::{gem_context, intex_context, nod_context};
     match &target.item {
         Item::Gem(id) => gem_context(*id, snapshot),
-        Item::Series { id, units } => intex_context(&id.0, U256::from(*units), snapshot),
+        Item::Series { id, units } => {
+            intex_context(&id.0, target.owner, U256::from(*units), snapshot)
+        }
         Item::Nod(id) => nod_context(*id, snapshot),
     }
 }

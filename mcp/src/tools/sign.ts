@@ -102,6 +102,29 @@ async function submit(
 }
 
 export function registerSignTools(server: McpServer, ctx: Ctx): void {
+  const rawAmount = z.string().regex(/^(0|[1-9][0-9]*)$/).refine(
+    value => BigInt(value) < (1n << 256n), "amount exceeds uint256",
+  ).describe("Amount in raw token units");
+  const proof = z.string().regex(HEX).describe("Combined pledge proof generated locally by outbe-cli pledgenote");
+  server.tool("credis_reserve", "Reserve exact stablecoin principal and freeze loan terms for 15 minutes.",
+    { smart_account: addr, asset: addr, amount: rawAmount, reference_currency: z.number().int().min(1).max(65535) },
+    handler(async ({ smart_account, asset, amount, reference_currency }) =>
+      submit(ctx, "vaultrouter", "reserveStables", [smart_account, asset, BigInt(amount), reference_currency], GAS_DEFAULT, true)));
+  server.tool("gratis_pledge", "Fund an owner-bound pledge note. Save the private note locally before submitting.",
+    { amount: rawAmount, mac: z.string().regex(HEX32), op_nonce: rawAmount.refine(v => BigInt(v) < (1n << 64n)) },
+    handler(async ({ amount, mac, op_nonce }) =>
+      submit(ctx, "gratisfactory", "pledgeGratis", [BigInt(amount), { mac, opNonce: BigInt(op_nonce) }], GAS_DEFAULT, true)));
+  server.tool("credis_issue", "Consume a pledge proof bound to the stored reservation and deliver the reserved principal.",
+    { reservation_id: rawAmount, proof, stake: coen },
+    handler(async ({ reservation_id, proof, stake }) =>
+      submit(ctx, "credisfactory", "issueCredis", [BigInt(reservation_id), proof], GAS_DEFAULT, true, parseNativeAmount(ctx.chain, stake))));
+  server.tool("gratis_unpledge", "Redeem a pledge note to the original owner proven by the proof.",
+    { proof }, handler(async ({ proof }) =>
+      submit(ctx, "gratisfactory", "unpledgeGratis", [proof], GAS_DEFAULT, true)));
+  server.tool("credis_settle", "Repay a position after approving its asset to CredisFactory; released collateral becomes a return note.",
+    { position_id: rawAmount, amount: rawAmount },
+    handler(async ({ position_id, amount }) =>
+      submit(ctx, "credisfactory", "settle", [BigInt(position_id), BigInt(amount)], GAS_DEFAULT, true)));
   // --- tribute_offer (encrypts to the live offer key, byte-identical to enclave)
   server.tool(
     "tribute_offer",

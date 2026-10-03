@@ -62,22 +62,21 @@ interface ICredis {
         /// ISO 4217 numeric code of the reference currency elected at origination
         /// and fixed for the position's life.
         uint16 referenceCurrency;
-        // Pledger EOA ciphertext (not an address). The enclave recovers
-        // the plaintext EOA on-chain via a RevealOwner round-trip.
-        bytes eoaCiphertext;
+        /// Proof-authenticated owner serial used to construct repayment notes.
+        bytes32 returnNoteSerial;
         /// P - the stablecoin amount disbursed. Never changes.
         uint256 principal;
         /// P_out - decreases with each settlement; the position closes at zero.
         uint256 outstanding;
-        /// G - the pledged Gratis, valued 1:1 against principal at the pledge quote rate.
+        /// G - the pledged Gratis, valued 1:1 against principal at the reservation quote rate.
         uint256 collateral;
         /// The share of G still locked. Released principal-proportionally.
         uint256 collateralLocked;
         /// r - the annual policy rate of the issuance currency, scale 1e6, fixed at opening.
         uint256 policyRate;
-        /// Entry price in the issuance currency, scale 1e6, sealed on the pledge.
+        /// Entry price in the issuance currency, scale 1e6, fixed by the reservation.
         uint256 entryPrice;
-        /// Call anchor price in the reference currency, scale 1e6, sealed at issuance.
+        /// Call anchor price in the reference currency, scale 1e6, fixed by the reservation.
         uint256 callAnchorPrice;
         /// callAnchorPrice * 1.64, in the reference currency.
         uint256 callPrice;

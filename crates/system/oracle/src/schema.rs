@@ -276,4 +276,11 @@ pub struct OracleContract {
     pub(crate) hourly_vwap_hour: Mapping<AddressPair, Mapping<u64, u64>>,
     pub(crate) hourly_pv_sum: Mapping<AddressPair, Mapping<u64, U256>>,
     pub(crate) hourly_vol_sum: Mapping<AddressPair, Mapping<u64, U256>>,
+
+    // === Window coverage (slots 81-82) ===
+    // Snapshots the pair contributed to the cell's hour; lives with the cell.
+    pub(crate) hourly_snapshot_count: Mapping<AddressPair, Mapping<u64, u64>>,
+    // First block number seen in each UTC hour (keyed by hour start), written
+    // at begin-block. Gives the window's block span independently of votes.
+    pub(crate) hour_first_block: Mapping<u64, u64>,
 }

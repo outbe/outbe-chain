@@ -689,7 +689,7 @@ fn require_snapshot(required: Option<VwapSnapshotId>, authorized: U256) -> Resul
     }
 }
 
-/// Settle paying the cost by spending a PayNote bound to this series and unit count.
+/// Settle paying the cost by spending a PayNote bound to this holding and unit count.
 pub fn settle_intex_with_paynote(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
@@ -705,7 +705,16 @@ pub fn settle_intex_with_paynote(
         settler,
         amount,
         |_| Ok(()),
-        |series, ()| discharge_cost(storage, series_id, series, amount, paynote_proof),
+        |series, ()| {
+            discharge_cost(
+                storage,
+                series_id,
+                intex_owner,
+                series,
+                amount,
+                paynote_proof,
+            )
+        },
     )
 }
 
@@ -853,6 +862,7 @@ fn token_balance(storage: &StorageHandle<'_>, asset: Address) -> Result<U256> {
 fn discharge_cost(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
+    intex_owner: Address,
     series: &outbe_intex::SeriesRecord,
     amount: U256,
     paynote_proof: &[u8],
@@ -862,7 +872,7 @@ fn discharge_cost(
     let (cost, snapshot) = cost_in_token(storage, series, claim.asset, currency, amount)?;
     let expected = outbe_paynote::api::settlement_context(
         outbe_paynote::api::SettlementDomain::Intex,
-        outbe_paynote::api::intex_series_target(series_id.as_bytes()),
+        outbe_paynote::api::intex_holding_target(series_id.as_bytes(), intex_owner),
         amount,
         snapshot.map_or(U256::ZERO, VwapSnapshotId::to_u256),
     )?;

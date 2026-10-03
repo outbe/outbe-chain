@@ -71,6 +71,10 @@ fn run_begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
 
     let vote_period = oracle.config_vote_period.read()?;
 
+    if block_number > 0 {
+        oracle.record_hour_block(timestamp, block_number)?;
+    }
+
     // Tally at end of vote period (skip block 0)
     // Block 0 is always skipped (no votes possible during genesis).
     // With vote_period=1, first tally runs at block 1 (one block delay).
