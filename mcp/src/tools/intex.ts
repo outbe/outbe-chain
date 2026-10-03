@@ -1145,7 +1145,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       owner: z
         .string()
         .optional()
-        .describe("holder of the units, the one the proof was built for (default: the configured signer)"),
+        .describe("owner of the units, the one the proof was built for (default: the configured signer)"),
       pay_note_proof: z
         .string()
         .describe("0x-hex `outbe.paynote` spend proof bound to this series, owner and units"),

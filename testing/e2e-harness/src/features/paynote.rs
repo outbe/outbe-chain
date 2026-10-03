@@ -89,16 +89,16 @@ pub(crate) fn gem_context(gem_id: U256, snapshot: U256) -> B256 {
     .expect("gem settlement context")
 }
 
-/// Context word for an Intex spend: the holder's units of the series, selected units, snapshot.
+/// Context word for an Intex spend: the owner's units of the series, selected units, snapshot.
 pub(crate) fn intex_context(
     series_id: &[u8; 14],
-    holder: Address,
+    owner: Address,
     units: U256,
     snapshot: U256,
 ) -> B256 {
     settlement_context(
         SettlementDomain::Intex,
-        intex_holding_target(series_id, holder),
+        intex_holding_target(series_id, owner),
         units,
         snapshot,
     )

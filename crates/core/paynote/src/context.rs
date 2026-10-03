@@ -20,12 +20,12 @@ pub enum SettlementDomain {
     Intex = 3,
 }
 
-/// One holder's units of an Intex series, `keccak256(abi.encodePacked(bytes14 seriesId,
-/// address holder))`: a series has many holders, so the series alone names no one's units.
-pub fn intex_holding_target(series_id: &[u8; 14], holder: Address) -> B256 {
+/// One owner's units of an Intex series, `keccak256(abi.encodePacked(bytes14 seriesId,
+/// address owner))`: a series has many owners, so the series alone names no one's units.
+pub fn intex_holding_target(series_id: &[u8; 14], owner: Address) -> B256 {
     let mut preimage = [0u8; 34];
     preimage[..14].copy_from_slice(series_id);
-    preimage[14..].copy_from_slice(holder.as_slice());
+    preimage[14..].copy_from_slice(owner.as_slice());
     keccak256(preimage)
 }
 
@@ -116,7 +116,7 @@ mod tests {
     }
 
     #[test]
-    fn an_intex_holding_is_one_holder_of_one_series() {
+    fn an_intex_holding_is_one_owner_of_one_series() {
         let series = *b"20260212-TRY-U";
         let alice = Address::repeat_byte(0x11);
         let holding = intex_holding_target(&series, alice);
