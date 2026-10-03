@@ -87,18 +87,22 @@ where
         return run_follow_stack(
             ctx,
             args,
-            node,
-            bridge,
-            upstream,
-            projection_readiness,
-            ocomp_readiness,
-            retained_tribute_writer,
-            projection_retention_fence,
-            retention_selector,
-            finalized_ce_committer,
-            ce_startup_recovery,
-            follower_shutdown
-                .ok_or_else(|| eyre::eyre!("follower pre-stop handshake is not installed"))?,
+            services::FollowerConnection {
+                node,
+                bridge,
+                upstream,
+            },
+            services::FollowerStackServices {
+                projection_readiness,
+                ocomp_readiness,
+                retained_tribute_writer,
+                projection_retention_fence,
+                retention_selector,
+                finalized_ce_committer,
+                ce_startup_recovery,
+                follower_shutdown: follower_shutdown
+                    .ok_or_else(|| eyre::eyre!("follower pre-stop handshake is not installed"))?,
+            },
         )
         .await;
     }
