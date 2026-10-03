@@ -85,7 +85,7 @@ pub fn mine_coen(
         GRATIS_FACTORY_ADDRESS,
         SolEvent::encode_log_data(&IGratisFactory::CoenMined {
             sender: account,
-            amount: native_amount,
+            coenMinor: native_amount,
         }),
     )?;
 

@@ -130,7 +130,7 @@ fn forfeit_and_credit_capacity(
     let tribute = TributeContract::new(storage.clone())
         .forfeit_sealed_partition(effect.scope, effect.current.worldwide_day)?;
     let credit = PromisLimitContract::new(storage.clone())
-        .checked_add_carry_over(effect.current.metadosis_limit_amount)?;
+        .checked_add_carry_over(effect.current.metadosis_limit_minor)?;
     Ok(CapacityForfeitureReceipt {
         worldwide_day: effect.current.worldwide_day,
         max_retained_wwds,
@@ -155,12 +155,12 @@ fn capacity_forfeiture_event(
         worldwideDay: receipt.worldwide_day.into(),
         maxRetainedWorldwideDays: receipt.max_retained_wwds,
         retainedCountBefore: receipt.retained_count_before,
-        dayMetadosisLimit: receipt.value_routed,
-        carryOverBefore: receipt.carry_over_before,
-        carryOverAfter: receipt.carry_over_after,
+        promisLimitReturnedMinor: receipt.value_routed,
+        promisLimitBeforeMinor: receipt.carry_over_before,
+        promisLimitAfterMinor: receipt.carry_over_after,
         sealedCollectionRoot: receipt.sealed_collection_root,
         forfeitedTributeCount: receipt.forfeited_count,
-        forfeitedTributeNominal: receipt.forfeited_nominal,
+        forfeitedTributeNominalMinor: receipt.forfeited_nominal,
         sourceGeneration: receipt.source_generation,
         retiredGeneration: receipt.retired_generation,
         retirementOutcome: crate::terminal::encode_retirement(receipt.retirement),
@@ -193,7 +193,7 @@ pub(super) fn apply_missed_offering(
     let storage = metadosis.storage.clone();
     let result = (|| {
         let credit = PromisLimitContract::new(storage.clone())
-            .checked_add_carry_over(current.metadosis_limit_amount)?;
+            .checked_add_carry_over(current.metadosis_limit_minor)?;
         let retirement = TributeContract::new(storage.clone())
             .retire_empty_missed_offering_partition(scope, current.worldwide_day)?;
         let receipt = MissedOfferingReceipt {
@@ -214,9 +214,9 @@ pub(super) fn apply_missed_offering(
         )?;
         metadosis.emit(IMetadosis::WorldwideDayMissedOffering {
             worldwideDay: current.worldwide_day.into(),
-            dayMetadosisLimit: receipt.value_routed,
-            carryOverBefore: receipt.carry_over_before,
-            carryOverAfter: receipt.carry_over_after,
+            promisLimitReturnedMinor: receipt.value_routed,
+            promisLimitBeforeMinor: receipt.carry_over_before,
+            promisLimitAfterMinor: receipt.carry_over_after,
             retirementOutcome: match retirement {
                 outbe_compressed_entities::RetirementOutcome::NotPresent => 1,
                 outbe_compressed_entities::RetirementOutcome::Requested => 2,

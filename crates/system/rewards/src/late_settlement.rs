@@ -661,7 +661,7 @@ mod tests {
                 outbe_metadosis::api::worldwide_day(ctx.storage.clone(), wwd)
                     .unwrap()
                     .unwrap()
-                    .metadosis_limit_amount,
+                    .metadosis_limit_minor,
                 daily_base
             );
             assert_eq!(

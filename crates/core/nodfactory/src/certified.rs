@@ -188,7 +188,7 @@ pub fn install_certified_generation(
                 nodRoot: input.roots.nod_root,
                 bucketRoot: input.roots.bucket_root,
                 outputManifestRoot: input.roots.output_manifest_root,
-                nodAmountTotal: input.nod_amount_total,
+                totalSettlementCostMinor: input.nod_amount_total,
                 lysisAllocationMinor: input.lysis_allocation_minor,
                 issuedAt: input.issued_at,
                 stateEventDigest: state_event_digest,
@@ -626,7 +626,7 @@ mod tests {
             event.data.outputManifestRoot,
             input.roots.output_manifest_root
         );
-        assert_eq!(event.data.nodAmountTotal, input.nod_amount_total);
+        assert_eq!(event.data.totalSettlementCostMinor, input.nod_amount_total);
         assert_eq!(
             event.data.lysisAllocationMinor,
             input.lysis_allocation_minor

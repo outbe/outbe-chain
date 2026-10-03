@@ -38,7 +38,7 @@ contract IntexNFT1155SupplyTest is Test {
         nft.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, issuedUnits, CALL_PERIOD));
     }
 
-    // --- createSeries / issue ---
+    // --- createSeries / issueIntex ---
 
     function test_CreateSeries_ZeroIssuedCount_Reverts() public {
         vm.prank(bridger);
@@ -77,8 +77,8 @@ contract IntexNFT1155SupplyTest is Test {
         _createSeries(issuedUnits);
 
         vm.startPrank(bridger);
-        nft.issue(ownerA, issuedUnits + 1, SERIES_ID);
-        nft.issue(ownerB, 60, SERIES_ID);
+        nft.issueIntex(ownerA, issuedUnits + 1, SERIES_ID);
+        nft.issueIntex(ownerB, 60, SERIES_ID);
         vm.stopPrank();
 
         assertEq(nft.totalSupply(TOKEN_ID), issuedUnits + 61);
@@ -100,7 +100,7 @@ contract IntexNFT1155SupplyTest is Test {
                 uint256(type(uint32).max)
             )
         );
-        nft.issue(ownerB, 1, SERIES_ID);
+        nft.issueIntex(ownerB, 1, SERIES_ID);
         vm.stopPrank();
 
         assertEq(nft.totalSupply(TOKEN_ID), type(uint32).max);
@@ -113,7 +113,7 @@ contract IntexNFT1155SupplyTest is Test {
     {
         _createSeries(issuedUnits);
         vm.prank(bridger);
-        nft.issue(ownerA, mintAmount, SERIES_ID);
+        nft.issueIntex(ownerA, mintAmount, SERIES_ID);
         if (callBeforeSettle) {
             vm.prank(bridger);
             nft.markCalled(SERIES_ID, uint32(block.timestamp));
@@ -138,22 +138,22 @@ contract IntexNFT1155SupplyTest is Test {
         assertEq(nft.balanceOf(ownerA, nft.settledTokenId(SERIES_ID)), 0);
     }
 
-    // --- ZeroAmount: split out of the former overloaded EmptyArray (one error = one failure) ---
+    // --- ZeroUnits: split out of the former overloaded EmptyArray (one error = one failure) ---
 
-    function test_Settle_ZeroAmount_Reverts() public {
+    function test_Settle_ZeroUnits_Reverts() public {
         _createSeries(10);
         vm.prank(bridger);
-        nft.issue(ownerA, 5, SERIES_ID);
-        // amount == 0 is rejected before any series-state work.
+        nft.issueIntex(ownerA, 5, SERIES_ID);
+        // units == 0 is rejected before any series-state work.
         vm.prank(settler);
-        vm.expectRevert(IIntexNFT1155.ZeroAmount.selector);
+        vm.expectRevert(IIntexNFT1155.ZeroUnits.selector);
         nft.settleIntex(SERIES_ID, ownerA, 0);
     }
 
-    function test_BurnSettled_ZeroAmount_Reverts() public {
+    function test_BurnSettled_ZeroUnits_Reverts() public {
         _issueAndSettle({issuedUnits: 10, mintAmount: 6, settleAmount: 4, callBeforeSettle: false});
         vm.prank(promis);
-        vm.expectRevert(IIntexNFT1155.ZeroAmount.selector);
+        vm.expectRevert(IIntexNFT1155.ZeroUnits.selector);
         nft.burnSettled(ownerA, SERIES_ID, 0);
     }
 
@@ -164,7 +164,7 @@ contract IntexNFT1155SupplyTest is Test {
         _createSeries(issuedUnits);
 
         vm.startPrank(bridger);
-        nft.issue(ownerA, issuedUnits, SERIES_ID);
+        nft.issueIntex(ownerA, issuedUnits, SERIES_ID);
         nft.crosschainMint(ownerB, TOKEN_ID, 5);
         vm.stopPrank();
 
@@ -177,7 +177,7 @@ contract IntexNFT1155SupplyTest is Test {
         _createSeries(10);
 
         vm.startPrank(bridger);
-        nft.issue(ownerA, 1, SERIES_ID);
+        nft.issueIntex(ownerA, 1, SERIES_ID);
         nft.crosschainMint(ownerB, TOKEN_ID, type(uint32).max - 1);
         assertEq(nft.totalSupply(TOKEN_ID), type(uint32).max, "fills the uint32 range exactly");
 
@@ -198,7 +198,7 @@ contract IntexNFT1155SupplyTest is Test {
         _createSeries(issuedUnits);
 
         vm.startPrank(bridger);
-        nft.issue(ownerA, issuedUnits, SERIES_ID);
+        nft.issueIntex(ownerA, issuedUnits, SERIES_ID);
         nft.crosschainBurn(ownerA, ownerA, TOKEN_ID, 4);
         nft.crosschainMint(ownerB, TOKEN_ID, 4);
         vm.stopPrank();
@@ -214,10 +214,10 @@ contract IntexNFT1155SupplyTest is Test {
         assertEq(nft.readData(SERIES_ID).totalSupply, 0);
 
         vm.startPrank(bridger);
-        nft.issue(ownerA, 3, SERIES_ID);
+        nft.issueIntex(ownerA, 3, SERIES_ID);
         assertEq(nft.readData(SERIES_ID).totalSupply, 3);
 
-        nft.issue(ownerB, 4, SERIES_ID);
+        nft.issueIntex(ownerB, 4, SERIES_ID);
         assertEq(nft.readData(SERIES_ID).totalSupply, 7);
         vm.stopPrank();
 

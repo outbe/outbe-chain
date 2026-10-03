@@ -113,7 +113,7 @@ pub(crate) fn process_ocomp_ready_candidate(
 ) -> Result<()> {
     let ReadyOwners { scope, parent } = owners;
     let wwd = current.worldwide_day;
-    let limit_amount = current.metadosis_limit_amount;
+    let limit_amount = current.metadosis_limit_minor;
     let day_type = current.day_type;
     if limit_amount.is_zero() || day_type == WwdDayType::Unknown {
         return crate::terminal::fail_worldwide_day(
@@ -138,8 +138,11 @@ pub(crate) fn process_ocomp_ready_candidate(
         );
     }
 
-    let calculation =
-        metadosis.calculate_metadosis(wwd, tribute_totals.tribute_nominal_amount, limit_amount)?;
+    let calculation = metadosis.calculate_metadosis(
+        wwd,
+        tribute_totals.tribute_nominal_total_minor,
+        limit_amount,
+    )?;
     if calculation.lysis_limit_minor.is_zero() {
         return process_local_terminal_outcome(
             metadosis,
@@ -148,7 +151,7 @@ pub(crate) fn process_ocomp_ready_candidate(
             current,
             LocalTerminalOutcome::ZeroGratisAllocation {
                 day_type,
-                tribute_nominal_total: tribute_totals.tribute_nominal_amount,
+                tribute_nominal_total: tribute_totals.tribute_nominal_total_minor,
                 calculation,
             },
         );
@@ -240,8 +243,8 @@ fn settle_empty_day(
     TributeContract::new(metadosis.storage.clone()).retire_completed_partition(scope, wwd)?;
     metadosis.emit(IMetadosis::MetadosisWorldwideDayProcessed {
         worldwideDay: wwd.into(),
-        dayMetadosisLimit: day_limit,
-        dayMetadosisLimitRemainder: returned,
+        metadosisLimitMinor: day_limit,
+        promisLimitReturnedMinor: returned,
         status: "COMPLETED".into(),
         dayState: wwd_state_label(day_type).into(),
         action: "no tributes".into(),
@@ -277,7 +280,7 @@ fn settle_zero_allocation(
     let desis_limit_minor = desis_limit(
         tribute_nominal_total,
         calculation.lysis_limit_minor,
-        current.metadosis_limit_amount,
+        current.metadosis_limit_minor,
         U256::ZERO,
         day_type == WwdDayType::Green,
     )
@@ -288,7 +291,7 @@ fn settle_zero_allocation(
     // The limit headroom above the day's own nominal is issued by nobody, so it stays on
     // the warehouse together with whatever the brief did not take.
     let returned = current
-        .metadosis_limit_amount
+        .metadosis_limit_minor
         .checked_sub(calculation.lysis_limit_minor)
         .and_then(|rest| rest.checked_sub(desis_limit_minor))
         .and_then(|headroom| headroom.checked_add(to_promis))
@@ -301,13 +304,13 @@ fn settle_zero_allocation(
     TributeContract::new(metadosis.storage.clone()).forfeit_sealed_partition(scope, wwd)?;
     metadosis.emit(IMetadosis::MetadosisExecuted {
         worldwideDay: wwd.into(),
-        tributeTotals: tribute_nominal_total,
-        dayGratisDemand: calculation.gratis_demand,
-        dayGratisLimit: calculation.day_gratis_limit_minor,
+        tributeNominalTotalMinor: tribute_nominal_total,
+        gratisDemandMinor: calculation.gratis_demand,
+        dayGratisLimitMinor: calculation.day_gratis_limit_minor,
         lysisLimitMinor: U256::ZERO,
         unusedLysisLimitMinor: U256::ZERO,
         lysisAllocationMinor: U256::ZERO,
-        dayMetadosisLimitRemainder: returned,
+        promisLimitReturnedMinor: returned,
         status: "COMPLETED".into(),
         blockNumber: ctx.block.block_number,
     })
@@ -344,7 +347,7 @@ fn dispatch_brief(
                 )
             }),
         outbe_desis::api::AuctionBriefReceipt::RejectedToCarryOver {
-            reason: outbe_desis::api::AuctionBriefRejectionReason::SupplyExceedsAuctionDomain,
+            reason: outbe_desis::api::AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
             desis_limit_minor: rejected_desis_limit_minor,
             max_accepted,
         } => {

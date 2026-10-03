@@ -412,7 +412,7 @@ fn certified_event_alone_does_not_drop() {
             sourceGeneration: 1,
             sealedCollectionRoot: B256::repeat_byte(0x45),
             consumedCount: 0,
-            consumedNominalTotal: U256::ZERO,
+            consumedNominalTotalMinor: U256::ZERO,
             retiredGeneration: 2,
             stateEventDigest: B256::repeat_byte(0x46),
         }

@@ -84,18 +84,18 @@ pub struct NodItemState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CallTerms {
     /// `entry_price_minor x (100 + call_rate) / 100`.
-    pub call_price: U256,
+    pub call_price_minor: U256,
     /// Selects the `COEN/<iso>` VWAP series the breach is measured on.
     pub reference_currency: u16,
     /// Markup percent the call price was derived at; provenance for a
-    /// `call_price` that outlives the constant.
+    /// `call_price_minor` that outlives the constant.
     pub call_rate: u16,
     /// Trailing span the daily scan reads for breaches, in seconds.
-    pub call_window: u32,
+    pub call_window_seconds: u32,
     /// Breach seconds within that span which arm the call.
-    pub call_threshold: u32,
+    pub call_threshold_seconds: u32,
     /// Seconds after `called_at` in which the owner must settle.
-    pub call_notice_period: u32,
+    pub call_notice_period_seconds: u32,
 }
 
 /// Shared bucket body. Unpaid membership is tracked by `bucket_nod_count`;
@@ -280,7 +280,7 @@ pub struct NodContract {
     /// `entry_price_minor x (100 + CALL_RATE_PCT) / 100`, snapshotted at issuance so
     /// the daily scan never loads a bucket body just to decide.
     #[attribute(order = 40)]
-    pub callable_bucket_call_price: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub callable_bucket_call_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
 
     /// Snapshotted with the call price; selects the `COEN/<iso>` VWAP series.
     #[attribute(order = 41)]
@@ -300,27 +300,27 @@ pub struct NodContract {
     // --- Call terms sealed at issuance. The daily scan and the settlement-time
     // deadline check read a bucket's own copy, so retuning a constant leaves
     // every already-issued bucket on the terms it was issued with.
-    /// Markup percent [`Self::callable_bucket_call_price`] was derived at.
+    /// Markup percent [`Self::callable_bucket_call_price_minor`] was derived at.
     #[attribute(order = 45)]
     pub callable_bucket_call_rate: Mapping<B256, u16>,
 
     /// Trailing span the daily scan reads for breaches, in seconds.
     #[attribute(order = 46)]
-    pub callable_bucket_call_window: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub callable_bucket_call_window_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     /// Breach seconds within that span which arm the call.
     #[attribute(order = 47)]
-    pub callable_bucket_call_threshold: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub callable_bucket_call_threshold_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     /// Seconds after `bucket_called_at` in which the owner must settle.
     #[attribute(order = 48)]
-    pub callable_bucket_call_notice_period: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub callable_bucket_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    /// Widest `call_window` ever issued in a reference currency, in seconds. It
+    /// Widest `call_window_seconds` ever issued in a reference currency, in seconds. It
     /// only grows, so the trailing span the daily scan collects always covers a
     /// bucket whose sealed window outruns the current constant.
     #[attribute(order = 49)]
-    pub max_call_window: outbe_primitives::storage::dsl::Map<u16, u32>,
+    pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
     /// Complete entry-price snapshot captured before issuance, once per day.
     #[attribute(order = 50)]
@@ -331,7 +331,7 @@ pub struct NodContract {
     pub entry_price_currency: Mapping<WorldwideDay, Mapping<u32, u16>>,
     /// Six-decimal entry price by reference ISO, independent of Oracle indices.
     #[attribute(order = 53)]
-    pub entry_price_value: Mapping<WorldwideDay, Mapping<u16, U256>>,
+    pub entry_price_minor: Mapping<WorldwideDay, Mapping<u16, U256>>,
 
     /// First member's `issued_at`, sealed at bucket creation; VWAP history counts from its
     /// `first_full_day`. Later members inherit it, like the call terms.

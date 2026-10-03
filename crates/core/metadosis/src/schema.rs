@@ -73,7 +73,7 @@ pub struct WorldwideDay {
     pub scheduled_process_time: u64,
 
     #[attribute(order = 7, default = U256::ZERO)]
-    pub metadosis_limit_amount: U256,
+    pub metadosis_limit_minor: U256,
 
     #[attribute(order = 8, default = U256::ZERO)]
     pub previous_vwap: U256,
@@ -92,19 +92,19 @@ pub struct DayLimitFormationReceiptState {
     pub formed: bool,
 
     #[attribute(order = 1, default = U256::ZERO)]
-    pub base_limit: U256,
+    pub base_limit_minor: U256,
 
     #[attribute(order = 2, default = U256::ZERO)]
-    pub carry_over_before: U256,
+    pub promis_limit_before_minor: U256,
 
     #[attribute(order = 3, default = U256::ZERO)]
-    pub carry_over_taken: U256,
+    pub promis_limit_taken_minor: U256,
 
     #[attribute(order = 4, default = U256::ZERO)]
-    pub carry_over_after: U256,
+    pub promis_limit_after_minor: U256,
 
     #[attribute(order = 5, default = U256::ZERO)]
-    pub formed_day_limit: U256,
+    pub metadosis_limit_minor: U256,
 
     #[attribute(order = 6)]
     pub block_number: u64,

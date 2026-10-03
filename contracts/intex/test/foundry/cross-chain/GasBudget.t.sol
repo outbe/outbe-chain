@@ -173,7 +173,7 @@ contract GasBudgetTest is CrossChainTest {
                     callThreshold: 0,
                     callPriceMinor: 200e6,
                     recipients: to,
-                    quantities: qty
+                    units: qty
                 })
             )
         );
@@ -217,7 +217,7 @@ contract GasBudgetTest is CrossChainTest {
                 callThreshold: 0,
                 callPriceMinor: 200e6,
                 recipients: to,
-                quantities: qty
+                units: qty
             });
         }
 
@@ -248,7 +248,7 @@ contract GasBudgetTest is CrossChainTest {
         // `multiSend` burns the whole batch from its caller and fans it out to `recipients`.
         address sender = address(0x3000);
         uint256 tokenId = intex.issuedTokenId(SERIES_PREFIX);
-        intex.issue(sender, items, SERIES_PREFIX);
+        intex.issueIntex(sender, items, SERIES_PREFIX);
 
         bytes32[] memory to = new bytes32[](items);
         uint256[] memory ids = new uint256[](items);
@@ -261,7 +261,7 @@ contract GasBudgetTest is CrossChainTest {
 
         vm.prank(sender);
         src.multiSend(
-            MultiRecipientSendParam({dstChainId: OUTBE_CHAIN_ID, recipients: to, tokenIds: ids, amounts: amounts})
+            MultiRecipientSendParam({dstChainId: OUTBE_CHAIN_ID, recipients: to, tokenIds: ids, units: amounts})
         );
 
         bytes memory payload = bridge.lastPayload();
@@ -291,7 +291,7 @@ contract GasBudgetTest is CrossChainTest {
 
         address sender = address(0x3000);
         uint256 tokenId = intex.issuedTokenId(SERIES_PREFIX);
-        intex.issue(sender, items, SERIES_PREFIX);
+        intex.issueIntex(sender, items, SERIES_PREFIX);
 
         // One receiver that rejects every mint, so every item takes the recording path.
         RevertingReceiver rejecting = new RevertingReceiver();
@@ -306,7 +306,7 @@ contract GasBudgetTest is CrossChainTest {
 
         vm.prank(sender);
         src.multiSend(
-            MultiRecipientSendParam({dstChainId: OUTBE_CHAIN_ID, recipients: to, tokenIds: ids, amounts: amounts})
+            MultiRecipientSendParam({dstChainId: OUTBE_CHAIN_ID, recipients: to, tokenIds: ids, units: amounts})
         );
 
         bytes memory payload = bridge.lastPayload();

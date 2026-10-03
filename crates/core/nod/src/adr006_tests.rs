@@ -205,7 +205,7 @@ fn entry_price_openings_follow_the_schema() {
     StorageHandle::enter(&mut provider, |storage| {
         let nod = NodContract::new(storage);
         let frozen = nod.entry_prices_frozen.base_slot();
-        let price = nod.entry_price_value.base_slot();
+        let price = nod.entry_price_minor.base_slot();
         let day = WorldwideDay::new(20_260_726);
         assert_eq!(
             crate::openings::entry_price_slots(day, &[840]).unwrap(),
@@ -297,7 +297,10 @@ fn nod_contract_slot_layout_is_pinned() {
         assert_eq!(nod.bucket_nod_count.base_slot(), U256::from(18));
         assert_eq!(nod.bucket_nods.base_slot(), U256::from(19));
         assert_eq!(nod.bucket_nod_index.base_slot(), U256::from(20));
-        assert_eq!(nod.callable_bucket_call_price.base_slot(), U256::from(21));
+        assert_eq!(
+            nod.callable_bucket_call_price_minor.base_slot(),
+            U256::from(21)
+        );
         assert_eq!(nod.callable_bucket_currency.base_slot(), U256::from(22));
         assert_eq!(nod.bucket_called_at.base_slot(), U256::from(23));
         assert_eq!(
@@ -305,20 +308,23 @@ fn nod_contract_slot_layout_is_pinned() {
             U256::from(24)
         );
         assert_eq!(nod.callable_bucket_call_rate.base_slot(), U256::from(25));
-        assert_eq!(nod.callable_bucket_call_window.base_slot(), U256::from(26));
         assert_eq!(
-            nod.callable_bucket_call_threshold.base_slot(),
+            nod.callable_bucket_call_window_seconds.base_slot(),
+            U256::from(26)
+        );
+        assert_eq!(
+            nod.callable_bucket_call_threshold_seconds.base_slot(),
             U256::from(27)
         );
         assert_eq!(
-            nod.callable_bucket_call_notice_period.base_slot(),
+            nod.callable_bucket_call_notice_period_seconds.base_slot(),
             U256::from(28)
         );
-        assert_eq!(nod.max_call_window.base_slot(), U256::from(29));
+        assert_eq!(nod.max_call_window_seconds.base_slot(), U256::from(29));
         assert_eq!(nod.entry_prices_frozen.base_slot(), U256::from(30));
         assert_eq!(nod.entry_price_currency_count.base_slot(), U256::from(31));
         assert_eq!(nod.entry_price_currency.base_slot(), U256::from(32));
-        assert_eq!(nod.entry_price_value.base_slot(), U256::from(33));
+        assert_eq!(nod.entry_price_minor.base_slot(), U256::from(33));
         assert_eq!(nod.callable_bucket_issued_at.base_slot(), U256::from(34));
         assert_eq!(nod.call_sweep_day.slot(), U256::from(35));
         assert_eq!(nod.call_pending_day.slot(), U256::from(36));
@@ -426,7 +432,7 @@ fn certified_generation_is_available_through_the_public_nod_abi() {
         assert_eq!(actual.tributeCount, generation.tribute_count);
         assert_eq!(actual.nodCount, generation.nod_count);
         assert_eq!(actual.bucketCount, generation.bucket_count);
-        assert_eq!(actual.nodAmountTotal, generation.nod_amount_total);
+        assert_eq!(actual.totalSettlementCostMinor, generation.nod_amount_total);
         assert_eq!(
             actual.lysisAllocationMinor,
             generation.lysis_allocation_minor
@@ -462,7 +468,7 @@ fn absent_certified_generation_has_an_explicit_public_abi_result() {
         assert_eq!(actual.tributeCount, 0);
         assert_eq!(actual.nodCount, 0);
         assert_eq!(actual.bucketCount, 0);
-        assert_eq!(actual.nodAmountTotal, U256::ZERO);
+        assert_eq!(actual.totalSettlementCostMinor, U256::ZERO);
         assert_eq!(actual.lysisAllocationMinor, U256::ZERO);
         assert_eq!(actual.issuedAt, 0);
     });

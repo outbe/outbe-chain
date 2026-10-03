@@ -153,8 +153,8 @@ library BridgeMsgCodec {
 
     /// @notice ISSUANCE_INSTRUCTIONS parallel arrays decoded to unequal lengths.
     /// @param recipients Length of the recipients array.
-    /// @param quantities Length of the quantities array.
-    error IssuanceArrayLengthMismatch(uint256 recipients, uint256 quantities);
+    /// @param units Length of the units array.
+    error IssuanceArrayLengthMismatch(uint256 recipients, uint256 units);
 
     /// @notice Inbound ISSUANCE_INSTRUCTIONS exceeds the per-message recipient cap.
     /// @param count Decoded number of recipients.
@@ -383,7 +383,7 @@ library BridgeMsgCodec {
     /// @notice Issuance instructions payload - grouped into a struct to keep the
     ///         encoder/decoder API resilient against EVM stack depth limits.
     /// @dev `issuedUnits` mirrors the auction-cleared count; the destination chain
-    ///      pins it on `SeriesData` and `IntexNFT1155.issue` rejects any issue
+    ///      pins it on `SeriesData` and `IntexNFT1155.issueIntex` rejects any issue
     ///      that would push `totalSupply` past it.
     struct IssuanceInstructionsPayload {
         bytes14 seriesId;
@@ -403,7 +403,7 @@ library BridgeMsgCodec {
         uint32 callThreshold;
         uint64 callPriceMinor;
         address[] recipients;
-        uint256[] quantities;
+        uint256[] units;
     }
 
     /// @notice Decode AUCTION_STAGE_START straight into the auction schedule + params structs.
@@ -519,8 +519,8 @@ library BridgeMsgCodec {
             if (_series[i].worldwideDay != _worldwideDay) {
                 revert IssuanceDayMismatch(_series[i].seriesId, _series[i].worldwideDay, _worldwideDay);
             }
-            if (_series[i].recipients.length != _series[i].quantities.length) {
-                revert IssuanceArrayLengthMismatch(_series[i].recipients.length, _series[i].quantities.length);
+            if (_series[i].recipients.length != _series[i].units.length) {
+                revert IssuanceArrayLengthMismatch(_series[i].recipients.length, _series[i].units.length);
             }
             recipients += _series[i].recipients.length;
         }
@@ -795,7 +795,7 @@ library BridgeMsgCodec {
     /// @notice Decodes ISSUANCE_INSTRUCTIONS message.
     /// @dev Reverts `UnsupportedBodyVersion` on a stale version byte, `InvalidIssuanceChunk` on a bad chunk
     ///      header, `IssuanceDayMismatch` if a series names another day, `IssuanceArrayLengthMismatch` if
-    ///      `recipients` and `quantities` differ in length, and `IssuanceBatchTooLarge` if `recipients`
+    ///      `recipients` and `units` differ in length, and `IssuanceBatchTooLarge` if `recipients`
     ///      exceeds `MAX_RECIPIENTS_PER_ISSUANCE`.
     /// @param _msg The wire-encoded ISSUANCE_INSTRUCTIONS message.
     /// @return worldwideDay The worldwide day (yyyymmdd) every series in the message belongs to.

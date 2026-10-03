@@ -46,9 +46,8 @@ contract IntexNFT1155BridgeCodecTest is Test {
         amounts[0] = 5;
         amounts[1] = 7;
 
-        IntexNFT1155BridgeCodec.BatchPayload memory p = IntexNFT1155BridgeCodec.BatchPayload({
-            to: _bytes32(address(0xA11CE)), tokenIds: tokenIds, amounts: amounts
-        });
+        IntexNFT1155BridgeCodec.BatchPayload memory p =
+            IntexNFT1155BridgeCodec.BatchPayload({to: _bytes32(address(0xA11CE)), tokenIds: tokenIds, units: amounts});
 
         bytes memory encoded = IntexNFT1155BridgeCodec.encodeBatch(p);
 
@@ -61,8 +60,8 @@ contract IntexNFT1155BridgeCodecTest is Test {
         assertEq(decoded.tokenIds.length, 2, "tokenIds length");
         assertEq(decoded.tokenIds[0], tokenIds[0], "tokenId 0");
         assertEq(decoded.tokenIds[1], tokenIds[1], "tokenId 1");
-        assertEq(decoded.amounts[0], amounts[0], "amount 0");
-        assertEq(decoded.amounts[1], amounts[1], "amount 1");
+        assertEq(decoded.units[0], amounts[0], "amount 0");
+        assertEq(decoded.units[1], amounts[1], "amount 1");
     }
 
     function test_MultiRoundTrip_PreservesFields() public view {
@@ -77,7 +76,7 @@ contract IntexNFT1155BridgeCodecTest is Test {
         amounts[1] = 4;
 
         IntexNFT1155BridgeCodec.MultiPayload memory p =
-            IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts});
+            IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, units: amounts});
 
         bytes memory encoded = IntexNFT1155BridgeCodec.encodeMulti(p);
         assertEq(uint8(encoded[0]), IntexNFT1155BridgeCodec.BODY_VERSION_V1, "version byte V1");
@@ -88,7 +87,7 @@ contract IntexNFT1155BridgeCodecTest is Test {
         assertEq(decoded.recipients[0], recipients[0], "recipient 0");
         assertEq(decoded.recipients[1], recipients[1], "recipient 1");
         assertEq(decoded.tokenIds[0], tokenIds[0], "tokenId 0");
-        assertEq(decoded.amounts[1], amounts[1], "amount 1");
+        assertEq(decoded.units[1], amounts[1], "amount 1");
     }
 
     // --- version gating: an unknown version fails closed ---
@@ -141,7 +140,7 @@ contract IntexNFT1155BridgeCodecTest is Test {
     function test_DecodeBatch_MismatchedArrays_RevertsArrayLengthMismatch() public {
         IntexNFT1155BridgeCodec.BatchPayload memory p = _emptyBatch();
         p.tokenIds = new uint256[](2);
-        p.amounts = new uint256[](1);
+        p.units = new uint256[](1);
         bytes memory encoded =
             abi.encodePacked(IntexNFT1155BridgeCodec.BODY_VERSION_V1, IntexNFT1155BridgeCodec.SEND, abi.encode(p));
         vm.expectRevert(IntexNFT1155BridgeCodec.ArrayLengthMismatch.selector);
@@ -202,7 +201,7 @@ contract IntexNFT1155BridgeCodecTest is Test {
         IntexNFT1155BridgeCodec.MultiPayload memory p = _emptyMulti();
         p.recipients = new bytes32[](2);
         p.tokenIds = new uint256[](1);
-        p.amounts = new uint256[](2);
+        p.units = new uint256[](2);
         bytes memory encoded = abi.encodePacked(
             IntexNFT1155BridgeCodec.BODY_VERSION_V1, IntexNFT1155BridgeCodec.SEND_MULTI, abi.encode(p)
         );
@@ -214,7 +213,7 @@ contract IntexNFT1155BridgeCodecTest is Test {
         IntexNFT1155BridgeCodec.MultiPayload memory p = _emptyMulti();
         p.recipients = new bytes32[](2);
         p.tokenIds = new uint256[](2);
-        p.amounts = new uint256[](1);
+        p.units = new uint256[](1);
         bytes memory encoded = abi.encodePacked(
             IntexNFT1155BridgeCodec.BODY_VERSION_V1, IntexNFT1155BridgeCodec.SEND_MULTI, abi.encode(p)
         );
@@ -234,35 +233,33 @@ contract IntexNFT1155BridgeCodecTest is Test {
 
     function _emptyBatch() internal pure returns (IntexNFT1155BridgeCodec.BatchPayload memory) {
         return
-            IntexNFT1155BridgeCodec.BatchPayload({
-                to: bytes32(0), tokenIds: new uint256[](0), amounts: new uint256[](0)
-            });
+            IntexNFT1155BridgeCodec.BatchPayload({to: bytes32(0), tokenIds: new uint256[](0), units: new uint256[](0)});
     }
 
     function _emptyMulti() internal pure returns (IntexNFT1155BridgeCodec.MultiPayload memory) {
         return IntexNFT1155BridgeCodec.MultiPayload({
-            recipients: new bytes32[](0), tokenIds: new uint256[](0), amounts: new uint256[](0)
+            recipients: new bytes32[](0), tokenIds: new uint256[](0), units: new uint256[](0)
         });
     }
 
     function _batchOfSize(uint256 n) internal pure returns (IntexNFT1155BridgeCodec.BatchPayload memory p) {
         p = IntexNFT1155BridgeCodec.BatchPayload({
-            to: _bytes32(address(0xA11CE)), tokenIds: new uint256[](n), amounts: new uint256[](n)
+            to: _bytes32(address(0xA11CE)), tokenIds: new uint256[](n), units: new uint256[](n)
         });
         for (uint256 i = 0; i < n; i++) {
             p.tokenIds[i] = i + 1;
-            p.amounts[i] = (i + 1) * 10;
+            p.units[i] = (i + 1) * 10;
         }
     }
 
     function _multiOfSize(uint256 n) internal pure returns (IntexNFT1155BridgeCodec.MultiPayload memory p) {
         p = IntexNFT1155BridgeCodec.MultiPayload({
-            recipients: new bytes32[](n), tokenIds: new uint256[](n), amounts: new uint256[](n)
+            recipients: new bytes32[](n), tokenIds: new uint256[](n), units: new uint256[](n)
         });
         for (uint256 i = 0; i < n; i++) {
             p.recipients[i] = _bytes32(address(uint160(i + 1)));
             p.tokenIds[i] = i + 1;
-            p.amounts[i] = (i + 1) * 10;
+            p.units[i] = (i + 1) * 10;
         }
     }
 }

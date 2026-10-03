@@ -53,7 +53,12 @@ pub fn dispatch(
             }),
             getDayTotals(c) => view(c, |c| {
                 let dt = tribute.get_day_totals(c.worldwideDay.into())?;
-                Ok((dt.tribute_count, dt.tribute_nominal_amount, dt.is_sealed).into())
+                Ok((
+                    dt.tribute_count,
+                    dt.tribute_nominal_total_minor,
+                    dt.is_sealed,
+                )
+                    .into())
             }),
             getTributesByOwner(c) => view(c, |c| {
                 Ok(tribute

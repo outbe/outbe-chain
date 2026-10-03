@@ -161,7 +161,7 @@ contract IntexAuction is
             schedule: schedule,
             params: params,
             result: IIntexAuction.AuctionResult({
-                issuedIntexLoadedPromis: 0, auctionClearingRate: 0, issuedUnits: 0, wonBidsCount: 0
+                issuedPromisLoadMinor: 0, auctionClearingRate: 0, issuedUnits: 0, wonBidsCount: 0
             })
         });
 
@@ -227,14 +227,14 @@ contract IntexAuction is
             revert ClearingRateBelowMin(auctionClearingRate, a.params.minIntexBidRate);
         }
 
-        // Final data provided by Outbe; `issuedIntexLoadedPromis` is derived on-chain.
+        // Final data provided by Outbe; `issuedPromisLoadMinor` is derived on-chain.
         a.result.issuedUnits = issuedUnits;
         a.result.auctionClearingRate = auctionClearingRate;
         a.result.wonBidsCount = wonBidsCount;
         // 256-bit product: over-range reverts typed, not Panic(0x11).
         uint256 loadedPromis = uint256(issuedUnits) * a.params.promisLoadMinor;
         if (loadedPromis > type(uint128).max) revert IssuedPromisOverflow(issuedUnits, a.params.promisLoadMinor);
-        a.result.issuedIntexLoadedPromis = uint128(loadedPromis);
+        a.result.issuedPromisLoadMinor = uint128(loadedPromis);
         $.cleared[worldwideDay] = true;
 
         emit AuctionStageUpdated(worldwideDay, IIntexAuction.AuctionStage.Completed, uint32(block.timestamp), "");

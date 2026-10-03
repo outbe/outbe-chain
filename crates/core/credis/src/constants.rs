@@ -32,16 +32,16 @@ pub const CALL_LOOKBACK_DAYS: u32 = 28;
 /// `CALL_WINDOW` / `CALL_THRESHOLD` pair.
 pub const CALL_THRESHOLD_DAYS: u32 = 21;
 
-/// [`CALL_LOOKBACK_DAYS`] in seconds - the encoding `Position::call_window`
+/// [`CALL_LOOKBACK_DAYS`] in seconds - the encoding `Position::call_window_seconds`
 /// seals at opening, matching `GemData::call_window_seconds`.
 pub const CALL_WINDOW: u32 = CALL_LOOKBACK_DAYS * SECS_PER_DAY;
 
-/// [`CALL_THRESHOLD_DAYS`] in seconds - the encoding `Position::call_threshold`
+/// [`CALL_THRESHOLD_DAYS`] in seconds - the encoding `Position::call_threshold_seconds`
 /// seals at opening, matching `GemData::call_threshold_seconds`.
 pub const CALL_THRESHOLD: u32 = CALL_THRESHOLD_DAYS * SECS_PER_DAY;
 
 /// Settlement window opened by the call, in seconds. Named for what it is, and
-/// for the `Position::call_notice_period` it seals, rather than for the window
+/// for the `Position::call_notice_period_seconds` it seals, rather than for the window
 /// it is not.
 pub const CALL_NOTICE_PERIOD: u32 = 7 * SECS_PER_DAY;
 

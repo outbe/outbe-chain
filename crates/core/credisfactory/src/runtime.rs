@@ -23,7 +23,7 @@ pub fn reservation_context(
     use outbe_gratis::context::{pledge_context, PledgeDomain};
     let target =
         keccak256((U256::from(chain_id), CREDIS_FACTORY_ADDRESS, id, r.clone()).abi_encode());
-    pledge_context(PledgeDomain::Issue, target, r.collateral, r.snapshotId)
+    pledge_context(PledgeDomain::Issue, target, r.gratisMinor, r.snapshotId)
 }
 fn revert(message: &str) -> PrecompileError {
     PrecompileError::Revert(message.into())
@@ -67,7 +67,7 @@ pub fn issue_credis(
         if currency != r.issuance_currency || decimals != r.asset_decimals {
             return Err(revert("asset metadata changed"));
         }
-        let required = checked_protocol_to_native(r.collateral)
+        let required = checked_protocol_to_native(r.gratis_minor)
             .ok_or_else(|| revert("COEN stake overflow"))?;
         if stake != required {
             return Err(CredisFactoryError::CcaStakeMismatch.into());
@@ -78,10 +78,10 @@ pub fn issue_credis(
         {
             return Err(revert("pledge context mismatch"));
         }
-        if claim.spend_amount != r.collateral {
+        if claim.spend_amount != r.gratis_minor {
             return Err(revert("collateral mismatch"));
         }
-        outbe_gratis::api::activate(&storage, r.collateral)?;
+        outbe_gratis::api::activate(&storage, r.gratis_minor)?;
         let mut credis = CredisContract::new(storage.clone());
         let id = credis.open_position(OpenPositionParams {
             smart_account: r.smart_account,
@@ -91,10 +91,10 @@ pub fn issue_credis(
             issuance_currency: r.issuance_currency,
             reference_currency: r.reference_currency,
             policy_rate: r.policy_rate,
-            principal: r.amount,
-            entry_price: r.entry_price,
-            call_anchor_price: r.call_anchor_price,
-            collateral: r.collateral,
+            principal_minor: r.amount,
+            entry_price_minor: r.entry_price_minor,
+            call_anchor_price_minor: r.call_anchor_price_minor,
+            gratis_minor: r.gratis_minor,
             issued_at: now,
         })?;
         let opened = credis.get_position(id)?;
@@ -113,7 +113,7 @@ pub fn issue_credis(
             alloy_sol_types::SolEvent::encode_log_data(&ICredisFactory::CredisIssued {
                 smartAccount: r.smart_account,
                 cca: caller,
-                amount: r.amount,
+                principalMinor: r.amount,
             }),
         )?;
         Ok((id, r.amount))
@@ -138,10 +138,10 @@ pub fn settle(
         let settlement = credis.settle(position_id, amount, now)?;
         let after = credis.get_position(position_id)?;
         let released = before
-            .collateral_locked
-            .checked_sub(after.collateral_locked)
+            .outstanding_gratis_minor
+            .checked_sub(after.outstanding_gratis_minor)
             .ok_or_else(|| revert("collateral increased"))?;
-        if released != settlement.gratis_released {
+        if released != settlement.gratis_returned_minor {
             return Err(revert("collateral release mismatch"));
         }
         let paid = settlement.total_paid;
@@ -184,8 +184,8 @@ pub fn settle(
         }
         if !released.is_zero() {
             let total = before
-                .collateral
-                .checked_sub(after.collateral_locked)
+                .gratis_minor
+                .checked_sub(after.outstanding_gratis_minor)
                 .ok_or_else(|| revert("collateral underflow"))?;
             outbe_gratis::api::return_collateral(
                 &storage,
@@ -207,13 +207,13 @@ pub fn void_position(storage: StorageHandle<'_>, position_id: U256) -> Result<()
         let mut credis = CredisContract::new(storage.clone());
         let before = credis.get_position(position_id)?;
         let void = credis.void_position(position_id, now)?;
-        if void.gratis_burned != before.collateral_locked {
+        if void.gratis_burned_minor != before.outstanding_gratis_minor {
             return Err(revert("forfeiture collateral mismatch"));
         }
-        if !void.gratis_burned.is_zero() {
-            outbe_gratis::api::forfeit(&storage, void.gratis_burned)?;
+        if !void.gratis_burned_minor.is_zero() {
+            outbe_gratis::api::forfeit(&storage, void.gratis_burned_minor)?;
             outbe_promislimit::PromisLimitContract::new(storage.clone())
-                .add_to_total_unallocated(void.gratis_burned)?;
+                .add_to_total_unallocated(void.gratis_burned_minor)?;
         }
         Ok(())
     })

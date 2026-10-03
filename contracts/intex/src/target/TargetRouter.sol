@@ -133,10 +133,10 @@ contract TargetRouter is
     function parkedIssuance(uint256 idx)
         external
         view
-        returns (bytes14 seriesId, address recipient, uint256 quantity, bool exists, bool done)
+        returns (bytes14 seriesId, address recipient, uint256 units, bool exists, bool done)
     {
         ParkedIssuance storage p = _ts().parkedIssuance[idx];
-        return (p.seriesId, p.recipient, p.quantity, p.exists, p.done);
+        return (p.seriesId, p.recipient, p.units, p.exists, p.done);
     }
 
     /// @notice How many issuances have ever parked here; `done` in the view tells which are resolved.
@@ -391,9 +391,9 @@ contract TargetRouter is
     }
 
     /// @notice Self-call shim around a single issuance; isolates a reverting recipient hook.
-    function issueOne(bytes14 seriesId, address to, uint256 quantity) external {
+    function issueOne(bytes14 seriesId, address to, uint256 units) external {
         if (msg.sender != address(this)) revert NotSelf();
-        _ts().intex.issue(to, quantity, seriesId);
+        _ts().intex.issueIntex(to, units, seriesId);
     }
 
     /// @notice Permissionless retry of a previously deferred issuance.
@@ -402,7 +402,7 @@ contract TargetRouter is
         if (!p.exists) revert NoSuchParkedIssuance(idx);
         if (p.done) revert AlreadyResolved(idx);
         p.done = true;
-        _ts().intex.issue(p.recipient, p.quantity, p.seriesId);
+        _ts().intex.issueIntex(p.recipient, p.units, p.seriesId);
         emit ParkedIssuanceApplied(idx, p.seriesId);
     }
 

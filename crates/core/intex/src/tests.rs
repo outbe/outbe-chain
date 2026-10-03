@@ -971,6 +971,17 @@ fn with_registry_at<R>(now: u64, f: impl FnOnce(StorageHandle) -> R) -> R {
 const NOTICE_END: u64 = ISSUED_AT as u64 + CALL_NOTICE_PERIOD as u64;
 
 #[test]
+fn series_data_reports_the_settlement_deadline_once_called() {
+    with_registry_at(NOTICE_END, |s| {
+        api::create_series(&s, sample_params(62)).unwrap();
+        assert_eq!(dispatch_series_data(&s, sid(62)).settlementDeadline, 0);
+
+        let id = called_series(&s, 63);
+        assert_eq!(dispatch_series_data(&s, id).settlementDeadline, NOTICE_END);
+    });
+}
+
+#[test]
 fn a_called_series_reads_expired_from_its_deadline_not_from_the_sweep() {
     // Strictly after: on the deadline itself the notice has not run out.
     with_registry_at(NOTICE_END, |s| {

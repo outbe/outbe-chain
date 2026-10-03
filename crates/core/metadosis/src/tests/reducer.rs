@@ -30,7 +30,7 @@ fn projection_for_day_type(status: WwdStatus, day_type: WwdDayType) -> WwdProjec
         lookback_end: LOOKBACK_END,
         offering_end: OFFERING_END,
         scheduled_process_time: PROCESS_AT,
-        metadosis_limit_amount: U256::from(10),
+        metadosis_limit_minor: U256::from(10),
         previous_vwap: U256::ZERO,
         current_vwap: U256::ZERO,
     }
@@ -297,7 +297,7 @@ fn final_zero_limit_turns_every_opening_advance_into_missed_offering() {
     use WwdAdvanceEdge::{BecomeReady, CloseOffering, OpenOffering, ResolveForming};
     let advance = |status: WwdStatus, limit: U256, block_time: u64, limit_final: bool| {
         let mut current = projection(status);
-        current.metadosis_limit_amount = limit;
+        current.metadosis_limit_minor = limit;
         reduce_outer_wwd(
             Some(&current),
             OuterWwdEvent::AdvanceDue {

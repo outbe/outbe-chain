@@ -154,7 +154,11 @@ impl Lifecycle for NodLifecycle {
             );
             assert_eq!(
                 (data.callRate, data.callWindow, data.callThreshold),
-                (dev.call_rate, dev.call_window, dev.call_threshold),
+                (
+                    dev.call_rate,
+                    dev.call_window_seconds,
+                    dev.call_threshold_seconds
+                ),
                 "the bucket did not seal the DEV call terms"
             );
             assert!(

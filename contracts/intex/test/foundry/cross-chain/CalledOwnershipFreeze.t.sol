@@ -33,14 +33,13 @@ contract CalledOwnershipFreezeTest is CrossChainTest {
         intex.grantRole(intex.RELAYER_ROLE(), address(nftBridge));
 
         intex.createSeries(CreateSeriesLib.params(WORLDWIDE_DAY, 10_000, 1 days));
-        intex.issue(owner, 10, SERIES_ID);
+        intex.issueIntex(owner, 10, SERIES_ID);
         tokenId = intex.issuedTokenId(SERIES_ID);
         intex.markCalled(SERIES_ID, uint32(block.timestamp));
     }
 
     function _param(address to, uint256 amount) internal view returns (SendParam memory) {
-        return
-            SendParam({dstChainId: DST_CHAIN_ID, to: bytes32(uint256(uint160(to))), tokenId: tokenId, amount: amount});
+        return SendParam({dstChainId: DST_CHAIN_ID, to: bytes32(uint256(uint160(to))), tokenId: tokenId, units: amount});
     }
 
     function test_AHolderMayCarryTheirOwnBalanceOut() public {
@@ -67,7 +66,7 @@ contract CalledOwnershipFreezeTest is CrossChainTest {
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferOnCalledForbidden.selector, tokenId));
         vm.prank(owner);
         nftBridge.multiSend(
-            MultiRecipientSendParam({dstChainId: DST_CHAIN_ID, recipients: to, tokenIds: ids, amounts: amounts})
+            MultiRecipientSendParam({dstChainId: DST_CHAIN_ID, recipients: to, tokenIds: ids, units: amounts})
         );
     }
 
@@ -80,13 +79,13 @@ contract CalledOwnershipFreezeTest is CrossChainTest {
     function test_BeforeTheCallTheBridgeStillCarriesToAnyone() public {
         intex.createSeries(CreateSeriesLib.params(20260502, 10_000, 1 days));
         bytes14 open = "20260502-USD-U";
-        intex.issue(owner, 5, open);
+        intex.issueIntex(owner, 5, open);
 
         uint256 openTokenId = intex.issuedTokenId(open);
         vm.prank(owner);
         nftBridge.send(
             SendParam({
-                dstChainId: DST_CHAIN_ID, to: bytes32(uint256(uint160(stranger))), tokenId: openTokenId, amount: 2
+                dstChainId: DST_CHAIN_ID, to: bytes32(uint256(uint160(stranger))), tokenId: openTokenId, units: 2
             })
         );
 

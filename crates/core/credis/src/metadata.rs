@@ -19,11 +19,11 @@ pub(crate) fn token_uri(position: &Position, now: u64) -> Result<String> {
     let mut rows = vec![
         (
             "Principal",
-            nft_card::amount_grouped(position.principal, AMOUNT_PRECISION),
+            nft_card::amount_grouped(position.principal_minor, AMOUNT_PRECISION),
         ),
         (
             "Outstanding",
-            nft_card::amount_grouped(position.outstanding, AMOUNT_PRECISION),
+            nft_card::amount_grouped(position.outstanding_principal_minor, AMOUNT_PRECISION),
         ),
         (
             "Accrued Interest",
@@ -31,30 +31,38 @@ pub(crate) fn token_uri(position: &Position, now: u64) -> Result<String> {
         ),
         (
             "Entry Price",
-            nft_card::amount_grouped(position.entry_price, PRICE_PRECISION),
+            nft_card::amount_grouped(position.entry_price_minor, PRICE_PRECISION),
         ),
         (
             "Call Anchor",
-            nft_card::amount_grouped(position.call_anchor_price, PRICE_PRECISION),
+            nft_card::amount_grouped(position.call_anchor_price_minor, PRICE_PRECISION),
         ),
         (
             "Call Price",
-            nft_card::amount_grouped(position.call_price, PRICE_PRECISION),
+            nft_card::amount_grouped(position.call_price_minor, PRICE_PRECISION),
         ),
     ];
     let mut traits = vec![
         Trait::text("State", state.label),
-        Trait::amount("Principal", position.principal, AMOUNT_PRECISION),
-        Trait::amount("Outstanding", position.outstanding, AMOUNT_PRECISION),
+        Trait::amount("Principal", position.principal_minor, AMOUNT_PRECISION),
+        Trait::amount(
+            "Outstanding",
+            position.outstanding_principal_minor,
+            AMOUNT_PRECISION,
+        ),
         Trait::amount("Accrued Interest", accrued_interest, AMOUNT_PRECISION),
-        Trait::amount("Entry Price", position.entry_price, PRICE_PRECISION),
-        Trait::amount("Call Anchor", position.call_anchor_price, PRICE_PRECISION),
-        Trait::amount("Call Price", position.call_price, PRICE_PRECISION),
+        Trait::amount("Entry Price", position.entry_price_minor, PRICE_PRECISION),
+        Trait::amount(
+            "Call Anchor",
+            position.call_anchor_price_minor,
+            PRICE_PRECISION,
+        ),
+        Trait::amount("Call Price", position.call_price_minor, PRICE_PRECISION),
         Trait::amount("Policy Rate", position.policy_rate, PRICE_PRECISION),
-        Trait::amount("Collateral", position.collateral, AMOUNT_PRECISION),
+        Trait::amount("Collateral", position.gratis_minor, AMOUNT_PRECISION),
         Trait::amount(
             "Collateral Locked",
-            position.collateral_locked,
+            position.outstanding_gratis_minor,
             AMOUNT_PRECISION,
         ),
         Trait::integer("Issuance Currency", position.issuance_currency),

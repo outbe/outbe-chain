@@ -240,7 +240,7 @@ async fn day_totals(client: &(impl Rpc + Sync), worldwide_day: WorldwideDay) -> 
 
     println!("WorldwideDay:           {}", worldwide_day);
     println!("Tribute Count:          {}", ret.tributeCount);
-    println!("Nominal Amount Minor:   {}", ret.tributeNominalAmount);
+    println!("Nominal Amount Minor:   {}", ret.tributeNominalTotalMinor);
     println!("Sealed:                 {}", ret.isSealed);
     Ok(())
 }
@@ -544,7 +544,7 @@ mod tests {
 
         let result = fetch_day_totals(&mock, 20241220u32.into()).await.unwrap();
         assert_eq!(result.tributeCount, 2);
-        assert_eq!(result.tributeNominalAmount, U256::from(500u64));
+        assert_eq!(result.tributeNominalTotalMinor, U256::from(500u64));
         assert!(result.isSealed);
     }
 

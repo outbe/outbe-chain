@@ -20,7 +20,7 @@ struct BidsRelayProgress {
 struct ParkedIssuance {
     bytes14 seriesId;
     address recipient;
-    uint256 quantity;
+    uint256 units;
     bool exists;
     bool done;
 }

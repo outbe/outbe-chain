@@ -140,7 +140,7 @@
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "units",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -162,12 +162,63 @@
     ],
     "outputs": [
       {
-        "name": "promisAmount",
+        "name": "promisMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "ownerBalances",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "bytes14",
+        "internalType": "bytes14"
+      },
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct IIntexFactory.OwnerBalances",
+        "components": [
+          {
+            "name": "issuedUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "settledUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "exercisedUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "gemFactoryUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "ownerUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -224,12 +275,12 @@
         "internalType": "bytes14"
       },
       {
-        "name": "paymentToken",
+        "name": "asset",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "units",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -241,7 +292,7 @@
         "internalType": "uint16"
       },
       {
-        "name": "payableUnits",
+        "name": "paymentMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -314,12 +365,12 @@
         "internalType": "bytes14"
       },
       {
-        "name": "intexOwner",
+        "name": "owner",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "units",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -347,12 +398,12 @@
         "internalType": "bytes14"
       },
       {
-        "name": "intexOwner",
+        "name": "owner",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "units",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -589,13 +640,13 @@
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "units",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "promisAmount",
+        "name": "promisMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -618,6 +669,12 @@
         "type": "uint32",
         "indexed": false,
         "internalType": "uint32"
+      },
+      {
+        "name": "settlementDeadline",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
       }
     ],
     "anonymous": false
@@ -639,7 +696,7 @@
         "internalType": "uint32"
       },
       {
-        "name": "returnedPromis",
+        "name": "returnedPromisMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -664,7 +721,7 @@
         "internalType": "uint32"
       },
       {
-        "name": "entryPrice",
+        "name": "entryPriceMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -683,13 +740,13 @@
         "internalType": "bytes14"
       },
       {
-        "name": "intexOwner",
+        "name": "owner",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "units",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

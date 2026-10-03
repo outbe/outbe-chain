@@ -326,17 +326,17 @@ fn reterm(
 ) {
     let nod = NodContract::new(storage.clone());
     let window = window_days * SECS_PER_DAY;
-    nod.callable_bucket_call_window
+    nod.callable_bucket_call_window_seconds
         .write(&bucket_key, window)
         .unwrap();
-    nod.callable_bucket_call_threshold
+    nod.callable_bucket_call_threshold_seconds
         .write(&bucket_key, threshold_days * SECS_PER_DAY)
         .unwrap();
-    nod.callable_bucket_call_notice_period
+    nod.callable_bucket_call_notice_period_seconds
         .write(&bucket_key, notice_days * SECS_PER_DAY)
         .unwrap();
-    if window > nod.max_call_window.read(&iso).unwrap() {
-        nod.max_call_window.write(&iso, window).unwrap();
+    if window > nod.max_call_window_seconds.read(&iso).unwrap() {
+        nod.max_call_window_seconds.write(&iso, window).unwrap();
     }
 }
 
@@ -355,24 +355,24 @@ fn issuance_seals_the_call_terms_on_the_bucket() {
             CALL_RATE_PCT
         );
         assert_eq!(
-            nod.callable_bucket_call_window
+            nod.callable_bucket_call_window_seconds
                 .read(&item.bucket_key)
                 .unwrap(),
             CALL_WINDOW
         );
         assert_eq!(
-            nod.callable_bucket_call_threshold
+            nod.callable_bucket_call_threshold_seconds
                 .read(&item.bucket_key)
                 .unwrap(),
             CALL_THRESHOLD
         );
         assert_eq!(
-            nod.callable_bucket_call_notice_period
+            nod.callable_bucket_call_notice_period_seconds
                 .read(&item.bucket_key)
                 .unwrap(),
             CALL_NOTICE_PERIOD
         );
-        assert_eq!(nod.max_call_window.read(&ISO).unwrap(), CALL_WINDOW);
+        assert_eq!(nod.max_call_window_seconds.read(&ISO).unwrap(), CALL_WINDOW);
         assert_eq!(
             nod.callable_bucket_issued_at
                 .read(&item.bucket_key)
@@ -403,21 +403,21 @@ fn an_unset_profile_seals_the_dev_terms_off_mainnet() {
                 nod.callable_bucket_call_rate
                     .read(&item.bucket_key)
                     .unwrap(),
-                nod.callable_bucket_call_window
+                nod.callable_bucket_call_window_seconds
                     .read(&item.bucket_key)
                     .unwrap(),
-                nod.callable_bucket_call_threshold
+                nod.callable_bucket_call_threshold_seconds
                     .read(&item.bucket_key)
                     .unwrap(),
-                nod.callable_bucket_call_notice_period
+                nod.callable_bucket_call_notice_period_seconds
                     .read(&item.bucket_key)
                     .unwrap(),
             ),
             (
                 dev.call_rate,
-                dev.call_window,
-                dev.call_threshold,
-                dev.call_notice_period
+                dev.call_window_seconds,
+                dev.call_threshold_seconds,
+                dev.call_notice_period_seconds
             )
         );
     });
@@ -520,7 +520,7 @@ fn the_scan_follows_the_terms_sealed_on_the_bucket_not_the_constants() {
 
 /// A bucket whose sealed window outruns the current constant still gets its
 /// whole span collected: the scan sizes the shared per-currency window off the
-/// `max_call_window` high-water mark, not off the constant.
+/// `max_call_window_seconds` high-water mark, not off the constant.
 #[test]
 fn a_window_wider_than_the_constant_is_collected_in_full() {
     harness(|storage, scope, parent| {
@@ -543,7 +543,7 @@ fn the_call_price_is_the_entry_price_times_the_call_rate() {
     harness(|storage, scope, parent| {
         let item = issue_qualified(storage, scope, parent, Address::repeat_byte(0x11), ISO);
         let stored = NodContract::new(storage.clone())
-            .callable_bucket_call_price
+            .callable_bucket_call_price_minor
             .read(&item.bucket_key)
             .unwrap();
         assert_eq!(
@@ -1230,7 +1230,7 @@ fn a_call_arm_out_of_visits_resumes_on_its_currency_before_any_forfeit() {
         for index in 1..=MAX_NOD_CALL_VISITS_PER_BLOCK {
             let key = B256::left_padding_from(&index.to_be_bytes());
             nod.callable_bucket_currency.write(&key, ISO).unwrap();
-            nod.callable_bucket_call_price
+            nod.callable_bucket_call_price_minor
                 .write(&key, at_call())
                 .unwrap();
             nod.insert_call_bin(key).unwrap();
@@ -1349,7 +1349,7 @@ fn mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exerci
         assert_eq!(nod.total_supply().unwrap(), 1);
         assert_eq!(called_at(storage, key), at);
         assert_eq!(
-            nod.read_call_terms(key).unwrap().call_notice_period,
+            nod.read_call_terms(key).unwrap().call_notice_period_seconds,
             CALL_NOTICE_PERIOD
         );
         api::remove_nod(

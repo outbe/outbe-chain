@@ -57,7 +57,7 @@
     ],
     "outputs": [
       {
-        "name": "",
+        "name": "gratisMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -86,7 +86,7 @@
         "internalType": "uint16"
       },
       {
-        "name": "payableUnits",
+        "name": "paymentMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -204,7 +204,7 @@
         "internalType": "bytes32"
       },
       {
-        "name": "nodAmountTotal",
+        "name": "totalSettlementCostMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -413,7 +413,7 @@
         "internalType": "bytes32"
       },
       {
-        "name": "amountCovered",
+        "name": "paymentMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

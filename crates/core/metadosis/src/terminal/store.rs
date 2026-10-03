@@ -66,7 +66,7 @@ impl MetadosisContract<'_> {
                 None => self
                     .worldwide_days
                     .entry(worldwide_day)
-                    .metadosis_limit_amount()
+                    .metadosis_limit_minor()
                     .read()?,
             },
         ))

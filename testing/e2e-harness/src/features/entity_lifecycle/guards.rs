@@ -115,8 +115,8 @@ pub(crate) fn assert_payment_guards(world: &World, target: &Target, other: &Targ
                 factory(target),
                 &eth::IIntexFactory::settleIntexWithPayNoteCall {
                     seriesId: *id,
-                    intexOwner: target.owner,
-                    amount: U256::from(*units),
+                    owner: target.owner,
+                    units: U256::from(*units),
                     payNoteProof: note.into(),
                 },
                 IntexFactoryError::PayNoteContextMismatch { expected, actual },
@@ -284,8 +284,8 @@ fn erc20_series(
 ) -> eth::IIntexFactory::settleIntexCall {
     eth::IIntexFactory::settleIntexCall {
         seriesId: id,
-        intexOwner: target.owner,
-        amount: U256::from(units),
+        owner: target.owner,
+        units: U256::from(units),
         asset,
         snapshotId: snapshot,
     }
@@ -299,7 +299,7 @@ fn mine_series(
     eth::IIntexFactory::minePromisCall {
         seriesId: id,
         owner: target.owner,
-        amount: U256::from(units),
+        units: U256::from(units),
         nonce: 0,
         mac: B256::ZERO,
         opNonce: 0,

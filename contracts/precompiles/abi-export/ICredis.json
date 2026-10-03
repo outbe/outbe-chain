@@ -48,12 +48,12 @@
     ],
     "outputs": [
       {
-        "name": "",
+        "name": "principalMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "",
+        "name": "outstandingPrincipalMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -131,22 +131,22 @@
             "internalType": "bytes32"
           },
           {
-            "name": "principal",
+            "name": "principalMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "outstanding",
+            "name": "outstandingPrincipalMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "collateral",
+            "name": "gratisMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "collateralLocked",
+            "name": "outstandingGratisMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -156,17 +156,17 @@
             "internalType": "uint256"
           },
           {
-            "name": "entryPrice",
+            "name": "entryPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "callAnchorPrice",
+            "name": "callAnchorPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "callPrice",
+            "name": "callPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -194,6 +194,26 @@
             "name": "interestPaidMinor",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "settlementDeadline",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "callNoticePeriod",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "callWindow",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "callThreshold",
+            "type": "uint32",
+            "internalType": "uint32"
           }
         ]
       }
@@ -365,22 +385,22 @@
             "internalType": "bytes32"
           },
           {
-            "name": "principal",
+            "name": "principalMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "outstanding",
+            "name": "outstandingPrincipalMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "collateral",
+            "name": "gratisMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "collateralLocked",
+            "name": "outstandingGratisMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -390,17 +410,17 @@
             "internalType": "uint256"
           },
           {
-            "name": "entryPrice",
+            "name": "entryPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "callAnchorPrice",
+            "name": "callAnchorPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "callPrice",
+            "name": "callPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -428,6 +448,26 @@
             "name": "interestPaidMinor",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "settlementDeadline",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "callNoticePeriod",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "callWindow",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "callThreshold",
+            "type": "uint32",
+            "internalType": "uint32"
           }
         ]
       }
@@ -491,22 +531,22 @@
             "internalType": "bytes32"
           },
           {
-            "name": "principal",
+            "name": "principalMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "outstanding",
+            "name": "outstandingPrincipalMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "collateral",
+            "name": "gratisMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "collateralLocked",
+            "name": "outstandingGratisMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -516,17 +556,17 @@
             "internalType": "uint256"
           },
           {
-            "name": "entryPrice",
+            "name": "entryPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "callAnchorPrice",
+            "name": "callAnchorPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "callPrice",
+            "name": "callPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -554,6 +594,26 @@
             "name": "interestPaidMinor",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "settlementDeadline",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "callNoticePeriod",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "callWindow",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "callThreshold",
+            "type": "uint32",
+            "internalType": "uint32"
           }
         ]
       }
@@ -846,13 +906,13 @@
         "internalType": "address"
       },
       {
-        "name": "principal",
+        "name": "principalMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "collateral",
+        "name": "gratisMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -890,13 +950,13 @@
         "internalType": "address"
       },
       {
-        "name": "gratisBurned",
+        "name": "gratisBurnedMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "principalWrittenOff",
+        "name": "principalWrittenOffMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -915,25 +975,25 @@
         "internalType": "uint256"
       },
       {
-        "name": "interestPaid",
+        "name": "interestMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "principalPaid",
+        "name": "principalPaidMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "gratisReleased",
+        "name": "gratisReturnedMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "outstanding",
+        "name": "outstandingPrincipalMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

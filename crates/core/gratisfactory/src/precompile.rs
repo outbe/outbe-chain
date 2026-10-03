@@ -37,7 +37,7 @@ pub fn dispatch(
                     runtime::pledge_gratis(
                         storage.clone(),
                         sender,
-                        c.amount,
+                        c.gratisMinor,
                         ModifyAuth {
                             mac: c.auth.mac.0,
                             op_nonce: c.auth.opNonce,
@@ -67,7 +67,7 @@ pub fn dispatch(
                         mac: c.mac.0,
                         op_nonce: c.opNonce,
                     };
-                    runtime::mine_coen(storage.clone(), sender, c.amount, auth)
+                    runtime::mine_coen(storage.clone(), sender, c.gratisMinor, auth)
                 }),
                 supportsInterface(c) => view(c, |c| {
                     let id: [u8; 4] = c.interfaceId.0;

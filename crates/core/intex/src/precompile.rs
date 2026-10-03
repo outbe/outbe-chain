@@ -107,5 +107,10 @@ fn to_abi_data(
         settledUnits: settled,
         exercisedUnits: exercised,
         gemFactoryUnits: gem_factory,
+        settlementDeadline: if r.called_at == 0 {
+            0
+        } else {
+            u64::from(r.called_at) + u64::from(r.call_notice_period_seconds)
+        },
     })
 }

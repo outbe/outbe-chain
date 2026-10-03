@@ -508,7 +508,7 @@
             "internalType": "uint64"
           },
           {
-            "name": "collateral",
+            "name": "gratisMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -518,12 +518,12 @@
             "internalType": "uint256"
           },
           {
-            "name": "entryPrice",
+            "name": "entryPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "valuationPrice",
+            "name": "valuationPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -548,7 +548,7 @@
             "internalType": "uint16"
           },
           {
-            "name": "callAnchorPrice",
+            "name": "callAnchorPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           }

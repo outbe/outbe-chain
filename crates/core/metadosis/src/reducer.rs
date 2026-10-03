@@ -182,7 +182,7 @@ fn reduce_due(
         )));
     }
     let mut plan = plan_wwd_advance(current, block_time)?;
-    if admission.limit_final && current.metadosis_limit_amount.is_zero() && plan.opens_offering() {
+    if admission.limit_final && current.metadosis_limit_minor.is_zero() && plan.opens_offering() {
         plan = WwdTransitionPlan::MissedOffering;
     }
     Ok(reduce_admission_plan(current, plan, admission))

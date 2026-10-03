@@ -775,7 +775,7 @@ fn dispatch_auction_brief_oversized_limit_returns_typed_full_carry_over() {
             )
             .unwrap(),
             AuctionBriefReceipt::RejectedToCarryOver {
-                reason: AuctionBriefRejectionReason::SupplyExceedsAuctionDomain,
+                reason: AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
                 desis_limit_minor: U256::MAX,
                 max_accepted: U256::from(u128::MAX),
             }
@@ -793,11 +793,11 @@ fn dispatch_auction_brief_oversized_limit_returns_typed_full_carry_over() {
     assert_eq!(logs.len(), 1);
     let event = IDesis::AuctionBriefRejectedToCarryOver::decode_log_data(&logs[0]).unwrap();
     assert_eq!(event.worldwideDay, WORLDWIDE_DAY.value());
-    assert_eq!(event.supply, U256::MAX);
-    assert_eq!(event.maxAccepted, U256::from(u128::MAX));
+    assert_eq!(event.desisLimitMinor, U256::MAX);
+    assert_eq!(event.maxAcceptedMinor, U256::from(u128::MAX));
     assert_eq!(
         event.reasonCode,
-        AuctionBriefRejectionReason::SupplyExceedsAuctionDomain.code()
+        AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain.code()
     );
 }
 
@@ -832,7 +832,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
             )
             .unwrap(),
             AuctionBriefReceipt::RejectedToCarryOver {
-                reason: AuctionBriefRejectionReason::SupplyExceedsAuctionDomain,
+                reason: AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
                 desis_limit_minor: supply,
                 max_accepted: U256::from(u128::MAX),
             }
@@ -846,11 +846,11 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
         crate::precompile::IDesis::AuctionBriefRejectedToCarryOver::decode_log_data(&logs[0])
             .unwrap();
     assert_eq!(event.worldwideDay, WORLDWIDE_DAY.value());
-    assert_eq!(event.supply, supply);
-    assert_eq!(event.maxAccepted, U256::from(u128::MAX));
+    assert_eq!(event.desisLimitMinor, supply);
+    assert_eq!(event.maxAcceptedMinor, U256::from(u128::MAX));
     assert_eq!(
         event.reasonCode,
-        AuctionBriefRejectionReason::SupplyExceedsAuctionDomain.code()
+        AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain.code()
     );
 }
 
@@ -1220,7 +1220,10 @@ fn schedule_arms_the_clearing_gate_at_reveal_end() {
         );
         assert_eq!(contract.clearing_initiated.read(&WORLDWIDE_DAY).unwrap(), 1);
         assert_eq!(
-            contract.pending_supply_intex.read(&WORLDWIDE_DAY).unwrap(),
+            contract
+                .pending_desis_limit_units
+                .read(&WORLDWIDE_DAY)
+                .unwrap(),
             10
         );
         assert_eq!(contract.gate_active_count.read().unwrap(), 1);
@@ -1352,7 +1355,7 @@ fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
         );
         assert_eq!(
             contract
-                .pending_supply_intex
+                .pending_desis_limit_units
                 .read(&NEXT_WORLDWIDE_DAY)
                 .unwrap(),
             1_000,
@@ -1772,6 +1775,51 @@ fn a_limit_short_of_one_unit_is_cancelled_at_start() {
     assert_eq!(event.promisLoadMinor, LOAD_MINOR);
 }
 
+fn allocation_records(
+    events: &[alloy_primitives::LogData],
+) -> Vec<crate::precompile::IDesis::DesisAllocationRecorded> {
+    use crate::precompile::IDesis::DesisAllocationRecorded;
+    use alloy_sol_types::SolEvent;
+    events
+        .iter()
+        .filter_map(|log| DesisAllocationRecorded::decode_log_data(log).ok())
+        .collect()
+}
+
+#[test]
+fn a_day_cancelled_at_start_records_a_zero_desis_allocation() {
+    let (stage, _, events) = start_day(LOAD_MINOR - 1, true);
+
+    assert_eq!(stage, AuctionStage::Cancelled);
+    let records = allocation_records(&events);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].worldwideDay, WORLDWIDE_DAY.value());
+    assert_eq!(records[0].desisLimitMinor, U256::from(LOAD_MINOR - 1));
+    assert_eq!(records[0].desisAllocationMinor, U256::ZERO);
+}
+
+#[test]
+fn an_overdue_day_records_a_zero_desis_allocation() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(NOW));
+    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+    storage.stub_sub_call_at(
+        outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
+        Bytes::from(vec![0u8; 32]),
+    );
+    StorageHandle::enter(&mut storage, |s| {
+        brief(&s, true);
+        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + 3 * 86_400).unwrap();
+    });
+
+    let records =
+        allocation_records(storage.get_events(outbe_primitives::addresses::DESIS_ADDRESS));
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].desisLimitMinor, U256::from(10 * LOAD_MINOR));
+    assert_eq!(records[0].desisAllocationMinor, U256::ZERO);
+}
+
 #[test]
 fn a_green_day_with_no_limit_is_cancelled_below_one_unit() {
     let (stage, _, events) = start_day(0, true);
@@ -2167,6 +2215,43 @@ fn force_clear_waits_then_fires_when_all_done() {
             AuctionStage::Cleared
         );
     });
+}
+
+/// A clearing names its Desis Allocation and returns the unused Desis Limit.
+#[test]
+fn clearing_reports_the_desis_allocation_and_the_unused_limit() {
+    use crate::precompile::IDesis;
+    use alloy_sol_types::SolEvent;
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(NOW));
+    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+    storage.stub_sub_call_at(
+        outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
+        Bytes::from(vec![0u8; 32]),
+    );
+    StorageHandle::enter(&mut storage, |s| {
+        open_clearing(&s, 3);
+        relay_bids(&s, SRC_CHAIN, 1, 200);
+        assert_eq!(clear(&s).issued_units, 1);
+    });
+
+    let logs = storage.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
+    let records = allocation_records(logs);
+    assert_eq!(
+        records.len(),
+        1,
+        "the clearing records its Desis Allocation once"
+    );
+    let allocation = &records[0];
+    assert_eq!(allocation.worldwideDay, WORLDWIDE_DAY.value());
+    assert_eq!(allocation.desisLimitMinor, U256::from(3 * LOAD_MINOR));
+    assert_eq!(allocation.desisAllocationMinor, U256::from(LOAD_MINOR));
+    let unused = logs
+        .iter()
+        .find_map(|log| IDesis::UnusedDesisLimitReported::decode_log_data(log).ok())
+        .expect("the clearing returns its unused Desis Limit");
+    assert_eq!(unused.unusedDesisLimitMinor, U256::from(2 * LOAD_MINOR));
 }
 
 /// After the deadline, clearing proceeds without the missing chain and reports it skipped.

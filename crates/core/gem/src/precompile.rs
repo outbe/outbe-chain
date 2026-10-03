@@ -151,14 +151,22 @@ fn to_abi_data(item: &GemData, now: u64) -> IGem::GemData {
         owner: item.owner,
         gemType: item.gem_type,
         state: item.effective_state(now),
-        promisLoad: item.promis_load_minor,
-        entryPrice: item.entry_price_minor,
-        floorPrice: item.floor_price_minor,
+        promisLoadMinor: item.promis_load_minor,
+        entryPriceMinor: item.entry_price_minor,
+        floorPriceMinor: item.floor_price_minor,
         issuanceCurrency: item.issuance_currency,
         referenceCurrency: item.reference_currency,
         issuedAt: item.issued_at,
-        callPrice: item.call_price_minor,
+        callPriceMinor: item.call_price_minor,
         calledAt: item.called_at,
         callNoticePeriod: item.call_notice_period_seconds,
+        callWindow: item.call_window_seconds,
+        callThreshold: item.call_threshold_seconds,
+        settlementDeadline: if item.called_at == 0 {
+            0
+        } else {
+            item.called_at
+                .saturating_add(u64::from(item.call_notice_period_seconds))
+        },
     }
 }

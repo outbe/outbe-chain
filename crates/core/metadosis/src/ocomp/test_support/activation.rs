@@ -344,7 +344,7 @@ impl ActivationFixture {
                 contributor,
                 tribute_generation: admission.source_generation,
                 tribute_count: totals.tribute_count,
-                tribute_nominal: totals.tribute_nominal_amount,
+                tribute_nominal: totals.tribute_nominal_total_minor,
                 tribute_total_supply: tribute.total_supply.read().unwrap(),
                 carry_over: outbe_promislimit::PromisLimitContract::new(storage)
                     .get_total_unallocated()
@@ -466,14 +466,14 @@ fn seed_owner_targets(storage: StorageHandle<'_>, seed_targets: bool) {
         totals.initialized = true;
         totals.is_sealed = true;
         totals.tribute_count = 2;
-        totals.tribute_nominal_amount = U256::from(1_000);
+        totals.tribute_nominal_total_minor = U256::from(1_000);
         tribute.day_totals.create(&totals).unwrap();
         let mut admission = DayPreAdmission::with_key(TEST_WWD);
         admission.initialized = true;
         admission.is_sealed = true;
         admission.sealed_collection_root = hash(31);
         admission.sealed_tribute_count = 2;
-        admission.sealed_tribute_nominal_amount = U256::from(1_000);
+        admission.sealed_tribute_nominal_total_minor = U256::from(1_000);
         admission.source_generation = 0;
         tribute.day_pre_admission.create(&admission).unwrap();
     }
@@ -505,7 +505,7 @@ fn seed_requested_job(
             lookback_end: 3,
             offering_end: 4,
             scheduled_process_time: 5,
-            metadosis_limit_amount: U256::from(100),
+            metadosis_limit_minor: U256::from(100),
             previous_vwap: U256::from(8),
             current_vwap: U256::from(10),
         })

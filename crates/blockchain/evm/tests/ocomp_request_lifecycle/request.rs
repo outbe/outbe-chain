@@ -157,7 +157,7 @@ pub(super) fn open_voting_with_pre_open_state() -> (VotingOpenScenario, PreOpenS
     );
     assert_eq!(accumulation.data.date, expected_cycle_day);
     assert!(
-        !accumulation.data.dayMetadosisLimitAmount.is_zero(),
+        !accumulation.data.metadosisLimitMinor.is_zero(),
         "production CycleTick must route a non-zero allocation"
     );
     let terminal_receipt = receipts.last().expect("terminal request receipt");
@@ -271,7 +271,7 @@ pub(super) fn open_voting_with_pre_open_state() -> (VotingOpenScenario, PreOpenS
         let base_limit = outbe_metadosis::api::worldwide_day(storage.clone(), prepared.wwd)
             .unwrap()
             .unwrap()
-            .metadosis_limit_amount;
+            .metadosis_limit_minor;
         // The effective ceiling is the day's own emission plus what it drew from the accumulator.
         assert_eq!(
             frozen.day_limit,
@@ -341,7 +341,7 @@ pub(super) fn open_voting_with_pre_open_state() -> (VotingOpenScenario, PreOpenS
         assert_eq!(tribute.total_supply().unwrap(), 1);
         let totals = tribute.get_day_totals(prepared.wwd).unwrap();
         assert_eq!(totals.tribute_count, 1);
-        assert_eq!(totals.tribute_nominal_amount, prepared.nominal);
+        assert_eq!(totals.tribute_nominal_total_minor, prepared.nominal);
     });
 
     let request_hash = payload.block().hash();

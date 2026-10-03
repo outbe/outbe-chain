@@ -70,7 +70,7 @@ impl TributeContract<'_> {
         if !totals.initialized
             || !totals.is_sealed
             || totals.tribute_count != verified_count
-            || totals.tribute_nominal_amount != verified_nominal
+            || totals.tribute_nominal_total_minor != verified_nominal
         {
             return Err(
                 outbe_primitives::error::PrecompileError::BodyReadCorruption(
@@ -89,7 +89,7 @@ impl TributeContract<'_> {
             })?;
         self.total_supply.write(supply)?;
         totals.tribute_count = 0;
-        totals.tribute_nominal_amount = alloy_primitives::U256::ZERO;
+        totals.tribute_nominal_total_minor = alloy_primitives::U256::ZERO;
         self.store_day_totals(&totals)
     }
 
@@ -129,7 +129,7 @@ impl TributeContract<'_> {
             if !totals.initialized
                 || !totals.is_sealed
                 || totals.tribute_count != 0
-                || !totals.tribute_nominal_amount.is_zero()
+                || !totals.tribute_nominal_total_minor.is_zero()
             {
                 return Err(
                     outbe_primitives::error::PrecompileError::BodyReadCorruption(
@@ -191,7 +191,8 @@ impl TributeContract<'_> {
             if admission.is_sealed {
                 if admission.sealed_collection_root != sealed_root
                     || admission.sealed_tribute_count != totals.tribute_count
-                    || admission.sealed_tribute_nominal_amount != totals.tribute_nominal_amount
+                    || admission.sealed_tribute_nominal_total_minor
+                        != totals.tribute_nominal_total_minor
                 {
                     return Err(
                         outbe_primitives::error::PrecompileError::BodyReadCorruption(
@@ -205,11 +206,11 @@ impl TributeContract<'_> {
                 admission.is_sealed = true;
                 admission.sealed_collection_root = sealed_root;
                 admission.sealed_tribute_count = totals.tribute_count;
-                admission.sealed_tribute_nominal_amount = totals.tribute_nominal_amount;
+                admission.sealed_tribute_nominal_total_minor = totals.tribute_nominal_total_minor;
             }
 
             let forfeited_count = totals.tribute_count;
-            let forfeited_nominal = totals.tribute_nominal_amount;
+            let forfeited_nominal = totals.tribute_nominal_total_minor;
             let supply = self
                 .total_supply
                 .read()?
@@ -221,7 +222,7 @@ impl TributeContract<'_> {
                 })?;
             self.total_supply.write(supply)?;
             totals.tribute_count = 0;
-            totals.tribute_nominal_amount = U256::ZERO;
+            totals.tribute_nominal_total_minor = U256::ZERO;
             self.store_day_totals(&totals)?;
 
             let retirement_outcome = self.retire_completed_partition_inner(scope, day)?;
@@ -276,7 +277,7 @@ impl TributeContract<'_> {
         if !totals.initialized
             || !totals.is_sealed
             || totals.tribute_count != 0
-            || !totals.tribute_nominal_amount.is_zero()
+            || !totals.tribute_nominal_total_minor.is_zero()
         {
             return Err(outbe_primitives::error::PrecompileError::Revert(
                 "Tribute WWD is not completed and empty".into(),
@@ -501,7 +502,7 @@ impl TributeContract<'_> {
             admission.is_sealed = true;
             admission.sealed_collection_root = sealed_collection_root;
             admission.sealed_tribute_count = totals.tribute_count;
-            admission.sealed_tribute_nominal_amount = totals.tribute_nominal_amount;
+            admission.sealed_tribute_nominal_total_minor = totals.tribute_nominal_total_minor;
             self.store_day_pre_admission(&admission)?;
             self.pre_admission_projection(day)
         })

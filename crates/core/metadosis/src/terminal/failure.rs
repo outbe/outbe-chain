@@ -42,7 +42,7 @@ pub(crate) fn fail_worldwide_day(
     let limits = poc_schema_limits();
     let unused_limit = metadosis
         .request_limit_receipt(worldwide_day, &limits)?
-        .map_or(current.metadosis_limit_amount, |receipt| {
+        .map_or(current.metadosis_limit_minor, |receipt| {
             receipt.lysis_limit_minor
         });
 
@@ -184,13 +184,13 @@ fn failed_day_event(
     } = *settlement;
     IMetadosis::MetadosisExecuted {
         worldwideDay: worldwide_day.into(),
-        tributeTotals: forfeited_nominal,
-        dayGratisDemand: U256::ZERO,
-        dayGratisLimit: U256::ZERO,
+        tributeNominalTotalMinor: forfeited_nominal,
+        gratisDemandMinor: U256::ZERO,
+        dayGratisLimitMinor: U256::ZERO,
         lysisLimitMinor: U256::ZERO,
         unusedLysisLimitMinor: U256::ZERO,
         lysisAllocationMinor: U256::ZERO,
-        dayMetadosisLimitRemainder: unused_limit,
+        promisLimitReturnedMinor: unused_limit,
         status: "FAILED".into(),
         blockNumber: block_number,
     }

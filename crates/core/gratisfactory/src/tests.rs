@@ -152,7 +152,7 @@ fn mine_coen_burns_gratis_mints_native_and_records_sale_cohort() {
         // mineCoen burns gratis (op = Burn) at op-nonce 1.
         let call = Bytes::from(
             IGratisFactory::IGratisFactoryCalls::mineCoen(IGratisFactory::mineCoenCall {
-                amount,
+                gratisMinor: amount,
                 mac: FixedBytes(auth(GratisOp::Burn, alice(), amount, 1).mac),
                 opNonce: 1,
             })
@@ -190,7 +190,7 @@ fn mine_coen_rejects_insufficient_balance() {
         let amount = U256::from(200u64);
         let call = Bytes::from(
             IGratisFactory::IGratisFactoryCalls::mineCoen(IGratisFactory::mineCoenCall {
-                amount,
+                gratisMinor: amount,
                 mac: FixedBytes(auth(GratisOp::Burn, alice(), amount, 1).mac),
                 opNonce: 1,
             })
@@ -242,7 +242,7 @@ fn rejects_msg_value() {
     StorageHandle::enter(&mut storage, |storage| {
         let call = Bytes::from(
             IGratisFactory::IGratisFactoryCalls::pledgeGratis(IGratisFactory::pledgeGratisCall {
-                amount: U256::from(1u64),
+                gratisMinor: U256::from(1u64),
                 auth: IGratisFactory::ModifyAuth {
                     mac: FixedBytes([0u8; 32]),
                     opNonce: 0,

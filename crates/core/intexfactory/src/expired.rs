@@ -190,7 +190,7 @@ fn expire_group(
                 crate::precompile::IIntexFactory::SeriesExpired {
                     seriesId: series_id.into(),
                     forfeitedUnits: forfeited.units,
-                    returnedPromis: returned,
+                    returnedPromisMinor: returned,
                 },
             )?;
             Ok(returned)

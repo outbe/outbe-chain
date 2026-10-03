@@ -681,7 +681,7 @@ fn capacity_forfeiture_cycle_tick_keeps_twenty_percent_block_headroom() {
                         worldwide_day: victim,
                         initialized: true,
                         tribute_count: u32::MAX,
-                        tribute_nominal_amount: U256::MAX,
+                        tribute_nominal_total_minor: U256::MAX,
                         is_sealed: true,
                     })
                     .unwrap();
@@ -817,7 +817,7 @@ fn capacity_forfeiture_cycle_tick_keeps_twenty_percent_block_headroom() {
             })
             .expect("typed capacity-forfeiture event");
         assert_eq!(capacity_log.forfeitedTributeCount, u32::MAX);
-        assert_eq!(capacity_log.forfeitedTributeNominal, U256::MAX);
+        assert_eq!(capacity_log.forfeitedTributeNominalMinor, U256::MAX);
         assert_eq!(capacity_log.retirementOutcome, 2);
         let receipt = executor.receipts()[cycle_receipt_index].clone();
         drop(executor);
