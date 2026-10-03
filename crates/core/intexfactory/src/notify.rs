@@ -4,7 +4,11 @@ use alloy_primitives::U256;
 use outbe_intex::SeriesId;
 use outbe_primitives::storage::types::Storable;
 use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::StorageHandle};
+use outbe_primitives::{
+    block::BlockRuntimeContext,
+    error::{Result, SweepFailure},
+    storage::StorageHandle,
+};
 
 use crate::constants::{MAX_ROUTER_CALLS_PER_FIRING, MAX_SERIES_PER_MARK};
 use crate::schema::IntexFactoryContract;
@@ -104,19 +108,21 @@ fn drain_called_run(
         factory.notify_at.clear(&slot)?;
     }
     *messages = messages.saturating_add(router_calls(run.len()));
-    // Best-effort: a batch that cannot be sent is dropped, never left to wedge the
-    // drain and with it the whole cycle trigger.
-    if let Err(error) = storage
+    // Best-effort: a batch the router refuses is dropped, never left to wedge the drain and
+    // with it the whole cycle trigger. A node-local failure fails the block instead.
+    match storage
         .with_checkpoint(|| crate::called::notify_called(storage, worldwide_day, called_at, &run))
     {
-        tracing::warn!(
+        Ok(()) => {}
+        Err(error) if error.sweep_failure() == SweepFailure::Propagate => return Err(error),
+        Err(error) => tracing::warn!(
             target: "outbe::intexfactory",
             worldwide_day = worldwide_day.value(),
             called_at,
             series = ?run.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
             error = ?error,
             "called notice: dropping"
-        );
+        ),
     }
     Ok(index - at)
 }

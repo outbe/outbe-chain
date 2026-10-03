@@ -297,3 +297,61 @@ fn a_node_local_failure_while_draining_parked_proceeds_fails_the_sweep() {
         assert_eq!(factory.parked_proceeds_cursor.read().unwrap(), 1);
     });
 }
+
+fn drain_notices_in_trigger(
+    provider: &mut super::router_fault::RouterFaultProvider,
+) -> outbe_primitives::error::Result<()> {
+    StorageHandle::enter(provider, |s| {
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, ISSUED_AT as u64, CHAIN_ID),
+            s.clone(),
+        );
+        // The cycle runtime runs each trigger inside its own checkpoint.
+        s.with_checkpoint(|| crate::notify::drain_notices(&ctx))
+    })
+}
+
+#[test]
+fn a_node_local_failure_inside_the_called_notice_send_fails_the_drain() {
+    use super::router_fault::RouterFaultProvider;
+    use crate::notify::{enqueue_notice, pack_called_notice};
+    use crate::sol_ext::IOriginRouter;
+
+    let mut provider = RouterFaultProvider::new(
+        factory_provider(),
+        IOriginRouter::sendMarkCalledCall::SELECTOR,
+    );
+    let queued = [
+        pack_called_notice(sid(7), ISSUED_AT),
+        pack_called_notice(sid(8), ISSUED_AT),
+    ];
+    StorageHandle::enter(&mut provider, |s| {
+        let mut factory = IntexFactoryContract::new(s);
+        for entry in queued {
+            enqueue_notice(&mut factory, entry).unwrap();
+        }
+    });
+    let queue = |provider: &mut RouterFaultProvider| {
+        StorageHandle::enter(provider, |s| {
+            let factory = IntexFactoryContract::new(s);
+            (
+                factory.notify_head.read().unwrap(),
+                factory.notify_tail.read().unwrap(),
+                [0, 1].map(|index| factory.notify_at.read(&index).unwrap()),
+            )
+        })
+    };
+
+    let result = drain_notices_in_trigger(&mut provider);
+    assert!(matches!(
+        result,
+        Err(outbe_primitives::error::PrecompileError::SubCall(
+            outbe_primitives::storage::SubCallError::DatabaseError(_)
+        ))
+    ));
+    assert_eq!(queue(&mut provider), (0, 2, queued));
+
+    provider.heal();
+    drain_notices_in_trigger(&mut provider).unwrap();
+    assert_eq!(queue(&mut provider), (0, 0, [U256::ZERO; 2]));
+}

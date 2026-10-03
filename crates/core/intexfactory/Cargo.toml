@@ -25,6 +25,7 @@ tracing.workspace = true
 outbe-intex = { workspace = true, features = ["test-utils"] }
 outbe-paynote = { workspace = true, features = ["test-utils"] }
 outbe-protocol.workspace = true
+revm.workspace = true
 serde_json.workspace = true
 
 [lints]
