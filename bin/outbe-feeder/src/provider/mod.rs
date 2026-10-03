@@ -1,9 +1,10 @@
 //! Price provider trait and implementations.
 
+pub mod aggregator_v3;
 pub mod binance;
-pub mod chainlink;
 pub mod coinbase;
 pub(crate) mod dex;
+pub(crate) mod evm_rpc;
 pub mod gate;
 pub mod huobi;
 pub mod kraken;
@@ -12,6 +13,8 @@ pub mod mock;
 pub mod mock_http;
 pub mod okx;
 pub mod pyth;
+#[cfg(test)]
+pub(crate) mod test_server;
 mod websocket;
 
 use eyre::{eyre, Result};
@@ -197,7 +200,6 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
                 Box::new(mock_http::MockHttpProvider::new(endpoint)?)
             }
             "pyth" => Box::new(pyth::PythProvider::new()?),
-            "chainlink" => Box::new(chainlink::ChainlinkProvider::new()?),
             "binance" => Box::new(binance::BinanceProvider::new()?),
             "kraken" => Box::new(kraken::KrakenProvider::new()?),
             "okx" => Box::new(okx::OkxProvider::new()?),
@@ -213,8 +215,15 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
                     .ok_or_else(|| eyre!("provider {name} requires a [[dex_providers]] entry"))?,
             )?),
             other => {
-                tracing::warn!(provider = other, "unknown provider, skipping");
-                continue;
+                let Some(section) = config
+                    .aggregator_v3_providers
+                    .iter()
+                    .find(|section| section.name == other)
+                else {
+                    tracing::warn!(provider = other, "unknown provider, skipping");
+                    continue;
+                };
+                Box::new(aggregator_v3::AggregatorV3Provider::new(section)?)
             }
         };
         let configured_pairs = config

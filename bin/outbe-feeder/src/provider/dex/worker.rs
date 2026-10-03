@@ -12,8 +12,8 @@ use super::{
     config::{DexMarketConfig, DexProviderConfig},
     math,
     pool::Decimals,
-    rpc::{quantity, Block, Rpc},
 };
+use crate::provider::evm_rpc::{quantity, Block, Rpc};
 use crate::provider::{Provider, TickerPrice};
 
 /// Rolling swap-volume window. One hour matches the exchange providers'
@@ -183,7 +183,7 @@ impl MarketWorker {
             head,
             TickerPrice {
                 price,
-                volume: math::base_volume(raw, decimals.base)?,
+                volume: math::scale_fp18(raw, decimals.base)?,
             },
         ))
     }

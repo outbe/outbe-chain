@@ -5,9 +5,10 @@ use crate::fixed::FixedValue;
 
 use super::{
     config::{DexMarketConfig, DexProviderConfig, PoolConfig},
-    rpc::{Log, Rpc},
     worker::{DexProvider, MarketWorker},
 };
+use crate::provider::evm_rpc::{quantity, Log, Rpc};
+use crate::provider::test_server;
 use crate::{config::FeederConfig, provider::Provider};
 use alloy_primitives::{
     aliases::{I24, U112, U160, U24},
@@ -20,11 +21,6 @@ use std::sync::{
     Arc, Mutex,
 };
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpListener,
-    task::JoinHandle,
-};
 
 fn fp(value: &str) -> FixedValue {
     FixedValue::parse(value).unwrap()
@@ -41,14 +37,14 @@ fn raw_rate_orientation_decimals_and_limits() {
         fp("0.333333333333333333")
     );
     assert_eq!(
-        math::base_volume(U256::from(2_000_000u64), 6).unwrap(),
+        math::scale_fp18(U256::from(2_000_000u64), 6).unwrap(),
         fp("2")
     );
-    assert_eq!(math::base_volume(U256::ZERO, 18).unwrap(), fp("0"));
+    assert_eq!(math::scale_fp18(U256::ZERO, 18).unwrap(), fp("0"));
     assert!(math::rate(U512::ZERO, base, 18, 6).is_err());
     assert!(math::rate(quote, U512::ZERO, 18, 6).is_err());
     assert!(math::rate(U512::MAX, U512::ONE, 18, 6).is_err());
-    assert!(math::base_volume(U256::MAX, 0).is_err());
+    assert!(math::scale_fp18(U256::MAX, 0).is_err());
     assert!(math::rate(quote, base, 78, 6).is_err());
     // Largest uint160 square requires 320 bits, beyond U256.
     let sqrt = (U512::ONE << 160) - U512::ONE;
@@ -264,7 +260,7 @@ impl Fixture {
                 let number = if tag == "finalized" {
                     self.head.load(Ordering::Relaxed)
                 } else {
-                    super::rpc::quantity(tag).unwrap()
+                    quantity(tag).unwrap()
                 };
                 self.block(number)
             }
@@ -319,8 +315,8 @@ impl Fixture {
                 json!(Bytes::from(output))
             }
             "eth_getLogs" => {
-                let from = super::rpc::quantity(params[0]["fromBlock"].as_str().unwrap()).unwrap();
-                let to = super::rpc::quantity(params[0]["toBlock"].as_str().unwrap()).unwrap();
+                let from = quantity(params[0]["fromBlock"].as_str().unwrap()).unwrap();
+                let to = quantity(params[0]["toBlock"].as_str().unwrap()).unwrap();
                 assert!(to <= self.head.load(Ordering::Relaxed));
                 assert_eq!(
                     params[0]["topics"],
@@ -352,22 +348,13 @@ impl Fixture {
 }
 
 struct Server {
-    task: JoinHandle<()>,
-    endpoint: String,
+    inner: test_server::Server,
     fixture: Arc<Fixture>,
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
 }
 
 impl Server {
     async fn start(market: DexMarketConfig) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let endpoint = format!("http://{}", listener.local_addr().unwrap());
-        let config = dex_config(market.clone(), endpoint.clone());
+        let config = dex_config(market.clone(), String::from("http://placeholder"));
         let fixture = Arc::new(Fixture {
             market,
             now: SystemTime::now()
@@ -386,55 +373,15 @@ impl Server {
             calls: Mutex::new(vec![]),
         });
         let state = Arc::clone(&fixture);
-        let task = tokio::spawn(async move {
-            loop {
-                let (mut stream, _) = listener.accept().await.unwrap();
-                // Sequential handling is sufficient: each worker awaits its RPC.
-                let mut request = Vec::new();
-                let (header_end, length) = loop {
-                    let mut chunk = [0u8; 4096];
-                    let count = stream.read(&mut chunk).await.unwrap();
-                    if count == 0 {
-                        return;
-                    }
-                    request.extend_from_slice(&chunk[..count]);
-                    if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
-                        let headers = String::from_utf8_lossy(&request[..end]).to_lowercase();
-                        let length = headers
-                            .lines()
-                            .find_map(|s| s.strip_prefix("content-length:"))
-                            .unwrap()
-                            .trim()
-                            .parse::<usize>()
-                            .unwrap();
-                        break (end + 4, length);
-                    }
-                };
-                while request.len() < header_end + length {
-                    let mut chunk = [0u8; 4096];
-                    let count = stream.read(&mut chunk).await.unwrap();
-                    assert_ne!(count, 0);
-                    request.extend_from_slice(&chunk[..count]);
-                }
-                let request: Value =
-                    serde_json::from_slice(&request[header_end..header_end + length]).unwrap();
-                let body = state.response(&request).to_string();
-                let response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
-                let _ = stream.write_all(response.as_bytes()).await;
-            }
-        });
-        Self {
-            task,
-            endpoint,
-            fixture,
-        }
+        let inner = test_server::start(Arc::new(move |request| state.response(request))).await;
+        Self { inner, fixture }
     }
 
     fn worker(&self) -> MarketWorker {
         MarketWorker::new(
-            dex_config(self.fixture.market.clone(), self.endpoint.clone()),
+            dex_config(self.fixture.market.clone(), self.inner.endpoint.clone()),
             self.fixture.market.clone(),
-            Rpc::new(&self.endpoint).unwrap(),
+            Rpc::new(&self.inner.endpoint).unwrap(),
         )
     }
 }
@@ -632,11 +579,11 @@ async fn dex_ticker_flows_through_existing_feeder_as_coen_usd() {
     .unwrap();
     config.dex_providers.push(dex_config(
         server.fixture.market.clone(),
-        server.endpoint.clone(),
+        server.inner.endpoint.clone(),
     ));
     config.dex_providers.push(dex_config(
         pancake.fixture.market.clone(),
-        pancake.endpoint.clone(),
+        pancake.inner.endpoint.clone(),
     ));
     config.currency_pairs[0]
         .sources
