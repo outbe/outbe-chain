@@ -135,6 +135,10 @@ fn a_nod_floor_is_its_entry_marked_up_and_rounded_down() {
         Some(U256::from(2_160_000u64))
     );
     assert_eq!(
+        NodContract::floor_price_minor(U256::from(1_000_001u64)),
+        Some(U256::from(1_080_001u64))
+    );
+    assert_eq!(
         NodContract::floor_price_minor(U256::from(999u64)),
         Some(U256::from(1_078u64))
     );

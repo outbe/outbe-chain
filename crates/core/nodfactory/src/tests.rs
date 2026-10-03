@@ -549,6 +549,34 @@ fn invalid_and_duplicate_issuance_leave_one_canonical_item() {
         .is_some());
 }
 
+/// A01: an entry past the issuable bound is refused before anything is written.
+#[test]
+fn direct_issuance_beyond_the_issuable_entry_writes_nothing() {
+    let mut world = World::new();
+    let mut input = params(Address::repeat_byte(0x2E));
+    input.entry_price_minor = U256::MAX / U256::from(100 + u32::from(u16::MAX)) + U256::from(1);
+    assert!(!NodContract::is_issuable_entry(input.entry_price_minor));
+    let storage_before = world.provider.storage.clone();
+    let events_before = world.provider.get_ordered_events().len();
+
+    let error = world
+        .enter(|storage, scope, parent| api::issue_nod(&storage, scope, parent, &input))
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        PrecompileError::Revert(ref reason)
+            if reason == &NodFactoryError::EntryPriceOutOfBounds.to_string()
+    ));
+    assert_eq!(world.provider.storage, storage_before);
+    assert_eq!(world.provider.get_ordered_events().len(), events_before);
+    let nod_id = NodContract::generate_nod_id(input.owner, input.worldwide_day).unwrap();
+    assert!(world
+        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+        .unwrap()
+        .is_none());
+}
+
 #[test]
 fn failed_authorization_preserves_the_loaded_nod() {
     let mut world = World::new();
