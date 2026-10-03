@@ -286,23 +286,10 @@ fn apply_pre_execution_changes_emits_cycle_tick_event_in_system_receipt() {
 
     let signer = test_evm_signer();
     let proposer = signer.address();
-    let emission_trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
     let mut state =
         state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
-            let genesis_ctx = BlockRuntimeContext::new(
-                BlockContext::new(0, GENESIS_TS, CHAIN_ID, proposer, vec![proposer]),
-                storage.clone(),
-            );
-            outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx).unwrap();
-            let cycle = outbe_cycle::schema::Cycle::new(storage);
-            cycle
-                .active_utc_day
-                .write(outbe_primitives::time::timestamp_to_date_key(GENESIS_TS))
-                .unwrap();
-            cycle
-                .last_executed_at
-                .write(&emission_trigger, GENESIS_TS + 60)
-                .unwrap();
+            seed_cycle_tick_genesis(storage, GENESIS_TS, proposer)
+                .expect("cycle-tick genesis fixture");
         });
     let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
     let block_timestamp = GENESIS_TS + SECONDS_PER_DAY + 60;
@@ -350,23 +337,10 @@ fn cycle_tick_utc_boundary_gas_usage() {
 
     let signer = test_evm_signer();
     let proposer = signer.address();
-    let emission_trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
     let mut state =
         state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
-            let genesis_ctx = BlockRuntimeContext::new(
-                BlockContext::new(0, GENESIS_TS, CHAIN_ID, proposer, vec![proposer]),
-                storage.clone(),
-            );
-            outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx).unwrap();
-            let cycle = outbe_cycle::schema::Cycle::new(storage);
-            cycle
-                .active_utc_day
-                .write(outbe_primitives::time::timestamp_to_date_key(GENESIS_TS))
-                .unwrap();
-            cycle
-                .last_executed_at
-                .write(&emission_trigger, GENESIS_TS + 60)
-                .unwrap();
+            seed_cycle_tick_genesis(storage, GENESIS_TS, proposer)
+                .expect("cycle-tick genesis fixture");
         });
     let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
     let block_timestamp = GENESIS_TS + SECONDS_PER_DAY + 60;
@@ -541,31 +515,10 @@ fn tee_expiry_worst_case_active_sweep_fits_cycle_tick_budget() {
 
 #[test]
 fn capacity_forfeiture_cycle_tick_keeps_twenty_percent_block_headroom() {
-    use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
-
     const BLOCK_GAS_LIMIT: u64 = 30_000_000;
     const REQUIRED_HEADROOM_BPS: u64 = 2_000;
     const BPS_DENOMINATOR: u64 = 10_000;
     const SECONDS_PER_DAY: u64 = 86_400;
-
-    fn post_state_root(state: &revm::database::BundleState) -> B256 {
-        let sorted =
-            HashedPostState::from_bundle_state::<KeccakKeyHasher>(state.state()).into_sorted();
-        let storages = sorted.storages;
-        let accounts = sorted
-            .accounts
-            .into_iter()
-            .filter_map(|(address, account)| {
-                account.map(|account| {
-                    let storage = storages
-                        .get(&address)
-                        .map(|storage| storage.storage_slots.clone())
-                        .unwrap_or_default();
-                    (address, (account, storage))
-                })
-            });
-        state_root_prehashed(accounts)
-    }
 
     let run = || {
         let signer = test_evm_signer();

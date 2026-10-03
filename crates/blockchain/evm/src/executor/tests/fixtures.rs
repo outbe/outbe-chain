@@ -100,9 +100,7 @@ pub(super) fn numbered_test_address(prefix: u8, n: u64) -> Address {
 }
 
 pub(super) fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
-    use outbe_primitives::tee_test_utils::{
-        gramine_direct_policy_v1, tee_attestation_v1_extra_field,
-    };
+    use outbe_primitives::tee_test_utils::{gramine_direct_policy_v1, tee_attestation_v1_extra_field};
 
     let mut spec = MAINNET.as_ref().clone();
     spec.chain = CHAIN_ID.into();
@@ -1031,4 +1029,45 @@ pub(super) fn executor_inputs_from_ctx(
             evm_signer,
         },
     }
+}
+
+/// Independent trie-root projection of the executed test bundle.
+pub(super) fn post_state_root(state: &revm::database::BundleState) -> B256 {
+    use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
+
+    let sorted = HashedPostState::from_bundle_state::<KeccakKeyHasher>(state.state()).into_sorted();
+    let storages = sorted.storages;
+    let accounts = sorted
+        .accounts
+        .into_iter()
+        .filter_map(|(address, account)| {
+            account.map(|account| {
+                let storage = storages
+                    .get(&address)
+                    .map(|storage| storage.storage_slots.clone())
+                    .unwrap_or_default();
+                (address, (account, storage))
+            })
+        });
+    state_root_prehashed(accounts)
+}
+
+/// Establish the genesis reward anchor and UTC boundary baseline for cycle-tick tests.
+pub(super) fn seed_cycle_tick_genesis(
+    storage: StorageHandle<'_>,
+    genesis_ts: u64,
+    proposer: Address,
+) -> outbe_primitives::error::Result<()> {
+    let genesis_ctx = BlockRuntimeContext::new(
+        BlockContext::new(0, genesis_ts, CHAIN_ID, proposer, vec![proposer]),
+        storage.clone(),
+    );
+    outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx)?;
+    let cycle = outbe_cycle::schema::Cycle::new(storage);
+    cycle
+        .active_utc_day
+        .write(outbe_primitives::time::timestamp_to_date_key(genesis_ts))?;
+    let trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
+    cycle.last_executed_at.write(&trigger, genesis_ts + 60)?;
+    Ok(())
 }

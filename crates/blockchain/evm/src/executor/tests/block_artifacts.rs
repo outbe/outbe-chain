@@ -90,7 +90,6 @@ fn pending_rpc_context_opens_ce_scope_but_skips_consensus_hooks() {
 #[test]
 fn outbe_post_execution_preserves_behavior_for_absent_or_empty_withdrawals() {
     use alloy_eips::eip6110::{DEPOSIT_REQUEST_TYPE, MAINNET_DEPOSIT_CONTRACT_ADDRESS};
-    use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
 
     const DAO_BALANCE: u128 = 37;
     const CUMULATIVE_TX_GAS: u64 = 11;
@@ -142,25 +141,6 @@ fn outbe_post_execution_preserves_behavior_for_absent_or_empty_withdrawals() {
             .with_database(database)
             .with_bundle_update()
             .build()
-    }
-
-    fn post_state_root(state: &revm::database::BundleState) -> B256 {
-        let sorted =
-            HashedPostState::from_bundle_state::<KeccakKeyHasher>(state.state()).into_sorted();
-        let storages = sorted.storages;
-        let accounts = sorted
-            .accounts
-            .into_iter()
-            .filter_map(|(address, account)| {
-                account.map(|account| {
-                    let storage = storages
-                        .get(&address)
-                        .map(|storage| storage.storage_slots.clone())
-                        .unwrap_or_default();
-                    (address, (account, storage))
-                })
-            });
-        state_root_prehashed(accounts)
     }
 
     fn balance(state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>, address: Address) -> U256 {
@@ -406,27 +386,6 @@ fn non_empty_withdrawal_rejects_before_any_state_write() {
 
 #[test]
 fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifacts() {
-    use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
-
-    fn post_state_root(state: &revm::database::BundleState) -> B256 {
-        let sorted =
-            HashedPostState::from_bundle_state::<KeccakKeyHasher>(state.state()).into_sorted();
-        let storages = sorted.storages;
-        let accounts = sorted
-            .accounts
-            .into_iter()
-            .filter_map(|(address, account)| {
-                account.map(|account| {
-                    let storage = storages
-                        .get(&address)
-                        .map(|storage| storage.storage_slots.clone())
-                        .unwrap_or_default();
-                    (address, (account, storage))
-                })
-            });
-        state_root_prehashed(accounts)
-    }
-
     let run = |replay: bool| {
         let signer = test_evm_signer();
         let proposer = signer.address();
@@ -1289,27 +1248,6 @@ fn factory_boundaries_are_byte_equal_across_proposer_and_validator_execution() {
 
 #[test]
 fn independent_body_stores_produce_identical_full_block_state_receipts_and_balances() {
-    use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
-
-    fn post_state_root(state: &revm::database::BundleState) -> B256 {
-        let sorted =
-            HashedPostState::from_bundle_state::<KeccakKeyHasher>(state.state()).into_sorted();
-        let storages = sorted.storages;
-        let accounts = sorted
-            .accounts
-            .into_iter()
-            .filter_map(|(address, account)| {
-                account.map(|account| {
-                    let storage = storages
-                        .get(&address)
-                        .map(|storage| storage.storage_slots.clone())
-                        .unwrap_or_default();
-                    (address, (account, storage))
-                })
-            });
-        state_root_prehashed(accounts)
-    }
-
     let proposer = test_evm_signer().address();
     let worldwide_day = WorldwideDay::new(20_241_220);
     let floor_price_minor = U256::from(500_000u64);
@@ -1633,27 +1571,6 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
 
 #[test]
 fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
-    use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
-
-    fn post_state_root(state: &revm::database::BundleState) -> B256 {
-        let sorted =
-            HashedPostState::from_bundle_state::<KeccakKeyHasher>(state.state()).into_sorted();
-        let storages = sorted.storages;
-        let accounts = sorted
-            .accounts
-            .into_iter()
-            .filter_map(|(address, account)| {
-                account.map(|account| {
-                    let storage = storages
-                        .get(&address)
-                        .map(|storage| storage.storage_slots.clone())
-                        .unwrap_or_default();
-                    (address, (account, storage))
-                })
-            });
-        state_root_prehashed(accounts)
-    }
-
     let proposer = test_evm_signer().address();
     let day = WorldwideDay::new(20_260_716);
     let tribute_owner = Address::repeat_byte(0x31);
@@ -1663,6 +1580,31 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
     let nod_id = outbe_compressed_entities::derive_poseidon_entity_id(nod_owner, day).unwrap();
     let bucket_key = NodContract::bucket_key(day, U256::from(13), 978);
     let ctx = BlockContext::new(1, 1, CHAIN_ID, proposer, vec![proposer]);
+
+    let tribute_fixture = || TributeData {
+        tribute_id,
+        owner: tribute_owner,
+        worldwide_day: day,
+        issuance_amount_minor: U256::from(10),
+        issuance_currency: 840,
+        nominal_amount_minor: U256::from(11),
+        reference_currency: 978,
+        tribute_price_minor: U256::from(12),
+        exclude_from_intex_issuance: false,
+    };
+    let nod_fixture = || NodItemState {
+        is_settled: false,
+        nod_id,
+        owner: nod_owner,
+        gratis_load_minor: U256::from(1),
+        worldwide_day: day,
+        league_id: 2,
+        floor_price_minor: U256::from(13),
+        bucket_key,
+        issuance_currency: 840,
+        reference_currency: 978,
+        issued_at: 15,
+    };
 
     let run = || {
         let bodies = Arc::new(MemoryStorage::new());
@@ -1674,17 +1616,7 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
         let (changes, events) =
             super::run_atomic_storage_hooks(&mut state, ctx.clone(), |hook_ctx| {
                 outbe_compressed_entities::begin_block(hook_ctx.storage.clone(), &scope)?;
-                let tribute = TributeData {
-                    tribute_id,
-                    owner: tribute_owner,
-                    worldwide_day: day,
-                    issuance_amount_minor: U256::from(10),
-                    issuance_currency: 840,
-                    nominal_amount_minor: U256::from(11),
-                    reference_currency: 978,
-                    tribute_price_minor: U256::from(12),
-                    exclude_from_intex_issuance: false,
-                };
+                let tribute = tribute_fixture();
                 let mut tribute_contract = TributeContract::new(hook_ctx.storage.clone());
                 tribute_contract.unseal_day(day)?;
                 tribute_contract.issue(&scope, &tribute_reader, &tribute)?;
@@ -1692,19 +1624,7 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
                     &hook_ctx.storage,
                     &scope,
                     &nod_reader,
-                    &NodItemState {
-                        is_settled: false,
-                        nod_id,
-                        owner: nod_owner,
-                        gratis_load_minor: U256::from(1),
-                        worldwide_day: day,
-                        league_id: 2,
-                        floor_price_minor: U256::from(13),
-                        bucket_key,
-                        issuance_currency: 840,
-                        reference_currency: 978,
-                        issued_at: 15,
-                    },
+                    &nod_fixture(),
                     U256::from(16),
                 )?;
                 outbe_compressed_entities::end_block(hook_ctx.storage.clone(), &scope).map(|_| ())
@@ -1764,17 +1684,7 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
         state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |_| {});
     let error = super::run_atomic_storage_hooks(&mut failed_state, ctx.clone(), |hook_ctx| {
         outbe_compressed_entities::begin_block(hook_ctx.storage.clone(), &scope)?;
-        let tribute = TributeData {
-            tribute_id,
-            owner: tribute_owner,
-            worldwide_day: day,
-            issuance_amount_minor: U256::from(10),
-            issuance_currency: 840,
-            nominal_amount_minor: U256::from(11),
-            reference_currency: 978,
-            tribute_price_minor: U256::from(12),
-            exclude_from_intex_issuance: false,
-        };
+        let tribute = tribute_fixture();
         let mut tribute_contract = TributeContract::new(hook_ctx.storage.clone());
         tribute_contract.unseal_day(day)?;
         tribute_contract.issue(&scope, &tribute_reader, &tribute)?;
@@ -1782,19 +1692,7 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
             &hook_ctx.storage,
             &scope,
             &nod_reader,
-            &NodItemState {
-                is_settled: false,
-                nod_id,
-                owner: nod_owner,
-                gratis_load_minor: U256::from(1),
-                worldwide_day: day,
-                league_id: 2,
-                floor_price_minor: U256::from(13),
-                bucket_key,
-                issuance_currency: 840,
-                reference_currency: 978,
-                issued_at: 15,
-            },
+            &nod_fixture(),
             U256::from(16),
         )?;
         Err(outbe_primitives::error::PrecompileError::Fatal(
