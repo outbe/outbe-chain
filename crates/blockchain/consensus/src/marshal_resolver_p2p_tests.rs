@@ -45,7 +45,6 @@ use commonware_consensus::{
 use commonware_cryptography::{
     Signer as _,
     bls12381::{self, primitives::variant::MinSig},
-    certificate::Verifier as _,
 };
 use commonware_p2p::{
     Manager as _,
@@ -55,7 +54,6 @@ use commonware_parallel::Sequential;
 use commonware_runtime::{
     Clock as _, Quota, Runner as _, Supervisor as _, buffer::paged::CacheRef, deterministic,
 };
-use commonware_storage::archive::immutable;
 use commonware_utils::{
     NZU32, NZUsize, TryCollect as _,
     ordered::{Quorum as _, Set},
@@ -64,7 +62,7 @@ use commonware_utils::{
 use alloy_primitives::Bytes;
 use reth_ethereum::{Block, primitives::SealedBlock};
 
-use crate::test_fixtures::marshal::{MarshalArchiveFixture, MarshalArchiveKind};
+use crate::test_fixtures::marshal::MarshalArchiveFixture;
 
 use crate::block::ConsensusBlock;
 use crate::digest::Digest;
@@ -195,22 +193,10 @@ async fn start_marshal_node(
         write_buffer,
     };
 
-    let finalizations_archive = immutable::Archive::init(
-        context.child("marshal_finalizations"),
-        archive_fixture.config(
-            MarshalArchiveKind::Finalizations,
-            HybridScheme::<MinSig>::certificate_codec_config_unbounded(),
-        ),
-    )
-    .await
-    .expect("finalizations archive should initialize");
-
-    let blocks_archive = immutable::Archive::init(
-        context.child("marshal_blocks"),
-        archive_fixture.config(MarshalArchiveKind::Blocks, ()),
-    )
-    .await
-    .expect("blocks archive should initialize");
+    let (finalizations_archive, blocks_archive) = archive_fixture
+        .open(context)
+        .await
+        .expect("marshal archives should initialize");
 
     let (actor, mailbox, _height) = marshal::core::Actor::init(
         context.child("marshal"),
