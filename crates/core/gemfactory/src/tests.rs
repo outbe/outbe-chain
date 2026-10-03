@@ -1132,6 +1132,80 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
 }
 
 #[test]
+fn a_paynote_bound_to_an_earlier_snapshot_cannot_settle_after_rollover() {
+    let usd_rate = U256::from(2u64) * six_decimal_unit();
+    let mut provider = test_storage(Some(usd_rate));
+    let quote = |provider: &mut HashMapStorageProvider, gem_id| {
+        StorageHandle::enter(provider, |storage| {
+            runtime::quote_settlement(&storage, gem_id, STABLE_EUR).unwrap()
+        })
+    };
+    let gem_id = StorageHandle::enter(&mut provider, |storage| {
+        register_currency(&storage, 978, six_decimal_unit());
+        seed_day_vwap(&storage, 840, usd_rate);
+        let gem_id = issue_at_live_rate(
+            &storage,
+            ALICE,
+            GemTypes::Wallet,
+            U256::from(10u64) * six_decimal_unit(),
+            978,
+            840,
+        )
+        .unwrap();
+        seed_qualifying_day(&storage, gem_id);
+        gem_id
+    });
+    let (_, amount, quoted) = quote(&mut provider, gem_id);
+    let stale = outbe_paynote::test_support::note_and_spend_proof(
+        1,
+        STABLE_EUR,
+        gem_context(gem_id, quoted),
+        amount,
+        amount,
+    );
+    outbe_paynote::test_support::seed_pool(&mut provider, 1, &[stale.commitment]);
+
+    let cutoff = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
+        .unwrap()
+        .cutoff();
+    provider.set_timestamp(U256::from(cutoff + 3_600));
+    let (_, next_amount, required) = quote(&mut provider, gem_id);
+    assert_eq!(next_amount, amount, "the next window holds the same price");
+    let before = provider.storage.clone();
+    let rejected = StorageHandle::enter(&mut provider, |storage| {
+        runtime::settle_gem_with_paynote(&storage, BOB, gem_id, &stale.proof)
+    });
+    assert_eq!(
+        err_msg(rejected),
+        format!(
+            "{:?}",
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GemFactoryError::PayNoteContextMismatch {
+                    expected: gem_context(gem_id, required),
+                    actual: gem_context(gem_id, quoted),
+                }
+            )
+        )
+    );
+    assert_eq!(
+        provider.storage, before,
+        "the note and the gem are untouched"
+    );
+
+    let current = outbe_paynote::test_support::note_and_spend_proof(
+        1,
+        STABLE_EUR,
+        gem_context(gem_id, required),
+        amount,
+        amount,
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        runtime::settle_gem_with_paynote(&storage, BOB, gem_id, &current.proof).unwrap();
+    });
+    assert_eq!(settled_event(&provider).amountPaid, amount);
+}
+
+#[test]
 fn a_hundred_dollars_converts_to_ninety_euros_at_every_asset_scale() {
     let eur_8 = address!("0x00000000000000000000000000000000000000E8");
     let eur_18 = address!("0x00000000000000000000000000000000000000E9");
@@ -1396,6 +1470,72 @@ fn a_paynote_bound_to_another_gem_cannot_settle_this_one() {
         let item = gem_api::get_gem(&storage, gem_id).unwrap().unwrap();
         assert_eq!(item.state, GemState::Settled as u8);
         assert_eq!(item.owner, ALICE);
+    });
+}
+
+#[test]
+fn a_nod_bound_paynote_cannot_settle_the_gem_sharing_its_id() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    let mut provider = test_storage(Some(rate));
+    let (gem_id, cost, snapshot) = StorageHandle::enter(&mut provider, |storage| {
+        let gem_id = issue_at_live_rate(
+            &storage,
+            ALICE,
+            GemTypes::Wallet,
+            U256::from(10u64) * six_decimal_unit(),
+            840,
+            840,
+        )
+        .unwrap();
+        seed_qualifying_day(&storage, gem_id);
+        let (_, cost, snapshot) = runtime::quote_settlement(&storage, gem_id, STABLE).unwrap();
+        (gem_id, cost, snapshot)
+    });
+    let nod_context = outbe_paynote::api::settlement_context(
+        outbe_paynote::api::SettlementDomain::Nod,
+        B256::from(gem_id),
+        U256::ONE,
+        snapshot,
+    )
+    .unwrap();
+    let nod_bound =
+        outbe_paynote::test_support::note_and_spend_proof(1, STABLE, nod_context, cost, cost);
+    outbe_paynote::test_support::seed_pool(&mut provider, 1, &[nod_bound.commitment]);
+    let before = provider.storage.clone();
+
+    let rejected = StorageHandle::enter(&mut provider, |storage| {
+        runtime::settle_gem_with_paynote(&storage, BOB, gem_id, &nod_bound.proof)
+    });
+    assert_eq!(
+        err_msg(rejected),
+        format!(
+            "{:?}",
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GemFactoryError::PayNoteContextMismatch {
+                    expected: gem_context(gem_id, snapshot),
+                    actual: nod_context,
+                }
+            )
+        )
+    );
+    assert_eq!(
+        provider.storage, before,
+        "the note and the gem are untouched"
+    );
+
+    let gem_bound = outbe_paynote::test_support::note_and_spend_proof(
+        1,
+        STABLE,
+        gem_context(gem_id, snapshot),
+        cost,
+        cost,
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        runtime::settle_gem_with_paynote(&storage, BOB, gem_id, &gem_bound.proof).unwrap();
+        assert_eq!(
+            gem_api::get_gem(&storage, gem_id).unwrap().unwrap().state,
+            GemState::Settled as u8
+        );
     });
 }
 
