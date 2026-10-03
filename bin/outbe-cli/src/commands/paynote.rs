@@ -446,7 +446,7 @@ fn private_dir(dir: &Path) -> Result<()> {
 }
 
 /// Immutable, durable publication: interruption leaves either no file or all of it.
-fn save_json(dir: &Path, name: &str, value: &impl Serialize) -> Result<PathBuf> {
+pub(super) fn save_json(dir: &Path, name: &str, value: &impl Serialize) -> Result<PathBuf> {
     private_dir(dir)?;
     let path = dir.join(name);
     let bytes = Zeroizing::new(serde_json::to_vec_pretty(value)?);

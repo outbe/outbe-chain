@@ -178,19 +178,19 @@ fn dispatch_local(
             hasLiquidity(c) => view(c, |c| runtime::has_liquidity(&storage, c.asset, c.amount)),
             reservationOf(c) => view(c, |c| {
                 let record = runtime::reservation_of(&storage, c.id)?;
-                Ok(IVaultRouter::LiquidityReservation {
-                    asset: record.asset,
-                    amount: record.amount,
-                    smartAccount: record.smart_account,
-                    cca: record.cca,
-                    vault: record.vault,
-                    expiresAt: record.expires_at,
-                })
+                Ok(record.into())
             }),
 
             // --- reservations ---
             reserveStables(c) => mutate(c, caller, |sender, c| {
-                runtime::reserve_stables(storage.clone(), sender, c.smartAccount, c.asset, c.amount)
+                runtime::reserve_stables(
+                    storage.clone(),
+                    sender,
+                    c.smartAccount,
+                    c.asset,
+                    c.amount,
+                    c.referenceCurrency,
+                )
             }),
             releaseReservation(c) => mutate(c, caller, |sender, c| {
                 if sender != outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS {

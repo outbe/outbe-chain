@@ -1,7 +1,7 @@
 //! Confidential Gratis token precompile (`0x1003`).
 //!
 //! A non-transferable, mineable/burnable balance ledger whose per-account
-//! balances and pledged amounts are **encrypted at rest**: the TEE enclave is the
+//! balances are **encrypted at rest**: the TEE enclave is the
 //! only party that decrypts them (and the account's view-key holder, client-side).
 //! Every write routes through the enclave - read the current ciphertext, apply the
 //! op inside SGX, store the returned ciphertext verbatim - mirroring the tribute
@@ -18,7 +18,10 @@
 //! - `schema` - encrypted storage layout for the [`Gratis`] facade.
 
 pub mod api;
+pub mod client;
+pub mod context;
 pub mod enclave_client;
+pub mod pledge;
 pub mod precompile;
 pub mod schema;
 
