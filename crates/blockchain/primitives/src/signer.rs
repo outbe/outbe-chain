@@ -10,8 +10,8 @@ use std::{
 };
 
 use alloy_consensus::{SignableTransaction as _, TxEip1559, TxLegacy};
-use alloy_primitives::{keccak256, Address, Signature};
-use k256::ecdsa::{signature::hazmat::PrehashSigner, SigningKey};
+use alloy_primitives::{Address, Signature, keccak256};
+use k256::ecdsa::{SigningKey, signature::hazmat::PrehashSigner};
 use reth_ethereum::TransactionSigned;
 use zeroize::Zeroizing;
 
@@ -149,40 +149,24 @@ impl OutbeEvmSigner {
     }
 
     pub fn sign_unsigned(&self, tx: TxLegacy) -> Result<TransactionSigned, SignerError> {
-        let signing_key = signing_key_from_bytes(&self.secret)?;
-        let hash = tx.signature_hash();
-        let (signature, recovery_id): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =
-            signing_key
-                .sign_prehash(hash.as_slice())
-                .map_err(|error| SignerError::SigningFailed(error.to_string()))?;
-
-        let signature_bytes = signature.to_bytes();
-        let bytes = signature_bytes.as_slice();
-        if bytes.len() != 64 {
-            return Err(SignerError::SignatureEncoding { len: bytes.len() });
-        }
-        let signature =
-            Signature::from_bytes_and_parity(bytes, recovery_id.to_byte() != 0).normalized_s();
+        let signature = self.transaction_signature(&tx)?;
         Ok(tx.into_signed(signature).into())
     }
 
     /// Signs the restricted EIP-1559 envelope used by validator result votes.
     pub fn sign_eip1559(&self, tx: TxEip1559) -> Result<TransactionSigned, SignerError> {
+        let signature = self.transaction_signature(&tx)?;
+        Ok(tx.into_signed(signature).into())
+    }
+
+    fn transaction_signature<T: alloy_consensus::SignableTransaction<Signature>>(
+        &self,
+        tx: &T,
+    ) -> Result<Signature, SignerError> {
         let signing_key = signing_key_from_bytes(&self.secret)?;
         let hash = tx.signature_hash();
-        let (signature, recovery_id): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =
-            signing_key
-                .sign_prehash(hash.as_slice())
-                .map_err(|error| SignerError::SigningFailed(error.to_string()))?;
-
-        let signature_bytes = signature.to_bytes();
-        let bytes = signature_bytes.as_slice();
-        if bytes.len() != 64 {
-            return Err(SignerError::SignatureEncoding { len: bytes.len() });
-        }
-        let signature =
-            Signature::from_bytes_and_parity(bytes, recovery_id.to_byte() != 0).normalized_s();
-        Ok(tx.into_signed(signature).into())
+        let bytes = sign_recoverable_hash(&signing_key, &hash)?;
+        Ok(Signature::from_bytes_and_parity(&bytes[..64], bytes[64] != 0).normalized_s())
     }
 
     /// Sign a raw 32-byte prehash, returning a recoverable secp256k1 signature in
@@ -192,21 +176,27 @@ impl OutbeEvmSigner {
     /// validator's EVM key.
     pub fn sign_hash(&self, hash: &alloy_primitives::B256) -> Result<[u8; 65], SignerError> {
         let signing_key = signing_key_from_bytes(&self.secret)?;
-        let (signature, recovery_id): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =
-            signing_key
-                .sign_prehash(hash.as_slice())
-                .map_err(|error| SignerError::SigningFailed(error.to_string()))?;
-        let sig_bytes = signature.to_bytes();
-        if sig_bytes.len() != 64 {
-            return Err(SignerError::SignatureEncoding {
-                len: sig_bytes.len(),
-            });
-        }
-        let mut out = [0u8; 65];
-        out[..64].copy_from_slice(sig_bytes.as_slice());
-        out[64] = recovery_id.to_byte();
-        Ok(out)
+        sign_recoverable_hash(&signing_key, hash)
     }
+}
+
+fn sign_recoverable_hash(
+    signing_key: &SigningKey,
+    hash: &alloy_primitives::B256,
+) -> Result<[u8; 65], SignerError> {
+    let (signature, recovery_id): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = signing_key
+        .sign_prehash(hash.as_slice())
+        .map_err(|error| SignerError::SigningFailed(error.to_string()))?;
+    let sig_bytes = signature.to_bytes();
+    if sig_bytes.len() != 64 {
+        return Err(SignerError::SignatureEncoding {
+            len: sig_bytes.len(),
+        });
+    }
+    let mut out = [0u8; 65];
+    out[..64].copy_from_slice(sig_bytes.as_slice());
+    out[64] = recovery_id.to_byte();
+    Ok(out)
 }
 
 pub type SharedOutbeEvmSigner = Arc<OutbeEvmSigner>;
@@ -323,12 +313,49 @@ fn ensure_safe_key_file_permissions(_path: &Path) -> Result<(), SignerError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system_tx::{build_unsigned_system_tx, SystemTxInputV2, SystemTxKind};
+    use crate::system_tx::{SystemTxInputV2, SystemTxKind, build_unsigned_system_tx};
     use alloy_consensus::Transaction as _;
-    use alloy_primitives::{address, Bytes, TxKind, U256};
+    use alloy_primitives::{Bytes, TxKind, U256, address};
     use reth_primitives_traits::SignedTransaction as _;
 
     const CHAIN_ID: u64 = 2026;
+    #[test]
+    fn raw_signature_matches_fixed_prehash_vector() {
+        let signer = OutbeEvmSigner::from_secret_bytes([1; 32]).unwrap();
+        let signature = signer
+            .sign_hash(&alloy_primitives::B256::with_last_byte(42))
+            .unwrap();
+        assert_eq!(
+            hex::encode(signature),
+            "85374ecb6e0ea7cb84429448bf06ca12ea17d9ff80d8fe910f25f2f4fead5b3442c30ba1656842a610ff1da4bf1823604bf15d3493b9043af65b7dced9bbed4400"
+        );
+    }
+
+    #[test]
+    fn eip1559_signature_matches_fixed_transaction_vector() {
+        let signer = OutbeEvmSigner::from_secret_bytes([1; 32]).unwrap();
+        let tx = TxEip1559 {
+            chain_id: 2026,
+            nonce: 7,
+            gas_limit: 21000,
+            max_fee_per_gas: 42,
+            max_priority_fee_per_gas: 1,
+            to: TxKind::Call(Address::repeat_byte(9)),
+            value: U256::from(3),
+            input: Bytes::from_static(b"OCOMP"),
+            ..Default::default()
+        };
+        let signed = signer.sign_eip1559(tx).unwrap();
+        assert_eq!(
+            signed.hash().to_string(),
+            "0x0c8ad4662e428cce0650561d5f26c3e35a7629d730ef5ea37d64692fefdcc919"
+        );
+        assert_eq!(
+            signed.signature().to_string(),
+            "0x5d337ec1c2a263805fd0e7103530a1001b913fbbb60245427649ec1fea3af9fc673acb064b85220c02d3bd213b63d7ef4e21d827562c03e4a283190223668ada1c"
+        );
+        assert_eq!(signed.try_recover().unwrap(), signer.address());
+    }
 
     #[test]
     fn derives_expected_address_from_known_secret() {
