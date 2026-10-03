@@ -637,6 +637,28 @@ contract IntexNFT1155Test is Test {
         assertEq(bals.settled, 4);
     }
 
+    function test_Settle_TransferredUnitsSettleToTheirNewOwner() public {
+        _createSeries(SERIES_ID_1_DAY, 0);
+        vm.prank(bridger);
+        nft.issue(user, 10, SERIES_ID_1);
+        vm.prank(user);
+        nft.safeTransferFrom(user, user2, TOKEN_ID_1, 4, "");
+        _grantSettlementRole(address(this));
+
+        nft.settleIntex(SERIES_ID_1, user2, 3);
+
+        (uint256 issued, uint256 settled) = nft.tokenIds(SERIES_ID_1);
+        assertEq(nft.balanceOf(user2, issued), 1);
+        assertEq(nft.balanceOf(user2, settled), 3, "Settled minted to the new owner");
+        assertEq(nft.balanceOf(user, issued), 6, "the sender's units are untouched");
+        assertEq(nft.balanceOf(user, settled), 0);
+
+        // The new owner cannot settle more than it holds by drawing on the sender's units.
+        vm.expectRevert();
+        nft.settleIntex(SERIES_ID_1, user2, 2);
+        assertEq(nft.balanceOf(user, issued), 6);
+    }
+
     function test_OwnerBalances_AboveUint16NoTruncation() public {
         // Drive a single owner above type(uint16).max via two sub-cap mints (each <= 65_535).
         uint32 bigCap = 100_000;
