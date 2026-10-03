@@ -184,10 +184,12 @@ fn bounded_head_lead_membership_drift_uses_recovered_boundary_committee() {
 
     let vrf_materials = VrfMaterialProvider::new(2, polynomial, None);
     let (_verifier_scheme, recovered_addresses) = epoch_validation_inputs(
-        Epoch::new(7),
-        &boundary_participants,
-        &latest_after_unfinalized_removal,
-        Some(&recovered_boundary),
+        EpochValidationCommittee {
+            epoch: Epoch::new(7),
+            participants: &boundary_participants,
+            validator_set: &latest_after_unfinalized_removal,
+            recovered_boundary: Some(&recovered_boundary),
+        },
         &vrf_materials,
     )
     .expect("bounded-head-lead recovery must use recovered boundary committee");
@@ -226,11 +228,13 @@ fn bounded_head_lead_membership_drift_uses_recovered_boundary_committee() {
     };
     let signer_address = validate_validator_evm_signer(
         &args,
-        local_key,
-        &latest_after_unfinalized_removal,
-        &latest_after_unfinalized_removal,
-        Some((&boundary_participants, &recovered_boundary)),
-        false,
+        ValidatorEvmIdentity {
+            signing_key: local_key,
+            consensus_validator_set: &latest_after_unfinalized_removal,
+            reshare_target_validator_set: &latest_after_unfinalized_removal,
+            recovered_committee: Some((&boundary_participants, &recovered_boundary)),
+            shareless_verifier: false,
+        },
     )
     .expect("old-epoch signer A should be authorized by recovered boundary, not latest state");
     assert_eq!(signer_address, Some(evm_signer.address()));

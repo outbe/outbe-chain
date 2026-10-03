@@ -1601,11 +1601,12 @@ mod copied_native_dkg_prerequisites {
             let own = recipient.join("own-dkg");
             std::fs::create_dir_all(&own).unwrap();
             save_pending_dkg_state(
-                &own,
-                &self.share,
-                &self.polynomial,
-                &self.output,
-                &bls::KeyBackend::Plaintext,
+                DkgStateStore::new(&own, &bls::KeyBackend::Plaintext),
+                DkgStateMaterial {
+                    share: &self.share,
+                    polynomial: &self.polynomial,
+                    output: &self.output,
+                },
             )
             .unwrap();
             save_pending_dkg_boundary(&own, &self.snapshot).unwrap();

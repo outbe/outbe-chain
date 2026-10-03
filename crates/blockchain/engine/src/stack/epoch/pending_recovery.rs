@@ -154,13 +154,17 @@ where
                         self.state.signing_share.clone(),
                     );
                     register_epoch_validation_providers(
-                        active_epoch,
-                        &activated_participants,
-                        &activated_validator_set,
-                        None,
-                        &self.vrf_materials,
-                        &self.certificate_scheme_provider,
-                        &self.committee_provider,
+                        EpochValidationCommittee {
+                            epoch: active_epoch,
+                            participants: &activated_participants,
+                            validator_set: &activated_validator_set,
+                            recovered_boundary: None,
+                        },
+                        EpochValidationProviders {
+                            vrf_materials: &self.vrf_materials,
+                            certificate_scheme: &self.certificate_scheme_provider,
+                            committee: &self.committee_provider,
+                        },
                     )?;
                     let recovered_peer_map =
                         build_peer_map(&activated_validator_set, &self.bootnode_map);

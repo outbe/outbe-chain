@@ -111,10 +111,12 @@ where
             .as_ref()
             .filter(|artifact| artifact.epoch == self.state.current_epoch.get());
         let (verifier_scheme, ordered_addresses) = epoch_validation_inputs(
-            self.state.current_epoch,
-            &self.state.participants,
-            &self.state.validator_set,
-            recovered_boundary_for_epoch,
+            EpochValidationCommittee {
+                epoch: self.state.current_epoch,
+                participants: &self.state.participants,
+                validator_set: &self.state.validator_set,
+                recovered_boundary: recovered_boundary_for_epoch,
+            },
             &self.vrf_materials,
         )?;
 

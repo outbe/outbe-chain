@@ -478,6 +478,7 @@ pub(in crate::stack) fn startup_live_join_scan_height(
 }
 
 pub(in crate::stack) struct DkgCeremonyReplaySpec {
+    pub(in crate::stack) freeze_height: u64,
     pub(in crate::stack) epoch: Epoch,
     pub(in crate::stack) round: u64,
     pub(in crate::stack) previous_output: Option<Output<MinSig, bls12381::PublicKey>>,
@@ -488,13 +489,10 @@ pub(in crate::stack) struct DkgCeremonyReplaySpec {
 /// Recreate the manager's ceremony and replay the finalized DealerLog prefix
 /// before a frozen-target DKG retry starts.
 ///
-#[allow(clippy::too_many_arguments)]
 pub(in crate::stack) fn restart_dkg_manager_from_finalized_history(
     provider: &(impl HeaderProvider<Header = OutbeHeader> + BlockHashReader),
     dkg_manager: &DkgManagerMailbox,
     spec: DkgCeremonyReplaySpec,
-    freeze_height: u64,
-    _scheduling_height: u64,
     verified_consensus_tip: impl FnOnce() -> crate::marshal_update_reporter::ConsensusTip,
 ) -> Result<()> {
     let replay_guard = dkg_manager.lock_finalized_replay();
@@ -510,7 +508,7 @@ pub(in crate::stack) fn restart_dkg_manager_from_finalized_history(
     );
     let finalized_logs = collect_finalized_dealer_logs(
         provider,
-        freeze_height,
+        spec.freeze_height,
         verified_consensus_tip.height.get(),
     )?;
     replay_guard.restart_ceremony_with_finalized_logs(

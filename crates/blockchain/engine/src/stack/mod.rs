@@ -110,9 +110,9 @@ use reth_ethereum::storage::{BlockNumReader, BlockReader, TransactionVariant};
 mod dkg;
 mod epoch;
 mod follower;
+mod marshal_archive;
 mod recovery;
 mod services;
-mod marshal_archive;
 mod shutdown;
 mod startup;
 #[cfg(test)]
@@ -147,7 +147,8 @@ use dkg::persistence::{
     persist_completed_dkg_before_activation, persist_observed_dkg_boundary_before_activation,
     recover_pending_dkg_boundary_snapshot, remove_pending_dkg_state,
     restore_pending_dkg_activation, retire_activated_dkg_retry_state, save_dkg_state,
-    PendingDkgBoundarySnapshot, DKG_OUTPUT_FILE, DKG_POLYNOMIAL_FILE, DKG_SHARE_FILE,
+    DkgBoundaryContext, DkgStateMaterial, DkgStateStore, PendingDkgBoundarySnapshot,
+    DKG_OUTPUT_FILE, DKG_POLYNOMIAL_FILE, DKG_SHARE_FILE,
 };
 
 use dkg::promotion::{
@@ -167,7 +168,8 @@ use dkg::startup::{
 
 use epoch::signer::{
     epoch_validation_inputs, radicle_signer_enabled, register_epoch_validation_providers,
-    validate_validator_evm_signer, wait_for_radicle_role_change,
+    validate_validator_evm_signer, wait_for_radicle_role_change, EpochValidationCommittee,
+    EpochValidationProviders, ValidatorEvmIdentity,
 };
 
 use epoch::watchdog::{

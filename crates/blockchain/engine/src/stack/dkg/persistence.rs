@@ -1,5 +1,45 @@
 use super::super::*;
 
+/// Active authority and the exact frozen target used to construct the next boundary.
+pub(in crate::stack) struct DkgBoundaryContext<'a> {
+    pub(in crate::stack) current_epoch: Epoch,
+    pub(in crate::stack) vrf_material_version: u64,
+    pub(in crate::stack) current_participants:
+        &'a commonware_utils::ordered::Set<bls12381::PublicKey>,
+    pub(in crate::stack) target: &'a FrozenDkgTarget,
+}
+
+/// File custody shared by material reads and writes.
+pub(in crate::stack) struct DkgStateStore<'a> {
+    pub(in crate::stack) directory: &'a std::path::Path,
+    pub(in crate::stack) key_backend: &'a bls::KeyBackend,
+}
+
+impl<'a> DkgStateStore<'a> {
+    pub(in crate::stack) fn new(
+        directory: &'a std::path::Path,
+        key_backend: &'a bls::KeyBackend,
+    ) -> Self {
+        Self {
+            directory,
+            key_backend,
+        }
+    }
+}
+
+struct DkgStateFiles {
+    share: &'static str,
+    polynomial: &'static str,
+    output: &'static str,
+    label: &'static str,
+}
+
+pub(in crate::stack) struct DkgStateMaterial<'a> {
+    pub(in crate::stack) share: &'a Share,
+    pub(in crate::stack) polynomial: &'a Sharing<MinSig>,
+    pub(in crate::stack) output: &'a Output<MinSig, bls12381::PublicKey>,
+}
+
 /// DKG state file names within keys_dir.
 pub(in crate::stack) const DKG_SHARE_FILE: &str = "dkg_share.hex";
 
@@ -20,6 +60,20 @@ pub(in crate::stack) const DKG_PENDING_BOUNDARY_TMP_FILE: &str = "dkg_pending_bo
 pub(in crate::stack) const DKG_DEALER_RETRY_FILE: &str = "dkg_dealer_retry.hex";
 
 pub(in crate::stack) const DKG_PLAYER_RETRY_FILE: &str = "dkg_player_retry.hex";
+
+const SAVED_DKG_FILES: DkgStateFiles = DkgStateFiles {
+    share: DKG_SHARE_FILE,
+    polynomial: DKG_POLYNOMIAL_FILE,
+    output: DKG_OUTPUT_FILE,
+    label: "saved",
+};
+
+const PENDING_DKG_FILES: DkgStateFiles = DkgStateFiles {
+    share: DKG_PENDING_SHARE_FILE,
+    polynomial: DKG_PENDING_POLYNOMIAL_FILE,
+    output: DKG_PENDING_OUTPUT_FILE,
+    label: "pending",
+};
 
 pub(in crate::stack) fn dkg_retry_store(
     args: &ConsensusArgs,
@@ -174,15 +228,17 @@ fn pending_dkg_boundary_path(storage_dir: &std::path::Path) -> std::path::PathBu
     storage_dir.join(DKG_PENDING_BOUNDARY_FILE)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(in crate::stack) fn build_completed_dkg_boundary(
-    current_epoch: Epoch,
-    vrf_material_version: u64,
-    current_participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
-    target: &FrozenDkgTarget,
+    context: DkgBoundaryContext<'_>,
     output: &Output<MinSig, bls12381::PublicKey>,
     completed_participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
 ) -> Result<DkgBoundaryArtifact> {
+    let DkgBoundaryContext {
+        current_epoch,
+        vrf_material_version,
+        current_participants,
+        target,
+    } = context;
     let activated_validator_set =
         validator_set_for_dkg_output_players(output, &target.validator_set)?;
     let activated_participants = participants_from_validator_set(&activated_validator_set)?;
@@ -207,33 +263,29 @@ pub(in crate::stack) fn build_completed_dkg_boundary(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(in crate::stack) fn persist_completed_dkg_before_activation(
-    keys_dir: &std::path::Path,
-    key_backend: &bls::KeyBackend,
-    current_epoch: Epoch,
-    vrf_material_version: u64,
-    current_participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
-    target: &FrozenDkgTarget,
+    store: DkgStateStore<'_>,
+    context: DkgBoundaryContext<'_>,
     complete: &dkg_actor::DkgComplete,
     completed_at_height: u64,
 ) -> Result<DkgBoundaryArtifact> {
-    let boundary_artifact = build_completed_dkg_boundary(
-        current_epoch,
-        vrf_material_version,
-        current_participants,
-        target,
-        &complete.output,
-        &complete.participants,
-    )?;
+    let DkgStateStore {
+        directory: keys_dir,
+        key_backend,
+    } = store;
+    let current_epoch = context.current_epoch;
+    let target = context.target;
+    let boundary_artifact =
+        build_completed_dkg_boundary(context, &complete.output, &complete.participants)?;
     let next_epoch = next_consensus_epoch_after_dkg_activation(current_epoch);
 
     save_pending_dkg_state(
-        keys_dir,
-        &complete.share,
-        complete.output.public(),
-        &complete.output,
-        key_backend,
+        DkgStateStore::new(keys_dir, key_backend),
+        DkgStateMaterial {
+            share: &complete.share,
+            polynomial: complete.output.public(),
+            output: &complete.output,
+        },
     )
     .wrap_err("failed to durably save completed DKG state before activation")?;
     save_pending_dkg_boundary(
@@ -255,24 +307,14 @@ pub(in crate::stack) fn persist_completed_dkg_before_activation(
     Ok(boundary_artifact)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(in crate::stack) fn persist_observed_dkg_boundary_before_activation(
     keys_dir: &std::path::Path,
-    current_epoch: Epoch,
-    vrf_material_version: u64,
-    current_participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
-    target: &FrozenDkgTarget,
+    context: DkgBoundaryContext<'_>,
     output: &Output<MinSig, bls12381::PublicKey>,
     completed_at_height: u64,
 ) -> Result<DkgBoundaryArtifact> {
-    let boundary_artifact = build_completed_dkg_boundary(
-        current_epoch,
-        vrf_material_version,
-        current_participants,
-        target,
-        output,
-        &target.participants,
-    )?;
+    let target = context.target;
+    let boundary_artifact = build_completed_dkg_boundary(context, output, &target.participants)?;
     save_pending_dkg_boundary(
         keys_dir,
         &PendingDkgBoundarySnapshot {
@@ -330,6 +372,21 @@ pub(in crate::stack) fn pending_boundary_is_finalized(
     })
 }
 
+fn require_frozen_validator_set(
+    node: &OutbeFullNode,
+    freeze_height: u64,
+    unavailable: impl FnOnce() -> eyre::Report,
+) -> Result<(validators::ValidatorSet, Vec<EthAddress>)> {
+    match refresh_validator_set_at_height(node, freeze_height)? {
+        FrozenValidatorSetRefresh::Ready {
+            validator_set,
+            tee_expired_target_exclusions,
+            ..
+        } => Ok((validator_set, tee_expired_target_exclusions)),
+        FrozenValidatorSetRefresh::PendingBlockHash => Err(unavailable()),
+    }
+}
+
 fn validate_pending_boundary_snapshot(
     snapshot: &PendingDkgBoundarySnapshot,
     local_output: &Output<MinSig, bls12381::PublicKey>,
@@ -342,22 +399,16 @@ fn validate_pending_boundary_snapshot(
         &boundary_output,
         "pending boundary snapshot",
     )?;
-    let (frozen, tee_expired_target_exclusions) = match refresh_validator_set_at_height(
+    let (frozen, tee_expired_target_exclusions) = require_frozen_validator_set(
         node,
         snapshot.artifact.freeze_height,
-    )? {
-        FrozenValidatorSetRefresh::Ready {
-            validator_set,
-            tee_expired_target_exclusions,
-            ..
-        } => (validator_set, tee_expired_target_exclusions),
-        FrozenValidatorSetRefresh::PendingBlockHash => {
-            return Err(eyre::eyre!(
-                "pending DKG boundary freeze-height state unavailable at height {}; refusing unsafe recovery",
-                snapshot.artifact.freeze_height
-            ));
-        }
-    };
+        || {
+            eyre::eyre!(
+            "pending DKG boundary freeze-height state unavailable at height {}; refusing unsafe recovery",
+            snapshot.artifact.freeze_height
+        )
+        },
+    )?;
     let activated_validator_set = validator_set_for_dkg_output_players(local_output, &frozen)?;
     let rebuilt = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
         epoch: Epoch::new(snapshot.artifact.epoch),
@@ -418,11 +469,12 @@ pub(in crate::stack) fn recover_pending_dkg_boundary_snapshot(
                     "finalized pending DKG material",
                 )?;
                 save_dkg_state(
-                    storage_dir,
-                    &share,
-                    &polynomial,
-                    &pending_output,
-                    key_backend,
+                    DkgStateStore::new(storage_dir, key_backend),
+                    DkgStateMaterial {
+                        share: &share,
+                        polynomial: &polynomial,
+                        output: &pending_output,
+                    },
                 )
                 .wrap_err("failed to promote finalized pending DKG state during restart")?;
             }
@@ -483,19 +535,12 @@ pub(in crate::stack) fn restore_pending_dkg_activation(
     let output = decode_boundary_output(&snapshot.artifact)
         .wrap_err("failed to decode pending DKG output during runtime restore")?;
     let (validator_set, tee_expired_target_exclusions) =
-        match refresh_validator_set_at_height(node, snapshot.artifact.freeze_height)? {
-            FrozenValidatorSetRefresh::Ready {
-                validator_set,
-                tee_expired_target_exclusions,
-                ..
-            } => (validator_set, tee_expired_target_exclusions),
-            FrozenValidatorSetRefresh::PendingBlockHash => {
-                return Err(eyre::eyre!(
+        require_frozen_validator_set(node, snapshot.artifact.freeze_height, || {
+            eyre::eyre!(
                 "pending DKG freeze-height state unavailable at height {} during runtime restore",
                 snapshot.artifact.freeze_height
-            ));
-            }
-        };
+            )
+        })?;
     let activated_validator_set = validator_set_for_dkg_output_players(&output, &validator_set)
         .wrap_err("pending DKG output does not match its frozen validator set")?;
     let participants = participants_from_validator_set(&activated_validator_set)?;
@@ -550,15 +595,20 @@ pub(in crate::stack) fn restore_pending_dkg_activation(
 
 type PersistedDkgState = (Share, Sharing<MinSig>, Output<MinSig, bls12381::PublicKey>);
 
-#[allow(clippy::too_many_arguments)]
 fn load_dkg_state_files(
-    storage_dir: &std::path::Path,
-    share_file: &str,
-    polynomial_file: &str,
-    output_file: &str,
-    key_backend: &bls::KeyBackend,
-    label: &str,
+    store: DkgStateStore<'_>,
+    files: DkgStateFiles,
 ) -> Result<Option<PersistedDkgState>> {
+    let DkgStateStore {
+        directory: storage_dir,
+        key_backend,
+    } = store;
+    let DkgStateFiles {
+        share: share_file,
+        polynomial: polynomial_file,
+        output: output_file,
+        label,
+    } = files;
     let share_path = storage_dir.join(share_file);
     let poly_path = storage_dir.join(polynomial_file);
     let output_path = storage_dir.join(output_file);
@@ -599,12 +649,11 @@ pub(in crate::stack) fn load_saved_dkg_state(
     key_backend: &bls::KeyBackend,
 ) -> Result<Option<PersistedDkgState>> {
     load_dkg_state_files(
-        storage_dir,
-        DKG_SHARE_FILE,
-        DKG_POLYNOMIAL_FILE,
-        DKG_OUTPUT_FILE,
-        key_backend,
-        "saved",
+        DkgStateStore {
+            directory: storage_dir,
+            key_backend,
+        },
+        SAVED_DKG_FILES,
     )
 }
 
@@ -613,26 +662,34 @@ pub(in crate::stack) fn load_pending_dkg_state(
     key_backend: &bls::KeyBackend,
 ) -> Result<Option<PersistedDkgState>> {
     load_dkg_state_files(
-        storage_dir,
-        DKG_PENDING_SHARE_FILE,
-        DKG_PENDING_POLYNOMIAL_FILE,
-        DKG_PENDING_OUTPUT_FILE,
-        key_backend,
-        "pending",
+        DkgStateStore {
+            directory: storage_dir,
+            key_backend,
+        },
+        PENDING_DKG_FILES,
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn save_dkg_state_files(
-    storage_dir: &std::path::Path,
-    share_file: &str,
-    polynomial_file: &str,
-    output_file: &str,
-    share: &Share,
-    polynomial: &Sharing<MinSig>,
-    output: &Output<MinSig, bls12381::PublicKey>,
-    key_backend: &bls::KeyBackend,
+    store: DkgStateStore<'_>,
+    files: DkgStateFiles,
+    material: DkgStateMaterial<'_>,
 ) -> Result<()> {
+    let DkgStateStore {
+        directory: storage_dir,
+        key_backend,
+    } = store;
+    let DkgStateFiles {
+        share: share_file,
+        polynomial: polynomial_file,
+        output: output_file,
+        ..
+    } = files;
+    let DkgStateMaterial {
+        share,
+        polynomial,
+        output,
+    } = material;
     std::fs::create_dir_all(storage_dir)
         .wrap_err_with(|| format!("failed to create storage dir: {}", storage_dir.display()))?;
 
@@ -650,41 +707,17 @@ fn save_dkg_state_files(
 
 /// Save finalized DKG results to disk for crash recovery.
 pub(in crate::stack) fn save_dkg_state(
-    storage_dir: &std::path::Path,
-    share: &Share,
-    polynomial: &Sharing<MinSig>,
-    output: &Output<MinSig, bls12381::PublicKey>,
-    key_backend: &bls::KeyBackend,
+    store: DkgStateStore<'_>,
+    material: DkgStateMaterial<'_>,
 ) -> Result<()> {
-    save_dkg_state_files(
-        storage_dir,
-        DKG_SHARE_FILE,
-        DKG_POLYNOMIAL_FILE,
-        DKG_OUTPUT_FILE,
-        share,
-        polynomial,
-        output,
-        key_backend,
-    )
+    save_dkg_state_files(store, SAVED_DKG_FILES, material)
 }
 
 pub(in crate::stack) fn save_pending_dkg_state(
-    storage_dir: &std::path::Path,
-    share: &Share,
-    polynomial: &Sharing<MinSig>,
-    output: &Output<MinSig, bls12381::PublicKey>,
-    key_backend: &bls::KeyBackend,
+    store: DkgStateStore<'_>,
+    material: DkgStateMaterial<'_>,
 ) -> Result<()> {
-    save_dkg_state_files(
-        storage_dir,
-        DKG_PENDING_SHARE_FILE,
-        DKG_PENDING_POLYNOMIAL_FILE,
-        DKG_PENDING_OUTPUT_FILE,
-        share,
-        polynomial,
-        output,
-        key_backend,
-    )
+    save_dkg_state_files(store, PENDING_DKG_FILES, material)
 }
 
 pub(in crate::stack) fn remove_pending_dkg_state(storage_dir: &std::path::Path) {

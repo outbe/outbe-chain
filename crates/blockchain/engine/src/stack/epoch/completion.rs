@@ -58,23 +58,22 @@ where
                 {
                     return Ok(EventAction::Outcome(EpochLoopOutcome::StackExit));
                 }
+                let boundary_context = DkgBoundaryContext {
+                    current_epoch: self.state.current_epoch,
+                    vrf_material_version: self.state.vrf_material_version,
+                    current_participants: &self.state.participants,
+                    target: &target,
+                };
                 let boundary_artifact = if let Some(ref keys_dir) = self.args.keys_dir {
                     persist_completed_dkg_before_activation(
-                        keys_dir,
-                        &self.key_backend,
-                        self.state.current_epoch,
-                        self.state.vrf_material_version,
-                        &self.state.participants,
-                        &target,
+                        DkgStateStore::new(keys_dir, &self.key_backend),
+                        boundary_context,
                         &dkg_complete,
                         current_height,
                     )?
                 } else {
                     build_completed_dkg_boundary(
-                        self.state.current_epoch,
-                        self.state.vrf_material_version,
-                        &self.state.participants,
-                        &target,
+                        boundary_context,
                         &dkg_complete.output,
                         &dkg_complete.participants,
                     )?

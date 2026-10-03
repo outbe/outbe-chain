@@ -410,14 +410,13 @@ fn dkg_retry_replays_to_verified_tip_not_stale_scheduling_height() {
         &provider,
         &retry,
         DkgCeremonyReplaySpec {
+            freeze_height: 40,
             epoch: Epoch::new(0),
             round,
             previous_output: None,
             participants: participants.clone(),
             finalized_dealer_log_tx: None,
         },
-        40,
-        41,
         || verified_tip,
     )
     .unwrap();
@@ -485,14 +484,13 @@ fn live_finalized_dkg_log_cannot_overtake_retry_replay_prefix() {
             &provider,
             &retry_task,
             DkgCeremonyReplaySpec {
+                freeze_height: 40,
                 epoch: Epoch::new(0),
                 round,
                 previous_output: None,
                 participants: retry_participants,
                 finalized_dealer_log_tx: None,
             },
-            40,
-            41,
             || verified_tip,
         )
     });
@@ -581,14 +579,13 @@ fn dkg_recovery_provider_gap_preserves_existing_ceremony() {
         &provider,
         &manager,
         DkgCeremonyReplaySpec {
+            freeze_height: 40,
             epoch: Epoch::new(0),
             round,
             previous_output: None,
             participants,
             finalized_dealer_log_tx: Some(finalized_log_tx),
         },
-        40,
-        41,
         || verified_tip,
     )
     .unwrap_err();
