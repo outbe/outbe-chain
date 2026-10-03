@@ -351,21 +351,11 @@ fn hint_accepted_when_metadata_matches_parent() {
     let evm = config.evm_with_env(&mut state, evm_env);
     let executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, inner_ctx, &chain_spec, &receipt_builder),
-        None,
-        Bytes::new(),
-        None, // accounted_parent_artifact_provider - None forces hint path
-        false,
-        None,
-        parent_hash,
-        None,
-        Vec::new(),
-        Vec::new(),
-        None,
-        None,
-        None,
-        true,
-        None,
-        Some(hint),
+        {
+            let mut inputs = fixtures::empty_executor_inputs(parent_hash);
+            inputs.parent_accounting.parent_artifact_hint = Some(hint);
+            inputs
+        },
     );
 
     let metadata = hint_test_metadata(block_number - 1, parent_hash);
@@ -399,21 +389,13 @@ fn provider_header_not_found_uses_matching_parent_hint() {
     let evm = config.evm_with_env(&mut state, evm_env);
     let executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, inner_ctx, &chain_spec, &receipt_builder),
-        None,
-        Bytes::new(),
-        Some(Arc::new(HeaderNotFoundArtifactProvider)),
-        false,
-        None,
-        parent_hash,
-        None,
-        Vec::new(),
-        Vec::new(),
-        None,
-        None,
-        None,
-        true,
-        None,
-        Some(hint),
+        {
+            let mut inputs = fixtures::empty_executor_inputs(parent_hash);
+            inputs.parent_accounting.accounted_parent_artifact_provider =
+                Some(Arc::new(HeaderNotFoundArtifactProvider));
+            inputs.parent_accounting.parent_artifact_hint = Some(hint);
+            inputs
+        },
     );
 
     let metadata = hint_test_metadata(block_number - 1, parent_hash);
@@ -449,21 +431,11 @@ fn hint_rejected_when_metadata_hash_mismatch() {
     let evm = config.evm_with_env(&mut state, evm_env);
     let executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, inner_ctx, &chain_spec, &receipt_builder),
-        None,
-        Bytes::new(),
-        None,
-        false,
-        None,
-        parent_hash,
-        None,
-        Vec::new(),
-        Vec::new(),
-        None,
-        None,
-        None,
-        true,
-        None,
-        Some(hint_test_artifact()),
+        {
+            let mut inputs = fixtures::empty_executor_inputs(parent_hash);
+            inputs.parent_accounting.parent_artifact_hint = Some(hint_test_artifact());
+            inputs
+        },
     );
 
     let metadata = hint_test_metadata(block_number - 1, foreign_hash);
@@ -498,21 +470,11 @@ fn hint_rejected_when_metadata_number_mismatch() {
     let evm = config.evm_with_env(&mut state, evm_env);
     let executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, inner_ctx, &chain_spec, &receipt_builder),
-        None,
-        Bytes::new(),
-        None,
-        false,
-        None,
-        parent_hash,
-        None,
-        Vec::new(),
-        Vec::new(),
-        None,
-        None,
-        None,
-        true,
-        None,
-        Some(hint_test_artifact()),
+        {
+            let mut inputs = fixtures::empty_executor_inputs(parent_hash);
+            inputs.parent_accounting.parent_artifact_hint = Some(hint_test_artifact());
+            inputs
+        },
     );
 
     // Off-by-one: metadata claims to describe block (block_number - 2)
@@ -549,21 +511,7 @@ fn no_provider_no_hint_returns_missing_artifact_error() {
     let evm = config.evm_with_env(&mut state, evm_env);
     let executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, inner_ctx, &chain_spec, &receipt_builder),
-        None,
-        Bytes::new(),
-        None,
-        false,
-        None,
-        parent_hash,
-        None,
-        Vec::new(),
-        Vec::new(),
-        None,
-        None,
-        None,
-        true,
-        None,
-        None, // no hint
+        fixtures::empty_executor_inputs(parent_hash),
     );
 
     let metadata = hint_test_metadata(block_number - 1, parent_hash);

@@ -291,8 +291,9 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   /**
    * What settling `units` Intex of `series` with `token` costs, in that token's
    * minor units, and the ISO 4217 code the payment is denominated in. The chain
-   * prices the whole operation and floors once, so a quote for many units can be
-   * a shade under the per-unit quote times that many. `snapshotId` is the
+   * prices the whole operation, rounds once and applies its one-minor-unit
+   * minimum once, so a quote for many units can be well under the per-unit
+   * quote times that many. `snapshotId` is the
    * trailing VWAP snapshot an issuance-currency payment must name (zero on the
    * reference rail); it goes stale at the next hourly cutoff.
    */

@@ -105,6 +105,7 @@ SEED_SECTIONS = (
     "tributes",
     "intex_factory",
     "gem_profile",
+    "nod_profile",
     "vault_router",
     "contracts",
     "tee_policy",

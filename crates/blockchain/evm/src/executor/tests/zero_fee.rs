@@ -430,21 +430,7 @@ fn property_soft_fail_does_not_perturb_validator_fee_sum() {
         // opaque return type otherwise.
         let mut executor = OutbeBlockExecutor::new(
             EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-            None,
-            Bytes::new(),
-            None,
-            false,
-            None,
-            ctx.inner.parent_hash,
-            None,
-            ctx.expected_begin_system_txs.clone(),
-            ctx.expected_end_system_txs.clone(),
-            ctx.system_layout_error.clone(),
-            ctx.parent_consensus_metadata.clone(),
-            ctx.proposer_evm_address,
-            ctx.execute_outbe_block_hooks,
-            ctx.prebuilt_phase1_tx.clone(),
-            ctx.parent_artifact_hint,
+            fixtures::executor_inputs_from_ctx(&ctx, None, false),
         );
 
         // Baseline: no txs.

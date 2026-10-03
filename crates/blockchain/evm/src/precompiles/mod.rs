@@ -55,6 +55,10 @@ impl OutbePrecompileExecutionContext {
         }
     }
 
+    pub(crate) const fn spec_id(&self) -> SpecId {
+        self.spec
+    }
+
     #[must_use]
     pub fn with_tee_attestation_v1(mut self, state: TeeAttestationChainSpecStateV1) -> Self {
         self.tee_attestation_v1 = state;

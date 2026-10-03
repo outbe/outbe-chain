@@ -72,6 +72,7 @@ mod compressed_entities;
 mod context;
 mod fee_route;
 mod hooks;
+mod inputs;
 mod late_finalize;
 mod post_execution;
 mod pre_execution;
@@ -84,6 +85,10 @@ mod zero_fee;
 pub use accounting::{AccountedParentArtifact, AccountedParentArtifactProvider};
 
 pub use block::OutbeBlockExecutor;
+pub(crate) use inputs::{
+    BlockExecutionDependencies, BlockExecutionIdentity, BlockExecutorInputs, BlockSystemPlan,
+    ParentAccountingInputs,
+};
 
 pub use boundary::marker_addresses;
 
@@ -100,6 +105,7 @@ pub(crate) use zero_fee::{ZeroFeeCfgAccess, ZeroFeeCfgSnapshot};
 #[cfg(test)]
 pub(crate) use tests::harness::with_phase1_verify_disabled;
 
+#[cfg(test)]
 use artifacts::validate_execution_summary_artifact;
 
 use compressed_entities::{

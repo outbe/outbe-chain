@@ -461,15 +461,17 @@ pub(crate) fn try_call_group(
 }
 
 /// One message per group, split only where the wire's cap forces it. `called_at`
-/// travels so every target derives the same deadline the origin did.
+/// travels so every target derives the same deadline the origin did. Returns the
+/// series whose message the router refused; a node-local failure fails the block instead.
 pub(crate) fn notify_called(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,
     called_at: u32,
     members: &[SeriesId],
-) -> Result<()> {
+) -> Result<Vec<SeriesId>> {
+    let mut refused = Vec::new();
     for chunk in members.chunks(MAX_SERIES_PER_MARK) {
-        // Best-effort, and the batch is the unit: a refusal loses the mark for every series in it.
+        // The batch is the unit: a refusal returns every series in it.
         let sent = storage.with_checkpoint(|| {
             // Relay-float-funded: value 0, so the router self-quotes and pays the fee from its float.
             storage.call(
@@ -488,17 +490,20 @@ pub(crate) fn notify_called(
         match sent {
             Ok(()) => {}
             Err(error) if error.sweep_failure() == SweepFailure::Propagate => return Err(error),
-            Err(error) => tracing::warn!(
-                target: "outbe::intexfactory",
-                worldwide_day = worldwide_day.value(),
-                called_at,
-                series = ?chunk.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
-                error = ?error,
-                "called notice: dropping"
-            ),
+            Err(error) => {
+                tracing::warn!(
+                    target: "outbe::intexfactory",
+                    worldwide_day = worldwide_day.value(),
+                    called_at,
+                    series = ?chunk.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+                    error = ?error,
+                    "called notice: refused"
+                );
+                refused.extend_from_slice(chunk);
+            }
         }
     }
-    Ok(())
+    Ok(refused)
 }
 
 /// Index of the currency the cursor names, or the head when the registry dropped it.

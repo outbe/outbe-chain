@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-/// Stateful token, vault and IntexNFT1155 counterparties for intex_gem_erc20_settlement.rs.
+/// Stateful token, vault and IntexNFT1155 counterparties for intex_gem_erc20_settlement.rs and the PayNote deposit tests.
 /// Compile with solc 0.8.30 --optimize --evm-version prague --bin-runtime --metadata-hash none.
 contract FactorySettlement {
     address constant ASSET = 0x3333333333333333333333333333333333333333;
@@ -47,7 +47,7 @@ contract FactorySettlement {
             callbackRejected = true;
         }
         allowance[from][msg.sender] -= amount;
-        balances[from] -= amount;
+        balances[from] -= mode == 10 && msg.sender == ROUTER ? amount - 1 : amount;
         balances[to] += mode == 9 ? amount - 1 : amount;
         if (mode == 7) assembly { return(0, 0) }
         return true;
@@ -75,9 +75,9 @@ contract FactorySettlement {
         return units[account][id];
     }
 
-    function settleIntex(bytes14 seriesId, address from, address to, uint256 amount) external {
+    function settleIntex(bytes14 seriesId, address owner, uint256 amount) external {
         uint256 id = uint256(uint112(seriesId));
-        units[from][id] -= amount;
-        units[to][id | (1 << 112)] += amount;
+        units[owner][id] -= amount;
+        units[owner][id | (1 << 112)] += amount;
     }
 }

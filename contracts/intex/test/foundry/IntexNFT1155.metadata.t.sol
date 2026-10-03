@@ -31,7 +31,6 @@ contract IntexNFT1155MetadataTest is Test {
     address internal admin = makeAddr("admin");
     address internal bridger = makeAddr("bridger");
     address internal user = makeAddr("user");
-    address internal user2 = makeAddr("user2");
 
     IntexNFT1155 internal token;
     uint256 internal iTok;
@@ -242,7 +241,7 @@ contract IntexNFT1155MetadataTest is Test {
 
     function test_uri_SettledToken_SuffixAndNoLifecycle() public {
         vm.prank(bridger);
-        token.settleIntex(SERIES_ID, user, user2, 3);
+        token.settleIntex(SERIES_ID, user, 3);
 
         bytes memory json = _json(sTok);
         _assertContains(json, string.concat("\"name\":\"Intex ", string(abi.encodePacked(SERIES_ID)), " - Settled\","));

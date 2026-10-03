@@ -326,9 +326,9 @@ fn a_node_local_failure_inside_the_called_notice_send_fails_the_drain() {
         pack_called_notice(sid(8), ISSUED_AT),
     ];
     StorageHandle::enter(&mut provider, |s| {
-        let mut factory = IntexFactoryContract::new(s);
+        let factory = IntexFactoryContract::new(s);
         for entry in queued {
-            enqueue_notice(&mut factory, entry).unwrap();
+            enqueue_notice(&factory, entry).unwrap();
         }
     });
     let queue = |provider: &mut RouterFaultProvider| {
