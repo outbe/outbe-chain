@@ -112,6 +112,7 @@ mod epoch;
 mod follower;
 mod recovery;
 mod services;
+mod marshal_archive;
 mod shutdown;
 mod startup;
 #[cfg(test)]

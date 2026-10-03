@@ -91,3 +91,22 @@ impl ConsensusStackServices {
         self
     }
 }
+
+/// Execution-side capabilities consumed only by the certified follower.
+pub(in crate::stack) struct FollowerStackServices {
+    pub(in crate::stack) projection_readiness: ProjectionReadinessHandle,
+    pub(in crate::stack) ocomp_readiness: Option<ProjectionReadinessHandle>,
+    pub(in crate::stack) retained_tribute_writer: Arc<RetainedTributeWriter>,
+    pub(in crate::stack) projection_retention_fence: Arc<ProjectionRetentionFence>,
+    pub(in crate::stack) retention_selector: Arc<SharedOcompRetentionSelector>,
+    pub(in crate::stack) finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
+    pub(in crate::stack) ce_startup_recovery: Arc<dyn CeStartupRecovery>,
+    pub(in crate::stack) follower_shutdown: crate::follower_shutdown::FollowerDrain,
+}
+
+/// The execution node and the transport selected for its follower stack.
+pub(in crate::stack) struct FollowerConnection {
+    pub(in crate::stack) node: OutbeFullNode,
+    pub(in crate::stack) bridge: ConsensusExecutionBridge,
+    pub(in crate::stack) upstream: String,
+}
