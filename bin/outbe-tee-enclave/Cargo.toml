@@ -97,6 +97,7 @@ outbe-fidelity-math.workspace = true
 # FFI inappropriate for the enclave.
 outbe-poseidon.workspace = true
 outbe-protocol.workspace = true
+outbe-zk-canonical.workspace = true
 outbe-protocol-derive.workspace = true
 ark-bn254.workspace = true
 ark-ff.workspace = true

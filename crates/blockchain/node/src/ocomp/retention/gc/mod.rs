@@ -1,6 +1,9 @@
 use crate::ocomp::retention::*;
 
 pub(super) mod retry;
+mod worker;
+
+use worker::run_retained_gc_worker;
 
 const RETAINED_GC_PROGRESS_POLL: Duration = Duration::from_millis(100);
 
@@ -82,185 +85,6 @@ pub(crate) fn retained_gc_next_wake_delay(
         .min(RETAINED_GC_IDLE_POLL)
 }
 
-fn run_retained_gc_worker(
-    coordinator: Weak<OcompRetentionCoordinator>,
-    signal: Arc<RetainedGcSignal>,
-) {
-    let mut observed_epoch = 0_u64;
-    let mut journal_recovery_failures = 0_u32;
-    let mut next_journal_recovery: Option<Instant> = None;
-    let mut retry_schedule = RetainedGcRetrySchedule::default();
-    loop {
-        let Some(coordinator) = coordinator.upgrade() else {
-            return;
-        };
-        let finalized_height = signal.finalized_height.load(Ordering::Acquire);
-        let closure_checkpoint = signal.closure_checkpoint.load(Ordering::Acquire);
-        atomic_max(&coordinator.closure_checkpoint, closure_checkpoint);
-
-        match coordinator.status() {
-            RetentionStatus::Unavailable { .. } => {
-                if let Some(next_attempt) = next_journal_recovery {
-                    let now = Instant::now();
-                    if now < next_attempt {
-                        let remaining = next_attempt.saturating_duration_since(now);
-                        metrics::gauge!(
-                            "outbe_ocomp_retention_journal_recovery_next_delay_seconds"
-                        )
-                        .set(remaining.as_secs_f64());
-                        drop(coordinator);
-                        wait_for_gc_signal(&signal, &mut observed_epoch, remaining);
-                        continue;
-                    }
-                }
-                match coordinator.recover_journal() {
-                    Ok(true) => {
-                        metrics::counter!(
-                            "outbe_ocomp_retention_journal_recovery_attempts_total",
-                            "result" => "success"
-                        )
-                        .increment(1);
-                        metrics::gauge!(
-                            "outbe_ocomp_retention_journal_recovery_consecutive_failures"
-                        )
-                        .set(0.0);
-                        metrics::gauge!(
-                            "outbe_ocomp_retention_journal_recovery_next_delay_seconds"
-                        )
-                        .set(0.0);
-                        journal_recovery_failures = 0;
-                        next_journal_recovery = None;
-                    }
-                    Ok(false) => {
-                        journal_recovery_failures = 0;
-                        next_journal_recovery = None;
-                    }
-                    Err(error) => {
-                        record_journal_failure(&error);
-                        let integrity_failure =
-                            matches!(coordinator.status(), RetentionStatus::Quarantined { .. });
-                        let result = if integrity_failure {
-                            "integrity_error"
-                        } else {
-                            "io_error"
-                        };
-                        metrics::counter!(
-                            "outbe_ocomp_retention_journal_recovery_attempts_total",
-                            "result" => result
-                        )
-                        .increment(1);
-                        if integrity_failure {
-                            journal_recovery_failures = 0;
-                            next_journal_recovery = None;
-                            drop(coordinator);
-                            wait_for_gc_signal(&signal, &mut observed_epoch, RETAINED_GC_IDLE_POLL);
-                            continue;
-                        }
-                        journal_recovery_failures = journal_recovery_failures.saturating_add(1);
-                        metrics::gauge!(
-                            "outbe_ocomp_retention_journal_recovery_consecutive_failures"
-                        )
-                        .set(journal_recovery_failures as f64);
-                        let delay =
-                            journal_recovery_backoff(journal_recovery_failures.saturating_sub(1));
-                        metrics::gauge!(
-                            "outbe_ocomp_retention_journal_recovery_next_delay_seconds"
-                        )
-                        .set(delay.as_secs_f64());
-                        next_journal_recovery = Some(Instant::now() + delay);
-                        tracing::warn!(
-                            %error,
-                            retry_delay_seconds = delay.as_secs(),
-                            journal_recovery_failures,
-                            "OCOMP retention journal recovery failed; retrying with backoff"
-                        );
-                        drop(coordinator);
-                        wait_for_gc_signal(&signal, &mut observed_epoch, delay);
-                        continue;
-                    }
-                }
-            }
-            RetentionStatus::Quarantined { .. } => {
-                journal_recovery_failures = 0;
-                next_journal_recovery = None;
-                drop(coordinator);
-                wait_for_gc_signal(&signal, &mut observed_epoch, RETAINED_GC_IDLE_POLL);
-                continue;
-            }
-            RetentionStatus::Empty | RetentionStatus::Ready(_) => {
-                journal_recovery_failures = 0;
-                next_journal_recovery = None;
-            }
-        }
-
-        let cycle_started_at = Instant::now();
-        let report = match coordinator.run_scheduled_gc_cycle(
-            finalized_height,
-            cycle_started_at,
-            &mut retry_schedule,
-            Instant::now,
-        ) {
-            Ok(RetainedGcScheduledCycle::DeferredGlobal(delay)) => {
-                metrics::gauge!("outbe_ocomp_retained_gc_global_retry_next_delay_seconds")
-                    .set(delay.as_secs_f64());
-                drop(coordinator);
-                wait_for_gc_signal(&signal, &mut observed_epoch, delay);
-                continue;
-            }
-            Ok(RetainedGcScheduledCycle::Ran(report)) => {
-                metrics::gauge!("outbe_ocomp_retained_gc_global_retry_next_delay_seconds").set(0.0);
-                report
-            }
-            Err(failure) => {
-                if let Some(report) = &failure.report {
-                    record_retained_gc_report(report);
-                }
-                metrics::counter!("outbe_ocomp_retained_gc_errors_total").increment(1);
-                metrics::gauge!("outbe_ocomp_retained_gc_global_retry_next_delay_seconds")
-                    .set(RETAINED_GC_RETRY_BACKOFF.as_secs_f64());
-                metrics::counter!(
-                    "outbe_ocomp_retained_gc_retry_attempts_total",
-                    "scope" => "global",
-                    "failure_class" => failure.class.as_str()
-                )
-                .increment(1);
-                metrics::counter!(
-                    "outbe_ocomp_retained_gc_failures_total",
-                    "scope" => "global",
-                    "failure_class" => failure.class.as_str()
-                )
-                .increment(1);
-                metrics::counter!(
-                    "outbe_ocomp_retained_gc_worker_cycles_total",
-                    "result" => "global_error",
-                    "failure_class" => failure.class.as_str()
-                )
-                .increment(1);
-                tracing::warn!(
-                    failure_class = failure.class.as_str(),
-                    error = %failure.error,
-                    "OCOMP retained-input GC global failure; retrying independently of ExEx"
-                );
-                wait_for_gc_signal(&signal, &mut observed_epoch, RETAINED_GC_RETRY_BACKOFF);
-                continue;
-            }
-        };
-        metrics::counter!(
-            "outbe_ocomp_retained_gc_worker_cycles_total",
-            "result" => "success"
-        )
-        .increment(1);
-        record_retained_gc_report(&report);
-        let made_progress = report.completed != 0 || report.pages != 0;
-        let delay = crate::ocomp::retention::retained_gc_next_wake_delay(
-            made_progress,
-            report.next_retry_delay,
-        );
-        drop(coordinator);
-        wait_for_gc_signal(&signal, &mut observed_epoch, delay);
-    }
-}
-
 fn record_retained_gc_report(report: &RetainedGcCycleReport) {
     metrics::gauge!("outbe_ocomp_retained_gc_pending_jobs").set(report.pending as f64);
     metrics::gauge!("outbe_ocomp_retained_gc_deferred_jobs").set(report.deferred as f64);
@@ -314,13 +138,17 @@ fn wait_for_gc_signal(signal: &RetainedGcSignal, observed_epoch: &mut u64, delay
     *observed_epoch = *epoch;
 }
 
+pub(in crate::ocomp::retention) struct RetainedGcClock<F> {
+    pub(in crate::ocomp::retention) eligibility_now: Instant,
+    pub(in crate::ocomp::retention) current_time: F,
+}
+
 impl OcompRetentionCoordinator {
     fn run_gc_cycle(
         &self,
         finalized_height: u64,
-        now: Instant,
         retry_schedule: &mut RetainedGcRetrySchedule,
-        current_time: &mut impl FnMut() -> Instant,
+        clock: &mut RetainedGcClock<impl FnMut() -> Instant>,
     ) -> Result<RetainedGcCycleReport, RetainedGcCycleFailure> {
         let work_items =
             self.gc_candidate_work(finalized_height)
@@ -339,7 +167,7 @@ impl OcompRetentionCoordinator {
             next_retry_delay: None,
         };
         for work in work_items {
-            if !retry_schedule.is_eligible(work, now) {
+            if !retry_schedule.is_eligible(work, clock.eligibility_now) {
                 report.deferred = report.deferred.saturating_add(1);
                 continue;
             }
@@ -356,12 +184,12 @@ impl OcompRetentionCoordinator {
                     retry_schedule.clear(work);
                 }
                 Err(RetainedGcAttemptFailure::Item(failure)) => {
-                    retry_schedule.defer(failure.work, current_time());
+                    retry_schedule.defer(failure.work, (clock.current_time)());
                     report.deferred = report.deferred.saturating_add(1);
                     report.failures.push(failure);
                 }
                 Err(RetainedGcAttemptFailure::Global { class, error }) => {
-                    report.next_retry_delay = retry_schedule.next_delay(current_time());
+                    report.next_retry_delay = retry_schedule.next_delay((clock.current_time)());
                     return Err(RetainedGcCycleFailure {
                         class,
                         error,
@@ -370,27 +198,26 @@ impl OcompRetentionCoordinator {
                 }
             }
         }
-        report.next_retry_delay = retry_schedule.next_delay(current_time());
+        report.next_retry_delay = retry_schedule.next_delay((clock.current_time)());
         Ok(report)
     }
 
     pub(in crate::ocomp::retention) fn run_scheduled_gc_cycle(
         &self,
         finalized_height: u64,
-        now: Instant,
         retry_schedule: &mut RetainedGcRetrySchedule,
-        mut current_time: impl FnMut() -> Instant,
+        mut clock: RetainedGcClock<impl FnMut() -> Instant>,
     ) -> Result<RetainedGcScheduledCycle, RetainedGcCycleFailure> {
-        if let Some(delay) = retry_schedule.global_delay(now) {
+        if let Some(delay) = retry_schedule.global_delay(clock.eligibility_now) {
             return Ok(RetainedGcScheduledCycle::DeferredGlobal(delay));
         }
-        match self.run_gc_cycle(finalized_height, now, retry_schedule, &mut current_time) {
+        match self.run_gc_cycle(finalized_height, retry_schedule, &mut clock) {
             Ok(report) => {
                 retry_schedule.clear_global();
                 Ok(RetainedGcScheduledCycle::Ran(report))
             }
             Err(failure) => {
-                retry_schedule.defer_global(current_time());
+                retry_schedule.defer_global((clock.current_time)());
                 Err(failure)
             }
         }

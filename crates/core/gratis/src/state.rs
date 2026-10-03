@@ -6,7 +6,7 @@
 //! the returned receipt, emitting events) lives in [`crate::runtime`]; the
 //! cross-crate surface is [`crate::api`].
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 
 use crate::schema::Gratis;
@@ -44,35 +44,16 @@ impl Gratis<'_> {
         self.balance_ct.get_bytes(&account).read()
     }
 
-    /// Encrypted pledged-ledger blob for `account`.
-    pub fn pledged_ct_of(&self, account: Address) -> Result<Vec<u8>> {
-        self.pledged_ct.get_bytes(&account).read()
-    }
-
     /// The account's current modify-auth replay counter (the value a client must
     /// bind into its next write authorization).
     pub fn op_nonce_of(&self, account: Address) -> Result<u64> {
         self.op_nonce.read(&account)
     }
 
-    pub(crate) fn pledge_ticket_ct_of(&self, handle: B256) -> Result<Vec<u8>> {
-        self.pledge_lock_tickets.get_bytes(&handle).read()
-    }
-
     // --- Writers (all `&self`; storage mutates through interior mutability) ---
 
     pub(crate) fn write_balance_ct(&self, account: Address, blob: &[u8]) -> Result<()> {
         self.balance_ct.get_bytes(&account).write(blob)
-    }
-
-    pub(crate) fn write_pledged_ct(&self, account: Address, blob: &[u8]) -> Result<()> {
-        self.pledged_ct.get_bytes(&account).write(blob)
-    }
-
-    /// Write (or, with an empty `blob`, clear/delete) the encrypted pledge-lock-ticket
-    /// under `handle`.
-    pub(crate) fn write_pledge_ticket_ct(&self, handle: B256, blob: &[u8]) -> Result<()> {
-        self.pledge_lock_tickets.get_bytes(&handle).write(blob)
     }
 
     pub(crate) fn set_op_nonce(&self, account: Address, nonce: u64) -> Result<()> {

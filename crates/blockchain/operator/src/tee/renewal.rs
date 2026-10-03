@@ -1,5 +1,22 @@
 //! Manual, crash-replay-safe TEE lease-renewal reducer.
 
+mod identity;
+mod lifecycle;
+mod preparation;
+mod submission;
+
+use lifecycle::run_locked_renewal;
+use preparation::RenewalPreparation;
+
+#[cfg(test)]
+use identity::*;
+#[cfg(test)]
+use lifecycle::*;
+#[cfg(test)]
+use preparation::*;
+#[cfg(test)]
+use submission::*;
+
 use std::path::PathBuf;
 
 use alloy_primitives::{keccak256, B256, U256};
@@ -113,577 +130,19 @@ pub async fn run_renewal_once_v1(
     node_signer: &impl RenewalNodeSignerV1,
     config: &RenewalServiceConfigV1,
 ) -> Result<RenewalOutcomeV1> {
-    // Serialize renewal intent creation against upgrade preparation. Holding
-    // this host-only lock across the reducer prevents the two exact-next
-    // Registry counter flows from being prepared concurrently.
-    let upgrade_guard = super::UpgradeJournalGuardV1::acquire(&config.node_data_dir)?;
-    let mut promoted_policy = None;
-    if let Some(upgrade) = upgrade_guard.load()? {
-        if let super::UpgradeJournalStateV1::Promoted { context, .. } = &upgrade.lifecycle {
-            // Promotion installs B's committed manifest. The completed journal
-            // remains as recovery evidence; it must not freeze B's renewals.
-            // A caller still holding A's manifest may not use this exception.
-            if config
-                .manifest
-                .authorization_hash()
-                .map_err(|e| eyre::eyre!(e))?
-                != context.candidate_manifest_hash
-            {
-                eyre::bail!("renewal manifest does not match the promoted enclave");
-            }
-            promoted_policy = Some(context.successor_policy_hash);
-        }
-        if matches!(
-            upgrade.lifecycle,
-            super::UpgradeJournalStateV1::KeyProvisioned { .. }
-                | super::UpgradeJournalStateV1::CandidateKeyReady { .. }
-                | super::UpgradeJournalStateV1::SubmissionPrepared { .. }
-                | super::UpgradeJournalStateV1::Submitted { .. }
-                | super::UpgradeJournalStateV1::Finalized { .. }
-                | super::UpgradeJournalStateV1::TerminalMissedCutoff { .. }
-        ) {
-            eyre::bail!(
-                "renewal is blocked while an enclave upgrade is journaled to preserve exact transition counters"
-            );
-        }
-    }
-    let _upgrade_guard = upgrade_guard;
-    let journal = RenewalJournalGuard::acquire(&config.node_data_dir)?;
-    let view = read_finalized_bound_renewal_view_v1(rpc, &config.selector).await?;
-    validate_identity(config, &view)?;
-
-    let snapshot = journal.load()?;
-    // A completed replacement supersedes the predecessor's finished renewal
-    // journal. Preserve it until a new renewal is prepared; never replay its
-    // old identity or silently discard a still-pending transaction.
-    let predecessor_replaced = snapshot.as_ref().is_some_and(|snapshot| {
-        let previous = match &snapshot.lifecycle {
-            RenewalJournalStateV1::Finalized {
-                finalized_binding, ..
-            } => finalized_binding,
-            RenewalJournalStateV1::Abandoned { attempt, .. } => &attempt.source,
-            _ => return false,
-        };
-        promoted_policy == Some(view.binding.policy_hash)
-            && previous.node_id_hash == view.binding.node_id_hash
-            && previous.enclave_id != view.binding.enclave_id
-            && previous.binding_version.checked_add(1) == Some(view.binding.binding_version)
-            && previous.transition_nonce.checked_add(1) == Some(view.binding.transition_nonce)
-    });
-    if let Some(snapshot) = snapshot.filter(|_| !predecessor_replaced) {
-        match snapshot.lifecycle {
-            RenewalJournalStateV1::Prepared { attempt }
-            | RenewalJournalStateV1::Submitted { attempt, .. } => {
-                if target_matches(&view.binding, &attempt)? {
-                    return finalize(&journal, attempt, &view);
-                }
-                ensure_source_or_conflict(&view.binding, &attempt.source)?;
-                if let Some(reason) =
-                    permanent_staleness(&attempt, view.schedule.finalized_timestamp)
-                {
-                    journal.store(RenewalJournalSnapshotV1::new(
-                        RenewalJournalStateV1::Abandoned {
-                            attempt,
-                            abandoned_at_finalized_height: view.schedule.finalized_height,
-                            reason: reason.clone(),
-                        },
-                    ))?;
-                    return Ok(RenewalOutcomeV1::Abandoned {
-                        finalized_height: view.schedule.finalized_height,
-                        reason,
-                    });
-                }
-                return submit_attempt(
-                    rpc,
-                    &journal,
-                    attempt,
-                    view.schedule.finalized_height,
-                    true,
-                )
-                .await;
-            }
-            RenewalJournalStateV1::Finalized {
-                attempt,
-                finalized_binding,
-                ..
-            } => {
-                if view.binding == finalized_binding || target_matches(&view.binding, &attempt)? {
-                    if !renewal_is_open(
-                        &view.binding,
-                        view.schedule.finalized_timestamp,
-                        view.policy.maximum_lease,
-                    )? {
-                        return Ok(RenewalOutcomeV1::NotDue {
-                            finalized_height: view.schedule.finalized_height,
-                            opens_at_timestamp: renewal_opens_at(
-                                &view.binding,
-                                view.policy.maximum_lease,
-                            )?,
-                        });
-                    }
-                } else {
-                    eyre::bail!("finalized Registry binding diverged from the renewal journal");
-                }
-            }
-            RenewalJournalStateV1::Abandoned { attempt, .. } => {
-                ensure_source_or_conflict(&view.binding, &attempt.source)?;
-            }
-        }
-    }
-
-    if !renewal_is_open(
-        &view.binding,
-        view.schedule.finalized_timestamp,
-        view.policy.maximum_lease,
-    )? {
-        return Ok(RenewalOutcomeV1::NotDue {
-            finalized_height: view.schedule.finalized_height,
-            opens_at_timestamp: renewal_opens_at(&view.binding, view.policy.maximum_lease)?,
-        });
-    }
-    let attempt = prepare_attempt(rpc, evm_signer, enclave, node_signer, config, &view).await?;
-    journal.store(RenewalJournalSnapshotV1::new(
-        RenewalJournalStateV1::Prepared {
-            attempt: attempt.clone(),
-        },
-    ))?;
-    submit_attempt(
+    let mut preparation = RenewalPreparation {
         rpc,
-        &journal,
-        attempt,
-        view.schedule.finalized_height,
-        false,
-    )
-    .await
-}
-
-fn validate_identity(
-    config: &RenewalServiceConfigV1,
-    view: &FinalizedRenewalChainViewV1,
-) -> Result<()> {
-    let manifest = &config.manifest;
-    let node_id_hash = manifest
-        .node_id
-        .node_id_hash()
-        .map_err(|error| eyre::eyre!("hash manifest node identity: {error}"))?;
-    let enclave_id = manifest
-        .enclave_id()
-        .map_err(|error| eyre::eyre!("derive manifest enclave identity: {error}"))?;
-    let authorization = manifest
-        .node_host_authorization_hash()
-        .map_err(|error| eyre::eyre!("derive manifest NodeHost authorization: {error}"))?;
-    let policy_hash = view
-        .policy
-        .policy_hash()
-        .map_err(|error| eyre::eyre!("hash finalized policy: {error}"))?;
-    if manifest.chain_id != view.policy.chain_id
-        || manifest.genesis_hash != view.policy.genesis_hash
-        || node_id_hash != view.binding.node_id_hash
-        || enclave_id != view.binding.enclave_id
-        || B256::from(manifest.recipient_x25519) != view.binding.recipient_x25519
-        || B256::from(manifest.attestation_ed25519) != view.binding.attestation_ed25519
-        || B256::from(manifest.noise_responder_x25519) != view.binding.noise_responder_x25519
-        || authorization != view.binding.node_host_authorization_hash
-        || policy_hash != view.binding.policy_hash
-    {
-        eyre::bail!("committed NodeHost manifest does not match the finalized Registry binding");
-    }
-    match &config.selector {
-        NodeBindingSelectorV1::NodeHost(public) if public == &manifest.node_id.reth_p2p_public => {}
-        _ => {
-            eyre::bail!("renewal selector does not match the committed node identity");
-        }
-    }
-    Ok(())
-}
-
-async fn prepare_attempt(
-    rpc: &(impl RenewalRpc + Sync),
-    evm_signer: &RelaySignerV1,
-    enclave: &mut impl RenewalEnclaveV1,
-    node_signer: &impl RenewalNodeSignerV1,
-    config: &RenewalServiceConfigV1,
-    view: &FinalizedRenewalChainViewV1,
-) -> Result<PreparedRenewalV1> {
-    let desired_valid_until = next_renewal_deadline(&view.binding, view.policy.maximum_lease)
-        .ok_or_else(|| eyre::eyre!("maximum renewal lease overflows timestamp"))?;
-    let intent = renewal_intent(config, view, desired_valid_until)?;
-    let generated_evidence = generate_renewal_evidence(
+        evm_signer,
         enclave,
-        &intent,
-        &view.policy,
-        view.schedule.finalized_timestamp,
-        desired_valid_until,
-    )?;
-    let intent_hash = intent
-        .intent_hash()
-        .map_err(|error| eyre::eyre!("hash renewal intent: {error}"))?;
-    let node_signature = node_signer
-        .sign_node_hash(intent_hash)
-        .wrap_err("sign renewal intent with node authority")?;
-    let enclave_signature = generated_evidence.enclave_signature;
-    let evidence = generated_evidence.evidence;
-    let evidence_hash = generated_evidence.evidence_hash;
-    let calldata = ITeeRegistryV1::renewEnclaveCall {
-        evidence: evidence.clone().into(),
-        nodeSignature: node_signature.to_vec().into(),
-        enclaveSignature: enclave_signature.to_vec().into(),
-    }
-    .abi_encode();
-    let gas_limit = TeeRegistryGasScheduleV1::normative()
-        .maximum_transaction_gas(
-            RegistryMutatorV1::RenewEnclave,
-            calldata.len(),
-            evidence.len(),
-            view.policy.measurement_rules.len(),
-            view.policy.attestation_mode,
-        )
-        .map_err(|error| eyre::eyre!("calculate normative renewal gas: {error}"))?;
-    let chain_id = rpc.chain_id().await?;
-    let account_nonce = rpc.transaction_count(evm_signer.address()).await?;
-    let gas_price = buffered_gas_price(rpc.gas_price().await?);
-    let required_balance = gas_price.saturating_mul(U256::from(gas_limit));
-    let balance = rpc.balance(evm_signer.address()).await?;
-    if balance < required_balance {
-        eyre::bail!(
-            "renewal EVM signer {} has {balance} but needs at least {required_balance}",
-            evm_signer.address()
-        );
-    }
-    let raw = evm_signer.sign_renewal(
-        chain_id,
-        account_nonce,
-        gas_price,
-        gas_limit,
-        TEE_REGISTRY_ADDRESS,
-        &calldata,
-    )?;
-    let intent_bytes = intent
-        .encode_canonical()
-        .map_err(|error| eyre::eyre!("encode canonical renewal intent: {error}"))?;
-    Ok(PreparedRenewalV1 {
-        source: view.binding.clone(),
-        intent: intent_bytes,
-        intent_hash,
-        evidence_hash,
-        evidence,
-        node_signature: node_signature.to_vec(),
-        enclave_signature: enclave_signature.to_vec(),
-        calldata_hash: keccak256(&calldata),
-        calldata,
-        requested_valid_until: intent.requested_valid_until,
-        collateral_valid_until: generated_evidence.collateral_valid_until,
-        collateral_margin: generated_evidence.collateral_margin,
-        // `relay` is retained in the V1 journal shape for restart compatibility;
-        // manual renewal binds it to the caller's global EVM signer.
-        relay: evm_signer.address(),
-        relay_variants: vec![raw],
-    })
-}
-
-fn renewal_intent(
-    config: &RenewalServiceConfigV1,
-    view: &FinalizedRenewalChainViewV1,
-    requested_valid_until: u64,
-) -> Result<RegistrationIntentV1> {
-    Ok(RegistrationIntentV1 {
-        chain_id: view.policy.chain_id,
-        genesis_hash: view.policy.genesis_hash,
-        operation: AttestationOperationV1::RenewEnclave,
-        attestation_mode: view.policy.attestation_mode,
-        policy_hash: view
-            .policy
-            .policy_hash()
-            .map_err(|error| eyre::eyre!("hash active policy: {error}"))?,
-        node_id: config.manifest.node_id.clone(),
-        enclave_id: view.binding.enclave_id,
-        binding_id: view.binding.binding_id,
-        binding_version: view.binding.binding_version,
-        registration_version: view
-            .binding
-            .registration_version
-            .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("registration version exhausted"))?,
-        renewal_nonce: view
-            .binding
-            .renewal_nonce
-            .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("renewal nonce exhausted"))?,
-        transition_nonce: view.binding.transition_nonce,
-        requested_valid_until,
-        recipient_x25519: config.manifest.recipient_x25519,
-        attestation_ed25519: config.manifest.attestation_ed25519,
-        noise_responder_x25519: config.manifest.noise_responder_x25519,
-        node_host_authorization_hash: view.binding.node_host_authorization_hash,
-    })
-}
-
-struct GeneratedRenewalEvidenceV1 {
-    evidence: Vec<u8>,
-    evidence_hash: B256,
-    enclave_signature: [u8; 64],
-    collateral_valid_until: u64,
-    collateral_margin: u64,
-}
-
-fn generate_renewal_evidence(
-    enclave: &mut impl RenewalEnclaveV1,
-    intent: &RegistrationIntentV1,
-    policy: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
-    finalized_timestamp: u64,
-    desired_valid_until: u64,
-) -> Result<GeneratedRenewalEvidenceV1> {
-    match policy.attestation_mode {
-        AttestationMode::DcapRequired => {
-            let (dcap, enclave_signature) = generate_dcap_evidence(enclave, intent, policy)?;
-            let window = dcap_collateral_validity_window_v1(&dcap, policy).map_err(|error| {
-                eyre::eyre!("validate signed renewal collateral window: {error:?}")
-            })?;
-            let ceiling = window
-                .expiration_ceiling
-                .checked_sub(policy.collateral_margin)
-                .ok_or_else(|| {
-                    eyre::eyre!("renewal collateral cannot satisfy the active margin")
-                })?;
-            if window.issue_floor > finalized_timestamp || desired_valid_until > ceiling {
-                eyre::bail!("fresh Intel collateral cannot cover the exact next renewal deadline");
-            }
-            let value = AttestationEvidenceV1::Dcap(dcap);
-            let evidence = value
-                .encode_canonical()
-                .map_err(|error| eyre::eyre!("encode canonical renewal evidence: {error}"))?;
-            let evidence_hash = dcap_evidence_hash_v1(&evidence)
-                .map_err(|code| eyre::eyre!("hash canonical renewal DCAP evidence: {code:?}"))?;
-            Ok(GeneratedRenewalEvidenceV1 {
-                evidence,
-                evidence_hash,
-                enclave_signature,
-                collateral_valid_until: window.expiration_ceiling,
-                collateral_margin: policy.collateral_margin,
-            })
-        }
-        AttestationMode::GramineDirectDev => {
-            let enclave_signature = enclave
-                .sign_registration_intent_dev_v1(intent)
-                .wrap_err("sign renewal intent inside GramineDirectDev enclave")?;
-            if !intent.verify_enclave_signature(&enclave_signature) {
-                eyre::bail!("GramineDirectDev enclave signature does not bind renewal intent");
-            }
-            let value = AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
-                transition_key_ready_proof: None,
-                intent: intent.clone(),
-                dev_attestation_public: intent.attestation_ed25519,
-                dev_signature: enclave_signature,
-            });
-            let evidence_hash = value
-                .evidence_hash()
-                .map_err(|error| eyre::eyre!("hash canonical renewal evidence: {error}"))?;
-            let evidence = value
-                .encode_canonical()
-                .map_err(|error| eyre::eyre!("encode canonical renewal evidence: {error}"))?;
-            Ok(GeneratedRenewalEvidenceV1 {
-                evidence,
-                evidence_hash,
-                enclave_signature,
-                collateral_valid_until: u64::MAX,
-                collateral_margin: 0,
-            })
-        }
-    }
-}
-
-fn generate_dcap_evidence(
-    enclave: &mut impl RenewalEnclaveV1,
-    intent: &RegistrationIntentV1,
-    policy: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
-) -> Result<(DcapEvidenceV1, [u8; 64])> {
-    let generated = enclave
-        .generate_dcap_quote(intent)
-        .wrap_err("generate intent-bound renewal quote")?;
-    let components = acquire_dcap_collateral_v1(&generated.quote_body)
-        .map_err(|error| eyre::eyre!("acquire renewal collateral: {error}"))?;
-    let evidence = DcapEvidenceV1 {
-        intent: intent.clone(),
-        quote: generated.quote_body,
-        components,
-        transition_key_ready_proof: generated.transition_key_ready_proof,
+        node_signer,
+        config,
     };
-    dcap_collateral_validity_window_v1(&evidence, policy)
-        .map_err(|error| eyre::eyre!("validate renewal collateral: {error:?}"))?;
-    Ok((evidence, generated.enclave_signature))
-}
-
-async fn submit_attempt(
-    rpc: &(impl RenewalRpc + Sync),
-    journal: &RenewalJournalGuard,
-    attempt: PreparedRenewalV1,
-    finalized_height: u64,
-    replayed: bool,
-) -> Result<RenewalOutcomeV1> {
-    let raw = attempt
-        .relay_variants
-        .last()
-        .ok_or_else(|| eyre::eyre!("renewal attempt has no relay transaction"))?;
-    let already_observed = replayed && exact_transaction_receipt_exists(rpc, raw).await?;
-    let returned_hash = if already_observed {
-        raw.transaction_hash
-    } else {
-        match rpc.send_raw_transaction(&raw.raw_transaction).await {
-            Ok(returned) => returned
-                .parse::<B256>()
-                .wrap_err("parse eth_sendRawTransaction renewal hash")?,
-            Err(error) if transaction_is_already_known(&error) => raw.transaction_hash,
-            Err(error) if transaction_nonce_is_too_low(&error) => {
-                if exact_transaction_receipt_exists(rpc, raw).await? {
-                    raw.transaction_hash
-                } else {
-                    return Err(error).wrap_err(
-                        "renewal nonce was consumed without the exact transaction receipt",
-                    );
-                }
-            }
-            Err(error) => return Err(error).wrap_err("submit exact renewal transaction"),
-        }
-    };
-    if returned_hash != raw.transaction_hash {
-        eyre::bail!("RPC returned a transaction hash different from the signed renewal bytes");
-    }
-    let hashes = attempt
-        .relay_variants
-        .iter()
-        .map(|variant| variant.transaction_hash)
-        .collect();
-    journal.store(RenewalJournalSnapshotV1::new(
-        RenewalJournalStateV1::Submitted {
-            attempt,
-            submitted_at_finalized_height: finalized_height,
-            transaction_hashes: hashes,
-        },
-    ))?;
-    Ok(RenewalOutcomeV1::Submitted {
-        transaction_hash: returned_hash,
-        replayed,
-    })
-}
-
-async fn exact_transaction_receipt_exists(
-    rpc: &(impl RenewalRpc + Sync),
-    raw: &crate::tx::RawRelayTransactionV1,
-) -> Result<bool> {
-    let expected_hash = format!("{:#x}", raw.transaction_hash);
-    let Some(receipt) = rpc.transaction_receipt(&expected_hash).await? else {
-        return Ok(false);
-    };
-    let observed_hash = receipt
-        .get("transactionHash")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| eyre::eyre!("exact renewal transaction receipt has no transactionHash"))?;
-    eyre::ensure!(
-        observed_hash.eq_ignore_ascii_case(&expected_hash),
-        "renewal RPC returned a receipt for a different transaction hash"
-    );
-    let status = receipt
-        .get("status")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| eyre::eyre!("exact renewal transaction receipt has no status"))?;
-    eyre::ensure!(
-        status == "0x1",
-        "exact renewal transaction receipt has non-success status {status}"
-    );
-    Ok(true)
-}
-
-fn transaction_is_already_known(error: &eyre::Report) -> bool {
-    let message = format!("{error:#}").to_ascii_lowercase();
-    message.contains("already known") || message.contains("known transaction")
-}
-
-fn transaction_nonce_is_too_low(error: &eyre::Report) -> bool {
-    format!("{error:#}")
-        .to_ascii_lowercase()
-        .contains("nonce too low")
-}
-
-fn finalize(
-    journal: &RenewalJournalGuard,
-    attempt: PreparedRenewalV1,
-    view: &FinalizedRenewalChainViewV1,
-) -> Result<RenewalOutcomeV1> {
-    journal.store(RenewalJournalSnapshotV1::new(
-        RenewalJournalStateV1::Finalized {
-            attempt: Box::new(attempt),
-            finalized_binding: view.binding.clone(),
-            finalized_height: view.schedule.finalized_height,
-            finalized_hash: view.schedule.finalized_hash,
-        },
-    ))?;
-    Ok(RenewalOutcomeV1::Finalized {
-        finalized_height: view.schedule.finalized_height,
-        valid_until: view.binding.valid_until,
-    })
-}
-
-fn ensure_source_or_conflict(current: &RenewalBindingV1, source: &RenewalBindingV1) -> Result<()> {
-    if current != source {
-        eyre::bail!("finalized Registry binding matches neither renewal source nor target");
-    }
-    Ok(())
-}
-
-fn target_matches(current: &RenewalBindingV1, attempt: &PreparedRenewalV1) -> Result<bool> {
-    let intent = RegistrationIntentV1::decode_canonical(&attempt.intent)
-        .map_err(|error| eyre::eyre!("decode journal renewal intent: {error}"))?;
-    Ok(current.node_id_hash == attempt.source.node_id_hash
-        && current.enclave_id == intent.enclave_id
-        && current.binding_id == intent.binding_id
-        && current.intent_hash == attempt.intent_hash
-        && current.evidence_hash == attempt.evidence_hash
-        && current.policy_hash == intent.policy_hash
-        && current.binding_version == intent.binding_version
-        && current.registration_version == intent.registration_version
-        && current.renewal_nonce == intent.renewal_nonce
-        && current.transition_nonce == intent.transition_nonce
-        && current.valid_until == intent.requested_valid_until
-        && current.recipient_x25519 == B256::from(intent.recipient_x25519)
-        && current.attestation_ed25519 == B256::from(intent.attestation_ed25519)
-        && current.noise_responder_x25519 == B256::from(intent.noise_responder_x25519)
-        && current.node_host_authorization_hash == intent.node_host_authorization_hash)
-}
-
-fn permanent_staleness(attempt: &PreparedRenewalV1, finalized_timestamp: u64) -> Option<String> {
-    if finalized_timestamp >= attempt.collateral_valid_until {
-        return Some("finalized consensus time reached the signed collateral expiration".into());
-    }
-    if finalized_timestamp >= attempt.requested_valid_until {
-        return Some("finalized consensus time reached the requested lease expiration".into());
-    }
-    None
-}
-
-fn renewal_opens_at(binding: &RenewalBindingV1, lease_period: u64) -> Result<u64> {
-    if lease_period == 0 || !lease_period.is_multiple_of(2) {
-        eyre::bail!("finalized Registry lease period is not a positive even duration");
-    }
-    Ok(binding.valid_until.saturating_sub(lease_period / 2))
-}
-
-fn renewal_is_open(
-    binding: &RenewalBindingV1,
-    finalized_timestamp: u64,
-    lease_period: u64,
-) -> Result<bool> {
-    if finalized_timestamp >= binding.valid_until {
-        eyre::bail!("finalized enclave lease expired; run tee join to recover");
-    }
-    Ok(finalized_timestamp >= renewal_opens_at(binding, lease_period)?)
-}
-
-fn next_renewal_deadline(binding: &RenewalBindingV1, lease_period: u64) -> Option<u64> {
-    binding.valid_until.checked_add(lease_period)
+    run_locked_renewal(&mut preparation).await
 }
 
 #[cfg(test)]
 mod tests {
+    use outbe_primitives::tee_attestation_v1::TeePolicyV1;
     use std::sync::{Arc, Mutex};
 
     use super::*;
@@ -964,15 +423,15 @@ mod tests {
         }
     }
 
-    fn replay_fixture(
-        node_data_dir: &std::path::Path,
-        mode: AttestationMode,
-    ) -> (
-        ReplayRpc,
-        RelaySignerV1,
-        RenewalServiceConfigV1,
-        PreparedRenewalV1,
-    ) {
+    struct ReplayIdentity {
+        policy: TeePolicyV1,
+        manifest: EnclaveInitializationManifestV1,
+        source: RenewalBindingV1,
+        node_signer: k256::ecdsa::SigningKey,
+        enclave_signer: ed25519_dalek::SigningKey,
+    }
+
+    fn replay_policy(mode: AttestationMode) -> TeePolicyV1 {
         let genesis_hash = B256::repeat_byte(0x82);
         let profile = match mode {
             AttestationMode::DcapRequired => {
@@ -986,8 +445,12 @@ mod tests {
             }
             AttestationMode::GramineDirectDev => InitialTeeProfileV1::GramineDirectDev,
         };
-        let policy = initial_tee_policy_v1(profile, DEVNET_CHAIN_ID, genesis_hash).unwrap();
-        let policy_hash = policy.policy_hash().unwrap();
+        initial_tee_policy_v1(profile, DEVNET_CHAIN_ID, genesis_hash).unwrap()
+    }
+
+    fn replay_identity(mode: AttestationMode) -> ReplayIdentity {
+        let policy = replay_policy(mode);
+        let genesis_hash = policy.genesis_hash;
         let node_signer = k256::ecdsa::SigningKey::from_bytes((&[0x85; 32]).into()).unwrap();
         let enclave_signer = ed25519_dalek::SigningKey::from_bytes(&[0x86; 32]);
         let node_id = NodeIdV1 {
@@ -1009,6 +472,23 @@ mod tests {
             attestation_ed25519: enclave_signer.verifying_key().to_bytes(),
             noise_responder_x25519: [0x8a; 32],
         };
+        let source = replay_source(&policy, &manifest);
+        ReplayIdentity {
+            policy,
+            manifest,
+            source,
+            node_signer,
+            enclave_signer,
+        }
+    }
+
+    fn replay_source(
+        policy: &TeePolicyV1,
+        manifest: &EnclaveInitializationManifestV1,
+    ) -> RenewalBindingV1 {
+        let mode = policy.attestation_mode;
+        let node_id = &manifest.node_id;
+        let policy_hash = policy.policy_hash().unwrap();
         let enclave_id = manifest.enclave_id().unwrap();
         let node_host_authorization_hash = manifest.node_host_authorization_hash().unwrap();
         let valid_until = 2_000_000;
@@ -1022,7 +502,7 @@ mod tests {
             }
             AttestationMode::GramineDirectDev => u64::MAX,
         };
-        let source = RenewalBindingV1 {
+        RenewalBindingV1 {
             node_id_hash: node_id.node_id_hash().unwrap(),
             enclave_id,
             binding_id: B256::repeat_byte(0x8b),
@@ -1046,8 +526,24 @@ mod tests {
             platform_tcb_status: 0,
             verdict_hash: B256::repeat_byte(0x8e),
             node_host_authorization_hash,
-        };
-        let intent = RegistrationIntentV1 {
+        }
+    }
+
+    fn replay_intent(identity: &ReplayIdentity) -> RegistrationIntentV1 {
+        let ReplayIdentity {
+            policy,
+            manifest,
+            source,
+            ..
+        } = identity;
+        let mode = policy.attestation_mode;
+        let genesis_hash = policy.genesis_hash;
+        let policy_hash = source.policy_hash;
+        let node_id = manifest.node_id.clone();
+        let enclave_id = source.enclave_id;
+        let node_host_authorization_hash = source.node_host_authorization_hash;
+        let requested_valid_until = source.valid_until + policy.maximum_lease;
+        RegistrationIntentV1 {
             chain_id: policy.chain_id,
             genesis_hash,
             operation: AttestationOperationV1::RenewEnclave,
@@ -1065,36 +561,24 @@ mod tests {
             attestation_ed25519: manifest.attestation_ed25519,
             noise_responder_x25519: manifest.noise_responder_x25519,
             node_host_authorization_hash,
-        };
-        let intent_hash = intent.intent_hash().unwrap();
-        let (node_signature_body, node_recovery): (
-            k256::ecdsa::Signature,
-            k256::ecdsa::RecoveryId,
-        ) = node_signer.sign_prehash(intent_hash.as_slice()).unwrap();
-        let mut node_signature = [0_u8; 65];
-        node_signature[..64].copy_from_slice(node_signature_body.to_bytes().as_slice());
-        node_signature[64] = node_recovery.to_byte();
-        let enclave_signature = enclave_signer.sign(intent_hash.as_slice()).to_bytes();
+        }
+    }
+
+    fn replay_evidence(
+        mode: AttestationMode,
+        intent: &RegistrationIntentV1,
+        enclave_signature: [u8; 64],
+    ) -> (Vec<u8>, B256) {
         let evidence_value = match mode {
             AttestationMode::DcapRequired => AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
                 intent: intent.clone(),
                 quote: vec![1],
-                components: [
-                    DcapCollateralKind::PckCertificateChain,
-                    DcapCollateralKind::PckCrl,
-                    DcapCollateralKind::PckCrlIssuerChain,
-                    DcapCollateralKind::RootCaCrl,
-                    DcapCollateralKind::TcbInfo,
-                    DcapCollateralKind::TcbInfoIssuerChain,
-                    DcapCollateralKind::QeIdentity,
-                    DcapCollateralKind::QeIdentityIssuerChain,
-                ]
-                .into_iter()
-                .map(|kind| DcapCollateralComponentV1 {
-                    kind,
-                    bytes: vec![kind as u8],
-                })
-                .collect(),
+                components: (1_u8..=8)
+                    .map(|tag| DcapCollateralComponentV1 {
+                        kind: DcapCollateralKind::try_from(tag).unwrap(),
+                        bytes: vec![tag],
+                    })
+                    .collect(),
                 transition_key_ready_proof: None,
             }),
             AttestationMode::GramineDirectDev => {
@@ -1111,17 +595,20 @@ mod tests {
             AttestationMode::DcapRequired => dcap_evidence_hash_v1(&evidence).unwrap(),
             AttestationMode::GramineDirectDev => evidence_value.evidence_hash().unwrap(),
         };
-        let calldata = ITeeRegistryV1::renewEnclaveCall {
-            evidence: evidence.clone().into(),
-            nodeSignature: node_signature.to_vec().into(),
-            enclaveSignature: enclave_signature.to_vec().into(),
-        }
-        .abi_encode();
+        (evidence, evidence_hash)
+    }
+
+    fn replay_relay(
+        policy: &TeePolicyV1,
+        calldata: &[u8],
+        evidence_len: usize,
+    ) -> (RelaySignerV1, crate::tx::RawRelayTransactionV1) {
+        let mode = policy.attestation_mode;
         let gas_limit = TeeRegistryGasScheduleV1::normative()
             .maximum_transaction_gas(
                 RegistryMutatorV1::RenewEnclave,
                 calldata.len(),
-                evidence.len(),
+                evidence_len,
                 policy.measurement_rules.len(),
                 mode,
             )
@@ -1134,9 +621,41 @@ mod tests {
                 U256::from(2_000_000_000_u64),
                 gas_limit,
                 TEE_REGISTRY_ADDRESS,
-                &calldata,
+                calldata,
             )
             .unwrap();
+        (relay, raw)
+    }
+
+    fn replay_attempt(identity: &ReplayIdentity) -> (RelaySignerV1, PreparedRenewalV1) {
+        let ReplayIdentity {
+            policy,
+            source,
+            node_signer,
+            enclave_signer,
+            ..
+        } = identity;
+        let mode = policy.attestation_mode;
+        let source_collateral_valid_until = source.collateral_valid_until;
+        let requested_valid_until = source.valid_until + policy.maximum_lease;
+        let intent = replay_intent(identity);
+        let intent_hash = intent.intent_hash().unwrap();
+        let (node_signature_body, node_recovery): (
+            k256::ecdsa::Signature,
+            k256::ecdsa::RecoveryId,
+        ) = node_signer.sign_prehash(intent_hash.as_slice()).unwrap();
+        let mut node_signature = [0_u8; 65];
+        node_signature[..64].copy_from_slice(node_signature_body.to_bytes().as_slice());
+        node_signature[64] = node_recovery.to_byte();
+        let enclave_signature = enclave_signer.sign(intent_hash.as_slice()).to_bytes();
+        let (evidence, evidence_hash) = replay_evidence(mode, &intent, enclave_signature);
+        let calldata = ITeeRegistryV1::renewEnclaveCall {
+            evidence: evidence.clone().into(),
+            nodeSignature: node_signature.to_vec().into(),
+            enclaveSignature: enclave_signature.to_vec().into(),
+        }
+        .abi_encode();
+        let (relay, raw) = replay_relay(policy, &calldata, evidence.len());
         let attempt = PreparedRenewalV1 {
             source: source.clone(),
             intent: intent.encode_canonical().unwrap(),
@@ -1156,6 +675,27 @@ mod tests {
             relay: relay.address(),
             relay_variants: vec![raw],
         };
+        (relay, attempt)
+    }
+
+    fn replay_fixture(
+        node_data_dir: &std::path::Path,
+        mode: AttestationMode,
+    ) -> (
+        ReplayRpc,
+        RelaySignerV1,
+        RenewalServiceConfigV1,
+        PreparedRenewalV1,
+    ) {
+        let identity = replay_identity(mode);
+        let (relay, attempt) = replay_attempt(&identity);
+        let ReplayIdentity {
+            policy,
+            manifest,
+            source,
+            ..
+        } = identity;
+        let valid_until = source.valid_until;
         let schedule = TeeRenewalScheduleV1 {
             finalized_height: 120,
             finalized_hash: B256::repeat_byte(0x90),
@@ -1369,66 +909,78 @@ mod tests {
     #[tokio::test]
     async fn promoted_successor_supersedes_only_finished_predecessor_renewals() {
         for case in 0..4 {
-            let dir = tempfile::tempdir().unwrap();
-            let (mut rpc, relay, mut config, attempt) =
-                replay_fixture(dir.path(), AttestationMode::GramineDirectDev);
-            let mut previous = rpc.binding.clone();
-            previous.intent_hash = attempt.intent_hash;
-            previous.evidence_hash = attempt.evidence_hash;
-            previous.registration_version += 1;
-            previous.renewal_nonce += 1;
-            previous.valid_until = attempt.requested_valid_until;
-            let lifecycle = match case {
-                1 => RenewalJournalStateV1::Abandoned {
-                    attempt: attempt.clone(),
-                    abandoned_at_finalized_height: 99,
-                    reason: "expired predecessor attempt".into(),
-                },
-                2 => RenewalJournalStateV1::Prepared {
-                    attempt: attempt.clone(),
-                },
-                _ => RenewalJournalStateV1::Finalized {
-                    attempt: Box::new(attempt.clone()),
-                    finalized_binding: previous,
-                    finalized_height: 99,
-                    finalized_hash: B256::repeat_byte(5),
-                },
-            };
+            assert_predecessor_supersession_case(case).await;
+        }
+    }
+
+    async fn assert_predecessor_supersession_case(case: u8) {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut rpc, relay, mut config, attempt) =
+            replay_fixture(dir.path(), AttestationMode::GramineDirectDev);
+        let mut previous = rpc.binding.clone();
+        previous.intent_hash = attempt.intent_hash;
+        previous.evidence_hash = attempt.evidence_hash;
+        previous.registration_version += 1;
+        previous.renewal_nonce += 1;
+        previous.valid_until = attempt.requested_valid_until;
+        let lifecycle = predecessor_lifecycle(case, &attempt, previous);
+        RenewalJournalGuard::acquire(dir.path())
+            .unwrap()
+            .store(RenewalJournalSnapshotV1::new(lifecycle.clone()))
+            .unwrap();
+        config.manifest.recipient_x25519[0] ^= 1;
+        rpc.binding.enclave_id = config.manifest.enclave_id().unwrap();
+        rpc.binding.recipient_x25519 = config.manifest.recipient_x25519.into();
+        rpc.binding.node_host_authorization_hash =
+            config.manifest.node_host_authorization_hash().unwrap();
+        rpc.binding.binding_version += if case == 3 { 2 } else { 1 };
+        rpc.binding.transition_nonce += 1;
+        rpc.schedule.finalized_timestamp =
+            renewal_opens_at(&rpc.binding, rpc.policy.maximum_lease).unwrap() - 1;
+        store_upgrade_checkpoint(&config, &attempt, true);
+        let mut enclave = ReplayMustNotPrepare;
+        let signer = |_hash: B256| -> Result<[u8; 65]> { panic!("unexpected signing") };
+        let result = run_renewal_once_v1(&rpc, &relay, &mut enclave, &signer, &config).await;
+        if case < 2 {
+            assert!(matches!(result.unwrap(), RenewalOutcomeV1::NotDue { .. }));
+        } else {
+            assert!(
+                result.is_err(),
+                "pending or non-successor journal must not be ignored"
+            );
+        }
+        assert!(rpc.sent.lock().unwrap().is_empty());
+        assert_eq!(
             RenewalJournalGuard::acquire(dir.path())
                 .unwrap()
-                .store(RenewalJournalSnapshotV1::new(lifecycle.clone()))
-                .unwrap();
-            config.manifest.recipient_x25519[0] ^= 1;
-            rpc.binding.enclave_id = config.manifest.enclave_id().unwrap();
-            rpc.binding.recipient_x25519 = config.manifest.recipient_x25519.into();
-            rpc.binding.node_host_authorization_hash =
-                config.manifest.node_host_authorization_hash().unwrap();
-            rpc.binding.binding_version += if case == 3 { 2 } else { 1 };
-            rpc.binding.transition_nonce += 1;
-            rpc.schedule.finalized_timestamp =
-                renewal_opens_at(&rpc.binding, rpc.policy.maximum_lease).unwrap() - 1;
-            store_upgrade_checkpoint(&config, &attempt, true);
-            let mut enclave = ReplayMustNotPrepare;
-            let signer = |_hash: B256| -> Result<[u8; 65]> { panic!("unexpected signing") };
-            let result = run_renewal_once_v1(&rpc, &relay, &mut enclave, &signer, &config).await;
-            if case < 2 {
-                assert!(matches!(result.unwrap(), RenewalOutcomeV1::NotDue { .. }));
-            } else {
-                assert!(
-                    result.is_err(),
-                    "pending or non-successor journal must not be ignored"
-                );
-            }
-            assert!(rpc.sent.lock().unwrap().is_empty());
-            assert_eq!(
-                RenewalJournalGuard::acquire(dir.path())
-                    .unwrap()
-                    .load()
-                    .unwrap()
-                    .unwrap()
-                    .lifecycle,
-                lifecycle
-            );
+                .load()
+                .unwrap()
+                .unwrap()
+                .lifecycle,
+            lifecycle
+        );
+    }
+
+    fn predecessor_lifecycle(
+        case: u8,
+        attempt: &PreparedRenewalV1,
+        previous: RenewalBindingV1,
+    ) -> RenewalJournalStateV1 {
+        match case {
+            1 => RenewalJournalStateV1::Abandoned {
+                attempt: attempt.clone(),
+                abandoned_at_finalized_height: 99,
+                reason: "expired predecessor attempt".into(),
+            },
+            2 => RenewalJournalStateV1::Prepared {
+                attempt: attempt.clone(),
+            },
+            _ => RenewalJournalStateV1::Finalized {
+                attempt: Box::new(attempt.clone()),
+                finalized_binding: previous,
+                finalized_height: 99,
+                finalized_hash: B256::repeat_byte(5),
+            },
         }
     }
 
@@ -1746,8 +1298,16 @@ mod tests {
             direct_calls: 0,
         };
 
-        let generated =
-            generate_renewal_evidence(&mut enclave, &intent, &policy, 100, 700).unwrap();
+        let generated = generate_renewal_evidence(
+            &mut enclave,
+            &intent,
+            &policy,
+            RenewalEvidenceWindow {
+                finalized_timestamp: 100,
+                desired_valid_until: 700,
+            },
+        )
+        .unwrap();
         assert_eq!(enclave.dcap_calls, 0);
         assert_eq!(enclave.direct_calls, 1);
         assert_eq!(generated.collateral_valid_until, u64::MAX);
@@ -1848,11 +1408,13 @@ mod tests {
         };
 
         let attempt = prepare_attempt(
-            &PreparationRpc,
-            &relay,
-            &mut enclave,
-            &|_| Ok([0x5f; 65]),
-            &config,
+            &mut RenewalPreparation {
+                rpc: &PreparationRpc,
+                evm_signer: &relay,
+                enclave: &mut enclave,
+                node_signer: &|_| Ok([0x5f; 65]),
+                config: &config,
+            },
             &view,
         )
         .await

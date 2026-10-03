@@ -7,7 +7,6 @@ use std::{
 };
 
 use eyre::{bail, ensure, Context, Result};
-use outbe_e2e_harness::ocomp_evidence::run_command_lane;
 
 use super::registry;
 
@@ -2087,13 +2086,10 @@ pub fn run_closure(repository_root: &Path, requested_output: Option<&Path>) -> R
     }
     build_ocomp_e2e_binaries(repository_root)?;
     let artifact_set = snapshot_ocomp_artifact_set(repository_root, &run_root)?;
-    let ledger = outbe_e2e_harness::ocomp_evidence::PlanningLedger::parse(
-        &repository_root.join("outbe-plan/off-chain-poc-evidence-ledger.yaml"),
-    )?;
 
     for lane in ["OCM-FAST", "OCM-INT"] {
         let evidence_dir = run_root.join("lanes").join(lane);
-        run_command_lane(repository_root, &ledger, lane, &artifact_set, &evidence_dir)?;
+        run_command_lane(repository_root, &artifact_set, lane, &evidence_dir)?;
         run_evidence_binary(
             repository_root,
             &artifact_set,
@@ -2163,13 +2159,10 @@ pub fn run_lane(repository_root: &Path, lane: &str, requested_output: Option<&Pa
     }
     build_ocomp_e2e_binaries(repository_root)?;
     let artifact_set = snapshot_ocomp_artifact_set(repository_root, &run_root)?;
-    let ledger = outbe_e2e_harness::ocomp_evidence::PlanningLedger::parse(
-        &repository_root.join("outbe-plan/off-chain-poc-evidence-ledger.yaml"),
-    )?;
     let evidence_dir = run_root.join("lanes").join(lane);
     match lane {
         "OCM-FAST" | "OCM-INT" => {
-            run_command_lane(repository_root, &ledger, lane, &artifact_set, &evidence_dir)?;
+            run_command_lane(repository_root, &artifact_set, lane, &evidence_dir)?;
         }
         "OCM-PUBLIC" => run_exact_scenario_set(
             repository_root,
@@ -2540,6 +2533,26 @@ fn exact_scenario_arguments(
         arguments.push(path_str(&artifact_set.join(binary))?.to_owned());
     }
     Ok(arguments)
+}
+
+fn run_command_lane(
+    repository_root: &Path,
+    artifact_set: &Path,
+    lane: &str,
+    evidence_dir: &Path,
+) -> Result<()> {
+    run_evidence_binary(
+        repository_root,
+        artifact_set,
+        &[
+            "command-lane",
+            lane,
+            "--artifact-set",
+            path_str(artifact_set)?,
+            "--evidence-dir",
+            path_str(evidence_dir)?,
+        ],
+    )
 }
 
 fn run_evidence_binary(

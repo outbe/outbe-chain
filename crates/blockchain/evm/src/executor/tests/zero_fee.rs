@@ -238,6 +238,17 @@ fn zero_fee_oracle_vote_from_delegated_feeder_keeps_zero_balance() {
             .execute_transaction(zero_fee_tx)
             .expect("delegated zero-fee oracle vote should execute");
 
+        let cfg = &executor.inner.evm.ctx_mut().cfg;
+        assert_eq!(
+            (
+                cfg.disable_balance_check,
+                cfg.disable_base_fee,
+                cfg.disable_fee_charge
+            ),
+            (false, false, false),
+            "oracle waiver must restore fee validation after execution"
+        );
+
         assert_eq!(executor.receipts().len(), 1);
         assert!(executor.receipts()[0].success);
         assert!(executor.receipts()[0].cumulative_gas_used > 0);
@@ -770,6 +781,102 @@ fn eip7702_bootstrap_rejects_zero_balance_without_state_change() {
     assert_eq!(account.nonce, 0);
     assert!(account.is_empty_code_hash());
     assert_eq!(zerofee_counter_for(&mut state, signer), 0);
+}
+
+#[test]
+fn bootstrap_execution_restores_existing_fee_flags_on_every_result_exit() {
+    let config = OutbeEvmConfig::new(test_chain_spec());
+    for flags in 0..8u8 {
+        for outcome in ["included", "declined", "error"] {
+            let recovered = bootstrap_test_tx();
+            let signer = Address::from(*recovered.signer());
+            let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+            let marker = Bytecode::new_legacy([0xef].into());
+            db.insert_account_info(
+                ZEROFEE_ADDRESS,
+                AccountInfo {
+                    code_hash: marker.hash_slow(),
+                    code: Some(marker),
+                    ..Default::default()
+                },
+            );
+            db.insert_account_info(
+                signer,
+                AccountInfo {
+                    balance: U256::from(1),
+                    ..Default::default()
+                },
+            );
+            let mut state = State::builder()
+                .with_database(db)
+                .with_bundle_update()
+                .build();
+            let expected = (flags & 1 != 0, flags & 2 != 0, flags & 4 != 0);
+            let mut env = pectra_evm_env(1);
+            env.cfg_env.disable_balance_check = expected.0;
+            env.cfg_env.disable_base_fee = expected.1;
+            env.cfg_env.disable_fee_charge = expected.2;
+            if outcome == "error" {
+                // The waiver is authorized, but the inner executor rejects
+                // the transaction against the available block gas.
+                env.block_env.gas_limit = 0;
+            }
+            {
+                let evm = config.evm_with_env(&mut state, env);
+                let mut executor =
+                    config.create_executor(evm, execution_ctx(Some(1), Bytes::new()));
+                let result = executor.execute_transaction_with_commit_condition(recovered, |_| {
+                    if outcome == "declined" {
+                        CommitChanges::No
+                    } else {
+                        CommitChanges::Yes
+                    }
+                });
+                match outcome {
+                    "included" => {
+                        assert!(result.unwrap().is_some());
+                        assert_eq!(executor.receipts().len(), 1);
+                        assert!(executor.receipts()[0].success);
+                    }
+                    "declined" => {
+                        assert!(result.unwrap().is_none());
+                        assert!(executor.receipts().is_empty());
+                    }
+                    "error" => {
+                        assert!(result.is_err());
+                        assert!(executor.receipts().is_empty());
+                    }
+                    _ => unreachable!(),
+                }
+                let cfg = &executor.inner.evm.ctx_mut().cfg;
+                assert_eq!(
+                    (
+                        cfg.disable_balance_check,
+                        cfg.disable_base_fee,
+                        cfg.disable_fee_charge
+                    ),
+                    expected,
+                    "flags={flags}, outcome={outcome}"
+                );
+                assert_eq!(
+                    executor.current_execution_summary().validator_fee_sum,
+                    U256::ZERO
+                );
+            }
+            let account = state.basic(signer).unwrap().unwrap();
+            assert_eq!(account.balance, U256::from(1));
+            assert_eq!(account.nonce, if outcome == "included" { 2 } else { 0 });
+            assert_eq!(
+                account.code.and_then(|code| code.eip7702_address()),
+                if outcome == "included" {
+                    Some(ZEROFEE_ADDRESS)
+                } else {
+                    None
+                }
+            );
+            assert_eq!(zerofee_counter_for(&mut state, signer), 0);
+        }
+    }
 }
 
 fn cache_db_with_paymaster_account(

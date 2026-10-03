@@ -17,7 +17,6 @@ use outbe_consensus::{
     config::MAX_P2P_MESSAGE_SIZE,
     timing::{DEFAULT_CERTIFICATION_TIMEOUT_MS, DEFAULT_LEADER_TIMEOUT_MS},
 };
-use outbe_e2e_harness::ocomp_evidence::verify_capacity_run_preimage;
 use outbe_ocomp_protocol::{
     capacity::{
         CapacityBudgetV1, CapacityEvidenceV1, VerifiedCapacityEvidenceV1, OCOMP_POC_CAS_QUOTA_BYTES,
@@ -118,25 +117,7 @@ pub fn run(
         scenario_paths.len() == evidence.runs.len(),
         "capacity generation requires one public scenario preimage per cold run"
     );
-    let run_count = u8::try_from(evidence.runs.len()).wrap_err("capacity run count exceeds u8")?;
-    for ordinal in 1_u8..=run_count {
-        let expected = evidence
-            .runs
-            .iter()
-            .find(|run| run.ordinal == ordinal)
-            .ok_or_else(|| eyre::eyre!("capacity evidence is missing ordinal {ordinal}"))?;
-        let scenario = scenario_paths
-            .get(usize::from(ordinal - 1))
-            .ok_or_else(|| {
-                eyre::eyre!("capacity scenario preimage is missing ordinal {ordinal}")
-            })?;
-        verify_capacity_run_preimage(expected, scenario).wrap_err_with(|| {
-            format!(
-                "verify capacity cold run {ordinal} from {}",
-                scenario.display()
-            )
-        })?;
-    }
+    verify_capacity_preimages(repository_root, &evidence_path, scenario_paths)?;
 
     let limits_bytes = std::fs::read(&limits_manifest_path).wrap_err_with(|| {
         format!(
@@ -264,6 +245,35 @@ pub fn measure(
 
 fn append_capacity_scenarios(command: &mut Command, scenario_paths: &[PathBuf]) {
     command.arg("--scenario").args(scenario_paths);
+}
+
+fn verify_capacity_preimages(
+    repository_root: &Path,
+    evidence_path: &Path,
+    scenario_paths: &[PathBuf],
+) -> Result<()> {
+    let mut build = Command::new("cargo");
+    build.current_dir(repository_root).args([
+        "build",
+        "--locked",
+        "--release",
+        "-p",
+        "outbe-e2e-harness",
+        "--features",
+        "ocomp-integration",
+        "--bin",
+        "outbe-e2e-evidence",
+    ]);
+    run_checked(&mut build, "build OCOMP capacity preimage verifier")?;
+    let mut verify = Command::new(repository_root.join("target/release/outbe-e2e-evidence"));
+    verify
+        .arg("--repo")
+        .arg(repository_root)
+        .arg("verify-capacity-preimage")
+        .arg("--evidence")
+        .arg(evidence_path);
+    append_capacity_scenarios(&mut verify, scenario_paths);
+    run_checked(&mut verify, "verify capacity cold-run preimages")
 }
 
 fn build_capacity_binaries(repository_root: &Path) -> Result<()> {

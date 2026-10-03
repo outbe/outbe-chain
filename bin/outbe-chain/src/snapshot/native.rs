@@ -247,7 +247,9 @@ pub(crate) fn inspect_stopped_stores(
     use outbe_compressed_entities::CeMdbxReadOnly;
     use outbe_ocomp::discovery_spool::inspect_closure_checkpoint;
     use outbe_offchain_data::{read_projection_state, ProjectionConfig};
-    use outbe_offchain_storage::RocksDbReader;
+    use outbe_offchain_storage::{
+        partitioned::adapters::RocksPartitionReadView, PartitionedStorage,
+    };
     use outbe_primitives::projection::ProjectionCheckpoint;
     use outbe_snapshot::manifest::NativeProgress;
     use std::sync::Arc;
@@ -277,10 +279,13 @@ pub(crate) fn inspect_stopped_stores(
             genesis_hash: layout.chain.genesis_hash(),
             start_block: layout.projection_start_block,
         },
-        Arc::new(RocksDbReader::open(
-            &super::projection_store::projection_database(&layout.offchain_root),
-            scratch,
-        )?),
+        Arc::new(PartitionedStorage::read_only(
+            Arc::new(RocksPartitionReadView::open(
+                &layout.offchain_root,
+                scratch,
+            )?),
+            outbe_offchain_data::entity_partition_routing()?,
+        )),
     )?
     .and_then(|state| state.checkpoint)
     .ok_or_else(|| eyre::eyre!("missing initialized offchain projection checkpoint"))?;

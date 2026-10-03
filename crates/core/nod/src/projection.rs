@@ -17,10 +17,11 @@ use crate::{
 };
 
 /// Code-defined namespaces owned by the Nod repository.
-pub const NOD_PROJECTION_NAMESPACES: [&str; 3] = [
+pub const NOD_PROJECTION_NAMESPACES: [&str; 4] = [
     NODS_NAMESPACE,
     NOD_BUCKETS_NAMESPACE,
     NODS_BY_OWNER_NAMESPACE,
+    crate::partitioning::NOD_LOCATIONS_NAMESPACE,
 ];
 
 /// Repository-owned prior state plus an in-block overlay for Nod projection.
@@ -226,10 +227,29 @@ fn plan_nod_item_mutation(
                 Some(metadata) => StoredValue::with_metadata(stored_body, metadata),
                 None => StoredValue::plain(stored_body),
             };
+            let scope = crate::partitioning::item_scope(body.owner)?;
+            if let Some(old) = old {
+                let old_scope = crate::partitioning::item_scope(old.owner)?;
+                if old_scope != scope {
+                    batch.push(AtomicWriteOperation::delete(
+                        namespace(NODS_NAMESPACE)?.with_scope(old_scope),
+                        item_key(nod_id)?,
+                    ));
+                }
+            }
             batch.push(AtomicWriteOperation::put_record(
-                namespace(NODS_NAMESPACE)?,
+                namespace(NODS_NAMESPACE)?.with_scope(scope),
                 item_key(nod_id)?,
                 primary_record,
+            ));
+            batch.push(AtomicWriteOperation::put(
+                namespace(crate::partitioning::NOD_LOCATIONS_NAMESPACE)?,
+                item_key(nod_id)?,
+                Value::new(
+                    crate::partitioning::owner_shard(body.owner)?
+                        .to_be_bytes()
+                        .to_vec(),
+                )?,
             ));
             batch.push(AtomicWriteOperation::put(
                 namespace(NODS_BY_OWNER_NAMESPACE)?,
@@ -252,8 +272,14 @@ fn plan_nod_item_mutation(
                     owner_index_key(old.owner, nod_id)?,
                 ));
             }
+            let primary = match old {
+                Some(old) => namespace(NODS_NAMESPACE)?
+                    .with_scope(crate::partitioning::item_scope(old.owner)?),
+                None => namespace(NODS_NAMESPACE)?,
+            };
+            batch.push(AtomicWriteOperation::delete(primary, item_key(nod_id)?));
             batch.push(AtomicWriteOperation::delete(
-                namespace(NODS_NAMESPACE)?,
+                namespace(crate::partitioning::NOD_LOCATIONS_NAMESPACE)?,
                 item_key(nod_id)?,
             ));
         }

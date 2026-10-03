@@ -8,3 +8,5 @@ mod layout;
 mod native;
 mod ocomp;
 mod validation;
+
+mod projection_fixture;

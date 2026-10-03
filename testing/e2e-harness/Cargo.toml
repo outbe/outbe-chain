@@ -10,10 +10,8 @@ default = []
 ocomp-finality-fixture = [
     "dep:alloy-consensus",
     "dep:alloy-rlp",
-    "dep:alloy-trie",
     "dep:k256",
     "dep:outbe-common",
-    "dep:outbe-fidelity",
     "dep:outbe-metadosis",
     "dep:outbe-nod",
     "dep:outbe-node",
@@ -21,14 +19,9 @@ ocomp-finality-fixture = [
     "dep:outbe-ocompregistry",
     "dep:outbe-oracle",
     "dep:reth-chainspec",
-    "dep:reth-primitives-traits",
-    "dep:reth-storage-api",
-    "dep:reth-trie",
-    "dep:revm",
 ]
 tribute-day-directory = [
     "dep:outbe-nod",
-    "dep:outbe-offchain-data",
     "dep:outbe-tribute",
 ]
 ocomp-integration = [
@@ -40,7 +33,6 @@ ocomp-integration = [
     "dep:outbe-gemfactory",
     "dep:outbe-intexfactory",
     "dep:outbe-nodfactory",
-    "dep:outbe-offchain-data",
     "dep:outbe-paynote",
     "dep:outbe-tribute",
     "dep:outbe-tee-enclave",
@@ -85,12 +77,14 @@ outbe-protocol-derive.workspace = true
 outbe-radicle.workspace = true
 # Read-only Heartwood policy/COB storage; same revision as heartwood-outbe-radicle.
 radicle = { git = "https://github.com/outbe/outbe-heartwood.git", rev = "b76a17801329291153585ed31db61ee3c658046e" }
+outbe-gratis.workspace = true
+outbe-credisfactory.workspace = true
+outbe-vaultrouter.workspace = true
 outbe-tee.workspace = true
 outbe-zk-backend.workspace = true
 outbe-zk-canonical.workspace = true
 outbe-common = { workspace = true, optional = true }
 outbe-consensus.workspace = true
-outbe-fidelity = { workspace = true, optional = true }
 outbe-gem = { workspace = true, optional = true }
 outbe-gemfactory = { workspace = true, optional = true }
 outbe-intexfactory = { workspace = true, optional = true }
@@ -103,19 +97,16 @@ outbe-node = { workspace = true, optional = true }
 outbe-ocomp = { workspace = true, optional = true }
 outbe-ocomp-protocol = { workspace = true, optional = true }
 outbe-ocompregistry = { workspace = true, optional = true }
-outbe-offchain-data = { workspace = true, optional = true }
+outbe-offchain-data.workspace = true
 outbe-offchain-storage.workspace = true
+mongodb.workspace = true
 outbe-oracle = { workspace = true, optional = true }
 outbe-tribute = { workspace = true, optional = true }
 outbe-tee-enclave = { workspace = true, optional = true }
 rand.workspace = true
 reth-chainspec = { workspace = true, optional = true }
 reth-ethereum.workspace = true
-reth-primitives-traits = { workspace = true, optional = true }
 reth-provider = { workspace = true, features = ["test-utils"], optional = true }
-reth-storage-api = { workspace = true, optional = true }
-reth-trie = { workspace = true, optional = true }
-revm = { workspace = true, optional = true }
 # Genesis `genesisTime` ISO-8601 formatting (bootstrap glue ported from `date -u`).
 time = { workspace = true, features = ["formatting", "parsing"] }
 
@@ -125,7 +116,6 @@ alloy-primitives = { workspace = true, features = ["std"] }
 alloy-eips.workspace = true
 alloy-consensus = { workspace = true, optional = true }
 alloy-rlp = { workspace = true, optional = true }
-alloy-trie = { workspace = true, optional = true }
 alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-provider.workspace = true
 alloy-signer.workspace = true

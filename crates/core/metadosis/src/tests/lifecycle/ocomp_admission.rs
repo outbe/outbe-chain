@@ -30,9 +30,11 @@ fn seed_positive_ocomp_admission_fixture(
             &storage,
             &scope,
             &parent,
-            address!("7400000000000000000000000000000000000074"),
-            wwd,
-            nominal,
+            FixtureTribute {
+                owner: address!("7400000000000000000000000000000000000074"),
+                wwd,
+                nominal,
+            },
         );
     });
     (scope, parent, scheduled)
@@ -221,9 +223,11 @@ fn absent_profile_rejects_populated_ready_before_failed_state_or_lysis_effects()
             &storage,
             &scope,
             &parent,
-            address!("7700000000000000000000000000000000000077"),
-            wwd,
-            U256::from(10),
+            FixtureTribute {
+                owner: address!("7700000000000000000000000000000000000077"),
+                wwd,
+                nominal: U256::from(10),
+            },
         );
     });
     let storage_before = provider.storage.clone();
@@ -276,17 +280,21 @@ fn active_ocomp_profile_discovers_later_ready_day_after_first_was_indexed() {
                 &storage,
                 scope,
                 parent,
-                address!("7400000000000000000000000000000000000074"),
-                first_wwd,
-                nominal,
+                FixtureTribute {
+                    owner: address!("7400000000000000000000000000000000000074"),
+                    wwd: first_wwd,
+                    nominal,
+                },
             );
             issue_one_tribute_in_scope(
                 &storage,
                 scope,
                 parent,
-                address!("7500000000000000000000000000000000000075"),
-                second_wwd,
-                nominal,
+                FixtureTribute {
+                    owner: address!("7500000000000000000000000000000000000075"),
+                    wwd: second_wwd,
+                    nominal,
+                },
             );
 
             let first_ctx = BlockRuntimeContext::new(
@@ -343,7 +351,16 @@ fn populated_positive_gratis_day_enqueues_ocomp_without_synchronous_lysis() {
         arm_genesis_ocomp(&storage, CHAIN_ID);
 
         with_active_scope(storage.clone(), |scope, parent| {
-            issue_one_tribute_in_scope(&storage, scope, parent, owner, wwd, nominal);
+            issue_one_tribute_in_scope(
+                &storage,
+                scope,
+                parent,
+                FixtureTribute {
+                    owner,
+                    wwd,
+                    nominal,
+                },
+            );
 
             // This collides with the NOD the removed synchronous Lysis path
             // would have attempted to issue. OCOMP admission must not touch it.

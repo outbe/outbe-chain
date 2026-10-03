@@ -147,3 +147,54 @@ fn restore_rejects_a_terminal_job_with_any_live_or_ready_successor() {
     invalid_nonce.terminal[0].pending_nonce = 1;
     assert!(JobFsmState::restore(invalid_nonce).is_err());
 }
+
+#[test]
+fn restore_roundtrips_each_phase_and_rejects_every_mixed_cardinality() {
+    let ready = JobFsmState::initial_ready(WWD, REQUEST_HEIGHT);
+    let pending = requested_state();
+    let mut terminal = pending.clone();
+    terminal
+        .apply(JobFsmCommand::Expire {
+            at_height: DEADLINE_HEIGHT,
+            at_time: 1000,
+        })
+        .unwrap();
+    for state in [&ready, &pending, &terminal] {
+        assert_eq!(JobFsmState::restore(state.snapshot()).unwrap(), *state);
+    }
+    for ready_present in [false, true] {
+        for live_present in [false, true] {
+            for terminal_count in 0..=2 {
+                let mut snapshot = ready.snapshot();
+                snapshot.ready = ready_present.then_some(ready.snapshot().ready.unwrap());
+                snapshot.live = live_present.then_some(pending.snapshot().live.unwrap());
+                snapshot.terminal = vec![terminal.terminal_attempts()[0]; terminal_count];
+                let valid = matches!(
+                    (ready_present, live_present, terminal_count),
+                    (true, false, 0) | (false, true, 0) | (false, false, 1)
+                );
+                assert_eq!(JobFsmState::restore(snapshot).is_ok(), valid);
+            }
+        }
+    }
+}
+
+#[test]
+fn rejected_request_does_not_mutate_ready_and_keeps_due_height_error_precedence() {
+    let mut state = JobFsmState::initial_ready(WWD, REQUEST_HEIGHT);
+    let before = state.clone();
+    let error = state
+        .apply(JobFsmCommand::Request {
+            at_height: REQUEST_HEIGHT - 1,
+            deadline_height: 0,
+            intent_id: B256::ZERO,
+            lysis_limit_minor: LYSIS_LIMIT,
+            request_limit_receipt_hash: B256::ZERO,
+        })
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "OCOMP request is not due until height 40"
+    );
+    assert_eq!(state, before);
+}

@@ -1,5 +1,6 @@
 #[cfg(test)]
 use super::validate_header_consensus_artifacts_for_activation;
+use super::verification::{HeaderArtifactRequest, HeaderArtifactValidationDeps};
 #[cfg(test)]
 use super::ValidatorRole;
 
@@ -32,17 +33,21 @@ pub(super) async fn validate_header_consensus_artifacts(
     ancestry: &impl AncestryReader,
 ) -> Result<(), String> {
     validate_header_consensus_artifacts_for_activation(
-        block,
-        parent_block,
-        round,
-        proposer,
-        chain_id,
-        OcompLifecycleActivation::Disabled,
-        role,
-        certificate_scheme_provider,
-        committee_provider,
-        dkg_manager,
-        ancestry,
+        HeaderArtifactRequest {
+            block,
+            parent_block,
+            round,
+            proposer,
+            role,
+        },
+        HeaderArtifactValidationDeps {
+            chain_id,
+            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
+            certificate_scheme_provider,
+            committee_provider,
+            dkg_manager,
+            ancestry,
+        },
     )
     .await
     .map_err(|error| error.to_string())

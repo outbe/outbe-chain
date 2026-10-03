@@ -1,4 +1,5 @@
 //! Durable primary and immutable-per-session secondary RocksDB capabilities.
+pub(crate) mod lifecycle;
 
 use std::{
     fs::{File, OpenOptions},
@@ -170,7 +171,7 @@ impl RocksDbReader {
 
 // Resolve symlinked parents before creating a missing secondary directory. A rejected
 // reader configuration must not first create a directory inside the primary.
-fn resolve_existing_ancestor(path: &Path) -> Result<PathBuf, StorageError> {
+pub(crate) fn resolve_existing_ancestor(path: &Path) -> Result<PathBuf, StorageError> {
     let absolute = std::path::absolute(path).map_err(StorageError::unavailable)?;
     let mut ancestor = absolute.as_path();
     let mut missing = Vec::new();
@@ -331,6 +332,11 @@ impl StorageWriter for RocksDbStorage {
 
     fn apply_atomic(&self, batch: &AtomicWriteBatch) -> Result<(), StorageError> {
         batch.validate()?;
+        if !batch.retired_scopes().is_empty() {
+            return Err(StorageError::InvalidArgument(
+                "raw RocksDB requires a partition adapter for scope retirement".into(),
+            ));
+        }
         if batch.is_empty() {
             return Ok(());
         }

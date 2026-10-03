@@ -219,7 +219,9 @@ use dkg::startup::{
 };
 
 #[cfg(test)]
-use epoch::run::{epoch_elector_config, radicle_channel_config};
+use epoch::simplex::epoch_elector_config;
+#[cfg(test)]
+use epoch::transport::radicle_channel_config;
 
 #[cfg(test)]
 use follower::{

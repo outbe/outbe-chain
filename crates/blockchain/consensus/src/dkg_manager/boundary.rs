@@ -294,40 +294,49 @@ impl Mailbox {
                 return Ok(BoundaryRequirement::MustEmit);
             }
 
-            let expected_hash = current.parent_hash();
-            let expected_height = current.number().saturating_sub(1);
-            let mut next = ancestry.get_block_by_height(expected_height).await;
-            let needs_hash_lookup = match next.as_ref() {
-                Some(block) if block.block_hash() == expected_hash => false,
-                Some(block) => {
-                    let stale_hash = block.block_hash();
-                    if self.evict_boundary_status(stale_hash) {
-                        debug!(
-                            expected_height,
-                            stale_hash = %stale_hash,
-                            expected_hash = %expected_hash,
-                            "evicted stale DKG boundary status after non-canonical ancestry height hit"
-                        );
-                    }
-                    true
-                }
-                None => true,
-            };
-            if needs_hash_lookup {
-                next = ancestry.get_block_by_hash(expected_hash).await;
-            }
-            let Some(next) = next else {
-                return Err(BoundaryRequirementError::Unavailable(format!(
-                    "DKG boundary ancestry unavailable before seeing pending boundary: missing parent {expected_hash} at height {expected_height}",
-                )));
-            };
-            if next.number() != expected_height {
-                return Err(BoundaryRequirementError::Unavailable(format!(
-                    "DKG boundary ancestry unavailable: parent {expected_hash} resolved at height {}, expected {expected_height}",
-                    next.number()
-                )));
-            };
-            current = next;
+            current = self.next_boundary_ancestor(&current, ancestry).await?;
         }
+    }
+
+    /// Read one parent without holding the state lock across ancestry lookups.
+    async fn next_boundary_ancestor<R: AncestryReader>(
+        &self,
+        current: &ConsensusBlock,
+        ancestry: &R,
+    ) -> Result<ConsensusBlock, BoundaryRequirementError> {
+        let expected_hash = current.parent_hash();
+        let expected_height = current.number().saturating_sub(1);
+        let mut next = ancestry.get_block_by_height(expected_height).await;
+        let needs_hash_lookup = match next.as_ref() {
+            Some(block) if block.block_hash() == expected_hash => false,
+            Some(block) => {
+                let stale_hash = block.block_hash();
+                if self.evict_boundary_status(stale_hash) {
+                    debug!(
+                        expected_height,
+                        stale_hash = %stale_hash,
+                        expected_hash = %expected_hash,
+                        "evicted stale DKG boundary status after non-canonical ancestry height hit"
+                    );
+                }
+                true
+            }
+            None => true,
+        };
+        if needs_hash_lookup {
+            next = ancestry.get_block_by_hash(expected_hash).await;
+        }
+        let Some(next) = next else {
+            return Err(BoundaryRequirementError::Unavailable(format!(
+                "DKG boundary ancestry unavailable before seeing pending boundary: missing parent {expected_hash} at height {expected_height}",
+            )));
+        };
+        if next.number() != expected_height {
+            return Err(BoundaryRequirementError::Unavailable(format!(
+                "DKG boundary ancestry unavailable: parent {expected_hash} resolved at height {}, expected {expected_height}",
+                next.number()
+            )));
+        };
+        Ok(next)
     }
 }

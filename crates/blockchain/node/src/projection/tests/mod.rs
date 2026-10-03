@@ -1,6 +1,5 @@
 use super::open_logical_projection;
 use super::test_support::admit_startup_finalized_target;
-use super::test_support::run_durable_projection_writer;
 use super::test_support::FinalizedTargetDisposition;
 use std::{
     sync::{
