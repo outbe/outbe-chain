@@ -28,11 +28,11 @@ fn issue_binds_complete_reservation_and_rolls_back_failed_claims() {
             match variant {
                 0 => altered.smart_account = bob(),
                 1 => altered.amount += U256::ONE,
-                2 => altered.collateral += U256::ONE,
+                2 => altered.gratis_minor += U256::ONE,
                 3 => altered.snapshot_id += U256::ONE,
                 4 => altered.policy_rate += U256::ONE,
                 5 => altered.reference_currency += 1,
-                6 => altered.call_anchor_price += U256::ONE,
+                6 => altered.call_anchor_price_minor += U256::ONE,
                 7 => altered.expires_at += 1,
                 _ => altered.cca = bob(),
             }
@@ -66,7 +66,7 @@ fn issue_binds_complete_reservation_and_rolls_back_failed_claims() {
         assert_eq!(amount, reservation.amount);
         assert_eq!(
             view_balance(&storage, CREDIS_ADDRESS),
-            reservation.collateral
+            reservation.gratis_minor
         );
         assert_eq!(
             outbe_gratis::api::balance_ct(storage.clone(), alice()).unwrap(),
@@ -79,7 +79,7 @@ fn issue_binds_complete_reservation_and_rolls_back_failed_claims() {
         assert_eq!(position.policy_rate, reservation.policy_rate);
         assert_eq!(
             position.call_price_minor,
-            outbe_credis::calc_call_price(reservation.call_anchor_price).unwrap()
+            outbe_credis::calc_call_price(reservation.call_anchor_price_minor).unwrap()
         );
         assert_eq!(
             position.call_notice_period_seconds,
@@ -309,16 +309,16 @@ fn issuance_uses_reserved_terms_across_midnight_and_oracle_changes() {
             .get_position(position_id)
             .unwrap();
         assert_eq!(principal, reservation.amount);
-        assert_eq!(position.gratis_minor, reservation.collateral);
-        assert_eq!(position.entry_price_minor, reservation.entry_price);
+        assert_eq!(position.gratis_minor, reservation.gratis_minor);
+        assert_eq!(position.entry_price_minor, reservation.entry_price_minor);
         assert_eq!(position.policy_rate, reservation.policy_rate);
         assert_eq!(
             position.call_anchor_price_minor,
-            reservation.call_anchor_price
+            reservation.call_anchor_price_minor
         );
         assert_eq!(
             position.call_price_minor,
-            outbe_credis::calc_call_price(reservation.call_anchor_price).unwrap()
+            outbe_credis::calc_call_price(reservation.call_anchor_price_minor).unwrap()
         );
         assert_eq!(position.issued_at, midnight + 300);
         assert_eq!(position.last_settled_at, position.issued_at);

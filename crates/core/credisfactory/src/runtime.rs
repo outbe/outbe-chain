@@ -23,7 +23,7 @@ pub fn reservation_context(
     use outbe_gratis::context::{pledge_context, PledgeDomain};
     let target =
         keccak256((U256::from(chain_id), CREDIS_FACTORY_ADDRESS, id, r.clone()).abi_encode());
-    pledge_context(PledgeDomain::Issue, target, r.collateral, r.snapshotId)
+    pledge_context(PledgeDomain::Issue, target, r.gratisMinor, r.snapshotId)
 }
 fn revert(message: &str) -> PrecompileError {
     PrecompileError::Revert(message.into())
@@ -67,7 +67,7 @@ pub fn issue_credis(
         if currency != r.issuance_currency || decimals != r.asset_decimals {
             return Err(revert("asset metadata changed"));
         }
-        let required = checked_protocol_to_native(r.collateral)
+        let required = checked_protocol_to_native(r.gratis_minor)
             .ok_or_else(|| revert("COEN stake overflow"))?;
         if stake != required {
             return Err(CredisFactoryError::CcaStakeMismatch.into());
@@ -78,10 +78,10 @@ pub fn issue_credis(
         {
             return Err(revert("pledge context mismatch"));
         }
-        if claim.spend_amount != r.collateral {
+        if claim.spend_amount != r.gratis_minor {
             return Err(revert("collateral mismatch"));
         }
-        outbe_gratis::api::activate(&storage, r.collateral)?;
+        outbe_gratis::api::activate(&storage, r.gratis_minor)?;
         let mut credis = CredisContract::new(storage.clone());
         let id = credis.open_position(OpenPositionParams {
             smart_account: r.smart_account,
@@ -92,9 +92,9 @@ pub fn issue_credis(
             reference_currency: r.reference_currency,
             policy_rate: r.policy_rate,
             principal_minor: r.amount,
-            entry_price_minor: r.entry_price,
-            call_anchor_price_minor: r.call_anchor_price,
-            gratis_minor: r.collateral,
+            entry_price_minor: r.entry_price_minor,
+            call_anchor_price_minor: r.call_anchor_price_minor,
+            gratis_minor: r.gratis_minor,
             issued_at: now,
         })?;
         let opened = credis.get_position(id)?;
