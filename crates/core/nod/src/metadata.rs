@@ -1,9 +1,10 @@
+use alloy_primitives::U256;
 use outbe_common::nft_card::{self, Card, Trait, AMOUNT_PRECISION, PRICE_PRECISION};
 use outbe_primitives::error::Result;
 
 use crate::api;
 use crate::constants::{TOKEN_DESCRIPTION, TOKEN_NAME};
-use crate::schema::{NodBucketState, NodContract, NodItemState};
+use crate::schema::{EffectiveState, NodBucketState, NodContract, NodItemState};
 
 /// The call and the sealed call terms live on the bucket, as in `nodData`; `qualified` is derived.
 pub(crate) fn token_uri(
@@ -11,20 +12,19 @@ pub(crate) fn token_uri(
     item: &NodItemState,
     bucket: &NodBucketState,
     qualified: bool,
+    now: U256,
 ) -> Result<String> {
     let called_at = nod.bucket_called_at.read(&item.bucket_key)?;
     let terms = nod.read_call_terms(item.bucket_key)?;
     let deadline = api::settlement_deadline_of(called_at, terms.call_notice_period_seconds);
     let call_price = terms.call_price_minor;
     let called = called_at != 0 && !item.is_settled;
-    let state = if item.is_settled {
-        nft_card::SETTLED
-    } else if called {
-        nft_card::CALLED
-    } else if qualified {
-        nft_card::QUALIFIED
-    } else {
-        nft_card::ISSUED
+    let state = match api::effective_state(item, qualified, called_at, deadline, now) {
+        EffectiveState::Settled => nft_card::SETTLED,
+        EffectiveState::Forfeited => nft_card::FORFEITED,
+        EffectiveState::Called => nft_card::CALLED,
+        EffectiveState::Qualified => nft_card::QUALIFIED,
+        EffectiveState::Issued => nft_card::ISSUED,
     };
 
     let hex = format!("{:064x}", item.nod_id.to_u256());

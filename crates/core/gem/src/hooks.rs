@@ -4,7 +4,7 @@ use outbe_primitives::{
     address_pair::AddressPair,
     block::{BlockLifecycle, BlockRuntimeContext},
     daily_sweep::{Scheduled, SweepDays},
-    error::{PrecompileError, Result},
+    error::Result,
     math::{constants::MAX_BIN_ID, tree_math},
     time::{previous_date_key, timestamp_to_date_key},
 };
@@ -353,7 +353,7 @@ impl BucketCallScan<'_, '_> {
                 .trigger_bucket_call(self.window, bucket, self.ctx.block.timestamp)
         }) {
             Ok(called) => Ok(called),
-            Err(error) if is_node_local(&error) => Err(error),
+            Err(error) if error.is_node_local() => Err(error),
             Err(error) => {
                 tracing::warn!(target: "outbe::gem", %bucket, error = ?error, "call scan: skipping bucket");
                 Ok(false)
@@ -490,7 +490,7 @@ impl ExpirySweep<'_, '_> {
                     tracing::warn!(target: "outbe::gem", %entry, "expiry sweep: queued gem is not Called");
                 }
             }
-            Err(error) if is_node_local(&error) => return Err(error),
+            Err(error) if error.is_node_local() => return Err(error),
             Err(error) => {
                 let deferred = gem.requeue_or_drop(entry, now)?;
                 tracing::warn!(target: "outbe::gem", %entry, deferred, error = ?error, "expiry sweep: forfeit failed");
@@ -538,7 +538,7 @@ impl ExpirySweep<'_, '_> {
                 return Ok(true);
             }
             Ok(false) => None,
-            Err(error) if is_node_local(&error) => return Err(error),
+            Err(error) if error.is_node_local() => return Err(error),
             Err(error) => Some(error),
         };
         match self
@@ -550,7 +550,7 @@ impl ExpirySweep<'_, '_> {
                 tracing::warn!(target: "outbe::gem", %bucket, %gem_id, error = ?error, "expiry sweep: bucket member not forfeited, queued on its own");
                 Ok(true)
             }
-            Err(detach) if is_node_local(&detach) => Err(detach),
+            Err(detach) if detach.is_node_local() => Err(detach),
             Err(detach) => {
                 gem.requeue_or_drop(crate::state::bucket_entry(bucket), now)?;
                 tracing::warn!(target: "outbe::gem", %bucket, %gem_id, error = ?error, detach = ?detach, "expiry sweep: bucket member not forfeited, bucket deferred");
@@ -558,16 +558,4 @@ impl ExpirySweep<'_, '_> {
             }
         }
     }
-}
-
-/// A failure of this node's own storage or readers must fail the block rather than turn
-/// into a state change only this node makes; any other error is the same on every node.
-fn is_node_local(error: &PrecompileError) -> bool {
-    matches!(
-        error,
-        PrecompileError::Storage(_)
-            | PrecompileError::BodyReadUnavailable(_)
-            | PrecompileError::BodyReadRequestDeadline
-            | PrecompileError::TreeUnavailable(_)
-    )
 }

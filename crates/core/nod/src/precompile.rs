@@ -79,7 +79,7 @@ pub fn dispatch(
                 let bucket = api::get_bucket(&storage, scope, parent, bucket_id)?
                     .ok_or(NodError::BucketNotFound)?;
                 let qualified = api::is_qualified(&storage, &bucket)?;
-                crate::metadata::token_uri(&nod, &item, &bucket, qualified)
+                crate::metadata::token_uri(&nod, &item, &bucket, qualified, storage.timestamp()?)
             }),
             tokenByIndex(c) => view(c, |c| {
                 let idx = usize::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;

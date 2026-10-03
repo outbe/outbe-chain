@@ -40,7 +40,7 @@ fn action_for(materialization_wwd: u32, ordinal: u32) -> NodActionV1 {
         settlement_cost_minor: U256::from(500),
         issuance_currency: 840,
         reference_currency: 840,
-        issued_at: 1_600_000_000,
+        issued_at: 1_650_000_000,
         bucket_key: NodContract::bucket_key(worldwide_day, floor_price_minor, 840),
     }
 }
@@ -474,8 +474,28 @@ fn multiple_batches_create_ordinary_nods_and_advance_fifo_atomically() {
         })
         .unwrap()
         .unwrap();
-    assert_eq!(first_item.issued_at, 1_700_000_000);
+    assert_eq!(first_item.issued_at, 1_600_000_000, "the generation's time");
     assert_ne!(first_item.issued_at, population.actions[0].issued_at);
+    let last_item = world
+        .enter(|storage, scope, parent| {
+            nod_api::get_item(
+                &storage,
+                scope,
+                parent,
+                ledger_entity(population.actions[9].nod_id),
+            )
+        })
+        .unwrap()
+        .unwrap();
+    assert_eq!(last_item.issued_at, 1_600_000_000);
+    let bucket_issued_at = world
+        .enter(|storage, _, _| {
+            NodContract::new(storage)
+                .callable_bucket_issued_at
+                .read(&population.actions[0].bucket_key)
+        })
+        .unwrap();
+    assert_eq!(bucket_issued_at, 1_600_000_000, "call windows start there");
     assert_eq!(
         world
             .enter(|storage, scope, parent| {

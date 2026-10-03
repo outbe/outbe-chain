@@ -129,6 +129,7 @@ mod groups;
 mod issuance;
 mod lifecycle;
 mod parked;
+mod router_fault;
 mod scans;
 mod settlement;
 mod vwap_push;

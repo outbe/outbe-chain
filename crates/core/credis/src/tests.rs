@@ -1966,6 +1966,43 @@ fn a_called_position_shows_its_settlement_deadline() {
 }
 
 #[test]
+fn a_called_position_past_its_deadline_shows_void() {
+    let mut provider = credis_provider();
+    let (id, deadline) = StorageHandle::enter(&mut provider, |storage| {
+        let mut credis = CredisContract::new(storage);
+        let id = open_pos(&mut credis);
+        credis.mark_called(id, at(3)).unwrap();
+        (id, settlement_deadline(&credis.get_position(id).unwrap()))
+    });
+
+    provider.set_timestamp(U256::from(deadline));
+    StorageHandle::enter(&mut provider, |storage| {
+        let (json, _) = token_uri_parts(&storage, id);
+        assert_eq!(trait_value(&json, "State").unwrap(), "Called");
+    });
+
+    provider.set_timestamp(U256::from(deadline + 1));
+    StorageHandle::enter(&mut provider, |storage| {
+        let (json, svg) = token_uri_parts(&storage, id);
+        assert_eq!(trait_value(&json, "State").unwrap(), "Void");
+        assert_eq!(trait_value(&json, "Settlement Deadline").unwrap(), deadline);
+        assert!(svg.contains(">VOID</text>"));
+        let data = ICredis::getPositionCall { positionId: id }.abi_encode();
+        let out = dispatch(storage.clone(), &data, alice(), U256::ZERO).unwrap();
+        let read = ICredis::getPositionCall::abi_decode_returns(&out).unwrap();
+        assert_eq!(read.state, CredisState::Void as u8);
+        assert_eq!(
+            CredisContract::new(storage)
+                .get_position(id)
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            CredisState::Called
+        );
+    });
+}
+
+#[test]
 fn metadata_update_marks_call_settlement_and_void() {
     use alloy_sol_types::SolEvent;
 

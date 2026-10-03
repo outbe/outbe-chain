@@ -13,6 +13,8 @@ pub enum GemState {
     Issued = 0,
     Called = 2,
     Settled = 3,
+    /// Read-time only: a Called gem past its notice period, until the sweep burns it.
+    Forfeited = 4,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -131,6 +133,19 @@ pub struct GemData {
     /// Block timestamp when the gem was Settled; `0` until Settled.
     #[attribute(order = 16, default = 0)]
     pub settled_at: u64,
+}
+
+impl GemData {
+    pub fn effective_state(&self, now: u64) -> u8 {
+        let deadline = self
+            .called_at
+            .saturating_add(u64::from(self.call_notice_period_seconds));
+        if self.state == GemState::Called as u8 && now > deadline {
+            GemState::Forfeited as u8
+        } else {
+            self.state
+        }
+    }
 }
 
 #[storage_schema]

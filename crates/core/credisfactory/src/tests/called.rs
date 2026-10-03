@@ -161,6 +161,33 @@ fn a_window_wider_than_the_constant_is_collected_in_full() {
 }
 
 #[test]
+fn a_node_local_failure_while_calling_a_position_fails_the_scan() {
+    let mut storage = env();
+    let at = CREATED_AT + AFTER_WINDOW;
+    let position_id = StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        open_with_series(&storage, at, CALL_LOOKBACK_DAYS, above_call())
+    });
+    storage.fail_after_mutation_at(0);
+    let result = StorageHandle::enter(&mut storage, |storage| {
+        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(BLOCK_NUMBER, at, CHAIN_ID),
+            storage.clone(),
+        );
+        crate::called::scan_and_call(&ctx)
+    });
+    storage.clear_mutation_failure();
+    assert!(matches!(
+        result,
+        Err(outbe_primitives::error::PrecompileError::Storage(_))
+    ));
+    StorageHandle::enter(&mut storage, |storage| {
+        assert_eq!(state_of(&storage, position_id), CredisState::Open);
+    });
+    teardown();
+}
+
+#[test]
 fn a_full_window_above_the_call_price_calls_the_position() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {

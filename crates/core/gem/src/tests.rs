@@ -1296,9 +1296,9 @@ fn forfeit_fails_once(call: fn(&StorageHandle, U256, u64)) -> (HashMapStoragePro
         call(&storage, gem_id, T_NOW);
         let hour = GemContract::deadline_hour(T_NOW + 7 * 86_400);
         // The credit overflows, so the forfeit reverts as a whole.
-        outbe_promislimit::PromisLimitContract::new(storage.clone())
-            .set_total_unallocated(U256::MAX)
-            .unwrap();
+        let mut limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
+        limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
+        limit.checked_add_carry_over(U256::MAX).unwrap();
 
         let now = GemContract::hour_end(hour);
         let ctx = block_ctx_at(&storage, now);
@@ -1318,7 +1318,7 @@ fn forfeit_fails_once(call: fn(&StorageHandle, U256, u64)) -> (HashMapStoragePro
 
     StorageHandle::enter(&mut provider, |storage| {
         outbe_promislimit::PromisLimitContract::new(storage.clone())
-            .set_total_unallocated(U256::ZERO)
+            .checked_take_carry_over_up_to(U256::MAX)
             .unwrap();
         let ctx = block_ctx_at(&storage, GemContract::hour_end(retry));
         <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
@@ -1374,8 +1374,9 @@ fn a_member_that_cannot_burn_does_not_hold_back_its_bucket() {
         let now = first_due_block(storage, gems[0]);
         // Room for the small load's credit only.
         let mut limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
+        limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
         limit
-            .set_total_unallocated(U256::MAX - U256::from(500u64))
+            .checked_add_carry_over(U256::MAX - U256::from(500u64))
             .unwrap();
 
         // The failing member sits on top, where the sweep starts.
@@ -1384,7 +1385,7 @@ fn a_member_that_cannot_burn_does_not_hold_back_its_bucket() {
         assert_eq!(gem_state(storage, gems[1]), GemState::Called as u8);
         assert!(bucket_of(storage, gems[1]).is_zero(), "queued on its own");
 
-        limit.set_total_unallocated(U256::ZERO).unwrap();
+        limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
         begin_block_at(
             storage,
             GemContract::hour_end(GemContract::deadline_hour(now) + 1),
@@ -2075,8 +2076,16 @@ fn an_issued_card_leads_with_the_load_and_shows_the_floor_price() {
     });
 }
 
+fn status_state(storage: &StorageHandle, gem_id: U256) -> u8 {
+    let data = IGem::getGemStatusCall { gemId: gem_id }.abi_encode();
+    let out = dispatch(storage.clone(), &data, Address::ZERO, U256::ZERO).unwrap();
+    IGem::getGemStatusCall::abi_decode_returns(&out)
+        .unwrap()
+        .state
+}
+
 #[test]
-fn token_uri_stays_called_past_the_call_deadline() {
+fn a_gem_reads_forfeited_past_the_call_deadline() {
     let mut provider = HashMapStorageProvider::new(1);
     provider.set_timestamp(U256::from(T_NOW));
     let (gem_id, deadline) = StorageHandle::enter(&mut provider, |storage| {
@@ -2094,12 +2103,16 @@ fn token_uri_stays_called_past_the_call_deadline() {
         assert_eq!(trait_value(&json, "Call Deadline").unwrap(), deadline);
         assert!(svg.contains(">CALLED</text>"));
         assert!(svg.contains(&outbe_common::nft_card::timestamp_utc(deadline)));
+        assert_eq!(status_state(&storage, gem_id), GemState::Called as u8);
     });
 
     provider.set_timestamp(U256::from(deadline + 1));
     StorageHandle::enter(&mut provider, |storage| {
         let (json, svg) = token_uri_parts(&storage, gem_id);
-        assert_eq!(trait_value(&json, "State").unwrap(), "Called");
-        assert!(svg.contains(">CALLED</text>"));
+        assert_eq!(trait_value(&json, "State").unwrap(), "Forfeited");
+        assert_eq!(trait_value(&json, "Call Deadline").unwrap(), deadline);
+        assert!(svg.contains(">FORFEITED</text>"));
+        assert_eq!(status_state(&storage, gem_id), GemState::Forfeited as u8);
+        assert_eq!(gem_state(&storage, gem_id), GemState::Called as u8);
     });
 }

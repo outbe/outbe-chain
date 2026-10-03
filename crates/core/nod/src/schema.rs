@@ -22,8 +22,8 @@ pub enum EffectiveState {
 /// Input for `NodContract::issue`. `nod_id` is derived inside the contract via
 /// `NodContract::nod_id(owner, worldwide_day)`; the floor from `entry_price_minor` (see
 /// [`NodContract::floor_price_minor`]); the cost from `entry_price_minor` and
-/// `gratis_load_minor` (see [`crate::api::settlement_cost_minor`]). `issued_at` is stamped inside `issue`
-/// from the current block timestamp and is not part of caller inputs.
+/// `gratis_load_minor` (see [`crate::api::settlement_cost_minor`]). `issued_at` is not part of caller
+/// inputs: it is the block timestamp, or the certified generation time for a materialized Nod.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NodIssueParams {
     pub owner: Address,

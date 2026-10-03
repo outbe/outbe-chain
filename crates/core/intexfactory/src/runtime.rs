@@ -7,7 +7,7 @@ use outbe_common::settlement::floor_to_asset_units;
 use outbe_intex::{SeriesId, SERIES_ID_LEN};
 use outbe_oracle::api::{settlement_fx_rates, VwapSnapshotId};
 use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::{PrecompileError, Result, SweepFailure};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{first_full_day, WorldwideDay};
 use outbe_primitives::units::{PROTOCOL_AMOUNT_DECIMALS, SCALE_1E6_U256};
@@ -648,6 +648,9 @@ pub(crate) fn sweep_proceeds_deadlines(storage: &StorageHandle<'_>, now: u64) ->
     for worldwide_day in worldwide_days {
         let res = storage.with_checkpoint(|| try_settle_proceeds(storage, worldwide_day, now));
         if let Err(e) = res {
+            if e.sweep_failure() == SweepFailure::Propagate {
+                return Err(e);
+            }
             tracing::warn!(target: "outbe::intexfactory", worldwide_day = worldwide_day.value(), error = ?e, "proceeds sweep: skipping series");
         }
     }

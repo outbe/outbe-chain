@@ -6,6 +6,7 @@ import {
   zeroAddress,
 } from "viem";
 import {
+  credisStateName,
   currencyLabel,
   dayTypeName,
   gemStateName,
@@ -176,6 +177,16 @@ interface ScalarFormatContext {
   marketDecimals?: number;
 }
 
+/** Names a `state` code by the contract whose struct carries it; any other keeps the bare code. */
+function lifecycleStateName(v: number, context: ScalarFormatContext): string | undefined {
+  const owner =
+    /\bI(Gem|Credis)\./.exec(context.enclosingTupleType ?? "")?.[1]?.toLowerCase() ??
+    context.contractName;
+  if (owner === "gem") return gemStateName(v);
+  if (owner === "credis") return credisStateName(v);
+  return undefined;
+}
+
 function isNativeCoenAmount(name: string, context: ScalarFormatContext): boolean {
   const contract = context.contractName;
   const fn = context.functionName;
@@ -219,7 +230,8 @@ function formatScalar(
   }
   if (isUint(type, 8) && n === "state") {
     const v = Number(value);
-    return { code: v, name: gemStateName(v) };
+    const name = lifecycleStateName(v, context);
+    return name === undefined ? { code: v } : { code: v, name };
   }
   if (isUint(type, 16) && /currency/i.test(n)) {
     return currencyLabel(Number(value));
