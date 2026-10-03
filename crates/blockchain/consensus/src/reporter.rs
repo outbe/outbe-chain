@@ -172,6 +172,22 @@ impl ReporterContinuity {
     }
 }
 
+/// Immutable authority for one reporter epoch. Address order matches participant indices.
+pub struct ReporterCommittee {
+    pub validator_addresses: Vec<Address>,
+    pub verifier_scheme: HybridScheme<MinSig>,
+    pub elector: HybridRandomElector<MinSig>,
+    pub epoch: Epoch,
+}
+
+/// Capabilities required to deliver finalized facts and record certification witnesses.
+pub struct ReporterDependencies {
+    pub finalization_mailbox: FinalizationMailbox,
+    pub bridge: Option<ConsensusExecutionBridge>,
+    pub witness_sink: Arc<dyn CertificationWitnessSink>,
+    pub finalize_verify_mailbox: FinalizeVerifyMailbox,
+}
+
 /// Type alias for our Simplex activity type - uses HybridScheme<MinSig>.
 type OutbeActivity = Activity<HybridScheme<MinSig>, Digest>;
 
@@ -189,6 +205,41 @@ impl OutbeReporter {
         witness_sink: Arc<dyn CertificationWitnessSink>,
         finalize_verify_mailbox: FinalizeVerifyMailbox,
     ) -> Self {
+        Self::with_context(
+            continuity,
+            ReporterCommittee {
+                validator_addresses,
+                verifier_scheme,
+                elector,
+                epoch,
+            },
+            ReporterDependencies {
+                finalization_mailbox,
+                bridge,
+                witness_sink,
+                finalize_verify_mailbox,
+            },
+        )
+    }
+
+    /// Construct from epoch authority and required downstream capabilities.
+    pub fn with_context(
+        continuity: ReporterContinuity,
+        committee: ReporterCommittee,
+        dependencies: ReporterDependencies,
+    ) -> Self {
+        let ReporterCommittee {
+            validator_addresses,
+            verifier_scheme,
+            elector,
+            epoch,
+        } = committee;
+        let ReporterDependencies {
+            finalization_mailbox,
+            bridge,
+            witness_sink,
+            finalize_verify_mailbox,
+        } = dependencies;
         let persisted = continuity.snapshot();
         Self {
             continuity,

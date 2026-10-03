@@ -50,6 +50,39 @@ pub fn shared(window_k: u64) -> SharedLateFinalizeStore {
 /// per-target view/height field and evict on that instead.
 const MAX_PENDING_TARGETS: usize = 512;
 
+/// Exact signed proposal domain for a finalize vote and its canonical resolution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FinalizeVoteTarget {
+    pub epoch: u64,
+    pub view: u64,
+    pub parent_view: u64,
+    pub fb_hash: B256,
+}
+
+impl FinalizeVoteTarget {
+    pub fn from_proposal(
+        proposal: &commonware_consensus::simplex::types::Proposal<crate::digest::Digest>,
+    ) -> Self {
+        Self {
+            epoch: proposal.round.epoch().get(),
+            view: proposal.round.view().get(),
+            parent_view: proposal.parent.get(),
+            fb_hash: proposal.payload.0,
+        }
+    }
+
+    fn matches_binding(&self, epoch: u64, view: u64, parent_view: u64) -> bool {
+        self.epoch == epoch && self.view == view && self.parent_view == parent_view
+    }
+}
+
+/// Canonical committee fingerprint and size carried by late credits.
+#[derive(Clone, Copy, Debug)]
+pub struct LateFinalizeCommittee {
+    pub set_hash: B256,
+    pub size: usize,
+}
+
 /// One buffered finalize vote with the proposal binding it was actually signed
 /// over. A finalize signature is valid only over `Proposal{Round(epoch, view),
 /// parent_view, payload = fb_hash}.encode()`, so a vote signed at a non-canonical
@@ -133,12 +166,32 @@ impl LateFinalizeSigStore {
         signer: u32,
         sig: MinPkSig,
     ) {
+        self.record_bound_vote(
+            FinalizeVoteTarget {
+                epoch,
+                view,
+                parent_view,
+                fb_hash,
+            },
+            signer,
+            sig,
+        );
+    }
+
+    /// Buffer a verified vote bound to its exact signed proposal.
+    pub fn record_bound_vote(&mut self, target: FinalizeVoteTarget, signer: u32, sig: MinPkSig) {
+        let binding = target;
+        let FinalizeVoteTarget {
+            epoch,
+            view,
+            parent_view,
+            fb_hash,
+        } = target;
         // Late arrival: the target already resolved -> append to it directly, but
         // only if the vote's binding equals the canonical one (else drop).
         if let Some(&fb_number) = self.resolved_fb_hash_to_number.get(&fb_hash) {
             if let Some(target) = self.resolved_by_number.get_mut(&fb_number) {
-                if target.epoch == epoch && target.view == view && target.parent_view == parent_view
-                {
+                if binding.matches_binding(target.epoch, target.view, target.parent_view) {
                     target.votes.entry(signer).or_insert(sig);
                 }
                 return;
@@ -183,8 +236,27 @@ impl LateFinalizeSigStore {
         signer: u32,
         bls_individual_vote: &bls12381::Signature,
     ) {
+        self.record_bound_individual_vote(
+            FinalizeVoteTarget {
+                epoch,
+                view,
+                parent_view,
+                fb_hash,
+            },
+            signer,
+            bls_individual_vote,
+        );
+    }
+
+    /// Record a raw MinPk vote after the caller verified its exact proposal binding.
+    pub fn record_bound_individual_vote(
+        &mut self,
+        target: FinalizeVoteTarget,
+        signer: u32,
+        bls_individual_vote: &bls12381::Signature,
+    ) {
         let sig: MinPkSig = *bls_individual_vote.as_ref();
-        self.record_vote(epoch, view, parent_view, fb_hash, signer, sig);
+        self.record_bound_vote(target, signer, sig);
     }
 
     /// Rekey a finalized proposal's buffered votes (keyed by `fb_hash`) to its
@@ -205,6 +277,38 @@ impl LateFinalizeSigStore {
         committee_set_hash: B256,
         committee_size: usize,
     ) {
+        self.resolve_finalized_target(
+            FinalizeVoteTarget {
+                epoch,
+                view,
+                parent_view,
+                fb_hash,
+            },
+            fb_number,
+            LateFinalizeCommittee {
+                set_hash: committee_set_hash,
+                size: committee_size,
+            },
+        );
+    }
+
+    /// Resolve and prune a canonical proposal without separating its signed fields.
+    pub fn resolve_finalized_target(
+        &mut self,
+        binding: FinalizeVoteTarget,
+        fb_number: u64,
+        committee: LateFinalizeCommittee,
+    ) {
+        let FinalizeVoteTarget {
+            epoch,
+            view,
+            parent_view,
+            fb_hash,
+        } = binding;
+        let LateFinalizeCommittee {
+            set_hash: committee_set_hash,
+            size: committee_size,
+        } = committee;
         // The canonical (epoch, view, parent_view) come from the finalized
         // certificate, so the resolved target is correctly bound whether or not
         // any vote was buffered before finalization. (A pure post-finalization
@@ -228,7 +332,7 @@ impl LateFinalizeSigStore {
             // cross-view vote for the same `fb_hash` signed a different message and
             // would make the aggregate fail `verify_same_message`, so it is dropped.
             for (signer, bound) in pending.votes {
-                if bound.epoch == epoch && bound.view == view && bound.parent_view == parent_view {
+                if binding.matches_binding(bound.epoch, bound.view, bound.parent_view) {
                     target.votes.entry(signer).or_insert(bound.sig);
                 }
             }

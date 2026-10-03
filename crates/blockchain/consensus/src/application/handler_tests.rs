@@ -1,4 +1,4 @@
-use crate::test_fixtures::marshal::{MarshalArchiveFixture, MarshalArchiveKind};
+use crate::test_fixtures::marshal::MarshalArchiveFixture;
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_rpc_types_engine::{PayloadStatus, PayloadStatusEnum};
 use commonware_actor::Feedback;
@@ -12,14 +12,13 @@ use commonware_consensus::{
 use commonware_cryptography::{
     Signer as _,
     bls12381::{self, primitives::variant::MinSig},
-    certificate::{Scheme as _, Verifier as _},
+    certificate::Scheme as _,
 };
 use commonware_p2p::Recipients;
 use commonware_parallel::Sequential;
 use commonware_resolver::Resolver;
 use commonware_resolver::TargetedResolver;
 use commonware_runtime::{Clock as _, Runner as _, Supervisor as _, buffer::paged::CacheRef};
-use commonware_storage::archive::immutable;
 use commonware_utils::{
     TryCollect as _,
     acknowledgement::Acknowledgement,
@@ -62,6 +61,9 @@ use crate::application::epoch_boundary::{
 
 #[path = "handler/tests/verify_stages.rs"]
 mod verify_stages;
+
+#[path = "handler/tests/missed_proposers.rs"]
+mod missed_proposers;
 
 struct TestApplicationShared {
     shared: ApplicationShared,
@@ -368,22 +370,10 @@ where
         write_buffer,
     };
 
-    let finalizations_archive = immutable::Archive::init(
-        context.child("marshal_finalizations"),
-        archive_fixture.config(
-            MarshalArchiveKind::Finalizations,
-            HybridScheme::<MinSig>::certificate_codec_config_unbounded(),
-        ),
-    )
-    .await
-    .expect("finalizations archive should initialize");
-
-    let blocks_archive = immutable::Archive::init(
-        context.child("marshal_blocks"),
-        archive_fixture.config(MarshalArchiveKind::Blocks, ()),
-    )
-    .await
-    .expect("blocks archive should initialize");
+    let (finalizations_archive, blocks_archive) = archive_fixture
+        .open(&context)
+        .await
+        .expect("marshal archives should initialize");
 
     let (actor, mailbox, _) = marshal::core::Actor::init(
         context.child("marshal"),
@@ -1491,38 +1481,7 @@ fn consensus_metadata_verify_accepts_canonical_missed_proposers() {
     // Deterministic runtime (TC-6): avoids marshal teardown leaky false-positives.
     let accepted = commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
         |context| async move {
-            use commonware_runtime::Supervisor as _;
-            let epoch = Epoch::new(0);
-            let FinalizationMetadataContext {
-                scheme_provider: provider,
-                committee_provider,
-                signers,
-                verifier,
-                committee,
-            } = finalization_metadata_context(epoch);
-            let elector_provider = HybridElectorConfigProvider::<MinSig>::new();
-            let _ = elector_provider.register(epoch, HybridRandom::default());
-            let clock = context.child("verify");
-
-            let previous_round = Round::new(epoch, View::new(5));
-            let previous_block = consensus_block_with_number(0x61, 4);
-            let (_, previous_finalization) = finalization_metadata_from_context(
-                &previous_block,
-                previous_round,
-                View::new(4),
-                FinalizationSigningContext::new(&signers, &verifier, committee.clone()),
-            );
-
-            let current_round = Round::new(epoch, View::new(8));
-            let current_block = consensus_block_with_number(0x62, 5);
-            let current_digest = current_block.digest();
-            let (mut metadata, current_finalization) = finalization_metadata_from_context(
-                &current_block,
-                current_round,
-                View::new(5),
-                FinalizationSigningContext::new(&signers, &verifier, committee),
-            );
-            metadata.missed_proposers = vec![
+            let missed_proposers = vec![
                 outbe_primitives::consensus_metadata::MissedProposerEvent {
                     view: 1,
                     validator: Address::with_last_byte(1),
@@ -1532,51 +1491,11 @@ fn consensus_metadata_verify_accepts_canonical_missed_proposers() {
                     validator: Address::with_last_byte(2),
                 },
             ];
-
-            let (marshal_mailbox, resolver_keepalive, actor_handle) = start_marshal_with_resolver(
-                context,
-                provider.clone(),
-                EmptyMarshalBuffer::default(),
-            )
-            .await;
-
-            let _ = marshal_mailbox
-                .verified(previous_round, previous_block.clone())
-                .await;
-            let mut reporter = marshal_mailbox.clone();
-            // 2026.5.0: `Reporter::report` is SYNC and returns `Feedback`.
-            let _ = reporter.report(Activity::Finalization(previous_finalization));
-            let _ = marshal_mailbox.verified(current_round, current_block).await;
-            // 2026.5.0: `Reporter::report` is SYNC and returns `Feedback`.
-            let _ = reporter.report(Activity::Finalization(current_finalization));
-
-            let current_info =
-                wait_for_marshal_info(&clock, &marshal_mailbox, current_digest).await;
-            let previous_info =
-                wait_for_marshal_info(&clock, &marshal_mailbox, previous_block.digest()).await;
-            let accepted = current_info.is_some()
-                && previous_info.is_some()
-                && metadata_verify_verdict(
-                    &clock,
-                    &metadata,
-                    &AttestationValidationContext {
-                        certificate_scheme_provider: &provider,
-                        elector_config_provider: &elector_provider,
-                        committee_provider: &committee_provider,
-                        marshal_mailbox: &marshal_mailbox,
-                        proposed_block_number: 6,
-                    },
-                )
+            missed_proposers::verify(context, (0x61, 0x62), missed_proposers)
                 .await
-                    == AttestationVerdict::AcceptValid;
-
-            drop(resolver_keepalive);
-            actor_handle.abort();
-            let _ = actor_handle.await;
-            accepted
+                .is_some_and(|verdict| verdict == AttestationVerdict::AcceptValid)
         },
     );
-
     assert!(
         accepted,
         "canonical missed proposer list must pass verify-time metadata validation"
@@ -1588,38 +1507,7 @@ fn consensus_metadata_verify_rejects_forged_missed_proposers() {
     // Deterministic runtime (TC-6): avoids marshal teardown leaky false-positives.
     let rejected = commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
         |context| async move {
-            use commonware_runtime::Supervisor as _;
-            let epoch = Epoch::new(0);
-            let FinalizationMetadataContext {
-                scheme_provider: provider,
-                committee_provider,
-                signers,
-                verifier,
-                committee,
-            } = finalization_metadata_context(epoch);
-            let elector_provider = HybridElectorConfigProvider::<MinSig>::new();
-            let _ = elector_provider.register(epoch, HybridRandom::default());
-            let clock = context.child("verify");
-
-            let previous_round = Round::new(epoch, View::new(5));
-            let previous_block = consensus_block_with_number(0x63, 4);
-            let (_, previous_finalization) = finalization_metadata_from_context(
-                &previous_block,
-                previous_round,
-                View::new(4),
-                FinalizationSigningContext::new(&signers, &verifier, committee.clone()),
-            );
-
-            let current_round = Round::new(epoch, View::new(8));
-            let current_block = consensus_block_with_number(0x64, 5);
-            let current_digest = current_block.digest();
-            let (mut metadata, current_finalization) = finalization_metadata_from_context(
-                &current_block,
-                current_round,
-                View::new(5),
-                FinalizationSigningContext::new(&signers, &verifier, committee),
-            );
-            metadata.missed_proposers = vec![
+            let missed_proposers = vec![
                 outbe_primitives::consensus_metadata::MissedProposerEvent {
                     view: 1,
                     validator: Address::with_last_byte(2),
@@ -1629,51 +1517,11 @@ fn consensus_metadata_verify_rejects_forged_missed_proposers() {
                     validator: Address::with_last_byte(1),
                 },
             ];
-
-            let (marshal_mailbox, resolver_keepalive, actor_handle) = start_marshal_with_resolver(
-                context,
-                provider.clone(),
-                EmptyMarshalBuffer::default(),
-            )
-            .await;
-
-            let _ = marshal_mailbox
-                .verified(previous_round, previous_block.clone())
-                .await;
-            let mut reporter = marshal_mailbox.clone();
-            // 2026.5.0: `Reporter::report` is SYNC and returns `Feedback`.
-            let _ = reporter.report(Activity::Finalization(previous_finalization));
-            let _ = marshal_mailbox.verified(current_round, current_block).await;
-            // 2026.5.0: `Reporter::report` is SYNC and returns `Feedback`.
-            let _ = reporter.report(Activity::Finalization(current_finalization));
-
-            let current_info =
-                wait_for_marshal_info(&clock, &marshal_mailbox, current_digest).await;
-            let previous_info =
-                wait_for_marshal_info(&clock, &marshal_mailbox, previous_block.digest()).await;
-            let rejected = current_info.is_some()
-                && previous_info.is_some()
-                && metadata_verify_verdict(
-                    &clock,
-                    &metadata,
-                    &AttestationValidationContext {
-                        certificate_scheme_provider: &provider,
-                        elector_config_provider: &elector_provider,
-                        committee_provider: &committee_provider,
-                        marshal_mailbox: &marshal_mailbox,
-                        proposed_block_number: 6,
-                    },
-                )
+            missed_proposers::verify(context, (0x63, 0x64), missed_proposers)
                 .await
-                    != AttestationVerdict::AcceptValid;
-
-            drop(resolver_keepalive);
-            actor_handle.abort();
-            let _ = actor_handle.await;
-            rejected
+                .is_some_and(|verdict| verdict != AttestationVerdict::AcceptValid)
         },
     );
-
     assert!(
         rejected,
         "non-canonical missed proposer order/content must be rejected"

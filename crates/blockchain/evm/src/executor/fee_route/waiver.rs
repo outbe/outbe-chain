@@ -9,7 +9,7 @@ pub(super) fn bootstrap_fee_waiver_authorized(
     chain_id: u64,
     account: &AccountInfo,
 ) -> bool {
-    let candidate = bootstrap_transaction(tx, signer, chain_id)
+    let candidate = BootstrapTransactionView::from_transaction(tx, signer, chain_id)
         .and_then(|view| outbe_zerofee::classify_bootstrap(&view));
     candidate.is_some_and(|candidate| {
         outbe_zerofee::authorize_bootstrap(

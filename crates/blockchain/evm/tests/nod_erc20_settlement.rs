@@ -1,4 +1,8 @@
 //! Real NOD/router execution with stateful ERC20 and reserve-vault counterparties.
+#[path = "common/nod_qualification.rs"]
+mod qualify_fixture;
+use qualify_fixture::qualify;
+
 use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, B256, U256};
@@ -49,27 +53,6 @@ const ASSET: Address = Address::new([0x33; 20]);
 const VAULT: Address = Address::new([0x55; 20]);
 const GRATIS_LOAD: u64 = 1_000;
 const TIMESTAMP: u64 = 1_700_000_000;
-
-/// Closes the bucket's first full day above its floor, which qualifies it.
-fn qualify(storage: &StorageHandle<'_>, bucket_key: B256, floor: U256, iso: u16) {
-    let issued_at = NodContract::new(storage.clone())
-        .callable_bucket_issued_at
-        .read(&bucket_key)
-        .unwrap();
-    let pair = outbe_oracle::api::AddressPair::new_coen_to(iso);
-    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-    let mut index = oracle.pair_index_of(pair).unwrap();
-    if index == 0 {
-        index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
-    }
-    let day = outbe_primitives::time::first_full_day(issued_at);
-    oracle
-        .record_utc_day_vwap(day, index, floor + U256::ONE)
-        .unwrap();
-    if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
-        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
-    }
-}
 
 type EvmCtx = revm::Context<
     revm::context::BlockEnv,
@@ -164,7 +147,7 @@ impl World {
             let floor_price_minor =
                 NodContract::floor_price_minor(params.entry_price_minor).unwrap();
             let bucket = NodContract::bucket_key(params.worldwide_day, floor_price_minor, 840);
-            qualify(&storage, bucket, floor_price_minor, 840);
+            qualify(&storage, bucket, floor_price_minor, 840).expect("bucket qualifies");
             nod
         });
         provider.flush().unwrap();

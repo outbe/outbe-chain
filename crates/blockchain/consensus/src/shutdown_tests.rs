@@ -6,6 +6,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use eyre::WrapErr as _;
 use commonware_actor::{Feedback, Unreliable};
 use commonware_codec::DecodeExt as _;
 use commonware_consensus::{
@@ -127,6 +128,55 @@ where
     }
 }
 
+fn collect_resumed_votes(
+    votes_rx: &mpsc::Receiver<RecordedVote>,
+    previous_view: Option<View>,
+) -> eyre::Result<Vec<RecordedVote>> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    let mut votes = Vec::new();
+    loop {
+        let vote = votes_rx
+            .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+            .wrap_err("journal restart must resume outbound voting")?;
+        let advanced = previous_view.map_or(vote.view() >= View::new(3), |previous| {
+            vote.view() > previous
+        });
+        if let Some(previous) = previous_view {
+            assert!(
+                vote.view() >= previous,
+                "restart regressed below the last durable outbound view"
+            );
+        }
+        votes.push(vote);
+        if advanced {
+            break;
+        }
+    }
+    Ok(votes)
+}
+
+fn assert_consistent_votes(recorded: &[RecordedVote], votes: &[RecordedVote]) -> eyre::Result<()> {
+    for vote in votes {
+        for previous in recorded
+            .iter()
+            .chain(votes.iter())
+            .filter(|other| other.view() == vote.view())
+        {
+            match (previous, vote) {
+                (Vote::Notarize(a), Vote::Notarize(b)) => assert_eq!(a.proposal, b.proposal),
+                (Vote::Finalize(a), Vote::Finalize(b)) => assert_eq!(a.proposal, b.proposal),
+                (Vote::Notarize(a), Vote::Finalize(b)) => assert_eq!(a.proposal, b.proposal),
+                (Vote::Finalize(a), Vote::Notarize(b)) => assert_eq!(a.proposal, b.proposal),
+                (Vote::Finalize(_), Vote::Nullify(_)) | (Vote::Nullify(_), Vote::Finalize(_)) => {
+                    eyre::bail!("conflicting finalize/nullify votes across journal restart");
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn global_stop_reopens_voter_journal_and_resumes_without_conflicting_votes() {
     let storage = tempfile::tempdir().expect("shutdown test storage");
@@ -201,26 +251,8 @@ fn global_stop_reopens_voter_journal_and_resumes_without_conflicting_votes() {
 
             // Receiving a vote observes the production sync-before-broadcast path.
             // On restart require progress beyond the previously observed view.
-            let deadline = std::time::Instant::now() + Duration::from_secs(3);
-            let mut votes = Vec::new();
-            loop {
-                let vote = votes_rx
-                    .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
-                    .expect("journal restart must resume outbound voting");
-                let advanced = previous_view.map_or(vote.view() >= View::new(3), |previous| {
-                    vote.view() > previous
-                });
-                if let Some(previous) = previous_view {
-                    assert!(
-                        vote.view() >= previous,
-                        "restart regressed below the last durable outbound view"
-                    );
-                }
-                votes.push(vote);
-                if advanced {
-                    break;
-                }
-            }
+            let mut votes = collect_resumed_votes(&votes_rx, previous_view)
+                .expect("journal restart must resume outbound voting");
             let (started_tx, started_rx) = mpsc::sync_channel(1);
             let (release_tx, release_rx) = mpsc::channel::<()>();
             let blocking = context
@@ -256,25 +288,8 @@ fn global_stop_reopens_voter_journal_and_resumes_without_conflicting_votes() {
             votes.extend(votes_rx.try_iter());
             votes
         });
-        for vote in &votes {
-            for previous in recorded
-                .iter()
-                .chain(votes.iter())
-                .filter(|other| other.view() == vote.view())
-            {
-                match (previous, vote) {
-                    (Vote::Notarize(a), Vote::Notarize(b)) => assert_eq!(a.proposal, b.proposal),
-                    (Vote::Finalize(a), Vote::Finalize(b)) => assert_eq!(a.proposal, b.proposal),
-                    (Vote::Notarize(a), Vote::Finalize(b)) => assert_eq!(a.proposal, b.proposal),
-                    (Vote::Finalize(a), Vote::Notarize(b)) => assert_eq!(a.proposal, b.proposal),
-                    (Vote::Finalize(_), Vote::Nullify(_))
-                    | (Vote::Nullify(_), Vote::Finalize(_)) => {
-                        panic!("conflicting finalize/nullify votes across journal restart");
-                    }
-                    _ => {}
-                }
-            }
-        }
+        assert_consistent_votes(&recorded, &votes)
+            .expect("outbound votes stay consistent across journal restart");
         recorded.extend(votes);
     }
 }

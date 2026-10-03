@@ -195,41 +195,54 @@ fn voting_gate_distinguishes_pre_ready_from_runtime_degraded() {
     );
 }
 
+fn sidecar_startup_cases() -> [(bool, bool, ManagerPhase, Option<PhaseError>); 4] {
+    [
+        (
+            false,
+            false,
+            ManagerPhase::RuntimeDegraded,
+            Some(PhaseError::SidecarUnavailable),
+        ),
+        (false, true, ManagerPhase::JoiningUnbound, None),
+        (
+            true,
+            false,
+            ManagerPhase::RuntimeDegraded,
+            Some(PhaseError::SidecarUnavailable),
+        ),
+        (true, true, ManagerPhase::Ready, None),
+    ]
+}
+
 #[test]
 fn voting_gate_matrix() {
     use ExactBindingState::{ActiveMatching, ActiveMismatch, ActiveMissing, SelfAbsent};
     use RadicleVotingGate::{Fatal, SignerAllowed, Verifier};
 
-    for binding in [SelfAbsent, ActiveMissing, ActiveMatching, ActiveMismatch] {
-        for ever_ready in [false, true] {
-            for uds_available in [false, true] {
-                let phase = if ever_ready && uds_available {
-                    ManagerPhase::Ready
-                } else if uds_available {
-                    ManagerPhase::JoiningUnbound
-                } else {
-                    ManagerPhase::RuntimeDegraded
-                };
-                let phase_error = (!uds_available).then_some(PhaseError::SidecarUnavailable);
-                let expected = match binding {
-                    ActiveMissing => Fatal(RadicleVotingGateError::ActiveBindingMissing),
-                    ActiveMismatch => Fatal(RadicleVotingGateError::BindingMismatch),
-                    SelfAbsent if !ever_ready && !uds_available => {
-                        Fatal(RadicleVotingGateError::SidecarUnavailable)
-                    }
-                    SelfAbsent => Verifier,
-                    ActiveMatching if !ever_ready && !uds_available => {
-                        Fatal(RadicleVotingGateError::SidecarUnavailable)
-                    }
-                    ActiveMatching if ever_ready => SignerAllowed,
-                    ActiveMatching => Verifier,
-                };
-                assert_eq!(
-                    gate(binding, phase, phase_error, ever_ready),
-                    expected,
-                    "binding={binding:?} ever_ready={ever_ready} uds_available={uds_available}"
-                );
-            }
+    let sidecar_unavailable = Fatal(RadicleVotingGateError::SidecarUnavailable);
+    let binding_missing = Fatal(RadicleVotingGateError::ActiveBindingMissing);
+    let binding_mismatch = Fatal(RadicleVotingGateError::BindingMismatch);
+    // Expected gates are independent facts, ordered by the four startup cases below.
+    for (binding, expected) in [
+        (
+            SelfAbsent,
+            [sidecar_unavailable, Verifier, Verifier, Verifier],
+        ),
+        (ActiveMissing, [binding_missing; 4]),
+        (
+            ActiveMatching,
+            [sidecar_unavailable, Verifier, SignerAllowed, SignerAllowed],
+        ),
+        (ActiveMismatch, [binding_mismatch; 4]),
+    ] {
+        for ((ever_ready, uds_available, phase, phase_error), expected_gate) in
+            sidecar_startup_cases().into_iter().zip(expected)
+        {
+            assert_eq!(
+                gate(binding, phase, phase_error, ever_ready),
+                expected_gate,
+                "binding={binding:?} ever_ready={ever_ready} uds_available={uds_available}"
+            );
         }
     }
 

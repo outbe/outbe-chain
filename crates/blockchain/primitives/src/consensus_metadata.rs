@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::{Address, B256, Bytes};
 use alloy_rlp::{Decodable as RlpDecodable, Encodable as RlpEncodable};
 
 use crate::error::{PrecompileError, Result};
@@ -395,41 +395,29 @@ fn read_addresses(data: &[u8], offset: &mut usize) -> Result<Vec<Address>> {
 }
 
 fn read_bytes_u16(data: &[u8], offset: &mut usize) -> Result<Vec<u8>> {
-    let count_end = offset.saturating_add(2);
-    let Some(count_bytes) = data.get(*offset..count_end) else {
-        return Err(PrecompileError::Fatal(
-            "unexpected EOF reading byte length".into(),
-        ));
-    };
-    *offset = count_end;
-    let len = u16::from_be_bytes(
-        count_bytes
-            .try_into()
-            .map_err(|_| PrecompileError::Fatal("invalid byte length slice".into()))?,
-    ) as usize;
-    let end = offset.saturating_add(len);
-    let Some(bytes) = data.get(*offset..end) else {
-        return Err(PrecompileError::Fatal(
-            "unexpected EOF reading bytes".into(),
-        ));
-    };
-    *offset = end;
-    Ok(bytes.to_vec())
+    let len = u16::from_be_bytes(read_byte_length(data, offset)?) as usize;
+    read_byte_payload(data, offset, len)
 }
 
 fn read_bytes_u32(data: &[u8], offset: &mut usize) -> Result<Vec<u8>> {
-    let count_end = offset.saturating_add(4);
+    let len = u32::from_be_bytes(read_byte_length(data, offset)?) as usize;
+    read_byte_payload(data, offset, len)
+}
+
+fn read_byte_length<const WIDTH: usize>(data: &[u8], offset: &mut usize) -> Result<[u8; WIDTH]> {
+    let count_end = offset.saturating_add(WIDTH);
     let Some(count_bytes) = data.get(*offset..count_end) else {
         return Err(PrecompileError::Fatal(
             "unexpected EOF reading byte length".into(),
         ));
     };
     *offset = count_end;
-    let len = u32::from_be_bytes(
-        count_bytes
-            .try_into()
-            .map_err(|_| PrecompileError::Fatal("invalid byte length slice".into()))?,
-    ) as usize;
+    count_bytes
+        .try_into()
+        .map_err(|_| PrecompileError::Fatal("invalid byte length slice".into()))
+}
+
+fn read_byte_payload(data: &[u8], offset: &mut usize, len: usize) -> Result<Vec<u8>> {
     let end = offset.saturating_add(len);
     let Some(bytes) = data.get(*offset..end) else {
         return Err(PrecompileError::Fatal(
@@ -445,3 +433,33 @@ fn read_bytes_u32(data: &[u8], offset: &mut usize) -> Result<Vec<u8>> {
 // [`CertifiedParentAccountingMetadata`] codec lives in
 // `crates/blockchain/primitives/tests/consensus_metadata.rs` and exercises
 // the canonical `OAV3` wire layout end-to-end.
+
+#[cfg(test)]
+mod reader_tests {
+    use super::*;
+
+    #[test]
+    fn byte_readers_preserve_cursor_at_prefix_and_payload_failures() {
+        type Reader = fn(&[u8], &mut usize) -> Result<Vec<u8>>;
+        for (width, read) in [(2, read_bytes_u16 as Reader), (4, read_bytes_u32 as Reader)] {
+            let mut offset = 1;
+            let short_prefix = vec![0; width];
+            assert!(
+                matches!(read(&short_prefix, &mut offset), Err(PrecompileError::Fatal(message)) if message == "unexpected EOF reading byte length")
+            );
+            assert_eq!(offset, 1);
+
+            let mut short_payload = vec![0; width + 1];
+            short_payload[width] = 2;
+            assert!(
+                matches!(read(&short_payload, &mut offset), Err(PrecompileError::Fatal(message)) if message == "unexpected EOF reading bytes")
+            );
+            assert_eq!(offset, width + 1);
+
+            offset = 1;
+            short_payload.extend_from_slice(&[0xab, 0xcd, 0xef]);
+            assert_eq!(read(&short_payload, &mut offset).unwrap(), [0xab, 0xcd]);
+            assert_eq!(offset, width + 3);
+        }
+    }
+}
