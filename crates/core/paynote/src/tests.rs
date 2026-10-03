@@ -493,10 +493,10 @@ fn full_width_u256_spend_round_trip() {
 fn the_merge_circuit_is_pinned() {
     use outbe_zk_canonical::paynote_merge::PaynoteMerge;
     assert_eq!(PaynoteMerge::LABEL, "outbe.paynote.merge");
-    assert_eq!(PaynoteMerge::VERSION, "1.0.0");
+    assert_eq!(PaynoteMerge::VERSION, "1.0.1");
     assert_eq!(
         PaynoteMerge::CIRCUIT_HASH,
-        alloy_primitives::hex!("2536a6813a5d9f5468cedc74376497d4c06bc6492aabfb69cd1783dda0b29722")
+        alloy_primitives::hex!("ae7946ee03305d92f06957c9abbb877eaed1d29667c23a8ba413d70224d67fe2")
     );
     assert_eq!(
         PaynoteMerge::VK_HASH,
