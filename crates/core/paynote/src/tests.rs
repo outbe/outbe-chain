@@ -384,6 +384,81 @@ fn partial_spend_appends_exactly_the_circuit_derived_change() {
     });
 }
 
+fn assert_unspent(provider: &mut HashMapStorageProvider, public: &PublicInputs) {
+    provider.enter(|storage| {
+        let paynote: PayNoteContract<'_> = storage.contract();
+        assert!(!paynote
+            .spent_nullifiers
+            .read(&b256(public.nullifier))
+            .unwrap());
+    });
+}
+
+#[test]
+fn a_change_the_pool_cannot_append_leaves_the_note_unspent() {
+    let (proof, public, tree) = prove_spend(CHAIN_ID, USDC, 100, 40);
+    let full_spend = prove_spend(CHAIN_ID, USDC, 100, 100).0;
+    for (tree_full, expected) in [
+        (true, "PayNote commitment tree is full"),
+        (false, "PayNote commitment already exists"),
+    ] {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        seed_pool(&mut provider, CHAIN_ID, tree.leaves());
+        provider.enter(|storage| {
+            let paynote: PayNoteContract<'_> = storage.contract();
+            if tree_full {
+                paynote.leaf_count.write(PAYNOTE_TREE_CAPACITY).unwrap();
+            } else {
+                paynote
+                    .commitments
+                    .write(&b256(public.change_commitment), true)
+                    .unwrap();
+            }
+        });
+        let before = provider.storage.clone();
+        provider.enter(|storage| assert_revert(runtime::consume(&storage, &proof), expected));
+        assert_eq!(provider.storage, before, "{expected}");
+        assert!(provider.get_ordered_events().is_empty());
+        assert_unspent(&mut provider, &public);
+
+        // A full spend appends nothing, so neither condition blocks it.
+        provider.enter(|storage| runtime::consume(&storage, &full_spend).unwrap());
+    }
+}
+
+#[test]
+fn a_failure_after_the_nullifier_is_booked_rolls_the_whole_spend_back() {
+    let (proof, public, tree) = prove_spend(CHAIN_ID, USDC, 100, 40);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    seed_pool(&mut provider, CHAIN_ID, tree.leaves());
+    let before = provider.storage.clone();
+
+    let mut probe = HashMapStorageProvider::new(CHAIN_ID);
+    seed_pool(&mut probe, CHAIN_ID, tree.leaves());
+    probe.fail_after_mutation_at(usize::MAX);
+    probe.enter(|storage| runtime::consume(&storage, &proof).unwrap());
+    let mutations = probe.clear_mutation_failure();
+    assert!(
+        mutations >= 4,
+        "nullifier, change leaf, its commitment and events"
+    );
+
+    for operation in 0..mutations {
+        provider.fail_after_mutation_at(operation);
+        let error = provider
+            .enter(|storage| runtime::consume(&storage, &proof))
+            .unwrap_err();
+        assert!(matches!(error, PrecompileError::Storage(_)), "{error:?}");
+        assert_eq!(provider.clear_mutation_failure(), operation + 1);
+        assert_eq!(provider.storage, before, "storage at {operation}");
+        assert!(provider.get_ordered_events().is_empty());
+        assert_unspent(&mut provider, &public);
+    }
+
+    provider.enter(|storage| runtime::consume(&storage, &proof).unwrap());
+    assert_eq!(provider.storage, probe.storage);
+}
+
 #[test]
 fn full_width_u256_spend_round_trip() {
     assert_eq!(Paynote::VERSION, "1.3.0");
@@ -506,6 +581,29 @@ fn a_substituted_context_fails_verification() {
             "PayNote proof is invalid",
         );
     });
+}
+
+#[test]
+fn a_substituted_change_commitment_fails_verification() {
+    const CHANGE: std::ops::Range<usize> = 4 + 8 * 32..4 + 9 * 32;
+    let (proof, public, tree) = prove_spend(CHAIN_ID, USDC, 100, 40);
+    assert_eq!(&proof[CHANGE], b256(public.change_commitment).as_slice());
+    let foreign = note(CHAIN_ID, 23, USDC, U256::from(60)).commitment;
+    for substitute in [foreign, Field::zero()] {
+        let mut forged = proof.clone();
+        forged[CHANGE].copy_from_slice(b256(substitute).as_slice());
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        seed_pool(&mut provider, CHAIN_ID, tree.leaves());
+        let before = provider.storage.clone();
+        provider.enter(|storage| {
+            assert_revert(
+                runtime::consume(&storage, &forged),
+                "PayNote proof is invalid",
+            );
+        });
+        assert_eq!(provider.storage, before);
+        assert_unspent(&mut provider, &public);
+    }
 }
 
 #[test]
