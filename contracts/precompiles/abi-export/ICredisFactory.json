@@ -4,29 +4,14 @@
     "name": "issueCredis",
     "inputs": [
       {
-        "name": "smartAccount",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "pledgeNote",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "spendAuth",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "referenceCurrency",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
         "name": "reservationId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "proof",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [

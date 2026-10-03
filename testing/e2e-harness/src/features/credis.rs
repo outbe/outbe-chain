@@ -205,6 +205,8 @@ fn prepare(world: &mut World) {
         keys,
         reservation: U256::ZERO,
         pledge: B256::ZERO,
+        pledge_nonce: 0,
+        issue_context: B256::ZERO,
         gratis_minor: U256::ZERO,
         position_id: U256::ZERO,
         initial_native: U256::ZERO,
@@ -249,6 +251,7 @@ fn reserve(world: &mut World) {
         VAULT_ROUTER_ADDRESS,
         &f.cca_key,
         &eth::IVaultRouter::reserveStablesCall {
+            referenceCurrency: USD,
             smartAccount: f.account,
             asset: f.currency.asset,
             amount: PRINCIPAL,
@@ -317,36 +320,60 @@ fn pledge(world: &mut World) {
         addresses::GRATIS_FACTORY_ADDR,
         DEPLOYER_KEY,
         &eth::IGratisFactory::pledgeGratisCall {
-            principalMinor: PRINCIPAL,
-            asset: f.currency.asset,
-            maxGratisMinor: INITIAL_GRATIS,
-            mac: mac.into(),
-            opNonce: nonce,
+            gratisMinor: PRINCIPAL,
+            auth: eth::IGratisFactory::ModifyAuth {
+                mac: mac.into(),
+                opNonce: nonce,
+            },
         },
         None,
     );
     let pledged =
-        event::<eth::IGratisFactory::GratisPledged>(&receipt, addresses::GRATIS_FACTORY_ADDR);
-    assert_eq!(pledged.account, f.user);
-    assert_eq!(pledged.asset, f.currency.asset);
-    assert_eq!(pledged.principalMinor, PRINCIPAL);
-    // Both the stablecoin and the live 1 USD/COEN quote use six decimals.
+        event::<eth::IGratisFactory::PledgeNote>(&receipt, addresses::GRATIS_FACTORY_ADDR);
     assert_eq!(pledged.gratisMinor, PRINCIPAL);
+    let chain_id = U256::from_be_bytes(chain_id_b256(world).0).to::<u64>();
+    let note =
+        outbe_gratis::client::Note::initial(chain_id, f.user, &f.keys.modify, PRINCIPAL, nonce)
+            .unwrap();
+    assert_eq!(pledged.commitment, note.commitment().unwrap());
     let f = world.state.credis.as_mut().expect("fixture");
-    f.pledge = pledged.pledgeNote;
+    f.pledge = pledged.commitment;
+    f.pledge_nonce = nonce;
     f.gratis_minor = pledged.gratisMinor;
     let state = snapshot(world);
     assert_eq!(state.liquid, INITIAL_GRATIS - pledged.gratisMinor);
-    // The pending ticket enters the pledged ledger only when consumed at issuance.
-    assert_eq!(state.pledged, U256::ZERO);
+    assert_eq!(state.pledged, pledged.gratisMinor);
 }
 
 #[when("the CCA issues Credis against the pledge and reservation")]
 fn issue(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     let f = world.state.credis.as_ref().expect("fixture");
-    let secret = outbe_tee_enclave::gratis::pledge_secret(&f.keys.modify, f.pledge);
-    let spend = outbe_tee_enclave::gratis::spend_auth_mac(&secret, f.account);
+    let chain_id = U256::from_be_bytes(chain_id_b256(world).0).to::<u64>();
+    let note = outbe_gratis::client::Note::initial(
+        chain_id,
+        f.user,
+        &f.keys.modify,
+        f.gratis_minor,
+        f.pledge_nonce,
+    )
+    .unwrap();
+    let reservation = eth::read_call(
+        &url,
+        VAULT_ROUTER_ADDRESS,
+        &outbe_vaultrouter::api::IVaultRouter::reservationOfCall { id: f.reservation },
+    )
+    .unwrap();
+    let context =
+        outbe_credisfactory::runtime::reservation_context(chain_id, f.reservation, &reservation)
+            .unwrap();
+    let proof = outbe_gratis::client::prove_issue(
+        &note,
+        &credis::pledge_tree(&url, chain_id),
+        f.gratis_minor,
+        context,
+    )
+    .unwrap();
     let stake = outbe_primitives::units::checked_protocol_to_native(f.gratis_minor)
         .expect("fixture stake fits native units");
     let receipt = send(
@@ -354,10 +381,7 @@ fn issue(world: &mut World) {
         CREDIS_FACTORY_ADDRESS,
         &f.cca_key,
         &ICredisFactory::issueCredisCall {
-            smartAccount: f.account,
-            pledgeNote: f.pledge,
-            spendAuth: spend.into(),
-            referenceCurrency: USD,
+            proof: proof.into(),
             reservationId: f.reservation,
         },
         Some(stake),
@@ -393,6 +417,7 @@ fn issue(world: &mut World) {
         },
     );
     world.state.credis.as_mut().expect("fixture").position_id = id;
+    world.state.credis.as_mut().expect("fixture").issue_context = context;
 }
 
 #[then("the smart account owns the open Credis position")]
@@ -422,7 +447,7 @@ fn issued(world: &mut World) {
     assert!(p.policyRate > U256::ZERO);
     // Credis currently pins the issuance currency's official rate with a 1x multiplier.
     assert_eq!(p.policyRate, state.policy_rate);
-    assert!(!p.eoaCiphertext.is_empty());
+    assert!(!p.returnNoteSerial.is_zero());
     assert_eq!(
         state.reservation,
         (
@@ -554,6 +579,39 @@ fn repay(world: &mut World) {
                 },
             );
         }
+        let chain_id = U256::from_be_bytes(chain_id_b256(world).0).to::<u64>();
+        let note = outbe_gratis::client::Note::initial(
+            chain_id,
+            f.user,
+            &f.keys.modify,
+            f.gratis_minor,
+            f.pledge_nonce,
+        )
+        .unwrap();
+        let returned = note
+            .returned(
+                f.issue_context,
+                f.position_id,
+                released,
+                p.gratisMinor - p.outstandingGratisMinor + released,
+            )
+            .unwrap();
+        let proof = outbe_gratis::client::prove_unpledge(
+            &returned,
+            &credis::pledge_tree(&url, chain_id),
+            released,
+            outbe_gratis::api::unpledge_context(chain_id, f.user, released).unwrap(),
+        )
+        .unwrap();
+        send(
+            &url,
+            addresses::GRATIS_FACTORY_ADDR,
+            DEPLOYER_KEY,
+            &eth::IGratisFactory::unpledgeGratisCall {
+                proof: proof.into(),
+            },
+            None,
+        );
         let after = snapshot(world);
         let a = after.position.as_ref().expect("position after payment");
         assert_eq!(

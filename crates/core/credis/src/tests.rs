@@ -1,4 +1,4 @@
-use alloy_primitives::{address, b256, Address, U256};
+use alloy_primitives::{address, b256, Address, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -63,8 +63,8 @@ fn asset() -> Address {
 
 /// Opaque sealed-EOA blob stored verbatim on the position. Credis unit tests
 /// treat it as bytes - decryption is exercised in the credisfactory enclave tests.
-fn eoa_ct() -> Vec<u8> {
-    vec![0xEEu8; 48]
+fn return_note_serial() -> B256 {
+    B256::from(U256::from(17))
 }
 
 fn credis_provider() -> HashMapStorageProvider {
@@ -107,7 +107,7 @@ fn params(owner: Address) -> OpenPositionParams {
     OpenPositionParams {
         smart_account: owner,
         cca: cca(),
-        eoa_ct: eoa_ct(),
+        return_note_serial: return_note_serial(),
         asset: asset(),
         issuance_currency: 840,
         reference_currency: 978,
@@ -189,6 +189,13 @@ fn open_position_seals_the_call_price_from_the_call_anchor() {
             calc_call_price(call_anchor_price()).unwrap()
         );
         assert_ne!(p.call_price_minor, calc_call_price(entry_price()).unwrap());
+        assert_eq!(
+            p.call_notice_period_seconds,
+            crate::constants::CALL_NOTICE_PERIOD
+        );
+        assert_eq!(p.call_rate, crate::constants::CALL_RATE_PCT);
+        assert_eq!(p.call_window_seconds, crate::constants::CALL_WINDOW);
+        assert_eq!(p.call_threshold_seconds, crate::constants::CALL_THRESHOLD);
 
         // Both codes are sealed, and they are distinct: the threshold anchor is
         // the reference currency, never the issuance one the position is
@@ -203,7 +210,7 @@ fn open_position_seals_the_call_price_from_the_call_anchor() {
         assert_eq!(p.called_at, 0);
         assert_eq!(p.lifecycle_state().unwrap(), CredisState::Open);
         assert_eq!(p.cca, cca());
-        assert_eq!(p.eoa_ct, eoa_ct());
+        assert_eq!(p.return_note_serial, return_note_serial());
     });
 }
 
@@ -284,7 +291,7 @@ fn worked_example_ledger_closes_exactly() {
         // Unpaid fraction 235_397_260 / 1_000_000_000 = 23.5397260%, at scale 1e6.
         assert_eq!(void.unpaid_share, U256::from(235_397u64));
         assert_eq!(void.cca, cca());
-        assert_eq!(void.eoa_ct, eoa_ct());
+        assert_eq!(void.return_note_serial, return_note_serial());
 
         // --- The paper's ledger check. ---------------------------------------
         let released =
@@ -1350,7 +1357,7 @@ fn precompile_get_position_returns_the_full_record() {
         assert_eq!(decoded.issuedAt, ORIGINATED_AT);
         assert_eq!(decoded.policyRate, policy_rate());
         assert_eq!(decoded.state, CredisState::Open as u8);
-        assert_eq!(decoded.eoaCiphertext.to_vec(), eoa_ct());
+        assert_eq!(decoded.returnNoteSerial, return_note_serial());
         assert_eq!(
             (
                 decoded.callNoticePeriod,

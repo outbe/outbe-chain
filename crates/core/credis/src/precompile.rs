@@ -103,7 +103,7 @@ fn abi_position(p: &crate::schema::Position) -> ICredis::Position {
         asset: p.asset,
         issuanceCurrency: p.issuance_currency,
         referenceCurrency: p.reference_currency,
-        eoaCiphertext: p.eoa_ct.clone().into(),
+        returnNoteSerial: p.return_note_serial,
         principalMinor: p.principal_minor,
         outstandingPrincipalMinor: p.outstanding_principal_minor,
         gratisMinor: p.gratis_minor,

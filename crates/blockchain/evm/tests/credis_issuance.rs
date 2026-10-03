@@ -15,8 +15,8 @@ use outbe_primitives::{
     storage::{direct::DirectStorageProvider, StorageHandle, SubCallInput, SubCallStatus},
     time::{previous_date_key, timestamp_to_date_key},
 };
-use outbe_tee::protocol::{GratisOp, ModifyAuth, PledgeTerms};
-use outbe_tee_enclave::gratis::{derive_modify_key, modify_mac, pledge_secret, spend_auth_mac};
+use outbe_tee::protocol::{GratisOp, ModifyAuth};
+use outbe_tee_enclave::gratis::{derive_modify_key, modify_mac};
 use outbe_vaultrouter::{api::IVaultRouter, LiquidityReservation, VaultRouterContract};
 use revm::{
     context_interface::JournalTr,
@@ -32,6 +32,7 @@ sol! {
     interface IFixture {
         function mint(address account, uint256 amount) external;
         function configure(uint256 mode) external;
+        function setPosition(uint256 id) external;
         function approve(address spender, uint256 amount) external returns (bool);
         function balanceOf(address account) external view returns (uint256);
     }
@@ -48,7 +49,7 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
     // 0: success; 1: ERC20 false; 2: ERC20 revert; 3: excess redeposit revert;
     // 4: wrong contribution; 5: invalid spend authorization; 6/7: changed asset metadata;
     // 8: failed ERC20 payout followed by expiry and cancellation of the restored note.
-    for failure in 0..9 {
+    for failure in [0, 1, 2, 4, 5, 6, 7, 8] {
         test_enclave::install();
         let key = derive_modify_key(&test_enclave::state_key(), OWNER).unwrap();
         let mut db = CacheDB::new(EmptyDB::default());
@@ -87,7 +88,7 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
             &mut db,
             BlockContext::new(1, NOW, CHAIN_ID, OWNER, vec![OWNER]),
         );
-        let note = StorageHandle::enter(&mut provider, |storage| {
+        let (note, proof, withdrawal) = StorageHandle::enter(&mut provider, |storage| {
             storage
                 .increase_balance(
                     CCA_REGISTRY_ADDRESS,
@@ -102,6 +103,18 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
             )
             .unwrap();
             let router = VaultRouterContract::new(storage.clone());
+            router.asset_vault_set(ASSET).insert(VAULT).unwrap();
+            router
+                .liquidity_sources
+                .insert(CREDIS_FACTORY_ADDRESS)
+                .unwrap();
+            router
+                .liquidity_source_types
+                .write(
+                    &CREDIS_FACTORY_ADDRESS,
+                    IVaultRouter::StablesSource::CredisCostAmount as u8,
+                )
+                .unwrap();
             router
                 .liquidity_targets
                 .insert(CREDIS_FACTORY_ADDRESS)
@@ -119,11 +132,20 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
                 .create(&LiquidityReservation {
                     id: U256::ONE,
                     asset: ASSET,
-                    amount: U256::from(3_000_000),
+                    amount: U256::from(2_000_000),
                     smart_account: ACCOUNT,
                     cca: CCA,
                     vault: VAULT,
-                    expires_at: NOW + 1800,
+                    expires_at: NOW + 900,
+                    collateral: U256::from(1_000_000),
+                    snapshot_id: U256::from(17),
+                    entry_price: U256::from(2_000_000),
+                    valuation_price: U256::from(2_000_000),
+                    policy_rate: U256::from(43_000),
+                    issuance_currency: 840,
+                    asset_decimals: 6,
+                    reference_currency: 840,
+                    call_anchor_price: U256::from(2_000_000),
                 })
                 .unwrap();
             let price = U256::from(2_000_000);
@@ -166,22 +188,43 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
                 auth(GratisOp::Mint, gratis, 0),
             )
             .unwrap();
-            outbe_gratis::api::pledge(
-                storage,
+            let section = outbe_fidelity::api::cohort_section(
+                storage.clone(),
                 OWNER,
-                price,
-                PledgeTerms {
-                    stables_amount: price,
-                    gratis_amount: gratis,
-                    asset: ASSET,
-                    entry_price: price,
-                    issuance_currency: 840,
-                    asset_decimals: 6,
-                    valuation_price: price,
-                },
-                auth(GratisOp::Pledge, price, 1),
+                outbe_tee::protocol::FidelityCohortOp::Probe,
+                NOW,
             )
-            .unwrap()
+            .unwrap();
+            let (commitment, _) = outbe_gratis::api::pledge_with_fidelity(
+                storage.clone(),
+                OWNER,
+                gratis,
+                auth(GratisOp::Pledge, gratis, 1),
+                section,
+            )
+            .unwrap();
+            let note =
+                outbe_gratis::client::Note::initial(CHAIN_ID, OWNER, &key, gratis, 1).unwrap();
+            assert_eq!(note.commitment().unwrap(), commitment);
+            let mut tree = outbe_gratis::client::new_tree(CHAIN_ID).unwrap();
+            tree.append(outbe_protocol::codec::field_from_b256(&commitment).unwrap())
+                .unwrap();
+            let reservation = outbe_vaultrouter::api::reservation_of(&storage, U256::ONE).unwrap();
+            let context = outbe_credisfactory::runtime::reservation_context(
+                CHAIN_ID,
+                U256::ONE,
+                &reservation.into(),
+            )
+            .unwrap();
+            let proof = outbe_gratis::client::prove_issue(&note, &tree, gratis, context).unwrap();
+            let withdrawal = outbe_gratis::client::prove_unpledge(
+                &note,
+                &tree,
+                gratis,
+                outbe_gratis::api::unpledge_context(CHAIN_ID, OWNER, gratis).unwrap(),
+            )
+            .unwrap();
+            (note, proof, withdrawal)
         });
         provider.flush().unwrap();
         let mut ctx = Context::mainnet()
@@ -210,7 +253,7 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
                 .unwrap()
             }};
         }
-        for (account, amount) in [(ACCOUNT, 2_000_000), (VAULT_ROUTER_ADDRESS, 3_000_000)] {
+        for (account, amount) in [(ACCOUNT, 2_000_000), (VAULT_ROUTER_ADDRESS, 2_000_000)] {
             assert!(matches!(
                 call!(
                     OWNER,
@@ -253,17 +296,13 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
                 SubCallStatus::Success
             ));
         }
-        let spend = spend_auth_mac(&pledge_secret(&key, note), ACCOUNT);
         let issue = ICredisFactory::issueCredisCall {
-            smartAccount: ACCOUNT,
-            pledgeNote: note,
-            spendAuth: if failure == 5 {
-                B256::ZERO
-            } else {
-                B256::from(spend)
-            },
-            referenceCurrency: 840,
             reservationId: U256::ONE,
+            proof: if failure == 5 {
+                Bytes::new()
+            } else {
+                proof.clone().into()
+            },
         };
         let out = call!(
             CCA,
@@ -301,10 +340,10 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
         for (account, expected) in [
             (ACCOUNT, 2_000_000),
             (CCA, if failure == 0 { 2_000_000 } else { 0 }),
-            (VAULT, if failure == 0 { 1_000_000 } else { 0 }),
+            (VAULT, 0),
             (
                 VAULT_ROUTER_ADDRESS,
-                if failure == 0 { 0 } else { 3_000_000 },
+                if failure == 0 { 0 } else { 2_000_000 },
             ),
         ] {
             let balance = call!(
@@ -331,7 +370,7 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
             if failure == 0 {
                 U256::ZERO
             } else {
-                U256::from(3_000_000)
+                U256::from(2_000_000)
             }
         );
         let payouts: Vec<_> = ctx
@@ -361,7 +400,7 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
             CREDIS_FACTORY_ADDRESS,
             stake,
             ICredisFactory::issueCredisCall {
-                spendAuth: B256::from(spend),
+                proof: proof.into(),
                 ..issue
             }
         );
@@ -372,55 +411,154 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
             retry.status
         );
         if failure == 8 {
-            assert!(String::from_utf8_lossy(&retry.returndata).contains("pledge note expired"));
+            assert!(String::from_utf8_lossy(&retry.returndata).contains("expired"));
             let cancel = IGratisFactory::unpledgeGratisCall {
-                principalMinor: U256::from(2_000_000),
-                pledgeNote: note,
-                mac: B256::from(modify_mac(
-                    &key,
-                    OWNER,
-                    GratisOp::Unpledge,
-                    U256::from(2_000_000),
-                    2,
-                    B256::from(U256::from(CHAIN_ID)),
-                )),
-                opNonce: 2,
+                proof: withdrawal.into(),
             };
             assert!(matches!(
-                call!(OWNER, GRATIS_FACTORY_ADDRESS, U256::ZERO, cancel).status,
+                call!(OWNER, GRATIS_FACTORY_ADDRESS, U256::ZERO, cancel.clone()).status,
                 SubCallStatus::Success
             ));
-            let returned: Vec<_> = ctx
+            let spent: Vec<_> = ctx
                 .journaled_state
                 .logs()
                 .iter()
-                .filter_map(|log| IGratisFactory::GratisUnpledged::decode_log_data(&log.data).ok())
+                .filter_map(|log| IGratisFactory::PledgeSpent::decode_log_data(&log.data).ok())
                 .collect();
-            assert_eq!(returned.len(), 1);
-            assert_eq!(returned[0].account, OWNER);
-            assert_eq!(returned[0].gratisMinor, U256::from(1_000_000));
-            // Even a fresh authorization cannot return the same collateral twice.
+            assert_eq!(spent.len(), 1);
+            assert_eq!(spent[0].nullifier, note.nullifier().unwrap());
             assert!(!matches!(
+                call!(OWNER, GRATIS_FACTORY_ADDRESS, U256::ZERO, cancel).status,
+                SubCallStatus::Success
+            ));
+        }
+        if failure == 0 {
+            use outbe_credis::precompile::ICredis;
+            use outbe_primitives::addresses::CREDIS_ADDRESS;
+            let position = ICredisFactory::issueCredisCall::abi_decode_returns(&out.returndata)
+                .unwrap()
+                .positionId;
+            call!(
+                OWNER,
+                ASSET,
+                U256::ZERO,
+                IFixture::setPositionCall { id: position }
+            );
+            call!(
+                CCA,
+                ASSET,
+                U256::ZERO,
+                IFixture::approveCall {
+                    spender: CREDIS_FACTORY_ADDRESS,
+                    amount: U256::MAX
+                }
+            );
+            let position_call = ICredis::getPositionCall {
+                positionId: position,
+            };
+            let before = call!(OWNER, CREDIS_ADDRESS, U256::ZERO, position_call.clone()).returndata;
+            let root = call!(
+                OWNER,
+                GRATIS_FACTORY_ADDRESS,
+                U256::ZERO,
+                IGratisFactory::pledgeRootCall {}
+            )
+            .returndata;
+            for mode in [1, 2, 3, 9, 10] {
+                let target = if mode == 3 { VAULT } else { ASSET };
+                call!(
+                    OWNER,
+                    target,
+                    U256::ZERO,
+                    IFixture::configureCall {
+                        mode: U256::from(mode)
+                    }
+                );
+                let logs = ctx.journaled_state.logs().len();
+                let payment = call!(
+                    CCA,
+                    CREDIS_FACTORY_ADDRESS,
+                    U256::ZERO,
+                    ICredisFactory::settleCredisCall {
+                        positionId: position,
+                        amountMinor: U256::from(1_000_000)
+                    }
+                );
+                assert!(
+                    !matches!(payment.status, SubCallStatus::Success),
+                    "payment mode {mode} must roll back"
+                );
+                if mode == 9 {
+                    assert!(
+                        String::from_utf8_lossy(&payment.returndata)
+                            .contains("outbe precompile reentrancy denied"),
+                        "{:?}",
+                        payment.returndata
+                    );
+                }
+                assert_eq!(ctx.journaled_state.logs().len(), logs);
+                assert_eq!(
+                    call!(OWNER, CREDIS_ADDRESS, U256::ZERO, position_call.clone()).returndata,
+                    before
+                );
+                assert_eq!(
+                    call!(
+                        OWNER,
+                        GRATIS_FACTORY_ADDRESS,
+                        U256::ZERO,
+                        IGratisFactory::pledgeRootCall {}
+                    )
+                    .returndata,
+                    root
+                );
+                for (account, expected) in [
+                    (CCA, 2_000_000),
+                    (VAULT, 0),
+                    (VAULT_ROUTER_ADDRESS, 0),
+                    (CREDIS_FACTORY_ADDRESS, 0),
+                ] {
+                    let balance = call!(
+                        OWNER,
+                        ASSET,
+                        U256::ZERO,
+                        IFixture::balanceOfCall { account }
+                    );
+                    assert_eq!(
+                        IFixture::balanceOfCall::abi_decode_returns(&balance.returndata).unwrap(),
+                        U256::from(expected)
+                    );
+                }
+                call!(
+                    OWNER,
+                    target,
+                    U256::ZERO,
+                    IFixture::configureCall { mode: U256::ZERO }
+                );
+            }
+            let paid = call!(
+                CCA,
+                CREDIS_FACTORY_ADDRESS,
+                U256::ZERO,
+                ICredisFactory::settleCredisCall {
+                    positionId: position,
+                    amountMinor: U256::from(1_000_000)
+                }
+            );
+            assert!(
+                matches!(paid.status, SubCallStatus::Success),
+                "{:?}",
+                paid.returndata
+            );
+            assert_ne!(
                 call!(
                     OWNER,
                     GRATIS_FACTORY_ADDRESS,
                     U256::ZERO,
-                    IGratisFactory::unpledgeGratisCall {
-                        mac: B256::from(modify_mac(
-                            &key,
-                            OWNER,
-                            GratisOp::Unpledge,
-                            U256::from(2_000_000),
-                            3,
-                            B256::from(U256::from(CHAIN_ID))
-                        )),
-                        opNonce: 3,
-                        ..cancel
-                    }
+                    IGratisFactory::pledgeRootCall {}
                 )
-                .status,
-                SubCallStatus::Success
-            ));
+                .returndata,
+                root
+            );
         }
         test_enclave::uninstall();
     }

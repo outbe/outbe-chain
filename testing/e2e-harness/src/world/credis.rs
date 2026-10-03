@@ -1,8 +1,8 @@
 //! Credis fixtures and observations over the same RPC/deployment path as Intex.
 
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{sol, SolCall};
+use alloy_sol_types::{sol, SolCall, SolEvent};
 use outbe_primitives::addresses::{
     CCA_REGISTRY_ADDRESS, CREDIS_ADDRESS, ORACLE_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
@@ -56,6 +56,8 @@ pub(crate) struct CredisFixture {
     pub keys: eth::ConfidentialAccountKeys,
     pub reservation: U256,
     pub pledge: B256,
+    pub pledge_nonce: u64,
+    pub issue_context: B256,
     pub gratis_minor: U256,
     pub position_id: U256,
     pub initial_native: U256,
@@ -189,7 +191,7 @@ pub(crate) fn snapshot(world: &World) -> Snapshot {
         let pledged = read(
             &url,
             addresses::GRATIS_ADDR,
-            &eth::IGratis::pledgedOfCall { account: f.user },
+            &eth::IGratis::pledgedTotalSupplyCall {},
             h,
         );
         let balance = |account| {
@@ -262,8 +264,7 @@ pub(crate) fn snapshot(world: &World) -> Snapshot {
             ),
             liquid: outbe_tee_enclave::gratis::decrypt_balance(&f.keys.view, f.user, &liquid)
                 .expect("decrypt Gratis"),
-            pledged: outbe_tee_enclave::gratis::decrypt_pledged(&f.keys.view, f.user, &pledged)
-                .expect("decrypt pledged Gratis"),
+            pledged,
             account_stables: balance(f.account),
             cca_stables: balance(f.cca),
             vault_stables: balance(f.currency.vault),
@@ -289,4 +290,26 @@ pub(crate) fn snapshot(world: &World) -> Snapshot {
         assert_eq!(observed, first, "Credis state differs across validators");
     }
     first
+}
+
+pub(crate) fn pledge_tree(url: &str, chain_id: u64) -> outbe_zk_canonical::pledgenote::Tree {
+    let logs = eth::raw_json_result(url, "eth_getLogs", serde_json::json!([{
+        "address": format!("{:#x}", addresses::GRATIS_FACTORY_ADDR), "fromBlock": "0x0", "toBlock": "latest",
+        "topics": [format!("{:#x}", eth::IGratisFactory::PledgeNote::SIGNATURE_HASH)]
+    }])).expect("pledge logs");
+    let mut tree = outbe_gratis::client::new_tree(chain_id).unwrap();
+    for log in logs.as_array().expect("log array") {
+        let topics: Vec<B256> = serde_json::from_value(log["topics"].clone()).unwrap();
+        let data: Bytes = serde_json::from_value(log["data"].clone()).unwrap();
+        let event =
+            eth::IGratisFactory::PledgeNote::decode_raw_log_validate(topics, &data).unwrap();
+        assert_eq!(event.leafIndex as usize, tree.leaves().len());
+        tree.append(outbe_protocol::codec::field_from_b256(&event.commitment).unwrap())
+            .unwrap();
+        assert_eq!(
+            outbe_protocol::codec::field_to_b256(&tree.root()).unwrap(),
+            event.rootAfter
+        );
+    }
+    tree
 }

@@ -376,7 +376,7 @@ fn settle<Q>(
     pay: impl FnOnce(&outbe_gem::GemData, Q) -> Result<(Address, u16, U256)>,
 ) -> Result<()> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
-    // Anyone may pay for a gem; the payment is bound to the caller, the gem is not.
+    // Anyone may pay for a gem; it stays with its owner.
     // The qualification walk goes last.
     match item.state {
         s if s == GemState::Called as u8 => {

@@ -68,13 +68,10 @@ pub struct Position {
     #[attribute(order = 3)]
     pub issuance_currency: u16,
 
-    /// The pledger EOA sealed under the enclave state key (`nonce || ct`, produced by
-    /// gratis `ConsumePledge`). Stored as ciphertext so external observers cannot link the
-    /// EOA to `smart_account`; settlement and the void recover the plaintext EOA
-    /// via a `RevealOwner` enclave round-trip to key the right `pledged_ct` and fidelity
-    /// cohort. Never a plaintext address on-chain.
+    /// Canonical, nonzero serial authenticated by the issuance proof. Repayment
+    /// notes use this serial without revealing or accessing the source account.
     #[attribute(order = 4)]
-    pub eoa_ct: Vec<u8>,
+    pub return_note_serial: B256,
 
     /// `P` - stablecoin minor units disbursed. Fixed.
     #[attribute(order = 5)]

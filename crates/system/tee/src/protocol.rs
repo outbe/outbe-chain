@@ -201,46 +201,21 @@ pub struct ParticipantAnnounce {
 ///
 /// The op determines the sign of the aggregate deltas the host applies to the
 /// public `total_supply` / `pledged_total_supply` scalars, and which ciphertext
-/// slots move (balance vs pledged vs pledge-lock-ticket).
+/// account balance is transformed. Note authorization is checked by the runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum GratisOp {
-    /// Mint `amount` to `account` (credit balance; `total_supply += amount`).
     Mint,
-    /// Burn `amount` from `account` (debit balance; `total_supply -= amount`).
     Burn,
-    /// Lock the gratis that covers `amount` stablecoin minor units into a new
-    /// `PledgeLockTicket` pending a credis request. `amount` is the STABLES figure
-    /// the pledger signed; the gratis actually debited comes from
-    /// [`GratisOpRequest::pledge_terms`] (derived host-side from the oracle rate) and
-    /// is what moves the balance and `pledged_total_supply`. The gratis is parked in
-    /// the ticket, NOT yet credited to the account's pledged ledger.
+    /// Authenticate the Gratis amount and fund an owner-bound note.
     Pledge,
-    /// Return a still-pending pledge (e.g. credis rejected): read the ticket, credit
-    /// its gratis back to `account`'s balance, and delete it
-    /// (`pledged_total_supply -= ticket.gratis_amount`). `amount` is the STABLES
-    /// figure, cross-checked against the ticket.
+    /// Credit the destination authenticated by an unpledge proof.
     Unpledge,
-    /// Consume a `PledgeLockTicket` for a credis request: verify `spend_auth` binds
-    /// it to `smart_account`, credit the ticket gratis into the EOA's own pledged
-    /// ledger, and delete the ticket (no aggregate change - it stays pledged). Returns
-    /// the sealed [`PledgeTerms`] so credis can size the position from the quote the
-    /// pledger accepted.
+    /// Credit the aggregate Credis collateral account after an issue proof.
     ConsumePledge,
-    /// Release `amount` of collateral from the EOA's own pledged ledger back to its
-    /// balance (`pledged_total_supply -= amount`). Amount-based (no ticket); the
-    /// on-chain Credis position is the accounting authority.
-    ReleaseToEoa,
-    /// Burn `amount` of collateral from the EOA's own pledged ledger at credis void
-    /// (`total_supply -= amount`; `pledged_total_supply -= amount`). Amount-based (no
-    /// ticket); the on-chain Credis position's outstanding balance is the authority.
+    /// Debit Credis collateral when repayment appends a return note.
+    ReleaseCollateral,
+    /// Debit Credis collateral at forfeiture; Fidelity is unchanged.
     BurnPledged,
-    /// Read-only: decrypt a state-key-sealed owner blob and return the plaintext EOA.
-    /// With `pledge_note = Some(handle)` the blob in `current_pledge_record` is a live
-    /// `PledgeLockTicket` (used at credis `ConsumePledge` time, before the calldata carries
-    /// no EOA); with `None` it is the self-contained `eoa_ct` stored on the Credis position
-    /// (used at settlement/void to recover the EOA that keys the pledged ledger).
-    /// No state mutation, no authorization.
-    RevealOwner,
 }
 
 /// Proof that the caller holds the account's modify key, without revealing it.
@@ -256,83 +231,29 @@ pub struct ModifyAuth {
     pub op_nonce: u64,
 }
 
-/// Loan terms quoted at pledge time and sealed into the `PledgeLockTicket`, so
-/// `requestCredis` sizes the position from the price the pledger accepted instead of
-/// re-quoting the oracle a transaction later. Supplied by the host on a `Pledge` and
-/// handed back verbatim on the matching `ConsumePledge`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct PledgeTerms {
-    /// Stablecoin minor units the pledge covers - equals `GratisOpRequest::amount` on
-    /// a `Pledge` (the enclave cross-checks it, since that is the MAC-bound figure).
-    pub stables_amount: U256,
-    /// Gratis debited from the pledger's balance, derived host-side from the oracle
-    /// rate and capped by the caller's `maxGratisMinor`.
-    pub gratis_amount: U256,
-    /// The stablecoin the credis is disbursed in.
-    pub asset: Address,
-    /// Effective principal per Gratis, floored at six decimals.
-    pub entry_price: U256,
-    /// ISO 4217 currency reported by the asset at pledge time.
-    pub issuance_currency: u16,
-    /// Asset atomic-unit scale, restricted to 0–18 decimals.
-    pub asset_decimals: u8,
-    /// Canonical COEN/issuance-currency VWAP sealed at pledge, scale 1e6.
-    pub valuation_price: U256,
-}
-
-/// Inputs for a single `ApplyGratisOp`. The host reads the current ciphertext
-/// blobs + versions from committed storage and forwards them verbatim; the
-/// enclave decrypts, enforces invariants, and re-encrypts deterministically.
+/// Stateless balance transition. Proof authorization is checked by the consuming runtime.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GratisOpRequest {
     pub op: GratisOp,
     pub chain_id: B256,
-    /// Execution block timestamp in seconds for Pledge/ConsumePledge; zero for
-    /// other operations. Supplied from chain execution, never caller calldata.
-    pub block_timestamp: u64,
-    /// Balance/pledged-owning account (the EOA). For `ConsumePledge`/`ReleaseToEoa`/
-    /// `BurnPledged` the EOA never appears in calldata or stored plaintext: the host first
-    /// recovers it with a `RevealOwner` round-trip (decrypting the pledge ticket, or the
-    /// `eoa_ct` stored on the Credis position) and passes the revealed address here. For
-    /// `ConsumePledge` the enclave still cross-checks it against `ticket.owner`. Ignored for
-    /// `RevealOwner` itself.
     pub account: Address,
-    /// The MAC-bound amount: gratis for Mint/Burn/ReleaseToEoa/BurnPledged, but
-    /// STABLECOIN minor units for `Pledge`/`Unpledge` (there the gratis figure travels
-    /// in [`Self::pledge_terms`] / the ticket).
-    // TODO(privacy): `amount` is a plaintext write input, so per-tx amounts are
-    // visible in calldata (only cumulative balances are encrypted). To also hide
-    // amounts, carry a client-encrypted amount blob here (like `EncryptedTributeOffer`)
-    // and decrypt it inside the enclave - heavier ABI + a client encrypt step.
     pub amount: U256,
-    /// Current balance blob (`version(8 BE) || ciphertext`), self-versioning so no
-    /// separate version slot is needed. Empty when the account has no state yet.
     pub current_balance: Vec<u8>,
-    /// Current pledged-ledger blob (same `version || ct` shape). Empty if none.
-    pub current_pledged: Vec<u8>,
-    /// Existing pledge-lock-ticket blob (`version || ct`); empty for `Pledge`. Set for
-    /// `Unpledge`/`ConsumePledge`.
-    pub current_pledge_record: Vec<u8>,
-    /// Modify-key authorization (required for Mint/Burn/Pledge/Unpledge; ignored for
-    /// the credis-driven `ConsumePledge`/`ReleaseToEoa`/`BurnPledged`).
     pub modify_auth: ModifyAuth,
-    /// Pledge note identifying the ticket (set for `Unpledge`/`ConsumePledge`).
-    pub pledge_note: Option<B256>,
-    /// Destination smart account (set for `ConsumePledge`).
-    pub smart_account: Option<Address>,
-    /// Spend authorization binding the pledge to `smart_account`
-    /// (`spend_auth_mac(pledge_secret, smart_account)`), set for `ConsumePledge`.
-    pub spend_auth: Option<[u8; 32]>,
-    /// The oracle-derived loan terms to seal into the new ticket. Required for
-    /// `Pledge`, `None` for every other op.
-    #[serde(default)]
-    pub pledge_terms: Option<PledgeTerms>,
-    /// Optional co-located Fidelity cohort update/probe, applied atomically with
-    /// the Gratis op in the SAME enclave round-trip (Mint -> `In`, Burn/BurnPledged
-    /// -> `Out`, Pledge -> `Probe` for the eligibility gate). A failing section
-    /// rejects the whole op - the host writes neither ledger.
-    #[serde(default)]
     pub fidelity: Option<FidelityOpSection>,
+}
+
+/// Wallet and enclave derive the same private initial note secret entropy.
+/// The caller reduces this HMAC to a nonzero BN254 field before deriving the serial.
+pub fn initial_pledge_secret(modify_key: &[u8; 32], amount: U256, nonce: u64) -> [u8; 32] {
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, modify_key);
+    let mut preimage = b"outbe/pledge-secret/v1".to_vec();
+    preimage.extend_from_slice(&amount.to_be_bytes::<32>());
+    preimage.extend_from_slice(&nonce.to_be_bytes());
+    ring::hmac::sign(&key, &preimage)
+        .as_ref()
+        .try_into()
+        .expect("SHA256 length")
 }
 
 /// The Fidelity cohort mutation carried inside a Gratis op.
@@ -420,42 +341,13 @@ pub enum GratisOpStatus {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GratisOpResult {
     pub status: GratisOpStatus,
-    /// New balance blob (`version || ct`) to store verbatim.
     pub new_balance: Vec<u8>,
-    /// New pledged-ledger blob (`version || ct`) to store verbatim.
-    pub new_pledged: Vec<u8>,
-    /// New pledge-lock-ticket blob (`version || ct`) for `Pledge`; empty on
-    /// `Unpledge`/`ConsumePledge` (which the host writes back to clear/delete the
-    /// ticket slot). Empty and untouched for all other ops.
-    pub new_pledge_record: Vec<u8>,
-    /// Deterministic pledge note for a `Pledge` (zero otherwise).
-    pub pledge_note: B256,
-    /// Pledged gratis surfaced for credis (`ConsumePledge`); zero otherwise.
-    pub gratis_amount: U256,
-    /// The loan terms sealed in the consumed ticket (`ConsumePledge`); `None`
-    /// otherwise. Lets credis size the position from the pledge-time quote.
-    #[serde(default)]
-    pub pledge_terms: Option<PledgeTerms>,
-    /// Plaintext EOA recovered by a `RevealOwner` op (zero otherwise). Lets the host key the
-    /// per-account pledged/balance ledgers without the EOA ever appearing in calldata or state.
-    pub revealed_owner: Address,
-    /// Self-contained sealed EOA blob (`nonce(12) || ChaCha20Poly1305(owner 20B)` under the
-    /// state key) produced by `ConsumePledge` for the host to store on the Credis position;
-    /// empty for every other op. Later decrypted via `RevealOwner` (`pledge_note = None`).
-    pub eoa_ct: Vec<u8>,
-    /// Amount for the emitted event (mint/burn/pledge/unpledge magnitude).
+    /// Owner-bound serial derived inside the enclave on pledge; zero otherwise.
+    pub note_serial: B256,
     pub event_amount: U256,
-    /// The account's next modify-auth nonce (for the host to persist).
     pub next_op_nonce: u64,
-    /// Receipt of the co-located Fidelity section; `Some` iff the request
-    /// carried one and the op was applied.
-    #[serde(default)]
     pub fidelity: Option<FidelityOpOutcome>,
-    /// Diagnostic hash of the canonical request inputs; the host recomputes it to
-    /// detect enclave non-determinism, then discards.
     pub inputs_canonical_hash: B256,
-    /// Local-only attestation tag over `(inputs_canonical_hash || result)`; the
-    /// host verifies it against the pinned enclave attestation key, then discards.
     pub attestation_tag: Vec<u8>,
 }
 
@@ -1403,49 +1295,11 @@ pub fn gratis_op_canonical_hash(req: &GratisOpRequest) -> B256 {
     let mut buf: Vec<u8> = Vec::new();
     buf.push(req.op as u8);
     buf.extend_from_slice(req.chain_id.as_slice());
-    buf.extend_from_slice(&req.block_timestamp.to_be_bytes());
     buf.extend_from_slice(req.account.as_slice());
     buf.extend_from_slice(&req.amount.to_be_bytes::<32>());
     push_bytes(&mut buf, &req.current_balance);
-    push_bytes(&mut buf, &req.current_pledged);
-    push_bytes(&mut buf, &req.current_pledge_record);
     buf.extend_from_slice(&req.modify_auth.mac);
     buf.extend_from_slice(&req.modify_auth.op_nonce.to_be_bytes());
-    // Optional linkage fields: length/flag-prefixed so presence is unambiguous.
-    match req.pledge_note {
-        Some(h) => {
-            buf.push(1);
-            buf.extend_from_slice(h.as_slice());
-        }
-        None => buf.push(0),
-    }
-    match req.smart_account {
-        Some(a) => {
-            buf.push(1);
-            buf.extend_from_slice(a.as_slice());
-        }
-        None => buf.push(0),
-    }
-    match req.spend_auth {
-        Some(s) => {
-            buf.push(1);
-            buf.extend_from_slice(&s);
-        }
-        None => buf.push(0),
-    }
-    match req.pledge_terms {
-        Some(t) => {
-            buf.push(1);
-            buf.extend_from_slice(&t.stables_amount.to_be_bytes::<32>());
-            buf.extend_from_slice(&t.gratis_amount.to_be_bytes::<32>());
-            buf.extend_from_slice(t.asset.as_slice());
-            buf.extend_from_slice(&t.entry_price.to_be_bytes::<32>());
-            buf.extend_from_slice(&t.issuance_currency.to_be_bytes());
-            buf.push(t.asset_decimals);
-            buf.extend_from_slice(&t.valuation_price.to_be_bytes::<32>());
-        }
-        None => buf.push(0),
-    }
     match &req.fidelity {
         Some(f) => {
             buf.push(1);

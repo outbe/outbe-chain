@@ -1130,7 +1130,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "intex_promis_mine). The cost is paid by spending a PayNote, so pass pay_note_proof: this call moves " +
       "no tokens of its own and needs no approval. Get the price with intex_settlement_tokens, deposit a " +
       "note of at least that size into IPayNote (from whichever wallet holds the money - a different one " +
-      "keeps the two unlinked), then build the spend proof off-chain; the MCP cannot produce it. " +
+      "keeps the two unlinked), then build the spend proof off-chain for this series, owner and units; the " +
+      "MCP cannot produce it. " +
       "Defaults to your own wallet; pass owner to pay for someone else's position. " +
       "Allowed once the series has qualified (voluntary; see `qualified` in intex_series_info) or is Called " +
       "(forced, within the call period). The " +
@@ -1141,8 +1142,13 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     {
       series: seriesArg,
       units: unitsArg,
-      owner: accountArg,
-      pay_note_proof: z.string().describe("0x-hex `outbe.paynote` spend proof naming the signing wallet as its owner"),
+      owner: z
+        .string()
+        .optional()
+        .describe("holder of the units, the one the proof was built for (default: the configured signer)"),
+      pay_note_proof: z
+        .string()
+        .describe("0x-hex `outbe.paynote` spend proof bound to this series, owner and units"),
       network: networkArg.optional(),
       wait: waitArg,
     },

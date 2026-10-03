@@ -662,5 +662,91 @@ fn spend_proof_requires_exactly_one_settlement_target() {
         "--units",
         "2"
     ])
+    .is_err());
+    assert!(Probe::try_parse_from([
+        "outbe-cli",
+        "spend-proof",
+        "note",
+        "1",
+        "--intex",
+        "20260212-TRY-U",
+        "--units",
+        "2",
+        "--holder",
+        "0x1111111111111111111111111111111111111111"
+    ])
     .is_ok());
+    assert!(Probe::try_parse_from([
+        "outbe-cli",
+        "spend-proof",
+        "note",
+        "1",
+        "--nod",
+        "7",
+        "--holder",
+        "0x1111111111111111111111111111111111111111"
+    ])
+    .is_err());
+}
+
+/// A series has many holders, so an Intex proof binds the one whose units it pays.
+#[tokio::test]
+async fn an_intex_quote_binds_the_holder() {
+    let series = *b"20260212-TRY-U";
+    let holder = Address::repeat_byte(0x11);
+    let units = U256::from(2u64);
+    let payable = U256::from(5u64);
+    let rpc = MockRpc {
+        eth_call_map: Some(call_map(HashMap::from([(
+            (
+                INTEX_FACTORY_ADDRESS,
+                IIntexFactory::quoteSettlementCall::SELECTOR,
+            ),
+            IIntexFactory::quoteSettlementCall::abi_encode_returns(
+                &IIntexFactory::quoteSettlementReturn {
+                    settlementCurrency: 840,
+                    paymentMinor: payable,
+                    snapshotId: U256::ZERO,
+                },
+            ),
+        )]))),
+        ..Default::default()
+    };
+    let quoted = quote_settlement(
+        &rpc,
+        &note(),
+        payable,
+        SettlementTarget::Intex {
+            series,
+            holder,
+            units,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(quoted.holder, Some(holder));
+    assert_eq!(quoted.series.as_deref(), Some("20260212-TRY-U"));
+    assert_eq!(
+        quoted.context,
+        settlement_context(
+            SettlementDomain::Intex,
+            outbe_paynote::api::intex_holding_target(&series, holder),
+            units,
+            U256::ZERO,
+        )
+        .unwrap()
+    );
+}
+
+#[test]
+fn a_zero_holder_is_refused_before_proving() {
+    let target = SpendTarget {
+        nod: None,
+        gem: None,
+        intex: Some("20260212-TRY-U".into()),
+    };
+    let error = target
+        .into_settlement(Some(U256::ONE), Some(Address::ZERO))
+        .unwrap_err();
+    assert!(error.to_string().contains("zero address"), "{error}");
 }

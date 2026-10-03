@@ -403,7 +403,10 @@ fn the_call_and_the_void_compose_across_runs() {
         finalize_through(&storage, lapsed);
         assert_eq!(scan(&storage, lapsed), 1);
         assert_eq!(state_of(&storage, position_id), CredisState::Void);
-        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        assert_eq!(
+            view_balance(&storage, outbe_primitives::addresses::CREDIS_ADDRESS),
+            U256::ZERO
+        );
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(storage.clone())
                 .get_total_unallocated()

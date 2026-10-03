@@ -2183,3 +2183,109 @@ fn closed_above_floor_is_false_for_an_unregistered_currency() {
         assert!(!crate::api::closed_above_floor(storage, 978, U256::from(1u64), 20260301).unwrap());
     });
 }
+
+/// Fills `[start, start + 8h)` with `count` evenly spaced snapshots for `pair`
+/// and records 1,800 blocks per hour; with `vote_period = 8` the window allows
+/// exactly 1,800 rounds. `sparse_pair` joins every 18th snapshot.
+fn fill_window(
+    oracle: &mut OracleContract<'_>,
+    pair: AddressPair,
+    start: u64,
+    count: u64,
+    sparse_pair: Option<AddressPair>,
+) {
+    let hour = 3_600;
+    oracle.config_vote_period.write(8).unwrap();
+    for k in 0..=8 {
+        oracle
+            .record_hour_block(start + k * hour, 1_000 + k * 1_800)
+            .unwrap();
+    }
+    for i in 0..count {
+        let timestamp = start + i * (8 * hour) / count;
+        let mut entries = vec![(pair, coen_iso(2), coen_iso(1))];
+        if let Some(other) = sparse_pair.filter(|_| i % 18 == 0) {
+            entries.push((other, coen_iso(5), coen_iso(1)));
+        }
+        oracle.write_snapshot(timestamp, &entries).unwrap();
+    }
+}
+
+#[test]
+fn finalized_window_vwap_requires_two_thirds_round_coverage() {
+    let day = ATOMIC_DAY_START;
+    let hour = 3_600;
+    let start = day + 2 * hour;
+    let cutoff = start + 8 * hour;
+
+    // 1,300 of 1,800 possible rounds (72%) is enough; a pair present in only
+    // 73 of them is not, and the judgement is per pair.
+    with_storage_at(cutoff + 5 * 60, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let usd = AddressPair::new_coen_to(840);
+        let eur = AddressPair::new_coen_to(978);
+        oracle.register_pair(usd).unwrap();
+        oracle.register_pair(eur).unwrap();
+        fill_window(&mut oracle, usd, start, 1_300, Some(eur));
+        let snapshot = default_snapshot_at(cutoff + 5 * 60);
+        assert_eq!(
+            oracle.finalized_window_vwap(usd, snapshot).unwrap(),
+            Some(coen_iso(2))
+        );
+        assert_eq!(oracle.finalized_window_vwap(eur, snapshot).unwrap(), None);
+        // The raw rolling read still sees the sparse pair; only the finalized
+        // window is gated.
+        assert_eq!(
+            oracle.calculate_vwap(eur, start, cutoff).unwrap(),
+            coen_iso(5)
+        );
+    });
+
+    // 1,100 of 1,800 (61%) is not enough even though the price is positive.
+    with_storage_at(cutoff + 5 * 60, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let usd = AddressPair::new_coen_to(840);
+        oracle.register_pair(usd).unwrap();
+        fill_window(&mut oracle, usd, start, 1_100, None);
+        let snapshot = default_snapshot_at(cutoff + 5 * 60);
+        assert_eq!(oracle.finalized_window_vwap(usd, snapshot).unwrap(), None);
+        assert_eq!(
+            oracle.calculate_vwap(usd, start, cutoff).unwrap(),
+            coen_iso(2)
+        );
+    });
+
+    // Exactly two thirds passes; one round fewer fails.
+    with_storage_at(cutoff + 5 * 60, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let usd = AddressPair::new_coen_to(840);
+        oracle.register_pair(usd).unwrap();
+        fill_window(&mut oracle, usd, start, 1_200, None);
+        let snapshot = default_snapshot_at(cutoff + 5 * 60);
+        assert!(oracle
+            .finalized_window_vwap(usd, snapshot)
+            .unwrap()
+            .is_some());
+    });
+    with_storage_at(cutoff + 5 * 60, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let usd = AddressPair::new_coen_to(840);
+        oracle.register_pair(usd).unwrap();
+        fill_window(&mut oracle, usd, start, 1_199, None);
+        let snapshot = default_snapshot_at(cutoff + 5 * 60);
+        assert_eq!(oracle.finalized_window_vwap(usd, snapshot).unwrap(), None);
+    });
+}
+
+#[test]
+fn hour_first_block_is_recorded_once_per_hour() {
+    let day = ATOMIC_DAY_START;
+    with_storage_at(day, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        oracle.record_hour_block(day + 10, 100).unwrap();
+        oracle.record_hour_block(day + 3_599, 900).unwrap();
+        oracle.record_hour_block(day + 3_600, 901).unwrap();
+        assert_eq!(oracle.hour_first_block.read(&day).unwrap(), 100);
+        assert_eq!(oracle.hour_first_block.read(&(day + 3_600)).unwrap(), 901);
+    });
+}

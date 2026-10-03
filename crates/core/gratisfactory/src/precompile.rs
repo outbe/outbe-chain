@@ -2,11 +2,10 @@
 //! movement + Fidelity bookkeeping lives in [`crate::runtime`]. Writes are
 //! authorized by the caller's Gratis modify key (`mac` + `opNonce`).
 
-use alloy_primitives::{Address, Bytes, B256, U256};
-use alloy_sol_types::{sol, SolEvent, SolInterface};
+use alloy_primitives::{Address, Bytes, U256};
+use alloy_sol_types::{sol, SolInterface};
 
 use outbe_gratis::api::ModifyAuth;
-use outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS;
 use outbe_primitives::dispatch::{dispatch_call, mutate, mutate_void, view};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
@@ -35,34 +34,33 @@ pub fn dispatch(
             use IGratisFactory::IGratisFactoryCalls::*;
             match call {
                 pledgeGratis(c) => mutate(c, caller, |sender, c| {
-                    let auth = ModifyAuth {
-                        mac: c.mac.0,
-                        op_nonce: c.opNonce,
-                    };
-                    let (handle, gratis_minor) = runtime::pledge_gratis(
+                    runtime::pledge_gratis(
                         storage.clone(),
                         sender,
-                        c.principalMinor,
-                        c.asset,
-                        c.maxGratisMinor,
-                        auth,
-                    )?;
-                    emit_pledged(&storage, sender, &c, gratis_minor, handle)?;
-                    Ok(handle)
+                        c.gratisMinor,
+                        ModifyAuth {
+                            mac: c.auth.mac.0,
+                            op_nonce: c.auth.opNonce,
+                        },
+                    )
                 }),
-                unpledgeGratis(c) => mutate_void(c, caller, |sender, c| {
-                    let auth = ModifyAuth {
-                        mac: c.mac.0,
-                        op_nonce: c.opNonce,
-                    };
-                    let gratis_minor = runtime::unpledge_gratis(
-                        storage.clone(),
-                        sender,
-                        c.principalMinor,
-                        c.pledgeNote,
-                        auth,
-                    )?;
-                    emit_unpledged(&storage, sender, gratis_minor)
+                unpledgeGratis(c) => mutate_void(c, caller, |_, c| {
+                    runtime::unpledge_gratis(storage.clone(), &c.proof).map(|_| ())
+                }),
+                pledgeRoot(c) => view(c, |_| {
+                    outbe_gratis::pledge::PledgePool::new(storage.clone())
+                        .current_root
+                        .read()
+                }),
+                pledgeLeafCount(c) => view(c, |_| {
+                    outbe_gratis::pledge::PledgePool::new(storage.clone())
+                        .leaf_count
+                        .read()
+                }),
+                pledgeSpent(c) => view(c, |c| {
+                    outbe_gratis::pledge::PledgePool::new(storage.clone())
+                        .spent_nullifiers
+                        .read(&c.nullifier)
                 }),
                 mineCoen(c) => mutate(c, caller, |sender, c| {
                     let auth = ModifyAuth {
@@ -77,34 +75,5 @@ pub fn dispatch(
                 }),
             }
         },
-    )
-}
-
-fn emit_pledged(
-    storage: &StorageHandle<'_>,
-    account: Address,
-    call: &IGratisFactory::pledgeGratisCall,
-    gratis_minor: U256,
-    pledge_note: B256,
-) -> Result<()> {
-    storage.emit_event(
-        GRATIS_FACTORY_ADDRESS,
-        SolEvent::encode_log_data(&IGratisFactory::GratisPledged {
-            account,
-            principalMinor: call.principalMinor,
-            asset: call.asset,
-            gratisMinor: gratis_minor,
-            pledgeNote: pledge_note,
-        }),
-    )
-}
-
-fn emit_unpledged(storage: &StorageHandle<'_>, account: Address, gratis_minor: U256) -> Result<()> {
-    storage.emit_event(
-        GRATIS_FACTORY_ADDRESS,
-        SolEvent::encode_log_data(&IGratisFactory::GratisUnpledged {
-            account,
-            gratisMinor: gratis_minor,
-        }),
     )
 }
