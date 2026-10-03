@@ -80,7 +80,7 @@ pub(super) struct EpochSupervisor<E: Clock> {
     pub(super) genesis_hash: B256,
     pub(super) bt: super::super::startup::BlockTiming,
     pub(super) page_cache: CacheRef,
-    pub(super) application: OutbeApplication,
+    pub(super) application: OutbeApplication<E>,
     pub(super) marshal_mailbox: outbe_consensus::marshal_types::MarshalMailbox,
     pub(super) finalization_mailbox: outbe_consensus::finalization::ingress::Mailbox,
     pub(super) finalization_view: outbe_consensus::finalization::state::FinalizationViewHandle,

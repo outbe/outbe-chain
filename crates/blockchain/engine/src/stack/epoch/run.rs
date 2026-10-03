@@ -415,8 +415,11 @@ where
     );
 
     // -- 12. Create application actor and handler ------------------------
-    let (application, application_rx) =
-        OutbeApplication::new(config::ENGINE_MAILBOX_SIZE, marshal_mailbox.clone());
+    let (application, application_rx) = OutbeApplication::new(
+        ctx.child("application"),
+        config::ENGINE_MAILBOX_SIZE,
+        marshal_mailbox.clone(),
+    );
 
     // -- 12d. Conditional bootstrap validation data ---------------------
     // Determined AFTER marshal init so we can use both execution height
@@ -532,6 +535,7 @@ where
 
     let marshal_reporter =
         crate::marshal_update_reporter::MarshalUpdateReporter::new(executor_mailbox.clone())
+            .with_publication(application.publication())
             .add_tip_consumer(consensus_tip_tx.clone())
             .add_block_consumer(peer_manager_mailbox.clone());
     let marshal_handle = marshal_actor.start(marshal_reporter, broadcast_mailbox.clone(), resolver);
@@ -751,6 +755,7 @@ where
         chain_id: node.chain_spec().chain().id(),
         ocomp_lifecycle_activation,
         marshal_mailbox: marshal_mailbox.clone(),
+        publication: application.publication(),
         certificate_scheme_provider: certificate_scheme_provider.clone(),
         elector_config_provider: elector_config_provider.clone(),
         committee_provider: committee_provider.clone(),

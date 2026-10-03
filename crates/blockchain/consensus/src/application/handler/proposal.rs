@@ -80,6 +80,31 @@ pub(super) enum ProposeOutcome {
     BoundaryUnavailable,
     ProjectionUnavailable,
     ExecutionUnavailable,
+    RoundAlreadyProposed,
+}
+
+impl ProposeOutcome {
+    pub(super) fn completion_message(self) -> &'static str {
+        match self {
+            Self::Proposed(_) => "proposal task completed with a built candidate",
+            Self::ParentProofUnavailable => {
+                "proposal task completed without response: exact parent proof unavailable"
+            }
+            Self::EpochStale => "proposal task completed without response for stale epoch work",
+            Self::BoundaryUnavailable => {
+                "proposal task completed without response: DKG boundary requirement unavailable"
+            }
+            Self::ProjectionUnavailable => {
+                "proposal task completed without response: exact parent is not projected"
+            }
+            Self::ExecutionUnavailable => {
+                "proposal task completed without response: candidate execution is not valid"
+            }
+            Self::RoundAlreadyProposed => {
+                "proposal task completed without response: round already has a candidate"
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -154,6 +179,13 @@ impl ApplicationShared {
             payload_trace,
         } = request;
         let round = context.round;
+        if self.publication.contains_round(round)
+            || self.marshal_mailbox.get_verified(round).await.is_some()
+        {
+            // A restarted view must not build a conflicting candidate under a
+            // changed context. The original candidate remains recoverable.
+            return Ok(ProposeOutcome::RoundAlreadyProposed);
+        }
         let Some(parent) = self.resolve_proposal_parent(clock, context).await? else {
             return Ok(ProposeOutcome::ParentProofUnavailable);
         };
