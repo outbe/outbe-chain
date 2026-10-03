@@ -347,8 +347,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "intex_series_info",
     "Canonical series record from the outbe Intex: promis load, entry/floor/call prices, currencies, " +
       "lifecycle state (Issued/Called/Expired), whether it has qualified (derived from finalized daily " +
-      "VWAPs, never stored), issued/called timestamps, the derived " +
-      "callDeadline/expired pair - check `expired` before attempting settle (past-deadline settles revert) - " +
+      "VWAPs, never stored), issued/called timestamps, the settlementDeadline and the derived `expired` " +
+      "flag - check `expired` before attempting settle (past-deadline settles revert) - " +
       "and how the issued units split into active, settled, exercised, sent to the Gem Factory and forfeited.",
     { series: seriesArg, network: networkArg.optional() },
     handler(async ({ series, network }) => {
@@ -367,7 +367,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         args: [series],
       })) as Record<string, number>;
       const u256 = (v: bigint | number) => v as bigint;
-      const callDeadlineSec = Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.callNoticePeriod) : 0;
+      const settlementDeadline = Number(d.settlementDeadline);
       const [metadata, qualified] = await Promise.all([seriesMetadata(n, series), seriesQualified(n, series)]);
       return ok({
         network: n.name,
@@ -395,8 +395,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         qualified,
         issuedAt: epochIso(d.issuedAt),
         calledAt: epochIso(d.calledAt),
-        callDeadline: epochIso(callDeadlineSec),
-        expired: callDeadlineSec > 0 && Math.floor(Date.now() / 1000) > callDeadlineSec,
+        settlementDeadline: epochIso(settlementDeadline),
+        expired: settlementDeadline > 0 && Math.floor(Date.now() / 1000) > settlementDeadline,
         metadata,
       });
     }),
@@ -433,7 +433,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "intex_holdings_by_owner",
     "Intex NFT holdings for an address: owned token ids, balances, decoded status (Issued/Settled), and " +
-      "for Issued ones the series lifecycle with its callDeadline and, on outbe, whether it has qualified. " +
+      "for Issued ones the series lifecycle with its settlementDeadline and, on outbe, whether it has qualified. " +
       "Defaults to bsc-testnet (where won NFTs " +
       "land); pass network to read outbe. A holding away from outbe cannot be settled where it sits - bridge " +
       "it over with intex_bridge_send before the deadline shown here.",
@@ -462,7 +462,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
               functionName: "readData",
               args: [seriesHex],
             })) as { state: number; calledAt: bigint | number; callTrigger: { callNoticePeriod: bigint | number } };
-            const deadlineSec =
+            const settlementDeadline =
               Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.callTrigger.callNoticePeriod) : 0;
             // Only outbe has the factory that derives it.
             const qualified = n.name === OUTBE ? await seriesQualified(n, seriesHex) : undefined;
@@ -471,8 +471,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
               series: fromSeriesId(seriesHex),
               state: intexState(d.state),
               ...(qualified === undefined ? {} : { qualified }),
-              callDeadline: epochIso(deadlineSec),
-              expired: deadlineSec > 0 && Math.floor(Date.now() / 1000) > deadlineSec,
+              settlementDeadline: epochIso(settlementDeadline),
+              expired: settlementDeadline > 0 && Math.floor(Date.now() / 1000) > settlementDeadline,
             };
           } catch {
             // A series the chain does not know is still a holding worth listing.
@@ -488,7 +488,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "intex_series_balance",
     "An address's Intex NFT balance for one series, split into issued and settled token ids. Reads the " +
       "chain you ask for; settlement only happens on outbe, so an issued balance found elsewhere has to be " +
-      "bridged over before the series callDeadline (intex_series_info shows it).",
+      "bridged over before the series settlementDeadline (intex_series_info shows it).",
     { series: seriesArg, account: accountArg, network: networkArg.optional() },
     handler(async ({ series, account, network }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
@@ -1066,7 +1066,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "intex_bridge_quote",
     "Bridge native fee to move an Intex NFT from BSC to outbe. Bridging is owner-initiated at every stage: " +
       "to any recipient while the series is Issued or Qualified, and to yourself only once it is Called, up to " +
-      "its callDeadline (read it with intex_series_info).",
+      "its settlementDeadline (read it with intex_series_info).",
     { series: seriesArg, units: unitsArg, recipient: recipientArg, network: networkArg.optional() },
     handler(async ({ series, units, recipient, network }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
@@ -1092,7 +1092,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "intex_bridge_send",
     "Bridge an Intex NFT from BSC to outbe, where settlement happens - nothing moves it for you, so a " +
-      "position left on BSC past the series callDeadline can no longer be settled at all. Works at every " +
+      "position left on BSC past the series settlementDeadline can no longer be settled at all. Works at every " +
       "stage: to any recipient while Issued or Qualified, and to yourself only once the series is Called " +
       "(ownership is frozen then, so a recipient other than you is refused). The bridge burns your token " +
       "directly (role-gated), so no approval is needed. Auto-quotes the native fee (paid as value), which " +
@@ -1136,7 +1136,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "(forced, within the call period). The " +
       "Settled token (soulbound) stays with the owner whoever pays, and only the owner can mine its Promis. " +
       "Settlement only ever happens on outbe: a position sitting on BSC has to be brought over with " +
-      "intex_bridge_send first, and that has to land before the series callDeadline. Requires " +
+      "intex_bridge_send first, and that has to land before the series settlementDeadline. Requires " +
       "OUTBE_PRIVATE_KEY.",
     {
       series: seriesArg,
