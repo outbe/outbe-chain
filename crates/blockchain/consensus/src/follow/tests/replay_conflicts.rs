@@ -46,14 +46,13 @@ fn restart_replay_suffix_rejects_conflicting_preannounces() {
     }
 
     let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
-        &chain,
-        &source,
-        &epocher,
-        e0,
-        Height::new(9),
-        Height::new(9),
-        certificates.clone(),
-        blocks.clone(),
+        replay_authority(&chain, &source, &epocher),
+        engine::ReplayWindow {
+            anchor_epoch: e0,
+            lower: Height::new(9),
+            upper: Height::new(9),
+        },
+        engine::ReplayArchives::new(certificates.clone(), blocks.clone()),
     ))
     .unwrap_err()
     .to_string();
@@ -93,14 +92,13 @@ fn restart_replay_suffix_rejects_boundary_outcome_conflicting_with_preannounce()
     let blocks = MemoryBlocks::default();
 
     let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
-        &chain,
-        &source,
-        &epocher,
-        e0,
-        Height::new(8),
-        Height::new(11),
-        certificates.clone(),
-        blocks.clone(),
+        replay_authority(&chain, &source, &epocher),
+        engine::ReplayWindow {
+            anchor_epoch: e0,
+            lower: Height::new(8),
+            upper: Height::new(11),
+        },
+        engine::ReplayArchives::new(certificates.clone(), blocks.clone()),
     ))
     .unwrap_err()
     .to_string();
@@ -136,14 +134,13 @@ fn restart_replay_suffix_rejects_wrong_upstream_payload_before_archive_write() {
     let blocks = MemoryBlocks::default();
 
     let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
-        &chain,
-        &source,
-        &epocher,
-        e0,
-        Height::new(9),
-        Height::new(9),
-        certificates.clone(),
-        blocks.clone(),
+        replay_authority(&chain, &source, &epocher),
+        engine::ReplayWindow {
+            anchor_epoch: e0,
+            lower: Height::new(9),
+            upper: Height::new(9),
+        },
+        engine::ReplayArchives::new(certificates.clone(), blocks.clone()),
     ))
     .unwrap_err()
     .to_string();
@@ -200,14 +197,13 @@ fn restart_replay_suffix_rejects_wrong_height_epoch_and_forged_certificate() {
         let blocks = MemoryBlocks::default();
 
         let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
-            &chain,
-            &source,
-            &epocher,
-            e0,
-            Height::new(9),
-            Height::new(9),
-            certificates.clone(),
-            blocks.clone(),
+            replay_authority(&chain, &source, &epocher),
+            engine::ReplayWindow {
+                anchor_epoch: e0,
+                lower: Height::new(9),
+                upper: Height::new(9),
+            },
+            engine::ReplayArchives::new(certificates.clone(), blocks.clone()),
         ))
         .unwrap_err()
         .to_string();
@@ -243,14 +239,13 @@ fn restart_repairs_both_durable_archive_crash_cuts() {
         ..Default::default()
     };
     let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
-        &chain,
-        &source,
-        &epocher,
-        e0,
-        Height::new(9),
-        Height::new(9),
-        certificates.clone(),
-        blocks.clone(),
+        replay_authority(&chain, &source, &epocher),
+        engine::ReplayWindow {
+            anchor_epoch: e0,
+            lower: Height::new(9),
+            upper: Height::new(9),
+        },
+        engine::ReplayArchives::new(certificates.clone(), blocks.clone()),
     ))
     .unwrap_err()
     .to_string();
@@ -263,14 +258,13 @@ fn restart_repairs_both_durable_archive_crash_cuts() {
     let epocher = FollowerEpocher::new(10, 0);
     let blocks = DurableCrashBlocks::default();
     futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
-        &chain,
-        &source,
-        &epocher,
-        e0,
-        Height::new(9),
-        Height::new(9),
-        certificates.clone(),
-        blocks.clone(),
+        replay_authority(&chain, &source, &epocher),
+        engine::ReplayWindow {
+            anchor_epoch: e0,
+            lower: Height::new(9),
+            upper: Height::new(9),
+        },
+        engine::ReplayArchives::new(certificates.clone(), blocks.clone()),
     ))
     .expect("restart must repair a durable finalization-only crash cut");
     assert!(blocks.durable.lock().unwrap().contains_key(&9));
@@ -287,14 +281,13 @@ fn restart_repairs_both_durable_archive_crash_cuts() {
         ..Default::default()
     };
     futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
-        &chain,
-        &source,
-        &epocher,
-        e0,
-        Height::new(9),
-        Height::new(9),
-        certificates.clone(),
-        blocks.clone(),
+        replay_authority(&chain, &source, &epocher),
+        engine::ReplayWindow {
+            anchor_epoch: e0,
+            lower: Height::new(9),
+            upper: Height::new(9),
+        },
+        engine::ReplayArchives::new(certificates.clone(), blocks.clone()),
     ))
     .expect("restart must repair a durable block-only crash cut");
     assert_eq!(
@@ -326,14 +319,13 @@ fn restart_replay_suffix_reconciliation_is_idempotent() {
 
     for _ in 0..2 {
         futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
-            &chain,
-            &source,
-            &epocher,
-            e0,
-            Height::new(9),
-            Height::new(9),
-            certificates.clone(),
-            blocks.clone(),
+            replay_authority(&chain, &source, &epocher),
+            engine::ReplayWindow {
+                anchor_epoch: e0,
+                lower: Height::new(9),
+                upper: Height::new(9),
+            },
+            engine::ReplayArchives::new(certificates.clone(), blocks.clone()),
         ))
         .expect("repeated authenticated repair must be idempotent");
     }

@@ -9,21 +9,7 @@ fn restart_authenticates_and_pairs_archive_suffix_across_epoch_boundary() {
     let e0 = Epoch::new(0);
     let e1 = Epoch::new(1);
     let epocher = FollowerEpocher::new(10, 0);
-    let mut records = BTreeMap::from([
-        (
-            1,
-            certified_block(&c0, e0, 1, c0.boundary_block_extra_data(e0)),
-        ),
-        (
-            10,
-            certified_block(&c0, e0, 10, c1.preannounce_block_extra_data(e1)),
-        ),
-        (
-            11,
-            certified_block(&c1, e1, 11, c1.boundary_block_extra_data(e1)),
-        ),
-        (12, certified_block(&c1, e1, 12, Vec::new())),
-    ]);
+    let mut records = epoch_boundary_records((&c0, e0), (&c1, e1));
     fill_plain_finalized_range(&mut records, &c0, e0, 2..10);
     let source = ArchivedFinalizedSource {
         by_height: Arc::new(records.clone()),
@@ -46,14 +32,13 @@ fn restart_authenticates_and_pairs_archive_suffix_across_epoch_boundary() {
     }
 
     futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
-        &chain,
-        &source,
-        &epocher,
-        e0,
-        Height::new(10),
-        Height::new(12),
-        certificates.clone(),
-        blocks.clone(),
+        replay_authority(&chain, &source, &epocher),
+        engine::ReplayWindow {
+            anchor_epoch: e0,
+            lower: Height::new(10),
+            upper: Height::new(12),
+        },
+        engine::ReplayArchives::new(certificates.clone(), blocks.clone()),
     ))
     .expect("paired suffix must authenticate through the epoch boundary");
 
@@ -103,14 +88,13 @@ fn restart_recovers_preannounce_before_suffix_lower_bound() {
         .insert(9, records[&9].block.clone());
 
     futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
-        &chain,
-        &source,
-        &epocher,
-        e0,
-        Height::new(9),
-        Height::new(9),
-        certificates.clone(),
-        blocks.clone(),
+        replay_authority(&chain, &source, &epocher),
+        engine::ReplayWindow {
+            anchor_epoch: e0,
+            lower: Height::new(9),
+            upper: Height::new(9),
+        },
+        engine::ReplayArchives::new(certificates.clone(), blocks.clone()),
     ))
     .expect("restart must recover an earlier authenticated successor preannounce");
 
@@ -129,21 +113,7 @@ fn restart_repairs_both_archive_halves_from_authenticated_suffix() {
     let e0 = Epoch::new(0);
     let e1 = Epoch::new(1);
     let epocher = FollowerEpocher::new(10, 0);
-    let mut records = BTreeMap::from([
-        (
-            1,
-            certified_block(&c0, e0, 1, c0.boundary_block_extra_data(e0)),
-        ),
-        (
-            10,
-            certified_block(&c0, e0, 10, c1.preannounce_block_extra_data(e1)),
-        ),
-        (
-            11,
-            certified_block(&c1, e1, 11, c1.boundary_block_extra_data(e1)),
-        ),
-        (12, certified_block(&c1, e1, 12, Vec::new())),
-    ]);
+    let mut records = epoch_boundary_records((&c0, e0), (&c1, e1));
     fill_plain_finalized_range(&mut records, &c0, e0, 2..10);
     let source = ArchivedFinalizedSource {
         by_height: Arc::new(records.clone()),
@@ -173,14 +143,13 @@ fn restart_repairs_both_archive_halves_from_authenticated_suffix() {
         .insert(11, records[&11].block.clone());
 
     futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
-        &chain,
-        &source,
-        &epocher,
-        e0,
-        Height::new(10),
-        Height::new(12),
-        certificates.clone(),
-        blocks.clone(),
+        replay_authority(&chain, &source, &epocher),
+        engine::ReplayWindow {
+            anchor_epoch: e0,
+            lower: Height::new(10),
+            upper: Height::new(12),
+        },
+        engine::ReplayArchives::new(certificates.clone(), blocks.clone()),
     ))
     .expect("authenticated suffix must repair either missing archive companion");
 
@@ -254,14 +223,13 @@ fn restart_authenticates_multiple_epochs_in_one_replay_suffix() {
     }
 
     futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
-        &chain,
-        &source,
-        &epocher,
-        e0,
-        Height::new(10),
-        Height::new(22),
-        certificates.clone(),
-        blocks.clone(),
+        replay_authority(&chain, &source, &epocher),
+        engine::ReplayWindow {
+            anchor_epoch: e0,
+            lower: Height::new(10),
+            upper: Height::new(22),
+        },
+        engine::ReplayArchives::new(certificates.clone(), blocks.clone()),
     ))
     .expect("one replay suffix may authenticate several epoch transitions");
 
@@ -300,14 +268,13 @@ fn restart_replay_suffix_rejects_missing_upstream_height() {
         .insert(9, records[&9].block.clone());
 
     let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
-        &chain,
-        &source,
-        &epocher,
-        e0,
-        Height::new(9),
-        Height::new(10),
-        certificates.clone(),
-        blocks.clone(),
+        replay_authority(&chain, &source, &epocher),
+        engine::ReplayWindow {
+            anchor_epoch: e0,
+            lower: Height::new(9),
+            upper: Height::new(10),
+        },
+        engine::ReplayArchives::new(certificates.clone(), blocks.clone()),
     ))
     .unwrap_err()
     .to_string();
@@ -346,14 +313,13 @@ fn restart_replay_suffix_rejects_local_block_conflict() {
         .insert(9, certified_block(&c0, e0, 9, vec![0xFF]).block);
 
     let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
-        &chain,
-        &source,
-        &epocher,
-        e0,
-        Height::new(9),
-        Height::new(9),
-        certificates.clone(),
-        blocks.clone(),
+        replay_authority(&chain, &source, &epocher),
+        engine::ReplayWindow {
+            anchor_epoch: e0,
+            lower: Height::new(9),
+            upper: Height::new(9),
+        },
+        engine::ReplayArchives::new(certificates.clone(), blocks.clone()),
     ))
     .unwrap_err()
     .to_string();
@@ -407,26 +373,24 @@ fn restart_replay_suffix_accepts_distinct_valid_quorum_for_same_proposal() {
         .insert(9, records[&9].block.clone());
 
     futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
-        &chain,
-        &source,
-        &epocher,
-        e0,
-        Height::new(9),
-        Height::new(9),
-        certificates.clone(),
-        blocks.clone(),
+        replay_authority(&chain, &source, &epocher),
+        engine::ReplayWindow {
+            anchor_epoch: e0,
+            lower: Height::new(9),
+            upper: Height::new(9),
+        },
+        engine::ReplayArchives::new(certificates.clone(), blocks.clone()),
     ))
     .expect("distinct valid quorum certificates for one proposal must reconcile");
 
     futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
-        &chain,
-        &source,
-        &epocher,
-        e0,
-        Height::new(9),
-        Height::new(9),
-        certificates.clone(),
-        blocks.clone(),
+        replay_authority(&chain, &source, &epocher),
+        engine::ReplayWindow {
+            anchor_epoch: e0,
+            lower: Height::new(9),
+            upper: Height::new(9),
+        },
+        engine::ReplayArchives::new(certificates.clone(), blocks.clone()),
     ))
     .expect("restarting with the retained alternate certificate must be idempotent");
 
@@ -467,14 +431,13 @@ fn restart_replay_suffix_rejects_invalid_local_certificate_for_same_proposal() {
         .insert(9, records[&9].block.clone());
 
     let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
-        &chain,
-        &source,
-        &epocher,
-        e0,
-        Height::new(9),
-        Height::new(9),
-        certificates.clone(),
-        blocks.clone(),
+        replay_authority(&chain, &source, &epocher),
+        engine::ReplayWindow {
+            anchor_epoch: e0,
+            lower: Height::new(9),
+            upper: Height::new(9),
+        },
+        engine::ReplayArchives::new(certificates.clone(), blocks.clone()),
     ))
     .unwrap_err()
     .to_string();
@@ -552,14 +515,13 @@ fn restart_replay_suffix_rejects_local_finalization_conflict() {
             .insert(9, records[&9].block.clone());
 
         let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
-            &chain,
-            &source,
-            &epocher,
-            e0,
-            Height::new(9),
-            Height::new(9),
-            certificates.clone(),
-            blocks.clone(),
+            replay_authority(&chain, &source, &epocher),
+            engine::ReplayWindow {
+                anchor_epoch: e0,
+                lower: Height::new(9),
+                upper: Height::new(9),
+            },
+            engine::ReplayArchives::new(certificates.clone(), blocks.clone()),
         ))
         .unwrap_err()
         .to_string();

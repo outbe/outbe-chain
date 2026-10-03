@@ -191,8 +191,75 @@ impl FinalizedSource for ArchivedFinalizedSource {
     }
 }
 
+fn epoch_boundary_records(
+    (current, current_epoch): (&Committee, Epoch),
+    (successor, successor_epoch): (&Committee, Epoch),
+) -> BTreeMap<u64, CertifiedFinalizedBlock> {
+    BTreeMap::from([
+        (
+            1,
+            certified_block(
+                current,
+                current_epoch,
+                1,
+                current.boundary_block_extra_data(current_epoch),
+            ),
+        ),
+        (
+            10,
+            certified_block(
+                current,
+                current_epoch,
+                10,
+                successor.preannounce_block_extra_data(successor_epoch),
+            ),
+        ),
+        (
+            11,
+            certified_block(
+                successor,
+                successor_epoch,
+                11,
+                successor.boundary_block_extra_data(successor_epoch),
+            ),
+        ),
+        (
+            12,
+            certified_block(successor, successor_epoch, 12, Vec::new()),
+        ),
+    ])
+}
+
+fn replay_authority<'a, F>(
+    chain: &'a SharedCommitteeChain,
+    source: &'a F,
+    epocher: &'a FollowerEpocher,
+) -> engine::ReplayAuthority<'a, F> {
+    engine::ReplayAuthority {
+        chain,
+        source,
+        epocher,
+    }
+}
+
+fn archived_record<T: Clone>(
+    by_height: &std::sync::Mutex<BTreeMap<u64, T>>,
+    id: Identifier<'_, Digest>,
+    digest: impl Fn(&T) -> Digest,
+) -> Option<T> {
+    let records = by_height.lock().unwrap();
+    match id {
+        Identifier::Index(height) => records.get(&height).cloned(),
+        Identifier::Key(key) => records
+            .values()
+            .find(|record| digest(record) == *key)
+            .cloned(),
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct MemoryCertificates {
+    _drop_trace: Option<replay_api::ArchiveDropTrace>,
     by_height: Arc<std::sync::Mutex<BTreeMap<u64, crate::marshal_types::Finalization>>>,
 }
 
@@ -228,17 +295,9 @@ impl Certificates for MemoryCertificates {
         &self,
         id: Identifier<'_, Self::BlockDigest>,
     ) -> Result<Option<crate::marshal_types::Finalization>, Self::Error> {
-        let value = match id {
-            Identifier::Index(height) => self.by_height.lock().unwrap().get(&height).cloned(),
-            Identifier::Key(digest) => self
-                .by_height
-                .lock()
-                .unwrap()
-                .values()
-                .find(|finalization| finalization.proposal.payload == *digest)
-                .cloned(),
-        };
-        Ok(value)
+        Ok(archived_record(&self.by_height, id, |finalization| {
+            finalization.proposal.payload
+        }))
     }
 
     async fn prune(self, min: Height) -> Result<Self, Self::Error> {
@@ -270,6 +329,7 @@ impl Certificates for MemoryCertificates {
 
 #[derive(Clone, Debug, Default)]
 struct MemoryBlocks {
+    _drop_trace: Option<replay_api::ArchiveDropTrace>,
     by_height: Arc<std::sync::Mutex<BTreeMap<u64, crate::block::ConsensusBlock>>>,
 }
 
@@ -291,17 +351,7 @@ impl Blocks for MemoryBlocks {
     }
 
     async fn get(&self, id: Identifier<'_, Digest>) -> Result<Option<Self::Block>, Self::Error> {
-        let value = match id {
-            Identifier::Index(height) => self.by_height.lock().unwrap().get(&height).cloned(),
-            Identifier::Key(digest) => self
-                .by_height
-                .lock()
-                .unwrap()
-                .values()
-                .find(|block| block.digest() == *digest)
-                .cloned(),
-        };
-        Ok(value)
+        Ok(archived_record(&self.by_height, id, |block| block.digest()))
     }
 
     async fn prune(self, min: Height) -> Result<Self, Self::Error> {
@@ -498,3 +548,5 @@ mod replay_conflicts;
 mod wire;
 
 mod resolver;
+
+mod replay_api;

@@ -20,6 +20,8 @@
 
 mod replay;
 
+pub use replay::{ReplayArchives, ReplayAuthority, ReplayWindow};
+
 use std::num::NonZeroUsize;
 
 use alloy_consensus::BlockHeader as _;
@@ -269,36 +271,17 @@ where
 /// subsets for the same proposal. A missing certificate or block is repaired
 /// from the authenticated record. Committee and boundary state advances
 /// through the same transition used by live resolver delivery.
-#[allow(clippy::too_many_arguments)]
 pub async fn authenticate_and_reconcile_replay_suffix<F, FC, FB>(
-    chain: &SharedCommitteeChain,
-    source: &F,
-    epocher: &FollowerEpocher,
-    anchor_epoch: Epoch,
-    lower: Height,
-    upper: Height,
-    certificates: FC,
-    blocks: FB,
+    authority: ReplayAuthority<'_, F>,
+    window: ReplayWindow,
+    archives: ReplayArchives<FC, FB>,
 ) -> Result<(Epoch, FC, FB)>
 where
     F: FinalizedSource,
     FC: Certificates<BlockDigest = Digest, Commitment = Digest, Scheme = HybridScheme<MinSig>>,
     FB: Blocks<Block = crate::block::ConsensusBlock>,
 {
-    replay::ReplayAuthority {
-        chain,
-        source,
-        epocher,
-    }
-    .run(
-        replay::ReplayWindow {
-            anchor_epoch,
-            lower,
-            upper,
-        },
-        replay::ReplayArchives::new(certificates, blocks),
-    )
-    .await
+    authority.run(window, archives).await
 }
 
 fn validate_certified_envelope(
