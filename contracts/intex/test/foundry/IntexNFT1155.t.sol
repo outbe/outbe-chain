@@ -889,6 +889,22 @@ contract IntexNFT1155Test is Test {
         assertEq(nft.totalSupply(settled), 4);
     }
 
+    function test_ParkIntex_RejectsSettledUnits() public {
+        _createSeries(SERIES_ID_1_DAY, 0);
+        vm.prank(bridger);
+        nft.issue(user, 10, SERIES_ID_1);
+        _grantSettlementRole(address(this));
+        nft.settleIntex(SERIES_ID_1, user, 10);
+        _grantGemRole(address(this));
+
+        vm.expectRevert();
+        nft.sendToGemFactory(user, SERIES_ID_1, 1);
+
+        uint256 sTok = nft.settledTokenId(SERIES_ID_1);
+        assertEq(nft.balanceOf(user, sTok), 10, "Settled units cannot be sent");
+        assertEq(nft.totalSupply(sTok), 10);
+    }
+
     function test_ParkIntex_FreesCapRoom() public {
         uint32 cap = 10;
         vm.startPrank(bridger);
