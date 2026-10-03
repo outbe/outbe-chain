@@ -32,7 +32,7 @@ interface IMetadosis {
 
     event WorldwideDayMissedOffering(
         uint32 indexed worldwideDay,
-        uint256 unusedMetadosisLimitMinor,
+        uint256 promisLimitReturnedMinor,
         uint256 promisLimitBeforeMinor,
         uint256 promisLimitAfterMinor,
         uint8 retirementOutcome,
@@ -43,7 +43,7 @@ interface IMetadosis {
         uint32 indexed worldwideDay,
         uint32 maxRetainedWorldwideDays,
         uint32 retainedCountBefore,
-        uint256 unusedMetadosisLimitMinor,
+        uint256 promisLimitReturnedMinor,
         uint256 promisLimitBeforeMinor,
         uint256 promisLimitAfterMinor,
         bytes32 sealedCollectionRoot,
@@ -65,7 +65,7 @@ interface IMetadosis {
         uint256 lysisLimitMinor,
         uint256 unusedLysisLimitMinor,
         uint256 lysisAllocationMinor,
-        uint256 unusedMetadosisLimitMinor,
+        uint256 promisLimitReturnedMinor,
         string status,
         uint64 blockNumber
     );
@@ -73,7 +73,7 @@ interface IMetadosis {
     event MetadosisWorldwideDayProcessed(
         uint32 indexed worldwideDay,
         uint256 metadosisLimitMinor,
-        uint256 unusedMetadosisLimitMinor,
+        uint256 promisLimitReturnedMinor,
         string status,
         string dayState,
         string action
@@ -138,7 +138,7 @@ interface IMetadosis {
         view
         returns (
             uint8 outcome,
-            uint256 unusedMetadosisLimitMinor,
+            uint256 promisLimitReturnedMinor,
             uint256 promisLimitBeforeMinor,
             uint256 promisLimitAfterMinor,
             uint8 retirementOutcome,
@@ -152,7 +152,7 @@ interface IMetadosis {
             uint8 outcome,
             uint32 maxRetainedWorldwideDays,
             uint32 retainedCountBefore,
-            uint256 unusedMetadosisLimitMinor,
+            uint256 promisLimitReturnedMinor,
             uint256 promisLimitBeforeMinor,
             uint256 promisLimitAfterMinor,
             bytes32 sealedCollectionRoot,

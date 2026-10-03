@@ -190,7 +190,7 @@ impl MetadosisContract<'_> {
             lysisLimitMinor: frozen.lysis_limit_minor,
             unusedLysisLimitMinor: unused_lysis_limit_minor,
             lysisAllocationMinor: lysis_allocation_minor,
-            unusedMetadosisLimitMinor: unused_lysis_limit_minor,
+            promisLimitReturnedMinor: unused_lysis_limit_minor,
             status: "COMPLETED".into(),
             blockNumber: activated_at_height,
         })?;

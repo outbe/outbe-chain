@@ -155,7 +155,7 @@ fn capacity_forfeiture_event(
         worldwideDay: receipt.worldwide_day.into(),
         maxRetainedWorldwideDays: receipt.max_retained_wwds,
         retainedCountBefore: receipt.retained_count_before,
-        unusedMetadosisLimitMinor: receipt.value_routed,
+        promisLimitReturnedMinor: receipt.value_routed,
         promisLimitBeforeMinor: receipt.carry_over_before,
         promisLimitAfterMinor: receipt.carry_over_after,
         sealedCollectionRoot: receipt.sealed_collection_root,
@@ -214,7 +214,7 @@ pub(super) fn apply_missed_offering(
         )?;
         metadosis.emit(IMetadosis::WorldwideDayMissedOffering {
             worldwideDay: current.worldwide_day.into(),
-            unusedMetadosisLimitMinor: receipt.value_routed,
+            promisLimitReturnedMinor: receipt.value_routed,
             promisLimitBeforeMinor: receipt.carry_over_before,
             promisLimitAfterMinor: receipt.carry_over_after,
             retirementOutcome: match retirement {

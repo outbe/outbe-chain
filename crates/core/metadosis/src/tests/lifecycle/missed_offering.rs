@@ -107,7 +107,7 @@ fn missed_offering_routes_the_formed_limit_once_and_exposes_a_durable_receipt() 
         let decoded =
             IMetadosis::getWorldwideDayTerminalReceiptCall::abi_decode_returns(&output).unwrap();
         assert_eq!(decoded.outcome, 1);
-        assert_eq!(decoded.unusedMetadosisLimitMinor, formed_limit);
+        assert_eq!(decoded.promisLimitReturnedMinor, formed_limit);
         assert_eq!(decoded.promisLimitBeforeMinor, carried);
         assert_eq!(decoded.promisLimitAfterMinor, carried + formed_limit);
         assert_eq!(

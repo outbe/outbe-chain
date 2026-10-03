@@ -46,7 +46,7 @@ impl Rpc {
         )?;
         Some(MetadosisWorldwideDayTerminalReceiptV1 {
             outcome: receipt.outcome,
-            value_routed: receipt.unusedMetadosisLimitMinor,
+            value_routed: receipt.promisLimitReturnedMinor,
             carry_over_before: receipt.promisLimitBeforeMinor,
             carry_over_after: receipt.promisLimitAfterMinor,
             retirement_outcome: receipt.retirementOutcome,

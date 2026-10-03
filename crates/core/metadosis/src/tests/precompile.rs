@@ -16,7 +16,7 @@ fn missing_receipts_have_canonical_empty_abi_returns() {
             IMetadosis::getWorldwideDayTerminalReceiptCall { wwd },
         );
         assert_eq!(terminal.outcome, 0);
-        assert_eq!(terminal.unusedMetadosisLimitMinor, U256::ZERO);
+        assert_eq!(terminal.promisLimitReturnedMinor, U256::ZERO);
         assert_eq!(terminal.promisLimitBeforeMinor, U256::ZERO);
         assert_eq!(terminal.promisLimitAfterMinor, U256::ZERO);
         assert_eq!(terminal.retirementOutcome, 0);
@@ -28,7 +28,7 @@ fn missing_receipts_have_canonical_empty_abi_returns() {
         assert_eq!(capacity.outcome, 0);
         assert_eq!(capacity.maxRetainedWorldwideDays, 0);
         assert_eq!(capacity.retainedCountBefore, 0);
-        assert_eq!(capacity.unusedMetadosisLimitMinor, U256::ZERO);
+        assert_eq!(capacity.promisLimitReturnedMinor, U256::ZERO);
         assert_eq!(capacity.sealedCollectionRoot, B256::ZERO);
         assert_eq!(capacity.forfeitedTributeCount, 0);
         assert_eq!(capacity.forfeitedTributeNominalMinor, U256::ZERO);

@@ -190,7 +190,7 @@ fn failed_day_event(
         lysisLimitMinor: U256::ZERO,
         unusedLysisLimitMinor: U256::ZERO,
         lysisAllocationMinor: U256::ZERO,
-        unusedMetadosisLimitMinor: unused_limit,
+        promisLimitReturnedMinor: unused_limit,
         status: "FAILED".into(),
         blockNumber: block_number,
     }

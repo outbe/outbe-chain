@@ -71,7 +71,7 @@
         "internalType": "uint32"
       },
       {
-        "name": "unusedMetadosisLimitMinor",
+        "name": "promisLimitReturnedMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -256,7 +256,7 @@
         "internalType": "uint8"
       },
       {
-        "name": "unusedMetadosisLimitMinor",
+        "name": "promisLimitReturnedMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -436,7 +436,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "unusedMetadosisLimitMinor",
+        "name": "promisLimitReturnedMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -504,7 +504,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "unusedMetadosisLimitMinor",
+        "name": "promisLimitReturnedMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -707,7 +707,7 @@
         "internalType": "uint32"
       },
       {
-        "name": "unusedMetadosisLimitMinor",
+        "name": "promisLimitReturnedMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -799,7 +799,7 @@
         "internalType": "uint32"
       },
       {
-        "name": "unusedMetadosisLimitMinor",
+        "name": "promisLimitReturnedMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

@@ -244,7 +244,7 @@ fn settle_empty_day(
     metadosis.emit(IMetadosis::MetadosisWorldwideDayProcessed {
         worldwideDay: wwd.into(),
         metadosisLimitMinor: day_limit,
-        unusedMetadosisLimitMinor: returned,
+        promisLimitReturnedMinor: returned,
         status: "COMPLETED".into(),
         dayState: wwd_state_label(day_type).into(),
         action: "no tributes".into(),
@@ -310,7 +310,7 @@ fn settle_zero_allocation(
         lysisLimitMinor: U256::ZERO,
         unusedLysisLimitMinor: U256::ZERO,
         lysisAllocationMinor: U256::ZERO,
-        unusedMetadosisLimitMinor: returned,
+        promisLimitReturnedMinor: returned,
         status: "COMPLETED".into(),
         blockNumber: ctx.block.block_number,
     })
