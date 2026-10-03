@@ -964,3 +964,71 @@ pub(super) fn seed_previous_day_vwap(
         .record_utc_day_vwap(day, index, rate)
         .unwrap();
 }
+
+pub(super) fn empty_executor_inputs(parent_hash: B256) -> BlockExecutorInputs {
+    BlockExecutorInputs {
+        identity: BlockExecutionIdentity {
+            block_extra_data: Bytes::new(),
+            validate_execution_summary: false,
+            block_hash: None,
+            parent_hash,
+        },
+        system_plan: BlockSystemPlan {
+            expected_begin_system_txs: Vec::new(),
+            expected_end_system_txs: Vec::new(),
+            system_layout_error: None,
+            proposer_evm_address: None,
+            execute_outbe_block_hooks: true,
+            prebuilt_phase1_tx: None,
+        },
+        parent_accounting: ParentAccountingInputs {
+            accounted_parent_artifact_provider: None,
+            parent_consensus_metadata: None,
+            parent_artifact_hint: None,
+        },
+        dependencies: BlockExecutionDependencies {
+            bridge: None,
+            evm_signer: None,
+        },
+    }
+}
+
+pub(super) fn executor_inputs_from_ctx(
+    ctx: &OutbeBlockExecutionCtx<'_>,
+    evm_signer: Option<SharedOutbeEvmSigner>,
+    validate_execution_summary: bool,
+) -> BlockExecutorInputs {
+    let expected_begin_system_txs = ctx.expected_begin_system_txs.clone();
+    let expected_end_system_txs = ctx.expected_end_system_txs.clone();
+    let system_layout_error = ctx.system_layout_error.clone();
+    let parent_consensus_metadata = ctx.parent_consensus_metadata.clone();
+    let proposer_evm_address = ctx.proposer_evm_address;
+    let execute_outbe_block_hooks = ctx.execute_outbe_block_hooks;
+    let prebuilt_phase1_tx = ctx.prebuilt_phase1_tx.clone();
+    let parent_artifact_hint = ctx.parent_artifact_hint;
+    BlockExecutorInputs {
+        identity: BlockExecutionIdentity {
+            block_extra_data: Bytes::new(),
+            validate_execution_summary,
+            block_hash: None,
+            parent_hash: ctx.inner.parent_hash,
+        },
+        system_plan: BlockSystemPlan {
+            expected_begin_system_txs,
+            expected_end_system_txs,
+            system_layout_error,
+            proposer_evm_address,
+            execute_outbe_block_hooks,
+            prebuilt_phase1_tx,
+        },
+        parent_accounting: ParentAccountingInputs {
+            accounted_parent_artifact_provider: None,
+            parent_consensus_metadata,
+            parent_artifact_hint,
+        },
+        dependencies: BlockExecutionDependencies {
+            bridge: None,
+            evm_signer,
+        },
+    }
+}

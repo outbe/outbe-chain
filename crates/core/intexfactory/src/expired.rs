@@ -142,7 +142,6 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
         }
         factory.expiry_sweep_day.write(0)?;
         factory.expiry_cursor.write(0)?;
-        // Anything left is not due yet; retiring the bucket keeps the tree moving.
         if factory.expiry_bucket_live.read(&day)? != 0 {
             let requeued = factory.force_retire_bucket(day, now)?;
             for &(iso_code, worldwide_day, retry_day) in &requeued {

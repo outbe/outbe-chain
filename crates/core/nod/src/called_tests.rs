@@ -1819,8 +1819,6 @@ fn steady_cycle_tick_ce_gas_limit() -> u64 {
         .unwrap()
 }
 
-/// A03/A15: a lapsed bucket of a full forfeit budget burns in one slice under
-/// the CycleTick CE gas window and credits every load exactly once.
 #[test]
 fn a_full_forfeit_budget_burns_in_one_slice_within_the_cycle_tick_gas_window() {
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));

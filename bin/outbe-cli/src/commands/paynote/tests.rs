@@ -594,6 +594,50 @@ async fn deposited_note_partial_spend_and_saved_change_consume_real_proofs() {
 }
 
 #[tokio::test]
+async fn spend_artifact_has_no_bearer_secrets_note_amount_or_source_commitment() {
+    let n = note();
+    let temp = private_tempdir();
+    let mut tree = new_tree(CHAIN).unwrap();
+    tree.append(n.commitment.to_field().unwrap()).unwrap();
+    let output = spend_proof(
+        &tree_rpc_quoted(&tree, vec![event(&n, 0, tree.root(), n.amount)], U256::ONE),
+        temp.path(),
+        &n,
+        U256::ONE,
+        nod_target(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(output["source_commitment"], json!(n.commitment));
+
+    let text = fs::read_to_string(output["proof_file"].as_str().unwrap()).unwrap();
+    let artifact: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(artifact.as_object().unwrap().len(), 17);
+    for private in [
+        "source_commitment",
+        "spend_key",
+        "note_amount",
+        "proof_file",
+        "change_note",
+    ] {
+        assert!(
+            artifact.get(private).is_none(),
+            "private field {private} leaked into relay artifact"
+        );
+    }
+    for secret in [
+        format!("{:#x}", n.commitment),
+        format!("{:#x}", n.spend_key),
+        n.amount.to_string(),
+    ] {
+        assert!(
+            !text.contains(&secret),
+            "{secret} leaked into relay artifact"
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_quote_whose_units_differ_from_the_spend_never_proves() {
     let n = note();
     let temp = private_tempdir();

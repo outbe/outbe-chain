@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
-use outbe_intex::SeriesId;
+use outbe_intex::{IntexState, SeriesId};
 use outbe_oracle::api::{get_utc_day_vwap_for_iso, settlement_fx_rates, VwapSnapshotId};
 use outbe_primitives::addresses::{
     GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
@@ -125,6 +125,9 @@ pub fn issue_gem_position(
 
     let series = outbe_intex::api::get_series(storage, source_intex_id)?
         .ok_or(GemFactoryError::SourceIntexNotFound)?;
+    if series.effective_state(storage.timestamp()?.to::<u64>())? != IntexState::Issued {
+        return Err(GemFactoryError::SourceIntexNotIssued.into());
+    }
 
     // The daily call scan walks only listed reference currencies.
     outbe_oracle::api::check_reference_currency_with_storage(
