@@ -1668,6 +1668,46 @@ fn unpaid_mining_is_rejected() {
 }
 
 #[test]
+fn settlement_leaves_fidelity_alone_and_mining_records_it() {
+    let fidelity = |world: &World| {
+        world
+            .provider
+            .storage
+            .iter()
+            .filter(|((address, _), _)| *address == outbe_primitives::addresses::FIDELITY_ADDRESS)
+            .map(|(slot, value)| (*slot, *value))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    let mut world = World::new();
+    let input = params(Address::repeat_byte(0x86));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    let proof = world.covering_proof(nod_id, &input);
+    let before = fidelity(&world);
+
+    world.settle(nod_id, input.owner, &proof).unwrap();
+    assert_eq!(fidelity(&world), before, "settlement acquires no Fidelity");
+
+    let nonce = world.pow_nonce(nod_id);
+    world
+        .enter(|storage, scope, parent| {
+            api::mine_gratis(
+                &storage,
+                scope,
+                parent,
+                api::MineGratisRequest {
+                    caller: input.owner,
+                    nod_id,
+                    nonce,
+                    auth: mine_auth(input.owner, input.gratis_load_minor),
+                },
+            )
+        })
+        .unwrap();
+    assert_ne!(fidelity(&world), before, "the mint records the acquisition");
+}
+
+#[test]
 fn fidelity_persistence_failure_preserves_paid_entitlement_and_mint_nonce() {
     let mut world = World::new();
     let input = params(Address::repeat_byte(0x85));

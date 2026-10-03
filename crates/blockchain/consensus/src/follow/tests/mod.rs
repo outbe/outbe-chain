@@ -496,3 +496,5 @@ mod chain;
 mod replay;
 mod replay_conflicts;
 mod wire;
+
+mod resolver;

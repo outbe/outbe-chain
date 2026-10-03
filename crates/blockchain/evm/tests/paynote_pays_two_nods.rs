@@ -17,14 +17,14 @@
 //!   * one note is one payment. Replaying the first proof against the second Nod
 //!     reverts, so the change note is the only way to pay it.
 //!
-//! Only the two ERC20/ERC4626 counterparties are stubbed; VaultRouter, PayNote,
-//! NodFactory, Nod, GratisFactory and Gratis all run for real.
+//! The ERC20/ERC4626 counterparties are the stateful `FactorySettlement` fixture;
+//! VaultRouter, PayNote, NodFactory, Nod, GratisFactory and Gratis all run for real.
 
 use outbe_protocol::codec::field_to_b256;
 use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, B256, U256};
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{sol, SolCall};
 use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_evm::sub_call;
 use outbe_gratis::enclave_client::test_enclave;
@@ -39,6 +39,7 @@ use outbe_paynote::precompile::IPayNote;
 use outbe_paynote::test_support::{change_note, note, spend_proof, Note};
 use outbe_primitives::addresses::{
     COMPRESSED_ENTITIES_ADDRESS, GRATIS_ADDRESS, NOD_FACTORY_ADDRESS, PAYNOTE_ADDRESS,
+    VAULT_ROUTER_ADDRESS,
 };
 use outbe_primitives::chain::CHAIN_ID;
 use outbe_primitives::time::WorldwideDay;
@@ -110,17 +111,20 @@ type EvmCtx = revm::Context<
     CacheDB<EmptyDB>,
 >;
 
-/// A counterparty stub that answers every call with one fixed word.
-///
-/// `PUSH32 <word>, PUSH1 0x00, MSTORE, PUSH1 0x20, PUSH1 0x00, RETURN`
-///
-/// The vault returns its own asset address, which `asset()` needs verbatim
-/// and `deposit()` reads as a share count nothing in this flow inspects.
-fn always_returns(word: B256) -> AccountInfo {
-    let mut code = vec![0x7f];
-    code.extend_from_slice(word.as_slice());
-    code.extend_from_slice(&[0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3]);
-    let bytecode = Bytecode::new_raw(Bytes::from(code));
+sol! {
+    interface IFixture {
+        function mint(address account, uint256 amount) external;
+        function approve(address spender, uint256 amount) external returns (bool);
+    }
+}
+
+/// The stateful token and vault: six decimals, ISO 840 (`REFERENCE_CURRENCY`),
+/// and balances and allowances that move for real.
+fn fixture_account() -> AccountInfo {
+    let bytecode = Bytecode::new_raw(Bytes::from(
+        alloy_primitives::hex::decode(include_str!("fixtures/FactorySettlement.hex").trim())
+            .unwrap(),
+    ));
     AccountInfo {
         code_hash: bytecode.hash_slow(),
         code: Some(bytecode),
@@ -128,29 +132,50 @@ fn always_returns(word: B256) -> AccountInfo {
     }
 }
 
-/// Returns six for `decimals()`, the reference currency for `isoCode()`,
-/// and true for `transferFrom` and `approve`.
-fn settlement_asset() -> AccountInfo {
-    let mut code = alloy_primitives::hex!(
-        // Dispatch decimals() to offset 40 and isoCode() to offset 51.
-        "60003560e01c63313ce56714602857"
-        "60003560e01c63dfa3b54114603357"
-        // Return true for ERC20 transfers and approvals.
-        "600160005260206000f3"
-        // JUMPDEST; return six decimals, matching COST's reference minor units.
-        "5b600660005260206000f3"
-        // JUMPDEST; PUSH2 <reference currency>.
-        "5b61"
-    )
-    .to_vec();
-    code.extend_from_slice(&REFERENCE_CURRENCY.to_be_bytes());
-    code.extend_from_slice(&alloy_primitives::hex!("60005260206000f3"));
-    let bytecode = Bytecode::new_raw(Bytes::from(code));
-    AccountInfo {
-        code_hash: bytecode.hash_slow(),
-        code: Some(bytecode),
-        ..Default::default()
+/// Funds both depositors and approves the pool, and lets the vault pull from the router.
+fn fund_depositors(ctx: &mut EvmCtx, scope: &Arc<ExecutionScope>) {
+    let mut setup = |caller: Address, calldata: Vec<u8>| {
+        let out = call(
+            ctx,
+            scope.clone(),
+            None,
+            caller,
+            ASSET,
+            calldata.into(),
+            false,
+        );
+        assert!(
+            matches!(out.status, SubCallStatus::Success),
+            "fixture setup reverted: {:?}",
+            out.status
+        );
+    };
+    for depositor in [ALICE1, ALICE2] {
+        setup(
+            depositor,
+            IFixture::mintCall {
+                account: depositor,
+                amount: U256::MAX >> 1,
+            }
+            .abi_encode(),
+        );
+        setup(
+            depositor,
+            IFixture::approveCall {
+                spender: PAYNOTE_ADDRESS,
+                amount: U256::MAX,
+            }
+            .abi_encode(),
+        );
     }
+    setup(
+        VAULT_ROUTER_ADDRESS,
+        IFixture::approveCall {
+            spender: VAULT,
+            amount: U256::MAX,
+        }
+        .abi_encode(),
+    );
 }
 
 fn nod_params(day: u32) -> NodIssueParams {
@@ -228,8 +253,8 @@ fn fixture_with_cost(
     test_enclave::install();
 
     let mut database = CacheDB::new(EmptyDB::default());
-    database.insert_account_info(ASSET, settlement_asset());
-    database.insert_account_info(VAULT, always_returns(ASSET.into_word()));
+    database.insert_account_info(ASSET, fixture_account());
+    database.insert_account_info(VAULT, fixture_account());
 
     let adapter = Arc::new(MemoryStorage::new());
     let readers = RuntimeBodyReaders::new(adapter.clone());
@@ -265,9 +290,10 @@ fn fixture_with_cost(
     });
     provider.flush().unwrap();
 
-    let ctx = Context::mainnet()
+    let mut ctx = Context::mainnet()
         .with_db(database)
         .modify_cfg_chained(|cfg| cfg.chain_id = CHAIN_ID);
+    fund_depositors(&mut ctx, &scope);
     (ctx, scope, readers, nods)
 }
 

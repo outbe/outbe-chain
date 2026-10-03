@@ -381,6 +381,68 @@ fn erc20_settlement_moves_exact_full_width_cost_and_preserves_mining() {
 }
 
 #[test]
+fn a_third_party_pays_and_the_nod_stays_with_the_owner() {
+    let payer = Address::new([0x77; 20]);
+    let mut world = World::new(OWNER, U256::from(500), true);
+    let cost = world.cost;
+    world.ok(
+        OWNER,
+        ASSET,
+        IFixture::mintCall {
+            account: payer,
+            amount: cost,
+        },
+    );
+    world.ok(
+        payer,
+        ASSET,
+        IFixture::approveCall {
+            spender: NOD_FACTORY_ADDRESS,
+            amount: cost,
+        },
+    );
+    let paid = world.call(
+        payer,
+        NOD_FACTORY_ADDRESS,
+        INodFactory::settleNodCall {
+            nodId: world.nod.to_u256(),
+            asset: ASSET,
+            snapshotId: U256::ZERO,
+        },
+        false,
+    );
+    assert!(matches!(paid.status, SubCallStatus::Success));
+
+    assert_eq!(
+        world.view(ASSET, IFixture::balanceOfCall { account: payer }),
+        U256::ZERO
+    );
+    assert_eq!(
+        world.balances(),
+        [cost * U256::from(2), U256::from(17), U256::ZERO, cost, cost],
+        "the owner's own funds are untouched"
+    );
+    let data = world.view(
+        NOD_ADDRESS,
+        INod::nodDataCall {
+            nodId: world.nod.to_u256(),
+        },
+    );
+    assert!(data.isSettled);
+    assert_eq!(data.owner, OWNER);
+    let events: Vec<_> = world
+        .ctx
+        .journaled_state
+        .logs()
+        .iter()
+        .filter_map(|log| INodFactory::NodPaid::decode_log_data(&log.data).ok())
+        .collect();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].owner, OWNER);
+    assert_eq!(events[0].amountCovered, cost);
+}
+
+#[test]
 fn payment_failures_restore_balances_allowances_nod_and_logs() {
     // False transfer/approve/router transfer, vault revert, malformed bool,
     // success without movement, fee-on-transfer, and missing router authorization.

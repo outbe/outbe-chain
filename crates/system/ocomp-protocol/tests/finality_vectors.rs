@@ -6,6 +6,9 @@
 //! used.
 // OCOMP-TEST-ID: OCM-FIN-001
 
+#[path = "finality_vectors/public_builder.rs"]
+mod public_builder;
+
 use std::collections::BTreeMap;
 
 use alloy_consensus::Header;
@@ -912,7 +915,14 @@ fn fixture_with_intent(signer_indices: &[u32], intent: JobIntentV1) -> Fixture {
     let snapshot = build_snapshot(&dkg);
     let committee_set_hash = snapshot.committee_set_hash_v2(FINALIZED_EPOCH);
     let committee_slots = committee_storage_slots(&snapshot, FINALIZED_EPOCH, committee_set_hash);
-    let (validator_storage_root, validator_storage_proofs) = storage_trie(&committee_slots);
+    let mut validator_slots = committee_slots.clone();
+    // The public builder authenticates the retained snapshot's ring entry first.
+    // Keep it outside the canonical committee witness, which contains snapshot slots only.
+    let ring_slot = U256::from(FINALIZED_EPOCH % 8).mapping_slot(U256::from(44));
+    let snapshot_key = independent_snapshot_key(FINALIZED_EPOCH, committee_set_hash);
+    validator_slots.push((ring_slot, U256::from_be_bytes(snapshot_key.0)));
+    let (validator_storage_root, all_validator_storage_proofs) = storage_trie(&validator_slots);
+    let validator_storage_proofs = &all_validator_storage_proofs[..committee_slots.len()];
     let validator_account = TrieAccount {
         nonce: 0,
         balance: U256::ZERO,
@@ -991,7 +1001,7 @@ fn fixture_with_intent(signer_indices: &[u32], intent: JobIntentV1) -> Fixture {
             &snapshot,
             validator_account,
             &account_proofs[&VALIDATOR_SET_ADDRESS],
-            &validator_storage_proofs,
+            validator_storage_proofs,
         )),
         canonical_job_intent: BoundedBytes(canonical_job_intent),
         intent_account_proof: ProofBytes(account_witness(
@@ -1032,7 +1042,7 @@ fn fixture_with_intent(signer_indices: &[u32], intent: JobIntentV1) -> Fixture {
             *value,
         )
     }));
-    storage.extend(committee_slots.iter().map(|(slot, value)| {
+    storage.extend(validator_slots.iter().map(|(slot, value)| {
         (
             (VALIDATOR_SET_ADDRESS, B256::new(slot.to_be_bytes::<32>())),
             *value,
@@ -1056,7 +1066,7 @@ fn fixture_with_intent(signer_indices: &[u32], intent: JobIntentV1) -> Fixture {
             info: Some(account(validator_account)),
             proof: account_proofs[&VALIDATOR_SET_ADDRESS].clone(),
             storage_root: validator_account.storage_root,
-            storage_proofs: storage_proofs(&committee_slots, &validator_storage_proofs),
+            storage_proofs: storage_proofs(&validator_slots, &all_validator_storage_proofs),
         },
     );
     let provider = FixtureProvider {

@@ -27,74 +27,24 @@ where
 
     let finalizations_archive = immutable::Archive::init(
         ctx.child("marshal_finalizations"),
-        immutable::Config {
-            metadata_partition: format!("{partition_prefix}-finalizations-metadata"),
-            freezer_table_partition: format!("{partition_prefix}-finalizations-freezer-table"),
-            freezer_table_initial_size: config::FREEZER_TABLE_INITIAL_SIZE,
-            freezer_table_resize_frequency: config::FREEZER_TABLE_RESIZE_FREQUENCY,
-            freezer_table_resize_chunk_size: config::FREEZER_TABLE_RESIZE_CHUNK_SIZE,
-            freezer_key_partition: format!("{partition_prefix}-finalizations-freezer-key"),
-            freezer_key_page_cache: page_cache.clone(),
-            freezer_value_partition: format!("{partition_prefix}-finalizations-freezer-value"),
-            freezer_value_target_size: config::FREEZER_VALUE_TARGET_SIZE,
-            freezer_value_compression: config::FREEZER_VALUE_COMPRESSION,
-            ordinal_partition: format!("{partition_prefix}-finalizations-ordinal"),
-            items_per_section: nonzero_u64(
-                config::IMMUTABLE_ITEMS_PER_SECTION,
-                "IMMUTABLE_ITEMS_PER_SECTION",
-            )?,
-            codec_config: HybridScheme::<MinSig>::certificate_codec_config_unbounded(),
-            replay_buffer: nonzero_usize(config::MARSHAL_REPLAY_BUFFER, "MARSHAL_REPLAY_BUFFER")?,
-            freezer_key_write_buffer: nonzero_usize(
-                config::MARSHAL_WRITE_BUFFER,
-                "MARSHAL_WRITE_BUFFER",
-            )?,
-            freezer_value_write_buffer: nonzero_usize(
-                config::MARSHAL_WRITE_BUFFER,
-                "MARSHAL_WRITE_BUFFER",
-            )?,
-            ordinal_write_buffer: nonzero_usize(
-                config::MARSHAL_WRITE_BUFFER,
-                "MARSHAL_WRITE_BUFFER",
-            )?,
-        },
+        marshal_archive::archive_config(
+            &partition_prefix,
+            marshal_archive::ArchiveKind::Finalizations,
+            page_cache,
+            HybridScheme::<MinSig>::certificate_codec_config_unbounded(),
+        )?,
     )
     .await
     .wrap_err("failed to initialize finalizations archive")?;
 
     let blocks_archive = immutable::Archive::init(
         ctx.child("marshal_blocks"),
-        immutable::Config {
-            metadata_partition: format!("{partition_prefix}-blocks-metadata"),
-            freezer_table_partition: format!("{partition_prefix}-blocks-freezer-table"),
-            freezer_table_initial_size: config::FREEZER_TABLE_INITIAL_SIZE,
-            freezer_table_resize_frequency: config::FREEZER_TABLE_RESIZE_FREQUENCY,
-            freezer_table_resize_chunk_size: config::FREEZER_TABLE_RESIZE_CHUNK_SIZE,
-            freezer_key_partition: format!("{partition_prefix}-blocks-freezer-key"),
-            freezer_key_page_cache: page_cache.clone(),
-            freezer_value_partition: format!("{partition_prefix}-blocks-freezer-value"),
-            freezer_value_target_size: config::FREEZER_VALUE_TARGET_SIZE,
-            freezer_value_compression: config::FREEZER_VALUE_COMPRESSION,
-            ordinal_partition: format!("{partition_prefix}-blocks-ordinal"),
-            items_per_section: nonzero_u64(
-                config::IMMUTABLE_ITEMS_PER_SECTION,
-                "IMMUTABLE_ITEMS_PER_SECTION",
-            )?,
-            codec_config: (),
-            replay_buffer: nonzero_usize(config::MARSHAL_REPLAY_BUFFER, "MARSHAL_REPLAY_BUFFER")?,
-            freezer_key_write_buffer: nonzero_usize(
-                config::MARSHAL_WRITE_BUFFER,
-                "MARSHAL_WRITE_BUFFER",
-            )?,
-            freezer_value_write_buffer: nonzero_usize(
-                config::MARSHAL_WRITE_BUFFER,
-                "MARSHAL_WRITE_BUFFER",
-            )?,
-            ordinal_write_buffer: nonzero_usize(
-                config::MARSHAL_WRITE_BUFFER,
-                "MARSHAL_WRITE_BUFFER",
-            )?,
-        },
+        marshal_archive::archive_config(
+            &partition_prefix,
+            marshal_archive::ArchiveKind::Blocks,
+            page_cache,
+            (),
+        )?,
     )
     .await
     .wrap_err("failed to initialize blocks archive")?;
@@ -113,35 +63,18 @@ where
             ctx.child("marshal"),
             finalizations_archive,
             blocks_archive,
-            marshal::Config {
-                provider: certificate_scheme_provider.clone(),
-                epocher,
-                start: marshal::Start::Genesis(marshal_genesis_anchor),
-                partition_prefix: partition_prefix.clone(),
-                mailbox_size: nonzero_usize(config::ENGINE_MAILBOX_SIZE, "ENGINE_MAILBOX_SIZE")?,
-                view_retention: ViewDelta::new(view_retention_timeout),
-                prunable_items_per_section: nonzero_u64(
-                    config::PRUNABLE_ITEMS_PER_SECTION,
-                    "PRUNABLE_ITEMS_PER_SECTION",
-                )?,
-                page_cache: page_cache.clone(),
-                replay_buffer: nonzero_usize(
-                    config::MARSHAL_REPLAY_BUFFER,
-                    "MARSHAL_REPLAY_BUFFER",
-                )?,
-                key_write_buffer: nonzero_usize(
-                    config::MARSHAL_WRITE_BUFFER,
-                    "MARSHAL_WRITE_BUFFER",
-                )?,
-                value_write_buffer: nonzero_usize(
-                    config::MARSHAL_WRITE_BUFFER,
-                    "MARSHAL_WRITE_BUFFER",
-                )?,
-                block_codec_config: (),
-                max_repair: nonzero_usize(config::MAX_REPAIR, "MAX_REPAIR")?,
-                max_pending_acks: nonzero_usize(config::MAX_PENDING_ACKS, "MAX_PENDING_ACKS")?,
-                strategy: commonware_parallel::Sequential,
-            },
+            marshal_archive::marshal_config(
+                certificate_scheme_provider.clone(),
+                marshal_archive::MarshalStart {
+                    epocher,
+                    genesis: marshal_genesis_anchor,
+                },
+                marshal_archive::MarshalSettings {
+                    partition_prefix: &partition_prefix,
+                    page_cache,
+                    view_retention_timeout,
+                },
+            )?,
         )
         .await;
 

@@ -702,27 +702,21 @@ fn gas_02_phase1_preexec_failure_must_consume_body0_or_abort() {
     ctx.parent_consensus_metadata = Some(metadata.clone());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        None,
-        Bytes::new(),
-        None,
-        false,
-        None,
-        parent_hash,
-        Some(signer.clone()),
-        ctx.expected_begin_system_txs.clone(),
-        ctx.expected_end_system_txs.clone(),
-        ctx.system_layout_error.clone(),
-        ctx.parent_consensus_metadata.clone(),
-        Some(proposer),
-        true,
-        None,
-        Some(AccountedParentArtifact {
-            summary: ExecutionSummaryArtifact {
-                validator_fee_sum: U256::ZERO,
-            },
-            timestamp: 1,
-            state_root: None,
-        }),
+        {
+            let mut inputs = fixtures::executor_inputs_from_ctx(&ctx, Some(signer.clone()), false);
+            inputs.identity.parent_hash = parent_hash;
+            inputs.system_plan.proposer_evm_address = Some(proposer);
+            inputs.system_plan.execute_outbe_block_hooks = true;
+            inputs.system_plan.prebuilt_phase1_tx = None;
+            inputs.parent_accounting.parent_artifact_hint = Some(AccountedParentArtifact {
+                summary: ExecutionSummaryArtifact {
+                    validator_fee_sum: U256::ZERO,
+                },
+                timestamp: 1,
+                state_root: None,
+            });
+            inputs
+        },
     );
     executor.system_tx_phase_cursor = crate::system_tx::SystemTxPhase::initial_for_block(
         2,
@@ -865,21 +859,7 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
     let ctx = block_one_execution_ctx(Some(1), Bytes::new());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        None,
-        Bytes::new(),
-        None,
-        false,
-        None,
-        ctx.inner.parent_hash,
-        Some(signer.clone()),
-        ctx.expected_begin_system_txs.clone(),
-        ctx.expected_end_system_txs.clone(),
-        ctx.system_layout_error.clone(),
-        ctx.parent_consensus_metadata.clone(),
-        ctx.proposer_evm_address,
-        ctx.execute_outbe_block_hooks,
-        ctx.prebuilt_phase1_tx.clone(),
-        ctx.parent_artifact_hint,
+        fixtures::executor_inputs_from_ctx(&ctx, Some(signer.clone()), false),
     )
     .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
 

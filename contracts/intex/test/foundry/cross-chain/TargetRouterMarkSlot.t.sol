@@ -104,6 +104,20 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         assertEq(router.parkedMark(series), 0, "nothing waits any more");
     }
 
+    /// @dev An allocation that lands after the deadline is acknowledged as late, not parked per winner.
+    function test_IssuanceAfterTheDeadlineIsLateAndParksNothing() public {
+        bytes memory called = _called();
+        bytes memory issuance = _issuance();
+        _deliver(called);
+        vm.warp(block.timestamp + 1); // past a zero notice period
+
+        _expectIgnored(BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, InboundReason.LATE);
+        _deliver(issuance);
+        assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Expired), "created past its deadline");
+        assertEq(router.parkedIssuanceCount(), 0, "no winner parked");
+        assertEq(intex.balanceOf(makeAddr("winner"), intex.issuedTokenId(series)), 0, "nothing issued");
+    }
+
     function test_ARedeliveredMarkThatSettlesTheSlotClearsIt() public {
         _deliver(_called());
         _deliver(_issuance()); // series created, and the waiting Called lands with it
