@@ -24,7 +24,7 @@ use outbe_credis::{CredisContract, CredisState, Position};
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result},
+    error::{PrecompileError, Result, SweepFailure},
     storage::StorageHandle,
     time::{previous_date_key, timestamp_to_date_key},
 };
@@ -143,8 +143,8 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
 
             // The price-path arms are pure storage and arithmetic, so a
             // deterministic error is isolated to this position and skipped -
-            // one bad position never halts the daily run. Same shape as gem's
-            // and intexfactory's scans.
+            // one bad position never halts the daily run, while a node-local
+            // one fails the block. Same shape as gem's and intexfactory's scans.
             let outcome = ctx
                 .storage
                 .with_checkpoint(|| visit_price_path(&mut credis, window, &position, now));
@@ -176,6 +176,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
                         mutated = mutated.saturating_add(1);
                     }
                 }
+                Err(e) if e.sweep_failure() == SweepFailure::Propagate => return Err(e),
                 Err(e) => {
                     tracing::warn!(
                         target: "outbe::credisfactory",

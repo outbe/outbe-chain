@@ -142,12 +142,13 @@ pub(crate) fn apply_auction_brief(
     receipt: &RequestLimitSplitReceiptV1,
 ) -> Result<()> {
     let green = receipt.day_type == DayType::Green;
+    let draw = auction_draw(receipt)?;
     // One checkpoint: the draw and the brief may not survive each other's failure.
     storage.with_checkpoint(|| {
-        if !receipt.desis_limit_minor.is_zero() {
-            let drawn = PromisLimitContract::new(storage.clone())
-                .checked_take_carry_over_up_to(receipt.desis_limit_minor)?;
-            if drawn.taken != receipt.desis_limit_minor {
+        if !draw.is_zero() {
+            let drawn =
+                PromisLimitContract::new(storage.clone()).checked_take_carry_over_up_to(draw)?;
+            if drawn.taken != draw {
                 return Err(MetadosisError::OcompLimitReceiptMismatch.into());
             }
         }
@@ -164,6 +165,19 @@ pub(crate) fn apply_auction_brief(
         }
         Ok(())
     })
+}
+
+/// What the auction draws from the accumulator. A red day opens no auction, so a
+/// receipt that gives it a Desis Limit is rejected.
+pub(crate) fn auction_draw(receipt: &RequestLimitSplitReceiptV1) -> Result<U256> {
+    if receipt.day_type != DayType::Green && !receipt.desis_limit_minor.is_zero() {
+        return Err(MetadosisError::InvalidOcompLimitSplit {
+            day_limit: receipt.day_limit,
+            lysis_limit_minor: receipt.lysis_limit_minor,
+        }
+        .into());
+    }
+    Ok(receipt.desis_limit_minor)
 }
 
 fn expected_receipt(

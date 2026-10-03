@@ -432,11 +432,11 @@ fn apply_certified_result(
         consumed_nominal_total: plan.tribute().consumed_nominal_total(),
         retired_generation: plan.tribute().retired_generation(),
     };
-    let lysis_limit_minor = plan
-        .nod()
-        .lysis_allocation_minor()
-        .checked_add(plan.carry_over().credited_unused_lysis_limit_minor())
-        .ok_or_else(|| crate::errors::business_failure("Lysis limit overflow"))?;
+    let lysis_limit_minor = conserved_lysis_limit(
+        plan.nod().lysis_allocation_minor(),
+        plan.carry_over().credited_unused_lysis_limit_minor(),
+        request_receipt.lysis_limit_minor,
+    )?;
     let carry_over_input = CertifiedCarryOverCreditV1 {
         binding: binding.clone(),
         source_wwd: plan.carry_over().source_wwd(),
@@ -527,6 +527,22 @@ fn inject_test_receipt_fault(
     crate::fixture_kernel::inject_receipt_fault(request_receipt, receipts);
     #[cfg(not(test))]
     let _ = (request_receipt, receipts);
+}
+
+/// The request's Lysis Limit, once the certified allocation and unused limit add up to it.
+pub(crate) fn conserved_lysis_limit(
+    lysis_allocation_minor: U256,
+    unused_lysis_limit_minor: U256,
+    request_lysis_limit_minor: U256,
+) -> PrecompileResult<U256> {
+    if lysis_allocation_minor.checked_add(unused_lysis_limit_minor)
+        != Some(request_lysis_limit_minor)
+    {
+        return Err(crate::errors::business_failure(
+            "Lysis allocation and unused limit do not add up to the request limit",
+        ));
+    }
+    Ok(request_lysis_limit_minor)
 }
 
 fn owner_apply_error(error: PrecompileError) -> PrecompileError {

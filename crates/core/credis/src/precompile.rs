@@ -46,7 +46,7 @@ pub fn dispatch(
             totalSupply(c) => view(c, |_| Ok(U256::from(contract.total_positions()?))),
             getPosition(c) => view(c, |c| {
                 let position = contract.get_position(c.positionId)?;
-                Ok(abi_position(&position))
+                abi_position(&position, contract.storage.timestamp()?.to::<u64>())
             }),
             ownerOf(c) => view(c, |c| {
                 let position = contract.get_position(c.positionId)?;
@@ -61,7 +61,8 @@ pub fn dispatch(
             isApprovedForAll(c) => view(c, |_| Ok(false)),
             positionByIndex(c) => view(c, |c| {
                 let index = u64::try_from(c.index).map_err(|_| CredisError::IndexOutOfBounds)?;
-                Ok(abi_position(&contract.position_at(index)?))
+                let position = contract.position_at(index)?;
+                abi_position(&position, contract.storage.timestamp()?.to::<u64>())
             }),
             balanceOf(c) => view(c, |c| {
                 Ok(U256::from(contract.position_count_of(c.smartAccount)?))
@@ -69,7 +70,7 @@ pub fn dispatch(
             positionOfAddressByIndex(c) => view(c, |c| {
                 let index = u32::try_from(c.index).map_err(|_| CredisError::IndexOutOfBounds)?;
                 let position = contract.position_of_address_at(c.smartAccount, index)?;
-                Ok(abi_position(&position))
+                abi_position(&position, contract.storage.timestamp()?.to::<u64>())
             }),
             hasCalledPosition(c) => view(c, |c| contract.has_called_position(c.smartAccount)),
             interestAccruedMinor(c) => view(c, |c| {
@@ -95,8 +96,8 @@ pub fn dispatch(
     })
 }
 
-fn abi_position(p: &crate::schema::Position) -> ICredis::Position {
-    ICredis::Position {
+fn abi_position(p: &crate::schema::Position, now: u64) -> Result<ICredis::Position> {
+    Ok(ICredis::Position {
         positionId: p.position_id,
         smartAccount: p.smart_account,
         cca: p.cca,
@@ -114,8 +115,8 @@ fn abi_position(p: &crate::schema::Position) -> ICredis::Position {
         issuedAt: p.issued_at,
         lastSettledAt: p.last_settled_at,
         calledAt: p.called_at,
-        state: p.state,
+        state: crate::runtime::effective_state(p, now)? as u8,
         callAnchorPrice: p.call_anchor_price,
         interestPaidMinor: p.interest_paid,
-    }
+    })
 }

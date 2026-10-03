@@ -5,7 +5,7 @@ use alloy_primitives::U256;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result},
+    error::{PrecompileError, Result, SweepFailure},
     storage::StorageHandle,
 };
 
@@ -14,13 +14,13 @@ use crate::runtime::emit_event;
 use crate::schema::IntexFactoryContract;
 
 /// Park a group in a later bucket. False means it is still in this bucket and
-/// the caller must stop the pass, or the tail sweep retires it without credit.
+/// the caller must stop the pass, or the tail sweep requeues it.
 fn defer_group(
     storage: &StorageHandle<'_>,
     iso_code: u16,
     worldwide_day: WorldwideDay,
     day: u32,
-) -> bool {
+) -> Result<bool> {
     let deferred = storage.with_checkpoint(|| {
         IntexFactoryContract::new(storage.clone()).defer_called_group(
             iso_code,
@@ -37,6 +37,9 @@ fn defer_group(
         )
     });
     if let Err(error) = deferred {
+        if error.sweep_failure() == SweepFailure::Propagate {
+            return Err(error);
+        }
         tracing::warn!(
             target: "outbe::intexfactory",
             iso_code,
@@ -44,9 +47,9 @@ fn defer_group(
             error = ?error,
             "expiry sweep: could not defer group, stopping the pass"
         );
-        return false;
+        return Ok(false);
     }
-    true
+    Ok(true)
 }
 
 struct GroupExpiry {
@@ -108,10 +111,13 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
                             pending = expiry.pending,
                             "expiry sweep: group deferred with members left"
                         );
-                        if !defer_group(storage, iso_code, worldwide_day, retry_day) {
+                        if !defer_group(storage, iso_code, worldwide_day, retry_day)? {
                             break;
                         }
                     }
+                }
+                Err(error) if error.sweep_failure() == SweepFailure::Propagate => {
+                    return Err(error);
                 }
                 Err(error) => {
                     tracing::warn!(
@@ -121,7 +127,7 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
                         error = ?error,
                         "expiry sweep: group deferred after an error"
                     );
-                    if !defer_group(storage, iso_code, worldwide_day, retry_day) {
+                    if !defer_group(storage, iso_code, worldwide_day, retry_day)? {
                         break;
                     }
                 }
@@ -136,14 +142,23 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
         }
         factory.expiry_sweep_day.write(0)?;
         factory.expiry_cursor.write(0)?;
-        // Anything left broke the invariant above; retiring it keeps the tree moving.
         if factory.expiry_bucket_live.read(&day)? != 0 {
-            let dropped = factory.force_retire_bucket(day)?;
+            let requeued = factory.force_retire_bucket(day, now)?;
+            for &(iso_code, worldwide_day, retry_day) in &requeued {
+                emit_event(
+                    storage,
+                    crate::precompile::IIntexFactory::ExpiryDeferred {
+                        referenceCurrency: iso_code,
+                        worldwideDay: worldwide_day.value(),
+                        retryAt: IntexFactoryContract::bucket_end(retry_day),
+                    },
+                )?;
+            }
             tracing::warn!(
                 target: "outbe::intexfactory",
                 day,
-                dropped,
-                "expiry sweep: bucket outlived its day, retiring it"
+                requeued = requeued.len(),
+                "expiry sweep: bucket outlived its day, requeued what it held"
             );
         }
     }
@@ -182,6 +197,7 @@ fn expire_group(
         });
         let returned = match returned {
             Ok(value) => value,
+            Err(error) if error.sweep_failure() == SweepFailure::Propagate => return Err(error),
             Err(error) => {
                 tracing::warn!(target: "outbe::intexfactory", series = %series_id, error = ?error, "expiry sweep: series left for the next pass");
                 left.push(series_id);

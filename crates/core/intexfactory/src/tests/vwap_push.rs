@@ -189,3 +189,48 @@ fn a_day_carries_its_priced_currencies_and_saturates_past_the_wire_type() {
             .is_empty());
     });
 }
+
+#[test]
+fn a_node_local_failure_inside_the_router_call_fails_the_push_and_holds_the_mark() {
+    use super::router_fault::RouterFaultProvider;
+    use crate::sol_ext::IOriginRouter;
+    use alloy_sol_types::SolCall;
+
+    let mut provider = RouterFaultProvider::new(
+        factory_provider(),
+        IOriginRouter::sendDailyVwapCall::SELECTOR,
+    );
+    let from = previous_date_key(FINALIZED);
+    StorageHandle::enter(&mut provider, |storage| {
+        let oracle = OracleContract::new(storage.clone());
+        list(&oracle, REFERENCE_ISO, PAIR_ID);
+        IntexFactoryContract::new(storage.clone())
+            .vwap_sent_day
+            .write(from)
+            .unwrap();
+        close_day(&oracle, FINALIZED, PAIR_ID, U256::from(1_000_000));
+    });
+
+    let result = StorageHandle::enter(&mut provider, |storage| {
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, ISSUED_AT as u64, CHAIN_ID),
+            storage,
+        );
+        vwap_push::run(&ctx)
+    });
+    assert!(matches!(
+        result,
+        Err(outbe_primitives::error::PrecompileError::SubCall(
+            outbe_primitives::storage::SubCallError::DatabaseError(_)
+        ))
+    ));
+    StorageHandle::enter(&mut provider, |storage| {
+        assert_eq!(sent_day(&storage), from);
+    });
+
+    provider.heal();
+    StorageHandle::enter(&mut provider, |storage| {
+        fire(&storage);
+        assert_eq!(sent_day(&storage), FINALIZED);
+    });
+}
