@@ -346,7 +346,6 @@ fn try_call(
     if materializing(nod, bucket_key)? {
         return Ok(Some(false));
     }
-    // A deterministic failure rolls this bucket back alone; a node-local one fails the block.
     match ctx
         .storage
         .with_checkpoint(|| mark_called(nod, bucket_key, now, terms.call_notice_period))

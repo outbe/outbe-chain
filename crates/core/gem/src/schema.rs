@@ -136,7 +136,6 @@ pub struct GemData {
 }
 
 impl GemData {
-    /// The state a view shows at `now`; the stored state stays Called until the sweep burns it.
     pub fn effective_state(&self, now: u64) -> u8 {
         let deadline = self
             .called_at
