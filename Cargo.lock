@@ -9863,6 +9863,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-promislimit",
  "outbe-teeregistry",
  "outbe-validatorset",
 ]
