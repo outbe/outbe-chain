@@ -270,24 +270,7 @@ pub fn decode_outbe_block_artifacts(extra_data: &[u8]) -> Result<OutbeBlockArtif
         return Ok(OutbeBlockArtifacts::default());
     }
 
-    if extra_data.len() < 4 + 1 + 1 {
-        return Err(PrecompileError::Fatal("block artifacts too short".into()));
-    }
-
-    if &extra_data[..4] != MAGIC {
-        return Err(PrecompileError::Fatal(
-            "unknown non-empty extra_data block artifact".into(),
-        ));
-    }
-
-    if extra_data[4] != VERSION {
-        return Err(PrecompileError::Fatal(format!(
-            "unsupported block artifact version: {}",
-            extra_data[4]
-        )));
-    }
-
-    let record_count = extra_data[5] as usize;
+    let record_count = decode_block_artifact_record_count(extra_data)?;
     let mut offset = 6usize;
     let mut artifacts = OutbeBlockArtifacts::default();
 
@@ -465,6 +448,27 @@ fn ensure_payload_fits_u16(name: &str, len: usize) -> Result<()> {
     Ok(())
 }
 
+fn decode_block_artifact_record_count(extra_data: &[u8]) -> Result<usize> {
+    if extra_data.len() < 4 + 1 + 1 {
+        return Err(PrecompileError::Fatal("block artifacts too short".into()));
+    }
+
+    if &extra_data[..4] != MAGIC {
+        return Err(PrecompileError::Fatal(
+            "unknown non-empty extra_data block artifact".into(),
+        ));
+    }
+
+    if extra_data[4] != VERSION {
+        return Err(PrecompileError::Fatal(format!(
+            "unsupported block artifact version: {}",
+            extra_data[4]
+        )));
+    }
+
+    Ok(extra_data[5] as usize)
+}
+
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{address, Address, Bytes, B256, U256};
@@ -562,9 +566,8 @@ mod tests {
         assert!(decode_boundary_artifact(&encoded).is_err());
     }
 
-    #[test]
-    fn roundtrip_block_artifacts_with_execution_summary_and_boundary() {
-        let boundary = DkgBoundaryArtifact {
+    fn roundtrip_boundary_fixture() -> DkgBoundaryArtifact {
+        DkgBoundaryArtifact {
             epoch: 7,
             dkg_cycle: 1,
             freeze_height: 100,
@@ -587,7 +590,12 @@ mod tests {
                 ],
                 active_set_hash: B256::with_last_byte(0x41),
             },
-        };
+        }
+    }
+
+    #[test]
+    fn roundtrip_block_artifacts_with_execution_summary_and_boundary() {
+        let boundary = roundtrip_boundary_fixture();
         let summary = ExecutionSummaryArtifact {
             validator_fee_sum: U256::from(3u64),
         };
@@ -613,30 +621,7 @@ mod tests {
 
     #[test]
     fn roundtrip_boundary_header_artifact_wrapper() {
-        let result = DkgBoundaryArtifact {
-            epoch: 7,
-            dkg_cycle: 1,
-            freeze_height: 100,
-            planned_activation_height: 200,
-            target_set_hash: B256::with_last_byte(0x41),
-            vrf_material_version: 1,
-            vrf_group_public_key: B256::with_last_byte(0x42),
-            vrf_group_public_key_bytes: Bytes::from_static(b"\x22\x22\x22"),
-            committee_set_hash: B256::with_last_byte(0x4F),
-            is_validator_set_change: true,
-            outcome: Bytes::from_static(b"dkg-outcome"),
-            is_full_dkg: true,
-            tee_recipient_pubkeys: Vec::new(),
-            tee_expired_target_exclusions: Vec::new(),
-            tee_expired_target_exclusions_hash: B256::ZERO,
-            reshare: ReshareResult {
-                new_active_set: vec![
-                    address!("0x1111111111111111111111111111111111111111"),
-                    address!("0x2222222222222222222222222222222222222222"),
-                ],
-                active_set_hash: B256::with_last_byte(0x41),
-            },
-        };
+        let result = roundtrip_boundary_fixture();
 
         let encoded = encode_boundary_artifact(&result).unwrap();
         let decoded = decode_boundary_artifact(&encoded).unwrap();

@@ -129,58 +129,18 @@ impl SystemTxInputV2 {
                     .unwrap_or_default(),
             }),
             SystemTxKind::OcompLifecycleBegin => {
-                if !body.is_empty() {
-                    return Err(SystemTxError::UnexpectedBody {
-                        kind,
-                        len: body.len(),
-                    });
-                }
-                Ok(Self::OcompLifecycleBegin)
+                Self::decode_empty_body(kind, body, Self::OcompLifecycleBegin)
             }
-            SystemTxKind::CycleTick => {
-                if !body.is_empty() {
-                    return Err(SystemTxError::UnexpectedBody {
-                        kind,
-                        len: body.len(),
-                    });
-                }
-                Ok(Self::CycleTick)
-            }
+            SystemTxKind::CycleTick => Self::decode_empty_body(kind, body, Self::CycleTick),
             SystemTxKind::RewardsGemDelivery => {
-                if !body.is_empty() {
-                    return Err(SystemTxError::UnexpectedBody {
-                        kind,
-                        len: body.len(),
-                    });
-                }
-                Ok(Self::RewardsGemDelivery)
+                Self::decode_empty_body(kind, body, Self::RewardsGemDelivery)
             }
             SystemTxKind::OracleSlashWindow => {
-                if !body.is_empty() {
-                    return Err(SystemTxError::UnexpectedBody {
-                        kind,
-                        len: body.len(),
-                    });
-                }
-                Ok(Self::OracleSlashWindow)
+                Self::decode_empty_body(kind, body, Self::OracleSlashWindow)
             }
-            SystemTxKind::HookEvents => {
-                if !body.is_empty() {
-                    return Err(SystemTxError::UnexpectedBody {
-                        kind,
-                        len: body.len(),
-                    });
-                }
-                Ok(Self::HookEvents)
-            }
+            SystemTxKind::HookEvents => Self::decode_empty_body(kind, body, Self::HookEvents),
             SystemTxKind::OcompTerminalRequest => {
-                if !body.is_empty() {
-                    return Err(SystemTxError::UnexpectedBody {
-                        kind,
-                        len: body.len(),
-                    });
-                }
-                Ok(Self::OcompTerminalRequest)
+                Self::decode_empty_body(kind, body, Self::OcompTerminalRequest)
             }
             SystemTxKind::BoundaryOutcome => {
                 let Some(artifact) =
@@ -194,6 +154,20 @@ impl SystemTxInputV2 {
                 payload: crate::tee_bootstrap_v2::codec::decode_canonical(body)
                     .map_err(|error| SystemTxError::Codec(error.to_string()))?,
             }),
+        }
+    }
+    fn decode_empty_body(
+        kind: SystemTxKind,
+        body: &[u8],
+        value: Self,
+    ) -> Result<Self, SystemTxError> {
+        if body.is_empty() {
+            Ok(value)
+        } else {
+            Err(SystemTxError::UnexpectedBody {
+                kind,
+                len: body.len(),
+            })
         }
     }
 }
