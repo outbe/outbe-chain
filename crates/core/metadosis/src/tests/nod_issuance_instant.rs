@@ -38,9 +38,11 @@ fn certified_issued_at(activation_height: u64, activation_time: u64) -> u64 {
 fn certified_nod_issued_at_is_the_initial_lysis_freeze() {
     let early = certified_issued_at(20, EARLY_ACTIVATION);
     let later = certified_issued_at(40, LATE_ACTIVATION);
-    assert!(FREEZE_AT < REQUEST_AT);
-    assert!(REQUEST_AT < EARLY_ACTIVATION);
-    assert!(EARLY_ACTIVATION < LATE_ACTIVATION);
+    const {
+        assert!(FREEZE_AT < REQUEST_AT);
+        assert!(REQUEST_AT < EARLY_ACTIVATION);
+        assert!(EARLY_ACTIVATION < LATE_ACTIVATION);
+    };
     assert_eq!(early, FREEZE_AT);
     assert_eq!(later, FREEZE_AT);
     assert_ne!(early, REQUEST_AT);
