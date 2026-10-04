@@ -110,13 +110,12 @@ pub(in crate::stack) fn validate_validator_evm_signer(
     let Some(evm_key_path) = args.effective_validator_evm_key()? else {
         return Ok(None);
     };
-    let signer =
-        outbe_primitives::signer::OutbeEvmSigner::from_file(&evm_key_path).wrap_err_with(|| {
-            format!(
-                "failed to load validator EVM key from {}",
-                evm_key_path.display()
-            )
-        })?;
+    let signer = outbe_primitives::signer::load::from_file(&evm_key_path).wrap_err_with(|| {
+        format!(
+            "failed to load validator EVM key from {}",
+            evm_key_path.display()
+        )
+    })?;
     let signer_address = signer.address();
 
     match identity.recovered_committee {

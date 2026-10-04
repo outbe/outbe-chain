@@ -53,7 +53,7 @@ impl OcompTopology {
         let canonical_vote = vote.encode_canonical(&limits)?;
         let calldata =
             outbe_ocomp_protocol::abi::encode_submit_lysis_result_calldata(&vote, &limits)?;
-        let signer = OutbeEvmSigner::from_file(
+        let signer: OutbeEvmSigner = outbe_primitives::signer::load::from_file(
             self.domain_root(validator_index)?.join("ocomp-evm-key.hex"),
         )?;
         let signed = signer.sign_eip1559(TxEip1559 {

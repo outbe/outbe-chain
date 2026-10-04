@@ -14,12 +14,14 @@ pub(super) async fn prepare(
         let evm_key_path = args
             .effective_validator_evm_key()?
             .ok_or_else(|| eyre::eyre!("validator mode requires an EVM signer key"))?;
-        let signer = Arc::new(OutbeEvmSigner::from_file(&evm_key_path).wrap_err_with(|| {
-            format!(
-                "failed to load validator EVM key from {}",
-                evm_key_path.display()
-            )
-        })?);
+        let signer = Arc::new(
+            outbe_primitives::signer::load::from_file(&evm_key_path).wrap_err_with(|| {
+                format!(
+                    "failed to load validator EVM key from {}",
+                    evm_key_path.display()
+                )
+            })?,
+        );
         info!(
             address = %signer.address(),
             path = %evm_key_path.display(),

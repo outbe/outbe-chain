@@ -324,9 +324,11 @@ impl EmbeddedOcompDomainV1 {
                         .ok_or(EmbeddedOcompRuntimeErrorV1::MissingValidatorRpc)?;
                     let owner_uid = effective_uid()
                         .map_err(|error| stage("resolve Node effective uid", error))?;
-                    let evm_signer =
-                        OutbeEvmSigner::from_strict_file(&layout.evm_key_path, owner_uid)
-                            .map_err(|error| stage("open Validator OCOMP EVM key", error))?;
+                    let evm_signer = outbe_primitives::signer::load::from_strict_file(
+                        &layout.evm_key_path,
+                        owner_uid,
+                    )
+                    .map_err(|error| stage("open Validator OCOMP EVM key", error))?;
                     let result_signer = OcompSigner::from_file(&layout.result_key_path, owner_uid)
                         .map_err(|error| stage("open Validator OCOMP result key", error))?;
                     let sign_once = SignOnceStore::open(
