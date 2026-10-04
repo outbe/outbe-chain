@@ -197,6 +197,62 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         adapterB.reclaimToSource(receiveId, 0);
     }
 
+    /// A hop inside the call window carries the units but never the clock: `calledAt` and the
+    /// sealed notice on both mirrors are byte-equal before and after, so the settlement deadline
+    /// (`calledAt + callNoticePeriod`) is unchanged, and one second past it the return hop is refused.
+    function test_CalledHop_KeepsCalledAtAndDeadlineOnBothChains() public {
+        uint32 day = 20260603;
+        bytes14 series = "20260603-USD-U";
+        uint256 id = uint256(uint112(series));
+        tokenA.createSeries(CreateSeriesLib.params(day, ISSUED_UNITS, 60));
+        tokenB.createSeries(CreateSeriesLib.params(day, ISSUED_UNITS, 60));
+        tokenA.issueIntex(user, 100, series);
+
+        uint32 calledAt = uint32(block.timestamp);
+        tokenA.markCalled(series, calledAt);
+        tokenB.markCalled(series, calledAt);
+        IIntexNFT1155.SeriesData memory beforeA = tokenA.readData(series);
+        IIntexNFT1155.SeriesData memory beforeB = tokenB.readData(series);
+        uint256 deadlineA = uint256(beforeA.calledAt) + beforeA.callTrigger.callNoticePeriod;
+        uint256 deadlineB = uint256(beforeB.calledAt) + beforeB.callTrigger.callNoticePeriod;
+        assertEq(deadlineA, uint256(calledAt) + 60);
+        assertEq(deadlineB, deadlineA, "both mirrors share one deadline");
+
+        vm.warp(uint256(calledAt) + 30);
+        _send(adapterA, adapterB, A_CHAIN_ID, user, id, 60);
+
+        IIntexNFT1155.SeriesData memory afterA = tokenA.readData(series);
+        IIntexNFT1155.SeriesData memory afterB = tokenB.readData(series);
+        assertEq(uint8(afterA.state), uint8(IIntexNFT1155.IntexState.Called));
+        assertEq(uint8(afterB.state), uint8(IIntexNFT1155.IntexState.Called));
+        assertEq(afterA.calledAt, beforeA.calledAt, "source calledAt survives the hop");
+        assertEq(afterB.calledAt, beforeB.calledAt, "destination calledAt survives the hop");
+        assertEq(afterA.callTrigger.callNoticePeriod, beforeA.callTrigger.callNoticePeriod);
+        assertEq(afterB.callTrigger.callNoticePeriod, beforeB.callTrigger.callNoticePeriod);
+        assertEq(uint256(afterA.calledAt) + afterA.callTrigger.callNoticePeriod, deadlineA, "source deadline not reset");
+        assertEq(
+            uint256(afterB.calledAt) + afterB.callTrigger.callNoticePeriod, deadlineB, "destination deadline not reset"
+        );
+        assertEq(tokenA.balanceOf(user, id), 40);
+        assertEq(tokenB.balanceOf(user, id), 60);
+        assertEq(tokenA.totalSupply(id) + tokenB.totalSupply(id), 100, "SI-08: sum preserved across the called hop");
+
+        // The hop bought no time: one second past the original deadline the return hop is refused.
+        vm.warp(deadlineB + 1);
+        uint256[] memory tokenIds = new uint256[](1);
+        tokenIds[0] = id;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 60;
+        BatchSendParam memory back = BatchSendParam({
+            dstChainId: A_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenIds: tokenIds, units: amounts
+        });
+        uint256 fee = adapterB.quoteBatchSend(back);
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, id, uint32(deadlineB)));
+        adapterB.batchSend{value: fee}(back);
+        assertEq(tokenB.balanceOf(user, id), 60, "a refused late hop moves nothing");
+    }
+
     function testFuzz_Hop_TotalSupplyPreserved(uint256 issuedSeed, uint256 bridgedSeed) public {
         uint256 minted = bound(issuedSeed, 1, ISSUED_UNITS);
         uint256 bridged = bound(bridgedSeed, 0, minted);
