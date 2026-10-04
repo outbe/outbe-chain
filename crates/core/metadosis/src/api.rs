@@ -57,6 +57,26 @@ pub fn worldwide_days(storage: StorageHandle<'_>) -> Result<Vec<WwdProjection>> 
         .collect())
 }
 
+/// How many Worldwide Days have been created. This is one storage word.
+/// Deleting or retiring a retained day does not reduce it. Zero does not mean
+/// none were created: a chain that already retained days before this slot
+/// existed reads the new word as zero.
+pub fn worldwide_days_created(storage: StorageHandle<'_>) -> Result<u64> {
+    MetadosisContract::new(storage)
+        .worldwide_days_created
+        .read()
+}
+
+/// A Worldwide Day has been created when the count is already above zero or
+/// the bounded active/closed aggregate still holds one. Either side fails
+/// closed: a read error does not report "never created".
+pub fn has_created_worldwide_day(storage: StorageHandle<'_>) -> Result<bool> {
+    if worldwide_days_created(storage.clone())? > 0 {
+        return Ok(true);
+    }
+    Ok(!worldwide_days(storage)?.is_empty())
+}
+
 /// Typed query used by TributeFactory instead of a raw status byte read.
 pub fn is_offering_day(storage: StorageHandle<'_>, wwd: WorldwideDay) -> Result<bool> {
     Ok(worldwide_day(storage, wwd)?

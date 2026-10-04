@@ -189,6 +189,12 @@ impl LysisApplyPlanV1 {
         &self.nod
     }
 
+    /// OCOMP job clock copied from the request. Nod issuance does not use it.
+    #[must_use]
+    pub const fn logical_anchor(&self) -> u64 {
+        self.request_limit_split.logical_anchor
+    }
+
     #[must_use]
     pub const fn contributors(&self) -> &ContributorRootApplyV1 {
         &self.contributors

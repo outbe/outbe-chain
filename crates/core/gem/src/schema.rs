@@ -296,6 +296,13 @@ pub struct GemContract {
     /// `(bin << 32) | buckets of that bin still to visit`; 0 = start from the lowest bin.
     #[attribute(order = 53)]
     pub bucket_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
+
+    /// Genesis gem id issued while no Worldwide Day existed. `1` is the
+    /// issuance-time privilege; an absent key stays `0` and is never filled in
+    /// after the first day is created. Not a Qualified state and not part of
+    /// `GemData`.
+    #[attribute(order = 54)]
+    pub issued_before_first_wwd: outbe_primitives::storage::dsl::Map<U256, u8>,
 }
 
 impl GemContract<'_> {

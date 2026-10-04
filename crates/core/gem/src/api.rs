@@ -62,9 +62,36 @@ pub fn set_state(storage: &StorageHandle<'_>, gem_id: U256, new_state: GemState)
     gem.set_state(gem_id, new_state)
 }
 
+/// Issuance-time privilege bit. Absent storage reads as zero.
+const ISSUED_BEFORE_FIRST_WWD: u8 = 1;
+
+/// Records that this Genesis gem was issued before any Worldwide Day.
+/// A later day does not clear it. A gem issued once a day is retained, or once
+/// the creation count is already above zero, never receives it.
+pub fn record_issued_before_first_wwd(storage: &StorageHandle<'_>, gem_id: U256) -> Result<()> {
+    let gem = GemContract::new(storage.clone());
+    if gem.issued_before_first_wwd.read(&gem_id)? == ISSUED_BEFORE_FIRST_WWD {
+        return Ok(());
+    }
+    gem.issued_before_first_wwd
+        .write(&gem_id, ISSUED_BEFORE_FIRST_WWD)
+}
+
 /// Qualified once a finalized daily VWAP closed above the floor. A zero floor clears on the
 /// first eligible full day, since every positive price exceeds it.
+///
+/// A Genesis gem issued before any Worldwide Day keeps that privilege from
+/// issuance. The bit is not recomputed from the creation count or from days
+/// retained now.
 pub fn is_qualified(storage: &StorageHandle<'_>, item: &GemData) -> Result<bool> {
+    if item.gem_type == crate::schema::GENESIS_GEM_TYPE
+        && GemContract::new(storage.clone())
+            .issued_before_first_wwd
+            .read(&item.gem_id)?
+            == ISSUED_BEFORE_FIRST_WWD
+    {
+        return Ok(true);
+    }
     outbe_oracle::api::closed_above_floor(
         storage.clone(),
         item.reference_currency,

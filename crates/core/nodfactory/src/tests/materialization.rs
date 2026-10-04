@@ -761,3 +761,75 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
         population.actions[0].gratis_load_minor
     );
 }
+
+/// Materialization on a later block keeps the certified issuance instant and
+/// the proven entry price. The block clock and a different frozen snapshot do
+/// not move qualification's first full day.
+#[test]
+fn a_later_block_materializes_the_certified_issuance_instant() {
+    const FREEZE_AT: u64 = 1_600_000_000;
+    const LATER: u64 = 1_704_153_600;
+    let mut world = World::new();
+    let population = population(10);
+    seed_generation(&mut world, &population);
+    world.set_timestamp(LATER);
+    world.provider.set_block_number(9);
+    world
+        .enter(|storage, _, _| {
+            outbe_nod::api::store_entry_price_snapshot(
+                storage,
+                WorldwideDay::new(MATERIALIZATION_WWD),
+                20_260_714,
+                &std::collections::BTreeMap::from([(840, U256::from(999_999u64))]),
+            )
+        })
+        .unwrap();
+
+    apply(&mut world, &batch(&population, 0, 8)).unwrap();
+
+    let action = action_for(MATERIALIZATION_WWD, 0);
+    let worldwide_day = WorldwideDay::new(MATERIALIZATION_WWD);
+    let bucket_id = WwdEntityId::from_day_and_digest(
+        worldwide_day,
+        NodContract::bucket_key(
+            worldwide_day,
+            action.entry_price_minor,
+            action.reference_currency,
+        )
+        .0,
+    );
+    let item = world
+        .enter(|storage, scope, parent| {
+            nod_api::get_item(
+                &storage,
+                scope,
+                parent,
+                ledger_entity(population.actions[0].nod_id),
+            )
+        })
+        .unwrap()
+        .unwrap();
+    let bucket = world
+        .enter(|storage, scope, parent| nod_api::get_bucket(&storage, scope, parent, bucket_id))
+        .unwrap()
+        .expect("materialization seals the bucket");
+    let bucket_issued_at = world
+        .enter(|storage, _, _| {
+            NodContract::new(storage)
+                .callable_bucket_issued_at
+                .read(&item.bucket_key)
+        })
+        .unwrap();
+    assert_eq!(item.issued_at, FREEZE_AT);
+    assert_eq!(bucket_issued_at, FREEZE_AT);
+    assert_eq!(bucket.entry_price_minor, action.entry_price_minor);
+    assert_ne!(bucket.entry_price_minor, U256::from(999_999u64));
+    assert_eq!(
+        outbe_primitives::time::first_full_day(bucket_issued_at),
+        outbe_primitives::time::first_full_day(FREEZE_AT)
+    );
+    assert_ne!(
+        outbe_primitives::time::first_full_day(bucket_issued_at),
+        outbe_primitives::time::first_full_day(LATER)
+    );
+}
