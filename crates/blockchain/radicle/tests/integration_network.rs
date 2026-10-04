@@ -145,14 +145,33 @@ fn anchor(snapshot: &FinalizedSnapshot) -> AnchorSnapshot {
     .unwrap()
 }
 
+struct EndpointFixture {
+    address: Address,
+    node_id: [u8; 32],
+    port: u16,
+}
+
+impl EndpointFixture {
+    fn new(address: Address, node_id: [u8; 32], port: u16) -> Self {
+        Self {
+            address,
+            node_id,
+            port,
+        }
+    }
+}
+
 fn response(
     request_id: [u8; 32],
     snapshot: &FinalizedSnapshot,
     signer: &bls12381::PrivateKey,
-    address: Address,
-    node_id: [u8; 32],
-    port: u16,
+    endpoint: EndpointFixture,
 ) -> outbe_radicle::endpoint::SignedEndpointResponse {
+    let EndpointFixture {
+        address,
+        node_id,
+        port,
+    } = endpoint;
     sign_response(
         EndpointResponseBody {
             request_id,
@@ -232,9 +251,7 @@ async fn request_response_and_signed_evidence() {
         request.request_id(),
         &current,
         &signer_b,
-        Address::repeat_byte(0x22),
-        [2_u8; 32],
-        8776,
+        EndpointFixture::new(Address::repeat_byte(0x22), [2_u8; 32], 8776),
     );
     incoming
         .send((
@@ -561,9 +578,7 @@ async fn future_anchor_evidence_is_published_only_after_exact_resolution() {
         request_id,
         &at_31,
         &signer_b,
-        Address::repeat_byte(0x22),
-        [2_u8; 32],
-        9776,
+        EndpointFixture::new(Address::repeat_byte(0x22), [2_u8; 32], 9776),
     );
     incoming
         .send((

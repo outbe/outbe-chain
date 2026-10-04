@@ -42,6 +42,16 @@
 
 use proptest::prelude::*;
 
+#[derive(Clone, Copy)]
+struct GasCapInput {
+    parent_remaining: u64,
+    stack_gas_limit: u64,
+    transfers_value: bool,
+    tangerine_active: bool,
+    stipend_reduction_divisor: u64,
+    call_stipend: u64,
+}
+
 /// Local (spike) re-implementation of the EIP-150 gas cap formula plus
 /// stipend addition, modeled after upstream
 /// `load_acc_and_calc_gas` lines 86-101.
@@ -49,14 +59,15 @@ use proptest::prelude::*;
 /// `stipend_reduction_divisor` defaults to 64 mainnet (per
 /// `revm-context-interface-17.0.1/src/cfg/gas_params.rs:211`); kept as a
 /// parameter so the proptest can vary it.
-fn local_calc_subcall_gas_cap(
-    parent_remaining: u64,
-    stack_gas_limit: u64,
-    transfers_value: bool,
-    tangerine_active: bool,
-    stipend_reduction_divisor: u64,
-    call_stipend: u64,
-) -> u64 {
+fn local_calc_subcall_gas_cap(input: GasCapInput) -> u64 {
+    let GasCapInput {
+        parent_remaining,
+        stack_gas_limit,
+        transfers_value,
+        tangerine_active,
+        stipend_reduction_divisor,
+        call_stipend,
+    } = input;
     let cap = if tangerine_active {
         let reduced = parent_remaining - parent_remaining / stipend_reduction_divisor;
         core::cmp::min(reduced, stack_gas_limit)
@@ -75,14 +86,15 @@ fn local_calc_subcall_gas_cap(
 /// algebraic equivalence with `local_calc_subcall_gas_cap`. Uses
 /// `checked_*` arithmetic to make any operator-precedence drift in the
 /// other implementation visible.
-fn reference_calc_subcall_gas_cap(
-    parent_remaining: u64,
-    stack_gas_limit: u64,
-    transfers_value: bool,
-    tangerine_active: bool,
-    stipend_reduction_divisor: u64,
-    call_stipend: u64,
-) -> u64 {
+fn reference_calc_subcall_gas_cap(input: GasCapInput) -> u64 {
+    let GasCapInput {
+        parent_remaining,
+        stack_gas_limit,
+        transfers_value,
+        tangerine_active,
+        stipend_reduction_divisor,
+        call_stipend,
+    } = input;
     let mut cap = if tangerine_active && stipend_reduction_divisor != 0 {
         let reduction = parent_remaining
             .checked_div(stipend_reduction_divisor)
@@ -121,22 +133,22 @@ proptest! {
         stipend_reduction_divisor in 1u64..=256,
         call_stipend in 0u64..=u64::MAX,
     ) {
-        let local = local_calc_subcall_gas_cap(
+        let local = local_calc_subcall_gas_cap(GasCapInput {
             parent_remaining,
             stack_gas_limit,
             transfers_value,
             tangerine_active,
             stipend_reduction_divisor,
             call_stipend,
-        );
-        let reference = reference_calc_subcall_gas_cap(
+        });
+        let reference = reference_calc_subcall_gas_cap(GasCapInput {
             parent_remaining,
             stack_gas_limit,
             transfers_value,
             tangerine_active,
             stipend_reduction_divisor,
             call_stipend,
-        );
+        });
         prop_assert_eq!(
             local, reference,
             "EIP-150 cap divergence at parent_remaining={}, stack_gas_limit={}, \
@@ -161,11 +173,25 @@ mod smoke {
     #[test]
     fn pre_tangerine_returns_stack_limit_plus_stipend() {
         assert_eq!(
-            local_calc_subcall_gas_cap(1_000_000, 50_000, false, false, 64, 2_300),
+            local_calc_subcall_gas_cap(GasCapInput {
+                parent_remaining: 1_000_000,
+                stack_gas_limit: 50_000,
+                transfers_value: false,
+                tangerine_active: false,
+                stipend_reduction_divisor: 64,
+                call_stipend: 2_300
+            }),
             50_000,
         );
         assert_eq!(
-            local_calc_subcall_gas_cap(1_000_000, 50_000, true, false, 64, 2_300),
+            local_calc_subcall_gas_cap(GasCapInput {
+                parent_remaining: 1_000_000,
+                stack_gas_limit: 50_000,
+                transfers_value: true,
+                tangerine_active: false,
+                stipend_reduction_divisor: 64,
+                call_stipend: 2_300
+            }),
             50_000 + 2_300,
         );
     }
@@ -176,7 +202,14 @@ mod smoke {
     #[test]
     fn post_tangerine_eip150_reduction() {
         assert_eq!(
-            local_calc_subcall_gas_cap(128, u64::MAX, false, true, 64, 0),
+            local_calc_subcall_gas_cap(GasCapInput {
+                parent_remaining: 128,
+                stack_gas_limit: u64::MAX,
+                transfers_value: false,
+                tangerine_active: true,
+                stipend_reduction_divisor: 64,
+                call_stipend: 0
+            }),
             126,
         );
     }
@@ -187,7 +220,14 @@ mod smoke {
         // parent_remaining=1_000_000, reduction=1_000_000/64=15_625
         // reduced=984_375; stack_gas_limit=10 -> cap=10
         assert_eq!(
-            local_calc_subcall_gas_cap(1_000_000, 10, false, true, 64, 0),
+            local_calc_subcall_gas_cap(GasCapInput {
+                parent_remaining: 1_000_000,
+                stack_gas_limit: 10,
+                transfers_value: false,
+                tangerine_active: true,
+                stipend_reduction_divisor: 64,
+                call_stipend: 0
+            }),
             10,
         );
     }
@@ -198,7 +238,14 @@ mod smoke {
     #[test]
     fn stipend_addition_saturates() {
         assert_eq!(
-            local_calc_subcall_gas_cap(u64::MAX, u64::MAX, true, false, 64, 100),
+            local_calc_subcall_gas_cap(GasCapInput {
+                parent_remaining: u64::MAX,
+                stack_gas_limit: u64::MAX,
+                transfers_value: true,
+                tangerine_active: false,
+                stipend_reduction_divisor: 64,
+                call_stipend: 100
+            }),
             u64::MAX, // u64::MAX + 100 saturates
         );
     }
