@@ -40,7 +40,6 @@ pub(crate) fn run_tee_bootstrap_v1(
 ) -> Result<()> {
     use outbe_primitives::tee_signatures::recover_signer;
     use outbe_teeregistry::{TeeBootstrapData, TeeRegistry};
-    use std::collections::BTreeSet;
 
     let mut registry = TeeRegistry::new(ctx.storage.clone());
     if registry.is_bootstrapped()? {
@@ -62,28 +61,7 @@ pub(crate) fn run_tee_bootstrap_v1(
         ));
     }
 
-    let committee: BTreeSet<Address> =
-        outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone())
-            .get_active_consensus_set()?
-            .into_iter()
-            .map(|record| record.validator_address)
-            .collect();
-    if committee.is_empty() {
-        return Err(PrecompileError::Revert(
-            "TeeBootstrapV2: active consensus committee is empty".into(),
-        ));
-    }
-    let participant_validators = payload
-        .participants
-        .iter()
-        .map(|participant| Address::from(participant.validator_binding.validator))
-        .collect::<BTreeSet<_>>();
-    if participant_validators != committee || payload.participants.len() != committee.len() {
-        return Err(PrecompileError::Revert(
-            "TeeBootstrapV2: participants must equal the complete active consensus committee"
-                .into(),
-        ));
-    }
+    let committee = read_bootstrap_committee(ctx, payload)?;
 
     let signing_hash = payload.signing_hash().map_err(|error| {
         PrecompileError::Fatal(format!(
@@ -153,4 +131,35 @@ pub(crate) fn run_tee_bootstrap_v1(
         committee_snapshot_hash,
         tribute_offer_group_public_key: payload.authority.tribute_offer_group_public_key.clone(),
     })
+}
+
+fn read_bootstrap_committee(
+    ctx: &BlockRuntimeContext,
+    payload: &outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2,
+) -> Result<std::collections::BTreeSet<Address>> {
+    use std::collections::BTreeSet;
+    let committee: BTreeSet<Address> =
+        outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone())
+            .get_active_consensus_set()?
+            .into_iter()
+            .map(|record| record.validator_address)
+            .collect();
+    if committee.is_empty() {
+        return Err(PrecompileError::Revert(
+            "TeeBootstrapV2: active consensus committee is empty".into(),
+        ));
+    }
+    let participant_validators = payload
+        .participants
+        .iter()
+        .map(|participant| Address::from(participant.validator_binding.validator))
+        .collect::<BTreeSet<_>>();
+    if participant_validators != committee || payload.participants.len() != committee.len() {
+        return Err(PrecompileError::Revert(
+            "TeeBootstrapV2: participants must equal the complete active consensus committee"
+                .into(),
+        ));
+    }
+
+    Ok(committee)
 }
