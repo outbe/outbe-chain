@@ -255,4 +255,9 @@ pub struct MetadosisContract {
     /// length of the sparse `ocomp_terminal_intents` index above.
     #[attribute(order = 25)]
     pub ocomp_terminal_counts: Mapping<WorldwideDayKey, u16>,
+
+    /// Worldwide Days created on this chain. Retirement does not decrement it.
+    /// A zero read is not "never created" when a day is already retained.
+    #[attribute(order = 26)]
+    pub worldwide_days_created: outbe_primitives::storage::dsl::Value<u64>,
 }

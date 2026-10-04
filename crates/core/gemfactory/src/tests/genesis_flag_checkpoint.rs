@@ -91,3 +91,43 @@ fn a_failed_genesis_flag_write_rolls_the_new_gem_back() {
         });
     }
 }
+
+#[test]
+fn a_retained_day_with_a_zero_creation_count_does_not_stamp_or_backfill() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        let historical = runtime::issue_gem(
+            storage,
+            ALICE,
+            GemTypes::Genesis,
+            genesis_load(),
+            840,
+            840,
+            rate,
+        )
+        .unwrap();
+        let gem = GemContract::new(storage.clone());
+        assert_eq!(gem.issued_before_first_wwd.read(&historical).unwrap(), 0);
+
+        // Retained day, creation slot never written. That is the pre-slot chain.
+        outbe_metadosis::test_support::seed_ready_worldwide_days_for_capacity(
+            storage.clone(),
+            &[WorldwideDay::new(20_240_101)],
+        )
+        .unwrap();
+        assert_eq!(
+            outbe_metadosis::api::worldwide_days_created(storage.clone()).unwrap(),
+            0
+        );
+        assert!(outbe_metadosis::api::has_created_worldwide_day(storage.clone()).unwrap());
+        assert_eq!(gem.issued_before_first_wwd.read(&historical).unwrap(), 0);
+        let historical_item = gem_api::get_gem(storage, historical).unwrap().unwrap();
+        assert!(!gem_api::is_qualified(storage, &historical_item).unwrap());
+
+        let fresh = issue_through_api(storage).unwrap();
+        assert_eq!(gem.issued_before_first_wwd.read(&fresh).unwrap(), 0);
+        assert_eq!(gem.issued_before_first_wwd.read(&historical).unwrap(), 0);
+        let fresh_item = gem_api::get_gem(storage, fresh).unwrap().unwrap();
+        assert!(!gem_api::is_qualified(storage, &fresh_item).unwrap());
+    });
+}

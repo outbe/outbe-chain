@@ -216,6 +216,7 @@ mod pre_admission;
 mod precompile;
 mod reducer;
 mod state;
+mod worldwide_day_created;
 mod wwd_vwap_overflow;
 
 mod tribute_fixture;

@@ -1,8 +1,9 @@
 //! Genesis reward Gems keep a zero floor. The issuance call records the privilege
-//! when the retained Worldwide Day aggregate is empty. A later block re-read keeps
-//! it after that day is created. Creation earlier on the same UTC day, and issuance
-//! on a later day, leave the Gem waiting: a missing bit stays unqualified. Entry,
-//! cost and call stay on the ordinary issuance formulas.
+//! only when the creation count is zero and the retained aggregate is empty.
+//! A zero count alone is not "never created". A later block re-read keeps the
+//! privilege after that day is created. Creation earlier on the same UTC day,
+//! and issuance on a later day, leave the Gem waiting: a missing bit stays
+//! unqualified. Entry, cost and call stay on the ordinary issuance formulas.
 
 use alloy_primitives::{Address, U256};
 use outbe_metadosis::genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay};

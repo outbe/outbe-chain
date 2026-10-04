@@ -113,6 +113,16 @@ impl MetadosisContract<'_> {
             .write(true)
     }
 
+    pub(crate) fn note_worldwide_day_created(&self) -> Result<()> {
+        let created = self.worldwide_days_created.read()?;
+        let next = created.checked_add(1).ok_or_else(|| {
+            crate::errors::storage_corruption(
+                "Metadosis Worldwide Day creation count overflow".into(),
+            )
+        })?;
+        self.worldwide_days_created.write(next)
+    }
+
     fn create_worldwide_day_raw(
         &mut self,
         wwd: WorldwideDayKey,
@@ -150,7 +160,8 @@ impl MetadosisContract<'_> {
             metadosis_limit_minor: U256::ZERO,
             previous_vwap: U256::ZERO,
             current_vwap: U256::ZERO,
-        })
+        })?;
+        self.note_worldwide_day_created()
     }
 
     pub fn ocomp_day_limit_formation(
@@ -211,6 +222,8 @@ impl MetadosisContract<'_> {
         (|| {
             // The day's terminal-evidence index dies with the day; without
             // this, retired days would leak index entries forever.
+            // `worldwide_days_created` stays. An empty retained index is not
+            // evidence that no Worldwide Day was ever created.
             self.delete_terminal_index(wwd_key)?;
             self.worldwide_day_terminal_receipts
                 .get_bytes(&wwd_key)
