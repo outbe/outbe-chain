@@ -164,7 +164,7 @@ fn validate_help_is_available_without_node_startup_and_restore_is_not_a_command(
 #[cfg(feature = "test-protocol-overrides")]
 #[test]
 fn report_and_native_checks_parse_the_genesis_once() {
-    let root = tempfile::tempdir().unwrap();
+    let root = snapshot::physical_tempdir();
     let fixture = stopped_fixture(&root.path().join("donor"));
     let report_path = root.path().join("headers-report.json");
     let mut command = binary();
@@ -181,7 +181,7 @@ fn report_and_native_checks_parse_the_genesis_once() {
 
 #[test]
 fn missing_artifact_reports_on_stdout_when_report_roots_cannot_be_resolved() {
-    let root = tempfile::tempdir().unwrap();
+    let root = snapshot::physical_tempdir();
     let target = root.path().join("missing.json");
     let output = run(binary()
         .args([
@@ -223,7 +223,7 @@ fn missing_artifact_reports_on_stdout_when_report_roots_cannot_be_resolved() {
 #[test]
 fn report_output_preserves_existing_files_and_rejects_native_roots_even_with_bad_projection_config()
 {
-    let root = tempfile::tempdir().unwrap();
+    let root = snapshot::physical_tempdir();
     let fixture = stopped_fixture(&root.path().join("donor"));
     let existing = root.path().join("existing-report.json");
     fs::write(&existing, b"operator-owned existing bytes").unwrap();
@@ -300,16 +300,20 @@ impl Placed {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "snapshot creation requires Linux openat2"
+)]
 fn signed_transfer_and_conventional_placement_do_not_mask_semantic_state_corruption() {
     for corrupt in [false, true] {
-        let producer = tempfile::tempdir().unwrap();
+        let producer = snapshot::physical_tempdir();
         let mut fixture = stopped_fixture(&producer.path().join("donor"));
         let expected_root = prepare_evm_authority(&mut fixture, corrupt);
         assert_ne!(expected_root, B256::ZERO);
         let archive = producer.path().join("snapshot.tar");
         create_archive(&fixture, &archive);
 
-        let receiver = tempfile::tempdir().unwrap();
+        let receiver = snapshot::physical_tempdir();
         let incoming = receiver.path().join("incoming");
         fs::create_dir(&incoming).unwrap();
         let transferred = incoming.join("received.tar");

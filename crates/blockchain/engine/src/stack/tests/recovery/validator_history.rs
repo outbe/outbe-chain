@@ -1,5 +1,6 @@
 //! Persist independent ValidatorSet snapshots using real native history tables.
 use alloy_primitives::{Address, B256, U256};
+use reth_ethereum::provider::db::models::ShardedKey;
 use reth_ethereum::provider::db::{
     database::Database,
     init_db,
@@ -8,7 +9,6 @@ use reth_ethereum::provider::db::{
     tables,
     transaction::{DbTx, DbTxMut},
 };
-use reth_ethereum::provider::db::models::ShardedKey;
 use std::{
     collections::{BTreeSet, HashMap},
     path::Path,

@@ -6,7 +6,6 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use eyre::WrapErr as _;
 use commonware_actor::{Feedback, Unreliable};
 use commonware_codec::DecodeExt as _;
 use commonware_consensus::{
@@ -26,6 +25,7 @@ use commonware_runtime::{
     buffer::paged::CacheRef, tokio, Clock as _, IoBufs, Runner as _, Spawner as _, Supervisor as _,
 };
 use commonware_utils::{ordered::Set, NZUsize};
+use eyre::WrapErr as _;
 
 use crate::{
     bls::bootstrap_dkg,

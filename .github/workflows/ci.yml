@@ -49,6 +49,8 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      - name: Trust the container checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Verify changed Rust module decomposition
         env:
           CHANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -173,7 +175,7 @@ jobs:
       - name: Run tests with coverage
         run: |
           cargo llvm-cov clean --workspace
-          cargo llvm-cov --workspace --no-report
+          cargo llvm-cov --workspace --features outbe-chain/snapshot-integration --no-report
       - name: Render coverage summary
         run: |
           cargo llvm-cov report --json --summary-only --output-path coverage-summary.json

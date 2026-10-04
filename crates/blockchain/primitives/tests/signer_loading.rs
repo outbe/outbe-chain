@@ -1,6 +1,6 @@
 #![cfg(unix)]
 
-use alloy_primitives::{B256, address};
+use alloy_primitives::{address, B256};
 use outbe_primitives::signer::{OutbeEvmSigner, SignerError};
 use std::{
     os::unix::fs::{MetadataExt as _, PermissionsExt as _},

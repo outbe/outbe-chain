@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_primitives::{Address, Bytes, B256};
 use alloy_rlp::{Decodable as RlpDecodable, Encodable as RlpEncodable};
 
 use crate::error::{PrecompileError, Result};
