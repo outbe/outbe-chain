@@ -5,6 +5,7 @@
 //! A separate legacy checkpoint supports copying an existing MRSIGNER seal.
 
 use super::journal_storage::{sync_directory, JournalPaths};
+use super::JournalSnapshotV1;
 
 mod storage;
 use storage::{
@@ -210,23 +211,10 @@ impl UpgradeJournalStateV1 {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct UpgradeJournalSnapshotV1 {
-    pub version: u8,
-    pub generation: u64,
-    pub lifecycle: UpgradeJournalStateV1,
-}
+/// V1 upgrade journal envelope, retaining the upgrade lifecycle type.
+pub type UpgradeJournalSnapshotV1 = JournalSnapshotV1<UpgradeJournalStateV1>;
 
 impl UpgradeJournalSnapshotV1 {
-    pub fn new(lifecycle: UpgradeJournalStateV1) -> Self {
-        Self {
-            version: 1,
-            generation: 1,
-            lifecycle,
-        }
-    }
-
     fn validate(&self) -> Result<()> {
         if self.version != 1 || self.generation == 0 {
             eyre::bail!("unsupported upgrade journal version or generation");
@@ -939,6 +927,65 @@ mod tests {
             resident_offer_public: B256::repeat_byte(7),
             proof_hash: B256::repeat_byte(8),
         }
+    }
+
+    #[test]
+    fn snapshot_legacy_json_loads_without_rewrite_and_keeps_exact_bytes() {
+        let legacy = concat!(
+            "{\"version\":1,\"generation\":7,\"lifecycle\":{\"state\":\"candidatePrepared\",",
+            "\"context\":{",
+            "\"predecessorManifestHash\":\"0x0101010101010101010101010101010101010101010101010101010101010101\",",
+            "\"candidateManifestHash\":\"0x0202020202020202020202020202020202020202020202020202020202020202\",",
+            "\"successorPolicyHash\":\"0x0303030303030303030303030303030303030303030303030303030303030303\",",
+            "\"activationHeight\":100,\"activeTeeDir\":\"/legacy/active\",",
+            "\"candidateTeeDir\":\"/legacy/candidate\"}}}"
+        );
+        let root = tempfile::tempdir().unwrap();
+        let guard = UpgradeJournalGuardV1::acquire(root.path()).unwrap();
+        let path = root.path().join(DIRECTORY).join("journal.json");
+        fs::write(&path, legacy).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(FILE_MODE)).unwrap();
+        let snapshot = guard.load().unwrap().unwrap();
+        assert_eq!(snapshot.generation, 7);
+        assert_eq!(snapshot.lifecycle.label(), "candidatePrepared");
+        assert_eq!(serde_json::to_vec(&snapshot).unwrap(), legacy.as_bytes());
+        assert_eq!(fs::read(&path).unwrap(), legacy.as_bytes());
+        let value: serde_json::Value = serde_json::from_str(legacy).unwrap();
+        for missing in ["version", "generation", "lifecycle"] {
+            let mut malformed = value.clone();
+            malformed.as_object_mut().unwrap().remove(missing);
+            assert!(serde_json::from_value::<UpgradeJournalSnapshotV1>(malformed).is_err());
+        }
+        let mut unknown = value;
+        unknown["unexpected"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<UpgradeJournalSnapshotV1>(unknown).is_err());
+    }
+
+    #[test]
+    fn snapshot_headers_reject_invalid_values_before_lifecycle_validation() {
+        let mut invalid_context = context(Path::new("/unused"));
+        invalid_context.activation_height = 0;
+        let lifecycle = UpgradeJournalStateV1::CandidatePrepared {
+            context: invalid_context,
+        };
+        for (version, generation) in [(0, 1), (2, 1), (1, 0)] {
+            let snapshot = UpgradeJournalSnapshotV1 {
+                version,
+                generation,
+                lifecycle: lifecycle.clone(),
+            };
+            assert_eq!(
+                snapshot.validate().unwrap_err().to_string(),
+                "unsupported upgrade journal version or generation"
+            );
+        }
+        assert_ne!(
+            UpgradeJournalSnapshotV1::new(lifecycle)
+                .validate()
+                .unwrap_err()
+                .to_string(),
+            "unsupported upgrade journal version or generation"
+        );
     }
 
     #[test]

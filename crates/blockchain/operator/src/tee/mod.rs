@@ -1,3 +1,4 @@
+mod journal_snapshot;
 mod journal_storage;
 
 pub mod onboarding;
@@ -7,6 +8,7 @@ pub mod renewal_journal;
 pub mod status;
 pub mod upgrade;
 
+pub use journal_snapshot::JournalSnapshotV1;
 pub use onboarding::{await_finalized_onboarding_v1, FinalizedOnboardingV1};
 pub use registry::{
     read_finalized_bound_renewal_view_v1, read_finalized_registry_view_v1,
