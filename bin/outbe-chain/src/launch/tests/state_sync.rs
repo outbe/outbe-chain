@@ -141,14 +141,27 @@ fn copied_projection_uses_native_checkpoint_and_recipient_configuration_on_each_
     .err()
     .expect("snapshot height is not a replacement for native start_block");
     assert!(error.to_string().contains("start_block 1"));
+    // A rejected preflight also owns an asynchronous storage close. Observe it
+    // before opening storage so the process cannot exit while RocksDB tears down.
+    let completions = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed = completions.clone();
     assert!(
-        prepare_offchain_data_projection(OffchainDataProjectionConfig {
-            chain_id: config.chain_id,
-            genesis_hash: B256::repeat_byte(0x72),
-            storage,
-        })
+        outbe_node::projection::prepare_offchain_data_projection_with_retention(
+            OffchainDataProjectionConfig {
+                chain_id: config.chain_id,
+                genesis_hash: B256::repeat_byte(0x72),
+                storage,
+            },
+            Arc::new(outbe_node::ocomp::retention::SharedOcompRetentionSelector::new()),
+            move |completion| observed.lock().unwrap().push(completion),
+        )
         .is_err()
     );
+    let completions = completions.lock().unwrap();
+    assert_eq!(completions.len(), 1);
+    completions[0]
+        .wait_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
     assert_eq!(fs::read(&secret).unwrap(), own_key_bytes);
 }
 
