@@ -18,6 +18,7 @@ pub(crate) struct MarshalUpdateReporter {
     executor: Mailbox,
     tip_consumers: Vec<watch::Sender<Option<ConsensusTip>>>,
     block_consumers: Vec<PeerManagerMailbox>,
+    publication: Option<outbe_consensus::application::publication::ProposalPublication>,
 }
 
 impl MarshalUpdateReporter {
@@ -26,6 +27,7 @@ impl MarshalUpdateReporter {
             executor,
             tip_consumers: Vec::new(),
             block_consumers: Vec::new(),
+            publication: None,
         }
     }
 
@@ -39,6 +41,14 @@ impl MarshalUpdateReporter {
 
     pub(crate) fn add_block_consumer(mut self, consumer: PeerManagerMailbox) -> Self {
         self.block_consumers.push(consumer);
+        self
+    }
+
+    pub(crate) fn with_publication(
+        mut self,
+        publication: outbe_consensus::application::publication::ProposalPublication,
+    ) -> Self {
+        self.publication = Some(publication);
         self
     }
 }
@@ -55,6 +65,9 @@ impl Reporter for MarshalUpdateReporter {
     /// best-effort wakeups and their closure must not stall the voter task.
     fn report(&mut self, activity: Self::Activity) -> commonware_actor::Feedback {
         if let commonware_consensus::marshal::Update::Tip(round, height, digest) = &activity {
+            if let Some(publication) = &self.publication {
+                publication.retire_through(*round);
+            }
             let tip = Some(ConsensusTip {
                 round: *round,
                 height: *height,

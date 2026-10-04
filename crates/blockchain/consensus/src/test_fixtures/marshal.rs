@@ -1,9 +1,11 @@
 //! Shared archive settings for deterministic marshal test harnesses.
 
 use std::num::{NonZeroU64, NonZeroUsize};
+use eyre::WrapErr as _;
 
 use commonware_runtime::buffer::paged::CacheRef;
 use commonware_storage::archive::immutable;
+use commonware_cryptography::certificate::Verifier as _;
 
 pub(crate) enum MarshalArchiveKind {
     Finalizations,
@@ -28,7 +30,40 @@ pub(crate) struct MarshalArchiveFixture<'a> {
     pub(crate) write_buffer: NonZeroUsize,
 }
 
+type MarshalTestArchives<E> = (
+    immutable::Archive<E, crate::digest::Digest, crate::marshal_types::Finalization>,
+    immutable::Archive<E, crate::digest::Digest, crate::block::ConsensusBlock>,
+);
+
 impl MarshalArchiveFixture<'_> {
+    /// Open both archives in the same order and partitions used by every harness.
+    pub(crate) async fn open<E>(&self, context: &E) -> eyre::Result<MarshalTestArchives<E>>
+    where
+        E: commonware_runtime::Storage
+            + commonware_runtime::Clock
+            + commonware_runtime::Metrics
+            + commonware_runtime::BufferPooler,
+    {
+        let finalizations = immutable::Archive::init(
+            context.child("marshal_finalizations"),
+            self.config(
+                MarshalArchiveKind::Finalizations,
+                crate::hybrid::HybridScheme::<
+                    commonware_cryptography::bls12381::primitives::variant::MinSig,
+                >::certificate_codec_config_unbounded(),
+            ),
+        )
+        .await
+        .wrap_err("finalizations archive should initialize")?;
+        let blocks = immutable::Archive::init(
+            context.child("marshal_blocks"),
+            self.config(MarshalArchiveKind::Blocks, ()),
+        )
+        .await
+        .wrap_err("blocks archive should initialize")?;
+        Ok((finalizations, blocks))
+    }
+
     pub(crate) fn config<C>(
         &self,
         kind: MarshalArchiveKind,

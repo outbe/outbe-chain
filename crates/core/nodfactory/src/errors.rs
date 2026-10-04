@@ -16,8 +16,8 @@ pub enum NodFactoryError {
     #[error("nod not found")]
     NodNotFound,
 
-    #[error("nod floor price overflows")]
-    FloorPriceOverflow,
+    #[error("nod entry price is out of bounds")]
+    EntryPriceOutOfBounds,
 
     #[error("nod is not qualified")]
     NodNotQualified,

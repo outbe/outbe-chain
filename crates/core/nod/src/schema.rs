@@ -55,9 +55,6 @@ pub struct NodItemState {
     #[attribute(order = 3)]
     pub league_id: u16,
 
-    #[attribute(order = 4)]
-    pub floor_price_minor: U256,
-
     #[attribute(order = 5)]
     pub bucket_key: B256,
 
@@ -104,10 +101,9 @@ pub struct CallTerms {
 pub struct NodBucketState {
     pub bucket_key: B256,
     pub worldwide_day: WorldwideDay,
-    pub floor_price_minor: U256,
     pub entry_price_minor: U256,
 
-    /// Denomination of `floor_price_minor`, propagated from the Nods in the
+    /// Denomination of `entry_price_minor`, propagated from the Nods in the
     /// bucket. Qualification compares the floor against the COEN day price for this
     /// currency only, and the call index is namespaced by it.
     pub reference_currency: u16,
@@ -115,6 +111,14 @@ pub struct NodBucketState {
     /// Live paid entitlements; decreases when exercised.
     #[serde(default)]
     pub settled_nods: u64,
+}
+
+impl NodBucketState {
+    /// The floor every Nod in the bucket shares, derived from its entry price.
+    pub fn floor_price_minor(&self) -> outbe_primitives::error::Result<U256> {
+        NodContract::floor_price_minor(self.entry_price_minor)
+            .ok_or_else(|| crate::errors::NodError::FloorPriceOverflow.into())
+    }
 }
 
 /// Immutable owner projection frozen into one OCOMP activation precondition.
@@ -171,7 +175,7 @@ impl NodCertifiedGenerationProjection {
 /// EVM storage layout for the Nod NFT contract.
 ///
 /// Nod item and bucket bodies live in the compressed-entity store, not here.
-/// Bucket key = keccak256(worldwide_day ++ floor_price_minor ++ reference_currency).
+/// Bucket key = keccak256(worldwide_day ++ entry_price_minor ++ reference_currency).
 ///
 /// Uncalled buckets wait in a per-currency bitmap trie by call price, see `state::CallBins`.
 ///
@@ -397,23 +401,30 @@ impl<'storage> NodContract<'storage> {
             .map(|scaled| scaled / U256::from(100u64))
     }
 
+    /// Whether the floor and the call price at any `u16` call rate fit `U256` for this entry.
+    pub fn is_issuable_entry(entry_price_minor: U256) -> bool {
+        entry_price_minor
+            .checked_mul(U256::from(100 + u32::from(u16::MAX)))
+            .is_some()
+    }
+
     /// Computes the bucket key from
-    /// `(worldwide_day, floor_price_minor, reference_currency)`.
+    /// `(worldwide_day, entry_price_minor, reference_currency)`.
     ///
-    /// The currency is part of the preimage because `floor_price_minor` is
-    /// denominated in it: two Nods sharing a day and a floor value in
+    /// The currency is part of the preimage because `entry_price_minor` is
+    /// denominated in it: two Nods sharing a day and an entry value in
     /// different currencies are priced against different oracle rates and must
     /// not share a bucket. This is the single derivation - the Lysis program
     /// calls it too, so the off-chain and on-chain keys cannot drift.
     pub fn bucket_key(
         worldwide_day: WorldwideDay,
-        floor_price_minor: U256,
+        entry_price_minor: U256,
         reference_currency: u16,
     ) -> B256 {
         use alloy_primitives::keccak256;
         let mut buf = [0u8; 38];
         buf[0..4].copy_from_slice(worldwide_day.key_bytes().as_slice());
-        buf[4..36].copy_from_slice(&floor_price_minor.to_be_bytes::<32>());
+        buf[4..36].copy_from_slice(&entry_price_minor.to_be_bytes::<32>());
         buf[36..38].copy_from_slice(&reference_currency.to_be_bytes());
         keccak256(buf)
     }

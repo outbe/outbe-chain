@@ -136,7 +136,7 @@ fn to_abi_data(
         owner: item.owner,
         worldwideDay: item.worldwide_day.into(),
         leagueId: item.league_id,
-        floorPriceMinor: item.floor_price_minor,
+        floorPriceMinor: bucket.floor_price_minor()?,
         gratisLoadMinor: item.gratis_load_minor,
         entryPriceMinor: bucket.entry_price_minor,
         settlementCostMinor: api::settlement_cost_minor(

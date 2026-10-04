@@ -87,6 +87,30 @@ fn a_partial_take_serves_what_the_accumulator_holds() {
 }
 
 #[test]
+fn a_strict_take_takes_the_exact_amount_or_nothing() {
+    with_contract(|c| {
+        c.checked_add_carry_over(U256::from(42u64)).unwrap();
+
+        let exact = c
+            .checked_take_carry_over(U256::from(10u64))
+            .unwrap()
+            .expect("covered take");
+        assert_eq!(exact.before, U256::from(42u64));
+        assert_eq!(exact.taken, U256::from(10u64));
+        assert_eq!(exact.after, U256::from(32u64));
+
+        assert_eq!(c.checked_take_carry_over(U256::from(33u64)).unwrap(), None);
+        assert_eq!(c.get_total_unallocated().unwrap(), U256::from(32u64));
+
+        let all = c
+            .checked_take_carry_over(U256::from(32u64))
+            .unwrap()
+            .expect("the whole balance");
+        assert_eq!(all.after, U256::ZERO);
+    });
+}
+
+#[test]
 fn test_set_overwrites_previous() {
     with_contract(|c| {
         c.set_total_unallocated(U256::from(500u64)).unwrap();

@@ -538,11 +538,6 @@ fn seed_requested_job(
         crate::reducer::OuterWwdEvent::OcompRequestCommitted,
     )
     .unwrap();
-    // A real request credits what Lysis left of the day's emission before the auction is
-    // sized, so the accumulator holds at least what this receipt says the auction draws.
-    outbe_promislimit::PromisLimitContract::new(storage.clone())
-        .checked_add_carry_over(request_receipt.desis_limit_minor)
-        .unwrap();
     outbe_ocompregistry::OcompRegistry::new(storage.clone())
         .pin_lineage(intent_id, limits)
         .unwrap();

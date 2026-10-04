@@ -297,14 +297,18 @@ where
                 EpochLoopAction::RestartEpoch => continue 'epoch_loop,
                 EpochLoopAction::ReplaceSigner => {
                     self.channels.replacement_epoch_subchannels = Some(
-                    outbe_consensus::epoch_subchannels::reacquire_epoch_subchannels(
+                    outbe_consensus::epoch_subchannels::reacquire_epoch_subchannels_with_policy(
                         self.state.current_epoch,
                         &ctx,
-                        Duration::from_secs(5),
-                        Duration::from_millis(10),
-                        &mut self.channels.vote_mux,
-                        &mut self.channels.cert_mux,
-                        &mut self.channels.res_mux,
+                        outbe_consensus::epoch_subchannels::SubchannelRetryPolicy {
+                            timeout: Duration::from_secs(5),
+                            retry_interval: Duration::from_millis(10),
+                        },
+                        outbe_consensus::epoch_subchannels::EpochMuxHandles {
+                            vote: &mut self.channels.vote_mux,
+                            cert: &mut self.channels.cert_mux,
+                            res: &mut self.channels.res_mux,
+                        },
                     )
                     .await
                     .wrap_err_with(|| {

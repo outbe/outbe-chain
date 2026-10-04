@@ -100,22 +100,24 @@ impl MaterialFixture {
 
     fn save(&self, path: &std::path::Path) {
         save_dkg_state(
-            path,
-            &self.share,
-            &self.polynomial,
-            &self.output,
-            &bls::KeyBackend::Plaintext,
+            DkgStateStore::new(path, &bls::KeyBackend::Plaintext),
+            DkgStateMaterial {
+                share: &self.share,
+                polynomial: &self.polynomial,
+                output: &self.output,
+            },
         )
         .unwrap();
     }
 
     fn save_pending(&self, path: &std::path::Path) {
         save_pending_dkg_state(
-            path,
-            &self.share,
-            &self.polynomial,
-            &self.output,
-            &bls::KeyBackend::Plaintext,
+            DkgStateStore::new(path, &bls::KeyBackend::Plaintext),
+            DkgStateMaterial {
+                share: &self.share,
+                polynomial: &self.polynomial,
+                output: &self.output,
+            },
         )
         .unwrap();
     }

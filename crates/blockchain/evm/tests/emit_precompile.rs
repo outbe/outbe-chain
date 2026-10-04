@@ -3,6 +3,10 @@
 //! `outbe.emit.mint@1.5.0` proofs, plus frame/value boundary cases extending
 //! the `precompile_value_boundary` patterns.
 
+#[path = "common/borrowed_precompile.rs"]
+mod borrow_code_fixture;
+use borrow_code_fixture::borrow_code;
+
 use alloy_evm::{Evm as _, EvmFactory as _};
 use alloy_primitives::{Address, Bytes, LogData, B256, U256};
 use alloy_sol_types::{SolCall, SolError, SolEvent};
@@ -268,40 +272,6 @@ fn mint_tx(
     }
     .abi_encode()
     .into()
-}
-
-/// Bytecode that copies its calldata into memory and forwards it to `target`
-/// through `opcode` (CALLCODE `0xf2` with the frame's value, DELEGATECALL
-/// `0xf4`, or STATICCALL `0xfa`), then bubbles the inner returndata up.
-fn borrow_code(opcode: u8, target: Address) -> Bytes {
-    let mut code = vec![
-        0x36, // CALLDATASIZE          size
-        0x60, 0x00, // PUSH1 0         offset
-        0x60, 0x00, // PUSH1 0         destOffset
-        0x37, // CALLDATACOPY
-        0x60, 0x00, // PUSH1 0         retLength
-        0x60, 0x00, // PUSH1 0         retOffset
-        0x36, // CALLDATASIZE          argsLength
-        0x60, 0x00, // PUSH1 0         argsOffset
-    ];
-    if opcode == 0xf2 {
-        code.push(0x34); // CALLVALUE   value
-    }
-    code.push(0x73); // PUSH20         address
-    code.extend_from_slice(target.as_slice());
-    code.push(0x5a); // GAS
-    code.push(opcode);
-    code.extend_from_slice(&[
-        0x50, // POP                   drop the success flag
-        0x3d, // RETURNDATASIZE        size
-        0x60, 0x00, // PUSH1 0         offset
-        0x60, 0x00, // PUSH1 0         destOffset
-        0x3e, // RETURNDATACOPY
-        0x3d, // RETURNDATASIZE        size
-        0x60, 0x00, // PUSH1 0         offset
-        0xf3, // RETURN                bubble the inner frame's returndata up
-    ]);
-    Bytes::from(code)
 }
 
 fn db_with_borrower(opcode: u8) -> CacheDB<EmptyDB> {

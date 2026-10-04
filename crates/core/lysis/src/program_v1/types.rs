@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use outbe_compressed_entities::{TributeBodyV1, WwdEntityId};
 use outbe_primitives::time::WorldwideDay;
 
@@ -102,14 +102,11 @@ pub struct NodActionV1 {
     pub owner: Address,
     pub worldwide_day: WorldwideDay,
     pub league_id: u16,
-    pub floor_price_minor: U256,
     pub gratis_load_minor: U256,
     pub entry_price_minor: U256,
     pub settlement_cost_minor: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
-    pub bucket_key: B256,
-    pub issued_at: u64,
 }
 
 /// Canonically owner-sorted contributor action.

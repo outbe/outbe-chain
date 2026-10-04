@@ -207,7 +207,6 @@ pub(super) fn nod_item(id: WwdEntityId, owner: Address) -> NodItemBodyV1 {
         gratis_load_minor: U256::from(1),
         worldwide_day: id.worldwide_day(),
         league_id: 3,
-        floor_price_minor: U256::from(4),
         bucket_key: B256::repeat_byte(5),
         issuance_currency: 840,
         reference_currency: 978,

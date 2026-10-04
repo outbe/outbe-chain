@@ -27,6 +27,9 @@ pub enum NodError {
     #[error("reference currency must be a nonzero ISO 4217 numeric code")]
     ZeroReferenceCurrency,
 
+    #[error("nod floor price overflows")]
+    FloorPriceOverflow,
+
     #[error("nod entry-price snapshot is already frozen")]
     EntryPricesAlreadyFrozen,
     #[error("invalid nod entry-price snapshot")]

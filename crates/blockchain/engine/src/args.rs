@@ -287,6 +287,12 @@ impl ConsensusArgs {
     /// - `--bls-key-backend encrypted` without `--bls-passphrase` -> error
     pub fn validate(&self) -> eyre::Result<()> {
         self.offchain_data()?;
+        self.validate_role_and_transport()?;
+        self.warn_ignored_signers();
+        self.validate_key_material()
+    }
+
+    fn validate_role_and_transport(&self) -> eyre::Result<()> {
         if self.txpool_pending_staleness_secs == 0 {
             eyre::bail!("--txpool.outbe.pending-staleness-secs must be greater than zero");
         }
@@ -306,6 +312,10 @@ impl ConsensusArgs {
                  Provide the path to your BLS signing key file."
             );
         }
+        self.validate_radicle_coordination()
+    }
+
+    fn validate_radicle_coordination(&self) -> eyre::Result<()> {
         if self.is_validator {
             if self.radicle_control_socket.is_none() {
                 eyre::bail!("--validator requires --radicle.control-socket");
@@ -319,6 +329,10 @@ impl ConsensusArgs {
         } else if self.radicle_control_socket.is_some() || self.radicle_status_address.is_some() {
             eyre::bail!("Radicle flags require --validator");
         }
+        Ok(())
+    }
+
+    fn warn_ignored_signers(&self) {
         if !self.is_validator && self.signing_key.is_some() {
             tracing::warn!(
                 "--consensus.signing-key provided without --validator; \
@@ -331,6 +345,9 @@ impl ConsensusArgs {
                  the EVM signer key will be ignored. Add --validator to run as a validator."
             );
         }
+    }
+
+    fn validate_key_material(&self) -> eyre::Result<()> {
         // Two valid manual-provisioning shapes:
         //   * signer triplet: all of signing-share + public-polynomial + dkg-output.
         //   * verifier-join pair: public-polynomial + dkg-output WITHOUT signing-share
@@ -342,15 +359,16 @@ impl ConsensusArgs {
             self.public_polynomial.is_some(),
             self.dkg_output.is_some(),
         );
-        let signer_triplet = share && poly && output;
-        let verifier_pair = !share && poly && output;
-        if (share || poly || output) && !signer_triplet && !verifier_pair {
-            eyre::bail!(
-                "manual DKG provisioning requires either all of --consensus.signing-share, \
+        match (share, poly, output) {
+            (false, false, false) | (false, true, true) | (true, true, true) => {}
+            _ => {
+                eyre::bail!(
+                    "manual DKG provisioning requires either all of --consensus.signing-share, \
                  --consensus.public-polynomial, --consensus.dkg-output (signer), or \
                  --consensus.public-polynomial + --consensus.dkg-output without \
                  --consensus.signing-share (verifier-join)."
-            );
+                );
+            }
         }
         if self.bls_key_backend == "encrypted" && self.bls_passphrase.is_none() {
             eyre::bail!(
@@ -685,6 +703,24 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("--validator"));
+    }
+
+    #[test]
+    fn manual_dkg_provisioning_acceptance_covers_all_flag_combinations() {
+        let expected = [true, false, false, false, false, false, true, true];
+        for (flags, accepted) in expected.into_iter().enumerate() {
+            let mut args = default_args();
+            args.signing_share = (flags & 1 != 0).then(|| PathBuf::from("share.hex"));
+            args.public_polynomial = (flags & 2 != 0).then(|| PathBuf::from("poly.hex"));
+            args.dkg_output = (flags & 4 != 0).then(|| PathBuf::from("output.hex"));
+            let result = args.validate();
+            assert_eq!(result.is_ok(), accepted, "provisioning flags {flags:03b}");
+            if let Err(error) = result {
+                assert!(error
+                    .to_string()
+                    .starts_with("manual DKG provisioning requires"));
+            }
+        }
     }
 
     #[test]

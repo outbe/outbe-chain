@@ -286,23 +286,10 @@ fn apply_pre_execution_changes_emits_cycle_tick_event_in_system_receipt() {
 
     let signer = test_evm_signer();
     let proposer = signer.address();
-    let emission_trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
     let mut state =
         state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
-            let genesis_ctx = BlockRuntimeContext::new(
-                BlockContext::new(0, GENESIS_TS, CHAIN_ID, proposer, vec![proposer]),
-                storage.clone(),
-            );
-            outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx).unwrap();
-            let cycle = outbe_cycle::schema::Cycle::new(storage);
-            cycle
-                .active_utc_day
-                .write(outbe_primitives::time::timestamp_to_date_key(GENESIS_TS))
-                .unwrap();
-            cycle
-                .last_executed_at
-                .write(&emission_trigger, GENESIS_TS + 60)
-                .unwrap();
+            seed_cycle_tick_genesis(storage, GENESIS_TS, proposer)
+                .expect("cycle-tick genesis fixture");
         });
     let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
     let block_timestamp = GENESIS_TS + SECONDS_PER_DAY + 60;
@@ -350,23 +337,10 @@ fn cycle_tick_utc_boundary_gas_usage() {
 
     let signer = test_evm_signer();
     let proposer = signer.address();
-    let emission_trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
     let mut state =
         state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
-            let genesis_ctx = BlockRuntimeContext::new(
-                BlockContext::new(0, GENESIS_TS, CHAIN_ID, proposer, vec![proposer]),
-                storage.clone(),
-            );
-            outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx).unwrap();
-            let cycle = outbe_cycle::schema::Cycle::new(storage);
-            cycle
-                .active_utc_day
-                .write(outbe_primitives::time::timestamp_to_date_key(GENESIS_TS))
-                .unwrap();
-            cycle
-                .last_executed_at
-                .write(&emission_trigger, GENESIS_TS + 60)
-                .unwrap();
+            seed_cycle_tick_genesis(storage, GENESIS_TS, proposer)
+                .expect("cycle-tick genesis fixture");
         });
     let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
     let block_timestamp = GENESIS_TS + SECONDS_PER_DAY + 60;
@@ -435,30 +409,8 @@ fn tee_expiry_worst_case_active_sweep_fits_cycle_tick_budget() {
     }
     let addresses: Vec<_> = validators.iter().map(|(address, _)| *address).collect();
     let mut state = state_with_active_validators_seeded_at_block(&validators, 1, |storage| {
-        let registry = outbe_teeregistry::TeeRegistry::new(storage);
-        for (index, validator) in addresses.iter().enumerate() {
-            let node_hash = keccak256((index as u64).to_be_bytes());
-            registry
-                .validator_v1_node_hash
-                .write(validator, node_hash)
-                .unwrap();
-            registry
-                .v1_node_enclave_id
-                .write(&node_hash, B256::with_last_byte(0x11))
-                .unwrap();
-            registry
-                .v1_node_binding_id
-                .write(&node_hash, B256::with_last_byte(0x12))
-                .unwrap();
-            registry
-                .v1_node_intent_hash
-                .write(&node_hash, B256::with_last_byte(0x13))
-                .unwrap();
-            registry
-                .v1_node_valid_until
-                .write(&node_hash, DEADLINE)
-                .unwrap();
-        }
+        seed_expiring_tee_nodes(storage, &addresses, DEADLINE)
+            .expect("seed expiring tee nodes fixture succeeds");
     });
     let mut evm_env = test_evm_env(2, REWARDS_ADDRESS);
     evm_env.block_env.timestamp = U256::from(DEADLINE);
@@ -541,188 +493,22 @@ fn tee_expiry_worst_case_active_sweep_fits_cycle_tick_budget() {
 
 #[test]
 fn capacity_forfeiture_cycle_tick_keeps_twenty_percent_block_headroom() {
-    use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
-
     const BLOCK_GAS_LIMIT: u64 = 30_000_000;
     const REQUIRED_HEADROOM_BPS: u64 = 2_000;
     const BPS_DENOMINATOR: u64 = 10_000;
-    const SECONDS_PER_DAY: u64 = 86_400;
-
-    fn post_state_root(state: &revm::database::BundleState) -> B256 {
-        let sorted =
-            HashedPostState::from_bundle_state::<KeccakKeyHasher>(state.state()).into_sorted();
-        let storages = sorted.storages;
-        let accounts = sorted
-            .accounts
-            .into_iter()
-            .filter_map(|(address, account)| {
-                account.map(|account| {
-                    let storage = storages
-                        .get(&address)
-                        .map(|storage| storage.storage_slots.clone())
-                        .unwrap_or_default();
-                    (address, (account, storage))
-                })
-            });
-        state_root_prehashed(accounts)
-    }
 
     let run = || {
         let signer = test_evm_signer();
         let proposer = signer.address();
-        let victim = WorldwideDay::new(2023_1101);
-        let day_limit = U256::from(100);
-        let mut fire_at = 0_u64;
-        let (tree_directory, tree_service) = persistent_test_tree(B256::ZERO);
-        let empty_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
-        let parent_tree = tree_service
-            .open_parent(ExactParentIdentity {
-                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                block_number: 0,
-                block_hash: B256::ZERO,
-                root: empty_root,
-            })
-            .expect("open exact empty CE parent");
-        let seed_scope =
-            ExecutionScope::with_parent_tree(parent_tree, CeWorkConfig::new(0, 0, u64::MAX));
-        let body_storage = Arc::new(MemoryStorage::new());
-        let body_reader: StorageReaderHandle = body_storage;
-        let tribute_parent = TributeRepositoryReader::new(body_reader.clone());
-        let mut staged_tree_batch = None;
-        let mut state = state_with_active_validators_seeded_at_block_with_cycle_frames(
-            &[(proposer, dummy_pubkey(0xA3))],
-            1,
-            4,
-            |storage| {
-                outbe_compressed_entities::begin_block(storage.clone(), &seed_scope)
-                    .expect("open CE seed block");
-                let genesis_ctx = BlockRuntimeContext::new(
-                    BlockContext::new(0, 1_704_067_200, CHAIN_ID, proposer, vec![proposer]),
-                    storage.clone(),
-                );
-                outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx).unwrap();
-                let mut tribute = TributeContract::new(storage.clone());
-                tribute.initialize_fresh_ocomp_profile().unwrap();
-                let retained = (0..outbe_metadosis::constants::MAX_RETAINED_WWDS)
-                    .map(|offset| {
-                        let days_before = outbe_metadosis::constants::MAX_RETAINED_WWDS - offset;
-                        WorldwideDay::from_timestamp(
-                            victim.start_timestamp()
-                                - u64::try_from(days_before).unwrap() * SECONDS_PER_DAY,
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                outbe_metadosis::test_support::seed_ready_worldwide_days_for_capacity(
-                    storage.clone(),
-                    &retained,
-                )
-                .unwrap();
-                for day in &retained {
-                    tribute.seal_day(*day).unwrap();
-                }
-                let victim_ctx = BlockRuntimeContext::new(
-                    BlockContext::new(
-                        1,
-                        victim.start_timestamp() + 2 * 3_600,
-                        CHAIN_ID,
-                        proposer,
-                        vec![proposer],
-                    ),
-                    storage.clone(),
-                );
-                outbe_metadosis::commands::apply_cycle_day_limit(&victim_ctx, day_limit).unwrap();
-                let victim_projection =
-                    outbe_metadosis::api::worldwide_day(storage.clone(), victim)
-                        .unwrap()
-                        .unwrap();
-                tribute.unseal_day(victim).unwrap();
-                tribute
-                    .issue(
-                        &seed_scope,
-                        &tribute_parent,
-                        &TributeData {
-                            tribute_id: outbe_compressed_entities::derive_poseidon_entity_id(
-                                proposer, victim,
-                            )
-                            .unwrap(),
-                            owner: proposer,
-                            worldwide_day: victim,
-                            issuance_amount_minor: U256::from(1),
-                            issuance_currency: 840,
-                            nominal_amount_minor: U256::from(1),
-                            reference_currency: 840,
-                            tribute_price_minor: U256::from(1),
-                            exclude_from_intex_issuance: false,
-                        },
-                    )
-                    .unwrap();
-                for boundary in [
-                    victim_projection.forming_end,
-                    victim_projection.lookback_end,
-                    victim_projection.offering_end,
-                ] {
-                    let ctx = BlockRuntimeContext::new(
-                        BlockContext::new(1, boundary, CHAIN_ID, proposer, vec![proposer]),
-                        storage.clone(),
-                    );
-                    outbe_metadosis::commands::advance_active_worldwide_days(&ctx, &seed_scope)
-                        .unwrap();
-                }
-                assert_eq!(
-                    outbe_metadosis::api::worldwide_day(storage.clone(), victim)
-                        .unwrap()
-                        .unwrap()
-                        .status,
-                    outbe_metadosis::api::WorldwideDayStatus::Waiting
-                );
-                tribute
-                    .day_totals
-                    .update(&outbe_tribute::DayTotals {
-                        worldwide_day: victim,
-                        initialized: true,
-                        tribute_count: u32::MAX,
-                        tribute_nominal_total_minor: U256::MAX,
-                        is_sealed: true,
-                    })
-                    .unwrap();
-                tribute.total_supply.write(u64::from(u32::MAX)).unwrap();
-                let scheduled = victim_projection.scheduled_process_time;
-                let protocol_cycle_period = 3_600;
-                fire_at = scheduled.div_ceil(protocol_cycle_period) * protocol_cycle_period;
-                let cycle = outbe_cycle::schema::Cycle::new(storage.clone());
-                cycle
-                    .active_utc_day
-                    .write(outbe_primitives::time::timestamp_to_date_key(fire_at))
-                    .unwrap();
-                for spec in outbe_cycle::triggers::ACTIVE_TRIGGERS {
-                    cycle
-                        .last_executed_at
-                        .write(
-                            &spec.id,
-                            if spec.id == outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32() {
-                                fire_at - protocol_cycle_period
-                            } else {
-                                fire_at
-                            },
-                        )
-                        .unwrap();
-                }
-                staged_tree_batch = Some(
-                    outbe_compressed_entities::end_block(storage, &seed_scope)
-                        .expect("seal populated Tribute seed block")
-                        .staged_tree_batch,
-                );
-            },
-        );
-        let staged_tree_batch = staged_tree_batch.expect("seed block must stage CE work");
-        let seed_hash = B256::repeat_byte(0xA5);
-        let seed_root = staged_tree_batch.new_root();
-        tree_service
-            .publish_candidate(seed_hash, staged_tree_batch)
-            .expect("publish populated Tribute seed");
-        tree_service
-            .apply_finalized(1, seed_hash, seed_root)
-            .expect("finalize populated Tribute seed");
+        let CapacityParent {
+            mut state,
+            tree_directory,
+            tree_service,
+            seed_hash,
+            seed_root,
+            body_reader,
+            fire_at,
+        } = prepare_capacity_parent(proposer).expect("prepare populated capacity parent");
 
         let mut evm_env = test_evm_env(2, REWARDS_ADDRESS);
         evm_env.block_env.timestamp = U256::from(fire_at);
@@ -888,46 +674,10 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
             )
             .unwrap();
             seed_previous_day_vwap(&storage, block_ts, U256::from(1_000_000u64));
-            let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
-            rewards
-                .daily_voter_count
-                .write(&prev_day, DENSE_VALIDATOR_COUNT)
-                .unwrap();
-            rewards
-                .daily_total_participation
-                .write(&prev_day, u64::from(DENSE_VALIDATOR_COUNT))
-                .unwrap();
-            for index in 0..DENSE_VALIDATOR_COUNT {
-                let voter = numbered_test_address(0x12, u64::from(index));
-                rewards
-                    .daily_voter_at
-                    .get_nested(&prev_day)
-                    .write(&index, voter)
-                    .unwrap();
-                rewards
-                    .daily_participation
-                    .get_nested(&prev_day)
-                    .write(&voter, 1)
-                    .unwrap();
-            }
-
-            let mut agent = outbe_agentreward::AgentRewardContract::new(storage);
-            for n in 0..DENSE_ADDRESS_COUNT {
-                let waa = numbered_test_address(0x10, n);
-                let sra = numbered_test_address(0x11, n);
-                agent.increment_waa_tribute(prev_day.into(), waa).unwrap();
-                agent.increment_sra_tribute(prev_day.into(), sra).unwrap();
-            }
-            assert_eq!(
-                agent.get_all_waa_counts(prev_day.into()).unwrap().len(),
-                DENSE_ADDRESS_COUNT as usize,
-                "GAS-05 fixture must seed all dense WAA recipients"
-            );
-            assert_eq!(
-                agent.get_all_sra_counts(prev_day.into()).unwrap().len(),
-                DENSE_ADDRESS_COUNT as usize,
-                "GAS-05 fixture must seed all dense SRA recipients"
-            );
+            seed_dense_voter_participation(storage.clone(), prev_day, DENSE_VALIDATOR_COUNT)
+                .expect("seed dense voter participation fixture succeeds");
+            seed_dense_agent_recipients(storage, prev_day, DENSE_ADDRESS_COUNT)
+                .expect("seed dense agent recipients fixture succeeds");
         });
     let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
     evm_env.block_env.timestamp = U256::from(block_ts);
@@ -976,41 +726,7 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     let mut provider =
         outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
     StorageHandle::enter(&mut provider, |storage| {
-        let agent = outbe_agentreward::AgentRewardContract::new(storage.clone());
-        assert!(
-            agent.get_all_waa_counts(prev_day.into())?.is_empty(),
-            "GAS-05: dense WAA day index must be cleared after CycleTick settlement"
-        );
-        assert!(
-            agent.get_all_sra_counts(prev_day.into())?.is_empty(),
-            "GAS-05: dense SRA day index must be cleared after CycleTick settlement"
-        );
-
-        let mut claimable_total = U256::ZERO;
-        for n in 0..DENSE_ADDRESS_COUNT {
-            let waa = numbered_test_address(0x10, n);
-            let sra = numbered_test_address(0x11, n);
-            let waa_claimable = agent.get_claimable_reward(waa)?;
-            let sra_claimable = agent.get_claimable_reward(sra)?;
-            assert!(
-                !waa_claimable.is_zero(),
-                "GAS-05: dense WAA recipient {waa} received zero claimable reward"
-            );
-            assert!(
-                !sra_claimable.is_zero(),
-                "GAS-05: dense SRA recipient {sra} received zero claimable reward"
-            );
-            claimable_total += waa_claimable + sra_claimable;
-        }
-        assert!(
-            !claimable_total.is_zero(),
-            "GAS-05: dense CycleTick must credit claimable AgentReward balances"
-        );
-        assert_eq!(
-            storage.balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)?,
-            claimable_total,
-            "GAS-05: AgentReward backing balance must match dense claimable total"
-        );
+        assert_dense_agent_settlement(storage.clone(), prev_day, DENSE_ADDRESS_COUNT)?;
         let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
         assert!(rewards.daily_topup_prepared.read(&prev_day)?);
         assert!(rewards.daily_topup_settled.read(&prev_day)?);
@@ -1686,38 +1402,17 @@ fn real_factory_approval_is_published_in_hook_events_receipt() {
         "target event must precede settlement event in committed hook order"
     );
 
-    {
-        let mut provider = super::DirectStorageProvider::new(&mut state, block_context.clone());
-        let storage = StorageHandle::new(&mut provider);
-        let vote = Vote::new(storage.clone());
-        let factory = StablecoinFactoryContract::new(storage.clone());
-        assert_eq!(
-            vote.proposals
-                .get(U256::from(1u64))
-                .unwrap()
-                .unwrap()
-                .proposal_status()
-                .unwrap(),
-            ProposalStatus::Approved
-        );
-        assert_eq!(
-            vote.proposal_bond(U256::from(1u64)).unwrap().settlement,
-            BondSettlement::Refunded
-        );
-        assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
-        assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);
-        assert_eq!(storage.balance(issuer).unwrap(), STABLECOIN_CREATE_BOND);
-        assert_eq!(factory.token_count().unwrap(), U256::from(1u64));
-        assert_eq!(
-            factory.registered_token_id(expected_token).unwrap(),
-            Some(expected_token_id)
-        );
-        assert_eq!(
-            factory.token_id_of(expected_token).unwrap(),
-            expected_token_id
-        );
-        assert!(!factory.reservations.exists(U256::from(1u64)).unwrap());
-    }
+    assert_approved_factory_state(
+        &mut state,
+        block_context.clone(),
+        ApprovedFactoryExpected {
+            issuer,
+            forced_surplus,
+            token_id: expected_token_id,
+            token: expected_token,
+        },
+    )
+    .expect("assert approved factory state fixture succeeds");
     let token_account = state
         .basic(expected_token)
         .expect("token account read")
@@ -1893,4 +1588,401 @@ fn real_factory_execution_error_has_no_factory_receipt_log() {
     );
     assert_eq!(factory.token_count().unwrap(), U256::ZERO);
     assert!(factory.reservations.exists(U256::from(1u64)).unwrap());
+}
+
+#[derive(Clone, Copy)]
+struct CapacityVictim<'a> {
+    proposer: Address,
+    victim: WorldwideDay,
+    day_limit: U256,
+    scope: &'a ExecutionScope,
+    parent: &'a TributeRepositoryReader,
+}
+fn seed_expiring_tee_nodes(
+    storage: StorageHandle<'_>,
+    addresses: &[Address],
+    deadline: u64,
+) -> eyre::Result<()> {
+    let registry = outbe_teeregistry::TeeRegistry::new(storage);
+    for (index, validator) in addresses.iter().enumerate() {
+        let node_hash = keccak256((index as u64).to_be_bytes());
+        registry
+            .validator_v1_node_hash
+            .write(validator, node_hash)?;
+        registry
+            .v1_node_enclave_id
+            .write(&node_hash, B256::with_last_byte(0x11))?;
+        registry
+            .v1_node_binding_id
+            .write(&node_hash, B256::with_last_byte(0x12))?;
+        registry
+            .v1_node_intent_hash
+            .write(&node_hash, B256::with_last_byte(0x13))?;
+        registry.v1_node_valid_until.write(&node_hash, deadline)?;
+    }
+
+    Ok(())
+}
+
+fn seed_retained_capacity_days(
+    storage: StorageHandle<'_>,
+    proposer: Address,
+    victim: WorldwideDay,
+) -> eyre::Result<()> {
+    let genesis_ctx = BlockRuntimeContext::new(
+        BlockContext::new(0, 1_704_067_200, CHAIN_ID, proposer, vec![proposer]),
+        storage.clone(),
+    );
+    outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx)?;
+    let mut tribute = TributeContract::new(storage.clone());
+    tribute.initialize_fresh_ocomp_profile()?;
+    let retained = (0..outbe_metadosis::constants::MAX_RETAINED_WWDS)
+        .map(|offset| -> eyre::Result<_> {
+            let days_before = outbe_metadosis::constants::MAX_RETAINED_WWDS - offset;
+            Ok(WorldwideDay::from_timestamp(
+                victim.start_timestamp() - u64::try_from(days_before)? * 86_400,
+            ))
+        })
+        .collect::<eyre::Result<Vec<_>>>()?;
+    outbe_metadosis::test_support::seed_ready_worldwide_days_for_capacity(
+        storage.clone(),
+        &retained,
+    )?;
+    for day in &retained {
+        tribute.seal_day(*day)?;
+    }
+
+    Ok(())
+}
+
+fn seed_waiting_capacity_victim(
+    storage: StorageHandle<'_>,
+    fixture: &CapacityVictim,
+) -> eyre::Result<u64> {
+    let CapacityVictim {
+        proposer,
+        victim,
+        day_limit,
+        scope: seed_scope,
+        parent: tribute_parent,
+    } = *fixture;
+    let mut tribute = TributeContract::new(storage.clone());
+    let victim_ctx = BlockRuntimeContext::new(
+        BlockContext::new(
+            1,
+            victim.start_timestamp() + 2 * 3_600,
+            CHAIN_ID,
+            proposer,
+            vec![proposer],
+        ),
+        storage.clone(),
+    );
+    outbe_metadosis::commands::apply_cycle_day_limit(&victim_ctx, day_limit)?;
+    let victim_projection = outbe_metadosis::api::worldwide_day(storage.clone(), victim)?
+        .ok_or_else(|| eyre::eyre!("missing fixture value"))?;
+    tribute.unseal_day(victim)?;
+    tribute.issue(
+        seed_scope,
+        tribute_parent,
+        &TributeData {
+            tribute_id: outbe_compressed_entities::derive_poseidon_entity_id(proposer, victim)?,
+            owner: proposer,
+            worldwide_day: victim,
+            issuance_amount_minor: U256::from(1),
+            issuance_currency: 840,
+            nominal_amount_minor: U256::from(1),
+            reference_currency: 840,
+            tribute_price_minor: U256::from(1),
+            exclude_from_intex_issuance: false,
+        },
+    )?;
+    for boundary in [
+        victim_projection.forming_end,
+        victim_projection.lookback_end,
+        victim_projection.offering_end,
+    ] {
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::new(1, boundary, CHAIN_ID, proposer, vec![proposer]),
+            storage.clone(),
+        );
+        outbe_metadosis::commands::advance_active_worldwide_days(&ctx, seed_scope)?;
+    }
+    assert_eq!(
+        outbe_metadosis::api::worldwide_day(storage.clone(), victim)
+            .unwrap()
+            .unwrap()
+            .status,
+        outbe_metadosis::api::WorldwideDayStatus::Waiting
+    );
+    Ok(victim_projection.scheduled_process_time)
+}
+
+fn arm_capacity_cycle(
+    storage: StorageHandle<'_>,
+    fire_at: u64,
+    protocol_cycle_period: u64,
+) -> eyre::Result<()> {
+    let cycle = outbe_cycle::schema::Cycle::new(storage.clone());
+    cycle
+        .active_utc_day
+        .write(outbe_primitives::time::timestamp_to_date_key(fire_at))?;
+    for spec in outbe_cycle::triggers::ACTIVE_TRIGGERS {
+        cycle.last_executed_at.write(
+            &spec.id,
+            if spec.id == outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32() {
+                fire_at - protocol_cycle_period
+            } else {
+                fire_at
+            },
+        )?;
+    }
+
+    Ok(())
+}
+
+fn seed_dense_voter_participation(
+    storage: StorageHandle<'_>,
+    prev_day: u32,
+    validator_count: u32,
+) -> eyre::Result<()> {
+    let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
+    rewards
+        .daily_voter_count
+        .write(&prev_day, validator_count)?;
+    rewards
+        .daily_total_participation
+        .write(&prev_day, u64::from(validator_count))?;
+    for index in 0..validator_count {
+        let voter = numbered_test_address(0x12, u64::from(index));
+        rewards
+            .daily_voter_at
+            .get_nested(&prev_day)
+            .write(&index, voter)?;
+        rewards
+            .daily_participation
+            .get_nested(&prev_day)
+            .write(&voter, 1)?;
+    }
+
+    Ok(())
+}
+
+fn seed_dense_agent_recipients(
+    storage: StorageHandle<'_>,
+    prev_day: u32,
+    address_count: u64,
+) -> eyre::Result<()> {
+    let mut agent = outbe_agentreward::AgentRewardContract::new(storage);
+    for n in 0..address_count {
+        let waa = numbered_test_address(0x10, n);
+        let sra = numbered_test_address(0x11, n);
+        agent.increment_waa_tribute(prev_day.into(), waa)?;
+        agent.increment_sra_tribute(prev_day.into(), sra)?;
+    }
+    assert_eq!(
+        agent.get_all_waa_counts(prev_day.into()).unwrap().len(),
+        address_count as usize,
+        "GAS-05 fixture must seed all dense WAA recipients"
+    );
+    assert_eq!(
+        agent.get_all_sra_counts(prev_day.into()).unwrap().len(),
+        address_count as usize,
+        "GAS-05 fixture must seed all dense SRA recipients"
+    );
+
+    Ok(())
+}
+
+fn assert_dense_agent_settlement(
+    storage: StorageHandle<'_>,
+    prev_day: u32,
+    address_count: u64,
+) -> Result<(), outbe_primitives::error::PrecompileError> {
+    let agent = outbe_agentreward::AgentRewardContract::new(storage.clone());
+    assert!(
+        agent.get_all_waa_counts(prev_day.into())?.is_empty(),
+        "GAS-05: dense WAA day index must be cleared after CycleTick settlement"
+    );
+    assert!(
+        agent.get_all_sra_counts(prev_day.into())?.is_empty(),
+        "GAS-05: dense SRA day index must be cleared after CycleTick settlement"
+    );
+
+    let mut claimable_total = U256::ZERO;
+    for n in 0..address_count {
+        let waa = numbered_test_address(0x10, n);
+        let sra = numbered_test_address(0x11, n);
+        let waa_claimable = agent.get_claimable_reward(waa)?;
+        let sra_claimable = agent.get_claimable_reward(sra)?;
+        assert!(
+            !waa_claimable.is_zero(),
+            "GAS-05: dense WAA recipient {waa} received zero claimable reward"
+        );
+        assert!(
+            !sra_claimable.is_zero(),
+            "GAS-05: dense SRA recipient {sra} received zero claimable reward"
+        );
+        claimable_total += waa_claimable + sra_claimable;
+    }
+    assert!(
+        !claimable_total.is_zero(),
+        "GAS-05: dense CycleTick must credit claimable AgentReward balances"
+    );
+    assert_eq!(
+        storage.balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)?,
+        claimable_total,
+        "GAS-05: AgentReward backing balance must match dense claimable total"
+    );
+    Ok(())
+}
+
+struct ApprovedFactoryExpected {
+    issuer: Address,
+    forced_surplus: U256,
+    token_id: B256,
+    token: Address,
+}
+fn assert_approved_factory_state(
+    state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
+    block_context: BlockContext,
+    expected: ApprovedFactoryExpected,
+) -> eyre::Result<()> {
+    let ApprovedFactoryExpected {
+        issuer,
+        forced_surplus,
+        token_id: expected_token_id,
+        token: expected_token,
+    } = expected;
+    let mut provider = super::DirectStorageProvider::new(state, block_context.clone());
+    let storage = StorageHandle::new(&mut provider);
+    let vote = Vote::new(storage.clone());
+    let factory = StablecoinFactoryContract::new(storage.clone());
+    assert_eq!(
+        vote.proposals
+            .get(U256::from(1u64))
+            .unwrap()
+            .unwrap()
+            .proposal_status()
+            .unwrap(),
+        ProposalStatus::Approved
+    );
+    assert_eq!(
+        vote.proposal_bond(U256::from(1u64)).unwrap().settlement,
+        BondSettlement::Refunded
+    );
+    assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
+    assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);
+    assert_eq!(storage.balance(issuer).unwrap(), STABLECOIN_CREATE_BOND);
+    assert_eq!(factory.token_count().unwrap(), U256::from(1u64));
+    assert_eq!(
+        factory.registered_token_id(expected_token).unwrap(),
+        Some(expected_token_id)
+    );
+    assert_eq!(
+        factory.token_id_of(expected_token).unwrap(),
+        expected_token_id
+    );
+    assert!(!factory.reservations.exists(U256::from(1u64)).unwrap());
+
+    Ok(())
+}
+
+struct CapacityParent {
+    state: State<CacheDB<EmptyDBTyped<ProviderError>>>,
+    tree_directory: tempfile::TempDir,
+    tree_service: Arc<CompressedTreeService>,
+    seed_hash: B256,
+    seed_root: B256,
+    body_reader: StorageReaderHandle,
+    fire_at: u64,
+}
+fn prepare_capacity_parent(proposer: Address) -> eyre::Result<CapacityParent> {
+    let victim = WorldwideDay::new(2023_1101);
+    let day_limit = U256::from(100);
+    let (tree_directory, tree_service) = persistent_test_tree(B256::ZERO);
+    let empty_root = outbe_compressed_entities::sealed_root(B256::ZERO)?;
+    let parent_tree = tree_service.open_parent(ExactParentIdentity {
+        commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+        block_number: 0,
+        block_hash: B256::ZERO,
+        root: empty_root,
+    })?;
+    let seed_scope =
+        ExecutionScope::with_parent_tree(parent_tree, CeWorkConfig::new(0, 0, u64::MAX));
+    let body_storage = Arc::new(MemoryStorage::new());
+    let body_reader: StorageReaderHandle = body_storage;
+    let tribute_parent = TributeRepositoryReader::new(body_reader.clone());
+    let mut seeded = None;
+    let state = state_with_active_validators_seeded_at_block_with_cycle_frames(
+        &[(proposer, dummy_pubkey(0xA3))],
+        1,
+        4,
+        |storage| {
+            seeded = Some(seed_capacity_storage(
+                storage,
+                &CapacityVictim {
+                    proposer,
+                    victim,
+                    day_limit,
+                    scope: &seed_scope,
+                    parent: &tribute_parent,
+                },
+            ));
+        },
+    );
+    let (fire_at, staged_tree_batch) =
+        seeded.ok_or_else(|| eyre::eyre!("capacity storage must be seeded"))??;
+    let seed_hash = B256::repeat_byte(0xA5);
+    let seed_root = staged_tree_batch.new_root();
+    tree_service.publish_candidate(seed_hash, staged_tree_batch)?;
+    tree_service.apply_finalized(1, seed_hash, seed_root)?;
+
+    Ok(CapacityParent {
+        state,
+        tree_directory,
+        tree_service,
+        seed_hash,
+        seed_root,
+        body_reader,
+        fire_at,
+    })
+}
+fn seed_capacity_storage(
+    storage: StorageHandle<'_>,
+    fixture: &CapacityVictim<'_>,
+) -> eyre::Result<(u64, outbe_compressed_entities::ProvisionalTreeBatch)> {
+    let CapacityVictim {
+        proposer,
+        victim,
+        day_limit,
+        scope: seed_scope,
+        parent: tribute_parent,
+    } = *fixture;
+    outbe_compressed_entities::begin_block(storage.clone(), seed_scope)?;
+    seed_retained_capacity_days(storage.clone(), proposer, victim)?;
+    let scheduled = seed_waiting_capacity_victim(
+        storage.clone(),
+        &CapacityVictim {
+            proposer,
+            victim,
+            day_limit,
+            scope: seed_scope,
+            parent: tribute_parent,
+        },
+    )?;
+    let tribute = TributeContract::new(storage.clone());
+    tribute.day_totals.update(&outbe_tribute::DayTotals {
+        worldwide_day: victim,
+        initialized: true,
+        tribute_count: u32::MAX,
+        tribute_nominal_total_minor: U256::MAX,
+        is_sealed: true,
+    })?;
+    tribute.total_supply.write(u64::from(u32::MAX))?;
+    let protocol_cycle_period = 3_600;
+    let fire_at = scheduled.div_ceil(protocol_cycle_period) * protocol_cycle_period;
+    arm_capacity_cycle(storage.clone(), fire_at, protocol_cycle_period)?;
+    let staged_tree_batch =
+        outbe_compressed_entities::end_block(storage, seed_scope)?.staged_tree_batch;
+    Ok((fire_at, staged_tree_batch))
 }

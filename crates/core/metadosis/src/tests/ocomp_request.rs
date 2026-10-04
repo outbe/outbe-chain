@@ -1506,8 +1506,8 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
             outbe_promislimit::PromisLimitContract::new(storage.clone())
                 .get_total_unallocated()
                 .unwrap(),
-            U256::from(968),
-            "the request credits what Lysis left of the day's own emission"
+            U256::from(900),
+            "the request credits what Lysis left and reserves the Desis Limit"
         );
     });
 }

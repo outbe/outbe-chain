@@ -26,6 +26,21 @@ pub(crate) struct ExpiredFailure<'attempt> {
     pub(crate) outer_transition: &'attempt OuterWwdTransition,
 }
 
+impl MetadosisContract<'_> {
+    /// What a failed day routes to the accumulator: its whole limit when no request took effect,
+    /// otherwise what the request retained.
+    pub(crate) fn failure_value_routed(
+        &self,
+        worldwide_day: WorldwideDay,
+        day_limit: U256,
+    ) -> Result<U256> {
+        match self.request_limit_receipt(worldwide_day, &poc_schema_limits())? {
+            Some(receipt) => crate::ocomp_limits::retained_request_limit(&receipt),
+            None => Ok(day_limit),
+        }
+    }
+}
+
 /// Atomically closes one deterministic Metadosis protocol failure without
 /// discarding its immutable OCOMP evidence.
 pub(crate) fn fail_worldwide_day(
@@ -40,11 +55,8 @@ pub(crate) fn fail_worldwide_day(
     })?;
     let mut metadosis = MetadosisContract::new(storage.clone());
     let limits = poc_schema_limits();
-    let unused_limit = metadosis
-        .request_limit_receipt(worldwide_day, &limits)?
-        .map_or(current.metadosis_limit_minor, |receipt| {
-            receipt.lysis_limit_minor
-        });
+    let unused_limit =
+        metadosis.failure_value_routed(worldwide_day, current.metadosis_limit_minor)?;
 
     if current.status == WwdStatus::Failed {
         metadosis
@@ -83,8 +95,9 @@ pub(crate) fn fail_worldwide_day(
 /// Completes an OCOMP expiry as the same atomic FAILED contract
 /// used by every other exact-WWD business failure. The expiry transition has
 /// already written immutable `Expired` attempt evidence, but the live FSM and
-/// outer WWD remain active until this function credits the retained Lysis Limit,
-/// retires Tribute as the final CE mutation, and commits the terminal state.
+/// outer WWD remain active until this function credits the Lysis and Desis Limits
+/// the request retained, retires Tribute as the final CE mutation, and commits the
+/// terminal state.
 pub(crate) fn fail_expired_ocomp_day(
     storage: StorageHandle<'_>,
     failure: ExpiredFailure<'_>,
@@ -134,8 +147,12 @@ fn expired_job_binding(
     worldwide_day: WorldwideDay,
     unused_limit: U256,
 ) -> bool {
+    let frozen = &record.intent.frozen_metadosis_values;
     record.intent.wwd == worldwide_day.value()
-        && record.intent.frozen_metadosis_values.lysis_limit_minor == unused_limit
+        && frozen
+            .lysis_limit_minor
+            .checked_add(frozen.desis_limit_minor)
+            == Some(unused_limit)
 }
 fn expired_evidence(record: &outbe_ocomp_protocol::state::OcompJobRecordV1) -> bool {
     record.status == outbe_ocomp_protocol::state::OcompJobStatus::Expired

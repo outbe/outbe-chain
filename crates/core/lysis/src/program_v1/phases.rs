@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{derive_poseidon_entity_id, WwdEntityId};
 use outbe_nod::NodContract;
+use outbe_ocomp_protocol::result::NodActionV1 as CertifiedNodActionV1;
 use outbe_primitives::time::WorldwideDay;
 
 use super::{
@@ -59,7 +60,6 @@ pub struct AmountRecordV1 {
     pub gratis_fraction_fp: U256,
     pub gratis_load_minor: U256,
     pub entry_price_minor: U256,
-    pub floor_price_minor: U256,
     pub settlement_cost_minor: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
@@ -109,6 +109,31 @@ pub struct BucketRecordV1 {
     pub raw_ordinal: u32,
     pub tribute_id: WwdEntityId,
     pub nod_id: WwdEntityId,
+}
+
+/// Key of the shuffle bucket a Nod action sorts into: its day, entry price and currency.
+pub trait NodBucketKeyV1 {
+    fn bucket_key(&self) -> B256;
+}
+
+impl NodBucketKeyV1 for NodActionV1 {
+    fn bucket_key(&self) -> B256 {
+        NodContract::bucket_key(
+            self.worldwide_day,
+            self.entry_price_minor,
+            self.reference_currency,
+        )
+    }
+}
+
+impl NodBucketKeyV1 for CertifiedNodActionV1 {
+    fn bucket_key(&self) -> B256 {
+        NodContract::bucket_key(
+            WorldwideDay::new(self.wwd),
+            self.entry_price_minor,
+            self.reference_currency,
+        )
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -440,12 +465,11 @@ pub fn amount_map(
                 ordinal: raw_ordinal as usize,
             });
         }
-        let floor_price_minor =
-            NodContract::floor_price_minor(entry_price_minor).ok_or_else(|| {
-                ProgramErrorV1::Arithmetic {
-                    message: format!("Nod floor overflow at {raw_ordinal}"),
-                }
-            })?;
+        if !NodContract::is_issuable_entry(entry_price_minor) {
+            return Err(ProgramErrorV1::Arithmetic {
+                message: format!("Nod entry price out of bounds at {raw_ordinal}"),
+            });
+        }
         let settlement_cost_minor =
             calculate_cost(entry_price_minor, gratis_load_minor, raw_ordinal as usize)?;
         checked_segment_gratis_total = checked_segment_gratis_total
@@ -463,7 +487,6 @@ pub fn amount_map(
             gratis_fraction_fp: fraction,
             gratis_load_minor,
             entry_price_minor,
-            floor_price_minor,
             settlement_cost_minor,
             issuance_currency: item.tribute.issuance_currency,
             reference_currency: item.tribute.reference_currency,
@@ -629,7 +652,6 @@ pub fn finalize_gratis_leaf(
 pub fn output_finalize(
     amounts: &AmountRunV1,
     prefix: &GratisLeafPrefixV1,
-    logical_evaluation_time: u64,
 ) -> Result<FinalizedOutputRunV1, ProgramErrorV1> {
     if amounts.ordered_records.is_empty()
         || amounts.start_ordinal / PRIMARY_WORK_SHARD_SIZE != prefix.segment_ordinal
@@ -668,11 +690,6 @@ pub fn output_finalize(
                     message: error.to_string(),
                 }
             })?;
-        let bucket_key = NodContract::bucket_key(
-            amount.worldwide_day,
-            amount.floor_price_minor,
-            amount.reference_currency,
-        );
         ordered_records.push(FinalizedOutputRecordV1 {
             raw_ordinal: amount.raw_ordinal,
             nod_action: NodActionV1 {
@@ -681,14 +698,11 @@ pub fn output_finalize(
                 owner: amount.owner,
                 worldwide_day: amount.worldwide_day,
                 league_id: amount.league_id,
-                floor_price_minor: amount.floor_price_minor,
                 gratis_load_minor: amount.gratis_load_minor,
                 entry_price_minor: amount.entry_price_minor,
                 settlement_cost_minor: amount.settlement_cost_minor,
                 issuance_currency: amount.issuance_currency,
                 reference_currency: amount.reference_currency,
-                bucket_key,
-                issued_at: logical_evaluation_time,
             },
             contributor_action: (!amount.exclude_from_intex_issuance).then_some(
                 FinalizedContributorV1 {
@@ -782,7 +796,7 @@ pub fn shuffle_buckets(run: &FinalizedOutputRunV1) -> Result<BucketOrderedRunV1,
         .ordered_records
         .iter()
         .map(|record| BucketRecordV1 {
-            bucket_key: record.nod_action.bucket_key,
+            bucket_key: record.nod_action.bucket_key(),
             raw_ordinal: record.raw_ordinal,
             tribute_id: record.nod_action.source_tribute_id,
             nod_id: record.nod_action.nod_id,

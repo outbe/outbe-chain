@@ -69,11 +69,12 @@ where
     // Save DKG state to keys_dir for future restarts.
     if let Some(ref keys_dir) = args.keys_dir {
         let save_result = save_dkg_state(
-            keys_dir,
-            &signing_share,
-            &polynomial,
-            &dkg_result.output,
-            key_backend,
+            DkgStateStore::new(keys_dir, key_backend),
+            DkgStateMaterial {
+                share: &signing_share,
+                polynomial: &polynomial,
+                output: &dkg_result.output,
+            },
         );
         if let Err(e) = save_result {
             warn!(

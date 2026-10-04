@@ -57,7 +57,6 @@ fn fixture() -> Arc<MemoryStorage> {
                 gratis_load_minor: U256::from(1),
                 worldwide_day: id(seed).worldwide_day(),
                 league_id: 7,
-                floor_price_minor: U256::from(2),
                 bucket_key: B256::repeat_byte(0x33),
                 issuance_currency: 840,
                 reference_currency: 978,
@@ -69,7 +68,6 @@ fn fixture() -> Arc<MemoryStorage> {
                 settled_nods: 0,
                 bucket_key: B256::with_last_byte(seed + 10),
                 worldwide_day: id(seed).worldwide_day(),
-                floor_price_minor: U256::from(1),
                 entry_price_minor: U256::from(2),
                 reference_currency: 978,
             })

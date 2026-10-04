@@ -16,7 +16,6 @@ fn item(owner: Address, day: u32) -> NodItemState {
         gratis_load_minor: U256::from(11),
         worldwide_day: WorldwideDay::new(day),
         league_id: 4,
-        floor_price_minor: U256::from(13),
         bucket_key: [1; 32].into(),
         issuance_currency: 840,
         reference_currency: 840,

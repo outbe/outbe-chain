@@ -297,6 +297,34 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
 }
 
 /// Build the canonical V2 **Finalization** parent-proof record from a
+/// Certified proposal identity and its finalized execution height.
+pub struct RecoveredFinalizedBlock {
+    pub proposal: crate::finalization::late_sig_store::FinalizeVoteTarget,
+    pub number: u64,
+}
+
+impl RecoveredFinalizedBlock {
+    pub fn from_proposal(
+        number: u64,
+        proposal: &commonware_consensus::simplex::types::Proposal<Digest>,
+    ) -> Self {
+        Self {
+            number,
+            proposal: crate::finalization::late_sig_store::FinalizeVoteTarget::from_proposal(
+                proposal,
+            ),
+        }
+    }
+}
+
+/// Certificate bytes and the committee authority used to rebuild their canonical record.
+pub struct RecoveredFinalizationMaterial<'a> {
+    pub ordered_committee: &'a [Address],
+    pub certificate: &'a HybridCertificate<MinSig>,
+    pub encoded_certificate: Bytes,
+    pub scheme: &'a HybridScheme<MinSig>,
+}
+
 /// marshal-recovered finalization.
 ///
 /// After a restart (or under brief finalization lag) the in-process
@@ -321,6 +349,46 @@ pub fn build_finalization_record_from_recovered(
     encoded_certificate: Bytes,
     scheme: &HybridScheme<MinSig>,
 ) -> Result<CertifiedParentProofRecord, SnapshotBuildError> {
+    build_recovered_finalization_record(
+        RecoveredFinalizedBlock {
+            proposal: crate::finalization::late_sig_store::FinalizeVoteTarget {
+                epoch: finalized_epoch,
+                view: finalized_view,
+                parent_view,
+                fb_hash: finalized_block_hash,
+            },
+            number: finalized_block_number,
+        },
+        RecoveredFinalizationMaterial {
+            ordered_committee,
+            certificate,
+            encoded_certificate,
+            scheme,
+        },
+    )
+}
+
+/// Rebuild the byte-identical durable record from cohesive certified inputs.
+pub fn build_recovered_finalization_record(
+    block: RecoveredFinalizedBlock,
+    material: RecoveredFinalizationMaterial<'_>,
+) -> Result<CertifiedParentProofRecord, SnapshotBuildError> {
+    let RecoveredFinalizedBlock {
+        proposal,
+        number: finalized_block_number,
+    } = block;
+    let crate::finalization::late_sig_store::FinalizeVoteTarget {
+        epoch: finalized_epoch,
+        view: finalized_view,
+        parent_view,
+        fb_hash: finalized_block_hash,
+    } = proposal;
+    let RecoveredFinalizationMaterial {
+        ordered_committee,
+        certificate,
+        encoded_certificate,
+        scheme,
+    } = material;
     let prelude = build_committee_prelude(scheme, ordered_committee, finalized_epoch)?;
     Ok(CertifiedParentProofRecord {
         format_version: CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,

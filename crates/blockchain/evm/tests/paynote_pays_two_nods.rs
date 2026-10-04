@@ -20,6 +20,10 @@
 //! The ERC20/ERC4626 counterparties are the stateful `FactorySettlement` fixture;
 //! VaultRouter, PayNote, NodFactory, Nod, GratisFactory and Gratis all run for real.
 
+#[path = "common/nod_qualification.rs"]
+mod qualify_fixture;
+use qualify_fixture::qualify;
+
 use outbe_protocol::codec::field_to_b256;
 use std::sync::Arc;
 
@@ -77,27 +81,6 @@ const NOTE_KEY: u64 = 17;
 const COST: u128 = 500;
 const GRATIS_LOAD: u128 = 1_000;
 const BLOCK_TIMESTAMP: u64 = 1_700_000_000;
-
-/// Closes the bucket's first full day above its floor, which qualifies it.
-fn qualify(storage: &StorageHandle<'_>, bucket_key: B256, floor: U256, iso: u16) {
-    let issued_at = NodContract::new(storage.clone())
-        .callable_bucket_issued_at
-        .read(&bucket_key)
-        .unwrap();
-    let pair = outbe_oracle::api::AddressPair::new_coen_to(iso);
-    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-    let mut index = oracle.pair_index_of(pair).unwrap();
-    if index == 0 {
-        index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
-    }
-    let day = outbe_primitives::time::first_full_day(issued_at);
-    oracle
-        .record_utc_day_vwap(day, index, floor + U256::ONE)
-        .unwrap();
-    if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
-        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
-    }
-}
 
 /// One Nod per owner per day, so two Nods for one owner means two days. They
 /// share `ALICE1` as their owner. Each spend proof binds the Nod it settles.
@@ -276,7 +259,7 @@ fn fixture_with_cost(
                 NodContract::floor_price_minor(params.entry_price_minor).unwrap();
             let bucket_key = NodContract::bucket_key(
                 params.worldwide_day,
-                floor_price_minor,
+                params.entry_price_minor,
                 params.reference_currency,
             );
             qualify(
@@ -284,7 +267,8 @@ fn fixture_with_cost(
                 bucket_key,
                 floor_price_minor,
                 params.reference_currency,
-            );
+            )
+            .expect("bucket qualifies");
             nod_id
         })
     });

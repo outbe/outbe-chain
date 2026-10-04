@@ -68,16 +68,14 @@ pub(super) fn terminal_receipt(
             metadosis.read_capacity_forfeiture_receipt(wwd)?;
         }
         crate::terminal::model::WwdTerminalReceipt::MetadosisFailure(_) => {
-            let expected_value_routed = metadosis
-                .request_limit_receipt(wwd, &crate::ocomp::schema::poc_schema_limits())?
-                .map_or(
-                    metadosis
-                        .worldwide_days
-                        .entry(wwd)
-                        .metadosis_limit_minor()
-                        .read()?,
-                    |receipt| receipt.lysis_limit_minor,
-                );
+            let expected_value_routed = metadosis.failure_value_routed(
+                wwd,
+                metadosis
+                    .worldwide_days
+                    .entry(wwd)
+                    .metadosis_limit_minor()
+                    .read()?,
+            )?;
             metadosis.read_metadosis_failure_receipt(wwd, expected_value_routed)?;
         }
     }

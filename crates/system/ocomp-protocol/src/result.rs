@@ -33,14 +33,11 @@ wire_struct! {
         pub owner: Address,
         pub wwd: u32,
         pub league_id: u16,
-        pub floor_price_minor: U256,
         pub gratis_load_minor: U256,
         pub entry_price_minor: U256,
         pub settlement_cost_minor: U256,
         pub issuance_currency: u16,
         pub reference_currency: u16,
-        pub issued_at: u64,
-        pub bucket_key: B256,
     }
 }
 

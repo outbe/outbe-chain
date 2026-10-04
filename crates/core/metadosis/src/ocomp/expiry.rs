@@ -249,6 +249,10 @@ fn expire_exact(
             "terminal OCOMP expiry returned a different retained limit",
         ));
     }
+    let value_routed = metadosis
+        .request_limit_receipt(before.worldwide_day, &poc_schema_limits())?
+        .ok_or_else(|| storage_corruption_message("expired OCOMP day has no request receipt"))
+        .and_then(|receipt| crate::ocomp_limits::retained_request_limit(&receipt))?;
     crate::terminal::fail_expired_ocomp_day(
         ctx.storage.clone(),
         crate::terminal::ExpiredFailure {
@@ -256,13 +260,13 @@ fn expire_exact(
                 block_number: ctx.block.block_number,
                 scope,
                 worldwide_day: before.worldwide_day,
-                unused_limit: retained_lysis_limit_minor,
+                unused_limit: value_routed,
             },
             intent_id,
             outer_transition,
         },
     )?;
-    validate_expired_post_state(metadosis, before, intent_id, expected_retained_limit_minor)?;
+    validate_expired_post_state(metadosis, before, intent_id, value_routed)?;
     metadosis.emit(IMetadosis::OffchainJobExpired {
         intentId: intent_id,
         wwd: before.worldwide_day.value(),
@@ -274,14 +278,14 @@ fn validate_expired_post_state(
     metadosis: &MetadosisContract<'_>,
     before: JobFsmProjection,
     intent_id: B256,
-    expected_retained_limit_minor: alloy_primitives::U256,
+    value_routed: alloy_primitives::U256,
 ) -> Result<()> {
     let inconsistent = || storage_corruption_message("OCOMP expiry post-state is inconsistent");
     if metadosis.get_wwd_status(before.worldwide_day)? != crate::aggregate::WwdStatus::Failed {
         return Err(inconsistent());
     }
     if metadosis
-        .read_metadosis_failure_receipt(before.worldwide_day, expected_retained_limit_minor)?
+        .read_metadosis_failure_receipt(before.worldwide_day, value_routed)?
         .is_none()
     {
         return Err(inconsistent());

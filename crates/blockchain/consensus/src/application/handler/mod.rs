@@ -99,6 +99,7 @@ pub(crate) struct ApplicationShared {
 
     /// Marshal mailbox for digest-bound block resolution.
     pub(crate) marshal_mailbox: crate::marshal_types::MarshalMailbox,
+    publication: super::publication::ProposalPublication,
 
     /// Epoch-scoped verifier schemes for carried finalized-parent certificates.
     certificate_scheme_provider: HybridSchemeProvider<MinSig>,
@@ -194,6 +195,7 @@ pub struct ApplicationDeps {
     pub chain_id: u64,
     pub ocomp_lifecycle_activation: OcompLifecycleActivation,
     pub marshal_mailbox: crate::marshal_types::MarshalMailbox,
+    pub publication: super::publication::ProposalPublication,
     pub certificate_scheme_provider: HybridSchemeProvider<MinSig>,
     pub elector_config_provider: HybridElectorConfigProvider<MinSig>,
     pub committee_provider: CommitteeProvider,
@@ -234,6 +236,7 @@ impl ApplicationHandler {
             chain_id,
             ocomp_lifecycle_activation,
             marshal_mailbox,
+            publication,
             certificate_scheme_provider,
             elector_config_provider,
             committee_provider,
@@ -263,6 +266,7 @@ impl ApplicationHandler {
                 chain_id,
                 ocomp_lifecycle_activation,
                 marshal_mailbox,
+                publication,
                 certificate_scheme_provider,
                 elector_config_provider,
                 committee_provider,

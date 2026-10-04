@@ -9,7 +9,7 @@ use outbe_lysis::program_v1::artifacts::{
     encode_enumerated_run, encode_fidelity_map_output, encode_finalized_output_run,
     encode_fixed_reduce_output, encode_gratis_prefix_down_output, encode_gratis_segment_summary,
     encode_raw_coverage_carrier, enumerate_tributes, gratis_summary_coverage, FixedReduceOutputV1,
-    GratisPrefixDownOutputV1, RawCoverageCarrierV1,
+    GratisPrefixDownOutputV1, LysisArtifactErrorV1, RawCoverageCarrierV1,
 };
 use outbe_lysis::program_v1::phases::{
     amount_map, fidelity_map, fidelity_reduce, fidelity_reduce_pair, finalize_fi_fraction_table,
@@ -2061,7 +2061,7 @@ fn dust_cost_matches_between_worker_sequential_lysis_and_nod_settlement() {
         .map(|record| record.gratis_load_minor)
         .collect::<Vec<_>>();
     let prefix = finalize_gratis_leaf(Some(budget), 0, &loads).unwrap();
-    let finalized = output_finalize(&amount, &prefix, logical_time).unwrap();
+    let finalized = output_finalize(&amount, &prefix).unwrap();
     let finalized = decode_finalized_output_run(
         &encode_finalized_output_run(&finalized, &limits).unwrap(),
         &limits,
@@ -2215,8 +2215,8 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
             .collect::<Vec<_>>(),
     )
     .unwrap();
-    let finalized_left = output_finalize(&amount_left, &left_prefix, logical_time).unwrap();
-    let finalized_right = output_finalize(&amount_right, &right_prefix, logical_time).unwrap();
+    let finalized_left = output_finalize(&amount_left, &left_prefix).unwrap();
+    let finalized_right = output_finalize(&amount_right, &right_prefix).unwrap();
     assert_eq!(
         finalized_left.checked_tribute_nominal_total,
         amount_left
@@ -2438,11 +2438,11 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
 
     let mut wrong_prefix = left_prefix.clone();
     wrong_prefix.outgoing_remaining += U256::from(1);
-    assert!(output_finalize(&amount_left, &wrong_prefix, logical_time).is_err());
+    assert!(output_finalize(&amount_left, &wrong_prefix).is_err());
 
     let mut wrong_amount_summary = amount_left;
     wrong_amount_summary.checked_segment_gratis_total += U256::from(1);
-    assert!(output_finalize(&wrong_amount_summary, &left_prefix, logical_time).is_err());
+    assert!(output_finalize(&wrong_amount_summary, &left_prefix).is_err());
 }
 
 #[test]
@@ -2460,7 +2460,6 @@ fn output_finalize_commits_all_excluded_nominal_once_per_shard_and_checks_overfl
             gratis_fraction_fp: SIX_DECIMAL_SCALE,
             gratis_load_minor: U256::from(1),
             entry_price_minor: SIX_DECIMAL_SCALE,
-            floor_price_minor: SIX_DECIMAL_SCALE,
             settlement_cost_minor: U256::from(1),
             issuance_currency: 840,
             reference_currency: 978,
@@ -2488,12 +2487,7 @@ fn output_finalize_commits_all_excluded_nominal_once_per_shard_and_checks_overfl
         first_error_ordinal: None,
     };
 
-    let finalized = output_finalize(
-        &run([U256::from(7), U256::from(11)]),
-        &prefix,
-        1_784_765_900,
-    )
-    .unwrap();
+    let finalized = output_finalize(&run([U256::from(7), U256::from(11)]), &prefix).unwrap();
     assert_eq!(finalized.checked_tribute_nominal_total, U256::from(18));
     assert!(finalized
         .ordered_records
@@ -2507,9 +2501,75 @@ fn output_finalize_commits_all_excluded_nominal_once_per_shard_and_checks_overfl
     );
 
     assert!(matches!(
-        output_finalize(&run([U256::MAX, U256::from(1)]), &prefix, 1_784_765_900,),
+        output_finalize(&run([U256::MAX, U256::from(1)]), &prefix),
         Err(ProgramErrorV1::TotalNominalOverflow { ordinal: 1 })
     ));
+}
+
+#[test]
+fn an_entry_beyond_the_call_price_bound_is_never_certified() {
+    let day = WorldwideDay::new(20_260_724);
+    let entry = U256::MAX / U256::from(100 + u32::from(u16::MAX)) + U256::from(1);
+    assert!(outbe_nod::NodContract::floor_price_minor(entry).is_some());
+    let mut item = observed(1, day, 100, 1, false);
+    item.entry_price_minor = ObservationValueV1::Value(entry);
+    let tributes = vec![item];
+    let budget = U256::from(100);
+    assert!(matches!(
+        execute(ProgramInputV1 {
+            worldwide_day: day,
+            logical_evaluation_time: 1_784_765_900,
+            lysis_limit_minor: budget,
+            tributes: tributes.clone(),
+        }),
+        Err(ProgramErrorV1::Arithmetic { .. })
+    ));
+    let fidelity = fidelity_map(0, &tributes).unwrap();
+    let fractions = finalize_fi_fraction_table(&fidelity.aggregate, budget).unwrap();
+    assert!(matches!(
+        amount_map(0, &tributes, &fidelity.observations, &fractions),
+        Err(ProgramErrorV1::Arithmetic { .. })
+    ));
+
+    let owner = Address::repeat_byte(1);
+    let amount = AmountRunV1 {
+        start_ordinal: 0,
+        end_ordinal: 1,
+        ordered_records: vec![AmountRecordV1 {
+            raw_ordinal: 0,
+            tribute_id: derive_poseidon_entity_id(owner, day).unwrap(),
+            owner,
+            worldwide_day: day,
+            league_id: 1,
+            nominal_amount_minor: U256::from(100),
+            gratis_fraction_fp: SIX_DECIMAL_SCALE,
+            gratis_load_minor: U256::from(1),
+            entry_price_minor: entry,
+            settlement_cost_minor: U256::from(1),
+            issuance_currency: 840,
+            reference_currency: 978,
+            exclude_from_intex_issuance: false,
+        }],
+        checked_segment_gratis_total: U256::from(1),
+    };
+    let limits = poc_schema_limits();
+    assert!(matches!(
+        encode_amount_run(&amount, &limits),
+        Err(LysisArtifactErrorV1::InvalidEncoding(
+            "amount run Nod entry price bound"
+        ))
+    ));
+    let finalized = output_finalize(
+        &amount,
+        &GratisLeafPrefixV1 {
+            segment_ordinal: 0,
+            incoming_remaining: U256::from(2),
+            outgoing_remaining: U256::from(1),
+            first_error_ordinal: None,
+        },
+    )
+    .unwrap();
+    assert!(encode_finalized_output_run(&finalized, &limits).is_err());
 }
 
 #[test]

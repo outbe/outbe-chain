@@ -86,7 +86,8 @@ fn verify_execution_preserves_verdict_and_side_effect_order() {
                 let clock = context.child("verify_matrix");
                 let (marshal, keepalive, actor) =
                     start_marshal_without_available_block(context).await;
-                let mut shared = finalizer_test_shared(marshal, HybridSchemeProvider::new());
+                let mut shared =
+                    finalizer_test_shared(&clock, marshal, HybridSchemeProvider::new());
                 let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
                 shared.shared.engine = super::super::EngineHandle::new(engine_tx);
                 let (executor_tx, mut executor_rx) = futures::channel::mpsc::unbounded();
@@ -284,7 +285,8 @@ fn verify_prechecks_reject_or_withhold_before_engine_work() {
                 let clock = context.child("verify_prechecks");
                 let (marshal, keepalive, actor) =
                     start_marshal_without_available_block(context).await;
-                let mut shared = finalizer_test_shared(marshal, HybridSchemeProvider::new());
+                let mut shared =
+                    finalizer_test_shared(&clock, marshal, HybridSchemeProvider::new());
                 let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
                 shared.shared.engine = super::super::EngineHandle::new(engine_tx);
                 let parent = consensus_block_with_timestamp(0x72, 1, 2_000);
