@@ -14,7 +14,10 @@ use alloy_consensus::{Header, Sealable};
 use alloy_primitives::B256;
 use outbe_compressed_entities::{CeMdbxReadOnly, EnvironmentIdentity, ACTIVE_COMMITMENT_SCHEME};
 use outbe_ocomp::discovery_spool::inspect_closure_checkpoint;
-use outbe_offchain_storage::{RocksDbReader, StorageBackend, StorageConfig};
+use outbe_offchain_storage::{
+    partitioned::adapters::RocksPartitionReadView, PartitionedStorage, StorageBackend,
+    StorageConfig,
+};
 use outbe_primitives::{projection::ProjectionCheckpoint, OutbeHeader, OutbePrimitives};
 use outbe_snapshot::{
     archive::read_archive_index,
@@ -551,7 +554,10 @@ fn open_native_stores(roots: &RecipientRoots, fixture: &StoppedFixture) {
             genesis_hash: fixture.genesis_hash,
             start_block: config.start_block,
         },
-        Arc::new(RocksDbReader::open(&rocks.path, &rocks.secondary_path).unwrap()),
+        Arc::new(PartitionedStorage::read_only(
+            Arc::new(RocksPartitionReadView::open(&rocks.path, &rocks.secondary_path).unwrap()),
+            outbe_offchain_data::entity_partition_routing().unwrap(),
+        )),
     )
     .unwrap()
     .unwrap()
