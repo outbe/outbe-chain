@@ -65,16 +65,22 @@ pub fn set_state(storage: &StorageHandle<'_>, gem_id: U256, new_state: GemState)
 /// Issuance-time privilege bit. Absent storage reads as zero.
 const ISSUED_BEFORE_FIRST_WWD: u8 = 1;
 
-/// Records that this Genesis gem was issued before any Worldwide Day.
-/// A later day does not clear it. A gem issued once a day is retained, or once
-/// the creation count is already above zero, never receives it.
-pub fn record_issued_before_first_wwd(storage: &StorageHandle<'_>, gem_id: U256) -> Result<()> {
-    let gem = GemContract::new(storage.clone());
-    if gem.issued_before_first_wwd.read(&gem_id)? == ISSUED_BEFORE_FIRST_WWD {
-        return Ok(());
-    }
-    gem.issued_before_first_wwd
-        .write(&gem_id, ISSUED_BEFORE_FIRST_WWD)
+/// Records this Genesis issue's classification. `false` writes 0 and replaces a
+/// privilege left on an id that burn freed in the same block. A later day does not
+/// rewrite a gem that is not issued again.
+pub fn record_genesis_issuance_privilege(
+    storage: &StorageHandle<'_>,
+    gem_id: U256,
+    issued_before_first_wwd: bool,
+) -> Result<()> {
+    let value = if issued_before_first_wwd {
+        ISSUED_BEFORE_FIRST_WWD
+    } else {
+        0
+    };
+    GemContract::new(storage.clone())
+        .issued_before_first_wwd
+        .write(&gem_id, value)
 }
 
 /// Qualified once a finalized daily VWAP closed above the floor. A zero floor clears on the
