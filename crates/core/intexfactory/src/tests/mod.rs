@@ -128,6 +128,7 @@ mod entrypoints;
 mod groups;
 mod issuance;
 mod lifecycle;
+mod mining_sequence;
 mod parked;
 mod router_fault;
 mod scans;

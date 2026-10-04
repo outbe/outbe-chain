@@ -38,3 +38,13 @@ test("the miner reproduces every shared Nod and Gem mining digest and first vali
     assert.equal(miningPowHash(vector.domain_tag, rightId, vector.owner, sequence, firstValid), vector.first_valid_hash);
   }
 });
+
+test("malformed byte fields are rejected instead of silently hashed", () => {
+  const vector = fixture.vectors[0];
+  const rightId = BigInt(vector.right_id);
+  assert.throws(() => miningPowHash("OUTBE_NOD_MINING", rightId, vector.owner, 0n, 1n), /19 bytes/);
+  assert.throws(() => miningPowHash(vector.domain_tag, rightId, "0x1111" as Address, 0n, 1n), /20 bytes/);
+  assert.throws(() => miningPowHash(vector.domain_tag, -1n, vector.owner, 0n, 1n), /rightId/);
+  assert.throws(() => miningPowHash(vector.domain_tag, rightId, vector.owner, 1n << 64n, 1n), /miningSequence/);
+  assert.throws(() => miningPowHash(vector.domain_tag, rightId, vector.owner, 0n, 1n << 64n), /nonce/);
+});
