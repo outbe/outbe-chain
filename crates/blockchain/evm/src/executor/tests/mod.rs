@@ -20,11 +20,10 @@ use alloy_primitives::{
 };
 use alloy_sol_types::{SolCall, SolEvent};
 use fixtures::{
-    begin_system_txs_for_test, begin_system_txs_for_test_with_bootstrap, block_one_execution_ctx,
-    boundary_with, boundary_with_epoch, cache_db_from_storage, dummy_pubkey, execution_ctx,
-    execution_ctx_with_tee_bootstrap, metadata_with, numbered_test_address, persistent_test_tree,
-    persistent_test_tree_with_marker, post_state_root,
-    register_and_activate_with_ocomp_registration, sample_tee_bootstrap_payload,
+    begin_system_txs_for_test, block_one_execution_ctx, boundary_with, boundary_with_epoch,
+    cache_db_from_storage, dummy_pubkey, execution_ctx, execution_ctx_with_tee_bootstrap,
+    metadata_with, numbered_test_address, persistent_test_tree, persistent_test_tree_with_marker,
+    post_state_root, register_and_activate_with_ocomp_registration, sample_tee_bootstrap_payload,
     sample_tee_bootstrap_payload_at, sample_tee_bootstrap_payload_for,
     seed_compressed_entities_genesis, seed_cycle_tick_genesis, seed_previous_day_vwap,
     seed_registered_active_validator, seed_test_committee_snapshot, seed_test_ocomp_profile,
@@ -35,7 +34,8 @@ use fixtures::{
     state_with_active_validators_seeded_at_block_with_cycle_frames, test_chain_spec, test_evm_env,
     test_evm_signer, test_metadata, test_ocomp_fork_install, test_oracle_submit_vote_tx,
     test_oracle_submit_vote_tx_with_gas_limit, test_register_active, test_register_waiting,
-    test_regular_tx, CHAIN_ID, OWNER, TEST_BLOCK_TIMESTAMP_BASE,
+    test_regular_tx, BeginBlockFixture, BootstrapFixture, CHAIN_ID, OWNER,
+    TEST_BLOCK_TIMESTAMP_BASE,
 };
 use k256::ecdsa::signature::hazmat::PrehashSigner as _;
 use outbe_compressed_entities::{

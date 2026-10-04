@@ -95,7 +95,7 @@ fn outbe_post_execution_preserves_behavior_for_absent_or_empty_withdrawals() {
     const CUMULATIVE_TX_GAS: u64 = 11;
     const STATE_GAS: u64 = 23;
 
-    use withdrawal_compatibility::{Case, run};
+    use withdrawal_compatibility::{run, Case};
     let cases = [
         Case {
             name: "shanghai-withdrawals-and-dao",
@@ -265,8 +265,17 @@ fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifact
         .with_evm_signer(signer)
         .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1))
         .with_ocomp_fork_install(install.clone());
-        let begin =
-            begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
+        let begin = begin_system_txs_for_test(
+            &config,
+            BeginBlockFixture {
+                block_number: 1,
+                parent_hash: B256::ZERO,
+                extra_data: &Bytes::new(),
+                parent_consensus_metadata: None,
+                proposer,
+                bootstrap: BootstrapFixture::StandardForBlock,
+            },
+        );
         let end = config
             .build_end_system_txs(1, CHAIN_ID, begin.len(), Some(proposer))
             .expect("terminal system tx builds");
@@ -480,11 +489,14 @@ fn proposer_validator_same_state_root() {
         });
         let system_txs = begin_system_txs_for_test(
             &config,
-            settle_block,
-            parent_hash,
-            &extra_data,
-            Some(metadata),
-            proposer,
+            BeginBlockFixture {
+                block_number: settle_block,
+                parent_hash,
+                extra_data: &extra_data,
+                parent_consensus_metadata: Some(metadata),
+                proposer,
+                bootstrap: BootstrapFixture::StandardForBlock,
+            },
         );
         for tx in system_txs {
             executor
@@ -565,7 +577,7 @@ fn proposer_validator_same_state_root() {
 
 #[test]
 fn factory_boundaries_are_byte_equal_across_proposer_and_validator_execution() {
-    use factory_boundary::{Boundary, run};
+    use factory_boundary::{run, Boundary};
 
     for boundary in [Boundary::Approved, Boundary::Expired, Boundary::Error] {
         let proposer = run(boundary, false).expect("proposer factory boundary");
@@ -673,11 +685,14 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
         parent_metadata.finalized_block_hash = seed_hash;
         let system_txs = begin_system_txs_for_test(
             &config,
-            2,
-            seed_hash,
-            &Bytes::new(),
-            Some(parent_metadata.clone()),
-            proposer,
+            BeginBlockFixture {
+                block_number: 2,
+                parent_hash: seed_hash,
+                extra_data: &Bytes::new(),
+                parent_consensus_metadata: Some(parent_metadata.clone()),
+                proposer,
+                bootstrap: BootstrapFixture::StandardForBlock,
+            },
         );
         let visible_envelopes: Vec<u64> = system_txs.iter().map(|tx| tx.tx().gas_limit()).collect();
         let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
@@ -1292,7 +1307,7 @@ fn late_credit_committee(
     B256,
 ) {
     use commonware_codec::Encode as _;
-    use commonware_cryptography::{Signer as _, bls12381};
+    use commonware_cryptography::{bls12381, Signer as _};
     use commonware_math::algebra::Random as _;
     use outbe_consensus::proof::{committee_set_hash_v2, CommitteeEntry, CommitteeSnapshot};
     let keys: Vec<bls12381::PrivateKey> = (0..4)
@@ -1377,9 +1392,9 @@ fn seed_late_credit_escrow(
 
 mod factory_boundary {
     use super::*;
-    use std::collections::BTreeMap;
     use reth_primitives_traits::Account as TrieAccount;
     use reth_trie::test_utils::state_root;
+    use std::collections::BTreeMap;
     const CREATION_BLOCK: u64 = 7;
     #[derive(Clone, Copy, Debug)]
     pub(super) enum Boundary {
@@ -1543,11 +1558,14 @@ mod factory_boundary {
         let (config, metadata, parent_hash) = execution_config(&fixture, signer);
         let system_txs = begin_system_txs_for_test(
             &config,
-            finalization_block,
-            parent_hash,
-            &Bytes::new(),
-            Some(metadata.clone()),
-            proposer,
+            BeginBlockFixture {
+                block_number: finalization_block,
+                parent_hash,
+                extra_data: &Bytes::new(),
+                parent_consensus_metadata: Some(metadata.clone()),
+                proposer,
+                bootstrap: BootstrapFixture::StandardForBlock,
+            },
         );
         let evm = config.evm_with_env(
             &mut state,

@@ -116,76 +116,202 @@ fn signed_input(
     Recovered::new_unchecked(signer.sign_unsigned(unsigned).unwrap(), signer.address())
 }
 
+#[derive(Clone, Copy)]
+struct PhaseMatrixCase {
+    name: &'static str,
+    height: u64,
+    active: bool,
+    boundary: bool,
+}
+
+const PHASE_MATRIX_CASES: [PhaseMatrixCase; 16] = [
+    PhaseMatrixCase {
+        name: "height_0_inactive_ordinary",
+        height: 0,
+        active: false,
+        boundary: false,
+    },
+    PhaseMatrixCase {
+        name: "height_0_inactive_boundary",
+        height: 0,
+        active: false,
+        boundary: true,
+    },
+    PhaseMatrixCase {
+        name: "height_0_active_ordinary",
+        height: 0,
+        active: true,
+        boundary: false,
+    },
+    PhaseMatrixCase {
+        name: "height_0_active_boundary",
+        height: 0,
+        active: true,
+        boundary: true,
+    },
+    PhaseMatrixCase {
+        name: "height_1_inactive_ordinary",
+        height: 1,
+        active: false,
+        boundary: false,
+    },
+    PhaseMatrixCase {
+        name: "height_1_inactive_boundary",
+        height: 1,
+        active: false,
+        boundary: true,
+    },
+    PhaseMatrixCase {
+        name: "height_1_active_ordinary",
+        height: 1,
+        active: true,
+        boundary: false,
+    },
+    PhaseMatrixCase {
+        name: "height_1_active_boundary",
+        height: 1,
+        active: true,
+        boundary: true,
+    },
+    PhaseMatrixCase {
+        name: "height_2_inactive_ordinary",
+        height: 2,
+        active: false,
+        boundary: false,
+    },
+    PhaseMatrixCase {
+        name: "height_2_inactive_boundary",
+        height: 2,
+        active: false,
+        boundary: true,
+    },
+    PhaseMatrixCase {
+        name: "height_2_active_ordinary",
+        height: 2,
+        active: true,
+        boundary: false,
+    },
+    PhaseMatrixCase {
+        name: "height_2_active_boundary",
+        height: 2,
+        active: true,
+        boundary: true,
+    },
+    PhaseMatrixCase {
+        name: "height_9_inactive_ordinary",
+        height: 9,
+        active: false,
+        boundary: false,
+    },
+    PhaseMatrixCase {
+        name: "height_9_inactive_boundary",
+        height: 9,
+        active: false,
+        boundary: true,
+    },
+    PhaseMatrixCase {
+        name: "height_9_active_ordinary",
+        height: 9,
+        active: true,
+        boundary: false,
+    },
+    PhaseMatrixCase {
+        name: "height_9_active_boundary",
+        height: 9,
+        active: true,
+        boundary: true,
+    },
+];
+
+fn phase_matrix_scenario(case: PhaseMatrixCase) -> Scenario {
+    let PhaseMatrixCase {
+        height,
+        active,
+        boundary,
+        ..
+    } = case;
+    let mut scenario = Scenario::new(height);
+    scenario.active = active;
+    if boundary {
+        scenario = scenario.with_boundary();
+    }
+    // Nonempty credit payload checks preservation as well as phase order.
+    if height >= 2 {
+        scenario.artifacts.late_finalize_credits = Some(LateFinalizeCreditsArtifact {
+            batches: vec![PerBlockCredit {
+                fb_number: height - 1,
+                fb_hash: scenario.parent,
+                epoch: 0,
+                view: 3,
+                parent_view: 2,
+                committee_set_hash: B256::with_last_byte(0xC5),
+                signer_bitmap: vec![1],
+                aggregate_signature: [0; 96],
+            }],
+        });
+    }
+    scenario
+}
+
+fn assert_signed_begin_body(
+    scenario: &Scenario,
+    proposer: &BeginInputs,
+    body: &[Recovered<TransactionSigned>],
+) {
+    assert_eq!(proposer.len(), body.len());
+    for ((kind, input, summary), tx) in proposer.iter().zip(body) {
+        assert_eq!(input.kind(), *kind);
+        assert_eq!(&input.encode().unwrap(), tx.tx().input());
+        assert_eq!(
+            *summary,
+            if *kind == SystemTxKind::CertifiedParentAccounting {
+                scenario.hint
+            } else {
+                None
+            }
+        );
+    }
+}
+
+fn assert_begin_phase_order(proposer: &BeginInputs, height: u64, active: bool) {
+    if height == 0 {
+        assert!(proposer.is_empty());
+        return;
+    }
+    let kinds: Vec<_> = proposer.iter().map(|(kind, _, _)| *kind).collect();
+    assert_eq!(kinds.last(), Some(&SystemTxKind::HookEvents));
+    assert!(!kinds.contains(&SystemTxKind::OcompTerminalRequest));
+    assert_eq!(kinds.contains(&SystemTxKind::TeeBootstrap), height == 1);
+    assert_eq!(kinds.contains(&SystemTxKind::OcompLifecycleBegin), active);
+    let cycle = kinds
+        .iter()
+        .position(|kind| *kind == SystemTxKind::CycleTick)
+        .unwrap();
+    assert_eq!(kinds[cycle + 1], SystemTxKind::RewardsGemDelivery);
+    if active {
+        assert_eq!(kinds[cycle - 1], SystemTxKind::OcompLifecycleBegin);
+    }
+    if height >= 2 {
+        assert_eq!(
+            &kinds[..2],
+            &[
+                SystemTxKind::CertifiedParentAccounting,
+                SystemTxKind::LateFinalizeCredits
+            ]
+        );
+    }
+}
+
 #[test]
 fn begin_inputs_match_signed_proposer_body_and_verifier_across_phase_matrix() {
-    for height in [0, 1, 2, 9] {
-        for active in [false, true] {
-            for boundary in [false, true] {
-                let mut scenario = Scenario::new(height);
-                scenario.active = active;
-                if boundary {
-                    scenario = scenario.with_boundary();
-                }
-                // Nonempty credit payload checks preservation as well as phase order.
-                if height >= 2 {
-                    scenario.artifacts.late_finalize_credits = Some(LateFinalizeCreditsArtifact {
-                        batches: vec![PerBlockCredit {
-                            fb_number: height - 1,
-                            fb_hash: scenario.parent,
-                            epoch: 0,
-                            view: 3,
-                            parent_view: 2,
-                            committee_set_hash: B256::with_last_byte(0xC5),
-                            signer_bitmap: vec![1],
-                            aggregate_signature: [0; 96],
-                        }],
-                    });
-                }
-                let proposer = scenario.resolve().unwrap();
-                let body = scenario.signed_body();
-                assert_eq!(proposer.len(), body.len());
-                for ((kind, input, summary), tx) in proposer.iter().zip(&body) {
-                    assert_eq!(input.kind(), *kind);
-                    assert_eq!(&input.encode().unwrap(), tx.tx().input());
-                    assert_eq!(
-                        *summary,
-                        if *kind == SystemTxKind::CertifiedParentAccounting {
-                            scenario.hint
-                        } else {
-                            None
-                        }
-                    );
-                }
-                scenario.body = body;
-                assert_eq!(scenario.resolve().unwrap(), proposer);
-                if height == 0 {
-                    assert!(proposer.is_empty());
-                    continue;
-                }
-                let kinds: Vec<_> = proposer.iter().map(|(kind, _, _)| *kind).collect();
-                assert_eq!(kinds.last(), Some(&SystemTxKind::HookEvents));
-                assert!(!kinds.contains(&SystemTxKind::OcompTerminalRequest));
-                assert_eq!(kinds.contains(&SystemTxKind::TeeBootstrap), height == 1);
-                assert_eq!(kinds.contains(&SystemTxKind::OcompLifecycleBegin), active);
-                let cycle = kinds
-                    .iter()
-                    .position(|kind| *kind == SystemTxKind::CycleTick)
-                    .unwrap();
-                assert_eq!(kinds[cycle + 1], SystemTxKind::RewardsGemDelivery);
-                if active {
-                    assert_eq!(kinds[cycle - 1], SystemTxKind::OcompLifecycleBegin);
-                }
-                if height >= 2 {
-                    assert_eq!(
-                        &kinds[..2],
-                        &[
-                            SystemTxKind::CertifiedParentAccounting,
-                            SystemTxKind::LateFinalizeCredits
-                        ]
-                    );
-                }
-            }
-        }
+    for case in PHASE_MATRIX_CASES {
+        let mut scenario = phase_matrix_scenario(case);
+        let proposer = scenario.resolve().expect(case.name);
+        let body = scenario.signed_body();
+        assert_signed_begin_body(&scenario, &proposer, &body);
+        scenario.body = body;
+        assert_eq!(scenario.resolve().unwrap(), proposer);
+        assert_begin_phase_order(&proposer, case.height, case.active);
     }
 }
 

@@ -524,36 +524,51 @@ pub(super) fn execution_ctx_with_tee_bootstrap<'a>(
     ctx
 }
 
+pub(super) enum BootstrapFixture {
+    StandardForBlock,
+    Payload(Box<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>),
+    Absent,
+}
+
+impl BootstrapFixture {
+    pub(super) fn explicit(
+        payload: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
+    ) -> Self {
+        match payload {
+            Some(payload) => Self::Payload(Box::new(payload)),
+            None => Self::Absent,
+        }
+    }
+}
+
+pub(super) struct BeginBlockFixture<'a> {
+    pub(super) block_number: u64,
+    pub(super) parent_hash: B256,
+    pub(super) extra_data: &'a Bytes,
+    pub(super) parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
+    pub(super) proposer: Address,
+    pub(super) bootstrap: BootstrapFixture,
+}
+
 pub(super) fn begin_system_txs_for_test(
     config: &OutbeEvmConfig,
-    block_number: u64,
-    parent_hash: B256,
-    extra_data: &Bytes,
-    parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
-    proposer: Address,
+    input: BeginBlockFixture<'_>,
 ) -> Vec<reth_primitives_traits::Recovered<reth_ethereum::TransactionSigned>> {
-    let pending_tee_bootstrap =
-        (block_number == 1).then(|| sample_tee_bootstrap_payload(block_number));
-    begin_system_txs_for_test_with_bootstrap(
-        config,
+    let BeginBlockFixture {
         block_number,
         parent_hash,
         extra_data,
         parent_consensus_metadata,
         proposer,
-        pending_tee_bootstrap,
-    )
-}
-
-pub(super) fn begin_system_txs_for_test_with_bootstrap(
-    config: &OutbeEvmConfig,
-    block_number: u64,
-    parent_hash: B256,
-    extra_data: &Bytes,
-    parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
-    proposer: Address,
-    pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
-) -> Vec<reth_primitives_traits::Recovered<reth_ethereum::TransactionSigned>> {
+        bootstrap,
+    } = input;
+    let pending_tee_bootstrap = match bootstrap {
+        BootstrapFixture::StandardForBlock => {
+            (block_number == 1).then(|| sample_tee_bootstrap_payload(block_number))
+        }
+        BootstrapFixture::Payload(payload) => Some(*payload),
+        BootstrapFixture::Absent => None,
+    };
     config
         .build_begin_system_txs(
             block_number,
@@ -1099,4 +1114,82 @@ pub(super) fn seed_cycle_tick_genesis(
     let trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
     cycle.last_executed_at.write(&trigger, genesis_ts + 60)?;
     Ok(())
+}
+
+/// Observations from the executed prefix, without deriving any expected result.
+pub(super) struct CycleObservation {
+    pub(super) visible_gas: u64,
+    pub(super) internal_gas: u64,
+    pub(super) receipt_index: usize,
+}
+
+pub(super) fn observe_cycle_tick(
+    system_txs: Vec<Recovered<TransactionSigned>>,
+    decode_message: &str,
+    mut execute: impl FnMut(Recovered<TransactionSigned>) -> CycleObservation,
+) -> Option<CycleObservation> {
+    for tx in system_txs {
+        let kind = SystemTxInputV2::decode(tx.tx().input().as_ref())
+            .expect(decode_message)
+            .kind();
+        let observation = execute(tx);
+        if kind == SystemTxKind::CycleTick {
+            return Some(observation);
+        }
+    }
+    None
+}
+
+pub(super) struct ParentAccountingFixture {
+    pub(super) parent_hash: B256,
+    pub(super) metadata: CertifiedParentAccountingMetadata,
+    pub(super) artifact: AccountedParentArtifact,
+    pub(super) proposer: Address,
+}
+
+pub(super) fn parent_accounting_context(
+    input: ParentAccountingFixture,
+) -> OutbeBlockExecutionCtx<'static> {
+    let mut execution = execution_ctx(Some(0), Bytes::new());
+    execution.inner.parent_hash = input.parent_hash;
+    execution.parent_consensus_metadata = Some(input.metadata);
+    execution.parent_artifact_hint = Some(input.artifact);
+    execution.proposer_evm_address = Some(input.proposer);
+    execution
+}
+
+pub(super) struct BeginPrefixCheck<'a> {
+    pub(super) execution_message: &'a str,
+    pub(super) cumulative_receipts: bool,
+}
+
+pub(super) fn assert_begin_prefix_gas<E>(
+    executor: &mut E,
+    system_txs: Vec<Recovered<TransactionSigned>>,
+    check: BeginPrefixCheck<'_>,
+) -> u64
+where
+    E: alloy_evm::block::BlockExecutor<Transaction = TransactionSigned, Receipt = Receipt>,
+    E::Evm: reth_ethereum::evm::primitives::Evm<Tx = revm::context::TxEnv>,
+{
+    let mut visible_system_gas_used = 0u64;
+    for tx in system_txs {
+        let signed_gas_limit = tx.tx().gas_limit();
+        let gas_output = executor
+            .execute_transaction(tx)
+            .expect(check.execution_message);
+        assert!(gas_output.tx_gas_used() <= signed_gas_limit);
+        visible_system_gas_used += gas_output.tx_gas_used();
+        if check.cumulative_receipts {
+            assert_eq!(
+                executor
+                    .receipts()
+                    .last()
+                    .expect("system receipt should be present")
+                    .cumulative_gas_used,
+                visible_system_gas_used,
+            );
+        }
+    }
+    visible_system_gas_used
 }
