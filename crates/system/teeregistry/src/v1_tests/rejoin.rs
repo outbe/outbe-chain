@@ -1,4 +1,5 @@
 use super::*;
+use crate::v1::{NodeHostAssociationV1, VerifiedIntentV1};
 
 fn same_enclave_rejoin_intent(
     current: &RegistrationIntentV1,
@@ -75,13 +76,17 @@ fn expired_same_enclave_rejoin_is_authorized_monotonic_and_idempotent() {
             registry
                 .register_enclave_and_bind_after_verifier_for_test_as(
                     wrong.address(),
-                    &rejoin,
-                    &rejoin_node,
-                    &rejoin_enclave,
-                    &binding,
-                    &validator_signature,
-                    &node_binding_signature,
-                    PostVerifierDcapCapabilityV1::new(accepted.clone()),
+                    VerifiedIntentV1 {
+                        intent: &rejoin,
+                        node_signature: &rejoin_node,
+                        enclave_signature: &rejoin_enclave,
+                        capability: PostVerifierDcapCapabilityV1::new(accepted.clone())
+                    },
+                    NodeHostAssociationV1 {
+                        binding: &binding,
+                        validator_signature: &validator_signature,
+                        node_binding_signature: &node_binding_signature
+                    }
                 )
                 .unwrap_err()
         )
@@ -90,13 +95,17 @@ fn expired_same_enclave_rejoin_is_authorized_monotonic_and_idempotent() {
             registry
                 .register_enclave_and_bind_after_verifier_for_test_as(
                     owner.address(),
-                    &rejoin,
-                    &rejoin_node,
-                    &rejoin_enclave,
-                    &binding,
-                    &validator_signature,
-                    &node_binding_signature,
-                    PostVerifierDcapCapabilityV1::new(accepted.clone()),
+                    VerifiedIntentV1 {
+                        intent: &rejoin,
+                        node_signature: &rejoin_node,
+                        enclave_signature: &rejoin_enclave,
+                        capability: PostVerifierDcapCapabilityV1::new(accepted.clone())
+                    },
+                    NodeHostAssociationV1 {
+                        binding: &binding,
+                        validator_signature: &validator_signature,
+                        node_binding_signature: &node_binding_signature
+                    }
                 )
                 .unwrap(),
             V1RegistrationOutcome::Created
@@ -125,13 +134,17 @@ fn expired_same_enclave_rejoin_is_authorized_monotonic_and_idempotent() {
             registry
                 .register_enclave_and_bind_after_verifier_for_test_as(
                     owner.address(),
-                    &rejoin,
-                    &rejoin_node,
-                    &rejoin_enclave,
-                    &binding,
-                    &validator_signature,
-                    &node_binding_signature,
-                    PostVerifierDcapCapabilityV1::new(accepted),
+                    VerifiedIntentV1 {
+                        intent: &rejoin,
+                        node_signature: &rejoin_node,
+                        enclave_signature: &rejoin_enclave,
+                        capability: PostVerifierDcapCapabilityV1::new(accepted)
+                    },
+                    NodeHostAssociationV1 {
+                        binding: &binding,
+                        validator_signature: &validator_signature,
+                        node_binding_signature: &node_binding_signature
+                    }
                 )
                 .unwrap(),
             V1RegistrationOutcome::Idempotent
@@ -189,13 +202,17 @@ fn expired_new_enclave_rejoin_preserves_historical_reverse_ownership() {
             registry
                 .register_enclave_and_bind_after_verifier_for_test_as(
                     owner.address(),
-                    &rejoin,
-                    &rejoin_node,
-                    &rejoin_enclave_signature,
-                    &binding,
-                    &validator_signature,
-                    &node_binding_signature,
-                    PostVerifierDcapCapabilityV1::new(accepted),
+                    VerifiedIntentV1 {
+                        intent: &rejoin,
+                        node_signature: &rejoin_node,
+                        enclave_signature: &rejoin_enclave_signature,
+                        capability: PostVerifierDcapCapabilityV1::new(accepted)
+                    },
+                    NodeHostAssociationV1 {
+                        binding: &binding,
+                        validator_signature: &validator_signature,
+                        node_binding_signature: &node_binding_signature
+                    }
                 )
                 .unwrap(),
             V1RegistrationOutcome::Created
@@ -379,16 +396,7 @@ fn expired_rejoin_fails_closed_on_corrupt_current_reverse_ownership() {
 
         assert!(matches!(
             registry
-                .register_enclave_and_bind_after_verifier_for_test_as(
-                    owner.address(),
-                    &rejoin,
-                    &rejoin_node,
-                    &rejoin_enclave,
-                    &binding,
-                    &validator_signature,
-                    &node_binding_signature,
-                    PostVerifierDcapCapabilityV1::new(accepted),
-                )
+                .register_enclave_and_bind_after_verifier_for_test_as(owner.address(), VerifiedIntentV1 { intent: &rejoin, node_signature: &rejoin_node, enclave_signature: &rejoin_enclave, capability: PostVerifierDcapCapabilityV1::new(accepted) }, NodeHostAssociationV1 { binding: &binding, validator_signature: &validator_signature, node_binding_signature: &node_binding_signature })
                 .unwrap_err(),
             PrecompileError::Fatal(message) if message.contains("reverse ownership")
         ));
@@ -453,13 +461,17 @@ fn expired_jailed_validator_must_unjail_before_rejoin() {
             registry
                 .register_enclave_and_bind_after_verifier_for_test_as(
                     owner.address(),
-                    &rejoin,
-                    &rejoin_node,
-                    &rejoin_enclave,
-                    &binding,
-                    &validator_signature,
-                    &node_binding_signature,
-                    PostVerifierDcapCapabilityV1::new(accepted),
+                    VerifiedIntentV1 {
+                        intent: &rejoin,
+                        node_signature: &rejoin_node,
+                        enclave_signature: &rejoin_enclave,
+                        capability: PostVerifierDcapCapabilityV1::new(accepted)
+                    },
+                    NodeHostAssociationV1 {
+                        binding: &binding,
+                        validator_signature: &validator_signature,
+                        node_binding_signature: &node_binding_signature
+                    }
                 )
                 .unwrap_err()
         )
@@ -549,11 +561,13 @@ fn expired_binding_rejects_replace_and_transition_without_state_change() {
             registry
                 .replace_enclave_binding_after_verifier_with_active_policy_for_test(
                     owner.address(),
-                    &replacement,
-                    &replacement_node,
-                    &replacement_enclave_signature,
-                    &current,
-                    PostVerifierDcapCapabilityV1::new(accepted),
+                    VerifiedIntentV1 {
+                        intent: &replacement,
+                        node_signature: &replacement_node,
+                        enclave_signature: &replacement_enclave_signature,
+                        capability: PostVerifierDcapCapabilityV1::new(accepted)
+                    },
+                    &current
                 )
                 .unwrap_err()
         )
@@ -562,10 +576,12 @@ fn expired_binding_rejects_replace_and_transition_without_state_change() {
             registry
                 .transition_enclave_measurement_after_verifier_for_test(
                     owner.address(),
-                    &transition,
-                    &transition_node,
-                    &transition_enclave_signature,
-                    PostVerifierDcapCapabilityV1::new(transition_verdict),
+                    VerifiedIntentV1 {
+                        intent: &transition,
+                        node_signature: &transition_node,
+                        enclave_signature: &transition_enclave_signature,
+                        capability: PostVerifierDcapCapabilityV1::new(transition_verdict)
+                    }
                 )
                 .unwrap_err()
         )

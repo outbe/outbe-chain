@@ -100,10 +100,11 @@ pub async fn await_finalized_onboarding_v1(
             .selector
             .decode_binding(&binding_bytes)
             .wrap_err("decode finalized enclave binding")?;
+        let identity_matches = binding.nodeIdHash == expected.node_id_hash
+            && binding.enclaveId == expected.enclave_id
+            && binding.intentHash == expected.intent_hash;
         if !binding.exists
-            || binding.nodeIdHash != expected.node_id_hash
-            || binding.enclaveId != expected.enclave_id
-            || binding.intentHash != expected.intent_hash
+            || !identity_matches
             || binding.recipientX25519 != B256::from(expected.recipient_x25519)
         {
             eyre::bail!("finalized Registry binding does not match the submitted registration");
@@ -184,16 +185,16 @@ fn exact_artifact(
         let artifact = DcapOnboardingArtifactV1::decode_canonical(&bytes)
             .map_err(|code| eyre::eyre!("invalid onboarding artifact: {:#06x}", code.code()))?;
         let context = artifact.context;
-        if context.chain_id != expected.chain_id
-            || context.genesis_hash != expected.genesis_hash
-            || context.intent_hash != expected.intent_hash
-            || context.node_id_hash != expected.node_id_hash
-            || context.enclave_id != expected.enclave_id
-            || context.recipient_x25519 != expected.recipient_x25519
-            || context.tribute_offer_public != expected.tribute_offer_public
-            || context.key_epoch != expected.key_epoch
-            || context.tribute_offer_epoch != expected.tribute_offer_epoch
-        {
+        let chain_matches =
+            context.chain_id == expected.chain_id && context.genesis_hash == expected.genesis_hash;
+        let registration_matches = context.intent_hash == expected.intent_hash
+            && context.node_id_hash == expected.node_id_hash
+            && context.enclave_id == expected.enclave_id
+            && context.recipient_x25519 == expected.recipient_x25519;
+        let offer_key_matches = context.tribute_offer_public == expected.tribute_offer_public
+            && context.key_epoch == expected.key_epoch
+            && context.tribute_offer_epoch == expected.tribute_offer_epoch;
+        if !chain_matches || !registration_matches || !offer_key_matches {
             eyre::bail!("onboarding artifact context does not match the exact registration");
         }
         if exact.replace(artifact).is_some() {

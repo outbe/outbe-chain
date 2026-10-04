@@ -2,6 +2,7 @@ use alloy_primitives::Address;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::error::Result;
+use outbe_teeregistry::v1::{EnclaveEvidenceV1, NodeHostAssociationV1};
 
 pub(super) fn prepare_tee_bootstrap(
     ctx: &BlockRuntimeContext,
@@ -123,13 +124,17 @@ pub(crate) fn run_tee_bootstrap_v1(
                 ))
             })?;
         registry.register_enclave_v1(
-            Address::from(participant.validator_binding.validator),
-            &evidence,
-            &participant.node_signature,
-            &participant.enclave_signature,
-            &participant.validator_binding,
-            &participant.validator_signature,
-            &participant.node_binding_signature,
+            EnclaveEvidenceV1 {
+                caller: Address::from(participant.validator_binding.validator),
+                evidence: &evidence,
+                node_signature: &participant.node_signature,
+                enclave_signature: &participant.enclave_signature,
+            },
+            NodeHostAssociationV1 {
+                binding: &participant.validator_binding,
+                validator_signature: &participant.validator_signature,
+                node_binding_signature: &participant.node_binding_signature,
+            },
         )?;
     }
 

@@ -6,6 +6,7 @@ use outbe_operator::tee::registry::{
 use outbe_operator::tee::upgrade::PreparedTransitionEvidenceV1;
 use outbe_operator::tx::RawRelayTransactionV1;
 
+use outbe_operator::tx::UnsignedRelayTransactionV1;
 pub(super) struct ProvisioningTarget {
     pub(super) binding_id: B256,
     pub(super) valid_until: u64,
@@ -308,14 +309,14 @@ impl<R: Rpc + Sync> NetworkPreparation<'_, R> {
         if rpc.eth_get_balance(relay.address()).await? < price.saturating_mul(U256::from(gas)) {
             eyre::bail!("insufficient balance for prepare transaction");
         }
-        let transaction = relay.sign_renewal(
-            rpc.eth_chain_id().await?,
-            nonce,
-            price,
-            gas,
-            TEE_REGISTRY_ADDRESS,
-            &calldata,
-        )?;
+        let transaction = relay.sign_renewal(UnsignedRelayTransactionV1 {
+            chain_id: rpc.eth_chain_id().await?,
+            account_nonce: nonce,
+            gas_price: price,
+            gas_limit: gas,
+            to: TEE_REGISTRY_ADDRESS,
+            calldata: &calldata,
+        })?;
         let value = NetworkUpgradeSubmissionV1 {
             candidate_manifest_hash: manifest_hash,
             evidence,

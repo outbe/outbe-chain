@@ -2,6 +2,8 @@
 
 use super::journal_storage::{sync_directory, JournalPaths};
 use super::JournalSnapshotV1;
+#[cfg(test)]
+use crate::tx::UnsignedRelayTransactionV1;
 
 mod validation;
 
@@ -307,14 +309,14 @@ mod tests {
         .abi_encode();
         let relay = RelaySignerV1::new(&hex::encode([0x41; 32])).unwrap();
         let raw = relay
-            .sign_renewal(
-                1,
-                2,
-                U256::from(3),
-                1_000_000,
-                TEE_REGISTRY_ADDRESS,
-                &calldata,
-            )
+            .sign_renewal(UnsignedRelayTransactionV1 {
+                chain_id: 1,
+                account_nonce: 2,
+                gas_price: U256::from(3),
+                gas_limit: 1_000_000,
+                to: TEE_REGISTRY_ADDRESS,
+                calldata: &calldata,
+            })
             .unwrap();
         (calldata, relay.address(), vec![raw])
     }
@@ -323,14 +325,14 @@ mod tests {
         let relay = RelaySignerV1::new(&hex::encode([0x41; 32])).unwrap();
         let first = &attempt.relay_variants[0];
         let replacement = relay
-            .sign_renewal(
-                first.chain_id,
-                first.account_nonce,
-                first.gas_price + U256::from(1),
-                first.gas_limit,
-                TEE_REGISTRY_ADDRESS,
-                &attempt.calldata,
-            )
+            .sign_renewal(UnsignedRelayTransactionV1 {
+                chain_id: first.chain_id,
+                account_nonce: first.account_nonce,
+                gas_price: first.gas_price + U256::from(1),
+                gas_limit: first.gas_limit,
+                to: TEE_REGISTRY_ADDRESS,
+                calldata: &attempt.calldata,
+            })
             .unwrap();
         attempt.relay_variants.push(replacement);
     }

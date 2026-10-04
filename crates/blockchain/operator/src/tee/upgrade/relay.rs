@@ -1,4 +1,5 @@
 use super::*;
+use crate::tx::UnsignedRelayTransactionV1;
 
 pub(super) async fn prepare_upgrade_relay_v1(
     rpc: &(impl RegistryRpc + RelayPreparationRpc + Sync),
@@ -77,14 +78,14 @@ async fn sign_transition_relay(
             relay.address()
         );
     }
-    let raw = relay.sign_renewal(
+    let raw = relay.sign_renewal(UnsignedRelayTransactionV1 {
         chain_id,
         account_nonce,
         gas_price,
         gas_limit,
-        TEE_REGISTRY_ADDRESS,
-        &calldata,
-    )?;
+        to: TEE_REGISTRY_ADDRESS,
+        calldata: &calldata,
+    })?;
     Ok((calldata, raw))
 }
 
