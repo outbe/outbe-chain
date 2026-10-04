@@ -51,3 +51,16 @@ test("a Gratis-tagged authorization never verifies as a Promis one", () => {
   );
   assert.notEqual(crossed, vector.mac);
 });
+
+test("malformed byte fields are rejected instead of silently authorized", () => {
+  const vector = fixture.vectors[0];
+  const amount = BigInt(vector.amount);
+  const nonce = BigInt(vector.op_nonce);
+  assert.throws(() => modifyMac("outbe/other/modify/v1", vector.modify_key, vector.account, 0, amount, nonce, vector.chain_id), /domain tag/);
+  assert.throws(() => modifyMac(vector.domain_tag, "0x5a5a" as Hex, vector.account, 0, amount, nonce, vector.chain_id), /32 bytes/);
+  assert.throws(() => modifyMac(vector.domain_tag, vector.modify_key, "0x1111" as Address, 0, amount, nonce, vector.chain_id), /20 bytes/);
+  assert.throws(() => modifyMac(vector.domain_tag, vector.modify_key, vector.account, 256, amount, nonce, vector.chain_id), /byte/);
+  assert.throws(() => modifyMac(vector.domain_tag, vector.modify_key, vector.account, 0, -1n, nonce, vector.chain_id), /u256/);
+  assert.throws(() => modifyMac(vector.domain_tag, vector.modify_key, vector.account, 0, amount, 1n << 64n, vector.chain_id), /u64/);
+  assert.throws(() => modifyMac(vector.domain_tag, vector.modify_key, vector.account, 0, amount, nonce, "0x01" as Hex), /32 bytes/);
+});

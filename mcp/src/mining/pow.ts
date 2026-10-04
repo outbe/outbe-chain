@@ -13,6 +13,19 @@ export const NOD_MINING_TAG = "OUTBE_NOD_MINING_V1";
 export const GEM_MINING_TAG = "OUTBE_GEM_MINING_V1";
 export const SINGLE_EXERCISE_SEQUENCE = 0n;
 
+const U64_MAX = 0xffff_ffff_ffff_ffffn;
+const U256_MAX = (1n << 256n) - 1n;
+
+function requireRange(name: string, value: bigint, max: bigint): void {
+  if (value < 0n || value > max) throw new Error(`${name} must be in 0..=${max}`);
+}
+
+function requireBytes(name: string, hex: Hex, length: number): Uint8Array {
+  const bytes = toBytes(hex);
+  if (bytes.length !== length) throw new Error(`${name} must be exactly ${length} bytes`);
+  return bytes;
+}
+
 export function miningPowHash(
   domainTag: string,
   rightId: bigint,
@@ -22,10 +35,14 @@ export function miningPowHash(
 ): Hex {
   const tag = new TextEncoder().encode(domainTag);
   if (tag.length !== 19) throw new Error("mining domain tag must be 19 bytes");
+  requireRange("rightId", rightId, U256_MAX);
+  requireRange("miningSequence", miningSequence, U64_MAX);
+  requireRange("nonce", nonce, U64_MAX);
+  const ownerBytes = requireBytes("owner", owner, 20);
   const data = concat([
     tag,
     toBytes(toHex(rightId, { size: 32 })),
-    toBytes(owner),
+    ownerBytes,
     toBytes(toHex(miningSequence, { size: 8 })),
     toBytes(toHex(nonce, { size: 8 })),
   ]);
@@ -33,7 +50,7 @@ export function miningPowHash(
 }
 
 export function meetsDifficulty(hash: Hex): boolean {
-  const bytes = toBytes(hash);
+  const bytes = requireBytes("hash", hash, 32);
   for (let i = 0; i < POW_DIFFICULTY; i++) {
     if (bytes[i] !== 0) return false;
   }
