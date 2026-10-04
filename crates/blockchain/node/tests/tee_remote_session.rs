@@ -1,3 +1,6 @@
+#[path = "../../../../testing/support/block_num_reader.rs"]
+mod block_num_reader;
+
 use alloy_consensus::{Header, Sealable as _};
 use alloy_eips::{BlockNumHash, BlockNumberOrTag};
 use alloy_primitives::{keccak256, Address, BlockHash, BlockNumber, Bytes, B256, U256};
@@ -73,26 +76,26 @@ fn current_finalized_registry_admits_role_neutral_nodes_and_rejects_superseded_s
             seed_binding(
                 &registry,
                 &source_node,
-                SeedBindingIds {
+                SeedBinding {
                     enclave_id: B256::repeat_byte(0x42),
                     binding_id: B256::repeat_byte(0x43),
                     intent_hash: B256::repeat_byte(0x44),
+                    valid_until: 1_700_000_500,
+                    noise_responder_x25519: [0x45; 32],
+                    node_host_authorization_hash: source_host_hash,
                 },
-                1_700_000_500,
-                [0x45; 32],
-                source_host_hash,
             );
             seed_binding(
                 &registry,
                 &target_node,
-                SeedBindingIds {
+                SeedBinding {
                     enclave_id: B256::repeat_byte(0x52),
                     binding_id: B256::repeat_byte(0x53),
                     intent_hash: B256::repeat_byte(0x54),
+                    valid_until: 1_700_000_400,
+                    noise_responder_x25519: [0x55; 32],
+                    node_host_authorization_hash: B256::repeat_byte(0x56),
                 },
-                1_700_000_400,
-                [0x55; 32],
-                B256::repeat_byte(0x56),
             );
         });
 
@@ -334,26 +337,28 @@ fn production_facade_installs_current_finalized_ticket_in_live_enclave() {
         seed_binding(
             &registry,
             &source_node,
-            SeedBindingIds {
+            SeedBinding {
                 enclave_id: B256::repeat_byte(0x95),
                 binding_id: B256::repeat_byte(0x96),
                 intent_hash: B256::repeat_byte(0x97),
+                valid_until: now + 600,
+                noise_responder_x25519: [0x98; 32],
+                node_host_authorization_hash: source_witness.authorization_hash().unwrap(),
             },
-            now + 600,
-            [0x98; 32],
-            source_witness.authorization_hash().unwrap(),
         );
         seed_binding(
             &registry,
             &target_node,
-            SeedBindingIds {
+            SeedBinding {
                 enclave_id: target_manifest.enclave_id().unwrap(),
                 binding_id: B256::repeat_byte(0x99),
                 intent_hash: B256::repeat_byte(0x9A),
+                valid_until: now + 500,
+                noise_responder_x25519: target_manifest.noise_responder_x25519,
+                node_host_authorization_hash: target_manifest
+                    .node_host_authorization_hash()
+                    .unwrap(),
             },
-            now + 500,
-            target_manifest.noise_responder_x25519,
-            target_manifest.node_host_authorization_hash().unwrap(),
         );
     });
     let chain_spec = ChainSpecBuilder::mainnet()
@@ -519,14 +524,14 @@ fn current_finalized_registry_constructs_exact_replacement_authorization() {
         seed_binding(
             &registry,
             &node_id,
-            SeedBindingIds {
+            SeedBinding {
                 enclave_id: intent.enclave_id,
                 binding_id: intent.binding_id,
                 intent_hash,
+                valid_until: intent.requested_valid_until,
+                noise_responder_x25519: intent.noise_responder_x25519,
+                node_host_authorization_hash: intent.node_host_authorization_hash,
             },
-            intent.requested_valid_until,
-            intent.noise_responder_x25519,
-            intent.node_host_authorization_hash,
         );
         let node_hash = node_id.node_id_hash().unwrap();
         registry
@@ -628,26 +633,26 @@ fn external_light_client_checkpoint_authenticates_the_exact_registry_storage_pro
         seed_binding(
             &registry,
             &source_node,
-            SeedBindingIds {
+            SeedBinding {
                 enclave_id: B256::repeat_byte(0x72),
                 binding_id: B256::repeat_byte(0x73),
                 intent_hash: B256::repeat_byte(0x74),
+                valid_until: 1_700_000_600,
+                noise_responder_x25519: [0x75; 32],
+                node_host_authorization_hash: source_witness.authorization_hash().unwrap(),
             },
-            1_700_000_600,
-            [0x75; 32],
-            source_witness.authorization_hash().unwrap(),
         );
         seed_binding(
             &registry,
             &target_node,
-            SeedBindingIds {
+            SeedBinding {
                 enclave_id: B256::repeat_byte(0x82),
                 binding_id: B256::repeat_byte(0x83),
                 intent_hash: B256::repeat_byte(0x84),
+                valid_until: 1_700_000_450,
+                noise_responder_x25519: [0x85; 32],
+                node_host_authorization_hash: B256::repeat_byte(0x86),
             },
-            1_700_000_450,
-            [0x85; 32],
-            B256::repeat_byte(0x86),
         );
         let mut slots = registry
             .node_enclave_binding_storage_slots_v1(&source_node)
@@ -817,25 +822,24 @@ fn full_node(seed: u8) -> NodeIdV1 {
     NodeIdV1 { reth_p2p_public }
 }
 
-struct SeedBindingIds {
+struct SeedBinding {
     enclave_id: B256,
     binding_id: B256,
     intent_hash: B256,
-}
-
-fn seed_binding(
-    registry: &TeeRegistry<'_>,
-    node: &NodeIdV1,
-    ids: SeedBindingIds,
     valid_until: u64,
     noise_responder_x25519: [u8; 32],
     node_host_authorization_hash: B256,
-) {
-    let SeedBindingIds {
+}
+
+fn seed_binding(registry: &TeeRegistry<'_>, node: &NodeIdV1, binding: SeedBinding) {
+    let SeedBinding {
         enclave_id,
         binding_id,
         intent_hash,
-    } = ids;
+        valid_until,
+        noise_responder_x25519,
+        node_host_authorization_hash,
+    } = binding;
     let node_hash = node.node_id_hash().unwrap();
     registry
         .v1_node_enclave_id
@@ -906,23 +910,7 @@ impl BlockHashReader for FinalizedMockProvider {
     }
 }
 
-impl BlockNumReader for FinalizedMockProvider {
-    fn chain_info(&self) -> ProviderResult<ChainInfo> {
-        self.inner.chain_info()
-    }
-
-    fn best_block_number(&self) -> ProviderResult<u64> {
-        self.inner.best_block_number()
-    }
-
-    fn last_block_number(&self) -> ProviderResult<u64> {
-        self.inner.last_block_number()
-    }
-
-    fn block_number(&self, hash: B256) -> ProviderResult<Option<u64>> {
-        self.inner.block_number(hash)
-    }
-}
+block_num_reader::delegate_block_num_reader!(FinalizedMockProvider, inner);
 
 impl BlockIdReader for FinalizedMockProvider {
     fn pending_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {

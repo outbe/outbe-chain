@@ -1,3 +1,6 @@
+#[path = "../../../../testing/support/block_num_reader.rs"]
+mod block_num_reader;
+
 use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::Header;
@@ -235,23 +238,7 @@ impl BlockHashReader for FinalizedMockProvider {
     }
 }
 
-impl BlockNumReader for FinalizedMockProvider {
-    fn chain_info(&self) -> ProviderResult<ChainInfo> {
-        self.inner.chain_info()
-    }
-
-    fn best_block_number(&self) -> ProviderResult<u64> {
-        self.inner.best_block_number()
-    }
-
-    fn last_block_number(&self) -> ProviderResult<u64> {
-        self.inner.last_block_number()
-    }
-
-    fn block_number(&self, hash: B256) -> ProviderResult<Option<u64>> {
-        self.inner.block_number(hash)
-    }
-}
+block_num_reader::delegate_block_num_reader!(FinalizedMockProvider, inner);
 
 impl BlockIdReader for FinalizedMockProvider {
     fn pending_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
