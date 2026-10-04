@@ -133,7 +133,14 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
             // rather than replaying the same latest price on subsequent blocks.
             let late = midnight + 3 * SECONDS_PER_DAY;
             let previous = previous_date_key(timestamp_to_date_key(late));
-            oracle.record_utc_day_vwap(previous, index, U256::from(100))?;
+            // The sealed test terms call on 2 breach days out of a 3-day window
+            // and an unpriced day counts as zero, so every day closed during
+            // the halt must carry its finalized price for the call to be due.
+            let mut day = previous;
+            while day >= timestamp_to_date_key(midnight) {
+                oracle.record_utc_day_vwap(day, index, U256::from(100))?;
+                day = previous_date_key(day);
+            }
             oracle.utc_day_vwap_last_finalized.write(previous)?;
             let ctx = BlockRuntimeContext::new(block_ctx(5, late), storage.clone());
             crate::runtime::dispatch_triggers(&ctx, scope, &parent)?;
