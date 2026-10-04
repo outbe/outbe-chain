@@ -286,7 +286,7 @@ where
 
             info!(
                 validators = payload.participants.len(),
-                attestation_mode = ?payload.policy.attestation_mode,
+                attestation_mode = ?payload.authority.policy.attestation_mode,
                 "mandatory OST3 bootstrap coordinated - payload ready for block 1"
             );
             bridge.set_pending_tee_bootstrap(payload);

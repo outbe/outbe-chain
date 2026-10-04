@@ -2,7 +2,7 @@
 use super::*;
 
 pub(super) fn validate(payload: &TeeBootstrapV2) -> Result<(), CodecError> {
-    let policy_hash = payload.policy.policy_hash()?;
+    let policy_hash = payload.authority.policy.policy_hash()?;
     validate_authority_shape(payload)?;
     validate_collateral_pool(payload)?;
     // Reject aggregate calldata before allocating the used-component bitmap
@@ -40,12 +40,13 @@ pub(super) fn validate(payload: &TeeBootstrapV2) -> Result<(), CodecError> {
 }
 
 fn has_committee_snapshot(payload: &TeeBootstrapV2) -> bool {
-    !payload.committee_snapshot_hash.is_zero() && payload.committee_snapshot_block != 0
+    !payload.authority.committee_snapshot_hash.is_zero()
+        && payload.authority.committee_snapshot_block != 0
 }
 
 fn has_offer_keys(payload: &TeeBootstrapV2) -> bool {
-    !payload.tribute_offer_public_key.is_zero()
-        && !payload.tribute_offer_group_public_key.is_empty()
+    !payload.authority.tribute_offer_public_key.is_zero()
+        && !payload.authority.tribute_offer_group_public_key.is_empty()
 }
 
 fn validate_authority_shape(payload: &TeeBootstrapV2) -> Result<(), CodecError> {
@@ -57,7 +58,7 @@ fn validate_authority_shape(payload: &TeeBootstrapV2) -> Result<(), CodecError> 
     enforce_limit(
         "TEE bootstrap group public key",
         MAX_GROUP_PUBLIC_KEY_BYTES,
-        payload.tribute_offer_group_public_key.len(),
+        payload.authority.tribute_offer_group_public_key.len(),
     )?;
     enforce_limit(
         "TEE bootstrap collateral pool",
@@ -79,7 +80,7 @@ fn validate_authority_shape(payload: &TeeBootstrapV2) -> Result<(), CodecError> 
             "TEE bootstrap signatures do not cover every participant",
         ));
     }
-    match payload.policy.attestation_mode {
+    match payload.authority.policy.attestation_mode {
         AttestationMode::DcapRequired if payload.collateral_pool.is_empty() => {
             return Err(CodecError::NonCanonical(
                 "DCAP TEE bootstrap collateral pool is empty",
@@ -133,7 +134,7 @@ fn validate_participant_binding(
     policy_hash: B256,
 ) -> Result<Address, CodecError> {
     if participant.intent.operation != AttestationOperationV1::RegisterEnclave
-        || participant.intent.attestation_mode != payload.policy.attestation_mode
+        || participant.intent.attestation_mode != payload.authority.policy.attestation_mode
         || participant.intent.policy_hash != policy_hash
     {
         return Err(CodecError::NonCanonical(
@@ -165,7 +166,7 @@ fn validate_participant_evidence(
         TeeBootstrapParticipantEvidenceV2::Dcap {
             quote,
             collateral_component_indices,
-        } if payload.policy.attestation_mode == AttestationMode::DcapRequired => {
+        } if payload.authority.policy.attestation_mode == AttestationMode::DcapRequired => {
             validate_dcap_evidence(
                 payload,
                 quote,
@@ -176,7 +177,7 @@ fn validate_participant_evidence(
         TeeBootstrapParticipantEvidenceV2::GramineDirectDev {
             dev_attestation_public,
             dev_signature,
-        } if payload.policy.attestation_mode == AttestationMode::GramineDirectDev => {
+        } if payload.authority.policy.attestation_mode == AttestationMode::GramineDirectDev => {
             if dev_attestation_public != &participant.intent.attestation_ed25519
                 || dev_signature != &participant.enclave_signature
                 || !participant.intent.verify_enclave_signature(dev_signature)

@@ -232,7 +232,7 @@ pub fn gramine_direct_bootstrap_v2(
         tribute_offer_public_key: B256::repeat_byte(0x23),
         tribute_offer_group_public_key: Bytes::from(vec![0x24; 96]),
     };
-    let mut payload = TeeBootstrapV2::assemble_unsigned(authority, submissions)
+    let mut payload = crate::tee_bootstrap_v2::assembly::assemble_unsigned(authority, submissions)
         .map_err(|error| format!("assemble GramineDirectDev OST3 test payload: {error}"))?;
     let signing_hash = payload
         .signing_hash()
@@ -245,8 +245,7 @@ pub fn gramine_direct_bootstrap_v2(
             .sign_hash(&signing_hash)
             .map_err(|error| format!("sign GramineDirectDev OST3 test payload: {error}"))?;
     }
-    payload
-        .encode_canonical()
+    crate::tee_bootstrap_v2::codec::encode_canonical(&payload)
         .map_err(|error| format!("validate GramineDirectDev OST3 test payload: {error}"))?;
     Ok(payload)
 }

@@ -54,9 +54,11 @@ pub async fn coordinate_tee_bootstrap_v2<G: BootstrapGossip>(
         early_signatures,
     } = collect_submissions(gossip, local_submission, &authority.policy, committee).await?;
 
-    let mut payload =
-        TeeBootstrapV2::assemble_unsigned(authority, submissions.into_values().collect())
-            .map_err(|error| eyre::eyre!("OST3 unsigned assembly failed: {error}"))?;
+    let mut payload = outbe_primitives::tee_bootstrap_v2::assembly::assemble_unsigned(
+        authority,
+        submissions.into_values().collect(),
+    )
+    .map_err(|error| eyre::eyre!("OST3 unsigned assembly failed: {error}"))?;
     let signing_hash = payload
         .signing_hash()
         .map_err(|error| eyre::eyre!("OST3 signing hash failed: {error}"))?;

@@ -211,7 +211,7 @@ impl OutbeEvmConfig {
                     error.into(),
                 ))
             })?;
-            if &payload.policy != expected_policy {
+            if &payload.authority.policy != expected_policy {
                 return Err(BlockExecutionError::Internal(
                     alloy_evm::block::InternalBlockExecutionError::Other(
                         "block-1 OST3 policy does not match the immutable ChainSpec schedule"

@@ -1,18 +1,34 @@
 //! Canonical bootstrap byte encoding, bounded decoding and logical evidence reconstruction.
 use super::*;
 
+/// Encode a payload after canonical admission checks.
+pub fn encode_canonical(payload: &TeeBootstrapV2) -> Result<Bytes, CodecError> {
+    payload.validate()?;
+    let mut out = payload.encode_body()?;
+    put_len_u16(&mut out, payload.committee_signatures.len())?;
+    for signature in &payload.committee_signatures {
+        out.extend_from_slice(signature.validator.as_slice());
+        out.extend_from_slice(&signature.signature);
+    }
+    enforce_full_calldata_cap(out.len())?;
+    Ok(Bytes::from(out))
+}
+
 pub(super) fn encode_body(payload: &TeeBootstrapV2) -> Result<Vec<u8>, CodecError> {
-    let policy = payload.policy.encode_canonical()?;
+    let policy = payload.authority.policy.encode_canonical()?;
     let mut out = Vec::with_capacity(payload.encoded_body_len()?);
     out.extend_from_slice(MAGIC);
     put_bytes_u32(&mut out, &policy)?;
-    out.extend_from_slice(payload.committee_snapshot_hash.as_slice());
-    put_u64(&mut out, payload.committee_snapshot_block);
-    put_u64(&mut out, payload.key_epoch);
-    put_u64(&mut out, payload.tribute_offer_epoch);
-    out.extend_from_slice(payload.dkg_transcript_hash.as_slice());
-    out.extend_from_slice(payload.tribute_offer_public_key.as_slice());
-    put_bytes_u32(&mut out, payload.tribute_offer_group_public_key.as_ref())?;
+    out.extend_from_slice(payload.authority.committee_snapshot_hash.as_slice());
+    put_u64(&mut out, payload.authority.committee_snapshot_block);
+    put_u64(&mut out, payload.authority.key_epoch);
+    put_u64(&mut out, payload.authority.tribute_offer_epoch);
+    out.extend_from_slice(payload.authority.dkg_transcript_hash.as_slice());
+    out.extend_from_slice(payload.authority.tribute_offer_public_key.as_slice());
+    put_bytes_u32(
+        &mut out,
+        payload.authority.tribute_offer_group_public_key.as_ref(),
+    )?;
 
     put_len_u16(&mut out, payload.collateral_pool.len())?;
     for component in &payload.collateral_pool {
@@ -67,7 +83,8 @@ fn encode_evidence(
     Ok(())
 }
 
-pub(super) fn decode_canonical(input: &[u8]) -> Result<TeeBootstrapV2, CodecError> {
+/// Decode bounded canonical bytes and validate the resulting payload.
+pub fn decode_canonical(input: &[u8]) -> Result<TeeBootstrapV2, CodecError> {
     enforce_full_calldata_cap(input.len())?;
     let mut decoder = Decoder { input, cursor: 0 };
     if decoder.take(4)? != MAGIC {
@@ -92,18 +109,21 @@ pub(super) fn decode_canonical(input: &[u8]) -> Result<TeeBootstrapV2, CodecErro
     decoder.finish()?;
 
     let value = TeeBootstrapV2 {
-        policy,
-        committee_snapshot_hash,
-        committee_snapshot_block,
-        key_epoch,
-        tribute_offer_epoch,
-        dkg_transcript_hash,
-        tribute_offer_public_key,
-        tribute_offer_group_public_key,
+        authority: TeeBootstrapAuthorityV2 {
+            policy,
+            committee_snapshot_hash,
+            committee_snapshot_block,
+            key_epoch,
+            tribute_offer_epoch,
+            dkg_transcript_hash,
+            tribute_offer_public_key,
+            tribute_offer_group_public_key,
+        },
         collateral_pool,
         participants,
         committee_signatures,
     };
+    value.validate()?;
     Ok(value)
 }
 
