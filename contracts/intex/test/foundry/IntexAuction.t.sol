@@ -29,7 +29,7 @@ contract AuctionTest is Test {
 
     // EIP-712 typehash mirrors `IntexAuction.REVEAL_BID_TYPEHASH`.
     bytes32 internal constant REVEAL_BID_TYPEHASH = keccak256(
-        "RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
+        "RevealBid(uint32 worldwideDay,address bidder,uint16 units,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
     );
 
     uint32 internal constant SCALE_1E6 = 1_000_000;
@@ -823,13 +823,13 @@ contract AuctionTest is Test {
 
         // Zero quantity
         bytes memory sig = _createSignature(worldwideDay, iba1, 0, 20, iba1PrivateKey);
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "quantity/bidRate"));
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "units/bidRate"));
         vm.prank(iba1);
         auction.revealBid(worldwideDay, 0, 20, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
 
         // Zero bidRate
         sig = _createSignature(worldwideDay, iba1, 10, 0, iba1PrivateKey);
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "quantity/bidRate"));
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "units/bidRate"));
         vm.prank(iba1);
         auction.revealBid(worldwideDay, 10, 0, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
 
