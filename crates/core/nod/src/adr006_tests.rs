@@ -35,8 +35,7 @@ fn item(owner: Address) -> NodItemState {
         gratis_load_minor: U256::from(11),
         worldwide_day,
         league_id: 4,
-        floor_price_minor: U256::from(13),
-        bucket_key: NodContract::bucket_key(worldwide_day, U256::from(13), 978),
+        bucket_key: NodContract::bucket_key(worldwide_day, U256::from(5), 978),
         issuance_currency: 840,
         reference_currency: 978,
         // Midnight of the last UTC day closed at `NOW`, so a bucket issued in
@@ -188,7 +187,7 @@ fn entry_price_openings_follow_the_schema() {
     StorageHandle::enter(&mut provider, |storage| {
         let nod = NodContract::new(storage);
         let frozen = nod.entry_prices_frozen.base_slot();
-        let price = nod.entry_price_value.base_slot();
+        let price = nod.entry_price_minor.base_slot();
         let day = WorldwideDay::new(20_260_726);
         assert_eq!(
             crate::openings::entry_price_slots(day, &[840]).unwrap(),
@@ -280,7 +279,10 @@ fn nod_contract_slot_layout_is_pinned() {
         assert_eq!(nod.bucket_nod_count.base_slot(), U256::from(18));
         assert_eq!(nod.bucket_nods.base_slot(), U256::from(19));
         assert_eq!(nod.bucket_nod_index.base_slot(), U256::from(20));
-        assert_eq!(nod.callable_bucket_call_price.base_slot(), U256::from(21));
+        assert_eq!(
+            nod.callable_bucket_call_price_minor.base_slot(),
+            U256::from(21)
+        );
         assert_eq!(nod.callable_bucket_currency.base_slot(), U256::from(22));
         assert_eq!(nod.bucket_called_at.base_slot(), U256::from(23));
         assert_eq!(
@@ -288,20 +290,23 @@ fn nod_contract_slot_layout_is_pinned() {
             U256::from(24)
         );
         assert_eq!(nod.callable_bucket_call_rate.base_slot(), U256::from(25));
-        assert_eq!(nod.callable_bucket_call_window.base_slot(), U256::from(26));
         assert_eq!(
-            nod.callable_bucket_call_threshold.base_slot(),
+            nod.callable_bucket_call_window_seconds.base_slot(),
+            U256::from(26)
+        );
+        assert_eq!(
+            nod.callable_bucket_call_threshold_seconds.base_slot(),
             U256::from(27)
         );
         assert_eq!(
-            nod.callable_bucket_call_notice_period.base_slot(),
+            nod.callable_bucket_call_notice_period_seconds.base_slot(),
             U256::from(28)
         );
-        assert_eq!(nod.max_call_window.base_slot(), U256::from(29));
+        assert_eq!(nod.max_call_window_seconds.base_slot(), U256::from(29));
         assert_eq!(nod.entry_prices_frozen.base_slot(), U256::from(30));
         assert_eq!(nod.entry_price_currency_count.base_slot(), U256::from(31));
         assert_eq!(nod.entry_price_currency.base_slot(), U256::from(32));
-        assert_eq!(nod.entry_price_value.base_slot(), U256::from(33));
+        assert_eq!(nod.entry_price_minor.base_slot(), U256::from(33));
         assert_eq!(nod.callable_bucket_issued_at.base_slot(), U256::from(34));
         assert_eq!(nod.call_sweep_day.slot(), U256::from(35));
         assert_eq!(nod.call_pending_day.slot(), U256::from(36));
@@ -409,7 +414,7 @@ fn certified_generation_is_available_through_the_public_nod_abi() {
         assert_eq!(actual.tributeCount, generation.tribute_count);
         assert_eq!(actual.nodCount, generation.nod_count);
         assert_eq!(actual.bucketCount, generation.bucket_count);
-        assert_eq!(actual.nodAmountTotal, generation.nod_amount_total);
+        assert_eq!(actual.totalSettlementCostMinor, generation.nod_amount_total);
         assert_eq!(
             actual.lysisAllocationMinor,
             generation.lysis_allocation_minor
@@ -445,7 +450,7 @@ fn absent_certified_generation_has_an_explicit_public_abi_result() {
         assert_eq!(actual.tributeCount, 0);
         assert_eq!(actual.nodCount, 0);
         assert_eq!(actual.bucketCount, 0);
-        assert_eq!(actual.nodAmountTotal, U256::ZERO);
+        assert_eq!(actual.totalSettlementCostMinor, U256::ZERO);
         assert_eq!(actual.lysisAllocationMinor, U256::ZERO);
         assert_eq!(actual.issuedAt, 0);
     });
@@ -483,15 +488,13 @@ fn seed_bucket_issued(
     parent: &NodRepositoryReader,
     issuance: BucketIssuance,
 ) -> WwdEntityId {
+    let entry = U256::from(5);
     let mut body = item(issuance.owner);
     body.reference_currency = issuance.reference_currency;
     body.issued_at = issuance.issued_at;
-    body.bucket_key = NodContract::bucket_key(
-        body.worldwide_day,
-        body.floor_price_minor,
-        issuance.reference_currency,
-    );
-    api::add_nod(storage, scope, parent, &body, U256::from(5)).unwrap();
+    body.bucket_key =
+        NodContract::bucket_key(body.worldwide_day, entry, issuance.reference_currency);
+    api::add_nod(storage, scope, parent, &body, entry).unwrap();
     WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key)
 }
 
@@ -591,11 +594,11 @@ fn a_priced_currency_still_qualifies_when_a_sibling_currency_is_unpriced() {
 #[test]
 fn qualification_requires_a_finalized_day_above_the_floor_and_stays() {
     for (daily_rate, finalized, live_rate, qualifies) in [
-        (0, true, 14, false),   // Missing day; no fallback to a live price.
-        (12, true, 14, false),  // A live crossing cannot qualify.
-        (13, true, 14, false),  // Equality is not enough.
-        (14, false, 14, false), // Wait for Oracle finalization.
-        (14, true, 1, true),    // A low live rate cannot prevent qualification.
+        (0, true, 14, false),  // Missing day; no fallback to a live price.
+        (4, true, 14, false),  // A live crossing cannot qualify.
+        (5, true, 14, false),  // Equality is not enough.
+        (6, false, 14, false), // Wait for Oracle finalization.
+        (6, true, 1, true),    // A low live rate cannot prevent qualification.
     ] {
         let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
         let mut provider = HashMapStorageProvider::new(1);
@@ -651,7 +654,7 @@ fn qualification_requires_a_finalized_day_above_the_floor_and_stays() {
                 .unwrap();
             assert_eq!(
                 is_qualified(&storage, &scope, &parent, bucket_id),
-                daily_rate > 13
+                daily_rate > 5
             );
         });
     }

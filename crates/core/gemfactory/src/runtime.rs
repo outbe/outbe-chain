@@ -93,13 +93,13 @@ fn emit_gem_issued(storage: &StorageHandle<'_>, gem_id: U256, position_id: U256)
             gemId: gem_id,
             gemType: item.gem_type,
             owner: item.owner,
-            promisLoad: item.promis_load_minor,
-            entryPrice: item.entry_price_minor,
-            floorPrice: item.floor_price_minor,
+            promisLoadMinor: item.promis_load_minor,
+            entryPriceMinor: item.entry_price_minor,
+            floorPriceMinor: item.floor_price_minor,
             issuanceCurrency: item.issuance_currency,
             referenceCurrency: item.reference_currency,
             issuedAt: item.issued_at,
-            callPrice: item.call_price_minor,
+            callPriceMinor: item.call_price_minor,
             callWindow: item.call_window_seconds,
             callThreshold: item.call_threshold_seconds,
             callNoticePeriod: item.call_notice_period_seconds,
@@ -117,7 +117,7 @@ pub fn issue_gem_position(
     storage: &StorageHandle<'_>,
     caller: Address,
     source_intex_id: SeriesId,
-    amount: U256,
+    units: U256,
 ) -> Result<U256> {
     if caller.is_zero() {
         return Err(GemFactoryError::InvalidOwner.into());
@@ -135,16 +135,16 @@ pub fn issue_gem_position(
         series.reference_currency,
     )?;
 
-    // Burn `amount` of the merchant's Intex units; `sendToGemFactory` returns the
-    // burned count (and reverts on a state that may not be sent, or a zero amount).
-    let units = burn_intex_into_gem_factory(storage, caller, source_intex_id, amount)?;
+    // Burn `units` of the merchant's Intex; `sendToGemFactory` returns the
+    // burned count (and reverts on a state that may not be sent, or zero units).
+    let burned = burn_intex_into_gem_factory(storage, caller, source_intex_id, units)?;
     let capacity = series
         .promis_load_minor
-        .checked_mul(units)
+        .checked_mul(burned)
         .ok_or(GemFactoryError::Overflow)?;
 
     // Their load moved into the position, so the source series cannot forfeit them.
-    let gem_factory_units = u32::try_from(units).map_err(|_| GemFactoryError::Overflow)?;
+    let gem_factory_units = u32::try_from(burned).map_err(|_| GemFactoryError::Overflow)?;
     outbe_intex::api::record_gem_factory_units(
         storage,
         source_intex_id,
@@ -161,9 +161,9 @@ pub fn issue_gem_position(
         position_id,
         merchant: caller,
         source_intex_id,
-        remaining_capacity: capacity,
-        source_entry_price: series.entry_price_minor,
-        source_floor_price: series.floor_price_minor,
+        remaining_capacity_minor: capacity,
+        source_entry_price_minor: series.entry_price_minor,
+        source_floor_price_minor: series.floor_price_minor,
         issuance_currency: series.issuance_currency,
         reference_currency: series.reference_currency,
         issued_at,
@@ -173,11 +173,11 @@ pub fn issue_gem_position(
 
     factory.push_live_position(position_id)?;
 
-    let prev_sent = factory.total_gem_factory_units.read()?;
+    let prev_sent = factory.total_capacity_minor.read()?;
     let new_sent = prev_sent
         .checked_add(capacity)
         .ok_or(GemFactoryError::Overflow)?;
-    factory.total_gem_factory_units.write(new_sent)?;
+    factory.total_capacity_minor.write(new_sent)?;
 
     emit_event(
         storage,
@@ -185,9 +185,9 @@ pub fn issue_gem_position(
             positionId: position_id,
             merchant: caller,
             sourceIntexId: source_intex_id.into(),
-            capacity,
-            sourceEntryPrice: position.source_entry_price,
-            sourceFloorPrice: position.source_floor_price,
+            capacityMinor: capacity,
+            sourceEntryPriceMinor: position.source_entry_price_minor,
+            sourceFloorPriceMinor: position.source_floor_price_minor,
             issuanceCurrency: position.issuance_currency,
             referenceCurrency: position.reference_currency,
             issuedAt: issued_at,
@@ -198,14 +198,14 @@ pub fn issue_gem_position(
     Ok(position_id)
 }
 
-/// Burn `amount` of the merchant's Issued Intex units via `sendToGemFactory`
+/// Burn `units` of the merchant's Issued Intex via `sendToGemFactory`
 /// (GEM_ROLE) and return the burned count. Reverts if the series is in a
-/// non-sendable (non-Issued) state or `amount` is zero.
+/// non-sendable (non-Issued) state or `units` is zero.
 fn burn_intex_into_gem_factory(
     storage: &StorageHandle<'_>,
     owner: Address,
     series_id: SeriesId,
-    amount: U256,
+    units: U256,
 ) -> Result<U256> {
     let ret = storage.call(
         INTEX_NFT1155_ADDRESS,
@@ -213,7 +213,7 @@ fn burn_intex_into_gem_factory(
         IIntexNFT1155::sendToGemFactoryCall {
             owner,
             seriesId: series_id.into(),
-            amount,
+            units,
         }
         .abi_encode()
         .into(),
@@ -252,15 +252,16 @@ pub fn issue_merchant_gem(
         return Err(GemFactoryError::PositionExpired.into());
     }
     let remaining = record
-        .remaining_capacity
+        .remaining_capacity_minor
         .checked_sub(promis_load)
         .ok_or(GemFactoryError::InsufficientCapacity)?;
 
     // Both maxima are an anti-dilution floor, not a price: never below the source Intex.
     let market_price = read_market_price(storage, record.reference_currency, now)?;
-    let entry_price = market_price.max(record.source_entry_price);
+    let entry_price = market_price.max(record.source_entry_price_minor);
     let terms = outbe_gem::config::read(storage)?;
-    let floor_price = derived_floor(entry_price, terms.floor_rate)?.max(record.source_floor_price);
+    let floor_price =
+        derived_floor(entry_price, terms.floor_rate)?.max(record.source_floor_price_minor);
     let call_price = derived_call_price(entry_price, terms.call_rate)?;
 
     let gem_id = gem_api::add_gem(
@@ -279,7 +280,7 @@ pub fn issue_merchant_gem(
         },
     )?;
 
-    record.remaining_capacity = remaining;
+    record.remaining_capacity_minor = remaining;
     factory.positions.update(&record)?;
     // Nothing left to return: it leaves the queue instead of sitting at the head.
     if remaining.is_zero() {
@@ -308,7 +309,7 @@ pub fn settle_gem(
 ) -> Result<()> {
     let quote = |item: &outbe_gem::GemData| {
         let currency = accept_payment_asset(storage, asset, item)?;
-        let (amount_paid, snapshot) = cost_in_token(storage, item, asset, currency)?;
+        let (amount_paid, snapshot) = cost_in_asset(storage, item, asset, currency)?;
         require_snapshot(snapshot, snapshot_id)?;
         Ok((settlement_currency(item, currency), amount_paid))
     };
@@ -318,7 +319,7 @@ pub fn settle_gem(
         quote,
         |_, (settlement_currency, amount_paid)| {
             deposit_payment(storage, caller, asset, amount_paid)?;
-            Ok((settlement_currency, amount_paid))
+            Ok((asset, settlement_currency, amount_paid))
         },
     )
 }
@@ -337,7 +338,7 @@ pub fn settle_gem_with_paynote(
         |item, ()| {
             let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
             let currency = accept_payment_asset(storage, claim.asset, item)?;
-            let (amount_paid, snapshot) = cost_in_token(storage, item, claim.asset, currency)?;
+            let (amount_paid, snapshot) = cost_in_asset(storage, item, claim.asset, currency)?;
             let expected = outbe_paynote::api::settlement_context(
                 outbe_paynote::api::SettlementDomain::Gem,
                 B256::from(gem_id),
@@ -359,19 +360,23 @@ pub fn settle_gem_with_paynote(
                 }
                 .into());
             }
-            Ok((settlement_currency(item, currency), amount_paid))
+            Ok((
+                claim.asset,
+                settlement_currency(item, currency),
+                amount_paid,
+            ))
         },
     )
 }
 
 /// `quote` prices and authorizes the payment before any state changes; `pay`
-/// then moves it after the transition and returns the settlement currency and
-/// the amount it charged.
+/// then moves it after the transition and returns the asset, the settlement
+/// currency and the amount it charged.
 fn settle<Q>(
     storage: &StorageHandle<'_>,
     gem_id: U256,
     quote: impl FnOnce(&outbe_gem::GemData) -> Result<Q>,
-    pay: impl FnOnce(&outbe_gem::GemData, Q) -> Result<(u16, U256)>,
+    pay: impl FnOnce(&outbe_gem::GemData, Q) -> Result<(Address, u16, U256)>,
 ) -> Result<()> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     // Anyone may pay for a gem; it stays with its owner.
@@ -393,13 +398,14 @@ fn settle<Q>(
         // Settled before payment so a token callback cannot settle the gem twice;
         // a failed payment rolls the state back.
         gem_api::set_state(storage, gem_id, GemState::Settled)?;
-        let (settlement_currency, amount_paid) = pay(&item, quoted)?;
+        let (asset, settlement_currency, amount_paid) = pay(&item, quoted)?;
         emit_event(
             storage,
             GemSettled {
                 gemId: gem_id,
                 owner: item.owner,
-                amountPaid: amount_paid,
+                asset,
+                paymentMinor: amount_paid,
                 settlementCurrency: settlement_currency,
             },
         )
@@ -523,7 +529,7 @@ fn accept_payment_asset(
 /// Cost of one gem in `asset`'s minor units and, on the issuance rail, the VWAP
 /// snapshot both COEN legs came from. The cross rate is folded into the same
 /// fraction, so the whole thing is floored once.
-fn cost_in_token(
+fn cost_in_asset(
     storage: &StorageHandle<'_>,
     item: &outbe_gem::GemData,
     asset: Address,
@@ -634,7 +640,7 @@ pub fn quote_settlement(
 ) -> Result<(u16, U256, U256)> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     let currency = accept_payment_asset(storage, asset, &item)?;
-    let (cost, snapshot) = cost_in_token(storage, &item, asset, currency)?;
+    let (cost, snapshot) = cost_in_asset(storage, &item, asset, currency)?;
     Ok((
         settlement_currency(&item, currency),
         cost,
@@ -655,9 +661,9 @@ pub fn position_data(
         positionId: record.position_id,
         merchant: record.merchant,
         sourceIntexId: record.source_intex_id.into(),
-        remainingCapacity: record.remaining_capacity,
-        sourceEntryPrice: record.source_entry_price,
-        sourceFloorPrice: record.source_floor_price,
+        remainingCapacityMinor: record.remaining_capacity_minor,
+        sourceEntryPriceMinor: record.source_entry_price_minor,
+        sourceFloorPriceMinor: record.source_floor_price_minor,
         issuanceCurrency: record.issuance_currency,
         referenceCurrency: record.reference_currency,
         issuedAt: record.issued_at,
@@ -691,7 +697,7 @@ pub fn mine_promis(
         GemExercised {
             gemId: gem_id,
             owner: item.owner,
-            promisLoad: item.promis_load_minor,
+            promisLoadMinor: item.promis_load_minor,
         },
     )?;
 

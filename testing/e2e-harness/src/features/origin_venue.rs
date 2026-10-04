@@ -654,7 +654,7 @@ fn cleared_day_issues_intex(world: &mut World) {
     assert_ne!(
         venue_probes::cleared_empty(&home, worldwide_day),
         Some(true),
-        "day {worldwide_day} cleared empty: the day's supply bought no whole Intex, so there is \
+        "day {worldwide_day} cleared empty: the day's Desis Limit bought no whole Intex, so there is \
          nothing to issue and this scenario cannot cover minting"
     );
     // The day issues to every chain it opened on, so every chain has to show the

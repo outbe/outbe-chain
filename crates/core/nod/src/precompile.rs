@@ -127,7 +127,7 @@ fn to_abi_data(
     let deadline = if called_at == 0 {
         0
     } else {
-        api::settlement_deadline_of(called_at, terms.call_notice_period)
+        api::settlement_deadline_of(called_at, terms.call_notice_period_seconds)
     };
     let qualified = api::is_qualified(storage, bucket)?;
     let state = api::effective_state(item, qualified, called_at, deadline, storage.timestamp()?);
@@ -136,7 +136,7 @@ fn to_abi_data(
         owner: item.owner,
         worldwideDay: item.worldwide_day.into(),
         leagueId: item.league_id,
-        floorPriceMinor: item.floor_price_minor,
+        floorPriceMinor: bucket.floor_price_minor()?,
         gratisLoadMinor: item.gratis_load_minor,
         entryPriceMinor: bucket.entry_price_minor,
         settlementCostMinor: api::settlement_cost_minor(
@@ -150,11 +150,11 @@ fn to_abi_data(
         calledAt: called_at,
         isSettled: item.is_settled,
         effectiveState: state as u8,
-        callPriceMinor: terms.call_price,
+        callPriceMinor: terms.call_price_minor,
         callRate: terms.call_rate,
-        callWindow: terms.call_window,
-        callThreshold: terms.call_threshold,
-        callNoticePeriod: terms.call_notice_period,
+        callWindow: terms.call_window_seconds,
+        callThreshold: terms.call_threshold_seconds,
+        callNoticePeriod: terms.call_notice_period_seconds,
         settlementDeadline: deadline,
     })
 }
@@ -174,7 +174,7 @@ fn to_abi_certified_generation(
             tributeCount: generation.tribute_count,
             nodCount: generation.nod_count,
             bucketCount: generation.bucket_count,
-            nodAmountTotal: generation.nod_amount_total,
+            totalSettlementCostMinor: generation.nod_amount_total,
             lysisAllocationMinor: generation.lysis_allocation_minor,
             issuedAt: generation.issued_at,
         },
@@ -188,7 +188,7 @@ fn to_abi_certified_generation(
             tributeCount: 0,
             nodCount: 0,
             bucketCount: 0,
-            nodAmountTotal: U256::ZERO,
+            totalSettlementCostMinor: U256::ZERO,
             lysisAllocationMinor: U256::ZERO,
             issuedAt: 0,
         },

@@ -155,7 +155,7 @@ pub(crate) fn redeem(world: &World, mined: &[Mined]) -> Vec<Redeemed> {
                     addresses::PROMIS_FACTORY_ADDR,
                     &record.owner_key,
                     &eth::IPromisFactory::mineCoenCall {
-                        amount: record.amount,
+                        promisMinor: record.amount,
                         mac,
                         opNonce: nonce,
                     },
@@ -166,7 +166,7 @@ pub(crate) fn redeem(world: &World, mined: &[Mined]) -> Vec<Redeemed> {
                     addresses::GRATIS_FACTORY_ADDR,
                     &record.owner_key,
                     &eth::IGratisFactory::mineCoenCall {
-                        amount: record.amount,
+                        gratisMinor: record.amount,
                         mac,
                         opNonce: nonce,
                     },

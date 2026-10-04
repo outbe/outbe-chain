@@ -183,7 +183,7 @@ fn test_initial_state() {
         assert_eq!(tc.total_supply().unwrap(), 0);
         let totals = tc.get_day_totals(20241220u32.into()).unwrap();
         assert_eq!(totals.tribute_count, 0);
-        assert_eq!(totals.tribute_nominal_amount, U256::ZERO);
+        assert_eq!(totals.tribute_nominal_total_minor, U256::ZERO);
         assert!(!totals.is_sealed);
     });
 }
@@ -228,7 +228,7 @@ fn test_day_bucket_tracks_nominal_and_gratis() {
         let totals = tc.get_day_totals(20241220u32.into()).unwrap();
         assert_eq!(totals.tribute_count, 2);
         assert_eq!(
-            totals.tribute_nominal_amount,
+            totals.tribute_nominal_total_minor,
             t1.nominal_amount_minor + t2.nominal_amount_minor
         );
         assert!(!totals.is_sealed);
@@ -264,7 +264,7 @@ fn pre_admission_projection_tracks_exact_incremental_tribute_inputs() {
         assert!(!projection.is_sealed);
         assert_eq!(projection.tribute_count, 2);
         assert_eq!(
-            projection.tribute_nominal_amount,
+            projection.tribute_nominal_total_minor,
             first.nominal_amount_minor + second.nominal_amount_minor
         );
         assert_eq!(
@@ -300,7 +300,7 @@ fn pre_admission_projection_removes_burned_tribute_contribution() {
 
         assert_eq!(projection.tribute_count, 1);
         assert_eq!(
-            projection.tribute_nominal_amount,
+            projection.tribute_nominal_total_minor,
             second.nominal_amount_minor
         );
         assert_eq!(
@@ -375,7 +375,10 @@ fn sealed_pre_admission_projection_is_immutable() {
     assert!(sealed.is_sealed);
     assert_eq!(sealed.sealed_collection_root, sealed_collection.root());
     assert_eq!(sealed.tribute_count, 1);
-    assert_eq!(sealed.tribute_nominal_amount, tribute.nominal_amount_minor);
+    assert_eq!(
+        sealed.tribute_nominal_total_minor,
+        tribute.nominal_amount_minor
+    );
 
     StorageHandle::enter(&mut provider, |storage| {
         let mut contract = TributeContract::new(storage);
@@ -437,7 +440,7 @@ fn pre_admission_overflow_rolls_back_the_entire_issue() {
                 is_sealed: false,
                 sealed_collection_root: B256::ZERO,
                 sealed_tribute_count: 0,
-                sealed_tribute_nominal_amount: U256::ZERO,
+                sealed_tribute_nominal_total_minor: U256::ZERO,
                 canonical_body_bytes: u64::MAX,
                 distinct_owner_count: 0,
                 distinct_reference_currency_count: 0,
@@ -454,7 +457,7 @@ fn pre_admission_overflow_rolls_back_the_entire_issue() {
         );
         let totals = tc.get_day_totals(tribute.worldwide_day).unwrap();
         assert_eq!(totals.tribute_count, 0);
-        assert_eq!(totals.tribute_nominal_amount, U256::ZERO);
+        assert_eq!(totals.tribute_nominal_total_minor, U256::ZERO);
         assert_eq!(tc.total_supply().unwrap(), 0);
         assert!(tc.get_tribute(tribute.tribute_id).unwrap().is_none());
     });
@@ -560,7 +563,7 @@ fn assert_pre_admission_matches_fold(
 
     let projection = tc.pre_admission_projection(day).unwrap();
     assert_eq!(projection.tribute_count, count);
-    assert_eq!(projection.tribute_nominal_amount, nominal);
+    assert_eq!(projection.tribute_nominal_total_minor, nominal);
     assert_eq!(projection.canonical_body_bytes, canonical_body_bytes);
     assert_eq!(
         projection.distinct_owner_count,
@@ -586,7 +589,7 @@ fn test_burn_tribute() {
 
         let totals = tc.get_day_totals(20241220u32.into()).unwrap();
         assert_eq!(totals.tribute_count, 0);
-        assert_eq!(totals.tribute_nominal_amount, U256::ZERO);
+        assert_eq!(totals.tribute_nominal_total_minor, U256::ZERO);
     });
 }
 
@@ -625,8 +628,8 @@ fn test_seal_day() {
             totals_before_seal.tribute_count
         );
         assert_eq!(
-            totals_after_rejected_mutations.tribute_nominal_amount,
-            totals_before_seal.tribute_nominal_amount
+            totals_after_rejected_mutations.tribute_nominal_total_minor,
+            totals_before_seal.tribute_nominal_total_minor
         );
 
         tc.unseal_day(day).unwrap();
@@ -656,7 +659,7 @@ fn lysis_bulk_accounting_rejects_count_and_nominal_mismatch_before_zeroing() {
         let unchanged = tc.get_day_totals(tribute.worldwide_day).unwrap();
         assert_eq!(unchanged.tribute_count, 1);
         assert_eq!(
-            unchanged.tribute_nominal_amount,
+            unchanged.tribute_nominal_total_minor,
             tribute.nominal_amount_minor
         );
         assert_eq!(tc.total_supply().unwrap(), 1);
@@ -667,7 +670,7 @@ fn lysis_bulk_accounting_rejects_count_and_nominal_mismatch_before_zeroing() {
         assert!(completed.initialized);
         assert!(completed.is_sealed);
         assert_eq!(completed.tribute_count, 0);
-        assert_eq!(completed.tribute_nominal_amount, U256::ZERO);
+        assert_eq!(completed.tribute_nominal_total_minor, U256::ZERO);
         assert_eq!(tc.total_supply().unwrap(), 0);
     });
 }
@@ -834,7 +837,7 @@ fn test_burn_all_by_wwd() {
 
         let totals = tc.get_day_totals(20241220u32.into()).unwrap();
         assert_eq!(totals.tribute_count, 0);
-        assert_eq!(totals.tribute_nominal_amount, U256::ZERO);
+        assert_eq!(totals.tribute_nominal_total_minor, U256::ZERO);
     });
 }
 

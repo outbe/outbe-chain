@@ -46,7 +46,7 @@ pub(crate) fn quote(
     let valuation = get_finalized_window_vwap(storage.clone(), currency, snapshot)?
         .filter(|v| !v.is_zero())
         .ok_or_else(|| invalid("pledge price unavailable"))?;
-    let (collateral, entry_price) = checked_quote(amount, decimals, valuation)?;
+    let (gratis_minor, entry_price_minor) = checked_quote(amount, decimals, valuation)?;
     let policy_rate = api::get_policy_rate(storage.clone(), currency)?
         .checked_mul(U256::from(POLICY_RATE_FACTOR_BP))
         .ok_or_else(|| invalid("policy rate overflow"))?
@@ -68,15 +68,15 @@ pub(crate) fn quote(
     Ok(LiquidityReservation {
         asset,
         amount,
-        collateral,
+        gratis_minor,
         snapshot_id: snapshot.to_u256(),
-        entry_price,
-        valuation_price: valuation,
+        entry_price_minor,
+        valuation_price_minor: valuation,
         policy_rate,
         issuance_currency: currency,
         asset_decimals: decimals,
         reference_currency,
-        call_anchor_price: anchor,
+        call_anchor_price_minor: anchor,
         ..Default::default()
     })
 }

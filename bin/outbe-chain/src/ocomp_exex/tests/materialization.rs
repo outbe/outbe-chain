@@ -538,14 +538,11 @@ mod copied_public_work {
                                 owner: tribute.owner,
                                 wwd: day.value(),
                                 league_id: 1,
-                                floor_price_minor: U256::ZERO,
                                 gratis_load_minor: U256::from(1),
                                 entry_price_minor: U256::ZERO,
                                 settlement_cost_minor: U256::from(2),
                                 issuance_currency: tribute.issuance_currency,
                                 reference_currency: tribute.reference_currency,
-                                issued_at: 1_784_765_900,
-                                bucket_key: hash(u8::try_from(local % 251).unwrap()),
                             }
                         })
                         .collect::<Vec<_>>();

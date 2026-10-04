@@ -69,7 +69,7 @@ pub(super) fn dynamic_deadline_fixture() -> (
                     validator: members[3],
                     jobId: jobs[ordinal],
                     missCount: (ordinal + 1) as u64,
-                    slashedBonded: if ordinal == 0 { slash } else { U256::ZERO },
+                    slashedBondedMinor: if ordinal == 0 { slash } else { U256::ZERO },
                     recoveryDeadline: 1000 + DYNAMIC_OCOMP_RECOVERY_BLOCKS,
                     firstInWindow: ordinal == 0,
                 };

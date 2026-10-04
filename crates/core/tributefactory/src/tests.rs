@@ -394,7 +394,7 @@ fn seed_offer_world(storage: StorageHandle<'_>, target_days: &[WorldwideDay]) {
             lookback_end: offset + 3,
             offering_end: offset + 4,
             scheduled_process_time: offset + 5,
-            metadosis_limit_amount: U256::from(100),
+            metadosis_limit_minor: U256::from(100),
             previous_vwap: U256::from(90),
             current_vwap: U256::from(100),
         });

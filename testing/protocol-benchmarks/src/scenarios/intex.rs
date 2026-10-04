@@ -73,7 +73,7 @@ fn params(index: usize) -> IssuanceParams {
         issuance_currency: 840,
         reference_currency: 840,
         recipients: vec![RECIPIENT],
-        quantities: vec![U256::from(100)],
+        units: vec![U256::from(100)],
         recipient_chains: vec![1],
         snapshot_chains: vec![1],
     }

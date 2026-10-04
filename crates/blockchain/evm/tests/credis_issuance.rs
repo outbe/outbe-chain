@@ -208,15 +208,15 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
         cca: CCA,
         vault: VAULT,
         expires_at: NOW + 900,
-        collateral: U256::from(1_000_000),
+        gratis_minor: U256::from(1_000_000),
         snapshot_id: U256::from(17),
-        entry_price: U256::from(2_000_000),
-        valuation_price: U256::from(2_000_000),
+        entry_price_minor: U256::from(2_000_000),
+        valuation_price_minor: U256::from(2_000_000),
         policy_rate: U256::from(43_000),
         issuance_currency: 840,
         asset_decimals: 6,
         reference_currency: 840,
-        call_anchor_price: U256::from(2_000_000),
+        call_anchor_price_minor: U256::from(2_000_000),
     })?;
 
     Ok(())
@@ -533,9 +533,9 @@ fn assert_payment_rollback(
         CCA,
         CREDIS_FACTORY_ADDRESS,
         U256::ZERO,
-        ICredisFactory::settleCall {
+        ICredisFactory::settleCredisCall {
             positionId: observation.position,
-            amount: U256::from(1_000_000)
+            amountMinor: U256::from(1_000_000)
         }
     );
     assert!(
@@ -621,9 +621,9 @@ fn settle_successful_issuance(
         CCA,
         CREDIS_FACTORY_ADDRESS,
         U256::ZERO,
-        ICredisFactory::settleCall {
+        ICredisFactory::settleCredisCall {
             positionId: position,
-            amount: U256::from(1_000_000)
+            amountMinor: U256::from(1_000_000)
         }
     );
     assert!(

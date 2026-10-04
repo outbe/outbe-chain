@@ -75,8 +75,8 @@ interface IPayNote {
     /// @param asset The spent note's bound ERC20 (indexed).
     /// @param context Settlement statement bound by the proof (indexed).
     /// @param nullifier The spent nullifier (indexed).
-    /// @param spendAmount Units released by the spend.
-    event NoteUsed(address indexed asset, bytes32 indexed context, bytes32 indexed nullifier, uint256 spendAmount);
+    /// @param amountMinor Units released by the spend.
+    event NoteUsed(address indexed asset, bytes32 indexed context, bytes32 indexed nullifier, uint256 amountMinor);
 
     /// @notice These canonical nullifiers were consumed to create one note.
     /// @dev Input commitments and all amounts remain private. NewNote supplies

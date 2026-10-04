@@ -170,15 +170,15 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(Bytes, U256), String> {
             cca: CCA,
             vault: Address::repeat_byte(0x77),
             expires_at: CREATED_AT + 15 * 60,
-            collateral: pledge_cost(),
+            gratis_minor: pledge_cost(),
             snapshot_id: U256::from(17),
-            entry_price: oracle_rate(),
-            valuation_price: oracle_rate(),
+            entry_price_minor: oracle_rate(),
+            valuation_price_minor: oracle_rate(),
             policy_rate: U256::from(43_000),
             issuance_currency: ISSUANCE_ISO,
             asset_decimals: 6,
             reference_currency: REFERENCE_ISO,
-            call_anchor_price: oracle_rate(),
+            call_anchor_price_minor: oracle_rate(),
         })
         .map_err(|error| error.to_string())?;
     let commitment = outbe_gratisfactory::runtime::pledge_gratis(
@@ -298,7 +298,7 @@ impl BenchmarkScenario for CredisScenario {
         if position.smart_account != ALICE
             || position.return_note_serial.is_zero()
             || pledged != pledge_cost()
-            || decoded.amountStables != pledge_stables()
+            || decoded.principalMinor != pledge_stables()
         {
             return Err("Credis request postcondition does not match the sealed pledge".to_owned());
         }

@@ -13,7 +13,7 @@ import {BatchSendParam, IIntexNFT1155Bridge} from "@contracts/shared/interfaces/
 ///   - SI-08: `sum totalSupply(issuedId)` across chains equals what was issued. Mint+bridge+round-trip
 ///     moves balances between chains but cannot inflate the global pool.
 ///   - SI-09: a `crosschainBurn` of `amount` on the source mints exactly `amount` on the destination,
-///     even when the inbound crosschainMint fails: the parked-amount `failedCrosschainMints[receiveId][idx].amount`
+///     even when the inbound crosschainMint fails: the parked-amount `failedCrosschainMints[receiveId][idx].units`
 ///     holds the in-flight units until retry, so the source-burned amount equals
 ///     `destination-minted + destination-parked` at every step.
 contract CrossChainSupplyConservationTest is CrossChainTest {
@@ -55,7 +55,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
     function test_HopAToB_TotalSupplyPreserved() public {
         uint256 minted = 100;
-        tokenA.issue(user, minted, SERIES_ID);
+        tokenA.issueIntex(user, minted, SERIES_ID);
 
         uint256 bridged = 60;
         _send(adapterA, adapterB, A_CHAIN_ID, user, TOKEN_ID, bridged);
@@ -71,7 +71,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
     function test_RoundTripAToBToA_TotalSupplyPreserved() public {
         uint256 minted = 100;
-        tokenA.issue(user, minted, SERIES_ID);
+        tokenA.issueIntex(user, minted, SERIES_ID);
 
         _send(adapterA, adapterB, A_CHAIN_ID, user, TOKEN_ID, minted);
         assertEq(tokenA.totalSupply(TOKEN_ID), 0, "A drained after outbound");
@@ -96,7 +96,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
         uint256 minted = 100;
         uint256 bridged = 100;
-        tokenA.issue(user, minted, parkSeries);
+        tokenA.issueIntex(user, minted, parkSeries);
 
         bytes32 receiveId = _send(adapterA, adapterB, A_CHAIN_ID, user, parkTokenId, bridged);
 
@@ -133,7 +133,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         tokenA.createSeries(CreateSeriesLib.params(parkDay, ISSUED_UNITS, 0));
 
         uint256 minted = 100;
-        tokenA.issue(user, minted, parkSeries);
+        tokenA.issueIntex(user, minted, parkSeries);
 
         bytes32 receiveId = _send(adapterA, adapterB, A_CHAIN_ID, user, parkTokenId, minted);
 
@@ -163,7 +163,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         uint256 minted = bound(issuedSeed, 1, ISSUED_UNITS);
         uint256 bridged = bound(bridgedSeed, 0, minted);
 
-        tokenA.issue(user, minted, SERIES_ID);
+        tokenA.issueIntex(user, minted, SERIES_ID);
         if (bridged > 0) {
             _send(adapterA, adapterB, A_CHAIN_ID, user, TOKEN_ID, bridged);
         }
@@ -191,7 +191,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         amounts[0] = amount;
 
         BatchSendParam memory params = BatchSendParam({
-            dstChainId: dstChainId, to: bytes32(uint256(uint160(recipient))), tokenIds: tokenIds, amounts: amounts
+            dstChainId: dstChainId, to: bytes32(uint256(uint160(recipient))), tokenIds: tokenIds, units: amounts
         });
 
         uint256 fee = from.quoteBatchSend(params);

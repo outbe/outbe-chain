@@ -63,7 +63,7 @@ contract IntexNFT1155Erc4906Test is Test {
         assertEq(count, 1, "createSeries emits once");
         assertEq(tokenId, iTok);
 
-        nft.issue(user, 10, SERIES_ID);
+        nft.issueIntex(user, 10, SERIES_ID);
         (count,) = _metadataUpdates();
         assertEq(count, 0, "mint is supply-only");
 

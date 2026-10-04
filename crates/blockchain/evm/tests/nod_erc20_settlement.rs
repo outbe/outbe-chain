@@ -146,7 +146,8 @@ impl World {
             let nod = outbe_nodfactory::api::issue_nod(&storage, &scope, &parent, &params).unwrap();
             let floor_price_minor =
                 NodContract::floor_price_minor(params.entry_price_minor).unwrap();
-            let bucket = NodContract::bucket_key(params.worldwide_day, floor_price_minor, 840);
+            let bucket =
+                NodContract::bucket_key(params.worldwide_day, params.entry_price_minor, 840);
             qualify(&storage, bucket, floor_price_minor, 840).expect("bucket qualifies");
             nod
         });
@@ -171,7 +172,7 @@ impl World {
             },
         );
         assert_eq!(quote.settlementCurrency, 840);
-        assert_eq!(quote.payableUnits, cost);
+        assert_eq!(quote.paymentMinor, cost);
         assert_eq!(quote.snapshotId, U256::ZERO);
         world.ok(
             owner,
@@ -334,7 +335,7 @@ fn erc20_settlement_moves_exact_full_width_cost_and_preserves_mining() {
     assert_eq!(paid[0].owner, OWNER);
     assert_eq!(paid[0].asset, ASSET);
     assert_eq!(paid[0].nullifier, B256::ZERO);
-    assert_eq!(paid[0].amountCovered, cost);
+    assert_eq!(paid[0].paymentMinor, cost);
     let balances = world.balances();
     assert!(!matches!(world.settle().status, SubCallStatus::Success));
     assert_eq!(world.balances(), balances);
@@ -423,7 +424,7 @@ fn a_third_party_pays_and_the_nod_stays_with_the_owner() {
         .collect();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].owner, OWNER);
-    assert_eq!(events[0].amountCovered, cost);
+    assert_eq!(events[0].paymentMinor, cost);
 }
 
 #[test]

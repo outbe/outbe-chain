@@ -560,13 +560,11 @@ fn try_evaluate(case: &CorpusCase) -> Result<Value, ReferenceFailure> {
             "entry_price": entry_price.to_string(),
         }));
 
-        // Validated as input; the floor derives from the entry price alone.
+        // Validated as input; the entry bound keeps the floor and any u16-rate call price in U256.
         decimal(&tribute.tribute_price)?;
-        let marked_up = &entry_price * 108_u16;
-        if marked_up >= u256_modulus() {
+        if &entry_price * (100_u32 + u32::from(u16::MAX)) >= u256_modulus() {
             return Err(ReferenceFailure::new("ARITHMETIC"));
         }
-        let floor_price = marked_up / 100_u8;
         let second = tribute
             .f2
             .ok_or_else(|| ReferenceFailure::ordinal("FIDELITY_SECOND_UNAVAILABLE", ordinal))?;
@@ -598,13 +596,11 @@ fn try_evaluate(case: &CorpusCase) -> Result<Value, ReferenceFailure> {
             "owner": tribute.owner,
             "worldwide_day": tribute.worldwide_day,
             "league": second,
-            "floor_price": floor_price.to_string(),
             "gratis_load": load.to_string(),
             "entry_price": entry_price.to_string(),
             "cost": cost.to_string(),
             "issuance_currency": tribute.issuance_currency,
             "reference_currency": currency,
-            "issued_at": input.logical_evaluation_time,
         }));
         if !tribute.excluded {
             let current = contributors

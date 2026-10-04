@@ -130,7 +130,7 @@ contract OriginRouterTest is CrossChainTest {
             callThreshold: 5,
             callPriceMinor: 25e6,
             recipients: recipients,
-            quantities: quantities
+            units: quantities
         });
     }
 

@@ -101,9 +101,9 @@ impl PledgeNoteCmd {
                 )?;
                 let tree = read_tree(rpc, chain_id).await?;
                 ensure_unspent(rpc, &note).await?;
-                let proof = client::prove_issue(&note, &tree, r.collateral, context)?;
+                let proof = client::prove_issue(&note, &tree, r.gratisMinor, context)?;
                 let change = note
-                    .change(r.collateral)?
+                    .change(r.gratisMinor)?
                     .map(|n| save_note(dir, &n))
                     .transpose()?;
                 // Persist the input and context before exposing a usable proof. They recover every return note.

@@ -246,7 +246,7 @@ fn fixture_with_cost(
                 NodContract::floor_price_minor(params.entry_price_minor).unwrap();
             let bucket_key = NodContract::bucket_key(
                 params.worldwide_day,
-                floor_price_minor,
+                params.entry_price_minor,
                 params.reference_currency,
             );
             qualify(

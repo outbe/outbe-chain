@@ -41,7 +41,7 @@ pub fn is_qualified(storage: &StorageHandle<'_>, bucket: &NodBucketState) -> Res
     outbe_oracle::api::closed_above_floor(
         storage.clone(),
         bucket.reference_currency,
-        bucket.floor_price_minor,
+        bucket.floor_price_minor()?,
         first_full_day(issued_at),
     )
 }
@@ -97,7 +97,9 @@ pub fn settlement_deadline(storage: &StorageHandle<'_>, bucket_key: B256) -> Res
     if called_at == 0 {
         return Ok(0);
     }
-    let notice = nod.callable_bucket_call_notice_period.read(&bucket_key)?;
+    let notice = nod
+        .callable_bucket_call_notice_period_seconds
+        .read(&bucket_key)?;
     Ok(settlement_deadline_of(called_at, notice))
 }
 

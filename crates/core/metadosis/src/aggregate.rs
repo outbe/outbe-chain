@@ -13,7 +13,6 @@ use outbe_primitives::{
 use crate::{
     constants::{MAX_ACTIVE_WWDS, MAX_RECORDS_KEPT, MAX_RETAINED_WWDS},
     errors::storage_corruption_message,
-    ocomp::poc_schema_limits,
     schema::{day_type, status, MetadosisContract},
     terminal::{model::WwdTerminalReceipt, TerminalReceiptValidationContext},
 };
@@ -123,7 +122,7 @@ pub struct WwdProjection {
     pub lookback_end: u64,
     pub offering_end: u64,
     pub scheduled_process_time: u64,
-    pub metadosis_limit_amount: U256,
+    pub metadosis_limit_minor: U256,
     pub previous_vwap: U256,
     pub current_vwap: U256,
 }
@@ -148,7 +147,7 @@ impl WwdProjection {
             lookback_end: record.lookback_end,
             offering_end: record.offering_end,
             scheduled_process_time: record.scheduled_process_time,
-            metadosis_limit_amount: record.metadosis_limit_amount,
+            metadosis_limit_minor: record.metadosis_limit_minor,
             previous_vwap: record.previous_vwap,
             current_vwap: record.current_vwap,
         }
@@ -330,13 +329,9 @@ fn validate_terminal_state(
         return Ok(());
     };
     let expected_value_routed = if matches!(receipt, WwdTerminalReceipt::MetadosisFailure(_)) {
-        contract
-            .request_limit_receipt(wwd, &poc_schema_limits())?
-            .map_or(record.metadosis_limit_amount, |receipt| {
-                receipt.lysis_limit_minor
-            })
+        contract.failure_value_routed(wwd, record.metadosis_limit_minor)?
     } else {
-        record.metadosis_limit_amount
+        record.metadosis_limit_minor
     };
     receipt
         .validate(TerminalReceiptValidationContext::new(

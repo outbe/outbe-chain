@@ -80,7 +80,7 @@ pub(crate) fn append(storage: &StorageHandle<'_>, commitment: B256, amount: U256
             commitment,
             leafIndex: u32::try_from(index).map_err(invalid)?,
             rootAfter: root,
-            amount,
+            gratisMinor: amount,
         }),
     )
 }

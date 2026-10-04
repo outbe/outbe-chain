@@ -4,7 +4,7 @@
     "name": "mineCoen",
     "inputs": [
       {
-        "name": "amount",
+        "name": "gratisMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -21,7 +21,7 @@
     ],
     "outputs": [
       {
-        "name": "",
+        "name": "coenMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -33,7 +33,7 @@
     "name": "pledgeGratis",
     "inputs": [
       {
-        "name": "amount",
+        "name": "gratisMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -152,7 +152,7 @@
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "coenMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -183,7 +183,7 @@
         "internalType": "bytes32"
       },
       {
-        "name": "amount",
+        "name": "gratisMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

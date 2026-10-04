@@ -125,7 +125,7 @@ fn third_party_settles_and_mines(world: &mut World) {
             nodId: id.to_u256(),
             asset,
             nullifier: B256::ZERO,
-            amountCovered: body.settlementCostMinor,
+            paymentMinor: body.settlementCostMinor,
         },
     );
     for &peer in &ports {
@@ -1090,7 +1090,10 @@ fn assert_snapshot_bodies(snapshot: &NodSnapshot, bodies: &(NodItemBodyV1, NodBu
     assert_eq!(body.owner, item.owner);
     assert_eq!(body.worldwideDay, item.worldwide_day.value());
     assert_eq!(body.leagueId, item.league_id);
-    assert_eq!(body.floorPriceMinor, item.floor_price_minor);
+    assert_eq!(
+        Some(body.floorPriceMinor),
+        outbe_nod::NodContract::floor_price_minor(bodies.1.entry_price_minor)
+    );
     assert_eq!(body.gratisLoadMinor, item.gratis_load_minor);
     assert_eq!(body.issuanceCurrency, item.issuance_currency);
     assert_eq!(body.referenceCurrency, item.reference_currency);
@@ -1324,7 +1327,6 @@ mod tests {
             gratis_load_minor: U256::from(100),
             worldwide_day: day,
             league_id: 0,
-            floor_price_minor: U256::from(10),
             bucket_key,
             issuance_currency: 840,
             reference_currency: 840,
@@ -1334,7 +1336,6 @@ mod tests {
         let bucket = NodBucketBodyV1 {
             bucket_key,
             worldwide_day: day,
-            floor_price_minor: U256::from(10),
             entry_price_minor: U256::from(9),
             reference_currency: 840,
             settled_nods: 0,

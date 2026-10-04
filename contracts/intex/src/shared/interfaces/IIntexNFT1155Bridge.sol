@@ -6,16 +6,16 @@ struct BatchSendParam {
     uint32 dstChainId;
     bytes32 to;
     uint256[] tokenIds;
-    uint256[] amounts;
+    uint256[] units;
 }
 
 /// @notice Parameters for sending tokens to MULTIPLE recipients in one transaction.
-/// @dev Each recipient can receive different token IDs and amounts.
+/// @dev Each recipient can receive different token IDs and units.
 struct MultiRecipientSendParam {
     uint32 dstChainId;
     bytes32[] recipients;
     uint256[] tokenIds;
-    uint256[] amounts;
+    uint256[] units;
 }
 
 /// @notice Parameters for sending a SINGLE token type to one recipient (encoded as a 1-item batch).
@@ -23,7 +23,7 @@ struct SendParam {
     uint32 dstChainId;
     bytes32 to;
     uint256 tokenId;
-    uint256 amount;
+    uint256 units;
 }
 
 /// @title IIntexNFT1155Bridge
@@ -39,9 +39,9 @@ interface IIntexNFT1155Bridge {
     /// @param dstChainId Destination chainId.
     /// @param from Sender address.
     /// @param tokenIds Array of token IDs sent.
-    /// @param amounts Corresponding amounts for each token ID.
+    /// @param units Units for each token ID.
     event BatchBridged(
-        bytes32 indexed sendId, uint32 dstChainId, address indexed from, uint256[] tokenIds, uint256[] amounts
+        bytes32 indexed sendId, uint32 dstChainId, address indexed from, uint256[] tokenIds, uint256[] units
     );
 
     /// @notice Emitted when a single token type is sent to one recipient.
@@ -49,8 +49,8 @@ interface IIntexNFT1155Bridge {
     /// @param dstChainId Destination chainId.
     /// @param from Sender address.
     /// @param tokenId Token ID sent.
-    /// @param amount Amount sent.
-    event Bridged(bytes32 indexed sendId, uint32 dstChainId, address indexed from, uint256 tokenId, uint256 amount);
+    /// @param units Units sent.
+    event Bridged(bytes32 indexed sendId, uint32 dstChainId, address indexed from, uint256 tokenId, uint256 units);
 
     /// @notice Emitted when tokens are sent to multiple recipients.
     /// @param sendId Bridge send identifier.
@@ -58,14 +58,14 @@ interface IIntexNFT1155Bridge {
     /// @param from Sender address.
     /// @param recipients Array of recipient addresses (bytes32-encoded).
     /// @param tokenIds Array of token IDs sent.
-    /// @param amounts Corresponding amounts for each recipient.
+    /// @param units Units for each recipient.
     event MultiBridged(
         bytes32 indexed sendId,
         uint32 dstChainId,
         address indexed from,
         bytes32[] recipients,
         uint256[] tokenIds,
-        uint256[] amounts
+        uint256[] units
     );
 
     /// @notice Emitted when a batch of tokens is received for one recipient.
@@ -73,9 +73,9 @@ interface IIntexNFT1155Bridge {
     /// @param srcChainId Source chainId.
     /// @param to Recipient address.
     /// @param tokenIds Array of token IDs received.
-    /// @param amounts Corresponding amounts for each token ID.
+    /// @param units Units for each token ID.
     event BatchReceived(
-        bytes32 indexed receiveId, uint32 srcChainId, address indexed to, uint256[] tokenIds, uint256[] amounts
+        bytes32 indexed receiveId, uint32 srcChainId, address indexed to, uint256[] tokenIds, uint256[] units
     );
 
     /// @notice Emitted when tokens are received for multiple recipients.
@@ -83,9 +83,9 @@ interface IIntexNFT1155Bridge {
     /// @param srcChainId Source chainId.
     /// @param recipients Array of recipient addresses (bytes32-encoded).
     /// @param tokenIds Array of token IDs received.
-    /// @param amounts Corresponding amounts for each recipient.
+    /// @param units Units for each recipient.
     event MultiReceived(
-        bytes32 indexed receiveId, uint32 srcChainId, bytes32[] recipients, uint256[] tokenIds, uint256[] amounts
+        bytes32 indexed receiveId, uint32 srcChainId, bytes32[] recipients, uint256[] tokenIds, uint256[] units
     );
 
     /// @notice Emitted when residual pre-funded native tokens are swept to an admin recipient.
@@ -99,7 +99,7 @@ interface IIntexNFT1155Bridge {
     /// @param idx Position of the failed item in the original batch.
     /// @param to Recipient address.
     /// @param tokenId ERC-1155 token id.
-    /// @param amount Amount that failed to crosschainMint.
+    /// @param units Units that failed to crosschainMint.
     /// @param reason Raw revert bytes from `token.crosschainMint`.
     event CrosschainMintFailed(
         uint32 indexed srcChainId,
@@ -107,7 +107,7 @@ interface IIntexNFT1155Bridge {
         uint256 idx,
         address indexed to,
         uint256 tokenId,
-        uint256 amount,
+        uint256 units,
         bytes reason
     );
 
@@ -122,14 +122,14 @@ interface IIntexNFT1155Bridge {
     /// @param srcChainId Origin chainId the reverse transfer was sent to.
     /// @param to Owner re-minted on the origin chain.
     /// @param tokenId Token ID reclaimed.
-    /// @param amount Amount reclaimed.
+    /// @param units Units reclaimed.
     event CrosschainMintReclaimed(
         bytes32 indexed receiveId,
         uint256 indexed idx,
         uint32 indexed srcChainId,
         address to,
         uint256 tokenId,
-        uint256 amount
+        uint256 units
     );
 
     // --- Errors ---

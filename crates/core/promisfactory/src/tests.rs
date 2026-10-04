@@ -59,7 +59,7 @@ fn with_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
 fn mine_coen_call(amount: U256, a: &ModifyAuth) -> Bytes {
     Bytes::from(
         IPromisFactory::IPromisFactoryCalls::mineCoen(IPromisFactory::mineCoenCall {
-            amount,
+            promisMinor: amount,
             mac: alloy_primitives::FixedBytes(a.mac),
             opNonce: a.op_nonce,
         })
@@ -210,7 +210,7 @@ fn gratis_view_balance(storage: &StorageHandle<'_>, account: Address) -> U256 {
 fn mine_gratis_call(amount: U256, promis: &ModifyAuth, gratis: &ModifyAuth) -> Bytes {
     Bytes::from(
         IPromisFactory::IPromisFactoryCalls::mineGratis(IPromisFactory::mineGratisCall {
-            amount,
+            promisMinor: amount,
             promisMac: alloy_primitives::FixedBytes(promis.mac),
             promisOpNonce: promis.op_nonce,
             gratisMac: alloy_primitives::FixedBytes(gratis.mac),

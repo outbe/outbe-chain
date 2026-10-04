@@ -197,7 +197,7 @@ contract BodyVersionTest is Test {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
         payload.seriesId = "20260212-TRY-U";
         payload.recipients = new address[](3);
-        payload.quantities = new uint256[](2); // short
+        payload.units = new uint256[](2); // short
         // Hand-build the body so the encoder's new parity check does not intervene.
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
@@ -219,7 +219,7 @@ contract BodyVersionTest is Test {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
         payload.seriesId = "20260212-TRY-U";
         payload.recipients = new address[](n);
-        payload.quantities = new uint256[](n);
+        payload.units = new uint256[](n);
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
             BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,

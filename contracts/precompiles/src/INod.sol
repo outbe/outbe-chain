@@ -100,7 +100,8 @@ interface INod {
         uint32 tributeCount;
         uint32 nodCount;
         uint32 bucketCount;
-        uint256 nodAmountTotal;
+        /// Sum of the generation's Nod settlementCostMinor.
+        uint256 totalSettlementCostMinor;
         /// Actual Lysis Allocation: sum of Nod gratisLoadMinor, not the Lysis Limit.
         uint256 lysisAllocationMinor;
         uint64 issuedAt;

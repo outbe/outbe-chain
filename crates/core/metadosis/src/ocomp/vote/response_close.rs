@@ -169,7 +169,7 @@ impl MetadosisContract<'_> {
                 validator: validator_address,
                 jobId: missing.job_id,
                 missCount: penalty.miss_count,
-                slashedBonded: penalty.slashed_bonded,
+                slashedBondedMinor: penalty.slashed_bonded,
                 recoveryDeadline: penalty.recovery_deadline,
                 firstInWindow: penalty.first_in_window,
             })?;

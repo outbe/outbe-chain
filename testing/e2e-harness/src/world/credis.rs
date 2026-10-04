@@ -58,7 +58,7 @@ pub(crate) struct CredisFixture {
     pub pledge: B256,
     pub pledge_nonce: u64,
     pub issue_context: B256,
-    pub collateral: U256,
+    pub gratis_minor: U256,
     pub position_id: U256,
     pub initial_native: U256,
     pub interest_paid: U256,

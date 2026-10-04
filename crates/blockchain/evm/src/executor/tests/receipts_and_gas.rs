@@ -1649,7 +1649,7 @@ fn seed_capacity_storage(
         worldwide_day: victim,
         initialized: true,
         tribute_count: u32::MAX,
-        tribute_nominal_amount: U256::MAX,
+        tribute_nominal_total_minor: U256::MAX,
         is_sealed: true,
     })?;
     tribute.total_supply.write(u64::from(u32::MAX))?;

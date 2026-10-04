@@ -131,7 +131,7 @@ fn tx(byte: u8) -> String {
 
 fn nod(owner: Address, day: u32) -> NodItemState {
     let worldwide_day = WorldwideDay::new(day);
-    let floor = U256::from(13u64);
+    let entry = U256::from(13u64);
     NodItemState {
         is_settled: false,
         nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
@@ -139,8 +139,7 @@ fn nod(owner: Address, day: u32) -> NodItemState {
         gratis_load_minor: U256::from(11u64),
         worldwide_day,
         league_id: 4,
-        floor_price_minor: floor,
-        bucket_key: NodContract::bucket_key(worldwide_day, floor, 840),
+        bucket_key: NodContract::bucket_key(worldwide_day, entry, 840),
         issuance_currency: 840,
         reference_currency: 840,
         issued_at: 1_752_534_000,

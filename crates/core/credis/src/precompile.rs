@@ -79,14 +79,14 @@ pub fn dispatch(
                 CredisContract::accrued_interest(&position, timestamp)
             }),
             interestPaidMinor(c) => view(c, |c| {
-                Ok(contract.get_position(c.positionId)?.interest_paid)
+                Ok(contract.get_position(c.positionId)?.interest_paid_minor)
             }),
             credisPrincipalAndOutstandingOf(c) => view(c, |c| {
                 let (principal, outstanding) =
                     contract.principal_and_outstanding_of(c.smartAccount)?;
                 Ok(ICredis::credisPrincipalAndOutstandingOfReturn {
-                    _0: principal,
-                    _1: outstanding,
+                    principalMinor: principal,
+                    outstandingPrincipalMinor: outstanding,
                 })
             }),
             supportsInterface(c) => {
@@ -105,18 +105,26 @@ fn abi_position(p: &crate::schema::Position, now: u64) -> Result<ICredis::Positi
         issuanceCurrency: p.issuance_currency,
         referenceCurrency: p.reference_currency,
         returnNoteSerial: p.return_note_serial,
-        principal: p.principal,
-        outstanding: p.outstanding,
-        collateral: p.collateral,
-        collateralLocked: p.collateral_locked,
+        principalMinor: p.principal_minor,
+        outstandingPrincipalMinor: p.outstanding_principal_minor,
+        gratisMinor: p.gratis_minor,
+        outstandingGratisMinor: p.outstanding_gratis_minor,
         policyRate: p.policy_rate,
-        entryPrice: p.entry_price,
-        callPrice: p.call_price,
+        entryPriceMinor: p.entry_price_minor,
+        callPriceMinor: p.call_price_minor,
         issuedAt: p.issued_at,
         lastSettledAt: p.last_settled_at,
         calledAt: p.called_at,
         state: crate::runtime::effective_state(p, now)? as u8,
-        callAnchorPrice: p.call_anchor_price,
-        interestPaidMinor: p.interest_paid,
+        callAnchorPriceMinor: p.call_anchor_price_minor,
+        interestPaidMinor: p.interest_paid_minor,
+        settlementDeadline: if p.called_at == 0 {
+            0
+        } else {
+            crate::runtime::settlement_deadline(p)
+        },
+        callNoticePeriod: p.call_notice_period_seconds,
+        callWindow: p.call_window_seconds,
+        callThreshold: p.call_threshold_seconds,
     })
 }

@@ -27,13 +27,13 @@ pub struct LiquidityReservation {
     #[attribute(order = 5)]
     pub expires_at: u64,
     #[attribute(order = 6)]
-    pub collateral: U256,
+    pub gratis_minor: U256,
     #[attribute(order = 7)]
     pub snapshot_id: U256,
     #[attribute(order = 8)]
-    pub entry_price: U256,
+    pub entry_price_minor: U256,
     #[attribute(order = 9)]
-    pub valuation_price: U256,
+    pub valuation_price_minor: U256,
     #[attribute(order = 10)]
     pub policy_rate: U256,
     #[attribute(order = 11)]
@@ -43,7 +43,7 @@ pub struct LiquidityReservation {
     #[attribute(order = 13)]
     pub reference_currency: u16,
     #[attribute(order = 14)]
-    pub call_anchor_price: U256,
+    pub call_anchor_price_minor: U256,
 }
 
 /// EVM storage layout for the vaultrouter precompile.
@@ -185,15 +185,15 @@ impl From<LiquidityReservation> for crate::api::IVaultRouter::LiquidityReservati
             cca: r.cca,
             vault: r.vault,
             expiresAt: r.expires_at,
-            collateral: r.collateral,
+            gratisMinor: r.gratis_minor,
             snapshotId: r.snapshot_id,
-            entryPrice: r.entry_price,
-            valuationPrice: r.valuation_price,
+            entryPriceMinor: r.entry_price_minor,
+            valuationPriceMinor: r.valuation_price_minor,
             policyRate: r.policy_rate,
             issuanceCurrency: r.issuance_currency,
             assetDecimals: r.asset_decimals,
             referenceCurrency: r.reference_currency,
-            callAnchorPrice: r.call_anchor_price,
+            callAnchorPriceMinor: r.call_anchor_price_minor,
         }
     }
 }

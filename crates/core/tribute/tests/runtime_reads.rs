@@ -318,8 +318,8 @@ fn issue_is_visible_and_rejects_duplicates_before_projection() {
         assert_eq!(totals_after.initialized, totals_before.initialized);
         assert_eq!(totals_after.tribute_count, totals_before.tribute_count);
         assert_eq!(
-            totals_after.tribute_nominal_amount,
-            totals_before.tribute_nominal_amount
+            totals_after.tribute_nominal_total_minor,
+            totals_before.tribute_nominal_total_minor
         );
         assert_eq!(totals_after.is_sealed, totals_before.is_sealed);
         assert_eq!(
@@ -374,7 +374,7 @@ fn burn_observes_same_block_mint_and_leaves_projection_to_the_projector() {
             .is_none());
         let totals = contract.get_day_totals(body.worldwide_day).unwrap();
         assert_eq!(totals.tribute_count, 0);
-        assert_eq!(totals.tribute_nominal_amount, U256::ZERO);
+        assert_eq!(totals.tribute_nominal_total_minor, U256::ZERO);
     });
     assert!(reader.get(body.tribute_id).unwrap().is_none());
     finish(&mut provider, &scope, &tree);

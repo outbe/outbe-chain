@@ -25,7 +25,7 @@ pub struct GenesisWorldwideDay {
     pub lookback_end: u64,
     pub offering_end: u64,
     pub scheduled_process_time: u64,
-    pub metadosis_limit_amount: U256,
+    pub metadosis_limit_minor: U256,
     pub previous_vwap: U256,
     pub current_vwap: U256,
 }
@@ -164,7 +164,7 @@ impl GenesisOperation {
             lookback_end: day.lookback_end,
             offering_end: day.offering_end,
             scheduled_process_time: day.scheduled_process_time,
-            metadosis_limit_amount: day.metadosis_limit_amount,
+            metadosis_limit_minor: day.metadosis_limit_minor,
             previous_vwap: day.previous_vwap,
             current_vwap: day.current_vwap,
         })?;
@@ -264,7 +264,7 @@ mod tests {
             lookback_end: 30,
             offering_end: 40,
             scheduled_process_time: 40,
-            metadosis_limit_amount: U256::from(100),
+            metadosis_limit_minor: U256::from(100),
             previous_vwap: U256::from(8),
             current_vwap: U256::from(9),
         }

@@ -651,8 +651,8 @@ fn factory_boundaries_are_byte_equal_across_proposer_and_validator_execution() {
 fn independent_body_stores_produce_identical_full_block_state_receipts_and_balances() {
     let proposer = test_evm_signer().address();
     let worldwide_day = WorldwideDay::new(20_241_220);
-    let floor_price_minor = U256::from(500_000u64);
-    let bucket_key = NodContract::bucket_key(worldwide_day, floor_price_minor, 840);
+    let entry_price_minor = U256::from(450_000_000u64);
+    let bucket_key = NodContract::bucket_key(worldwide_day, entry_price_minor, 840);
     let nod_item = || NodItemState {
         is_settled: false,
         nod_id: NodContract::generate_nod_id(proposer, worldwide_day).unwrap(),
@@ -660,7 +660,6 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
         gratis_load_minor: U256::from(1_000_000u64),
         worldwide_day,
         league_id: 1,
-        floor_price_minor,
         bucket_key,
         issuance_currency: 840,
         reference_currency: 840,
@@ -669,7 +668,7 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
     let fixture = NodBodyFixture {
         proposer,
         worldwide_day,
-        floor_price_minor,
+        entry_price_minor,
         bucket_key,
         item: nod_item(),
     };
@@ -852,7 +851,7 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
         outbe_compressed_entities::derive_poseidon_entity_id(tribute_owner, day).unwrap();
     let nod_owner = Address::repeat_byte(0x32);
     let nod_id = outbe_compressed_entities::derive_poseidon_entity_id(nod_owner, day).unwrap();
-    let bucket_key = NodContract::bucket_key(day, U256::from(13), 978);
+    let bucket_key = NodContract::bucket_key(day, U256::from(16), 978);
     let ctx = BlockContext::new(1, 1, CHAIN_ID, proposer, vec![proposer]);
 
     let tribute_fixture = || TributeData {
@@ -873,7 +872,6 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
         gratis_load_minor: U256::from(1),
         worldwide_day: day,
         league_id: 2,
-        floor_price_minor: U256::from(13),
         bucket_key,
         issuance_currency: 840,
         reference_currency: 978,
@@ -1887,7 +1885,7 @@ mod factory_boundary {
 struct NodBodyFixture {
     proposer: Address,
     worldwide_day: WorldwideDay,
-    floor_price_minor: U256,
+    entry_price_minor: U256,
     bucket_key: B256,
     item: NodItemState,
 }
@@ -1956,7 +1954,7 @@ fn seed_called_nod(
         scope,
         &empty_reader,
         &fixture.item,
-        U256::from(450_000_000u64),
+        fixture.entry_price_minor,
     )?;
     // The daily Nod trigger forfeits a lapsed called bucket, deleting both bodies.
     let nod = NodContract::new(storage.clone());
@@ -1992,7 +1990,7 @@ fn seed_nod_daily_trigger(
 fn independent_nod_readers(fixture: &NodBodyFixture) -> eyre::Result<RuntimeBodyReaders> {
     let NodBodyFixture {
         worldwide_day,
-        floor_price_minor,
+        entry_price_minor,
         bucket_key,
         ..
     } = *fixture;
@@ -2005,8 +2003,7 @@ fn independent_nod_readers(fixture: &NodBodyFixture) -> eyre::Result<RuntimeBody
         settled_nods: 0,
         bucket_key,
         worldwide_day,
-        floor_price_minor,
-        entry_price_minor: U256::from(450_000_000u64),
+        entry_price_minor,
         reference_currency: 840,
     })?;
     let readers = RuntimeBodyReaders::new(reader);

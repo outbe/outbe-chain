@@ -58,9 +58,9 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         payload.callPriceMinor = 200e6;
         if (recipient != address(0)) {
             payload.recipients = new address[](1);
-            payload.quantities = new uint256[](1);
+            payload.units = new uint256[](1);
             payload.recipients[0] = recipient;
-            payload.quantities[0] = quantity;
+            payload.units[0] = quantity;
         }
     }
 
@@ -224,11 +224,11 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
     function test_ARecipientNamedTwiceInOnePayloadIsIssuedOnce() public {
         BridgeMsgCodec.IssuanceInstructionsPayload memory p = _series(USD, address(0), 0);
         p.recipients = new address[](2);
-        p.quantities = new uint256[](2);
+        p.units = new uint256[](2);
         p.recipients[0] = alice;
         p.recipients[1] = alice;
-        p.quantities[0] = 7;
-        p.quantities[1] = 3;
+        p.units[0] = 7;
+        p.units[1] = 3;
         vm.recordLogs();
         _deliver(0, 1, IssuanceBatchLib.one(p));
         assertEq(_balance(USD, alice), 7, "only the first naming mints");

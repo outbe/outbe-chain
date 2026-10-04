@@ -159,7 +159,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function issue(address to, uint256 quantity, bytes14 seriesId) external onlyRole(RELAYER_ROLE) {
+    function issueIntex(address to, uint256 units, bytes14 seriesId) external onlyRole(RELAYER_ROLE) {
         if (to == address(0)) {
             revert ZeroAddress("to", to);
         }
@@ -178,11 +178,11 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             }
         }
 
-        // A per-recipient mint quantity is one bidder's auction win, bounded by their bid's
+        // A per-recipient mint is one bidder's auction win, bounded by their bid's
         // `intexQuantity` (uint16); keeps the ERC1155 balance and `totalSupply` consistent.
-        if (quantity > type(uint16).max) revert QuantityTooLarge(quantity);
+        if (units > type(uint16).max) revert UnitsTooLarge(units);
 
-        uint256 newTotal = uint256(data.totalSupply) + quantity;
+        uint256 newTotal = uint256(data.totalSupply) + units;
         if (newTotal > type(uint32).max) {
             revert SupplyCapExceeded(seriesId, newTotal, type(uint32).max);
         }
@@ -191,9 +191,9 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // consistent (totalSupply == sum balanceOf) snapshot - closes the read-only-reentrancy window.
         // forge-lint: disable-next-line(unsafe-typecast) -- bounded by the uint32 check above
         data.totalSupply = uint32(newTotal);
-        _mint(to, tokenId, quantity, "");
+        _mint(to, tokenId, units, "");
 
-        emit IntexIssued(msg.sender, tokenId, to, quantity);
+        emit IntexIssued(msg.sender, tokenId, to, units);
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -279,23 +279,23 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         }
 
         // A crosschainMinted balance can be an owner's full transferable balance (<= totalSupply, uint32).
-        if (amount > type(uint32).max) revert QuantityTooLarge(amount);
+        if (amount > type(uint32).max) revert UnitsTooLarge(amount);
 
         uint256 newTotal = uint256(data.totalSupply) + amount;
         if (newTotal > type(uint32).max) {
             revert SupplyCapExceeded(bytes14(uint112(tokenId)), newTotal, type(uint32).max);
         }
 
-        // CEI ok: write totalSupply before _mint (see issue()).
+        // CEI ok: write totalSupply before _mint (see issueIntex()).
         // forge-lint: disable-next-line(unsafe-typecast) -- bounded by the uint32 check above
         data.totalSupply = uint32(newTotal);
         _mint(to, tokenId, amount, "");
     }
 
     /// @inheritdoc IIntexNFT1155
-    function settleIntex(bytes14 seriesId, address owner, uint256 amount) external onlyRole(SETTLEMENT_ROLE) {
+    function settleIntex(bytes14 seriesId, address owner, uint256 units) external onlyRole(SETTLEMENT_ROLE) {
         if (owner == address(0)) revert ZeroAddress("owner", owner);
-        if (amount == 0) revert ZeroAmount();
+        if (units == 0) revert ZeroUnits();
 
         IntexNFT1155Storage storage $ = _s();
         uint256 iTok = _issuedTokenId(seriesId);
@@ -316,19 +316,19 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
         // CEI ok: update both Issued and Settled totalSupply mirrors before the external _mint
         // callback fires - keeps (totalSupply == sum balanceOf) consistent mid-callback.
-        // forge-lint: disable-next-line(unsafe-typecast) -- amount <= issued balance <= totalSupply (uint32); _burn reverts otherwise
-        data.totalSupply -= uint32(amount);
-        _burn(owner, iTok, amount);
+        // forge-lint: disable-next-line(unsafe-typecast) -- units <= issued balance <= totalSupply (uint32); _burn reverts otherwise
+        data.totalSupply -= uint32(units);
+        _burn(owner, iTok, units);
 
-        // forge-lint: disable-next-line(unsafe-typecast) -- amount mirrors the issued amount burned above
-        $.settledSupply[sTok] += uint32(amount);
-        _mint(owner, sTok, amount, "");
+        // forge-lint: disable-next-line(unsafe-typecast) -- units mirrors the issued units burned above
+        $.settledSupply[sTok] += uint32(units);
+        _mint(owner, sTok, units, "");
     }
 
     /// @inheritdoc IIntexNFT1155
-    function burnSettled(address owner, bytes14 seriesId, uint256 amount) external onlyRole(PROMIS_ROLE) {
+    function burnSettled(address owner, bytes14 seriesId, uint256 units) external onlyRole(PROMIS_ROLE) {
         if (owner == address(0)) revert ZeroAddress("owner", owner);
-        if (amount == 0) revert ZeroAmount();
+        if (units == 0) revert ZeroUnits();
 
         IntexNFT1155Storage storage $ = _s();
         uint256 iTok = _issuedTokenId(seriesId);
@@ -340,21 +340,21 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         uint256 sTok = _settledTokenId(seriesId);
         // CEI ok: write before _burn for symmetry with mint; _burn fires no acceptance callback
         // (to == address(0)), so no read-only-reentrancy surface here.
-        // forge-lint: disable-next-line(unsafe-typecast) -- amount <= settled balance <= totalSupply (uint32); _burn reverts otherwise
-        $.settledSupply[sTok] -= uint32(amount);
-        _burn(owner, sTok, amount);
+        // forge-lint: disable-next-line(unsafe-typecast) -- units <= settled balance <= totalSupply (uint32); _burn reverts otherwise
+        $.settledSupply[sTok] -= uint32(units);
+        _burn(owner, sTok, units);
 
-        emit IntexExercised(seriesId, owner, amount);
+        emit IntexExercised(seriesId, owner, units);
     }
 
     /// @inheritdoc IIntexNFT1155
-    function sendToGemFactory(address owner, bytes14 seriesId, uint256 amount)
+    function sendToGemFactory(address owner, bytes14 seriesId, uint256 units)
         external
         onlyRole(GEM_ROLE)
         returns (uint256)
     {
         if (owner == address(0)) revert ZeroAddress("owner", owner);
-        if (amount == 0) revert ZeroAmount();
+        if (units == 0) revert ZeroUnits();
 
         uint256 iTok = _issuedTokenId(seriesId);
         IIntexNFT1155.SeriesData storage data = _s().seriesData[iTok];
@@ -364,12 +364,12 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             revert InvalidState(uint8(IIntexNFT1155.IntexState.Issued), uint8(data.state));
         }
 
-        // forge-lint: disable-next-line(unsafe-typecast) -- amount <= issued balance <= totalSupply (uint32); _burn reverts otherwise
-        data.totalSupply -= uint32(amount);
-        _burn(owner, iTok, amount);
+        // forge-lint: disable-next-line(unsafe-typecast) -- units <= issued balance <= totalSupply (uint32); _burn reverts otherwise
+        data.totalSupply -= uint32(units);
+        _burn(owner, iTok, units);
 
-        emit IntexSentToGemFactory(seriesId, owner, amount);
-        return amount;
+        emit IntexSentToGemFactory(seriesId, owner, units);
+        return units;
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -462,10 +462,9 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     function ownerBalances(bytes14 seriesId, address owner) external view returns (IIntexNFT1155.OwnerBalances memory) {
         uint256 iTok = _issuedTokenId(seriesId);
         uint256 sTok = _settledTokenId(seriesId);
-        return
-            IIntexNFT1155.OwnerBalances({
-                issued: uint32(balanceOf(owner, iTok)), settled: uint32(balanceOf(owner, sTok))
-            });
+        return IIntexNFT1155.OwnerBalances({
+            issuedUnits: uint32(balanceOf(owner, iTok)), settledUnits: uint32(balanceOf(owner, sTok))
+        });
     }
 
     /// @inheritdoc IIntexNFT1155

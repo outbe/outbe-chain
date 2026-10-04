@@ -264,7 +264,6 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
             settled_nods: 0,
             bucket_key,
             worldwide_day: day,
-            floor_price_minor: U256::from(10),
             entry_price_minor: U256::from(9),
             reference_currency: 978,
         })
@@ -276,7 +275,6 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
         gratis_load_minor: U256::from(11),
         worldwide_day: day,
         league_id: 3,
-        floor_price_minor: U256::from(10),
         bucket_key,
         issuance_currency: 840,
         reference_currency: 978,

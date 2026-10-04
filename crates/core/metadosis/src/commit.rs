@@ -249,17 +249,17 @@ pub(crate) fn commit_day_limit_formation(
         metadosis.commit_write_day_limit_formation(permit, formation)?;
         metadosis.emit(IMetadosis::MetadosisAccumulation {
             date: formation.worldwide_day.value(),
-            dayMetadosisLimitAmount: formation.day_limit,
-            totalAccumulated: formation.day_limit,
+            metadosisLimitMinor: formation.day_limit,
+            totalAccumulatedMinor: formation.day_limit,
             blockNumber: formation.block_number,
         })?;
         metadosis.emit(IMetadosis::OcompDayLimitFormed {
             worldwideDay: formation.worldwide_day.value(),
-            baseLimit: formation.base_limit,
-            carryOverBefore: formation.carry_over_before,
-            carryOverTaken: formation.carry_over_taken,
-            carryOverAfter: formation.carry_over_after,
-            formedDayLimit: formation.day_limit,
+            baseLimitMinor: formation.base_limit,
+            promisLimitBeforeMinor: formation.carry_over_before,
+            promisLimitTakenMinor: formation.carry_over_taken,
+            promisLimitAfterMinor: formation.carry_over_after,
+            metadosisLimitMinor: formation.day_limit,
             blockNumber: formation.block_number,
         })?;
         // Selector-last: neither an interrupted write nor an event failure may
@@ -594,7 +594,7 @@ mod tests {
             lookback_end: 3,
             offering_end: 4,
             scheduled_process_time: 5,
-            metadosis_limit_amount: U256::ZERO,
+            metadosis_limit_minor: U256::ZERO,
             previous_vwap: U256::ZERO,
             current_vwap: U256::ZERO,
         }

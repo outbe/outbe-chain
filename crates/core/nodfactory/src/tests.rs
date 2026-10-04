@@ -382,6 +382,16 @@ impl World {
             let item = nod_api::get_item(&storage, scope, parent, nod_id)
                 .unwrap()
                 .unwrap();
+            let floor = nod_api::get_bucket(
+                &storage,
+                scope,
+                parent,
+                WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0),
+            )
+            .unwrap()
+            .unwrap()
+            .floor_price_minor()
+            .unwrap();
             let issued_at = NodContract::new(storage.clone())
                 .callable_bucket_issued_at
                 .read(&item.bucket_key)
@@ -394,7 +404,7 @@ impl World {
             }
             let day = outbe_primitives::time::first_full_day(issued_at);
             oracle
-                .record_utc_day_vwap(day, index, item.floor_price_minor + U256::from(1))
+                .record_utc_day_vwap(day, index, floor + U256::from(1))
                 .unwrap();
             if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
                 oracle.utc_day_vwap_last_finalized.write(day).unwrap();
@@ -452,7 +462,7 @@ fn second_same_block_issue_reuses_the_pending_bucket_without_parent_projection()
 
     let bucket_key = NodContract::bucket_key(
         first.worldwide_day,
-        NodContract::floor_price_minor(first.entry_price_minor).unwrap(),
+        first.entry_price_minor,
         first.reference_currency,
     );
     let bucket_id = WwdEntityId::from_day_and_digest(first.worldwide_day, bucket_key.0);
@@ -512,6 +522,33 @@ fn invalid_and_duplicate_issuance_leave_one_canonical_item() {
         .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
         .unwrap()
         .is_some());
+}
+
+#[test]
+fn direct_issuance_beyond_the_issuable_entry_writes_nothing() {
+    let mut world = World::new();
+    let mut input = params(Address::repeat_byte(0x2E));
+    input.entry_price_minor = U256::MAX / U256::from(100 + u32::from(u16::MAX)) + U256::from(1);
+    assert!(!NodContract::is_issuable_entry(input.entry_price_minor));
+    let storage_before = world.provider.storage.clone();
+    let events_before = world.provider.get_ordered_events().len();
+
+    let error = world
+        .enter(|storage, scope, parent| api::issue_nod(&storage, scope, parent, &input))
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        PrecompileError::Revert(ref reason)
+            if reason == &NodFactoryError::EntryPriceOutOfBounds.to_string()
+    ));
+    assert_eq!(world.provider.storage, storage_before);
+    assert_eq!(world.provider.get_ordered_events().len(), events_before);
+    let nod_id = NodContract::generate_nod_id(input.owner, input.worldwide_day).unwrap();
+    assert!(world
+        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+        .unwrap()
+        .is_none());
 }
 
 #[test]
@@ -602,7 +639,7 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
         .is_none());
     let bucket_key = NodContract::bucket_key(
         input.worldwide_day,
-        NodContract::floor_price_minor(input.entry_price_minor).unwrap(),
+        input.entry_price_minor,
         input.reference_currency,
     );
     let bucket_id = WwdEntityId::from_day_and_digest(input.worldwide_day, bucket_key.0);
@@ -900,7 +937,7 @@ fn assert_covering_paynote_mines_nod(input: NodIssueParams) {
         paid[0].asset, NOTE_ASSET,
         "the log must name the asset the note carried"
     );
-    assert_eq!(paid[0].amountCovered, U256::from(cost_of(&input)));
+    assert_eq!(paid[0].paymentMinor, U256::from(cost_of(&input)));
 
     let spent = world
         .enter(|storage, _, _| outbe_paynote::api::is_spent(&storage, paid[0].nullifier).unwrap());
@@ -1255,7 +1292,7 @@ fn a_paynote_can_cover_a_nod_cost_above_u128() {
         .filter_map(|event| INodFactory::NodPaid::decode_log_data(&event.data).ok())
         .last()
         .expect("NodPaid event");
-    assert_eq!(paid.amountCovered, cost);
+    assert_eq!(paid.paymentMinor, cost);
 }
 
 #[test]
@@ -1709,7 +1746,7 @@ fn erc20_settlement_enforces_eligibility_before_payment_and_accepts_zero_cost() 
         .unwrap();
     assert_eq!(paid.owner, input.owner);
     assert_eq!(paid.nullifier, B256::ZERO);
-    assert_eq!(paid.amountCovered, U256::ZERO);
+    assert_eq!(paid.paymentMinor, U256::ZERO);
 }
 
 #[test]
@@ -1852,7 +1889,7 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
 
     let paid = paid_event(&world);
     assert_eq!(paid.asset, EUR_ASSET);
-    assert_eq!(paid.amountCovered, U256::from(issuance_cost));
+    assert_eq!(paid.paymentMinor, U256::from(issuance_cost));
     assert!(is_settled(&mut world, nod_id));
 }
 
@@ -1882,7 +1919,7 @@ fn quote_agrees_with_what_settling_charges_on_both_rails() {
     let spend = u128::try_from(iss_amount).unwrap();
     let (proof, _) = world.fund_note(EUR_ASSET, nod_id, spend, spend);
     world.settle(nod_id, input.owner, &proof).unwrap();
-    assert_eq!(paid_event(&world).amountCovered, iss_amount);
+    assert_eq!(paid_event(&world).paymentMinor, iss_amount);
 }
 
 #[test]
@@ -2317,5 +2354,5 @@ fn quote_settlement_dispatch() {
         .unwrap();
     let ret = INodFactory::quoteSettlementCall::abi_decode_returns(&out).unwrap();
     assert_eq!(ret.settlementCurrency, 978);
-    assert_eq!(ret.payableUnits, U256::from(cost_of(&input) / 2));
+    assert_eq!(ret.paymentMinor, U256::from(cost_of(&input) / 2));
 }
