@@ -461,7 +461,7 @@ impl<'storage> Vote<'storage> {
         Ok(())
     }
 
-    fn remove_pending_proposal_id(&mut self, proposal_id: U256) -> Result<()> {
+    pub(crate) fn remove_pending_proposal_id(&mut self, proposal_id: U256) -> Result<()> {
         let ids = self.pending_proposal_ids.read_all()?;
         let Some(removed_idx) = ids.iter().position(|p| *p == proposal_id) else {
             warn!("proposal {proposal_id} not found in pending proposal list");
