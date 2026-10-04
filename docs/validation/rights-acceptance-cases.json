@@ -134,6 +134,14 @@
       ],
       "package": "outbe-evm",
       "binary": "outbe-evm",
+      "test": "executor::tests::block_artifacts::factory_boundary::factory_boundaries_are_byte_equal_across_proposer_and_validator_execution"
+    },
+    {
+      "acceptance": [
+        "A38"
+      ],
+      "package": "outbe-evm",
+      "binary": "outbe-evm",
       "test": "executor::tests::receipts_and_gas::native_sinks::base_fee_is_burned_tip_reaches_rewards_and_promis_limit_is_untouched"
     },
     {
@@ -2031,22 +2039,6 @@
       ],
       "package": "outbe-oracle",
       "binary": "outbe-oracle",
-      "test": "tests::window::a_policy_change_leaves_an_old_snapshot_readable_and_unchanged"
-    },
-    {
-      "acceptance": [
-        "A43"
-      ],
-      "package": "outbe-oracle",
-      "binary": "outbe-oracle",
-      "test": "tests::window::finalized_window_vwap_requires_two_thirds_round_coverage"
-    },
-    {
-      "acceptance": [
-        "A43"
-      ],
-      "package": "outbe-oracle",
-      "binary": "outbe-oracle",
       "test": "tests::window::a_finalized_window_value_is_immutable_after_its_cutoff"
     },
     {
@@ -2055,7 +2047,23 @@
       ],
       "package": "outbe-oracle",
       "binary": "outbe-oracle",
+      "test": "tests::window::a_policy_change_leaves_an_old_snapshot_readable_and_unchanged"
+    },
+    {
+      "acceptance": [
+        "A43"
+      ],
+      "package": "outbe-oracle",
+      "binary": "outbe-oracle",
       "test": "tests::window::an_authorization_naming_another_pricing_policy_never_matches_the_required_snapshot"
+    },
+    {
+      "acceptance": [
+        "A43"
+      ],
+      "package": "outbe-oracle",
+      "binary": "outbe-oracle",
+      "test": "tests::window::finalized_window_vwap_requires_two_thirds_round_coverage"
     },
     {
       "acceptance": [

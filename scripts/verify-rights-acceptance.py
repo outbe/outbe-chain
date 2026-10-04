@@ -26,7 +26,8 @@ def git(*args):
 
 def command(args, cwd, output, label, report):
     """Write complete tool output before reporting an exit status."""
-    print(f"[{label}] {' '.join(args)}", flush=True)
+    display = [arg if len(arg) <= 500 else f"<{len(arg)} characters; see report.json>" for arg in args]
+    print(f"[{label}] {' '.join(display)}", flush=True)
     started = time.monotonic()
     path = output / f"{label}.log"
     with path.open("w") as log:
