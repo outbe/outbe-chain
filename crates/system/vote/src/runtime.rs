@@ -318,13 +318,39 @@ impl Vote<'_> {
             let Some(proposal) = self.proposals.get(proposal_id)? else {
                 return Err(VoteError::ProposalNotFound.into());
             };
-            if proposal.proposal_status()? == ProposalStatus::Pending
-                && block_number > proposal.voting_deadline_height
-            {
-                self.finalize_voting(ctx, proposal_id, registry)?;
+            match proposal.proposal_status()? {
+                ProposalStatus::Pending if block_number > proposal.voting_deadline_height => {
+                    self.finalize_voting(ctx, proposal_id, registry)?;
+                }
+                // Persisted by a previous binary, which left an Error proposal in
+                // the pending vector with its bond unsettled. Release it once.
+                ProposalStatus::Error => {
+                    self.settle_legacy_error(proposal_id, proposal.proposer)?;
+                }
+                ProposalStatus::Pending
+                | ProposalStatus::Approved
+                | ProposalStatus::Rejected
+                | ProposalStatus::Expired => {}
             }
         }
         Ok(())
+    }
+
+    /// Closes an Error proposal that an earlier binary left in the pending
+    /// vector: it leaves the bounded pending caps and its still-escrowed bond
+    /// is refunded exactly once. The target is not executed again and no
+    /// finalization is announced; the pending-vector walk is already bounded
+    /// by the admission caps.
+    fn settle_legacy_error(&mut self, proposal_id: U256, proposer: Address) -> Result<()> {
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.remove_pending_proposal_id(proposal_id)?;
+            let bond = self.proposal_bond(proposal_id)?;
+            if bond.settlement == BondSettlement::Unsettled {
+                self.settle_terminal_bond(proposal_id, proposer, bond, ProposalStatus::Error)?;
+            }
+            Ok(())
+        })
     }
 
     fn finalize_voting(
