@@ -107,7 +107,11 @@ fn copied_projection_uses_native_checkpoint_and_recipient_configuration_on_each_
                 }),
             }
         );
+        let completion = prepared.storage_completion();
         drop(prepared);
+        completion
+            .wait_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
         let (_, public) =
             super::load_reth_p2p_node_host_signer(&network, default_secret.clone()).unwrap();
         assert_eq!(public, own_public);
