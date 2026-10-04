@@ -54,25 +54,18 @@ where
             Ok(EventAction::Proceed)
         }
     }
-    pub(super) fn ensure_frozen_rotation_timely(&mut self, current_height: u64) -> Result<()> {
-        if let Some(target) = self.rotation.frozen_dkg_target.as_ref() {
-            let activation_deadline = target
-                .planned_activation_height
-                .saturating_add(self.dkg_rotation_params.activation_grace_blocks);
-            if frozen_dkg_target_expired(
+    fn ensure_frozen_rotation_timely(&mut self, current_height: u64) -> Result<()> {
+        if let Some(target) = self
+            .rotation
+            .frozen_dkg_target
+            .as_ref()
+            .map(super::expiry::DkgTargetDeadline::from)
+        {
+            self.ensure_dkg_target_timely(
+                target,
                 current_height,
-                target.planned_activation_height,
-                self.dkg_rotation_params.activation_grace_blocks,
-            ) {
-                self.vrf_safety.mark_expired(current_height);
-                publish_randomness_status(&self.bridge, &self.vrf_safety);
-                return Err(eyre::eyre!(
-                    "frozen DKG target missed VRF expiry: cycle {}, height {}, deadline {}",
-                    target.dkg_cycle,
-                    current_height,
-                    activation_deadline
-                ));
-            }
+                "frozen DKG target missed VRF expiry",
+            )?;
         }
         Ok(())
     }

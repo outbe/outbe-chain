@@ -22,6 +22,24 @@ where
         current_height: u64,
         engine: &mut commonware_runtime::Handle<()>,
     ) -> Result<EventAction> {
+        if let Some(action) = self
+            .activate_completed_player(ctx, current_height, engine)
+            .await?
+        {
+            return Ok(action);
+        }
+        if let Some(action) = self.prepare_observed_boundary(current_height).await? {
+            return Ok(action);
+        }
+        self.activate_dealer_handoff(ctx, current_height, engine)
+            .await
+    }
+    async fn activate_completed_player(
+        &mut self,
+        ctx: &E,
+        current_height: u64,
+        engine: &mut commonware_runtime::Handle<()>,
+    ) -> Result<Option<EventAction>> {
         if let Some(pending) = self.rotation.pending_dkg_activation.as_ref() {
             let consensus_finalized_height = self
                 .finalization_view
@@ -63,7 +81,7 @@ where
                             activation_height,
                             "DKG activation height reached but canonical finalized-log output is not ready"
                         );
-                        return Ok(EventAction::Continue);
+                        return Ok(Some(EventAction::Continue));
                     };
                     let Some(pending) = self.rotation.pending_dkg_activation.take() else {
                         return Err(eyre::eyre!(
@@ -216,11 +234,16 @@ where
                         super::continuity::AnchorTransition::Dkg,
                     )
                     .await?;
-                    return Ok(EventAction::Outcome(EpochLoopOutcome::RestartEpoch));
+                    return Ok(Some(EventAction::Outcome(EpochLoopOutcome::RestartEpoch)));
                 }
             }
         }
-
+        Ok(None)
+    }
+    async fn prepare_observed_boundary(
+        &mut self,
+        current_height: u64,
+    ) -> Result<Option<EventAction>> {
         if self
             .rotation
             .dealer_only_dkg_activation
@@ -244,7 +267,7 @@ where
                     .await?
                     == BoundaryPromotion::LocalExcluded
                 {
-                    return Ok(EventAction::Outcome(EpochLoopOutcome::StackExit));
+                    return Ok(Some(EventAction::Outcome(EpochLoopOutcome::StackExit)));
                 }
                 let boundary_artifact = if let Some(ref keys_dir) = self.args.keys_dir {
                     persist_observed_dkg_boundary_before_activation(
@@ -307,7 +330,14 @@ where
                 );
             }
         }
-
+        Ok(None)
+    }
+    async fn activate_dealer_handoff(
+        &mut self,
+        ctx: &E,
+        current_height: u64,
+        engine: &mut commonware_runtime::Handle<()>,
+    ) -> Result<EventAction> {
         let dealer_only_decision =
             self.rotation
                 .dealer_only_dkg_activation
