@@ -1,4 +1,9 @@
 use crate::*;
+use outbe_node::tee_remote_session::{
+    construct_local_finalized_replacement_authorization_with_view_v1,
+    inspect_local_finalized_successor_status_v1, RegistryChainIdentity,
+    ReplacementAuthorizationRequest,
+};
 
 pub(crate) const TEE_UPGRADE_POLL_SECS: u64 = 30;
 
@@ -89,12 +94,16 @@ pub(crate) async fn run_upgrade_promotion_worker_v1<P>(
                     info!(finalized_height, %finalized_hash, "reconciled already-promoted enclave candidate");
                     return;
                 }
-                match outbe_node::tee_remote_session::construct_local_finalized_replacement_authorization_with_view_v1(
+                match construct_local_finalized_replacement_authorization_with_view_v1(
                     &provider,
-                    chain_id,
-                    genesis_hash,
-                    &node_data_dir,
-                    &committed.node_id,
+                    RegistryChainIdentity {
+                        chain_id,
+                        genesis_hash,
+                    },
+                    ReplacementAuthorizationRequest {
+                        node_data_dir: &node_data_dir,
+                        node_id: &committed.node_id,
+                    },
                 ) {
                     Ok(authorized) => {
                         if let Err(error) = outbe_tee::promote_replacement_candidate(
@@ -121,19 +130,20 @@ pub(crate) async fn run_upgrade_promotion_worker_v1<P>(
             _ => {}
         }
 
-        let status =
-            match outbe_node::tee_remote_session::inspect_local_finalized_successor_status_v1(
-                &provider,
+        let status = match inspect_local_finalized_successor_status_v1(
+            &provider,
+            RegistryChainIdentity {
                 chain_id,
                 genesis_hash,
-            ) {
-                Ok(status) => status,
-                Err(error) => {
-                    tracing::error!(error = %error, "read node-local finalized successor status failed");
-                    tokio::time::sleep(std::time::Duration::from_secs(poll_secs)).await;
-                    continue;
-                }
-            };
+            },
+        ) {
+            Ok(status) => status,
+            Err(error) => {
+                tracing::error!(error = %error, "read node-local finalized successor status failed");
+                tokio::time::sleep(std::time::Duration::from_secs(poll_secs)).await;
+                continue;
+            }
+        };
         if let Some(policy) = &status.staged_policy {
             let policy_hash = match policy.policy_hash() {
                 Ok(hash) => hash,
@@ -159,12 +169,16 @@ pub(crate) async fn run_upgrade_promotion_worker_v1<P>(
                     return;
                 }
             };
-            match outbe_node::tee_remote_session::construct_local_finalized_replacement_authorization_with_view_v1(
+            match construct_local_finalized_replacement_authorization_with_view_v1(
                 &provider,
-                chain_id,
-                genesis_hash,
-                &node_data_dir,
-                &committed.node_id,
+                RegistryChainIdentity {
+                    chain_id,
+                    genesis_hash,
+                },
+                ReplacementAuthorizationRequest {
+                    node_data_dir: &node_data_dir,
+                    node_id: &committed.node_id,
+                },
             ) {
                 Ok(authorized) => {
                     // A matching finalized B proves that transition execution

@@ -8,8 +8,8 @@ use outbe_node::tee_remote_session::{
     authorize_local_finalized_remote_session_v1,
     construct_local_finalized_replacement_authorization_v1,
     construct_local_finalized_replacement_authorization_with_view_v1,
-    ExternalRegistryAdmissionError, LocalRegistryAdmissionError,
-    TrustedFinalizedRegistryCheckpointV1,
+    ExternalRegistryAdmissionError, LocalRegistryAdmissionError, RegistryChainIdentity,
+    RemoteSessionRequest, ReplacementAuthorizationRequest, TrustedFinalizedRegistryCheckpointV1,
 };
 use outbe_primitives::{
     header::{OutbeHeader, OutbePrimitives},
@@ -138,16 +138,20 @@ fn current_finalized_registry_admits_role_neutral_nodes_and_rejects_superseded_s
         finalized_source.override_state(next_block_hash, empty_next_state);
         let admitted = admit_local_finalized_remote_session_v1(
             &finalized_source,
-            CHAIN_ID,
-            genesis_hash,
-            RemoteSessionExpectationV1 {
-                chain_id: chain_id_word(CHAIN_ID),
+            RegistryChainIdentity {
+                chain_id: CHAIN_ID,
                 genesis_hash,
-                source_node_id_hash: source_hash,
-                target_node_id_hash: target_hash,
             },
-            &source_witness,
-            &target_node,
+            RemoteSessionRequest {
+                expected: RemoteSessionExpectationV1 {
+                    chain_id: chain_id_word(CHAIN_ID),
+                    genesis_hash,
+                    source_node_id_hash: source_hash,
+                    target_node_id_hash: target_hash,
+                },
+                source_witness: &source_witness,
+                target_node: &target_node,
+            },
         )
         .unwrap();
 
@@ -163,10 +167,14 @@ fn current_finalized_registry_admits_role_neutral_nodes_and_rejects_superseded_s
         assert!(matches!(
             construct_local_finalized_replacement_authorization_v1(
                 &finalized_source,
-                CHAIN_ID,
-                genesis_hash,
-                missing_candidate_dir.path(),
-                &source_node,
+                RegistryChainIdentity {
+                    chain_id: CHAIN_ID,
+                    genesis_hash,
+                },
+                ReplacementAuthorizationRequest {
+                    node_data_dir: missing_candidate_dir.path(),
+                    node_id: &source_node,
+                },
             ),
             Err(LocalRegistryAdmissionError::ReplacementAuthorization(_))
         ));
@@ -175,26 +183,34 @@ fn current_finalized_registry_admits_role_neutral_nodes_and_rejects_superseded_s
         assert!(matches!(
             admit_local_finalized_remote_session_v1(
                 &finalized_source,
-                CHAIN_ID,
-                genesis_hash,
-                RemoteSessionExpectationV1 {
-                    chain_id: chain_id_word(CHAIN_ID),
+                RegistryChainIdentity {
+                    chain_id: CHAIN_ID,
                     genesis_hash,
-                    source_node_id_hash: source_hash,
-                    target_node_id_hash: target_hash,
                 },
-                &source_witness,
-                &target_node,
+                RemoteSessionRequest {
+                    expected: RemoteSessionExpectationV1 {
+                        chain_id: chain_id_word(CHAIN_ID),
+                        genesis_hash,
+                        source_node_id_hash: source_hash,
+                        target_node_id_hash: target_hash,
+                    },
+                    source_witness: &source_witness,
+                    target_node: &target_node,
+                },
             ),
             Err(LocalRegistryAdmissionError::SourceBindingMissing)
         ));
         assert!(matches!(
             construct_local_finalized_replacement_authorization_v1(
                 &finalized_source,
-                CHAIN_ID,
-                genesis_hash,
-                missing_candidate_dir.path(),
-                &source_node,
+                RegistryChainIdentity {
+                    chain_id: CHAIN_ID,
+                    genesis_hash,
+                },
+                ReplacementAuthorizationRequest {
+                    node_data_dir: missing_candidate_dir.path(),
+                    node_id: &source_node,
+                },
             ),
             Err(LocalRegistryAdmissionError::ReplacementBindingMissing)
         ));
@@ -204,16 +220,20 @@ fn current_finalized_registry_admits_role_neutral_nodes_and_rejects_superseded_s
         assert!(matches!(
             admit_local_finalized_remote_session_v1(
                 &unfinalized,
-                CHAIN_ID,
-                genesis_hash,
-                RemoteSessionExpectationV1 {
-                    chain_id: chain_id_word(CHAIN_ID),
+                RegistryChainIdentity {
+                    chain_id: CHAIN_ID,
                     genesis_hash,
-                    source_node_id_hash: source_hash,
-                    target_node_id_hash: target_hash,
                 },
-                &source_witness,
-                &target_node,
+                RemoteSessionRequest {
+                    expected: RemoteSessionExpectationV1 {
+                        chain_id: chain_id_word(CHAIN_ID),
+                        genesis_hash,
+                        source_node_id_hash: source_hash,
+                        target_node_id_hash: target_hash,
+                    },
+                    source_witness: &source_witness,
+                    target_node: &target_node,
+                },
             ),
             Err(LocalRegistryAdmissionError::FinalizedBlockUnavailable)
         ));
@@ -367,16 +387,20 @@ fn production_facade_installs_current_finalized_ticket_in_live_enclave() {
     let ticket = authorize_local_finalized_remote_session_v1(
         &finalized,
         &mut target_client,
-        chain_id,
-        genesis_hash,
-        RemoteSessionExpectationV1 {
-            chain_id: chain_id_word(chain_id),
+        RegistryChainIdentity {
+            chain_id,
             genesis_hash,
-            source_node_id_hash: source_hash,
-            target_node_id_hash: target_hash,
         },
-        &source_witness,
-        &target_node,
+        RemoteSessionRequest {
+            expected: RemoteSessionExpectationV1 {
+                chain_id: chain_id_word(chain_id),
+                genesis_hash,
+                source_node_id_hash: source_hash,
+                target_node_id_hash: target_hash,
+            },
+            source_witness: &source_witness,
+            target_node: &target_node,
+        },
     )
     .unwrap();
     assert_eq!(ticket.finalized_block_hash(), block_hash);
@@ -552,10 +576,14 @@ fn current_finalized_registry_constructs_exact_replacement_authorization() {
 
     let authorized = construct_local_finalized_replacement_authorization_with_view_v1(
         &finalized,
-        chain_id,
-        genesis_hash,
-        &node_data_dir,
-        &node_id,
+        RegistryChainIdentity {
+            chain_id,
+            genesis_hash,
+        },
+        ReplacementAuthorizationRequest {
+            node_data_dir: &node_data_dir,
+            node_id: &node_id,
+        },
     )
     .unwrap();
     assert_eq!(authorized.view.block_number, 90);
@@ -563,10 +591,14 @@ fn current_finalized_registry_constructs_exact_replacement_authorization() {
     assert_eq!(authorized.successor_activation_height, None);
     let authorization = construct_local_finalized_replacement_authorization_v1(
         &finalized,
-        chain_id,
-        genesis_hash,
-        &node_data_dir,
-        &node_id,
+        RegistryChainIdentity {
+            chain_id,
+            genesis_hash,
+        },
+        ReplacementAuthorizationRequest {
+            node_data_dir: &node_data_dir,
+            node_id: &node_id,
+        },
     )
     .unwrap();
     assert_eq!(authorization, authorized.authorization);
@@ -692,9 +724,11 @@ fn external_light_client_checkpoint_authenticates_the_exact_registry_storage_pro
     let admitted = admit_anchored_remote_session_v1(
         checkpoint,
         &proof,
-        expected,
-        &source_witness,
-        &target_node,
+        RemoteSessionRequest {
+            expected,
+            source_witness: &source_witness,
+            target_node: &target_node,
+        },
     )
     .unwrap();
 
@@ -714,9 +748,11 @@ fn external_light_client_checkpoint_authenticates_the_exact_registry_storage_pro
         admit_anchored_remote_session_v1(
             checkpoint,
             &tampered,
-            expected,
-            &source_witness,
-            &target_node,
+            RemoteSessionRequest {
+                expected,
+                source_witness: &source_witness,
+                target_node: &target_node,
+            },
         ),
         Err(ExternalRegistryAdmissionError::Proof(_))
     ));

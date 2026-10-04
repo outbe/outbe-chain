@@ -171,26 +171,16 @@ pub enum ExternalRegistryAdmissionError {
 pub fn authorize_local_finalized_remote_session_v1<P>(
     provider: &P,
     local_enclave: &mut AuthorizedEnclaveClient,
-    chain_id: u64,
-    genesis_hash: B256,
-    expected: RemoteSessionExpectationV1,
-    source_witness: &NodeHostAuthorizationWitnessV1,
-    target_node: &NodeIdV1,
+    chain: RegistryChainIdentity,
+    request: RemoteSessionRequest<'_>,
 ) -> Result<RemoteSessionTicketV1, LocalRegistryAdmissionError>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
     LocalRemoteSessionOperation {
         provider,
-        chain: RegistryChainIdentity {
-            chain_id,
-            genesis_hash,
-        },
-        request: RemoteSessionRequest {
-            expected,
-            source_witness,
-            target_node,
-        },
+        chain,
+        request,
     }
     .authorize(local_enclave)
 }
@@ -201,39 +191,38 @@ where
 #[doc(hidden)]
 pub fn admit_local_finalized_remote_session_v1<P>(
     provider: &P,
-    chain_id: u64,
-    genesis_hash: B256,
-    expected: RemoteSessionExpectationV1,
-    source_witness: &NodeHostAuthorizationWitnessV1,
-    target_node: &NodeIdV1,
+    chain: RegistryChainIdentity,
+    request: RemoteSessionRequest<'_>,
 ) -> Result<RemoteSessionAdmissionV1, LocalRegistryAdmissionError>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
     LocalRemoteSessionOperation {
         provider,
-        chain: RegistryChainIdentity {
-            chain_id,
-            genesis_hash,
-        },
-        request: RemoteSessionRequest {
-            expected,
-            source_witness,
-            target_node,
-        },
+        chain,
+        request,
     }
     .admit()
 }
 
+/// Chain identity used to read and validate Registry state.
 #[derive(Clone, Copy)]
-struct RegistryChainIdentity {
-    chain_id: u64,
-    genesis_hash: B256,
+pub struct RegistryChainIdentity {
+    pub chain_id: u64,
+    pub genesis_hash: B256,
 }
-struct RemoteSessionRequest<'a> {
-    expected: RemoteSessionExpectationV1,
-    source_witness: &'a NodeHostAuthorizationWitnessV1,
-    target_node: &'a NodeIdV1,
+
+/// Expected session identity and the borrowed source/target authorization inputs.
+pub struct RemoteSessionRequest<'a> {
+    pub expected: RemoteSessionExpectationV1,
+    pub source_witness: &'a NodeHostAuthorizationWitnessV1,
+    pub target_node: &'a NodeIdV1,
+}
+
+/// Durable replacement candidate location and the node whose binding must match.
+pub struct ReplacementAuthorizationRequest<'a> {
+    pub node_data_dir: &'a Path,
+    pub node_id: &'a NodeIdV1,
 }
 struct LocalRemoteSessionOperation<'a, P> {
     provider: &'a P,
@@ -316,22 +305,14 @@ fn binding_codes_admitted(
 /// counterpart: replacement promotion is a local node authority decision.
 pub fn construct_local_finalized_replacement_authorization_v1<P>(
     provider: &P,
-    chain_id: u64,
-    genesis_hash: B256,
-    node_data_dir: &Path,
-    node_id: &NodeIdV1,
+    chain: RegistryChainIdentity,
+    request: ReplacementAuthorizationRequest<'_>,
 ) -> Result<FinalizedReplacementAuthorizationV1, LocalRegistryAdmissionError>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
-    construct_local_finalized_replacement_authorization_with_view_v1(
-        provider,
-        chain_id,
-        genesis_hash,
-        node_data_dir,
-        node_id,
-    )
-    .map(|result| result.authorization)
+    construct_local_finalized_replacement_authorization_with_view_v1(provider, chain, request)
+        .map(|result| result.authorization)
 }
 
 /// Same authority constructor as
@@ -339,14 +320,20 @@ where
 /// finalized marker needed by the node-owned durable promotion watcher.
 pub fn construct_local_finalized_replacement_authorization_with_view_v1<P>(
     provider: &P,
-    chain_id: u64,
-    genesis_hash: B256,
-    node_data_dir: &Path,
-    node_id: &NodeIdV1,
+    chain: RegistryChainIdentity,
+    request: ReplacementAuthorizationRequest<'_>,
 ) -> Result<LocalFinalizedReplacementAuthorizationV1, LocalRegistryAdmissionError>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
+    let RegistryChainIdentity {
+        chain_id,
+        genesis_hash,
+    } = chain;
+    let ReplacementAuthorizationRequest {
+        node_data_dir,
+        node_id,
+    } = request;
     with_local_finalized_registry(provider, chain_id, genesis_hash, |view, registry| {
         let finalized_binding =
             read_finalized_replacement_binding(view, registry, node_data_dir, node_id)?;
@@ -447,12 +434,15 @@ fn replacement_intent_matches(
 /// candidate promotion.
 pub fn inspect_local_finalized_successor_status_v1<P>(
     provider: &P,
-    chain_id: u64,
-    genesis_hash: B256,
+    chain: RegistryChainIdentity,
 ) -> Result<LocalFinalizedSuccessorStatusV1, LocalRegistryAdmissionError>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
+    let RegistryChainIdentity {
+        chain_id,
+        genesis_hash,
+    } = chain;
     with_local_finalized_registry(provider, chain_id, genesis_hash, |view, registry| {
         let staged = registry
             .staged_successor_policy_v1()
@@ -542,21 +532,15 @@ fn finalized_header_state_is_usable(header: &OutbeHeader) -> bool {
 pub fn admit_anchored_remote_session_v1(
     checkpoint: TrustedFinalizedRegistryCheckpointV1,
     proof: &PublicAccountProofV1,
-    expected: RemoteSessionExpectationV1,
-    source_witness: &NodeHostAuthorizationWitnessV1,
-    target_node: &NodeIdV1,
+    request: RemoteSessionRequest<'_>,
 ) -> Result<RemoteSessionAdmissionV1, ExternalRegistryAdmissionError> {
     let chain_id = chain_id_u64(checkpoint.view.chain_id)?;
-    verify_registry_binding_proof(
-        checkpoint,
-        proof,
-        &RemoteSessionRequest {
-            expected,
-            source_witness,
-            target_node,
-        },
-        chain_id,
-    )?;
+    verify_registry_binding_proof(checkpoint, proof, &request, chain_id)?;
+    let RemoteSessionRequest {
+        expected,
+        source_witness,
+        target_node,
+    } = request;
 
     let values = proof
         .storage_proofs

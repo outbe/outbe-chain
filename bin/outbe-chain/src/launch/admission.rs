@@ -1,4 +1,7 @@
 use crate::*;
+use outbe_node::tee_remote_session::{
+    inspect_local_finalized_successor_status_v1, RegistryChainIdentity,
+};
 
 const TEE_LEASE_GUARD_POLL_SECS: u64 = 1;
 
@@ -342,6 +345,10 @@ where
         + Sync
         + 'static,
 {
+    let chain = RegistryChainIdentity {
+        chain_id,
+        genesis_hash,
+    };
     let mut retired_at = 0;
     let mut interval = tokio::time::interval(Duration::from_secs(TEE_LEASE_GUARD_POLL_SECS));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -355,12 +362,7 @@ where
                 .finalized_block_num_hash()?
                 .is_some_and(|head| head.number > 0)
         {
-            let status =
-                outbe_node::tee_remote_session::inspect_local_finalized_successor_status_v1(
-                    &provider,
-                    chain_id,
-                    genesis_hash,
-                )?;
+            let status = inspect_local_finalized_successor_status_v1(&provider, chain)?;
             if status.retirement_height > retired_at {
                 let activation_height = status.retirement_height;
                 let response = outbe_tee::try_with_enclave(|session| {
