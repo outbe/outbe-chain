@@ -2031,7 +2031,7 @@
       ],
       "package": "outbe-oracle",
       "binary": "outbe-oracle",
-      "test": "tests::state::a_policy_change_leaves_an_old_snapshot_readable_and_unchanged"
+      "test": "tests::window::a_policy_change_leaves_an_old_snapshot_readable_and_unchanged"
     },
     {
       "acceptance": [
@@ -2039,7 +2039,7 @@
       ],
       "package": "outbe-oracle",
       "binary": "outbe-oracle",
-      "test": "tests::state::finalized_window_vwap_requires_two_thirds_round_coverage"
+      "test": "tests::window::finalized_window_vwap_requires_two_thirds_round_coverage"
     },
     {
       "acceptance": [
