@@ -38,17 +38,12 @@ pub(super) fn initialized_runtime(start_block: u64) -> Mutex<ProjectionRuntime> 
         outbe_offchain_data::ProjectionStatus::Starting,
     );
     let (runtime_failure_tx, runtime_failure_rx) = tokio::sync::watch::channel(None);
-    Mutex::new(ProjectionRuntime {
+    Mutex::new(projection_runtime(
         projector,
-        readiness_publisher,
         projection_config,
-        _reader: reader,
-        overlay: Some(overlay),
-        writer,
-        _writer_lease: None,
-        runtime_failure_sender: Some(runtime_failure_tx),
-        runtime_failure_receiver: Some(runtime_failure_rx),
-    })
+        (reader, overlay, writer),
+        (readiness_publisher, runtime_failure_tx, runtime_failure_rx),
+    ))
 }
 
 pub(super) struct BlockingWriteStorage {
@@ -228,5 +223,37 @@ impl StorageWriter for FailAfterStartupStorage {
             ));
         }
         self.inner.apply_atomic(batch)
+    }
+}
+
+type ProjectionFixtureStorage = (
+    StorageReaderHandle,
+    Arc<PendingOverlayStorage>,
+    StorageWriterHandle,
+);
+type ProjectionFixtureSignals = (
+    outbe_offchain_data::ProjectionReadinessPublisher,
+    tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>,
+    tokio::sync::watch::Receiver<Option<RuntimeBodyFailure>>,
+);
+
+pub(super) fn projection_runtime(
+    projector: OffchainDataProjection,
+    projection_config: ProjectionConfig,
+    storage: ProjectionFixtureStorage,
+    signals: ProjectionFixtureSignals,
+) -> ProjectionRuntime {
+    let (reader, overlay, writer) = storage;
+    let (readiness_publisher, runtime_failure_tx, runtime_failure_rx) = signals;
+    ProjectionRuntime {
+        projector,
+        readiness_publisher,
+        projection_config,
+        _reader: reader,
+        overlay: Some(overlay),
+        writer,
+        _writer_lease: None,
+        runtime_failure_sender: Some(runtime_failure_tx),
+        runtime_failure_receiver: Some(runtime_failure_rx),
     }
 }
