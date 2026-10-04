@@ -24,15 +24,15 @@ interface IVaultRouter {
         address cca;
         address vault;
         uint64 expiresAt;
-        uint256 collateral;
+        uint256 gratisMinor;
         uint256 snapshotId;
-        uint256 entryPrice;
-        uint256 valuationPrice;
+        uint256 entryPriceMinor;
+        uint256 valuationPriceMinor;
         uint256 policyRate;
         uint16 issuanceCurrency;
         uint8 assetDecimals;
         uint16 referenceCurrency;
-        uint256 callAnchorPrice;
+        uint256 callAnchorPriceMinor;
     }
 
     error TokenOperationFailed();

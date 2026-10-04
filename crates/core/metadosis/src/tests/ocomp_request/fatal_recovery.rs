@@ -301,7 +301,7 @@ fn assert_failed_day_recovery(
         let tribute = TributeContract::new(storage.clone());
         let totals = tribute.get_day_totals(fixture.wwd).unwrap();
         assert_eq!(totals.tribute_count, 0);
-        assert_eq!(totals.tribute_nominal_amount, U256::ZERO);
+        assert_eq!(totals.tribute_nominal_total_minor, U256::ZERO);
         assert_eq!(tribute.total_supply().unwrap(), 0);
         assert_eq!(
             tribute
@@ -830,9 +830,9 @@ fn failure_view(
             crate::schema::terminal_outcome::METADOSIS_FAILURE
         );
         (
-            receipt.valueRouted,
-            receipt.carryOverBefore,
-            receipt.carryOverAfter,
+            receipt.promisLimitReturnedMinor,
+            receipt.promisLimitBeforeMinor,
+            receipt.promisLimitAfterMinor,
         )
     })
 }

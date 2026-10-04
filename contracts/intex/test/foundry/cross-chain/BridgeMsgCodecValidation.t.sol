@@ -302,7 +302,7 @@ contract BridgeMsgCodecValidationTest is Test {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
         payload.seriesId = "20260212-TRY-U";
         payload.recipients = new address[](1);
-        payload.quantities = new uint256[](1);
+        payload.units = new uint256[](1);
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
             BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
@@ -338,7 +338,7 @@ contract BridgeMsgCodecValidationTest is Test {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
         payload.seriesId = "20260212-TRY-U";
         payload.recipients = new address[](1);
-        payload.quantities = new uint256[](1);
+        payload.units = new uint256[](1);
         return BridgeMsgCodec.encodeIssuanceInstructions(0, chunkIndex, totalChunks, IssuanceBatchLib.one(payload));
     }
 
@@ -350,7 +350,7 @@ contract BridgeMsgCodecValidationTest is Test {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
         payload.seriesId = "20260212-TRY-U";
         payload.recipients = new address[](n);
-        payload.quantities = new uint256[](n);
+        payload.units = new uint256[](n);
         return BridgeMsgCodec.encodeIssuanceInstructions(0, 0, 1, IssuanceBatchLib.one(payload));
     }
 }

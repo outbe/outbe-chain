@@ -131,7 +131,7 @@ pub(in crate::lifecycle) fn prepare_parent(
                 lookback_end,
                 offering_end,
                 scheduled_process_time: request_time,
-                metadosis_limit_amount: U256::from(100),
+                metadosis_limit_minor: U256::from(100),
                 previous_vwap: U256::ZERO,
                 current_vwap: U256::from(2),
             })
@@ -323,10 +323,10 @@ pub(in crate::lifecycle) fn assert_provider_activated_ocomp_inputs(
         outbe_metadosis::WwdMembership::Active
     );
     assert_eq!(projection.day_type, WwdDayType::Green);
-    assert_eq!(projection.metadosis_limit_amount, U256::from(100));
+    assert_eq!(projection.metadosis_limit_minor, U256::from(100));
     let totals = TributeContract::new(storage).get_day_totals(wwd).unwrap();
     assert_eq!(totals.tribute_count, 1);
-    assert_eq!(totals.tribute_nominal_amount, expected_nominal);
+    assert_eq!(totals.tribute_nominal_total_minor, expected_nominal);
 }
 
 pub(in crate::lifecycle) fn seed_ce_genesis(storage: &StorageHandle<'_>) {

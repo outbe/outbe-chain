@@ -185,7 +185,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
             callThreshold: 5,
             callPriceMinor: 25e6,
             recipients: recipients,
-            quantities: quantities
+            units: quantities
         });
         bytes memory packet =
             BridgeMsgCodec.encodeIssuanceInstructions(WORLDWIDE_DAY, 0, 1, IssuanceBatchLib.one(payload));
@@ -221,7 +221,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
                     callThreshold: 5,
                     callPriceMinor: 25e6,
                     recipients: recipients,
-                    quantities: quantities
+                    units: quantities
                 })
             )
         );

@@ -180,7 +180,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             .unwrap());
         assert_eq!(
             NodContract::new(storage.clone())
-                .entry_price_value
+                .entry_price_minor
                 .get_nested(&wwd)
                 .read(&840)
                 .unwrap(),
@@ -459,7 +459,7 @@ fn ineligible_request_defers_only_the_ready_key_without_effects() {
         assert!(after.fsm.live_intent_id.is_none());
         assert_eq!(after.receipt, None);
         assert_eq!(after.desis_stage, AuctionStage::None as u8);
-        assert_eq!(after.desis_supply, U256::ZERO);
+        assert_eq!(after.desis_limit_minor, U256::ZERO);
         assert_eq!(after.nod_supply, 0);
         assert_eq!(after.tribute_supply, 1);
         assert!(!after.tribute_pre_admission.is_sealed);
@@ -1366,7 +1366,7 @@ struct RequestObservables {
     fsm: crate::ocomp::state::JobFsmProjection,
     receipt: Option<outbe_ocomp_protocol::receipts::RequestLimitSplitReceiptV1>,
     desis_stage: u8,
-    desis_supply: U256,
+    desis_limit_minor: U256,
     nod_supply: u64,
     nod_prices_frozen: bool,
     tribute_supply: u64,
@@ -1389,7 +1389,7 @@ fn request_observables(
             .auction_stage
             .read(&wwd)
             .unwrap(),
-        desis_supply: DesisContract::new(storage.clone())
+        desis_limit_minor: DesisContract::new(storage.clone())
             .pending_desis_limit_minor
             .read(&wwd)
             .unwrap(),

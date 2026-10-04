@@ -32,11 +32,11 @@ impl MetadosisContract<'_> {
         reason: &'static str,
     ) -> Result<()> {
         match self.ocomp_day_limit_formation(current.worldwide_day)? {
-            Some(formation) if formation.day_limit == current.metadosis_limit_amount => Ok(()),
+            Some(formation) if formation.day_limit == current.metadosis_limit_minor => Ok(()),
             Some(_) => Err(crate::errors::storage_corruption(format!(
                 "{reason} formed day limit does not match WWD state"
             ))),
-            None if current.metadosis_limit_amount.is_zero() => Ok(()),
+            None if current.metadosis_limit_minor.is_zero() => Ok(()),
             None => Err(crate::errors::storage_corruption(format!(
                 "{reason} has a day limit with no formation"
             ))),
@@ -83,22 +83,22 @@ impl MetadosisContract<'_> {
         }
         self.worldwide_days
             .entry(formation.worldwide_day)
-            .metadosis_limit_amount()
+            .metadosis_limit_minor()
             .write(formation.day_limit)?;
         let receipt = self
             .day_limit_formation_receipts
             .entry(formation.worldwide_day);
-        receipt.base_limit().write(formation.base_limit)?;
+        receipt.base_limit_minor().write(formation.base_limit)?;
         receipt
-            .carry_over_before()
+            .promis_limit_before_minor()
             .write(formation.carry_over_before)?;
         receipt
-            .carry_over_taken()
+            .promis_limit_taken_minor()
             .write(formation.carry_over_taken)?;
         receipt
-            .carry_over_after()
+            .promis_limit_after_minor()
             .write(formation.carry_over_after)?;
-        receipt.formed_day_limit().write(formation.day_limit)?;
+        receipt.metadosis_limit_minor().write(formation.day_limit)?;
         receipt.block_number().write(formation.block_number)
     }
 
@@ -147,7 +147,7 @@ impl MetadosisContract<'_> {
             lookback_end,
             offering_end,
             scheduled_process_time,
-            metadosis_limit_amount: U256::ZERO,
+            metadosis_limit_minor: U256::ZERO,
             previous_vwap: U256::ZERO,
             current_vwap: U256::ZERO,
         })
@@ -164,13 +164,13 @@ impl MetadosisContract<'_> {
         let persisted_day_limit = self
             .worldwide_days
             .entry(wwd_key)
-            .metadosis_limit_amount()
+            .metadosis_limit_minor()
             .read()?;
-        let base_limit = receipt.base_limit().read()?;
-        let carry_over_before = receipt.carry_over_before().read()?;
-        let carry_over_taken = receipt.carry_over_taken().read()?;
-        let carry_over_after = receipt.carry_over_after().read()?;
-        let day_limit = receipt.formed_day_limit().read()?;
+        let base_limit = receipt.base_limit_minor().read()?;
+        let carry_over_before = receipt.promis_limit_before_minor().read()?;
+        let carry_over_taken = receipt.promis_limit_taken_minor().read()?;
+        let carry_over_after = receipt.promis_limit_after_minor().read()?;
+        let day_limit = receipt.metadosis_limit_minor().read()?;
         let block_number = receipt.block_number().read()?;
         let valid_arithmetic = base_limit.checked_add(carry_over_taken) == Some(day_limit)
             && carry_over_before.checked_sub(carry_over_taken) == Some(carry_over_after);

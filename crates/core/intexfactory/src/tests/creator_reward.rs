@@ -80,8 +80,8 @@ fn unpublished_selectors_refuse_native_value() {
 
     let calls = [IIntexFactory::settleIntexWithPayNoteCall {
         seriesId: Default::default(),
-        intexOwner: Address::ZERO,
-        amount: U256::ZERO,
+        owner: Address::ZERO,
+        units: U256::ZERO,
         payNoteProof: Default::default(),
     }
     .abi_encode()];

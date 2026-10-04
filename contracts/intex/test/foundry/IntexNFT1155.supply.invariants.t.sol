@@ -26,7 +26,7 @@ contract NFT1155SupplyHandler is Test {
     function mint(uint256 bidderSeed, uint256 qtySeed) external {
         address to = bidders[bound(bidderSeed, 0, bidders.length - 1)];
         uint256 qty = bound(qtySeed, 1, 1_000);
-        try intex.issue(to, qty, seriesId) {} catch {}
+        try intex.issueIntex(to, qty, seriesId) {} catch {}
     }
 
     function burn(uint256 bidderSeed, uint256 qtySeed) external {

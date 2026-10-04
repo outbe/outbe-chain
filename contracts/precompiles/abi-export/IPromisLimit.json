@@ -5,7 +5,7 @@
     "inputs": [],
     "outputs": [
       {
-        "name": "",
+        "name": "promisLimitMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -29,19 +29,19 @@
         "internalType": "uint32"
       },
       {
-        "name": "beforeValue",
+        "name": "promisLimitBeforeMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "creditedUnusedLysis",
+        "name": "unusedLysisLimitMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "afterValue",
+        "name": "promisLimitAfterMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

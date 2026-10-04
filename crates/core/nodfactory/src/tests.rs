@@ -976,7 +976,7 @@ fn assert_covering_paynote_mines_nod(input: NodIssueParams) {
         paid[0].asset, NOTE_ASSET,
         "the log must name the asset the note carried"
     );
-    assert_eq!(paid[0].amountCovered, U256::from(cost_of(&input)));
+    assert_eq!(paid[0].paymentMinor, U256::from(cost_of(&input)));
 
     let spent = world
         .enter(|storage, _, _| outbe_paynote::api::is_spent(&storage, paid[0].nullifier).unwrap());
@@ -1331,7 +1331,7 @@ fn a_paynote_can_cover_a_nod_cost_above_u128() {
         .filter_map(|event| INodFactory::NodPaid::decode_log_data(&event.data).ok())
         .last()
         .expect("NodPaid event");
-    assert_eq!(paid.amountCovered, cost);
+    assert_eq!(paid.paymentMinor, cost);
 }
 
 #[test]
@@ -1813,7 +1813,7 @@ fn erc20_settlement_enforces_eligibility_before_payment_and_accepts_zero_cost() 
         .unwrap();
     assert_eq!(paid.owner, input.owner);
     assert_eq!(paid.nullifier, B256::ZERO);
-    assert_eq!(paid.amountCovered, U256::ZERO);
+    assert_eq!(paid.paymentMinor, U256::ZERO);
 }
 
 #[test]
@@ -1956,7 +1956,7 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
 
     let paid = paid_event(&world);
     assert_eq!(paid.asset, EUR_ASSET);
-    assert_eq!(paid.amountCovered, U256::from(issuance_cost));
+    assert_eq!(paid.paymentMinor, U256::from(issuance_cost));
     assert!(is_settled(&mut world, nod_id));
 }
 
@@ -1986,7 +1986,7 @@ fn quote_agrees_with_what_settling_charges_on_both_rails() {
     let spend = u128::try_from(iss_amount).unwrap();
     let (proof, _) = world.fund_note(EUR_ASSET, nod_id, spend, spend);
     world.settle(nod_id, input.owner, &proof).unwrap();
-    assert_eq!(paid_event(&world).amountCovered, iss_amount);
+    assert_eq!(paid_event(&world).paymentMinor, iss_amount);
 }
 
 #[test]
@@ -2421,5 +2421,5 @@ fn quote_settlement_dispatch() {
         .unwrap();
     let ret = INodFactory::quoteSettlementCall::abi_decode_returns(&out).unwrap();
     assert_eq!(ret.settlementCurrency, 978);
-    assert_eq!(ret.payableUnits, U256::from(cost_of(&input) / 2));
+    assert_eq!(ret.paymentMinor, U256::from(cost_of(&input) / 2));
 }

@@ -33,6 +33,41 @@ fn scan_and_call_force_calls_breached_series() {
 }
 
 #[test]
+fn a_called_series_reports_its_settlement_deadline() {
+    use alloy_sol_types::SolEvent;
+
+    let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+    let mut storage = factory_provider();
+    let notice = StorageHandle::enter(&mut storage, |s| {
+        select_prod_profile(&s);
+        runtime::issue(&s, sample(7)).unwrap();
+        let oracle = OracleContract::new(s.clone());
+        let pair = setup_pair(&oracle);
+        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+        let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
+        fill_days(&oracle, last_closed_day, pair, 30, breach);
+
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
+            s.clone(),
+        );
+        assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
+        outbe_intex::api::read_series(&s, sid(7))
+            .unwrap()
+            .call_notice_period_seconds
+    });
+
+    let events: Vec<_> = storage
+        .get_events(INTEX_FACTORY_ADDRESS)
+        .iter()
+        .filter_map(|log| IIntexFactory::SeriesCalled::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(events.len(), 1);
+    assert_eq!(u64::from(events[0].calledAt), scan_ts);
+    assert_eq!(events[0].settlementDeadline, scan_ts + u64::from(notice));
+}
+
+#[test]
 fn scan_and_call_reads_daily_vwap_at_midnight() {
     // Regression: the scan fires on the midnight Cycle tick, when yesterday's
     // WorldwideDay snapshot does not exist yet (metadosis writes it at noon of

@@ -246,15 +246,15 @@ pub fn seed_reservation_at(
             cca: originator,
             vault: address!("0x0000000000000000000000000000000000000777"),
             expires_at,
-            collateral: amount / U256::from(2),
+            gratis_minor: amount / U256::from(2),
             snapshot_id: U256::from(17),
-            entry_price: oracle_rate(),
-            valuation_price: oracle_rate(),
+            entry_price_minor: oracle_rate(),
+            valuation_price_minor: oracle_rate(),
             policy_rate: policy_rate(),
             issuance_currency: ISSUANCE_ISO,
             asset_decimals: 6,
             reference_currency: REFERENCE_ISO,
-            call_anchor_price: oracle_rate(),
+            call_anchor_price_minor: oracle_rate(),
         })
         .unwrap();
     id

@@ -16,9 +16,9 @@ fn missing_receipts_have_canonical_empty_abi_returns() {
             IMetadosis::getWorldwideDayTerminalReceiptCall { wwd },
         );
         assert_eq!(terminal.outcome, 0);
-        assert_eq!(terminal.valueRouted, U256::ZERO);
-        assert_eq!(terminal.carryOverBefore, U256::ZERO);
-        assert_eq!(terminal.carryOverAfter, U256::ZERO);
+        assert_eq!(terminal.promisLimitReturnedMinor, U256::ZERO);
+        assert_eq!(terminal.promisLimitBeforeMinor, U256::ZERO);
+        assert_eq!(terminal.promisLimitAfterMinor, U256::ZERO);
         assert_eq!(terminal.retirementOutcome, 0);
         assert_eq!(terminal.blockNumber, 0);
         let capacity = query(
@@ -28,10 +28,10 @@ fn missing_receipts_have_canonical_empty_abi_returns() {
         assert_eq!(capacity.outcome, 0);
         assert_eq!(capacity.maxRetainedWorldwideDays, 0);
         assert_eq!(capacity.retainedCountBefore, 0);
-        assert_eq!(capacity.valueRouted, U256::ZERO);
+        assert_eq!(capacity.promisLimitReturnedMinor, U256::ZERO);
         assert_eq!(capacity.sealedCollectionRoot, B256::ZERO);
         assert_eq!(capacity.forfeitedTributeCount, 0);
-        assert_eq!(capacity.forfeitedTributeNominal, U256::ZERO);
+        assert_eq!(capacity.forfeitedTributeNominalMinor, U256::ZERO);
         assert_eq!(capacity.sourceGeneration, 0);
         assert_eq!(capacity.retiredGeneration, 0);
         assert_eq!(capacity.retirementOutcome, 0);
@@ -100,7 +100,7 @@ fn worldwide_day_abi_preserves_genesis_windows_rates_and_membership() {
             (10, 20, 30, 40, 50)
         );
         assert_eq!(
-            (day.previousVwap, day.currentVwap),
+            (day.previousVwapMinor, day.currentVwapMinor),
             (U256::from(8), U256::from(9))
         );
         let active: Vec<u32> = query(storage.clone(), IMetadosis::getActiveWorldwideDaysCall {});
@@ -134,7 +134,7 @@ pub(super) fn seed_offering_day(storage: StorageHandle<'_>) {
             lookback_end: 30,
             offering_end: 40,
             scheduled_process_time: 50,
-            metadosis_limit_amount: U256::from(100),
+            metadosis_limit_minor: U256::from(100),
             previous_vwap: U256::from(8),
             current_vwap: U256::from(9),
         })

@@ -238,7 +238,7 @@ mod group_scans {
             issuance_currency,
             reference_currency: REFERENCE_ISO,
             recipients: vec![],
-            quantities: vec![],
+            units: vec![],
             recipient_chains: vec![],
             snapshot_chains: vec![1],
         }

@@ -133,23 +133,104 @@ test("MCP formats Credis prices at six decimals", () => {
     type: "tuple",
     internalType: "struct ICredis.Position",
     components: [
-      { name: "entryPrice", type: "uint256" },
-      { name: "callAnchorPrice", type: "uint256" },
-      { name: "callPrice", type: "uint256" },
+      { name: "entryPriceMinor", type: "uint256" },
+      { name: "callAnchorPriceMinor", type: "uint256" },
+      { name: "callPriceMinor", type: "uint256" },
     ],
   } as AbiParameter;
   assert.deepEqual(
     formatParam(position, {
-      entryPrice: 2_000_000n,
-      callAnchorPrice: 1_900_000n,
-      callPrice: 3_116_000n,
+      entryPriceMinor: 2_000_000n,
+      callAnchorPriceMinor: 1_900_000n,
+      callPriceMinor: 3_116_000n,
     }),
     {
-      entryPrice: { raw: "2000000", value: "2" },
-      callAnchorPrice: { raw: "1900000", value: "1.9" },
-      callPrice: { raw: "3116000", value: "3.116" },
+      entryPriceMinor: { raw: "2000000", value: "2" },
+      callAnchorPriceMinor: { raw: "1900000", value: "1.9" },
+      callPriceMinor: { raw: "3116000", value: "3.116" },
     },
   );
+});
+
+test("MCP leaves a settlement quote in the asset's own minor units", () => {
+  const quoteSettlement = {
+    type: "function",
+    name: "quoteSettlement",
+    stateMutability: "view",
+    inputs: [
+      { name: "gemId", type: "uint256" },
+      { name: "asset", type: "address" },
+    ],
+    outputs: [
+      { name: "settlementCurrency", type: "uint16" },
+      { name: "paymentMinor", type: "uint256" },
+      { name: "snapshotId", type: "uint256" },
+    ],
+  } as AbiFunction;
+  const quote = humanizeReturn(quoteSettlement, [840, 2_000_000_000_000_000_000n, 0n]) as Record<
+    string,
+    unknown
+  >;
+  assert.equal(quote.paymentMinor, "2000000000000000000");
+});
+
+test("MCP leaves asset-native amounts raw and scales Gratis, Promis and prices", () => {
+  const position = {
+    name: "position",
+    type: "tuple",
+    internalType: "struct ICredis.Position",
+    components: [
+      { name: "principalMinor", type: "uint256" },
+      { name: "outstandingPrincipalMinor", type: "uint256" },
+      { name: "gratisMinor", type: "uint256" },
+      { name: "outstandingGratisMinor", type: "uint256" },
+      { name: "entryPriceMinor", type: "uint256" },
+      { name: "interestPaidMinor", type: "uint256" },
+      { name: "settlementDeadline", type: "uint64" },
+    ],
+  } as AbiParameter;
+  assert.deepEqual(
+    formatParam(position, {
+      principalMinor: 1_000_000_000_000_000_000n,
+      outstandingPrincipalMinor: 500_000_000_000_000_000n,
+      gratisMinor: 333_333n,
+      outstandingGratisMinor: 166_667n,
+      entryPriceMinor: 3_000_003n,
+      interestPaidMinor: 8_000_000_000_000_000n,
+      settlementDeadline: 1_767_225_600n,
+    }),
+    {
+      principalMinor: "1000000000000000000",
+      outstandingPrincipalMinor: "500000000000000000",
+      gratisMinor: { raw: "333333", value: "0.333333" },
+      outstandingGratisMinor: { raw: "166667", value: "0.166667" },
+      entryPriceMinor: { raw: "3000003", value: "3.000003" },
+      interestPaidMinor: "8000000000000000",
+      settlementDeadline: { epoch: 1_767_225_600, iso: "2026-01-01T00:00:00.000Z" },
+    },
+  );
+
+  for (const name of [
+    "principalPaidMinor",
+    "principalWrittenOffMinor",
+    "interestAccruedMinor",
+    "interestMinor",
+    "paymentMinor",
+    "amountMinor",
+  ]) {
+    assert.equal(
+      formatParam({ name, type: "uint256" } as AbiParameter, 2_500_000_000_000_000_000n),
+      "2500000000000000000",
+      name,
+    );
+  }
+  for (const name of ["promisMinor", "promisLoadMinor", "gratisReturnedMinor", "gratisBurnedMinor"]) {
+    assert.deepEqual(
+      formatParam({ name, type: "uint256" } as AbiParameter, 2_500_000n),
+      { raw: "2500000", value: "2.5" },
+      name,
+    );
+  }
 });
 
 test("MCP formats Credis and Oracle annual rates with six decimals", () => {

@@ -116,7 +116,7 @@ fn sample(worldwide_day: u32) -> IssuanceParams {
         issuance_currency: 840,
         reference_currency: 840,
         recipients: vec![],
-        quantities: vec![],
+        units: vec![],
         recipient_chains: vec![],
         // One target in the snapshot exercises the per-chain ISSUANCE loop (empty recipients).
         snapshot_chains: vec![1],

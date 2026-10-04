@@ -62,7 +62,7 @@ fn inputs() -> PreAdmissionInputs {
             is_sealed: true,
             sealed_collection_root: B256::repeat_byte(0x51),
             tribute_count: 256,
-            tribute_nominal_amount: U256::from(1_000),
+            tribute_nominal_total_minor: U256::from(1_000),
             canonical_body_bytes: 40_000,
             distinct_owner_count: 256,
             distinct_reference_currency_count: 16,

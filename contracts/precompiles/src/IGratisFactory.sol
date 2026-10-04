@@ -6,16 +6,16 @@ interface IGratisFactory {
         bytes32 mac;
         uint64 opNonce;
     }
-    event PledgeNote(bytes32 indexed commitment, uint32 leafIndex, bytes32 rootAfter, uint256 amount);
+    event PledgeNote(bytes32 indexed commitment, uint32 leafIndex, bytes32 rootAfter, uint256 gratisMinor);
     event PledgeSpent(bytes32 indexed nullifier);
-    event CoenMined(address indexed sender, uint256 amount);
+    event CoenMined(address indexed sender, uint256 coenMinor);
     /// Debit authenticated Gratis and append a note bound to the source account.
-    function pledgeGratis(uint256 amount, ModifyAuth calldata auth) external returns (bytes32 commitment);
+    function pledgeGratis(uint256 gratisMinor, ModifyAuth calldata auth) external returns (bytes32 commitment);
     /// Credit the original owner authenticated by the unpledge proof.
     function unpledgeGratis(bytes calldata proof) external;
     function pledgeRoot() external view returns (bytes32);
     function pledgeLeafCount() external view returns (uint64);
     function pledgeSpent(bytes32 nullifier) external view returns (bool);
-    function mineCoen(uint256 amount, bytes32 mac, uint64 opNonce) external returns (uint256);
+    function mineCoen(uint256 gratisMinor, bytes32 mac, uint64 opNonce) external returns (uint256 coenMinor);
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }

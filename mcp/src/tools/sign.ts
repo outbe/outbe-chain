@@ -124,7 +124,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
   server.tool("credis_settle", "Repay a position after approving its asset to CredisFactory; released collateral becomes a return note.",
     { position_id: rawAmount, amount: rawAmount },
     handler(async ({ position_id, amount }) =>
-      submit(ctx, "credisfactory", "settle", [BigInt(position_id), BigInt(amount)], GAS_DEFAULT, true)));
+      submit(ctx, "credisfactory", "settleCredis", [BigInt(position_id), BigInt(amount)], GAS_DEFAULT, true)));
   // --- tribute_offer (encrypts to the live offer key, byte-identical to enclave)
   server.tool(
     "tribute_offer",

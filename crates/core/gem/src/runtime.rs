@@ -51,7 +51,7 @@ impl GemContract<'_> {
         self.emit(GemExpired {
             gemId: gem_id,
             owner: item.owner,
-            promisLoad: item.promis_load_minor,
+            promisLoadMinor: item.promis_load_minor,
         })?;
         Ok(true)
     }
@@ -60,8 +60,8 @@ impl GemContract<'_> {
 /// Days before the bucket's start day never count: its gems did not exist yet.
 fn breached_enough(window: &[(u32, Option<U256>)], terms: &BucketTerms) -> bool {
     // Both terms are stored in seconds; the daily scan needs day counts.
-    let window_days = terms.call_window / 86_400;
-    let threshold_days = terms.call_threshold / 86_400;
+    let window_days = terms.call_window_seconds / 86_400;
+    let threshold_days = terms.call_threshold_seconds / 86_400;
     // Zero days means no terms, not a breach on every day.
     if threshold_days == 0 || threshold_days > window_days {
         return false;
@@ -71,7 +71,7 @@ fn breached_enough(window: &[(u32, Option<U256>)], terms: &BucketTerms) -> bool 
         if *day < terms.start_day {
             break;
         }
-        if vwap.is_some_and(|value| value > terms.call_price) {
+        if vwap.is_some_and(|value| value > terms.call_price_minor) {
             breaches += 1;
         }
     }

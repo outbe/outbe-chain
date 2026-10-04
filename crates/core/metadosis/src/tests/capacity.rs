@@ -127,7 +127,7 @@ fn seed_empty_waiting_candidate(
             worldwide_day: wwd,
             initialized: true,
             tribute_count: 0,
-            tribute_nominal_amount: U256::ZERO,
+            tribute_nominal_total_minor: U256::ZERO,
             is_sealed: true,
         })
         .unwrap();
@@ -146,7 +146,7 @@ fn wwd_words(
         U256::from(record.lookback_end),
         U256::from(record.offering_end),
         U256::from(record.scheduled_process_time),
-        record.metadosis_limit_amount,
+        record.metadosis_limit_minor,
         record.previous_vwap,
         record.current_vwap,
     ]
@@ -199,7 +199,7 @@ fn seed_capacity_fixture_with_victim_state(
                 worldwide_day: victim,
                 initialized: true,
                 tribute_count,
-                tribute_nominal_amount: tribute_nominal,
+                tribute_nominal_total_minor: tribute_nominal,
                 is_sealed: victim_state != status::OFFERING,
             })
             .unwrap();
@@ -499,7 +499,7 @@ fn multiple_due_candidates_advance_exactly_one_per_tick_in_protocol_order() {
                     worldwide_day: candidate,
                     initialized: true,
                     tribute_count: 0,
-                    tribute_nominal_amount: U256::ZERO,
+                    tribute_nominal_total_minor: U256::ZERO,
                     is_sealed: true,
                 })
                 .unwrap();
@@ -781,7 +781,7 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
             decoded.outcome,
             crate::schema::terminal_outcome::CAPACITY_FORFEITURE
         );
-        assert_eq!(decoded.valueRouted, U256::from(100));
+        assert_eq!(decoded.promisLimitReturnedMinor, U256::from(100));
         assert_eq!(
             decoded.retirementOutcome,
             crate::schema::terminal_retirement::NOT_PRESENT
@@ -798,7 +798,7 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
             decoded.outcome,
             crate::schema::terminal_outcome::CAPACITY_FORFEITURE
         );
-        assert_eq!(decoded.valueRouted, U256::from(100));
+        assert_eq!(decoded.promisLimitReturnedMinor, U256::from(100));
     });
 
     assert_eq!(
@@ -835,7 +835,7 @@ fn additional_ready_day_preserves_real_pending_ocomp_job_and_indexes_byte_for_by
                 worldwide_day: victim,
                 initialized: true,
                 tribute_count: 0,
-                tribute_nominal_amount: U256::ZERO,
+                tribute_nominal_total_minor: U256::ZERO,
                 is_sealed: true,
             })
             .unwrap();
@@ -1033,7 +1033,7 @@ fn populated_and_max_shape_forfeiture_is_constant_size_and_emits_one_canonical_r
             assert_eq!(tribute.total_supply.read().unwrap(), 0);
             let totals = tribute.get_day_totals(victim).unwrap();
             assert_eq!(totals.tribute_count, 0);
-            assert_eq!(totals.tribute_nominal_amount, U256::ZERO);
+            assert_eq!(totals.tribute_nominal_total_minor, U256::ZERO);
             let admission = tribute.pre_admission_projection(victim).unwrap();
             assert_eq!(admission.sealed_collection_root, tree.partition_root);
             assert_eq!(admission.source_generation, 1);

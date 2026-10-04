@@ -97,7 +97,9 @@ pub fn settlement_deadline(storage: &StorageHandle<'_>, bucket_key: B256) -> Res
     if called_at == 0 {
         return Ok(0);
     }
-    let notice = nod.callable_bucket_call_notice_period.read(&bucket_key)?;
+    let notice = nod
+        .callable_bucket_call_notice_period_seconds
+        .read(&bucket_key)?;
     Ok(settlement_deadline_of(called_at, notice))
 }
 

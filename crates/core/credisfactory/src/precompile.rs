@@ -36,7 +36,7 @@ pub fn dispatch(
             match call {
                 issueCredis(c) => {
                     mutate_payable(c, PAYABLE_SELECTORS, caller, value, |sender, c, val| {
-                        let (position_id, amount_stables) = runtime::issue_credis(
+                        let (position_id, principal_minor) = runtime::issue_credis(
                             storage.clone(),
                             sender,
                             c.reservationId,
@@ -45,16 +45,16 @@ pub fn dispatch(
                         )?;
                         Ok(ICredisFactory::issueCredisReturn {
                             positionId: position_id,
-                            amountStables: amount_stables,
+                            principalMinor: principal_minor,
                         })
                     })
                 }
-                settle(c) => mutate(c, caller, |sender, c| {
+                settleCredis(c) => mutate(c, caller, |sender, c| {
                     let (principal, interest) =
-                        runtime::settle(storage.clone(), sender, c.positionId, c.amount)?;
-                    Ok(ICredisFactory::settleReturn {
-                        principal,
-                        interest,
+                        runtime::settle(storage.clone(), sender, c.positionId, c.amountMinor)?;
+                    Ok(ICredisFactory::settleCredisReturn {
+                        principalPaidMinor: principal,
+                        interestMinor: interest,
                     })
                 }),
                 supportsInterface(c) => view(c, |c| {

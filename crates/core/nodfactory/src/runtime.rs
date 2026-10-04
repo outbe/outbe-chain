@@ -142,7 +142,7 @@ pub fn settle_nod(
             terms.issuance_currency,
             terms.reference_currency,
         )?;
-        let (cost, snapshot) = cost_in_token(storage, terms, entry_price, asset, currency)?;
+        let (cost, snapshot) = cost_in_asset(storage, terms, entry_price, asset, currency)?;
         require_snapshot(snapshot, snapshot_id)?;
         Ok(cost)
     };
@@ -253,7 +253,7 @@ fn settle<Q>(
                 nodId: nod_id.to_u256(),
                 asset: paid.asset,
                 nullifier: paid.nullifier,
-                amountCovered: paid.spend_amount,
+                paymentMinor: paid.spend_amount,
             },
         )
     })
@@ -379,7 +379,7 @@ fn discharge_cost(
         terms.issuance_currency,
         terms.reference_currency,
     )?;
-    let (cost, snapshot) = cost_in_token(storage, terms, entry_price_minor, claim.asset, currency)?;
+    let (cost, snapshot) = cost_in_asset(storage, terms, entry_price_minor, claim.asset, currency)?;
     let expected = outbe_paynote::api::settlement_context(
         outbe_paynote::api::SettlementDomain::Nod,
         B256::from(nod_id.to_u256()),
@@ -462,7 +462,7 @@ fn require_snapshot(required: Option<VwapSnapshotId>, authorized: U256) -> Resul
 /// Cost of one Nod in `asset`'s minor units and, on the issuance rail, the VWAP
 /// snapshot both COEN legs came from. The cross rate is folded into the same
 /// fraction, so the whole thing is floored once.
-fn cost_in_token(
+fn cost_in_asset(
     storage: &StorageHandle<'_>,
     terms: &SettlementTerms,
     entry_price_minor: U256,
@@ -566,7 +566,7 @@ pub fn quote_settlement(
         PaymentCurrency::Reference => terms.reference_currency,
         PaymentCurrency::Issuance => terms.issuance_currency,
     };
-    let (cost, snapshot) = cost_in_token(
+    let (cost, snapshot) = cost_in_asset(
         storage,
         &terms,
         bucket.body().entry_price_minor,

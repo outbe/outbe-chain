@@ -43,7 +43,7 @@ fn seed_local_terminal_fixture(provider: &mut HashMapStorageProvider, day: Local
                 worldwide_day: wwd,
                 initialized: true,
                 tribute_count,
-                tribute_nominal_amount: tribute_nominal,
+                tribute_nominal_total_minor: tribute_nominal,
                 is_sealed: true,
             })
             .unwrap();
@@ -54,7 +54,7 @@ fn seed_local_terminal_fixture(provider: &mut HashMapStorageProvider, day: Local
             "local terminal classification precedes OCOMP pre-admission sealing"
         );
         assert_eq!(admission.tribute_count, tribute_count);
-        assert_eq!(admission.tribute_nominal_amount, tribute_nominal);
+        assert_eq!(admission.tribute_nominal_total_minor, tribute_nominal);
         scheduled
     })
 }
@@ -132,7 +132,7 @@ fn assert_tribute_partition_forfeited(
         assert_eq!(tribute.total_supply().unwrap(), 0);
         let totals = tribute.get_day_totals(wwd).unwrap();
         assert_eq!(totals.tribute_count, 0);
-        assert_eq!(totals.tribute_nominal_amount, U256::ZERO);
+        assert_eq!(totals.tribute_nominal_total_minor, U256::ZERO);
         assert_eq!(
             tribute
                 .pre_admission_projection(wwd)
@@ -767,8 +767,8 @@ fn assert_populated_ready_day_fails_and_forfeits(
         .collect::<Vec<_>>();
     assert_eq!(executed.len(), 1);
     assert_eq!(executed[0].status, "FAILED");
-    assert_eq!(executed[0].tributeTotals, nominal);
-    assert_eq!(executed[0].dayMetadosisLimitRemainder, day_limit);
+    assert_eq!(executed[0].tributeNominalTotalMinor, nominal);
+    assert_eq!(executed[0].promisLimitReturnedMinor, day_limit);
 }
 
 #[test]

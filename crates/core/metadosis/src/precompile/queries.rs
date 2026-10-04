@@ -73,7 +73,7 @@ pub(super) fn terminal_receipt(
                 metadosis
                     .worldwide_days
                     .entry(wwd)
-                    .metadosis_limit_amount()
+                    .metadosis_limit_minor()
                     .read()?,
             )?;
             metadosis.read_metadosis_failure_receipt(wwd, expected_value_routed)?;

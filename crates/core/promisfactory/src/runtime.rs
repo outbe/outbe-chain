@@ -53,7 +53,7 @@ pub fn mine_coen(
         PROMIS_FACTORY_ADDRESS,
         alloy_sol_types::SolEvent::encode_log_data(&IPromisFactory::CoenMined {
             sender: account,
-            amount: native_amount,
+            coenMinor: native_amount,
         }),
     )?;
 

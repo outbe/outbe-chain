@@ -270,7 +270,7 @@ fn test_set_metadosis_limit_overwrites() {
         assert_eq!(
             m.worldwide_days
                 .entry(date)
-                .metadosis_limit_amount()
+                .metadosis_limit_minor()
                 .read()
                 .unwrap(),
             U256::from(100u64)
@@ -280,7 +280,7 @@ fn test_set_metadosis_limit_overwrites() {
         assert_eq!(
             m.worldwide_days
                 .entry(date)
-                .metadosis_limit_amount()
+                .metadosis_limit_minor()
                 .read()
                 .unwrap(),
             U256::from(250u64)
@@ -533,7 +533,7 @@ fn test_storage_dsl_layout_slots() {
     with_contract(|m| {
         assert_eq!(m.bootstrap_end_time.slot(), U256::ZERO);
         assert_eq!(m.worldwide_days.base_slot(), U256::from(1u64));
-        // WorldwideDay gained `metadosis_limit_amount`, so the record is now
+        // WorldwideDay gained `metadosis_limit_minor`, so the record is now
         // 10 scalar slots (was 9); worldwide_days occupies slots 1..=10.
         assert_eq!(<WorldwideDay as StorageRecord>::SLOTS, 10);
         assert_eq!(m.closed_wwd.base_slot(), U256::from(13u64));

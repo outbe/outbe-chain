@@ -30,9 +30,9 @@ pub fn issue_gem_position(
     storage: &StorageHandle<'_>,
     caller: Address,
     source_intex_id: SeriesId,
-    amount: U256,
+    units: U256,
 ) -> Result<U256> {
-    runtime::issue_gem_position(storage, caller, source_intex_id, amount)
+    runtime::issue_gem_position(storage, caller, source_intex_id, units)
 }
 
 pub fn issue_merchant_gem(

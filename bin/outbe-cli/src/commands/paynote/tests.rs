@@ -343,7 +343,7 @@ fn nod_target() -> SettlementTarget {
 fn quote_return(payable: U256) -> Vec<u8> {
     INodFactory::quoteSettlementCall::abi_encode_returns(&INodFactory::quoteSettlementReturn {
         settlementCurrency: 840,
-        payableUnits: payable,
+        paymentMinor: payable,
         snapshotId: U256::ZERO,
     })
 }
@@ -716,7 +716,7 @@ fn spend_proof_requires_exactly_one_settlement_target() {
         "20260212-TRY-U",
         "--units",
         "2",
-        "--holder",
+        "--owner",
         "0x1111111111111111111111111111111111111111"
     ])
     .is_ok());
@@ -727,17 +727,17 @@ fn spend_proof_requires_exactly_one_settlement_target() {
         "1",
         "--nod",
         "7",
-        "--holder",
+        "--owner",
         "0x1111111111111111111111111111111111111111"
     ])
     .is_err());
 }
 
-/// A series has many holders, so an Intex proof binds the one whose units it pays.
+/// A series has many owners, so an Intex proof binds the one whose units it pays.
 #[tokio::test]
-async fn an_intex_quote_binds_the_holder() {
+async fn an_intex_quote_binds_the_owner() {
     let series = *b"20260212-TRY-U";
-    let holder = Address::repeat_byte(0x11);
+    let owner = Address::repeat_byte(0x11);
     let units = U256::from(2u64);
     let payable = U256::from(5u64);
     let rpc = MockRpc {
@@ -749,7 +749,7 @@ async fn an_intex_quote_binds_the_holder() {
             IIntexFactory::quoteSettlementCall::abi_encode_returns(
                 &IIntexFactory::quoteSettlementReturn {
                     settlementCurrency: 840,
-                    payableUnits: payable,
+                    paymentMinor: payable,
                     snapshotId: U256::ZERO,
                 },
             ),
@@ -762,19 +762,19 @@ async fn an_intex_quote_binds_the_holder() {
         payable,
         SettlementTarget::Intex {
             series,
-            holder,
+            owner,
             units,
         },
     )
     .await
     .unwrap();
-    assert_eq!(quoted.holder, Some(holder));
+    assert_eq!(quoted.owner, Some(owner));
     assert_eq!(quoted.series.as_deref(), Some("20260212-TRY-U"));
     assert_eq!(
         quoted.context,
         settlement_context(
             SettlementDomain::Intex,
-            outbe_paynote::api::intex_holding_target(&series, holder),
+            outbe_paynote::api::intex_holding_target(&series, owner),
             units,
             U256::ZERO,
         )
@@ -783,7 +783,7 @@ async fn an_intex_quote_binds_the_holder() {
 }
 
 #[test]
-fn a_zero_holder_is_refused_before_proving() {
+fn a_zero_owner_is_refused_before_proving() {
     let target = SpendTarget {
         nod: None,
         gem: None,

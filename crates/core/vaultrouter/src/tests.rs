@@ -2225,12 +2225,12 @@ fn a_reservation_holds_then_releases_once() {
         assert_eq!(held.smart_account, receiver());
         assert_eq!(held.cca, cca());
         assert_eq!(held.vault, vault());
-        assert_eq!(held.collateral, U256::from(5));
+        assert_eq!(held.gratis_minor, U256::from(5));
         assert_eq!(held.asset_decimals, 6);
         assert_eq!(held.issuance_currency, USD_ISO_CODE);
         assert_eq!(held.reference_currency, USD_ISO_CODE);
         assert_eq!(held.policy_rate, U256::from(43_000));
-        assert_eq!(held.call_anchor_price, U256::from(2_000_000));
+        assert_eq!(held.call_anchor_price_minor, U256::from(2_000_000));
         assert!(!held.snapshot_id.is_zero());
         assert_eq!(held.expires_at, 1_700_000_000 + 15 * 60);
 

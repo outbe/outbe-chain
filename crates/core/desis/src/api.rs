@@ -19,7 +19,7 @@ use crate::schema::DesisContract;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum AuctionBriefRejectionReason {
-    SupplyExceedsAuctionDomain = 1,
+    DesisLimitExceedsAuctionDomain = 1,
 }
 
 impl AuctionBriefRejectionReason {
@@ -65,7 +65,7 @@ pub fn dispatch_auction_brief(
         let anchor = runtime::preflight_brief(&storage, worldwide_day, now)?;
         let Ok(desis_limit_u128) = u128::try_from(desis_limit_minor) else {
             let max_accepted = U256::from(u128::MAX);
-            let reason = AuctionBriefRejectionReason::SupplyExceedsAuctionDomain;
+            let reason = AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain;
             if matches!(overflow, BriefOverflowPolicy::Reject) {
                 return Err(outbe_primitives::error::PrecompileError::Revert(
                     "auction brief limit exceeds Desis u128 domain".into(),
@@ -74,8 +74,8 @@ pub fn dispatch_auction_brief(
             let mut contract = storage.contract::<DesisContract>();
             contract.emit(IDesis::AuctionBriefRejectedToCarryOver {
                 worldwideDay: worldwide_day.into(),
-                supply: desis_limit_minor,
-                maxAccepted: max_accepted,
+                desisLimitMinor: desis_limit_minor,
+                maxAcceptedMinor: max_accepted,
                 reasonCode: reason.code(),
             })?;
             return Ok(AuctionBriefReceipt::RejectedToCarryOver {

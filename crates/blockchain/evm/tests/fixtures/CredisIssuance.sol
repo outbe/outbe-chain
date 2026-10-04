@@ -32,7 +32,7 @@ contract CredisIssuance {
             mode = 0;
             balanceOf[address(this)] += 1;
             allowance[address(this)][address(0x1009)] = 1;
-            (bool ok, bytes memory reason) = address(0x1009).call(abi.encodeWithSignature("settle(uint256,uint256)", position, 1));
+            (bool ok, bytes memory reason) = address(0x1009).call(abi.encodeWithSignature("settleCredis(uint256,uint256)", position, 1));
             if (!ok) { assembly { revert(add(reason, 32), mload(reason)) } }
         }
         allowance[from][msg.sender] -= amount;

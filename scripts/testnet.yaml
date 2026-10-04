@@ -168,7 +168,7 @@ oracle:
 # testnet genesis carries no metadosis storage at all.
 #
 # A seeded day is worse than useless here. The seeder writes only the day's
-# `metadosis_limit_amount`, never the formation record that
+# `metadosis_limit_minor`, never the formation record that
 # `apply_missed_offering` requires, so the moment such a day reaches
 # MissedOffering the whole ProtocolCycle dies with
 # `MissedOffering requires an immutable formed day limit` and the chain stops

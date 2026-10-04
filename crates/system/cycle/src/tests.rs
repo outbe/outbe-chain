@@ -634,7 +634,7 @@ fn a_day_whose_limit_a_multi_day_halt_skipped_misses_its_offering() {
         let projection = outbe_metadosis::api::worldwide_day(handle, genesis_day)
             .unwrap()
             .unwrap();
-        assert_eq!(projection.metadosis_limit_amount, U256::ZERO);
+        assert_eq!(projection.metadosis_limit_minor, U256::ZERO);
         projection.lookback_end
     });
 

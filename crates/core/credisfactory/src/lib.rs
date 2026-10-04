@@ -3,7 +3,7 @@
 //!
 //! - `issueCredis` consumes an owner-bound pledge note for a fixed reservation,
 //!   credits aggregate Credis collateral and stores the authenticated return serial.
-//! - `settle` applies interest-first payments and appends notes for released collateral.
+//! - `settleCredis` applies interest-first payments and appends notes for released collateral.
 //! - [`called`] is the daily Cycle-triggered price-path scan: it calls positions
 //!   whose breach window filled and voids the remainder of called positions whose
 //!   settlement window has lapsed, burning the unpaid share of the collateral into

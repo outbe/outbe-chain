@@ -307,7 +307,7 @@ fn the_last_gem_out_closes_its_bucket() {
 
         api::set_state(storage, gem_id, GemState::Settled).unwrap();
         assert_eq!(gem.bucket_gem_count.read(&bucket).unwrap(), 0);
-        assert!(gem.bucket_call_price.read(&bucket).unwrap().is_zero());
+        assert!(gem.bucket_call_price_minor.read(&bucket).unwrap().is_zero());
         assert_eq!(gem.bucket_bin_index.read(&bucket).unwrap(), 0);
         assert!(!tree_math::contains(&crate::state::BucketBins(&gem, 840), bin).unwrap());
     });
@@ -582,6 +582,32 @@ fn precompile_transfer_paths_revert() {
                 "expected NonTransferable revert, got {err:?}",
             );
         }
+    });
+}
+
+#[test]
+fn gem_status_reports_call_terms_and_settlement_deadline() {
+    with_storage(|storage| {
+        let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
+        let status = |storage: &StorageHandle| {
+            let data = IGem::getGemStatusCall { gemId: gem_id }.abi_encode();
+            let bytes = dispatch(storage.clone(), &data, Address::ZERO, U256::ZERO).unwrap();
+            IGem::getGemStatusCall::abi_decode_returns(&bytes).unwrap()
+        };
+        let item = api::get_gem(storage, gem_id).unwrap().unwrap();
+
+        let open = status(storage);
+        assert_eq!(open.callWindow, item.call_window_seconds);
+        assert_eq!(open.callThreshold, item.call_threshold_seconds);
+        assert_eq!(open.settlementDeadline, 0);
+
+        call_gem(storage, gem_id, T_NOW + 10);
+        let called = status(storage);
+        assert_eq!(called.calledAt, T_NOW + 10);
+        assert_eq!(
+            called.settlementDeadline,
+            T_NOW + 10 + u64::from(item.call_notice_period_seconds)
+        );
     });
 }
 

@@ -16,8 +16,8 @@ pub(crate) fn token_uri(
 ) -> Result<String> {
     let called_at = nod.bucket_called_at.read(&item.bucket_key)?;
     let terms = nod.read_call_terms(item.bucket_key)?;
-    let deadline = api::settlement_deadline_of(called_at, terms.call_notice_period);
-    let call_price = terms.call_price;
+    let deadline = api::settlement_deadline_of(called_at, terms.call_notice_period_seconds);
+    let call_price = terms.call_price_minor;
     let called = called_at != 0 && !item.is_settled;
     let state = match api::effective_state(item, qualified, called_at, deadline, now) {
         EffectiveState::Settled => nft_card::SETTLED,

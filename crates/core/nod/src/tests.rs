@@ -214,7 +214,7 @@ fn same_day_and_entry_in_two_currencies_are_two_buckets_in_two_bins() {
 
         let nod = NodContract::new(storage.clone());
         let call_price = nod
-            .callable_bucket_call_price
+            .callable_bucket_call_price_minor
             .read(&usd.bucket_key)
             .unwrap();
         let bin = NodContract::price_to_bin(call_price).unwrap();
@@ -454,12 +454,12 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
             nod.seal_bucket_call_terms(
                 item.bucket_key,
                 CallTerms {
-                    call_price: U256::from(937),
+                    call_price_minor: U256::from(937),
                     reference_currency: USD,
                     call_rate: 23,
-                    call_window: 432_000,
-                    call_threshold: 172_800,
-                    call_notice_period: notice,
+                    call_window_seconds: 432_000,
+                    call_threshold_seconds: 172_800,
+                    call_notice_period_seconds: notice,
                 },
             )
             .unwrap();
@@ -926,12 +926,12 @@ fn nod_card_hides_call_rows_it_cannot_honour() {
         nod.seal_bucket_call_terms(
             item.bucket_key,
             CallTerms {
-                call_price: U256::from(937),
+                call_price_minor: U256::from(937),
                 reference_currency: USD,
                 call_rate: 23,
-                call_window: 432_000,
-                call_threshold: 172_800,
-                call_notice_period: 17,
+                call_window_seconds: 432_000,
+                call_threshold_seconds: 172_800,
+                call_notice_period_seconds: 17,
             },
         )
         .unwrap();

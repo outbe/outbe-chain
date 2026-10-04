@@ -57,7 +57,7 @@ sol! {
             uint256 entryPriceMinor,
             uint16 referenceCurrency,
             address[] recipients,
-            uint256[] quantities,
+            uint256[] units,
             uint32[] recipientChains,
             uint32[] snapshotChains
         ) external;
@@ -164,7 +164,7 @@ pub fn dispatch(
                     issuance_currency,
                     reference_currency: call.referenceCurrency,
                     recipients: call.recipients.clone(),
-                    quantities: call.quantities.clone(),
+                    units: call.units.clone(),
                     recipient_chains: call.recipientChains.clone(),
                     snapshot_chains: call.snapshotChains.clone(),
                 },
@@ -213,9 +213,9 @@ pub fn dispatch(
                     runtime::settle_intex(
                         &storage,
                         SeriesId::from(c.seriesId),
-                        c.intexOwner,
+                        c.owner,
                         sender,
-                        c.amount,
+                        c.units,
                         c.asset,
                         c.snapshotId,
                     )
@@ -224,22 +224,23 @@ pub fn dispatch(
                     runtime::settle_intex_with_paynote(
                         &storage,
                         SeriesId::from(c.seriesId),
-                        c.intexOwner,
+                        c.owner,
                         sender,
-                        c.amount,
+                        c.units,
                         &c.payNoteProof,
                     )
                 }),
                 quoteSettlement(c) => metadata::<IIntexFactory::quoteSettlementCall>(|| {
-                    let (settlement_currency, amount, snapshot_id) = runtime::quote_settlement(
-                        &storage,
-                        SeriesId::from(c.seriesId),
-                        c.paymentToken,
-                        c.amount,
-                    )?;
+                    let (settlement_currency, payment_minor, snapshot_id) =
+                        runtime::quote_settlement(
+                            &storage,
+                            SeriesId::from(c.seriesId),
+                            c.asset,
+                            c.units,
+                        )?;
                     Ok(IIntexFactory::quoteSettlementReturn {
                         settlementCurrency: settlement_currency,
-                        payableUnits: amount,
+                        paymentMinor: payment_minor,
                         snapshotId: snapshot_id,
                     })
                 }),
@@ -266,7 +267,7 @@ pub fn dispatch(
                         &storage,
                         SeriesId::from(c.seriesId),
                         c.owner,
-                        c.amount,
+                        c.units,
                         c.nonce,
                         auth,
                     )
@@ -303,6 +304,9 @@ pub fn dispatch(
                 }),
                 seriesUnitCounts(c) => view(c, |c| {
                     runtime::series_unit_counts(&storage, c.seriesId.into())
+                }),
+                ownerBalances(c) => view(c, |c| {
+                    runtime::owner_balances(&storage, c.seriesId.into(), c.owner)
                 }),
             }
         },

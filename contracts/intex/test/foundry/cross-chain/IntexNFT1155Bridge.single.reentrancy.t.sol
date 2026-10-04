@@ -27,7 +27,7 @@ contract ReentrantSendProbe is IERC1155Receiver {
     function onERC1155Received(address, address, uint256, uint256, bytes calldata) external returns (bytes4) {
         attempted = true;
 
-        SendParam memory param = SendParam({dstChainId: 0, to: bytes32(0), tokenId: 0, amount: 0});
+        SendParam memory param = SendParam({dstChainId: 0, to: bytes32(0), tokenId: 0, units: 0});
 
         try IIntexNFT1155Bridge(adapter).send{value: 0}(param) {
         // unexpected: re-entrant call should always revert (either with the guard or with InvalidReceiver)
@@ -101,14 +101,14 @@ contract IntexNFT1155BridgeSingleReentrancyTest is CrossChainTest {
         tokenA.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
         tokenB.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
 
-        tokenA.issue(user, AMOUNT, SERIES_ID);
+        tokenA.issueIntex(user, AMOUNT, SERIES_ID);
     }
 
     function test_receiveMessage_blocks_reentry_to_send() public {
         ReentrantSendProbe probe = new ReentrantSendProbe(address(adapterB));
 
         SendParam memory sendParam = SendParam({
-            dstChainId: bChainId, to: bytes32(uint256(uint160(address(probe)))), tokenId: TOKEN_ID, amount: AMOUNT
+            dstChainId: bChainId, to: bytes32(uint256(uint160(address(probe)))), tokenId: TOKEN_ID, units: AMOUNT
         });
 
         uint256 fee = adapterA.quoteSend(sendParam);
