@@ -99,9 +99,8 @@ fn apply_pre_execution_changes_executes_cycle_tick_system_tx_receipt() {
     let ctx = block_one_execution_ctx(Some(0), Bytes::new());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        fixtures::executor_inputs_from_ctx(&ctx, Some(signer.clone()), false),
-    )
-    .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
+        fixtures::executor_inputs_with_bootstrap(&ctx, Some(signer.clone()), false),
+    );
 
     executor
         .apply_pre_execution_changes()
@@ -213,9 +212,8 @@ fn system_prefix_charges_visible_gas_and_receipt_cumulative_contract() {
     let ctx = block_one_execution_ctx(Some(3), Bytes::new());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        fixtures::executor_inputs_from_ctx(&ctx, Some(signer), false),
-    )
-    .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
+        fixtures::executor_inputs_with_bootstrap(&ctx, Some(signer), false),
+    );
 
     executor
         .apply_pre_execution_changes()
@@ -754,9 +752,8 @@ fn gas_09_noncritical_system_oog_exhausts_aggregate_budget_atomically() {
     let ctx = block_one_execution_ctx(Some(3), Bytes::new());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        fixtures::executor_inputs_from_ctx(&ctx, Some(signer.clone()), true),
-    )
-    .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
+        fixtures::executor_inputs_with_bootstrap(&ctx, Some(signer.clone()), true),
+    );
 
     executor
         .apply_pre_execution_changes()
@@ -838,9 +835,8 @@ fn gas_13_system_receipt_rpc_gas_delta_is_visible_envelope_gas() {
     let ctx = block_one_execution_ctx(Some(3), Bytes::new());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        fixtures::executor_inputs_from_ctx(&ctx, Some(signer.clone()), true),
-    )
-    .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
+        fixtures::executor_inputs_with_bootstrap(&ctx, Some(signer.clone()), true),
+    );
 
     executor
         .apply_pre_execution_changes()
@@ -980,9 +976,8 @@ fn gas_14_executor_finish_sets_visible_system_gas_for_fee_history_input() {
     let ctx = block_one_execution_ctx(Some(2), Bytes::new());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        fixtures::executor_inputs_from_ctx(&ctx, Some(signer.clone()), true),
-    )
-    .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
+        fixtures::executor_inputs_with_bootstrap(&ctx, Some(signer.clone()), true),
+    );
 
     executor
         .apply_pre_execution_changes()
@@ -1051,9 +1046,8 @@ fn gas_16_mixed_system_and_user_block_finish_uses_visible_system_gas() {
     let ctx = block_one_execution_ctx(Some(3), Bytes::new());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        fixtures::executor_inputs_from_ctx(&ctx, Some(signer.clone()), true),
-    )
-    .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
+        fixtures::executor_inputs_with_bootstrap(&ctx, Some(signer.clone()), true),
+    );
 
     executor
         .apply_pre_execution_changes()

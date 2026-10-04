@@ -23,12 +23,12 @@ use fixtures::{
     begin_system_txs_for_test, begin_system_txs_for_test_with_bootstrap, block_one_execution_ctx,
     boundary_with, boundary_with_epoch, cache_db_from_storage, dummy_pubkey, execution_ctx,
     execution_ctx_with_tee_bootstrap, metadata_with, numbered_test_address, persistent_test_tree,
-    persistent_test_tree_with_marker, register_and_activate_with_ocomp_registration,
-    sample_tee_bootstrap_payload, sample_tee_bootstrap_payload_at,
-    sample_tee_bootstrap_payload_for, seed_compressed_entities_genesis, seed_previous_day_vwap,
+    persistent_test_tree_with_marker, post_state_root,
+    register_and_activate_with_ocomp_registration, sample_tee_bootstrap_payload,
+    sample_tee_bootstrap_payload_at, sample_tee_bootstrap_payload_for,
+    seed_compressed_entities_genesis, seed_cycle_tick_genesis, seed_previous_day_vwap,
     seed_registered_active_validator, seed_test_committee_snapshot, seed_test_ocomp_profile,
-    post_state_root, seed_cycle_tick_genesis, signer_balance, state_with_active_proposer,
-    state_with_active_proposer_and_funded_account,
+    signer_balance, state_with_active_proposer, state_with_active_proposer_and_funded_account,
     state_with_active_proposer_and_funded_account_fixture,
     state_with_active_proposer_without_ocomp, state_with_active_validators_seeded,
     state_with_active_validators_seeded_at_block,
@@ -98,6 +98,7 @@ mod accounting;
 mod begin_layout;
 mod block_artifacts;
 mod boundary;
+mod construction;
 mod fixtures;
 pub(super) mod harness;
 mod receipts_and_gas;

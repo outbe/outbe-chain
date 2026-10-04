@@ -59,10 +59,9 @@ impl Scenario {
         ctx.parent_artifact_hint = self.hint;
         ctx.expected_begin_system_txs = self.body.clone();
         ctx.pending_tee_bootstrap = self.pending.clone();
-        config
-            .create_executor(evm, ctx)
-            .with_ocomp_lifecycle_active(self.active)
-            .begin_block_system_tx_inputs(self.height, &self.artifacts)
+        let mut executor = config.create_executor(evm, ctx);
+        executor.ocomp_lifecycle_active = self.active;
+        executor.begin_block_system_tx_inputs(self.height, &self.artifacts)
     }
 
     fn signed_body(&self) -> Vec<Recovered<TransactionSigned>> {

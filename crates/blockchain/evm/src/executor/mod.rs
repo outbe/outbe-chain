@@ -86,8 +86,8 @@ pub use accounting::{AccountedParentArtifact, AccountedParentArtifactProvider};
 
 pub use block::OutbeBlockExecutor;
 pub(crate) use inputs::{
-    BlockExecutionDependencies, BlockExecutionIdentity, BlockExecutorInputs, BlockSystemPlan,
-    ParentAccountingInputs,
+    BlockExecutionDependencies, BlockExecutionIdentity, BlockExecutionRuntime, BlockExecutorInputs,
+    BlockSystemPlan, ParentAccountingInputs,
 };
 
 pub use boundary::marker_addresses;

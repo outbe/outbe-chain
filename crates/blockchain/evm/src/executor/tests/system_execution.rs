@@ -859,9 +859,8 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
     let ctx = block_one_execution_ctx(Some(1), Bytes::new());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        fixtures::executor_inputs_from_ctx(&ctx, Some(signer.clone()), false),
-    )
-    .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
+        fixtures::executor_inputs_with_bootstrap(&ctx, Some(signer.clone()), false),
+    );
 
     executor
         .apply_pre_execution_changes()

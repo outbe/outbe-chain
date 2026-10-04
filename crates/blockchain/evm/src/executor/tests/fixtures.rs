@@ -100,7 +100,9 @@ pub(super) fn numbered_test_address(prefix: u8, n: u64) -> Address {
 }
 
 pub(super) fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
-    use outbe_primitives::tee_test_utils::{gramine_direct_policy_v1, tee_attestation_v1_extra_field};
+    use outbe_primitives::tee_test_utils::{
+        gramine_direct_policy_v1, tee_attestation_v1_extra_field,
+    };
 
     let mut spec = MAINNET.as_ref().clone();
     spec.chain = CHAIN_ID.into();
@@ -969,6 +971,7 @@ pub(super) fn empty_executor_inputs(parent_hash: B256) -> BlockExecutorInputs {
             block_extra_data: Bytes::new(),
             validate_execution_summary: false,
             block_hash: None,
+            block_state_root: None,
             parent_hash,
         },
         system_plan: BlockSystemPlan {
@@ -978,12 +981,15 @@ pub(super) fn empty_executor_inputs(parent_hash: B256) -> BlockExecutorInputs {
             proposer_evm_address: None,
             execute_outbe_block_hooks: true,
             prebuilt_phase1_tx: None,
+            pending_tee_bootstrap: None,
+            ocomp_lifecycle_active: false,
         },
         parent_accounting: ParentAccountingInputs {
             accounted_parent_artifact_provider: None,
             parent_consensus_metadata: None,
             parent_artifact_hint: None,
         },
+        runtime: empty_execution_runtime(),
         dependencies: BlockExecutionDependencies {
             bridge: None,
             evm_signer: None,
@@ -1009,6 +1015,7 @@ pub(super) fn executor_inputs_from_ctx(
             block_extra_data: Bytes::new(),
             validate_execution_summary,
             block_hash: None,
+            block_state_root: None,
             parent_hash: ctx.inner.parent_hash,
         },
         system_plan: BlockSystemPlan {
@@ -1018,17 +1025,39 @@ pub(super) fn executor_inputs_from_ctx(
             proposer_evm_address,
             execute_outbe_block_hooks,
             prebuilt_phase1_tx,
+            pending_tee_bootstrap: None,
+            ocomp_lifecycle_active: false,
         },
         parent_accounting: ParentAccountingInputs {
             accounted_parent_artifact_provider: None,
             parent_consensus_metadata,
             parent_artifact_hint,
         },
+        runtime: empty_execution_runtime(),
         dependencies: BlockExecutionDependencies {
             bridge: None,
             evm_signer,
         },
     }
+}
+
+fn empty_execution_runtime() -> BlockExecutionRuntime {
+    BlockExecutionRuntime {
+        compressed_entities_scope: Arc::new(ExecutionScope::new()),
+        compressed_tree_service: None,
+        runtime_body_readers: None,
+        execution_read_budget: None,
+    }
+}
+
+pub(super) fn executor_inputs_with_bootstrap(
+    ctx: &OutbeBlockExecutionCtx<'_>,
+    evm_signer: Option<SharedOutbeEvmSigner>,
+    validate_execution_summary: bool,
+) -> BlockExecutorInputs {
+    let mut inputs = executor_inputs_from_ctx(ctx, evm_signer, validate_execution_summary);
+    inputs.system_plan.pending_tee_bootstrap = ctx.pending_tee_bootstrap.clone();
+    inputs
 }
 
 /// Independent trie-root projection of the executed test bundle.

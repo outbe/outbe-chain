@@ -99,7 +99,7 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     pub(super) zero_fee_soft_failures: u32,
     /// Least-authority off-chain readers used by lifecycle body reads.
     pub(super) runtime_body_readers: Option<RuntimeBodyReaders>,
-    execution_read_budget_guard: Option<ExecutionReadBudgetGuard>,
+    _execution_read_budget_guard: Option<ExecutionReadBudgetGuard>,
     /// One lifecycle capability shared with every precompile in this EVM.
     pub(super) compressed_entities_scope: Arc<ExecutionScope>,
     pub(super) compressed_entities_started: bool,
@@ -119,6 +119,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
                     block_extra_data,
                     validate_execution_summary,
                     block_hash,
+                    block_state_root,
                     parent_hash,
                 },
             system_plan:
@@ -129,6 +130,8 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
                     proposer_evm_address,
                     execute_outbe_block_hooks,
                     prebuilt_phase1_tx,
+                    pending_tee_bootstrap,
+                    ocomp_lifecycle_active,
                 },
             parent_accounting:
                 ParentAccountingInputs {
@@ -137,8 +140,19 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
                     parent_artifact_hint,
                 },
             dependencies: BlockExecutionDependencies { bridge, evm_signer },
+            runtime:
+                BlockExecutionRuntime {
+                    compressed_entities_scope,
+                    compressed_tree_service,
+                    runtime_body_readers,
+                    execution_read_budget,
+                },
         } = inputs;
         let genesis_hash = inner.spec.genesis_hash();
+        let execution_read_budget_guard = runtime_body_readers
+            .as_ref()
+            .zip(execution_read_budget)
+            .map(|(readers, budget)| readers.enter_execution_budget(budget));
         Self {
             inner,
             genesis_hash,
@@ -148,14 +162,14 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             accounted_parent_artifact_provider,
             validate_execution_summary,
             block_hash,
-            block_state_root: None,
+            block_state_root,
             parent_hash,
             current_block_validator_fees: U256::ZERO,
             system_tx_execution_gas: 0,
             evm_signer,
             expected_begin_system_txs,
             expected_end_system_txs,
-            ocomp_lifecycle_active: false,
+            ocomp_lifecycle_active,
             ocomp_terminal_request_consumed: false,
             ethereum_post_execution_requests: None,
             system_layout_error,
@@ -171,65 +185,16 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             // populated by `verify_phase1_in_preexec` on real
             // verify; remains `None` for skip paths.
             verified_phase1_vrf_proof_hash: None,
-            // proposer-only; set via `with_pending_tee_bootstrap` from the
-            // execution ctx. `None` keeps the begin-zone unchanged.
-            pending_tee_bootstrap: None,
+            pending_tee_bootstrap,
             whitelisted_hook_event_logs: Vec::new(),
             zero_fee_soft_failures: 0,
-            runtime_body_readers: None,
-            execution_read_budget_guard: None,
-            compressed_entities_scope: Arc::new(ExecutionScope::new()),
+            runtime_body_readers,
+            _execution_read_budget_guard: execution_read_budget_guard,
+            compressed_entities_scope,
             compressed_entities_started: false,
             compressed_entities_seal_output: None,
-            compressed_tree_service: None,
+            compressed_tree_service,
         }
-    }
-
-    pub(crate) fn with_compressed_entities_scope(mut self, scope: Arc<ExecutionScope>) -> Self {
-        self.compressed_entities_scope = scope;
-        self
-    }
-
-    pub(crate) fn with_block_state_root(mut self, state_root: Option<B256>) -> Self {
-        self.block_state_root = state_root;
-        self
-    }
-
-    pub(crate) fn with_ocomp_lifecycle_active(mut self, active: bool) -> Self {
-        self.ocomp_lifecycle_active = active;
-        self
-    }
-
-    pub(crate) fn with_compressed_tree_service(
-        mut self,
-        service: Option<Arc<outbe_compressed_entities::CompressedTreeService>>,
-    ) -> Self {
-        self.compressed_tree_service = service;
-        self
-    }
-
-    pub(crate) fn with_runtime_body_readers(
-        mut self,
-        readers: Option<RuntimeBodyReaders>,
-        budget: Option<outbe_primitives::projection::ExecutionReadBudget>,
-    ) -> Self {
-        self.execution_read_budget_guard = readers
-            .as_ref()
-            .zip(budget)
-            .map(|(readers, budget)| readers.enter_execution_budget(budget));
-        self.runtime_body_readers = readers;
-        self
-    }
-
-    /// Proposer-path builder: attach the one-time `TeeBootstrap` payload the
-    /// executor injects after `BoundaryOutcome`. No-op (stays `None`) on the
-    /// validator path. Mirrors `OutbeEvmConfig::build_begin_system_txs`.
-    pub(crate) fn with_pending_tee_bootstrap(
-        mut self,
-        pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
-    ) -> Self {
-        self.pending_tee_bootstrap = pending_tee_bootstrap;
-        self
     }
 }
 
