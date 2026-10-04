@@ -205,13 +205,17 @@ where
                     let (tribute_offer_public, tribute_offer_group_public_key) =
                         crate::tee_bootstrap::run_tee_dkg_at_startup(
                             &mut enclave,
-                            dkg_clock,
-                            n,
-                            tee_policy.network_binding(),
-                            0,
-                            dkg_remote_peers,
-                            dkg_sender,
-                            dkg_receiver,
+                            crate::tee_bootstrap::TeeDkgStartup {
+                                participant_count: n,
+                                network_binding: tee_policy.network_binding(),
+                                tribute_offer_epoch: 0,
+                            },
+                            crate::tee_bootstrap::StartupGossipTransport {
+                                sender: dkg_sender,
+                                receiver: dkg_receiver,
+                                clock: dkg_clock,
+                                allowed_remote_peers: dkg_remote_peers,
+                            },
                         )
                         .await
                         .map_err(|e| eyre::eyre!("TEE DKG ceremony failed: {e}"))?;
@@ -222,10 +226,12 @@ where
                     let local_submission =
                         crate::tee_bootstrap::build_local_tee_bootstrap_submission_v2(
                             &mut enclave,
-                            production_manifest.as_ref(),
-                            node_id,
-                            &tee_policy,
-                            requested_valid_until,
+                            crate::tee_bootstrap::LocalRegistrationRequest {
+                                production_manifest: production_manifest.as_ref(),
+                                node_id,
+                                policy: &tee_policy,
+                                requested_valid_until,
+                            },
                             &evm_signer,
                             |hash| {
                                 use k256::ecdsa::signature::hazmat::PrehashSigner as _;
@@ -252,14 +258,18 @@ where
                         tribute_offer_group_public_key: Bytes::from(tribute_offer_group_public_key),
                     };
                     let payload = crate::tee_bootstrap::run_tee_bootstrap_v2_at_startup(
-                        local_submission,
-                        authority,
-                        committee,
-                        &evm_signer,
-                        tee_remote_peers,
-                        tee_sender,
-                        tee_receiver,
-                        bootstrap_clock,
+                        crate::tee_bootstrap::TeeBootstrapStartup {
+                            local_submission,
+                            authority,
+                            committee,
+                            evm_signer: &evm_signer,
+                        },
+                        crate::tee_bootstrap::StartupGossipTransport {
+                            sender: tee_sender,
+                            receiver: tee_receiver,
+                            clock: bootstrap_clock,
+                            allowed_remote_peers: tee_remote_peers,
+                        },
                     )
                     .await
                     .map_err(|e| eyre::eyre!("TEE bootstrap coordination failed: {e}"))?;

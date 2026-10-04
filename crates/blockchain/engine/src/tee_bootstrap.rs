@@ -62,9 +62,9 @@ mod message;
 mod submission;
 mod validation;
 
-pub use coordination::coordinate_tee_bootstrap_v2;
+pub use coordination::{coordinate_tee_bootstrap_v2, TeeBootstrapCoordination};
 use message::Ost3WireMessage;
-pub use submission::build_local_tee_bootstrap_submission_v2;
+pub use submission::{build_local_tee_bootstrap_submission_v2, LocalRegistrationRequest};
 use validation::{bootstrap_evidence_kind, validate_submission, BootstrapEvidenceKind};
 
 mod delivery;
@@ -75,9 +75,11 @@ mod startup;
 mod tests;
 
 use delivery::{ack_envelope, new_delivery_tracker, receive_delivery, DeliveryTracker};
-pub use gossip::{CommonwareBootstrapGossip, CommonwareDkgGossip};
+pub use gossip::{CommonwareBootstrapGossip, CommonwareDkgGossip, StartupGossipTransport};
+pub use identity::{CeremonyBinding, IdentityExchange, LocalIdentityAnnouncement};
 pub use startup::{
     query_enclave_offer_public, run_tee_bootstrap_v2_at_startup, run_tee_dkg_at_startup,
+    TeeBootstrapStartup, TeeDkgStartup,
 };
 
 /// Envelope tag for a ceremony DKG message on the TEE-DKG channel.

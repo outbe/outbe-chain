@@ -1,5 +1,14 @@
 use super::*;
 
+/// Owned Commonware channel, runtime clock and permitted remote delivery peers
+/// for one startup ceremony. The ceremony supplies its own delivery scope.
+pub struct StartupGossipTransport<S, R, C> {
+    pub sender: S,
+    pub receiver: R,
+    pub clock: C,
+    pub allowed_remote_peers: BTreeSet<bls12381::PublicKey>,
+}
+
 /// Adapts the consensus P2P channel (commonware `Sender`/`Receiver`) to the
 /// [`BootstrapGossip`] surface the coordination needs. Messages are opaque bytes.
 pub struct CommonwareBootstrapGossip<S, R, C> {
@@ -80,21 +89,15 @@ where
     R: P2pReceiver<PublicKey = bls12381::PublicKey>,
     C: Clock,
 {
-    pub fn new(
-        sender: S,
-        receiver: R,
-        clock: C,
-        scope: B256,
-        allowed_peers: BTreeSet<bls12381::PublicKey>,
-    ) -> Self {
+    pub fn new(transport: StartupGossipTransport<S, R, C>, scope: B256) -> Self {
         Self {
-            sender,
-            receiver,
-            clock,
+            sender: transport.sender,
+            receiver: transport.receiver,
+            clock: transport.clock,
             routing: BTreeMap::new(),
             buffered: VecDeque::new(),
             early_signed_identities: BTreeMap::new(),
-            delivery: new_delivery_tracker(scope, allowed_peers),
+            delivery: new_delivery_tracker(scope, transport.allowed_remote_peers),
         }
     }
 

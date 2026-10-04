@@ -5,26 +5,17 @@ use super::*;
 /// collateral acquisition is host-only startup work. The separate development
 /// mode signs an explicit GramineDirectDev intent and never creates a DCAP
 /// verdict or hardware-attestation claim.
-#[allow(clippy::too_many_arguments)]
 pub fn build_local_tee_bootstrap_submission_v2(
     client: &mut RuntimeEnclaveClient,
-    production_manifest: Option<&EnclaveInitializationManifestV1>,
-    node_id: NodeIdV1,
-    policy: &TeePolicyV1,
-    requested_valid_until: u64,
+    request: LocalRegistrationRequest<'_>,
     evm_signer: &OutbeEvmSigner,
     sign_node_hash: impl Fn(B256) -> Result<[u8; 65], String>,
 ) -> eyre::Result<TeeBootstrapParticipantSubmissionV2> {
+    let policy = request.policy;
     let policy_hash = policy
         .policy_hash()
         .map_err(|error| eyre::eyre!("invalid OST3 policy: {error}"))?;
 
-    let request = LocalRegistrationRequest {
-        production_manifest,
-        node_id,
-        policy,
-        requested_valid_until,
-    };
     let identity = request.resolve_identity(client)?;
     let (intent, node_id_hash) = request.into_intent(identity, policy_hash)?;
     let intent_hash = intent
@@ -51,11 +42,13 @@ pub fn build_local_tee_bootstrap_submission_v2(
     })
 }
 
-struct LocalRegistrationRequest<'a> {
-    production_manifest: Option<&'a EnclaveInitializationManifestV1>,
-    node_id: NodeIdV1,
-    policy: &'a TeePolicyV1,
-    requested_valid_until: u64,
+/// Identity and attestation policy for one local OST3 registration. The
+/// enclave session and signing capabilities are supplied separately.
+pub struct LocalRegistrationRequest<'a> {
+    pub production_manifest: Option<&'a EnclaveInitializationManifestV1>,
+    pub node_id: NodeIdV1,
+    pub policy: &'a TeePolicyV1,
+    pub requested_valid_until: u64,
 }
 
 struct LocalEnclaveIdentity {

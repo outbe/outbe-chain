@@ -1,19 +1,24 @@
 use super::*;
 
-struct LocalIdentityAnnouncement {
-    bls: Vec<u8>,
-    enc: [u8; 32],
-    signature: Vec<u8>,
+/// Enclave identity advertised during discovery or the signed exchange.
+pub struct LocalIdentityAnnouncement {
+    pub bls: Vec<u8>,
+    pub enc: [u8; 32],
+    pub signature: Vec<u8>,
 }
-struct CeremonyBinding {
-    ceremony_id: B256,
-    round: u64,
-    participant_set_hash: B256,
+/// Binding attached to the canonical participant announcements returned by
+/// an exchange. Preliminary discovery uses the existing zero binding.
+pub struct CeremonyBinding {
+    pub ceremony_id: B256,
+    pub round: u64,
+    pub participant_set_hash: B256,
 }
-struct IdentityExchange {
-    local: LocalIdentityAnnouncement,
-    binding: CeremonyBinding,
-    participant_count: usize,
+/// Local announcement, ceremony binding and expected participant count for
+/// one identity-exchange phase.
+pub struct IdentityExchange {
+    pub local: LocalIdentityAnnouncement,
+    pub binding: CeremonyBinding,
+    pub participant_count: usize,
 }
 type IdentitySet = BTreeMap<Vec<u8>, ([u8; 32], Vec<u8>)>;
 struct IdentityCollection {
@@ -54,31 +59,11 @@ where
     /// early and recording the `tee_bls -> consensus_pubkey` routing. Returns the
     /// identities sorted canonically by `tee_bls` (so every node derives the same
     /// ceremony id and participant order).
-    #[allow(clippy::too_many_arguments)]
     pub async fn exchange_identities(
         &mut self,
-        my_bls: Vec<u8>,
-        my_enc: [u8; 32],
-        my_sig: Vec<u8>,
-        ceremony_id: B256,
-        round: u64,
-        participant_set_hash: B256,
-        n: usize,
+        request: IdentityExchange,
     ) -> eyre::Result<Vec<outbe_tee::protocol::ParticipantAnnounce>> {
-        self.exchange_identity_request(IdentityExchange {
-            local: LocalIdentityAnnouncement {
-                bls: my_bls,
-                enc: my_enc,
-                signature: my_sig,
-            },
-            binding: CeremonyBinding {
-                ceremony_id,
-                round,
-                participant_set_hash,
-            },
-            participant_count: n,
-        })
-        .await
+        self.exchange_identity_request(request).await
     }
 
     fn begin_identity_exchange(
