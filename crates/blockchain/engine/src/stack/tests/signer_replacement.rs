@@ -195,11 +195,13 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
 
     let address = validate_validator_evm_signer(
         &args,
-        local_key,
-        &latest_after_unfinalized_removal,
-        &latest_after_unfinalized_removal,
-        Some((&participants, &boundary)),
-        false,
+        ValidatorEvmIdentity {
+            signing_key: local_key,
+            consensus_validator_set: &latest_after_unfinalized_removal,
+            reshare_target_validator_set: &latest_after_unfinalized_removal,
+            recovered_committee: Some((&participants, &boundary)),
+            shareless_verifier: false,
+        },
     )
     .unwrap();
     assert_eq!(address, Some(evm_signer.address()));
@@ -218,11 +220,13 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
     };
     let err = validate_validator_evm_signer(
         &wrong_args,
-        local_key,
-        &latest_after_unfinalized_removal,
-        &latest_after_unfinalized_removal,
-        Some((&participants, &boundary)),
-        false,
+        ValidatorEvmIdentity {
+            signing_key: local_key,
+            consensus_validator_set: &latest_after_unfinalized_removal,
+            reshare_target_validator_set: &latest_after_unfinalized_removal,
+            recovered_committee: Some((&participants, &boundary)),
+            shareless_verifier: false,
+        },
     )
     .unwrap_err()
     .to_string();
@@ -248,13 +252,17 @@ fn test_register_epoch_validation_providers_is_available_and_first_wins() {
     let committee_provider = CommitteeProvider::new();
 
     register_epoch_validation_providers(
-        epoch,
-        &participants,
-        &validator_set,
-        None,
-        &vrf_materials,
-        &scheme_provider,
-        &committee_provider,
+        EpochValidationCommittee {
+            epoch,
+            participants: &participants,
+            validator_set: &validator_set,
+            recovered_boundary: None,
+        },
+        EpochValidationProviders {
+            vrf_materials: &vrf_materials,
+            certificate_scheme: &scheme_provider,
+            committee: &committee_provider,
+        },
     )
     .unwrap();
 
@@ -277,13 +285,17 @@ fn test_register_epoch_validation_providers_is_available_and_first_wins() {
         p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; 3],
     };
     register_epoch_validation_providers(
-        epoch,
-        &participants,
-        &replacement_set,
-        None,
-        &vrf_materials,
-        &scheme_provider,
-        &committee_provider,
+        EpochValidationCommittee {
+            epoch,
+            participants: &participants,
+            validator_set: &replacement_set,
+            recovered_boundary: None,
+        },
+        EpochValidationProviders {
+            vrf_materials: &vrf_materials,
+            certificate_scheme: &scheme_provider,
+            committee: &committee_provider,
+        },
     )
     .unwrap();
 
@@ -298,10 +310,8 @@ fn test_register_epoch_validation_providers_is_available_and_first_wins() {
 
 #[test]
 fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
-    use crate::args::ConsensusArgs;
     use crate::validators::{ValidatorP2pAddress, ValidatorSet};
     use commonware_cryptography::Signer as _;
-    use std::net::SocketAddr;
 
     let temp = tempfile::tempdir().unwrap();
     let evm_key_path = temp.path().join("evm-key.hex");
@@ -326,45 +336,18 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         addresses: vec![evm_signer.address()],
         p2p_addresses: vec![ValidatorP2pAddress::Missing],
     };
-    let args = ConsensusArgs {
-        is_validator: true,
-        signing_key: Some(temp.path().join("signing-key.hex")),
-        validator_evm_key: Some(evm_key_path),
-        signing_share: None,
-        public_polynomial: None,
-        dkg_output: None,
-        listen_address: "127.0.0.1:30400".parse::<SocketAddr>().unwrap(),
-        storage_dir: None,
-        keys_dir: None,
-        trust_el_head: false,
-        testnet_unix_time_offset_secs: None,
-        consensus_peers: Vec::new(),
-        use_local_defaults: true,
-        payload_resolve_time_ms: 200,
-        payload_return_time_ms: 450,
-        worker_threads: 1,
-        bls_key_backend: "plaintext".to_string(),
-        bls_passphrase: None,
-        tee_enclave_socket: None,
-        tee_session_mode: crate::args::TeeSessionMode::PolicyDefault,
-        tee_bootstrap_timeout_secs: 60,
-        tee_canary_interval_secs: 30,
-        tee_canary_failure_threshold: 3,
-        txpool_pending_staleness_secs: 600,
-        radicle_control_socket: None,
-        radicle_status_address: None,
-        upstream: None,
-        upstream_nocertify: false,
-        projection_storage_config: Some("/tmp/offchain-storage.toml".into()),
-    };
+    let args =
+        super::harness::validator_signer_args(temp.path().join("signing-key.hex"), evm_key_path);
 
-    let address = super::validate_validator_evm_signer(
+    let address = validate_validator_evm_signer(
         &args,
-        &bls_key,
-        &consensus_set,
-        &active_set,
-        None,
-        false,
+        ValidatorEvmIdentity {
+            signing_key: &bls_key,
+            consensus_validator_set: &consensus_set,
+            reshare_target_validator_set: &active_set,
+            recovered_committee: None,
+            shareless_verifier: false,
+        },
     )
     .unwrap();
 
@@ -379,11 +362,31 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         p2p_addresses: Vec::new(),
     };
     assert!(
-        super::validate_validator_evm_signer(&args, &bls_key, &empty, &empty, None, false).is_err(),
+        validate_validator_evm_signer(
+            &args,
+            ValidatorEvmIdentity {
+                signing_key: &bls_key,
+                consensus_validator_set: &empty,
+                reshare_target_validator_set: &empty,
+                recovered_committee: None,
+                shareless_verifier: false
+            },
+        )
+        .is_err(),
         "non-member must bail when not verifier-join"
     );
     assert_eq!(
-        super::validate_validator_evm_signer(&args, &bls_key, &empty, &empty, None, true).unwrap(),
+        validate_validator_evm_signer(
+            &args,
+            ValidatorEvmIdentity {
+                signing_key: &bls_key,
+                consensus_validator_set: &empty,
+                reshare_target_validator_set: &empty,
+                recovered_committee: None,
+                shareless_verifier: true
+            },
+        )
+        .unwrap(),
         None,
         "non-member must run as verifier (None) when verifier-join"
     );
@@ -418,14 +421,8 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
     .unwrap();
 
     assert_eq!(
-        super::validate_validator_evm_signer(
-            &args,
-            &bls_key,
-            &boundary_set,
-            &active_set,
-            Some((&boundary_participants, &boundary)),
-            true,
-        )
+        validate_validator_evm_signer(&args,
+ValidatorEvmIdentity { signing_key: &bls_key, consensus_validator_set: &boundary_set, reshare_target_validator_set: &active_set, recovered_committee: Some((&boundary_participants, &boundary)), shareless_verifier: true },)
         .unwrap(),
         Some(evm_signer.address()),
         "a shareless validator in the canonical reshare target must retain its identity for post-DKG promotion"
@@ -436,13 +433,15 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         addresses: vec![evm_signer.address()],
         p2p_addresses: vec![ValidatorP2pAddress::Missing],
     };
-    let mismatch = super::validate_validator_evm_signer(
+    let mismatch = validate_validator_evm_signer(
         &args,
-        &bls_key,
-        &boundary_set,
-        &mismatched_target,
-        Some((&boundary_participants, &boundary)),
-        true,
+        ValidatorEvmIdentity {
+            signing_key: &bls_key,
+            consensus_validator_set: &boundary_set,
+            reshare_target_validator_set: &mismatched_target,
+            recovered_committee: Some((&boundary_participants, &boundary)),
+            shareless_verifier: true,
+        },
     )
     .unwrap_err()
     .to_string();
@@ -452,26 +451,30 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
     );
 
     assert_eq!(
-        super::validate_validator_evm_signer(
+        validate_validator_evm_signer(
             &args,
-            &bls_key,
-            &boundary_set,
-            &empty,
-            Some((&boundary_participants, &boundary)),
-            true,
+            ValidatorEvmIdentity {
+                signing_key: &bls_key,
+                consensus_validator_set: &boundary_set,
+                reshare_target_validator_set: &empty,
+                recovered_committee: Some((&boundary_participants, &boundary)),
+                shareless_verifier: true
+            },
         )
         .unwrap(),
         None,
         "an unregistered shareless verifier has no canonical proposer identity"
     );
     assert!(
-        super::validate_validator_evm_signer(
+        validate_validator_evm_signer(
             &args,
-            &bls_key,
-            &boundary_set,
-            &active_set,
-            Some((&boundary_participants, &boundary)),
-            false,
+            ValidatorEvmIdentity {
+                signing_key: &bls_key,
+                consensus_validator_set: &boundary_set,
+                reshare_target_validator_set: &active_set,
+                recovered_committee: Some((&boundary_participants, &boundary)),
+                shareless_verifier: false
+            },
         )
         .is_err(),
         "an excluded validator must fail closed outside shareless recovery mode"

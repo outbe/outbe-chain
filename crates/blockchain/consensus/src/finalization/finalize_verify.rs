@@ -140,11 +140,10 @@ impl FinalizeVerifyActor {
         // resolution instead of poisoning the aggregate.
         if let Some(hybrid_sig) = finalize.attestation.signature.get() {
             if let Ok(mut store) = self.late_sig_store.lock() {
-                store.record_individual_vote(
-                    finalize.proposal.round.epoch().get(),
-                    finalize.proposal.round.view().get(),
-                    finalize.proposal.parent.get(),
-                    finalize.proposal.payload.0,
+                store.record_bound_individual_vote(
+                    crate::finalization::late_sig_store::FinalizeVoteTarget::from_proposal(
+                        &finalize.proposal,
+                    ),
                     finalize.signer().get(),
                     &hybrid_sig.bls_individual_vote,
                 );

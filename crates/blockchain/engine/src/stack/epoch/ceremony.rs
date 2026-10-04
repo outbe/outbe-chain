@@ -83,14 +83,13 @@ where
                             &self.node.provider,
                             &self.dkg_manager,
                             DkgCeremonyReplaySpec {
+                                freeze_height: target.freeze_height,
                                 epoch: self.state.current_epoch,
                                 round,
                                 previous_output: prev_output.clone(),
                                 participants: target.participants.clone(),
                                 finalized_dealer_log_tx: Some(finalized_log_tx.clone()),
                             },
-                            target.freeze_height,
-                            current_height,
                             || {
                                 (*self.consensus_tip_rx.borrow()).expect(
                                                 "the height arm continues before DKG retry when no consensus tip is available",
@@ -233,23 +232,22 @@ where
                                         "failed to publish verifier-follower DKG admission",
                                     )?;
                                 restart_dkg_manager_from_finalized_history(
-                                            &self.node.provider,
-                                            &self.dkg_manager,
-                                            DkgCeremonyReplaySpec {
-                                                epoch: self.state.current_epoch,
-                                                round: self.state.dkg_cycle,
-                                                previous_output: self.state.last_dkg_output.clone(),
-                                                participants: new_participants.clone(),
-                                                finalized_dealer_log_tx: None,
-                                            },
-                                            freeze_height,
-                                            current_height,
-                                            || {
-                                                (*self.consensus_tip_rx.borrow()).expect(
-                                                    "the height arm continues before verifier-follower DKG recovery when no consensus tip is available",
-                                                )
-                                            },
+                                    &self.node.provider,
+                                    &self.dkg_manager,
+                                    DkgCeremonyReplaySpec {
+                                        freeze_height,
+                                        epoch: self.state.current_epoch,
+                                        round: self.state.dkg_cycle,
+                                        previous_output: self.state.last_dkg_output.clone(),
+                                        participants: new_participants.clone(),
+                                        finalized_dealer_log_tx: None,
+                                    },
+                                    || {
+                                        (*self.consensus_tip_rx.borrow()).expect(
+                                            "the height arm continues before verifier-follower DKG recovery when no consensus tip is available",
                                         )
+                                    },
+                                )
                                         .wrap_err(
                                             "failed to recover verifier-follower DKG reconstruction from finalized history",
                                         )?;
@@ -394,14 +392,13 @@ where
                         &self.node.provider,
                         &self.dkg_manager,
                         DkgCeremonyReplaySpec {
+                            freeze_height,
                             epoch: self.state.current_epoch,
                             round,
                             previous_output: prev_output.clone(),
                             participants: target_participants.clone(),
                             finalized_dealer_log_tx: Some(finalized_log_tx.clone()),
                         },
-                        freeze_height,
-                        current_height,
                         || {
                             (*self.consensus_tip_rx.borrow()).expect(
                                             "the height arm continues before live DKG recovery when no consensus tip is available",

@@ -1,5 +1,18 @@
 use super::super::*;
 
+pub(in crate::stack) struct EpochValidationCommittee<'a> {
+    pub(in crate::stack) epoch: Epoch,
+    pub(in crate::stack) participants: &'a commonware_utils::ordered::Set<bls12381::PublicKey>,
+    pub(in crate::stack) validator_set: &'a validators::ValidatorSet,
+    pub(in crate::stack) recovered_boundary: Option<&'a DkgBoundaryArtifact>,
+}
+
+pub(in crate::stack) struct EpochValidationProviders<'a> {
+    pub(in crate::stack) vrf_materials: &'a VrfMaterialProvider<MinSig>,
+    pub(in crate::stack) certificate_scheme: &'a HybridSchemeProvider<MinSig>,
+    pub(in crate::stack) committee: &'a CommitteeProvider,
+}
+
 pub(in crate::stack) fn radicle_signer_enabled(
     gate: RadicleVotingGate,
     has_share: bool,
@@ -36,12 +49,15 @@ pub(in crate::stack) async fn wait_for_radicle_role_change(
 }
 
 pub(in crate::stack) fn epoch_validation_inputs(
-    epoch: Epoch,
-    participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
-    validator_set: &validators::ValidatorSet,
-    recovered_boundary: Option<&DkgBoundaryArtifact>,
+    committee: EpochValidationCommittee<'_>,
     vrf_materials: &VrfMaterialProvider<MinSig>,
 ) -> Result<(HybridScheme<MinSig>, Vec<alloy_primitives::Address>)> {
+    let EpochValidationCommittee {
+        epoch,
+        participants,
+        validator_set,
+        recovered_boundary,
+    } = committee;
     let verifier_scheme = HybridScheme::<MinSig>::verifier_with_vrf_provider(
         &config::outbe_app_namespace(),
         participants.clone(),
@@ -63,36 +79,33 @@ pub(in crate::stack) fn epoch_validation_inputs(
 }
 
 pub(in crate::stack) fn register_epoch_validation_providers(
-    epoch: Epoch,
-    participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
-    validator_set: &validators::ValidatorSet,
-    recovered_boundary: Option<&DkgBoundaryArtifact>,
-    vrf_materials: &VrfMaterialProvider<MinSig>,
-    certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
-    committee_provider: &CommitteeProvider,
+    committee: EpochValidationCommittee<'_>,
+    providers: EpochValidationProviders<'_>,
 ) -> Result<()> {
-    let (verifier_scheme, ordered_addresses) = epoch_validation_inputs(
-        epoch,
-        participants,
-        validator_set,
-        recovered_boundary,
-        vrf_materials,
-    )?;
-    let _ = certificate_scheme_provider.register(epoch, verifier_scheme);
-    let _ = committee_provider.register(epoch, ordered_addresses);
+    let epoch = committee.epoch;
+    let (verifier_scheme, ordered_addresses) =
+        epoch_validation_inputs(committee, providers.vrf_materials)?;
+    let _ = providers
+        .certificate_scheme
+        .register(epoch, verifier_scheme);
+    let _ = providers.committee.register(epoch, ordered_addresses);
     Ok(())
+}
+
+pub(in crate::stack) struct ValidatorEvmIdentity<'a> {
+    pub(in crate::stack) signing_key: &'a bls12381::PrivateKey,
+    pub(in crate::stack) consensus_validator_set: &'a validators::ValidatorSet,
+    pub(in crate::stack) reshare_target_validator_set: &'a validators::ValidatorSet,
+    pub(in crate::stack) recovered_committee: Option<(
+        &'a commonware_utils::ordered::Set<bls12381::PublicKey>,
+        &'a DkgBoundaryArtifact,
+    )>,
+    pub(in crate::stack) shareless_verifier: bool,
 }
 
 pub(in crate::stack) fn validate_validator_evm_signer(
     args: &ConsensusArgs,
-    signing_key: &bls12381::PrivateKey,
-    consensus_validator_set: &validators::ValidatorSet,
-    reshare_target_validator_set: &validators::ValidatorSet,
-    recovered_committee: Option<(
-        &commonware_utils::ordered::Set<bls12381::PublicKey>,
-        &DkgBoundaryArtifact,
-    )>,
-    shareless_verifier: bool,
+    identity: ValidatorEvmIdentity<'_>,
 ) -> Result<Option<EthAddress>> {
     let Some(evm_key_path) = args.effective_validator_evm_key()? else {
         return Ok(None);
@@ -106,75 +119,98 @@ pub(in crate::stack) fn validate_validator_evm_signer(
         })?;
     let signer_address = signer.address();
 
-    if let Some((participants, boundary)) = recovered_committee {
-        let ordered_addresses =
-            ordered_addresses_from_recovered_boundary(participants, boundary)
-                .wrap_err("failed to validate recovered DKG boundary committee for EVM signer")?;
-        let local_public_key = signing_key.public_key();
-        let Some(participant_index) = participants.position(&local_public_key) else {
-            if shareless_verifier {
-                let Some(target_index) = reshare_target_validator_set
-                    .addresses
-                    .iter()
-                    .position(|address| *address == signer_address)
-                else {
-                    info!(
-                    target: "outbe_engine::stack",
-                                           %signer_address,
-                                           epoch = boundary.epoch,
-                                           "shareless verifier is not yet in the canonical reshare target; retaining no proposer identity"
-                                       );
-                    return Ok(None);
-                };
-                let target_public_key = reshare_target_validator_set
-                    .public_keys
-                    .get(target_index)
-                    .ok_or_else(|| {
-                        eyre::eyre!(
-                            "current reshare target is missing the BLS public key for EVM address {}",
-                            signer_address
-                        )
-                    })?;
-                ensure!(
-                    target_public_key == &local_public_key,
-                    "validator EVM key address {} belongs to a different BLS consensus key in the current reshare target",
-                    signer_address
-                );
-                info!(
-                    %signer_address,
-                    epoch = boundary.epoch,
-                    "shareless validator identity matches the canonical reshare target; \
-                     the node remains authority-free until DKG grants its threshold share"
-                );
-                return Ok(Some(signer_address));
-            }
-            eyre::bail!(
-                "local BLS key is not in recovered DKG boundary committee for epoch {}; \
-                 refusing latest-state EVM signer authorization",
-                boundary.epoch
-            );
-        };
-        let expected_address = ordered_addresses.get(participant_index).ok_or_else(|| {
-            eyre::eyre!(
-                "recovered DKG boundary address mapping missing participant index {}",
-                participant_index
-            )
-        })?;
-        ensure!(
-            *expected_address == signer_address,
-            "validator EVM key address {} does not match recovered DKG boundary address {} \
-             for local BLS consensus key",
-            signer_address,
-            expected_address
-        );
-        info!(
-            address = %signer_address,
-            epoch = boundary.epoch,
-            "validated validator EVM signer against recovered DKG boundary"
-        );
-        return Ok(Some(signer_address));
+    match identity.recovered_committee {
+        Some((participants, boundary)) => {
+            authorize_recovered_signer(signer_address, &identity, participants, boundary)
+        }
+        None => authorize_current_signer(signer_address, &identity),
     }
+}
 
+fn authorize_recovered_signer(
+    signer_address: EthAddress,
+    identity: &ValidatorEvmIdentity<'_>,
+    participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
+    boundary: &DkgBoundaryArtifact,
+) -> Result<Option<EthAddress>> {
+    let signing_key = identity.signing_key;
+    let reshare_target_validator_set = identity.reshare_target_validator_set;
+    let shareless_verifier = identity.shareless_verifier;
+    let ordered_addresses = ordered_addresses_from_recovered_boundary(participants, boundary)
+        .wrap_err("failed to validate recovered DKG boundary committee for EVM signer")?;
+    let local_public_key = signing_key.public_key();
+    let Some(participant_index) = participants.position(&local_public_key) else {
+        if shareless_verifier {
+            let Some(target_index) = reshare_target_validator_set
+                .addresses
+                .iter()
+                .position(|address| *address == signer_address)
+            else {
+                info!(
+                target: "outbe_engine::stack",
+                                       %signer_address,
+                                       epoch = boundary.epoch,
+                                       "shareless verifier is not yet in the canonical reshare target; retaining no proposer identity"
+                                   );
+                return Ok(None);
+            };
+            let target_public_key = reshare_target_validator_set
+                .public_keys
+                .get(target_index)
+                .ok_or_else(|| {
+                    eyre::eyre!(
+                        "current reshare target is missing the BLS public key for EVM address {}",
+                        signer_address
+                    )
+                })?;
+            ensure!(
+                target_public_key == &local_public_key,
+                "validator EVM key address {} belongs to a different BLS consensus key in the current reshare target",
+                signer_address
+            );
+            info!(
+                %signer_address,
+                epoch = boundary.epoch,
+                "shareless validator identity matches the canonical reshare target; \
+                 the node remains authority-free until DKG grants its threshold share"
+            );
+            return Ok(Some(signer_address));
+        }
+        eyre::bail!(
+            "local BLS key is not in recovered DKG boundary committee for epoch {}; \
+             refusing latest-state EVM signer authorization",
+            boundary.epoch
+        );
+    };
+    let expected_address = ordered_addresses.get(participant_index).ok_or_else(|| {
+        eyre::eyre!(
+            "recovered DKG boundary address mapping missing participant index {}",
+            participant_index
+        )
+    })?;
+    ensure!(
+        *expected_address == signer_address,
+        "validator EVM key address {} does not match recovered DKG boundary address {} \
+         for local BLS consensus key",
+        signer_address,
+        expected_address
+    );
+    info!(
+        address = %signer_address,
+        epoch = boundary.epoch,
+        "validated validator EVM signer against recovered DKG boundary"
+    );
+    Ok(Some(signer_address))
+}
+
+fn authorize_current_signer(
+    signer_address: EthAddress,
+    identity: &ValidatorEvmIdentity<'_>,
+) -> Result<Option<EthAddress>> {
+    let signing_key = identity.signing_key;
+    let consensus_validator_set = identity.consensus_validator_set;
+    let reshare_target_validator_set = identity.reshare_target_validator_set;
+    let shareless_verifier = identity.shareless_verifier;
     let authorized = consensus_validator_set
         .addresses
         .iter()

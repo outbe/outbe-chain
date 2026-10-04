@@ -172,13 +172,17 @@ where
                                                );
                     publish_randomness_status(&self.bridge, &self.vrf_safety);
                     register_epoch_validation_providers(
-                        next_epoch,
-                        &activated_participants,
-                        &activated_validator_set,
-                        None,
-                        &self.vrf_materials,
-                        &self.certificate_scheme_provider,
-                        &self.committee_provider,
+                        EpochValidationCommittee {
+                            epoch: next_epoch,
+                            participants: &activated_participants,
+                            validator_set: &activated_validator_set,
+                            recovered_boundary: None,
+                        },
+                        EpochValidationProviders {
+                            vrf_materials: &self.vrf_materials,
+                            certificate_scheme: &self.certificate_scheme_provider,
+                            committee: &self.committee_provider,
+                        },
                     )?;
                     self.state.validator_set = activated_validator_set;
                     self.rotation.frozen_dkg_target = None;
@@ -245,19 +249,23 @@ where
                 let boundary_artifact = if let Some(ref keys_dir) = self.args.keys_dir {
                     persist_observed_dkg_boundary_before_activation(
                         keys_dir,
-                        self.state.current_epoch,
-                        self.state.vrf_material_version,
-                        &self.state.participants,
-                        &target,
+                        DkgBoundaryContext {
+                            current_epoch: self.state.current_epoch,
+                            vrf_material_version: self.state.vrf_material_version,
+                            current_participants: &self.state.participants,
+                            target: &target,
+                        },
                         &canonical_output,
                         current_height,
                     )?
                 } else {
                     build_completed_dkg_boundary(
-                        self.state.current_epoch,
-                        self.state.vrf_material_version,
-                        &self.state.participants,
-                        &target,
+                        DkgBoundaryContext {
+                            current_epoch: self.state.current_epoch,
+                            vrf_material_version: self.state.vrf_material_version,
+                            current_participants: &self.state.participants,
+                            target: &target,
+                        },
                         &canonical_output,
                         &target.participants,
                     )?
@@ -428,13 +436,17 @@ where
                         None,
                     );
                     register_epoch_validation_providers(
-                        next_epoch,
-                        &self.state.participants,
-                        &self.state.validator_set,
-                        None,
-                        &self.vrf_materials,
-                        &self.certificate_scheme_provider,
-                        &self.committee_provider,
+                        EpochValidationCommittee {
+                            epoch: next_epoch,
+                            participants: &self.state.participants,
+                            validator_set: &self.state.validator_set,
+                            recovered_boundary: None,
+                        },
+                        EpochValidationProviders {
+                            vrf_materials: &self.vrf_materials,
+                            certificate_scheme: &self.certificate_scheme_provider,
+                            committee: &self.committee_provider,
+                        },
                     )?;
                     let anchored_height = activation_height;
                     self.state.last_dkg_activation_height = activation_height;

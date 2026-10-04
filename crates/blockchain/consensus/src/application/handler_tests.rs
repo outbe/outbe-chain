@@ -1,44 +1,43 @@
-use crate::test_fixtures::marshal::{MarshalArchiveFixture, MarshalArchiveKind};
-use alloy_primitives::{Address, B256, Bytes};
+use crate::test_fixtures::marshal::MarshalArchiveFixture;
+use alloy_primitives::{Address, Bytes, B256};
 use alloy_rpc_types_engine::{PayloadStatus, PayloadStatusEnum};
 use commonware_actor::Feedback;
 use commonware_codec::Encode as _;
 use commonware_consensus::{
-    Reporter,
-    marshal::{self, Start, Update, core::Buffer, resolver::handler},
+    marshal::{self, core::Buffer, resolver::handler, Start, Update},
     simplex::types::{Activity, Finalization, Finalize, Proposal},
     types::{Epoch, FixedEpocher, Round, View, ViewDelta},
+    Reporter,
 };
 use commonware_cryptography::{
-    Signer as _,
     bls12381::{self, primitives::variant::MinSig},
-    certificate::{Scheme as _, Verifier as _},
+    certificate::Scheme as _,
+    Signer as _,
 };
 use commonware_p2p::Recipients;
 use commonware_parallel::Sequential;
 use commonware_resolver::Resolver;
 use commonware_resolver::TargetedResolver;
-use commonware_runtime::{Clock as _, Runner as _, Supervisor as _, buffer::paged::CacheRef};
-use commonware_storage::archive::immutable;
+use commonware_runtime::{buffer::paged::CacheRef, Clock as _, Runner as _, Supervisor as _};
 use commonware_utils::{
-    TryCollect as _,
     acknowledgement::Acknowledgement,
     channel::oneshot,
     ordered::{Quorum, Set},
     vec::NonEmptyVec,
+    TryCollect as _,
 };
 use outbe_primitives::projection::{
-    ProjectionCheckpoint, ProjectionFailure, ProjectionFailureClass, ProjectionReadinessPublisher,
-    ProjectionStatus, projection_readiness,
+    projection_readiness, ProjectionCheckpoint, ProjectionFailure, ProjectionFailureClass,
+    ProjectionReadinessPublisher, ProjectionStatus,
 };
-use outbe_primitives::{OutbeHeader, consensus_metadata::CertifiedParentAccountingMetadata};
-use reth_ethereum::{Block, primitives::SealedBlock};
+use outbe_primitives::{consensus_metadata::CertifiedParentAccountingMetadata, OutbeHeader};
+use reth_ethereum::{primitives::SealedBlock, Block};
 use std::{
     io,
     num::{NonZeroU16, NonZeroU64, NonZeroUsize},
     sync::{
-        Arc, Mutex as StdMutex,
         atomic::{AtomicU64, Ordering},
+        Arc, Mutex as StdMutex,
     },
     time::Duration,
 };
@@ -46,7 +45,7 @@ use std::{
 use crate::ancestry_readiness::AncestryReadiness;
 use crate::dkg_manager::Mailbox as DkgManagerMailbox;
 use crate::finalization::attestation::{
-    AttestationValidationContext, AttestationVerdict, validate_consensus_metadata_for_verify,
+    validate_consensus_metadata_for_verify, AttestationValidationContext, AttestationVerdict,
 };
 use crate::finalization::state::FinalizationViewAccess;
 use crate::finalization::util::build_signer_bitmap;
@@ -57,11 +56,20 @@ use crate::vrf_safety::VrfSafetyGate;
 
 use super::{ApplicationShared, CommitteeProvider, ConsensusBlock, Digest};
 use crate::application::epoch_boundary::{
-    ApplicationEpochFence, EpochBoundaryParentError, resolve_epoch_boundary_parent,
+    resolve_epoch_boundary_parent, ApplicationEpochFence, EpochBoundaryParentError,
 };
 
 #[path = "handler/tests/verify_stages.rs"]
 mod verify_stages;
+
+#[path = "handler/tests/certification.rs"]
+mod certification;
+
+#[path = "handler/tests/publication.rs"]
+mod publication;
+
+#[path = "handler/tests/missed_proposers.rs"]
+mod missed_proposers;
 
 struct TestApplicationShared {
     shared: ApplicationShared,
@@ -207,33 +215,50 @@ impl Buffer<crate::marshal_types::Variant> for EmptyMarshalBuffer {
 struct RecordingMarshalBuffer {
     /// (round, block commitment, was Recipients::All) for each `send`.
     sends: Arc<StdMutex<Vec<(Round, Digest, bool)>>>,
+    /// Optional received candidate that exists only in the network buffer.
+    available: Option<Arc<ConsensusBlock>>,
+}
+
+impl RecordingMarshalBuffer {
+    fn lookup(&self, digest: Digest) -> Option<Arc<ConsensusBlock>> {
+        self.available
+            .as_ref()
+            .filter(|block| block.digest() == digest)
+            .cloned()
+    }
+
+    fn subscription(&self, digest: Digest) -> oneshot::Receiver<Arc<ConsensusBlock>> {
+        let (tx, rx) = oneshot::channel();
+        if let Some(block) = self.lookup(digest) {
+            let _ = tx.send(block);
+        }
+        rx
+    }
 }
 
 impl Buffer<crate::marshal_types::Variant> for RecordingMarshalBuffer {
     type PublicKey = bls12381::PublicKey;
 
-    async fn find_by_digest(&self, _digest: Digest) -> Option<Arc<ConsensusBlock>> {
-        None
+    async fn find_by_digest(&self, digest: Digest) -> Option<Arc<ConsensusBlock>> {
+        self.lookup(digest)
     }
 
-    async fn find_by_commitment(&self, _commitment: Digest) -> Option<Arc<ConsensusBlock>> {
-        None
+    async fn find_by_commitment(&self, commitment: Digest) -> Option<Arc<ConsensusBlock>> {
+        self.lookup(commitment)
     }
 
     fn subscribe_by_digest(
         &self,
-        _digest: Digest,
+        digest: Digest,
     ) -> Option<oneshot::Receiver<Arc<ConsensusBlock>>> {
-        let (_tx, rx) = oneshot::channel();
-        Some(rx)
+        Some(self.subscription(digest))
     }
 
     fn subscribe_by_commitment(
         &self,
-        _commitment: Digest,
+        commitment: Digest,
     ) -> Option<oneshot::Receiver<Arc<ConsensusBlock>>> {
-        let (_tx, rx) = oneshot::channel();
-        Some(rx)
+        Some(self.subscription(commitment))
     }
 
     fn retire(&self, _update: commonware_consensus::marshal::core::Retirement<Digest>) {}
@@ -349,13 +374,34 @@ async fn start_marshal_with_resolver<B>(
 where
     B: Buffer<crate::marshal_types::Variant, PublicKey = bls12381::PublicKey>,
 {
+    let test_id = MARSHAL_TEST_ID.fetch_add(1, Ordering::SeqCst);
+    start_marshal_in_partition(
+        context,
+        provider,
+        buffer,
+        format!("handler-finalized-regression-{test_id}"),
+    )
+    .await
+}
+
+async fn start_marshal_in_partition<B>(
+    context: commonware_runtime::deterministic::Context,
+    provider: HybridSchemeProvider<MinSig>,
+    buffer: B,
+    partition_prefix: String,
+) -> (
+    crate::marshal_types::MarshalMailbox,
+    handler::Handler<Digest>,
+    commonware_runtime::Handle<()>,
+)
+where
+    B: Buffer<crate::marshal_types::Variant, PublicKey = bls12381::PublicKey>,
+{
     let page_cache = CacheRef::from_pooler(
         &context,
         NonZeroU16::new(1024).expect("non-zero page size"),
         NonZeroUsize::new(10).expect("non-zero cache size"),
     );
-    let test_id = MARSHAL_TEST_ID.fetch_add(1, Ordering::SeqCst);
-    let partition_prefix = format!("handler-finalized-regression-{test_id}");
     let items_per_section = NonZeroU64::new(10).expect("non-zero items per section");
     let replay_buffer = NonZeroUsize::new(1024).expect("non-zero replay buffer");
     let write_buffer = NonZeroUsize::new(1024).expect("non-zero write buffer");
@@ -368,22 +414,10 @@ where
         write_buffer,
     };
 
-    let finalizations_archive = immutable::Archive::init(
-        context.child("marshal_finalizations"),
-        archive_fixture.config(
-            MarshalArchiveKind::Finalizations,
-            HybridScheme::<MinSig>::certificate_codec_config_unbounded(),
-        ),
-    )
-    .await
-    .expect("finalizations archive should initialize");
-
-    let blocks_archive = immutable::Archive::init(
-        context.child("marshal_blocks"),
-        archive_fixture.config(MarshalArchiveKind::Blocks, ()),
-    )
-    .await
-    .expect("blocks archive should initialize");
+    let (finalizations_archive, blocks_archive) = archive_fixture
+        .open(&context)
+        .await
+        .expect("marshal archives should initialize");
 
     let (actor, mailbox, _) = marshal::core::Actor::init(
         context.child("marshal"),
@@ -449,6 +483,7 @@ async fn start_marshal_without_available_block(
 /// `crate::finalization::actor` (shared `FinalizationView` + actor
 /// handle_finalized).
 fn finalizer_test_shared(
+    context: &commonware_runtime::deterministic::Context,
     marshal_mailbox: crate::marshal_types::MarshalMailbox,
     provider: HybridSchemeProvider<MinSig>,
 ) -> TestApplicationShared {
@@ -495,6 +530,9 @@ fn finalizer_test_shared(
         chain_id: outbe_primitives::chain::CHAIN_ID,
         ocomp_lifecycle_activation: outbe_primitives::system_tx::OcompLifecycleActivation::Disabled,
         marshal_mailbox,
+        publication: crate::application::publication::ProposalPublication::new(
+            context.child("publication"),
+        ),
         certificate_scheme_provider: provider,
         elector_config_provider,
         committee_provider,
@@ -703,8 +741,11 @@ fn relay_broadcast_forwards_proposed_block_directly_to_all_peers() {
             let _durable = marshal_mailbox.verified(round, block).await;
 
             // Relay::broadcast must forward DIRECTLY to marshal (no app-mailbox hop).
-            let (mut app, _app_rx) =
-                crate::application::actor::OutbeApplication::new(16, marshal_mailbox.clone());
+            let (mut app, _app_rx) = crate::application::actor::OutbeApplication::new(
+                context.child("application"),
+                16,
+                marshal_mailbox.clone(),
+            );
             use commonware_consensus::Relay as _;
             let _feedback = app.broadcast(
                 digest,
@@ -752,8 +793,11 @@ fn forward_without_prior_proposed_is_safe_noop() {
             let sends = recorder.sends.clone();
             let (marshal_mailbox, _keepalive, _actor) =
                 start_marshal_with_resolver(context.child("marshal"), provider, recorder).await;
-            let (mut app, _app_rx) =
-                crate::application::actor::OutbeApplication::new(16, marshal_mailbox.clone());
+            let (mut app, _app_rx) = crate::application::actor::OutbeApplication::new(
+                context.child("application"),
+                16,
+                marshal_mailbox.clone(),
+            );
 
             let round = Round::new(Epoch::new(0), View::new(1));
             let block = consensus_block_with_number(0xCD, 9);
@@ -864,6 +908,7 @@ fn epoch_boundary_parent_uses_finalized_round_for_exact_proof_key() {
             let (marshal_mailbox, resolver_keepalive, actor_handle) =
                 start_marshal_without_available_block(context).await;
             let shared = finalizer_test_shared(
+                &clock,
                 marshal_mailbox.clone(),
                 HybridSchemeProvider::<MinSig>::new(),
             );
@@ -936,6 +981,7 @@ fn epoch_boundary_anchor_wait_miss_forfeits_slot_not_stall() {
             let (marshal_mailbox, resolver_keepalive, actor_handle) =
                 start_marshal_without_available_block(context).await;
             let shared = finalizer_test_shared(
+                &clock,
                 marshal_mailbox.clone(),
                 HybridSchemeProvider::<MinSig>::new(),
             );
@@ -1012,8 +1058,11 @@ fn forfeited_build_does_not_advance_retry_timestamp_source() {
             let clock = context.child("timestamp_retry");
             let (marshal_mailbox, resolver_keepalive, actor_handle) =
                 start_marshal_without_available_block(context).await;
-            let mut shared =
-                finalizer_test_shared(marshal_mailbox, HybridSchemeProvider::<MinSig>::new());
+            let mut shared = finalizer_test_shared(
+                &clock,
+                marshal_mailbox,
+                HybridSchemeProvider::<MinSig>::new(),
+            );
             shared.shared.unix_time_source = Arc::new(FixedUnixTimeSource(
                 parent_timestamp.saturating_add(10 * BAND),
             ));
@@ -1355,7 +1404,7 @@ fn parent_proof_recovered_from_marshal_archive_on_selection_miss() {
                 "marshal must hold the seeded parent finalization before recovery"
             );
 
-            let shared = finalizer_test_shared(marshal_mailbox.clone(), scheme_provider);
+            let shared = finalizer_test_shared(&clock, marshal_mailbox.clone(), scheme_provider);
             // Recovery resolves the committee for the finalization's epoch.
             let _ = shared.committee_provider.register(epoch, committee);
 
@@ -1447,7 +1496,7 @@ fn parent_proof_selector_recovers_from_marshal_after_empty_store_restart() {
                 "marshal must retain the finalized parent archive entry"
             );
 
-            let shared = finalizer_test_shared(marshal_mailbox.clone(), scheme_provider);
+            let shared = finalizer_test_shared(&clock, marshal_mailbox.clone(), scheme_provider);
             let _ = shared.committee_provider.register(epoch, committee);
             let key = CertifiedParentProofKey::new(
                 epoch.get(),
@@ -1491,38 +1540,7 @@ fn consensus_metadata_verify_accepts_canonical_missed_proposers() {
     // Deterministic runtime (TC-6): avoids marshal teardown leaky false-positives.
     let accepted = commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
         |context| async move {
-            use commonware_runtime::Supervisor as _;
-            let epoch = Epoch::new(0);
-            let FinalizationMetadataContext {
-                scheme_provider: provider,
-                committee_provider,
-                signers,
-                verifier,
-                committee,
-            } = finalization_metadata_context(epoch);
-            let elector_provider = HybridElectorConfigProvider::<MinSig>::new();
-            let _ = elector_provider.register(epoch, HybridRandom::default());
-            let clock = context.child("verify");
-
-            let previous_round = Round::new(epoch, View::new(5));
-            let previous_block = consensus_block_with_number(0x61, 4);
-            let (_, previous_finalization) = finalization_metadata_from_context(
-                &previous_block,
-                previous_round,
-                View::new(4),
-                FinalizationSigningContext::new(&signers, &verifier, committee.clone()),
-            );
-
-            let current_round = Round::new(epoch, View::new(8));
-            let current_block = consensus_block_with_number(0x62, 5);
-            let current_digest = current_block.digest();
-            let (mut metadata, current_finalization) = finalization_metadata_from_context(
-                &current_block,
-                current_round,
-                View::new(5),
-                FinalizationSigningContext::new(&signers, &verifier, committee),
-            );
-            metadata.missed_proposers = vec![
+            let missed_proposers = vec![
                 outbe_primitives::consensus_metadata::MissedProposerEvent {
                     view: 1,
                     validator: Address::with_last_byte(1),
@@ -1532,51 +1550,11 @@ fn consensus_metadata_verify_accepts_canonical_missed_proposers() {
                     validator: Address::with_last_byte(2),
                 },
             ];
-
-            let (marshal_mailbox, resolver_keepalive, actor_handle) = start_marshal_with_resolver(
-                context,
-                provider.clone(),
-                EmptyMarshalBuffer::default(),
-            )
-            .await;
-
-            let _ = marshal_mailbox
-                .verified(previous_round, previous_block.clone())
-                .await;
-            let mut reporter = marshal_mailbox.clone();
-            // 2026.5.0: `Reporter::report` is SYNC and returns `Feedback`.
-            let _ = reporter.report(Activity::Finalization(previous_finalization));
-            let _ = marshal_mailbox.verified(current_round, current_block).await;
-            // 2026.5.0: `Reporter::report` is SYNC and returns `Feedback`.
-            let _ = reporter.report(Activity::Finalization(current_finalization));
-
-            let current_info =
-                wait_for_marshal_info(&clock, &marshal_mailbox, current_digest).await;
-            let previous_info =
-                wait_for_marshal_info(&clock, &marshal_mailbox, previous_block.digest()).await;
-            let accepted = current_info.is_some()
-                && previous_info.is_some()
-                && metadata_verify_verdict(
-                    &clock,
-                    &metadata,
-                    &AttestationValidationContext {
-                        certificate_scheme_provider: &provider,
-                        elector_config_provider: &elector_provider,
-                        committee_provider: &committee_provider,
-                        marshal_mailbox: &marshal_mailbox,
-                        proposed_block_number: 6,
-                    },
-                )
+            missed_proposers::verify(context, (0x61, 0x62), missed_proposers)
                 .await
-                    == AttestationVerdict::AcceptValid;
-
-            drop(resolver_keepalive);
-            actor_handle.abort();
-            let _ = actor_handle.await;
-            accepted
+                .is_some_and(|verdict| verdict == AttestationVerdict::AcceptValid)
         },
     );
-
     assert!(
         accepted,
         "canonical missed proposer list must pass verify-time metadata validation"
@@ -1588,38 +1566,7 @@ fn consensus_metadata_verify_rejects_forged_missed_proposers() {
     // Deterministic runtime (TC-6): avoids marshal teardown leaky false-positives.
     let rejected = commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
         |context| async move {
-            use commonware_runtime::Supervisor as _;
-            let epoch = Epoch::new(0);
-            let FinalizationMetadataContext {
-                scheme_provider: provider,
-                committee_provider,
-                signers,
-                verifier,
-                committee,
-            } = finalization_metadata_context(epoch);
-            let elector_provider = HybridElectorConfigProvider::<MinSig>::new();
-            let _ = elector_provider.register(epoch, HybridRandom::default());
-            let clock = context.child("verify");
-
-            let previous_round = Round::new(epoch, View::new(5));
-            let previous_block = consensus_block_with_number(0x63, 4);
-            let (_, previous_finalization) = finalization_metadata_from_context(
-                &previous_block,
-                previous_round,
-                View::new(4),
-                FinalizationSigningContext::new(&signers, &verifier, committee.clone()),
-            );
-
-            let current_round = Round::new(epoch, View::new(8));
-            let current_block = consensus_block_with_number(0x64, 5);
-            let current_digest = current_block.digest();
-            let (mut metadata, current_finalization) = finalization_metadata_from_context(
-                &current_block,
-                current_round,
-                View::new(5),
-                FinalizationSigningContext::new(&signers, &verifier, committee),
-            );
-            metadata.missed_proposers = vec![
+            let missed_proposers = vec![
                 outbe_primitives::consensus_metadata::MissedProposerEvent {
                     view: 1,
                     validator: Address::with_last_byte(2),
@@ -1629,51 +1576,11 @@ fn consensus_metadata_verify_rejects_forged_missed_proposers() {
                     validator: Address::with_last_byte(1),
                 },
             ];
-
-            let (marshal_mailbox, resolver_keepalive, actor_handle) = start_marshal_with_resolver(
-                context,
-                provider.clone(),
-                EmptyMarshalBuffer::default(),
-            )
-            .await;
-
-            let _ = marshal_mailbox
-                .verified(previous_round, previous_block.clone())
-                .await;
-            let mut reporter = marshal_mailbox.clone();
-            // 2026.5.0: `Reporter::report` is SYNC and returns `Feedback`.
-            let _ = reporter.report(Activity::Finalization(previous_finalization));
-            let _ = marshal_mailbox.verified(current_round, current_block).await;
-            // 2026.5.0: `Reporter::report` is SYNC and returns `Feedback`.
-            let _ = reporter.report(Activity::Finalization(current_finalization));
-
-            let current_info =
-                wait_for_marshal_info(&clock, &marshal_mailbox, current_digest).await;
-            let previous_info =
-                wait_for_marshal_info(&clock, &marshal_mailbox, previous_block.digest()).await;
-            let rejected = current_info.is_some()
-                && previous_info.is_some()
-                && metadata_verify_verdict(
-                    &clock,
-                    &metadata,
-                    &AttestationValidationContext {
-                        certificate_scheme_provider: &provider,
-                        elector_config_provider: &elector_provider,
-                        committee_provider: &committee_provider,
-                        marshal_mailbox: &marshal_mailbox,
-                        proposed_block_number: 6,
-                    },
-                )
+            missed_proposers::verify(context, (0x63, 0x64), missed_proposers)
                 .await
-                    != AttestationVerdict::AcceptValid;
-
-            drop(resolver_keepalive);
-            actor_handle.abort();
-            let _ = actor_handle.await;
-            rejected
+                .is_some_and(|verdict| verdict != AttestationVerdict::AcceptValid)
         },
     );
-
     assert!(
         rejected,
         "non-canonical missed proposer order/content must be rejected"
@@ -1806,8 +1713,11 @@ fn resolve_for_verify_timeout_logs_full_context() {
             let clock = context.child("verify");
             let (marshal_mailbox, resolver_keepalive, actor_handle) =
                 start_marshal_without_available_block(context).await;
-            let shared =
-                finalizer_test_shared(marshal_mailbox, HybridSchemeProvider::<MinSig>::new());
+            let shared = finalizer_test_shared(
+                &clock,
+                marshal_mailbox,
+                HybridSchemeProvider::<MinSig>::new(),
+            );
 
             let round = Round::new(Epoch::new(0), View::new(1201));
             let digest = Digest(B256::repeat_byte(0xA7));

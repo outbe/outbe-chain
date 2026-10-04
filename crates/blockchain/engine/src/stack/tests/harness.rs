@@ -284,3 +284,41 @@ where
     );
     (mailbox, resolver_handler, handle)
 }
+
+/// Independent unbound-validator configuration for signer and restart scenarios.
+pub(super) fn validator_signer_args(
+    signing_key: std::path::PathBuf,
+    evm_key: std::path::PathBuf,
+) -> crate::args::ConsensusArgs {
+    crate::args::ConsensusArgs {
+        is_validator: true,
+        signing_key: Some(signing_key),
+        validator_evm_key: Some(evm_key),
+        signing_share: None,
+        public_polynomial: None,
+        dkg_output: None,
+        listen_address: std::net::SocketAddr::from(([127, 0, 0, 1], 30400)),
+        storage_dir: None,
+        keys_dir: None,
+        trust_el_head: false,
+        testnet_unix_time_offset_secs: None,
+        consensus_peers: Vec::new(),
+        use_local_defaults: true,
+        payload_resolve_time_ms: 200,
+        payload_return_time_ms: 450,
+        worker_threads: 1,
+        bls_key_backend: "plaintext".to_string(),
+        bls_passphrase: None,
+        tee_enclave_socket: None,
+        tee_session_mode: crate::args::TeeSessionMode::PolicyDefault,
+        tee_bootstrap_timeout_secs: 60,
+        tee_canary_interval_secs: 30,
+        tee_canary_failure_threshold: 3,
+        txpool_pending_staleness_secs: 600,
+        radicle_control_socket: None,
+        radicle_status_address: None,
+        upstream: None,
+        upstream_nocertify: false,
+        projection_storage_config: Some("/tmp/offchain-storage.toml".into()),
+    }
+}

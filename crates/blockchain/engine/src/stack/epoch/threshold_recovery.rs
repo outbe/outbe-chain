@@ -233,11 +233,13 @@ where
         .map(|(_, boundary)| (&participants, boundary));
     let proposer_evm_address = validate_validator_evm_signer(
         args,
-        signing_key,
-        validator_set,
-        &reshare_target_validator_set,
-        recovered_committee_for_signer,
-        shareless_verifier,
+        ValidatorEvmIdentity {
+            signing_key,
+            consensus_validator_set: validator_set,
+            reshare_target_validator_set: &reshare_target_validator_set,
+            recovered_committee: recovered_committee_for_signer,
+            shareless_verifier,
+        },
     )?;
 
     Ok(RecoveredThreshold {

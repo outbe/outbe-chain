@@ -253,12 +253,13 @@ fn test_completed_dkg_is_durable_before_activation_boundary() {
     let backend = bls::KeyBackend::Plaintext;
 
     let completed_boundary = persist_completed_dkg_before_activation(
-        dir.path(),
-        &backend,
-        Epoch::new(3),
-        3,
-        &participants,
-        &target,
+        DkgStateStore::new(dir.path(), &backend),
+        DkgBoundaryContext {
+            current_epoch: Epoch::new(3),
+            vrf_material_version: 3,
+            current_participants: &participants,
+            target: &target,
+        },
         &complete,
         104,
     )
@@ -324,7 +325,15 @@ fn test_pending_dkg_material_alone_does_not_restore_boundary() {
     // snapshot did not. Restart must not infer/activate a boundary from material
     // alone; the pending-boundary file remains absent and DkgManager has no
     // pending artifact to verify/drain.
-    save_pending_dkg_state(dir.path(), &share, &polynomial, &output, &backend).unwrap();
+    save_pending_dkg_state(
+        DkgStateStore::new(dir.path(), &backend),
+        DkgStateMaterial {
+            share: &share,
+            polynomial: &polynomial,
+            output: &output,
+        },
+    )
+    .unwrap();
     assert!(load_pending_dkg_state(dir.path(), &backend)
         .unwrap()
         .is_some());
@@ -372,7 +381,15 @@ fn test_pending_boundary_snapshot_restores_manager_before_commit() {
     // process memory was lost before/around note_ceremony_completed. Restart can
     // load both durable pieces and restore the boundary into DkgManager without
     // creating a committed marker.
-    save_pending_dkg_state(dir.path(), &share, &polynomial, &output, &backend).unwrap();
+    save_pending_dkg_state(
+        DkgStateStore::new(dir.path(), &backend),
+        DkgStateMaterial {
+            share: &share,
+            polynomial: &polynomial,
+            output: &output,
+        },
+    )
+    .unwrap();
     save_pending_dkg_boundary(dir.path(), &snapshot).unwrap();
     let loaded_state = load_pending_dkg_state(dir.path(), &backend)
         .unwrap()
@@ -506,7 +523,15 @@ fn test_save_and_load_dkg_state_preserves_output() {
     let dir = tempfile::tempdir().unwrap();
     let backend = bls::KeyBackend::Plaintext;
 
-    save_dkg_state(dir.path(), &share, &polynomial, &output, &backend).unwrap();
+    save_dkg_state(
+        DkgStateStore::new(dir.path(), &backend),
+        DkgStateMaterial {
+            share: &share,
+            polynomial: &polynomial,
+            output: &output,
+        },
+    )
+    .unwrap();
 
     let (loaded_share, loaded_polynomial, loaded_output) =
         load_saved_dkg_state(dir.path(), &backend).unwrap().unwrap();

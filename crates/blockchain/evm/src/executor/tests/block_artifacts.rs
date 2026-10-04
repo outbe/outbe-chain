@@ -89,111 +89,31 @@ fn pending_rpc_context_opens_ce_scope_but_skips_consensus_hooks() {
 
 #[test]
 fn outbe_post_execution_preserves_behavior_for_absent_or_empty_withdrawals() {
-    use alloy_eips::eip6110::{DEPOSIT_REQUEST_TYPE, MAINNET_DEPOSIT_CONTRACT_ADDRESS};
-    use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
+    use alloy_eips::eip6110::DEPOSIT_REQUEST_TYPE;
 
     const DAO_BALANCE: u128 = 37;
     const CUMULATIVE_TX_GAS: u64 = 11;
-    const REGULAR_GAS: u64 = 17;
     const STATE_GAS: u64 = 23;
 
-    struct Case {
-        name: &'static str,
-        chain_spec: Arc<ChainSpec<OutbeHeader>>,
-        spec_id: SpecId,
-        include_deposit: bool,
-        expected_gas_used: u64,
-    }
-
-    fn fixture_receipt(include_deposit: bool) -> Receipt {
-        let logs = if include_deposit {
-            let event = DepositEvent {
-                pubkey: Bytes::from(vec![0x11; 48]),
-                withdrawal_credentials: Bytes::from(vec![0x22; 32]),
-                amount: Bytes::from(vec![0x33; 8]),
-                signature: Bytes::from(vec![0x44; 96]),
-                index: Bytes::from(vec![0x55; 8]),
-            };
-            vec![Log {
-                address: MAINNET_DEPOSIT_CONTRACT_ADDRESS,
-                data: event.encode_log_data(),
-            }]
-        } else {
-            Vec::new()
-        };
-        Receipt {
-            tx_type: reth_ethereum::TxType::Legacy,
-            success: true,
-            cumulative_gas_used: CUMULATIVE_TX_GAS,
-            logs,
-        }
-    }
-
-    fn fixture_state() -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
-        let mut database = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-        database.insert_account_info(
-            alloy_evm::eth::dao_fork::DAO_HARDFORK_ACCOUNTS[0],
-            AccountInfo {
-                balance: U256::from(DAO_BALANCE),
-                ..Default::default()
-            },
-        );
-        State::builder()
-            .with_database(database)
-            .with_bundle_update()
-            .build()
-    }
-
-    fn post_state_root(state: &revm::database::BundleState) -> B256 {
-        let sorted =
-            HashedPostState::from_bundle_state::<KeccakKeyHasher>(state.state()).into_sorted();
-        let storages = sorted.storages;
-        let accounts = sorted
-            .accounts
-            .into_iter()
-            .filter_map(|(address, account)| {
-                account.map(|account| {
-                    let storage = storages
-                        .get(&address)
-                        .map(|storage| storage.storage_slots.clone())
-                        .unwrap_or_default();
-                    (address, (account, storage))
-                })
-            });
-        state_root_prehashed(accounts)
-    }
-
-    fn balance(state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>, address: Address) -> U256 {
-        state
-            .basic(address)
-            .expect("post-execution balance is readable")
-            .map_or(U256::ZERO, |account| account.balance)
-    }
-
-    let chain_spec = |activate: fn(ChainSpecBuilder) -> ChainSpecBuilder| {
-        let mut spec = activate(ChainSpecBuilder::from(&*MAINNET)).build();
-        spec.chain = CHAIN_ID.into();
-        spec.genesis.config.chain_id = CHAIN_ID;
-        Arc::new(spec.map_header(OutbeHeader::new))
-    };
+    use withdrawal_compatibility::{run, Case};
     let cases = [
         Case {
             name: "shanghai-withdrawals-and-dao",
-            chain_spec: chain_spec(ChainSpecBuilder::shanghai_activated),
+            chain_spec: withdrawal_chain_spec(ChainSpecBuilder::shanghai_activated),
             spec_id: SpecId::SHANGHAI,
             include_deposit: false,
             expected_gas_used: CUMULATIVE_TX_GAS,
         },
         Case {
             name: "prague-deposit-and-system-requests",
-            chain_spec: chain_spec(ChainSpecBuilder::prague_activated),
+            chain_spec: withdrawal_chain_spec(ChainSpecBuilder::prague_activated),
             spec_id: SpecId::PRAGUE,
             include_deposit: true,
             expected_gas_used: CUMULATIVE_TX_GAS,
         },
         Case {
             name: "amsterdam-state-gas",
-            chain_spec: chain_spec(ChainSpecBuilder::amsterdam_activated),
+            chain_spec: withdrawal_chain_spec(ChainSpecBuilder::amsterdam_activated),
             spec_id: SpecId::AMSTERDAM,
             include_deposit: false,
             expected_gas_used: STATE_GAS,
@@ -204,72 +124,10 @@ fn outbe_post_execution_preserves_behavior_for_absent_or_empty_withdrawals() {
 
     for case in cases {
         for (withdrawal_name, withdrawals) in withdrawal_cases.clone() {
-            let run = |ocomp: bool| {
-                let mut state = fixture_state();
-                let config = if ocomp {
-                    OutbeEvmConfig::new(case.chain_spec.clone())
-                        .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(0))
-                } else {
-                    OutbeEvmConfig::new(case.chain_spec.clone())
-                };
-                let evm_env = EvmEnv {
-                    cfg_env: CfgEnv::new()
-                        .with_chain_id(case.chain_spec.chain().id())
-                        .with_spec_and_mainnet_gas_params(case.spec_id),
-                    block_env: BlockEnv {
-                        number: U256::ZERO,
-                        gas_limit: 30_000_000,
-                        beneficiary: REWARDS_ADDRESS,
-                        timestamp: U256::ZERO,
-                        ..Default::default()
-                    },
-                };
-                let evm = config.evm_with_env(&mut state, evm_env);
-                let mut ctx = execution_ctx(Some(1), Bytes::new());
-                ctx.execute_outbe_block_hooks = false;
-                ctx.inner.withdrawals = withdrawals.clone().map(std::borrow::Cow::Owned);
-
-                let mut executor = config.create_executor(evm, ctx);
-                executor.inner.receipts = vec![fixture_receipt(case.include_deposit)];
-                executor.inner.cumulative_tx_gas_used = CUMULATIVE_TX_GAS;
-                executor.inner.block_regular_gas_used = REGULAR_GAS;
-                executor.inner.block_state_gas_used = STATE_GAS;
-                executor.inner.blob_gas_used = 5;
-                executor.validate_execution_summary = false;
-                if ocomp {
-                    executor.ocomp_lifecycle_active = true;
-                    executor.ocomp_terminal_request_consumed = true;
-                    executor
-                        .apply_outbe_ethereum_post_execution()
-                        .expect("OCOMP post-execution phase succeeds");
-                }
-                let (evm, result) = executor.finish().expect("Outbe result assembly succeeds");
-                drop(evm);
-
-                let root = post_state_root(&state.bundle_state);
-                let dao_source_balance = balance(
-                    &mut state,
-                    alloy_evm::eth::dao_fork::DAO_HARDFORK_ACCOUNTS[0],
-                );
-                let dao_beneficiary_balance = balance(
-                    &mut state,
-                    alloy_evm::eth::dao_fork::DAO_HARDFORK_BENEFICIARY,
-                );
-                let withdrawal_balance = balance(
-                    &mut state,
-                    address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
-                );
-                (
-                    result,
-                    root,
-                    dao_source_balance,
-                    dao_beneficiary_balance,
-                    withdrawal_balance,
-                )
-            };
-
-            let ocomp = run(true);
-            let normal = run(false);
+            let ocomp =
+                run(&case, withdrawals.clone(), true).expect("OCOMP withdrawal compatibility");
+            let normal =
+                run(&case, withdrawals.clone(), false).expect("normal withdrawal compatibility");
             assert_eq!(
                 ocomp, normal,
                 "{} / {withdrawal_name}: proposer, validator and OCOMP execution must agree",
@@ -321,24 +179,7 @@ fn non_empty_withdrawal_rejects_before_any_state_write() {
     }
 
     for ocomp in [false, true] {
-        let mut spec = ChainSpecBuilder::from(&*MAINNET)
-            .shanghai_activated()
-            .build();
-        spec.chain = CHAIN_ID.into();
-        spec.genesis.config.chain_id = CHAIN_ID;
-        let chain_spec = Arc::new(spec.map_header(OutbeHeader::new));
-        let mut database = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-        database.insert_account_info(
-            alloy_evm::eth::dao_fork::DAO_HARDFORK_ACCOUNTS[0],
-            AccountInfo {
-                balance: U256::from(DAO_BALANCE),
-                ..Default::default()
-            },
-        );
-        let mut state = State::builder()
-            .with_database(database)
-            .with_bundle_update()
-            .build();
+        let (chain_spec, mut state) = unsupported_withdrawal_state();
         let config = if ocomp {
             OutbeEvmConfig::new(chain_spec.clone())
                 .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(0))
@@ -406,27 +247,6 @@ fn non_empty_withdrawal_rejects_before_any_state_write() {
 
 #[test]
 fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifacts() {
-    use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
-
-    fn post_state_root(state: &revm::database::BundleState) -> B256 {
-        let sorted =
-            HashedPostState::from_bundle_state::<KeccakKeyHasher>(state.state()).into_sorted();
-        let storages = sorted.storages;
-        let accounts = sorted
-            .accounts
-            .into_iter()
-            .filter_map(|(address, account)| {
-                account.map(|account| {
-                    let storage = storages
-                        .get(&address)
-                        .map(|storage| storage.storage_slots.clone())
-                        .unwrap_or_default();
-                    (address, (account, storage))
-                })
-            });
-        state_root_prehashed(accounts)
-    }
-
     let run = |replay: bool| {
         let signer = test_evm_signer();
         let proposer = signer.address();
@@ -486,18 +306,8 @@ fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifact
         let (evm, result) = executor.finish().expect("active block finishes");
         drop(evm);
         let state_root = post_state_root(&state.bundle_state);
-        {
-            let mut provider = super::DirectStorageProvider::new(
-                &mut state,
-                BlockContext::empty_for_tests(1, 1, chain_spec.chain().id()),
-            );
-            let storage = StorageHandle::new(&mut provider);
-            assert!(
-                outbe_metadosis::api::is_active_ocomp_fork_install(storage, &install)
-                    .expect("read persisted block-1 fork installation"),
-                "block-1 lifecycle must persist the exact fork installation"
-            );
-        }
+        assert_persisted_fork_install(&mut state, chain_spec.chain().id(), &install)
+            .expect("assert persisted fork install fixture succeeds");
 
         (
             result.receipts,
@@ -530,22 +340,7 @@ fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifact
 /// where a zero `validator_fee_sum` made settlement prove nothing.
 #[test]
 fn proposer_validator_same_state_root() {
-    use commonware_codec::Encode as _;
-    use commonware_consensus::simplex::types::Proposal;
-    use commonware_consensus::types::{Epoch, Round, View};
-    use commonware_cryptography::bls12381::{
-        self,
-        primitives::{ops::aggregate, variant::MinPk},
-    };
-    use commonware_cryptography::Signer as _;
-    use commonware_math::algebra::Random as _;
-    use outbe_consensus::digest::Digest as OutbeDigest;
-    use outbe_consensus::proof::{
-        committee_set_hash_v2, finalize_namespace, CommitteeEntry, CommitteeSnapshot,
-    };
-    use outbe_primitives::reshare_artifact::{
-        decode_outbe_block_artifacts, LateFinalizeCreditsArtifact, PerBlockCredit,
-    };
+    use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
 
     // Mirror production startup: the consensus chain id is installed into the
     // namespace source of truth BEFORE anything signs or verifies. The
@@ -560,32 +355,7 @@ fn proposer_validator_same_state_root() {
 
     let epoch = 0u64;
     // Real BLS committee of 4 (committee addresses are the late-credit voters).
-    let keys: Vec<bls12381::PrivateKey> = (0..4)
-        .map(|_| {
-            bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
-                rand_commonware::rngs::SysRng,
-            ))
-        })
-        .collect();
-    let addrs: Vec<Address> = (0..4).map(|i| Address::with_last_byte(i + 0x40)).collect();
-    let snapshot = CommitteeSnapshot {
-        committee: keys
-            .iter()
-            .zip(&addrs)
-            .map(|(k, a)| {
-                let mut pk = [0u8; 48];
-                pk.copy_from_slice(&k.public_key().encode());
-                CommitteeEntry {
-                    address: *a,
-                    consensus_pubkey: pk,
-                }
-            })
-            .collect(),
-        vrf_material_version: 1,
-        vrf_group_public_key_bytes: vec![0x11; 96],
-        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
-    };
-    let csh = committee_set_hash_v2(epoch, &snapshot);
+    let (keys, addrs, snapshot, csh) = late_credit_committee(epoch);
 
     // Execute at block N+K so the begin-zone `settle_matured` is not a no-op.
     let window_k = outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K;
@@ -617,47 +387,18 @@ fn proposer_validator_same_state_root() {
     // payout_i = fee * w(1) / (committee * w_max) = 4000e12 * 100 / 400 = 1000e12.
     let expected_payout = settle_fee * outbe_rewards::constants::decay_weight(1)
         / outbe_rewards::constants::fixed_denominator(settle_committee);
-    let proposal = Proposal::new(
-        Round::new(Epoch::new(epoch), View::new(view)),
-        View::new(parent_view),
-        OutbeDigest(fb_hash),
-    );
-    let msg = proposal.encode().to_vec();
-    // finalize votes bind the ordered committee; build the canonical
-    // `Set` from the same committee the snapshot/verifier uses.
-    let committee_set: commonware_utils::ordered::Set<bls12381::PublicKey> =
-        commonware_utils::ordered::Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
-    let sigs: Vec<bls12381::Signature> = [0usize, 1, 2]
-        .iter()
-        .map(|&i| keys[i].sign(&finalize_namespace(&committee_set), &msg))
-        .collect();
-    let agg = aggregate::combine_signatures::<MinPk, _>(
-        commonware_utils::iter::NonEmpty::try_new(sigs.iter().map(|s| s.as_ref())).unwrap(),
-    );
-    let mut aggregate_signature = [0u8; 96];
-    aggregate_signature.copy_from_slice(&agg.encode());
-    let mut signer_bitmap = vec![0u8; 4usize.div_ceil(8)];
-    for i in [0usize, 1, 2] {
-        signer_bitmap[i / 8] |= 1u8 << (i % 8);
-    }
-    let artifact = OutbeBlockArtifacts {
-        execution_summary: None,
-        consensus_header_artifact: None,
-        timestamp_millis_part: 0,
-        late_finalize_credits: Some(LateFinalizeCreditsArtifact {
-            batches: vec![PerBlockCredit {
-                fb_number,
-                fb_hash,
-                epoch,
-                view,
-                parent_view,
-                committee_set_hash: csh,
-                signer_bitmap,
-                aggregate_signature,
-            }],
-        }),
-        compressed_entities_root: None,
-    };
+    let artifact = signed_late_credit_artifact(
+        &keys,
+        &LateCreditBinding {
+            fb_number,
+            fb_hash,
+            epoch,
+            view,
+            parent_view,
+            csh,
+        },
+    )
+    .expect("sign independent late credit fixture");
 
     // Proposer encodes; validator decodes the same bytes and re-encodes.
     let extra_proposer = encode_outbe_block_artifacts(&artifact).unwrap();
@@ -687,48 +428,21 @@ fn proposer_validator_same_state_root() {
             // The live credit's escrow binding is written by the N+K CPA
             // (on_finalized_metadata); the committee snapshot is pre-seeded
             // for the credit's BLS verify.
-            outbe_validatorset::write_committee_snapshot(storage.clone(), epoch, &snapshot)
-                .expect("seed committee snapshot");
-
-            // Pre-seed the matured escrow (block N), its k=1 voter, fund
-            // REWARDS to back the payout + residue burn, and advance the
-            // accounting marker so the N+K CPA progress gate passes.
-            let seed_ctx = BlockRuntimeContext::new(
-                BlockContext::new(settle_target, 1, CHAIN_ID, Address::ZERO, vec![]),
+            seed_late_credit_escrow(
                 storage,
-            );
-            outbe_rewards::late_settlement::escrow_block_fee(
-                &seed_ctx,
-                settle_target,
-                settle_fb_hash,
-                settle_fee,
-                settle_committee as u32,
-                epoch,
-                0, // canonical_view (block N is pre-seeded + settled, not live-credited)
-                0, // canonical_parent_view
-                csh,
-                &[],
+                &LateCreditEscrow {
+                    snapshot: &snapshot,
+                    epoch,
+                    settle_target,
+                    settle_fb_hash,
+                    settle_fee,
+                    settle_committee,
+                    settle_voter,
+                    progress_marker,
+                    csh,
+                },
             )
-            .expect("seed matured escrow");
-            seed_ctx
-                .storage
-                .contract::<outbe_rewards::schema::Rewards>()
-                .pending_reward_day
-                .write(&settle_fb_hash, 19700101)
-                .expect("seed canonical reward day");
-            outbe_rewards::late_settlement::record_late_credit(
-                &seed_ctx,
-                settle_fb_hash,
-                settle_voter,
-                1,
-            )
-            .expect("seed k=1 voter");
-            seed_ctx
-                .storage
-                .increase_balance(REWARDS_ADDRESS, settle_fee)
-                .expect("fund REWARDS for settle");
-            outbe_accounting::record_phase1_progress(&seed_ctx, progress_marker)
-                .expect("seed accounting progress");
+            .expect("seed late credit escrow fixture succeeds");
         });
         let bridge = ConsensusExecutionBridge::new();
         bridge.record_execution_summary_with_state_root(
@@ -791,37 +505,14 @@ fn proposer_validator_same_state_root() {
             outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
         let (count, voters, voter_balance, rewards_balance, absentee_miss) =
             StorageHandle::enter(&mut provider, |storage| {
-                let r = outbe_rewards::contract::Rewards::new(storage.clone());
-                let count = r.late_voter_count.read(&fb_hash)?;
-                let at = r.late_voter_at.get_nested(&fb_hash);
-                let mut voters = Vec::new();
-                for i in 0..count {
-                    voters.push(at.read(&i)?);
-                }
-                // The real BLS late-credit phase also contributes to GEM,
-                // attributed to the authenticated parent's timestamp (1).
-                let reward_day = r.pending_reward_day.read(&fb_hash)?;
-                assert_eq!(reward_day, 19700101);
-                let participation = r.daily_participation.get_nested(&reward_day);
-                for voter in &addrs[..3] {
-                    assert_eq!(participation.read(voter)?, 1);
-                }
-                assert_eq!(participation.read(&addrs[3])?, 0);
-                assert_eq!(r.daily_total_participation.read(&reward_day)?, 4);
-                let voter_balance = storage.balance(settle_voter)?;
-                let rewards_balance = storage.balance(REWARDS_ADDRESS)?;
-                // `addrs[3]` is a committee member absent for the settled block
-                // and not in the live in-window credit -> a pure window-close
-                // absentee. Its miss count must match on both paths.
-                let si = outbe_slashindicator::contract::SlashIndicator::new(storage.clone());
-                let absentee_miss = si.get_voter_miss_count(addrs[3])?;
-                Ok::<_, outbe_primitives::error::PrecompileError>((
-                    count,
-                    voters,
-                    voter_balance,
-                    rewards_balance,
-                    absentee_miss,
-                ))
+                read_late_credit_settlement(
+                    storage,
+                    &LateCreditRead {
+                        fb_hash,
+                        addrs: &addrs,
+                        settle_voter,
+                    },
+                )
             })
             .expect("read recorded late-credit + settlement state");
         (
@@ -874,354 +565,11 @@ fn proposer_validator_same_state_root() {
 
 #[test]
 fn factory_boundaries_are_byte_equal_across_proposer_and_validator_execution() {
-    use std::collections::BTreeMap;
-
-    use reth_primitives_traits::Account as TrieAccount;
-    use reth_trie::test_utils::state_root;
-
-    #[derive(Clone, Copy, Debug)]
-    enum Boundary {
-        Approved,
-        Expired,
-        Error,
-    }
-
-    #[derive(Debug, PartialEq, Eq)]
-    struct Output {
-        state_root: B256,
-        receipts_root: B256,
-        logs_bloom: alloy_primitives::Bloom,
-        receipt_bytes: Vec<Vec<u8>>,
-        receipt_success: Vec<bool>,
-        cumulative_gas: Vec<u64>,
-        created_logs: usize,
-        refunded_logs: usize,
-        burned_logs: usize,
-        status: ProposalStatus,
-        settlement: BondSettlement,
-        factory_count: U256,
-        registered_token_id: Option<B256>,
-        token_by_id: Address,
-        token_by_ticker: Address,
-        token_code_hash: Option<B256>,
-        token_total_supply: U256,
-        issuer_token_balance: U256,
-        issuer_balance: U256,
-        vote_balance: U256,
-        liabilities: U256,
-        reservation_exists: bool,
-    }
-
-    fn full_state_root(state: &State<CacheDB<EmptyDBTyped<ProviderError>>>) -> B256 {
-        let mut accounts: BTreeMap<Address, (AccountInfo, BTreeMap<U256, U256>)> = state
-            .database
-            .cache
-            .accounts
-            .iter()
-            .filter_map(|(address, account)| {
-                account.info().map(|info| {
-                    (
-                        *address,
-                        (
-                            info,
-                            account.storage.iter().map(|(k, v)| (*k, *v)).collect(),
-                        ),
-                    )
-                })
-            })
-            .collect();
-        for (address, cached) in &state.cache.accounts {
-            match &cached.account {
-                Some(current) => {
-                    let entry = accounts
-                        .entry(*address)
-                        .or_insert_with(|| (current.info.clone(), BTreeMap::new()));
-                    entry.0 = current.info.clone();
-                    entry
-                        .1
-                        .extend(current.storage.iter().map(|(k, v)| (*k, *v)));
-                }
-                None => {
-                    accounts.remove(address);
-                }
-            }
-        }
-        state_root(accounts.into_iter().map(|(address, (info, storage))| {
-            let bytecode_hash = (!info.code_hash.is_zero() && info.code_hash != keccak256([]))
-                .then_some(info.code_hash);
-            let account = TrieAccount {
-                nonce: info.nonce,
-                balance: info.balance,
-                bytecode_hash,
-            };
-            let storage = storage
-                .into_iter()
-                .filter(|(_, value)| !value.is_zero())
-                .map(|(slot, value)| (B256::from(slot.to_be_bytes::<32>()), value));
-            (address, (account, storage))
-        }))
-    }
-
-    fn run(boundary: Boundary, validator_execution: bool) -> Output {
-        const CREATION_BLOCK: u64 = 7;
-        let finalization_block = CREATION_BLOCK + VOTING_WINDOW_BLOCKS + 1;
-        let signer = test_evm_signer();
-        let proposer = signer.address();
-        let issuer = Address::repeat_byte(0x31);
-        let validators = [
-            (proposer, dummy_pubkey(0xc1)),
-            (Address::repeat_byte(0xc2), dummy_pubkey(0xc2)),
-            (Address::repeat_byte(0xc3), dummy_pubkey(0xc3)),
-        ];
-        let payload = encode_canonical_stablecoin_create(&StablecoinCreatePayload {
-            issuer,
-            name: "Parity Dollar".into(),
-            ticker: "PARUSD".into(),
-            iso4217: 840,
-            decimals: 6,
-            supply_cap: U256::from(1_000_000u64),
-            policy_id: U256::from(1u64),
-        })
-        .expect("canonical Factory payload");
-        let payload = core::str::from_utf8(&payload).expect("canonical payload is UTF-8");
-
-        let mut state =
-            state_with_active_validators_seeded_at_block(&validators, CREATION_BLOCK, |_| {});
-        let seed_context = BlockContext::new(
-            CREATION_BLOCK,
-            1_700_000_000,
-            CHAIN_ID,
-            proposer,
-            validators.iter().map(|(address, _)| *address).collect(),
-        );
-        let (expected_token_id, expected_token) = {
-            let mut provider = super::DirectStorageProvider::new(&mut state, seed_context.clone());
-            let storage = StorageHandle::new(&mut provider);
-            storage
-                .set_balance(VOTE_ADDRESS, STABLECOIN_CREATE_BOND)
-                .unwrap();
-            let predicted = StablecoinFactoryContract::new(storage.clone())
-                .predict_token_address(issuer, "PARUSD")
-                .unwrap();
-            let mut vote = Vote::new(storage.clone());
-            let proposal_id = vote
-                .create_proposal_with_value(
-                    issuer,
-                    STABLECOIN_FACTORY_ADDRESS,
-                    payload,
-                    CREATION_BLOCK,
-                    STABLECOIN_CREATE_BOND,
-                    crate::handlers::vote::registry(),
-                )
-                .unwrap();
-            match boundary {
-                Boundary::Approved | Boundary::Error => {
-                    vote.cast_vote_approve(proposal_id, validators[0].0, true, CREATION_BLOCK + 1)
-                        .unwrap();
-                    vote.cast_vote_approve(proposal_id, validators[1].0, true, CREATION_BLOCK + 1)
-                        .unwrap();
-                }
-                Boundary::Expired => {}
-            }
-            if matches!(boundary, Boundary::Error) {
-                let mut corrupted = vote.proposals.get(proposal_id).unwrap().unwrap();
-                corrupted.payload = "{".into();
-                vote.proposals.update(&corrupted).unwrap();
-            }
-            let progress_context = BlockRuntimeContext::new(seed_context, storage.clone());
-            outbe_accounting::record_phase1_progress(&progress_context, finalization_block - 2)
-                .unwrap();
-            provider.flush().expect("seed direct storage");
-            predicted
-        };
-
-        let parent_hash = B256::repeat_byte(0x71);
-        let mut metadata = test_metadata();
-        metadata.finalized_block_number = finalization_block - 1;
-        metadata.finalized_block_hash = parent_hash;
-        metadata.ordered_committee = validators.iter().map(|(address, _)| *address).collect();
-        metadata.signer_bitmap = vec![1; validators.len()];
-
-        let bridge = ConsensusExecutionBridge::new();
-        bridge.record_execution_summary_with_state_root(
-            metadata.finalized_block_number,
-            parent_hash,
-            ExecutionSummaryArtifact {
-                validator_fee_sum: U256::ZERO,
-            },
-            1_700_000_000,
-            B256::repeat_byte(0x91),
-        );
-        let config =
-            OutbeEvmConfig::new_with_bridge(test_chain_spec(), bridge).with_evm_signer(signer);
-        let system_txs = begin_system_txs_for_test(
-            &config,
-            finalization_block,
-            parent_hash,
-            &Bytes::new(),
-            Some(metadata.clone()),
-            proposer,
-        );
-        let evm = config.evm_with_env(
-            &mut state,
-            test_evm_env(finalization_block, REWARDS_ADDRESS),
-        );
-        let mut execution = execution_ctx(Some(0), Bytes::new());
-        execution.inner.parent_hash = parent_hash;
-        execution.parent_consensus_metadata = Some(metadata);
-        execution.proposer_evm_address = Some(proposer);
-        if validator_execution {
-            execution.expected_begin_system_txs = system_txs.clone();
-        }
-        let mut executor = config.create_executor(evm, execution);
-        super::with_phase1_verify_disabled(|| {
-            executor
-                .apply_pre_execution_changes()
-                .expect("stablecoin boundary pre-execution");
-        });
-        for transaction in system_txs {
-            executor
-                .execute_transaction(transaction)
-                .expect("mandatory begin-zone transaction");
-        }
-
-        let receipts = executor.receipts().to_vec();
-        let receipt_bytes = receipts
-            .iter()
-            .map(|receipt| receipt.with_bloom_ref().encoded_2718())
-            .collect();
-        let receipt_blooms: Vec<_> = receipts
-            .iter()
-            .map(|receipt| receipt.with_bloom_ref())
-            .collect();
-        let receipts_root = alloy_consensus::proofs::calculate_receipt_root(&receipt_blooms);
-        let block_bloom = logs_bloom(receipts.iter().flat_map(|receipt| receipt.logs.iter()));
-        let receipt_success = receipts.iter().map(|receipt| receipt.success).collect();
-        let cumulative_gas = receipts
-            .iter()
-            .map(|receipt| receipt.cumulative_gas_used)
-            .collect();
-        let created_logs = receipts
-            .iter()
-            .flat_map(|receipt| &receipt.logs)
-            .filter(|log| {
-                log.address == STABLECOIN_FACTORY_ADDRESS
-                    && log.data.topics().first()
-                        == Some(&IStablecoinFactory::StablecoinCreated::SIGNATURE_HASH)
-            })
-            .count();
-        let refunded_logs = receipts
-            .iter()
-            .flat_map(|receipt| &receipt.logs)
-            .filter(|log| {
-                log.address == VOTE_ADDRESS
-                    && log.data.topics().first()
-                        == Some(&IVote::ProposalBondRefunded::SIGNATURE_HASH)
-            })
-            .count();
-        let burned_logs = receipts
-            .iter()
-            .flat_map(|receipt| &receipt.logs)
-            .filter(|log| {
-                log.address == VOTE_ADDRESS
-                    && log.data.topics().first() == Some(&IVote::ProposalBondBurned::SIGNATURE_HASH)
-            })
-            .count();
-        drop(executor);
-
-        let read_context = BlockContext::new(
-            finalization_block,
-            1_700_000_000,
-            CHAIN_ID,
-            proposer,
-            validators.iter().map(|(address, _)| *address).collect(),
-        );
-        let (
-            status,
-            settlement,
-            factory_count,
-            registered_token_id,
-            token_by_id,
-            token_by_ticker,
-            token_total_supply,
-            issuer_token_balance,
-            issuer_balance,
-            vote_balance,
-            liabilities,
-            reservation_exists,
-        ) = {
-            let mut provider = super::DirectStorageProvider::new(&mut state, read_context);
-            let storage = StorageHandle::new(&mut provider);
-            let vote = Vote::new(storage.clone());
-            let factory = StablecoinFactoryContract::new(storage.clone());
-            let factory_count = factory.token_count().unwrap();
-            let (token_total_supply, issuer_token_balance) = if factory_count == U256::ONE {
-                let token = StablecoinContract::new(storage.clone(), expected_token);
-                (
-                    token.total_supply().unwrap(),
-                    token.balance_of(issuer).unwrap(),
-                )
-            } else {
-                (U256::ZERO, U256::ZERO)
-            };
-            (
-                vote.proposals
-                    .get(U256::from(1u64))
-                    .unwrap()
-                    .unwrap()
-                    .proposal_status()
-                    .unwrap(),
-                vote.proposal_bond(U256::from(1u64)).unwrap().settlement,
-                factory_count,
-                factory.registered_token_id(expected_token).unwrap(),
-                factory.token_by_id(expected_token_id).unwrap(),
-                factory.token_by_ticker("PARUSD").unwrap(),
-                token_total_supply,
-                issuer_token_balance,
-                storage.balance(issuer).unwrap(),
-                storage.balance(VOTE_ADDRESS).unwrap(),
-                vote.bond_liabilities().unwrap(),
-                factory.reservations.exists(U256::from(1u64)).unwrap(),
-            )
-        };
-        let token_code_hash = state
-            .basic(expected_token)
-            .expect("token account read")
-            .map(|account| account.code_hash);
-        let state_root = full_state_root(&state);
-
-        if matches!(boundary, Boundary::Approved) {
-            assert_eq!(registered_token_id, Some(expected_token_id));
-        }
-        Output {
-            state_root,
-            receipts_root,
-            logs_bloom: block_bloom,
-            receipt_bytes,
-            receipt_success,
-            cumulative_gas,
-            created_logs,
-            refunded_logs,
-            burned_logs,
-            status,
-            settlement,
-            factory_count,
-            registered_token_id,
-            token_by_id,
-            token_by_ticker,
-            token_code_hash,
-            token_total_supply,
-            issuer_token_balance,
-            issuer_balance,
-            vote_balance,
-            liabilities,
-            reservation_exists,
-        }
-    }
+    use factory_boundary::{run, Boundary};
 
     for boundary in [Boundary::Approved, Boundary::Expired, Boundary::Error] {
-        let proposer = run(boundary, false);
-        let validator = run(boundary, true);
+        let proposer = run(boundary, false).expect("proposer factory boundary");
+        let validator = run(boundary, true).expect("validator factory boundary");
         assert_eq!(
             proposer, validator,
             "{boundary:?} must be byte/state equal across execution roles"
@@ -1289,27 +637,6 @@ fn factory_boundaries_are_byte_equal_across_proposer_and_validator_execution() {
 
 #[test]
 fn independent_body_stores_produce_identical_full_block_state_receipts_and_balances() {
-    use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
-
-    fn post_state_root(state: &revm::database::BundleState) -> B256 {
-        let sorted =
-            HashedPostState::from_bundle_state::<KeccakKeyHasher>(state.state()).into_sorted();
-        let storages = sorted.storages;
-        let accounts = sorted
-            .accounts
-            .into_iter()
-            .filter_map(|(address, account)| {
-                account.map(|account| {
-                    let storage = storages
-                        .get(&address)
-                        .map(|storage| storage.storage_slots.clone())
-                        .unwrap_or_default();
-                    (address, (account, storage))
-                })
-            });
-        state_root_prehashed(accounts)
-    }
-
     let proposer = test_evm_signer().address();
     let worldwide_day = WorldwideDay::new(20_241_220);
     let entry_price_minor = U256::from(450_000_000u64);
@@ -1326,124 +653,17 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
         reference_currency: 840,
         issued_at: 1,
     };
-    let seed_state = || {
-        let (directory, tree_service) = persistent_test_tree(B256::ZERO);
-        let empty_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
-        let parent_tree = tree_service
-            .open_parent(ExactParentIdentity {
-                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                block_number: 0,
-                block_hash: B256::ZERO,
-                root: empty_root,
-            })
-            .expect("open exact empty CE parent");
-        let scope =
-            ExecutionScope::with_parent_tree(parent_tree, CeWorkConfig::new(0, 0, u64::MAX));
-        let mut staged = None;
-        let state = state_with_active_validators_seeded_at_block(
-            &[(proposer, dummy_pubkey(0xA2))],
-            1,
-            |storage| {
-                storage
-                    .sstore(
-                        outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-                        U256::ZERO,
-                        U256::from(2_u64),
-                    )
-                    .unwrap();
-                storage
-                    .sstore(
-                        outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-                        U256::from(1_u64),
-                        U256::from_be_bytes(empty_root.0),
-                    )
-                    .unwrap();
-                outbe_compressed_entities::begin_block(storage.clone(), &scope)
-                    .expect("open compressed-entity seed scope");
-                let empty_reader = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
-                outbe_nod::api::add_nod(
-                    &storage,
-                    &scope,
-                    &empty_reader,
-                    &nod_item(),
-                    U256::from(450_000_000u64),
-                )
-                .expect("seed compact Nod scheduling state");
-                // The daily Nod trigger forfeits a lapsed called bucket, deleting both bodies.
-                let nod = NodContract::new(storage.clone());
-                nod.bucket_called_at.write(&bucket_key, 1).unwrap();
-                nod.called_bucket_index.write(&bucket_key, 0).unwrap();
-                nod.called_buckets.push(bucket_key).unwrap();
-                let (.., pair_index) =
-                    outbe_oracle::api::require_coen_pair(storage.clone(), 840).unwrap();
-                let previous_day = outbe_primitives::time::previous_date_key(
-                    outbe_primitives::time::timestamp_to_date_key(TEST_BLOCK_TIMESTAMP_BASE + 2),
-                );
-                let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-                oracle
-                    .record_utc_day_vwap(previous_day, pair_index, U256::from(1_000_000u64))
-                    .unwrap();
-                oracle
-                    .utc_day_vwap_last_finalized
-                    .write(previous_day)
-                    .unwrap();
-                outbe_cycle::schema::Cycle::new(storage.clone())
-                    .last_executed_at
-                    .write(
-                        &outbe_cycle::triggers::TriggerId::NodCallDaily.as_u32(),
-                        TEST_BLOCK_TIMESTAMP_BASE - 86_400,
-                    )
-                    .unwrap();
-                staged = Some(
-                    outbe_compressed_entities::end_block(storage, &scope)
-                        .expect("close compressed-entity seed scope")
-                        .staged_tree_batch,
-                );
-            },
-        );
-        let staged = staged.expect("seed lifecycle must produce a tree batch");
-        let seed_hash = B256::repeat_byte(0x41);
-        let seed_root = staged.new_root();
-        tree_service
-            .publish_candidate(seed_hash, staged)
-            .expect("publish seed CE candidate");
-        tree_service
-            .apply_finalized(1, seed_hash, seed_root)
-            .expect("finalize seed CE candidate");
-        (state, directory, tree_service, seed_hash)
+    let fixture = NodBodyFixture {
+        proposer,
+        worldwide_day,
+        entry_price_minor,
+        bucket_key,
+        item: nod_item(),
     };
-    let independent_readers = || {
-        let adapter = Arc::new(MemoryStorage::new());
-        let reader: StorageReaderHandle = adapter.clone();
-        let writer: StorageWriterHandle = adapter;
-        let repository = NodRepositoryWriter::new(reader.clone(), writer);
-        repository
-            .put_nod(&nod_item())
-            .expect("seed independent off-chain Nod item");
-        repository
-            .put_bucket(&NodBucketState {
-                settled_nods: 0,
-                bucket_key,
-                worldwide_day,
-                entry_price_minor,
-                reference_currency: 840,
-            })
-            .expect("seed independent off-chain Nod bucket");
-        let readers = RuntimeBodyReaders::new(reader);
-        assert!(readers
-            .nod()
-            .get_bucket(outbe_compressed_entities::WwdEntityId::from_day_and_digest(
-                worldwide_day,
-                bucket_key.0,
-            ))
-            .expect("independent bucket read")
-            .is_some());
-        readers
-    };
-
     let run = |expected_validator_body: bool, readers: RuntimeBodyReaders| {
         let signer = test_evm_signer();
-        let (mut state, _tree_directory, tree_service, seed_hash) = seed_state();
+        let (mut state, _tree_directory, tree_service, seed_hash) =
+            seed_nod_body_state(&fixture).expect("seed Nod body fixture");
         let config = OutbeEvmConfig::new_with_runtime_body_readers(test_chain_spec(), readers)
             .with_evm_signer(signer)
             .with_compressed_tree_service(tree_service.clone());
@@ -1496,29 +716,12 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
                 })),
             "fixture must mutate a Nod bucket before testing CE cleanup"
         );
-        let cleanup_hook_observation = Arc::new(Mutex::new(None));
+        let cleanup_hook_observation = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let cleanup_hook_capture = cleanup_hook_observation.clone();
-        executor.evm_mut().db_mut().set_state_hook(Some(Box::new(
-            move |changes: revm::state::EvmState| {
-                let Some(compressed_entities) =
-                    changes.get(&outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS)
-                else {
-                    return;
-                };
-                let cleared_slots = compressed_entities
-                    .storage
-                    .values()
-                    .filter(|slot| {
-                        slot.is_changed()
-                            && !slot.original_value.is_zero()
-                            && slot.present_value.is_zero()
-                    })
-                    .count();
-                if cleared_slots > 0 {
-                    *cleanup_hook_capture.lock().unwrap() = Some(cleared_slots);
-                }
-            },
-        )));
+        executor
+            .evm_mut()
+            .db_mut()
+            .set_state_hook(Some(Box::new(observe_ce_cleanup(cleanup_hook_capture))));
         // Match the production payload-builder ordering: finalize CE while
         // the parallel-root hook is attached, prove the zeroing diff was
         // observed, then detach the hook and freeze/finalize the root.
@@ -1539,10 +742,8 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
         tree_service
             .apply_finalized(2, block_hash, block_root)
             .expect("finalize block CE candidate");
-        let cleanup_hook_cleared_slots = cleanup_hook_observation
-            .lock()
-            .unwrap()
-            .expect("parallel-root hook must observe CE cleanup before root detach");
+        let cleanup_hook_cleared_slots =
+            cleanup_hook_observation.load(std::sync::atomic::Ordering::SeqCst);
         assert!(
             cleanup_hook_cleared_slots > 0,
             "pre-root hook must expose at least one temporary CE slot changing to zero"
@@ -1558,22 +759,13 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
         // A new lifecycle can only open when every pending body/index record and
         // touched list from the finished block has been removed. This checks the
         // same committed bundle used for the state root above, not a mock store.
-        let clean_parent = tree_service
-            .open_parent(ExactParentIdentity {
-                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                block_number: 2,
-                block_hash,
-                root: block_root,
-            })
-            .expect("open finalized block CE parent");
-        let clean_scope =
-            ExecutionScope::with_parent_tree(clean_parent, CeWorkConfig::new(0, 0, u64::MAX));
-        let clean_ctx = BlockContext::new(3, 2, CHAIN_ID, proposer, vec![proposer]);
-        super::run_atomic_storage_hooks(&mut state, clean_ctx, |hook_ctx| {
-            outbe_compressed_entities::begin_block(hook_ctx.storage.clone(), &clean_scope)?;
-            outbe_compressed_entities::end_block(hook_ctx.storage.clone(), &clean_scope).map(|_| ())
-        })
-        .expect("finished block must leave a clean compressed-entity overlay");
+        assert_clean_ce_lifecycle(
+            &mut state,
+            &tree_service,
+            (block_hash, block_root),
+            proposer,
+        )
+        .expect("assert clean ce lifecycle fixture succeeds");
         (
             root,
             bundle,
@@ -1586,8 +778,14 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
         )
     };
 
-    let proposer_result = run(false, independent_readers());
-    let validator_result = run(true, independent_readers());
+    let proposer_result = run(
+        false,
+        independent_nod_readers(&fixture).expect("independent nod readers fixture succeeds"),
+    );
+    let validator_result = run(
+        true,
+        independent_nod_readers(&fixture).expect("independent nod readers fixture succeeds"),
+    );
     assert_eq!(proposer_result, validator_result);
     assert!(proposer_result.2.iter().any(|receipt| {
         receipt.logs.iter().any(|log| {
@@ -1631,27 +829,6 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
 
 #[test]
 fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
-    use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
-
-    fn post_state_root(state: &revm::database::BundleState) -> B256 {
-        let sorted =
-            HashedPostState::from_bundle_state::<KeccakKeyHasher>(state.state()).into_sorted();
-        let storages = sorted.storages;
-        let accounts = sorted
-            .accounts
-            .into_iter()
-            .filter_map(|(address, account)| {
-                account.map(|account| {
-                    let storage = storages
-                        .get(&address)
-                        .map(|storage| storage.storage_slots.clone())
-                        .unwrap_or_default();
-                    (address, (account, storage))
-                })
-            });
-        state_root_prehashed(accounts)
-    }
-
     let proposer = test_evm_signer().address();
     let day = WorldwideDay::new(20_260_716);
     let tribute_owner = Address::repeat_byte(0x31);
@@ -1661,6 +838,30 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
     let nod_id = outbe_compressed_entities::derive_poseidon_entity_id(nod_owner, day).unwrap();
     let bucket_key = NodContract::bucket_key(day, U256::from(16), 978);
     let ctx = BlockContext::new(1, 1, CHAIN_ID, proposer, vec![proposer]);
+
+    let tribute_fixture = || TributeData {
+        tribute_id,
+        owner: tribute_owner,
+        worldwide_day: day,
+        issuance_amount_minor: U256::from(10),
+        issuance_currency: 840,
+        nominal_amount_minor: U256::from(11),
+        reference_currency: 978,
+        tribute_price_minor: U256::from(12),
+        exclude_from_intex_issuance: false,
+    };
+    let nod_fixture = || NodItemState {
+        is_settled: false,
+        nod_id,
+        owner: nod_owner,
+        gratis_load_minor: U256::from(1),
+        worldwide_day: day,
+        league_id: 2,
+        bucket_key,
+        issuance_currency: 840,
+        reference_currency: 978,
+        issued_at: 15,
+    };
 
     let run = || {
         let bodies = Arc::new(MemoryStorage::new());
@@ -1672,17 +873,7 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
         let (changes, events) =
             super::run_atomic_storage_hooks(&mut state, ctx.clone(), |hook_ctx| {
                 outbe_compressed_entities::begin_block(hook_ctx.storage.clone(), &scope)?;
-                let tribute = TributeData {
-                    tribute_id,
-                    owner: tribute_owner,
-                    worldwide_day: day,
-                    issuance_amount_minor: U256::from(10),
-                    issuance_currency: 840,
-                    nominal_amount_minor: U256::from(11),
-                    reference_currency: 978,
-                    tribute_price_minor: U256::from(12),
-                    exclude_from_intex_issuance: false,
-                };
+                let tribute = tribute_fixture();
                 let mut tribute_contract = TributeContract::new(hook_ctx.storage.clone());
                 tribute_contract.unseal_day(day)?;
                 tribute_contract.issue(&scope, &tribute_reader, &tribute)?;
@@ -1690,18 +881,7 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
                     &hook_ctx.storage,
                     &scope,
                     &nod_reader,
-                    &NodItemState {
-                        is_settled: false,
-                        nod_id,
-                        owner: nod_owner,
-                        gratis_load_minor: U256::from(1),
-                        worldwide_day: day,
-                        league_id: 2,
-                        bucket_key,
-                        issuance_currency: 840,
-                        reference_currency: 978,
-                        issued_at: 15,
-                    },
+                    &nod_fixture(),
                     U256::from(16),
                 )?;
                 outbe_compressed_entities::end_block(hook_ctx.storage.clone(), &scope).map(|_| ())
@@ -1761,17 +941,7 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
         state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |_| {});
     let error = super::run_atomic_storage_hooks(&mut failed_state, ctx.clone(), |hook_ctx| {
         outbe_compressed_entities::begin_block(hook_ctx.storage.clone(), &scope)?;
-        let tribute = TributeData {
-            tribute_id,
-            owner: tribute_owner,
-            worldwide_day: day,
-            issuance_amount_minor: U256::from(10),
-            issuance_currency: 840,
-            nominal_amount_minor: U256::from(11),
-            reference_currency: 978,
-            tribute_price_minor: U256::from(12),
-            exclude_from_intex_issuance: false,
-        };
+        let tribute = tribute_fixture();
         let mut tribute_contract = TributeContract::new(hook_ctx.storage.clone());
         tribute_contract.unseal_day(day)?;
         tribute_contract.issue(&scope, &tribute_reader, &tribute)?;
@@ -1779,18 +949,7 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
             &hook_ctx.storage,
             &scope,
             &nod_reader,
-            &NodItemState {
-                is_settled: false,
-                nod_id,
-                owner: nod_owner,
-                gratis_load_minor: U256::from(1),
-                worldwide_day: day,
-                league_id: 2,
-                bucket_key,
-                issuance_currency: 840,
-                reference_currency: 978,
-                issued_at: 15,
-            },
+            &nod_fixture(),
             U256::from(16),
         )?;
         Err(outbe_primitives::error::PrecompileError::Fatal(
@@ -1956,4 +1115,1115 @@ fn finish_rejects_non_artifact_header_extra_data() {
     assert!(err
         .to_string()
         .contains("unknown non-empty extra_data block artifact"));
+}
+
+struct LateCreditEscrow<'a> {
+    snapshot: &'a outbe_consensus::proof::CommitteeSnapshot,
+    epoch: u64,
+    settle_target: u64,
+    settle_fb_hash: B256,
+    settle_fee: U256,
+    settle_committee: u64,
+    settle_voter: Address,
+    progress_marker: u64,
+    csh: B256,
+}
+fn withdrawal_chain_spec(
+    activate: fn(ChainSpecBuilder) -> ChainSpecBuilder,
+) -> Arc<ChainSpec<OutbeHeader>> {
+    let mut spec = activate(ChainSpecBuilder::from(&*MAINNET)).build();
+    spec.chain = CHAIN_ID.into();
+    spec.genesis.config.chain_id = CHAIN_ID;
+    Arc::new(spec.map_header(OutbeHeader::new))
+}
+
+mod withdrawal_compatibility {
+    use super::*;
+    use alloy_eips::eip6110::MAINNET_DEPOSIT_CONTRACT_ADDRESS;
+    const DAO_BALANCE: u128 = 37;
+    const CUMULATIVE_TX_GAS: u64 = 11;
+    const REGULAR_GAS: u64 = 17;
+    const STATE_GAS: u64 = 23;
+    pub(super) struct Case {
+        pub name: &'static str,
+        pub chain_spec: Arc<ChainSpec<OutbeHeader>>,
+        pub spec_id: SpecId,
+        pub include_deposit: bool,
+        pub expected_gas_used: u64,
+    }
+
+    fn fixture_receipt(include_deposit: bool) -> Receipt {
+        let logs = if include_deposit {
+            let event = DepositEvent {
+                pubkey: Bytes::from(vec![0x11; 48]),
+                withdrawal_credentials: Bytes::from(vec![0x22; 32]),
+                amount: Bytes::from(vec![0x33; 8]),
+                signature: Bytes::from(vec![0x44; 96]),
+                index: Bytes::from(vec![0x55; 8]),
+            };
+            vec![Log {
+                address: MAINNET_DEPOSIT_CONTRACT_ADDRESS,
+                data: event.encode_log_data(),
+            }]
+        } else {
+            Vec::new()
+        };
+        Receipt {
+            tx_type: reth_ethereum::TxType::Legacy,
+            success: true,
+            cumulative_gas_used: CUMULATIVE_TX_GAS,
+            logs,
+        }
+    }
+
+    fn fixture_state() -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
+        let mut database = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+        database.insert_account_info(
+            alloy_evm::eth::dao_fork::DAO_HARDFORK_ACCOUNTS[0],
+            AccountInfo {
+                balance: U256::from(DAO_BALANCE),
+                ..Default::default()
+            },
+        );
+        State::builder()
+            .with_database(database)
+            .with_bundle_update()
+            .build()
+    }
+
+    fn balance(
+        state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
+        address: Address,
+    ) -> eyre::Result<U256> {
+        Ok(state
+            .basic(address)?
+            .map_or(U256::ZERO, |account| account.balance))
+    }
+
+    pub(super) fn run(
+        case: &Case,
+        withdrawals: Option<Vec<alloy_eips::eip4895::Withdrawal>>,
+        ocomp: bool,
+    ) -> eyre::Result<(
+        alloy_evm::block::BlockExecutionResult<Receipt>,
+        B256,
+        U256,
+        U256,
+        U256,
+    )> {
+        let mut state = fixture_state();
+        let config = if ocomp {
+            OutbeEvmConfig::new(case.chain_spec.clone())
+                .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(0))
+        } else {
+            OutbeEvmConfig::new(case.chain_spec.clone())
+        };
+        let evm_env = EvmEnv {
+            cfg_env: CfgEnv::new()
+                .with_chain_id(case.chain_spec.chain().id())
+                .with_spec_and_mainnet_gas_params(case.spec_id),
+            block_env: BlockEnv {
+                number: U256::ZERO,
+                gas_limit: 30_000_000,
+                beneficiary: REWARDS_ADDRESS,
+                timestamp: U256::ZERO,
+                ..Default::default()
+            },
+        };
+        let evm = config.evm_with_env(&mut state, evm_env);
+        let mut ctx = execution_ctx(Some(1), Bytes::new());
+        ctx.execute_outbe_block_hooks = false;
+        ctx.inner.withdrawals = withdrawals.clone().map(std::borrow::Cow::Owned);
+
+        let mut executor = config.create_executor(evm, ctx);
+        executor.inner.receipts = vec![fixture_receipt(case.include_deposit)];
+        executor.inner.cumulative_tx_gas_used = CUMULATIVE_TX_GAS;
+        executor.inner.block_regular_gas_used = REGULAR_GAS;
+        executor.inner.block_state_gas_used = STATE_GAS;
+        executor.inner.blob_gas_used = 5;
+        executor.validate_execution_summary = false;
+        if ocomp {
+            executor.ocomp_lifecycle_active = true;
+            executor.ocomp_terminal_request_consumed = true;
+            executor.apply_outbe_ethereum_post_execution()?;
+        }
+        let (evm, result) = executor.finish()?;
+        drop(evm);
+
+        observe_finished_state(&mut state, result)
+    }
+    fn observe_finished_state(
+        state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
+        result: alloy_evm::block::BlockExecutionResult<Receipt>,
+    ) -> eyre::Result<(
+        alloy_evm::block::BlockExecutionResult<Receipt>,
+        B256,
+        U256,
+        U256,
+        U256,
+    )> {
+        let root = post_state_root(&state.bundle_state);
+        let dao_source_balance =
+            balance(state, alloy_evm::eth::dao_fork::DAO_HARDFORK_ACCOUNTS[0])?;
+        let dao_beneficiary_balance =
+            balance(state, alloy_evm::eth::dao_fork::DAO_HARDFORK_BENEFICIARY)?;
+        let withdrawal_balance = balance(
+            state,
+            address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
+        )?;
+        Ok((
+            result,
+            root,
+            dao_source_balance,
+            dao_beneficiary_balance,
+            withdrawal_balance,
+        ))
+    }
+}
+
+fn late_credit_committee(
+    epoch: u64,
+) -> (
+    Vec<commonware_cryptography::bls12381::PrivateKey>,
+    Vec<Address>,
+    outbe_consensus::proof::CommitteeSnapshot,
+    B256,
+) {
+    use commonware_codec::Encode as _;
+    use commonware_cryptography::{bls12381, Signer as _};
+    use commonware_math::algebra::Random as _;
+    use outbe_consensus::proof::{committee_set_hash_v2, CommitteeEntry, CommitteeSnapshot};
+    let keys: Vec<bls12381::PrivateKey> = (0..4)
+        .map(|_| {
+            bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                rand_commonware::rngs::SysRng,
+            ))
+        })
+        .collect();
+    let addrs: Vec<Address> = (0..4).map(|i| Address::with_last_byte(i + 0x40)).collect();
+    let snapshot = CommitteeSnapshot {
+        committee: keys
+            .iter()
+            .zip(&addrs)
+            .map(|(k, a)| {
+                let mut pk = [0u8; 48];
+                pk.copy_from_slice(&k.public_key().encode());
+                CommitteeEntry {
+                    address: *a,
+                    consensus_pubkey: pk,
+                }
+            })
+            .collect(),
+        vrf_material_version: 1,
+        vrf_group_public_key_bytes: vec![0x11; 96],
+        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
+    };
+    let csh = committee_set_hash_v2(epoch, &snapshot);
+
+    (keys, addrs, snapshot, csh)
+}
+
+fn seed_late_credit_escrow(
+    storage: StorageHandle<'_>,
+    fixture: &LateCreditEscrow,
+) -> eyre::Result<()> {
+    let LateCreditEscrow {
+        snapshot,
+        epoch,
+        settle_target,
+        settle_fb_hash,
+        settle_fee,
+        settle_committee,
+        settle_voter,
+        progress_marker,
+        csh,
+    } = *fixture;
+    outbe_validatorset::write_committee_snapshot(storage.clone(), epoch, snapshot)?;
+
+    // Pre-seed the matured escrow (block N), its k=1 voter, fund
+    // REWARDS to back the payout + residue burn, and advance the
+    // accounting marker so the N+K CPA progress gate passes.
+    let seed_ctx = BlockRuntimeContext::new(
+        BlockContext::new(settle_target, 1, CHAIN_ID, Address::ZERO, vec![]),
+        storage,
+    );
+    outbe_rewards::late_settlement::escrow_block_fee(
+        &seed_ctx,
+        settle_target,
+        settle_fb_hash,
+        settle_fee,
+        settle_committee as u32,
+        epoch,
+        0, // canonical_view (block N is pre-seeded + settled, not live-credited)
+        0, // canonical_parent_view
+        csh,
+        &[],
+    )?;
+    seed_ctx
+        .storage
+        .contract::<outbe_rewards::schema::Rewards>()
+        .pending_reward_day
+        .write(&settle_fb_hash, 19700101)?;
+    outbe_rewards::late_settlement::record_late_credit(&seed_ctx, settle_fb_hash, settle_voter, 1)?;
+    seed_ctx
+        .storage
+        .increase_balance(REWARDS_ADDRESS, settle_fee)?;
+    outbe_accounting::record_phase1_progress(&seed_ctx, progress_marker)?;
+
+    Ok(())
+}
+
+mod factory_boundary {
+    use super::*;
+    use reth_primitives_traits::Account as TrieAccount;
+    use reth_trie::test_utils::state_root;
+    use std::collections::BTreeMap;
+    const CREATION_BLOCK: u64 = 7;
+    #[derive(Clone, Copy, Debug)]
+    pub(super) enum Boundary {
+        Approved,
+        Expired,
+        Error,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    pub(super) struct Output {
+        pub state_root: B256,
+        pub receipts_root: B256,
+        pub logs_bloom: alloy_primitives::Bloom,
+        pub receipt_bytes: Vec<Vec<u8>>,
+        pub receipt_success: Vec<bool>,
+        pub cumulative_gas: Vec<u64>,
+        pub created_logs: usize,
+        pub refunded_logs: usize,
+        pub burned_logs: usize,
+        pub status: ProposalStatus,
+        pub settlement: BondSettlement,
+        pub factory_count: U256,
+        pub registered_token_id: Option<B256>,
+        pub token_by_id: Address,
+        pub token_by_ticker: Address,
+        pub token_code_hash: Option<B256>,
+        pub token_total_supply: U256,
+        pub issuer_token_balance: U256,
+        pub issuer_balance: U256,
+        pub vote_balance: U256,
+        pub liabilities: U256,
+        pub reservation_exists: bool,
+    }
+
+    fn full_state_root(state: &State<CacheDB<EmptyDBTyped<ProviderError>>>) -> B256 {
+        let mut accounts: BTreeMap<Address, (AccountInfo, BTreeMap<U256, U256>)> = state
+            .database
+            .cache
+            .accounts
+            .iter()
+            .filter_map(|(address, account)| {
+                account.info().map(|info| {
+                    (
+                        *address,
+                        (
+                            info,
+                            account.storage.iter().map(|(k, v)| (*k, *v)).collect(),
+                        ),
+                    )
+                })
+            })
+            .collect();
+        for (address, cached) in &state.cache.accounts {
+            match &cached.account {
+                Some(current) => {
+                    let entry = accounts
+                        .entry(*address)
+                        .or_insert_with(|| (current.info.clone(), BTreeMap::new()));
+                    entry.0 = current.info.clone();
+                    entry
+                        .1
+                        .extend(current.storage.iter().map(|(k, v)| (*k, *v)));
+                }
+                None => {
+                    accounts.remove(address);
+                }
+            }
+        }
+        state_root(accounts.into_iter().map(|(address, (info, storage))| {
+            let bytecode_hash = (!info.code_hash.is_zero() && info.code_hash != keccak256([]))
+                .then_some(info.code_hash);
+            let account = TrieAccount {
+                nonce: info.nonce,
+                balance: info.balance,
+                bytecode_hash,
+            };
+            let storage = storage
+                .into_iter()
+                .filter(|(_, value)| !value.is_zero())
+                .map(|(slot, value)| (B256::from(slot.to_be_bytes::<32>()), value));
+            (address, (account, storage))
+        }))
+    }
+
+    struct FactoryFixture {
+        finalization_block: u64,
+        proposer: Address,
+        issuer: Address,
+        validators: [(Address, [u8; 48]); 3],
+        expected_token_id: B256,
+        expected_token: Address,
+    }
+    type PreparedBoundary = (
+        State<CacheDB<EmptyDBTyped<ProviderError>>>,
+        Arc<OutbeEvmSigner>,
+        FactoryFixture,
+    );
+    fn prepare_boundary(boundary: Boundary) -> eyre::Result<PreparedBoundary> {
+        const CREATION_BLOCK: u64 = 7;
+        let finalization_block = CREATION_BLOCK + VOTING_WINDOW_BLOCKS + 1;
+        let signer = test_evm_signer();
+        let proposer = signer.address();
+        let issuer = Address::repeat_byte(0x31);
+        let validators = [
+            (proposer, dummy_pubkey(0xc1)),
+            (Address::repeat_byte(0xc2), dummy_pubkey(0xc2)),
+            (Address::repeat_byte(0xc3), dummy_pubkey(0xc3)),
+        ];
+        let payload = encode_canonical_stablecoin_create(&StablecoinCreatePayload {
+            issuer,
+            name: "Parity Dollar".into(),
+            ticker: "PARUSD".into(),
+            iso4217: 840,
+            decimals: 6,
+            supply_cap: U256::from(1_000_000u64),
+            policy_id: U256::from(1u64),
+        })?;
+        let payload = core::str::from_utf8(&payload)?;
+
+        let mut state =
+            state_with_active_validators_seeded_at_block(&validators, CREATION_BLOCK, |_| {});
+        let seed_context = BlockContext::new(
+            CREATION_BLOCK,
+            1_700_000_000,
+            CHAIN_ID,
+            proposer,
+            validators.iter().map(|(address, _)| *address).collect(),
+        );
+        let (expected_token_id, expected_token) = seed_factory_boundary(
+            &mut state,
+            seed_context,
+            &FactoryProposal {
+                boundary,
+                issuer,
+                payload,
+                validators: &validators,
+                finalization_block,
+            },
+        )?;
+
+        Ok((
+            state,
+            signer,
+            FactoryFixture {
+                finalization_block,
+                proposer,
+                issuer,
+                validators,
+                expected_token_id,
+                expected_token,
+            },
+        ))
+    }
+    pub(super) fn run(boundary: Boundary, validator_execution: bool) -> eyre::Result<Output> {
+        let (mut state, signer, fixture) = prepare_boundary(boundary)?;
+        let FactoryFixture {
+            finalization_block,
+            proposer,
+            ..
+        } = fixture;
+        let (config, metadata, parent_hash) = execution_config(&fixture, signer);
+        let system_txs = begin_system_txs_for_test(
+            &config,
+            finalization_block,
+            parent_hash,
+            &Bytes::new(),
+            Some(metadata.clone()),
+            proposer,
+        );
+        let evm = config.evm_with_env(
+            &mut state,
+            test_evm_env(finalization_block, REWARDS_ADDRESS),
+        );
+        let mut execution = execution_ctx(Some(0), Bytes::new());
+        execution.inner.parent_hash = parent_hash;
+        execution.parent_consensus_metadata = Some(metadata);
+        execution.proposer_evm_address = Some(proposer);
+        if validator_execution {
+            execution.expected_begin_system_txs = system_txs.clone();
+        }
+        let mut executor = config.create_executor(evm, execution);
+        super::with_phase1_verify_disabled(|| executor.apply_pre_execution_changes())?;
+        for transaction in system_txs {
+            executor.execute_transaction(transaction)?;
+        }
+
+        let receipts = executor.receipts().to_vec();
+        drop(executor);
+        let receipts = observe_receipts(&receipts);
+
+        observe_boundary_state(&mut state, &fixture, boundary, receipts)
+    }
+
+    fn execution_config(
+        fixture: &FactoryFixture,
+        signer: Arc<OutbeEvmSigner>,
+    ) -> (OutbeEvmConfig, CertifiedParentAccountingMetadata, B256) {
+        let FactoryFixture {
+            finalization_block,
+            validators,
+            ..
+        } = fixture;
+        let finalization_block = *finalization_block;
+        let parent_hash = B256::repeat_byte(0x71);
+        let mut metadata = test_metadata();
+        metadata.finalized_block_number = finalization_block - 1;
+        metadata.finalized_block_hash = parent_hash;
+        metadata.ordered_committee = validators.iter().map(|(address, _)| *address).collect();
+        metadata.signer_bitmap = vec![1; validators.len()];
+
+        let bridge = ConsensusExecutionBridge::new();
+        bridge.record_execution_summary_with_state_root(
+            metadata.finalized_block_number,
+            parent_hash,
+            ExecutionSummaryArtifact {
+                validator_fee_sum: U256::ZERO,
+            },
+            1_700_000_000,
+            B256::repeat_byte(0x91),
+        );
+        let config =
+            OutbeEvmConfig::new_with_bridge(test_chain_spec(), bridge).with_evm_signer(signer);
+        (config, metadata, parent_hash)
+    }
+    fn observe_boundary_state(
+        state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
+        fixture: &FactoryFixture,
+        boundary: Boundary,
+        receipts: ReceiptObservation,
+    ) -> eyre::Result<Output> {
+        let FactoryFixture {
+            finalization_block,
+            proposer,
+            issuer,
+            validators,
+            expected_token_id,
+            expected_token,
+        } = *fixture;
+        let contracts = observe_contracts(
+            state,
+            &FactoryRead {
+                finalization_block,
+                proposer,
+                validators: &validators,
+                issuer,
+                expected_token,
+                expected_token_id,
+            },
+        )?;
+        let token_code_hash = state
+            .basic(expected_token)?
+            .map(|account| account.code_hash);
+        let state_root = full_state_root(state);
+
+        if matches!(boundary, Boundary::Approved) {
+            assert_eq!(contracts.registered_token_id, Some(expected_token_id));
+        }
+        Ok(assemble_output(
+            (state_root, token_code_hash),
+            receipts,
+            contracts,
+        ))
+    }
+    fn assemble_output(
+        roots: (B256, Option<B256>),
+        receipts: ReceiptObservation,
+        contracts: FactoryContractState,
+    ) -> Output {
+        let (state_root, token_code_hash) = roots;
+        Output {
+            state_root,
+            receipts_root: receipts.receipts_root,
+            logs_bloom: receipts.block_bloom,
+            receipt_bytes: receipts.receipt_bytes,
+            receipt_success: receipts.receipt_success,
+            cumulative_gas: receipts.cumulative_gas,
+            created_logs: receipts.created_logs,
+            refunded_logs: receipts.refunded_logs,
+            burned_logs: receipts.burned_logs,
+            status: contracts.status,
+            settlement: contracts.settlement,
+            factory_count: contracts.factory_count,
+            registered_token_id: contracts.registered_token_id,
+            token_by_id: contracts.token_by_id,
+            token_by_ticker: contracts.token_by_ticker,
+            token_code_hash,
+            token_total_supply: contracts.token_total_supply,
+            issuer_token_balance: contracts.issuer_token_balance,
+            issuer_balance: contracts.issuer_balance,
+            vote_balance: contracts.vote_balance,
+            liabilities: contracts.liabilities,
+            reservation_exists: contracts.reservation_exists,
+        }
+    }
+    struct FactoryProposal<'a> {
+        boundary: Boundary,
+        issuer: Address,
+        payload: &'a str,
+        validators: &'a [(Address, [u8; 48])],
+        finalization_block: u64,
+    }
+    fn seed_factory_boundary(
+        state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
+        seed_context: BlockContext,
+        fixture: &FactoryProposal<'_>,
+    ) -> eyre::Result<(B256, Address)> {
+        let FactoryProposal {
+            boundary,
+            issuer,
+            payload,
+            validators,
+            finalization_block,
+        } = *fixture;
+        let mut provider = super::DirectStorageProvider::new(state, seed_context.clone());
+        let storage = StorageHandle::new(&mut provider);
+        storage.set_balance(VOTE_ADDRESS, STABLECOIN_CREATE_BOND)?;
+        let predicted = StablecoinFactoryContract::new(storage.clone())
+            .predict_token_address(issuer, "PARUSD")?;
+        let mut vote = Vote::new(storage.clone());
+        let proposal_id = vote.create_proposal_with_value(
+            issuer,
+            STABLECOIN_FACTORY_ADDRESS,
+            payload,
+            CREATION_BLOCK,
+            STABLECOIN_CREATE_BOND,
+            crate::handlers::vote::registry(),
+        )?;
+        match boundary {
+            Boundary::Approved | Boundary::Error => {
+                vote.cast_vote_approve(proposal_id, validators[0].0, true, CREATION_BLOCK + 1)?;
+                vote.cast_vote_approve(proposal_id, validators[1].0, true, CREATION_BLOCK + 1)?;
+            }
+            Boundary::Expired => {}
+        }
+        if matches!(boundary, Boundary::Error) {
+            let mut corrupted = vote
+                .proposals
+                .get(proposal_id)?
+                .ok_or_else(|| eyre::eyre!("missing fixture value"))?;
+            corrupted.payload = "{".into();
+            vote.proposals.update(&corrupted)?;
+        }
+        let progress_context = BlockRuntimeContext::new(seed_context, storage.clone());
+        outbe_accounting::record_phase1_progress(&progress_context, finalization_block - 2)?;
+        provider.flush()?;
+        Ok(predicted)
+    }
+
+    struct ReceiptObservation {
+        receipt_bytes: Vec<Vec<u8>>,
+        receipts_root: B256,
+        block_bloom: alloy_primitives::Bloom,
+        receipt_success: Vec<bool>,
+        cumulative_gas: Vec<u64>,
+        created_logs: usize,
+        refunded_logs: usize,
+        burned_logs: usize,
+    }
+    fn observe_receipts(receipts: &[Receipt]) -> ReceiptObservation {
+        let receipt_bytes = receipts
+            .iter()
+            .map(|receipt| receipt.with_bloom_ref().encoded_2718())
+            .collect();
+        let receipt_blooms: Vec<_> = receipts
+            .iter()
+            .map(|receipt| receipt.with_bloom_ref())
+            .collect();
+        let receipts_root = alloy_consensus::proofs::calculate_receipt_root(&receipt_blooms);
+        let block_bloom = logs_bloom(receipts.iter().flat_map(|receipt| receipt.logs.iter()));
+        let receipt_success = receipts.iter().map(|receipt| receipt.success).collect();
+        let cumulative_gas = receipts
+            .iter()
+            .map(|receipt| receipt.cumulative_gas_used)
+            .collect();
+        let created_logs = receipts
+            .iter()
+            .flat_map(|receipt| &receipt.logs)
+            .filter(|log| {
+                log.address == STABLECOIN_FACTORY_ADDRESS
+                    && log.data.topics().first()
+                        == Some(&IStablecoinFactory::StablecoinCreated::SIGNATURE_HASH)
+            })
+            .count();
+        let refunded_logs = receipts
+            .iter()
+            .flat_map(|receipt| &receipt.logs)
+            .filter(|log| {
+                log.address == VOTE_ADDRESS
+                    && log.data.topics().first()
+                        == Some(&IVote::ProposalBondRefunded::SIGNATURE_HASH)
+            })
+            .count();
+        let burned_logs = receipts
+            .iter()
+            .flat_map(|receipt| &receipt.logs)
+            .filter(|log| {
+                log.address == VOTE_ADDRESS
+                    && log.data.topics().first() == Some(&IVote::ProposalBondBurned::SIGNATURE_HASH)
+            })
+            .count();
+
+        ReceiptObservation {
+            receipt_bytes,
+            receipts_root,
+            block_bloom,
+            receipt_success,
+            cumulative_gas,
+            created_logs,
+            refunded_logs,
+            burned_logs,
+        }
+    }
+
+    struct FactoryRead<'a> {
+        finalization_block: u64,
+        proposer: Address,
+        validators: &'a [(Address, [u8; 48])],
+        issuer: Address,
+        expected_token: Address,
+        expected_token_id: B256,
+    }
+    struct FactoryContractState {
+        status: ProposalStatus,
+        settlement: BondSettlement,
+        factory_count: U256,
+        registered_token_id: Option<B256>,
+        token_by_id: Address,
+        token_by_ticker: Address,
+        token_total_supply: U256,
+        issuer_token_balance: U256,
+        issuer_balance: U256,
+        vote_balance: U256,
+        liabilities: U256,
+        reservation_exists: bool,
+    }
+    fn observe_contracts(
+        state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
+        fixture: &FactoryRead<'_>,
+    ) -> eyre::Result<FactoryContractState> {
+        let FactoryRead {
+            finalization_block,
+            proposer,
+            validators,
+            issuer,
+            expected_token,
+            expected_token_id,
+        } = *fixture;
+        let read_context = BlockContext::new(
+            finalization_block,
+            1_700_000_000,
+            CHAIN_ID,
+            proposer,
+            validators.iter().map(|(address, _)| *address).collect(),
+        );
+        let mut provider = super::DirectStorageProvider::new(state, read_context);
+        let storage = StorageHandle::new(&mut provider);
+        let vote = Vote::new(storage.clone());
+        let factory = StablecoinFactoryContract::new(storage.clone());
+        let factory_count = factory.token_count()?;
+        let (token_total_supply, issuer_token_balance) = if factory_count == U256::ONE {
+            let token = StablecoinContract::new(storage.clone(), expected_token);
+            (token.total_supply()?, token.balance_of(issuer)?)
+        } else {
+            (U256::ZERO, U256::ZERO)
+        };
+        Ok(FactoryContractState {
+            status: vote
+                .proposals
+                .get(U256::from(1u64))?
+                .ok_or_else(|| eyre::eyre!("missing fixture value"))?
+                .proposal_status()?,
+            settlement: vote.proposal_bond(U256::from(1u64))?.settlement,
+            factory_count,
+            registered_token_id: factory.registered_token_id(expected_token)?,
+            token_by_id: factory.token_by_id(expected_token_id)?,
+            token_by_ticker: factory.token_by_ticker("PARUSD")?,
+            token_total_supply,
+            issuer_token_balance,
+            issuer_balance: storage.balance(issuer)?,
+            vote_balance: storage.balance(VOTE_ADDRESS)?,
+            liabilities: vote.bond_liabilities()?,
+            reservation_exists: factory.reservations.exists(U256::from(1u64))?,
+        })
+    }
+}
+
+struct NodBodyFixture {
+    proposer: Address,
+    worldwide_day: WorldwideDay,
+    entry_price_minor: U256,
+    bucket_key: B256,
+    item: NodItemState,
+}
+type SeededNodParent = (
+    State<CacheDB<EmptyDBTyped<ProviderError>>>,
+    tempfile::TempDir,
+    Arc<CompressedTreeService>,
+    B256,
+);
+fn seed_nod_body_state(fixture: &NodBodyFixture) -> eyre::Result<SeededNodParent> {
+    let proposer = fixture.proposer;
+    let (directory, tree_service) = persistent_test_tree(B256::ZERO);
+    let empty_root = outbe_compressed_entities::sealed_root(B256::ZERO)?;
+    let parent_tree = tree_service.open_parent(ExactParentIdentity {
+        commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+        block_number: 0,
+        block_hash: B256::ZERO,
+        root: empty_root,
+    })?;
+    let scope = ExecutionScope::with_parent_tree(parent_tree, CeWorkConfig::new(0, 0, u64::MAX));
+    let mut staged = None;
+    let mut seeded = Ok(());
+    let state = state_with_active_validators_seeded_at_block(
+        &[(proposer, dummy_pubkey(0xA2))],
+        1,
+        |storage| {
+            seeded = (|| -> eyre::Result<()> {
+                seed_called_nod(storage.clone(), &scope, empty_root, fixture)?;
+                staged =
+                    Some(outbe_compressed_entities::end_block(storage, &scope)?.staged_tree_batch);
+
+                Ok(())
+            })();
+        },
+    );
+    seeded?;
+    let staged = staged.ok_or_else(|| eyre::eyre!("seed lifecycle must produce a tree batch"))?;
+    let seed_hash = B256::repeat_byte(0x41);
+    let seed_root = staged.new_root();
+    tree_service.publish_candidate(seed_hash, staged)?;
+    tree_service.apply_finalized(1, seed_hash, seed_root)?;
+    Ok((state, directory, tree_service, seed_hash))
+}
+
+fn seed_called_nod(
+    storage: StorageHandle<'_>,
+    scope: &ExecutionScope,
+    empty_root: B256,
+    fixture: &NodBodyFixture,
+) -> eyre::Result<()> {
+    let bucket_key = fixture.bucket_key;
+    storage.sstore(
+        outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+        U256::ZERO,
+        U256::from(2_u64),
+    )?;
+    storage.sstore(
+        outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+        U256::from(1_u64),
+        U256::from_be_bytes(empty_root.0),
+    )?;
+    outbe_compressed_entities::begin_block(storage.clone(), scope)?;
+    let empty_reader = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    outbe_nod::api::add_nod(
+        &storage,
+        scope,
+        &empty_reader,
+        &fixture.item,
+        fixture.entry_price_minor,
+    )?;
+    // The daily Nod trigger forfeits a lapsed called bucket, deleting both bodies.
+    let nod = NodContract::new(storage.clone());
+    nod.bucket_called_at.write(&bucket_key, 1)?;
+    nod.called_bucket_index.write(&bucket_key, 0)?;
+    nod.called_buckets.push(bucket_key)?;
+    seed_nod_daily_trigger(storage, fixture)?;
+
+    Ok(())
+}
+
+fn seed_nod_daily_trigger(
+    storage: StorageHandle<'_>,
+    _fixture: &NodBodyFixture,
+) -> eyre::Result<()> {
+    let (.., pair_index) = outbe_oracle::api::require_coen_pair(storage.clone(), 840)?;
+    let previous_day = outbe_primitives::time::previous_date_key(
+        outbe_primitives::time::timestamp_to_date_key(TEST_BLOCK_TIMESTAMP_BASE + 2),
+    );
+    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+    oracle.record_utc_day_vwap(previous_day, pair_index, U256::from(1_000_000u64))?;
+    oracle.utc_day_vwap_last_finalized.write(previous_day)?;
+    outbe_cycle::schema::Cycle::new(storage.clone())
+        .last_executed_at
+        .write(
+            &outbe_cycle::triggers::TriggerId::NodCallDaily.as_u32(),
+            TEST_BLOCK_TIMESTAMP_BASE - 86_400,
+        )?;
+
+    Ok(())
+}
+
+fn independent_nod_readers(fixture: &NodBodyFixture) -> eyre::Result<RuntimeBodyReaders> {
+    let NodBodyFixture {
+        worldwide_day,
+        entry_price_minor,
+        bucket_key,
+        ..
+    } = *fixture;
+    let adapter = Arc::new(MemoryStorage::new());
+    let reader: StorageReaderHandle = adapter.clone();
+    let writer: StorageWriterHandle = adapter;
+    let repository = NodRepositoryWriter::new(reader.clone(), writer);
+    repository.put_nod(&fixture.item)?;
+    repository.put_bucket(&NodBucketState {
+        settled_nods: 0,
+        bucket_key,
+        worldwide_day,
+        entry_price_minor,
+        reference_currency: 840,
+    })?;
+    let readers = RuntimeBodyReaders::new(reader);
+    assert!(readers
+        .nod()
+        .get_bucket(outbe_compressed_entities::WwdEntityId::from_day_and_digest(
+            worldwide_day,
+            bucket_key.0,
+        ))
+        .expect("independent bucket read")
+        .is_some());
+    Ok(readers)
+}
+
+fn observe_ce_cleanup(
+    cleanup_hook_capture: Arc<std::sync::atomic::AtomicUsize>,
+) -> impl Fn(revm::state::EvmState) + Send + Sync {
+    move |changes: revm::state::EvmState| {
+        let Some(compressed_entities) =
+            changes.get(&outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS)
+        else {
+            return;
+        };
+        let cleared_slots = compressed_entities
+            .storage
+            .values()
+            .filter(|slot| {
+                slot.is_changed() && !slot.original_value.is_zero() && slot.present_value.is_zero()
+            })
+            .count();
+        if cleared_slots > 0 {
+            cleanup_hook_capture.store(cleared_slots, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+}
+
+fn assert_clean_ce_lifecycle(
+    state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
+    tree_service: &CompressedTreeService,
+    block: (B256, B256),
+    proposer: Address,
+) -> eyre::Result<()> {
+    let (block_hash, block_root) = block;
+    let clean_parent = tree_service.open_parent(ExactParentIdentity {
+        commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+        block_number: 2,
+        block_hash,
+        root: block_root,
+    })?;
+    let clean_scope =
+        ExecutionScope::with_parent_tree(clean_parent, CeWorkConfig::new(0, 0, u64::MAX));
+    let clean_ctx = BlockContext::new(3, 2, CHAIN_ID, proposer, vec![proposer]);
+    super::run_atomic_storage_hooks(state, clean_ctx, |hook_ctx| {
+        outbe_compressed_entities::begin_block(hook_ctx.storage.clone(), &clean_scope)?;
+        outbe_compressed_entities::end_block(hook_ctx.storage.clone(), &clean_scope).map(|_| ())
+    })?;
+
+    Ok(())
+}
+
+fn unsupported_withdrawal_state() -> (
+    Arc<ChainSpec<OutbeHeader>>,
+    State<CacheDB<EmptyDBTyped<ProviderError>>>,
+) {
+    const DAO_BALANCE: u128 = 37;
+    let mut spec = ChainSpecBuilder::from(&*MAINNET)
+        .shanghai_activated()
+        .build();
+    spec.chain = CHAIN_ID.into();
+    spec.genesis.config.chain_id = CHAIN_ID;
+    let chain_spec = Arc::new(spec.map_header(OutbeHeader::new));
+    let mut database = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+    database.insert_account_info(
+        alloy_evm::eth::dao_fork::DAO_HARDFORK_ACCOUNTS[0],
+        AccountInfo {
+            balance: U256::from(DAO_BALANCE),
+            ..Default::default()
+        },
+    );
+    let state = State::builder()
+        .with_database(database)
+        .with_bundle_update()
+        .build();
+    (chain_spec, state)
+}
+
+fn assert_persisted_fork_install(
+    state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
+    chain_id: u64,
+    install: &outbe_metadosis::config::OcompForkInstallV1,
+) -> eyre::Result<()> {
+    let mut provider =
+        super::DirectStorageProvider::new(state, BlockContext::empty_for_tests(1, 1, chain_id));
+    let storage = StorageHandle::new(&mut provider);
+    assert!(
+        outbe_metadosis::api::is_active_ocomp_fork_install(storage, install)
+            .expect("read persisted block-1 fork installation"),
+        "block-1 lifecycle must persist the exact fork installation"
+    );
+
+    Ok(())
+}
+
+struct LateCreditBinding {
+    fb_number: u64,
+    fb_hash: B256,
+    epoch: u64,
+    view: u64,
+    parent_view: u64,
+    csh: B256,
+}
+fn signed_late_credit_artifact(
+    keys: &[commonware_cryptography::bls12381::PrivateKey],
+    binding: &LateCreditBinding,
+) -> eyre::Result<OutbeBlockArtifacts> {
+    use outbe_primitives::reshare_artifact::{LateFinalizeCreditsArtifact, PerBlockCredit};
+    let LateCreditBinding {
+        fb_number,
+        fb_hash,
+        epoch,
+        view,
+        parent_view,
+        csh,
+    } = *binding;
+    let (aggregate_signature, signer_bitmap) = late_credit_signature(keys, binding)?;
+    let artifact = OutbeBlockArtifacts {
+        execution_summary: None,
+        consensus_header_artifact: None,
+        timestamp_millis_part: 0,
+        late_finalize_credits: Some(LateFinalizeCreditsArtifact {
+            batches: vec![PerBlockCredit {
+                fb_number,
+                fb_hash,
+                epoch,
+                view,
+                parent_view,
+                committee_set_hash: csh,
+                signer_bitmap,
+                aggregate_signature,
+            }],
+        }),
+        compressed_entities_root: None,
+    };
+
+    Ok(artifact)
+}
+
+struct LateCreditRead<'a> {
+    fb_hash: B256,
+    addrs: &'a [Address],
+    settle_voter: Address,
+}
+fn read_late_credit_settlement(
+    storage: StorageHandle<'_>,
+    fixture: &LateCreditRead<'_>,
+) -> Result<(u32, Vec<Address>, U256, U256, u64), outbe_primitives::error::PrecompileError> {
+    let LateCreditRead {
+        fb_hash,
+        addrs,
+        settle_voter,
+    } = *fixture;
+    let r = outbe_rewards::contract::Rewards::new(storage.clone());
+    let count = r.late_voter_count.read(&fb_hash)?;
+    let at = r.late_voter_at.get_nested(&fb_hash);
+    let mut voters = Vec::new();
+    for i in 0..count {
+        voters.push(at.read(&i)?);
+    }
+    // The real BLS late-credit phase also contributes to GEM,
+    // attributed to the authenticated parent's timestamp (1).
+    let reward_day = r.pending_reward_day.read(&fb_hash)?;
+    assert_eq!(reward_day, 19700101);
+    let participation = r.daily_participation.get_nested(&reward_day);
+    for voter in &addrs[..3] {
+        assert_eq!(participation.read(voter)?, 1);
+    }
+    assert_eq!(participation.read(&addrs[3])?, 0);
+    assert_eq!(r.daily_total_participation.read(&reward_day)?, 4);
+    let voter_balance = storage.balance(settle_voter)?;
+    let rewards_balance = storage.balance(REWARDS_ADDRESS)?;
+    // `addrs[3]` is a committee member absent for the settled block
+    // and not in the live in-window credit -> a pure window-close
+    // absentee. Its miss count must match on both paths.
+    let si = outbe_slashindicator::contract::SlashIndicator::new(storage.clone());
+    let absentee_miss = si.get_voter_miss_count(addrs[3])?;
+    Ok::<_, outbe_primitives::error::PrecompileError>((
+        count,
+        voters,
+        voter_balance,
+        rewards_balance,
+        absentee_miss,
+    ))
+}
+
+fn late_credit_signature(
+    keys: &[commonware_cryptography::bls12381::PrivateKey],
+    binding: &LateCreditBinding,
+) -> eyre::Result<([u8; 96], Vec<u8>)> {
+    use commonware_codec::Encode as _;
+    use commonware_consensus::simplex::types::Proposal;
+    use commonware_consensus::types::{Epoch, Round, View};
+    use commonware_cryptography::bls12381::{
+        self,
+        primitives::{ops::aggregate, variant::MinPk},
+    };
+    use commonware_cryptography::Signer as _;
+    use outbe_consensus::digest::Digest as OutbeDigest;
+    use outbe_consensus::proof::finalize_namespace;
+    let LateCreditBinding {
+        fb_hash,
+        epoch,
+        view,
+        parent_view,
+        ..
+    } = *binding;
+    let proposal = Proposal::new(
+        Round::new(Epoch::new(epoch), View::new(view)),
+        View::new(parent_view),
+        OutbeDigest(fb_hash),
+    );
+    let msg = proposal.encode().to_vec();
+    // finalize votes bind the ordered committee; build the canonical
+    // `Set` from the same committee the snapshot/verifier uses.
+    let committee_set: commonware_utils::ordered::Set<bls12381::PublicKey> =
+        commonware_utils::ordered::Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
+    let sigs: Vec<bls12381::Signature> = [0usize, 1, 2]
+        .iter()
+        .map(|&i| keys[i].sign(&finalize_namespace(&committee_set), &msg))
+        .collect();
+    let agg = aggregate::combine_signatures::<MinPk, _>(
+        commonware_utils::iter::NonEmpty::try_new(sigs.iter().map(|s| s.as_ref()))
+            .ok_or_else(|| eyre::eyre!("three signatures must be nonempty"))?,
+    );
+    let mut aggregate_signature = [0u8; 96];
+    aggregate_signature.copy_from_slice(&agg.encode());
+    let mut signer_bitmap = vec![0u8; 4usize.div_ceil(8)];
+    for i in [0usize, 1, 2] {
+        signer_bitmap[i / 8] |= 1u8 << (i % 8);
+    }
+    Ok((aggregate_signature, signer_bitmap))
 }

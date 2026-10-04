@@ -38,60 +38,57 @@ fn record(
     }
 }
 
+fn walk_source_files(dir: &std::path::Path, visit: &mut impl FnMut(&std::path::Path)) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            walk_source_files(&path, visit);
+        } else if is_non_test_rust_source(&path) {
+            visit(&path);
+        }
+    }
+}
+
+fn is_non_test_rust_source(path: &std::path::Path) -> bool {
+    if path.extension().and_then(|extension| extension.to_str()) != Some("rs") {
+        return false;
+    }
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    !name.contains("_tests") && !name.starts_with("test_")
+}
+
+fn removed_api_hits(path: &std::path::Path) -> usize {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return 0;
+    };
+    content
+        .lines()
+        .filter(|line| {
+            if !line.contains("await_parent_cert") || line.trim_start().starts_with("//") {
+                return false;
+            }
+            eprintln!("await_parent_cert hit in {}: {}", path.display(), line);
+            true
+        })
+        .count()
+}
+
 /// `rg -n "await_parent_cert" crates/blockchain/consensus/src/`
 /// must return 0 hits in non-test code. Performed in-process so the
 /// assertion runs on every `cargo nextest` invocation.
 #[test]
 fn await_parent_cert_is_removed_from_non_test_consensus_src() {
-    use std::io::Read;
     let mut total_non_test_hits = 0usize;
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    fn walk(dir: &std::path::Path, hits: &mut usize) {
-        let read = match std::fs::read_dir(dir) {
-            Ok(r) => r,
-            Err(_) => return,
-        };
-        for entry in read.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, hits);
-                continue;
-            }
-            if path.extension().and_then(|s| s.to_str()) != Some("rs") {
-                continue;
-            }
-            let file_name = path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or_default();
-            // Treat *_tests.rs files and test_harness.rs as test code.
-            if file_name.contains("_tests") || file_name.starts_with("test_") {
-                continue;
-            }
-            let mut content = String::new();
-            if std::fs::File::open(&path)
-                .and_then(|mut f| f.read_to_string(&mut content))
-                .is_err()
-            {
-                continue;
-            }
-            for line in content.lines() {
-                if line.contains("await_parent_cert") {
-                    // Allow docstring mentions that reference the historical
-                    // method name (these survive as comments). The
-                    // contract is "non-test executable code"; mentions inside
-                    // `//!` / `///` / `//` lines are documentation only.
-                    let trimmed = line.trim_start();
-                    if trimmed.starts_with("//") {
-                        continue;
-                    }
-                    *hits += 1;
-                    eprintln!("await_parent_cert hit in {}: {}", path.display(), line);
-                }
-            }
-        }
-    }
-    walk(&root, &mut total_non_test_hits);
+    walk_source_files(&root, &mut |path| {
+        total_non_test_hits += removed_api_hits(path)
+    });
     assert_eq!(
         total_non_test_hits, 0,
         "await_parent_cert must not exist in non-test consensus src code"

@@ -1,5 +1,5 @@
 use super::*;
-use crate::test_fixtures::marshal::{MarshalArchiveFixture, MarshalArchiveKind};
+use crate::test_fixtures::marshal::MarshalArchiveFixture;
 
 // Unique partition prefix per backfill-test marshal so the immutable
 // archives never collide between concurrent test runs.
@@ -145,12 +145,11 @@ async fn start_empty_marshal(
     commonware_consensus::marshal::resolver::handler::Handler<Digest>,
     commonware_runtime::Handle<()>,
 ) {
-    use commonware_cryptography::{bls12381::primitives::variant::MinSig, certificate::Verifier};
+    use commonware_cryptography::bls12381::primitives::variant::MinSig;
     use commonware_runtime::buffer::paged::CacheRef;
-    use commonware_storage::archive::immutable;
     use std::num::{NonZeroU16, NonZeroU64, NonZeroUsize};
 
-    use crate::hybrid::{HybridScheme, HybridSchemeProvider};
+    use crate::hybrid::HybridSchemeProvider;
 
     let page_cache = CacheRef::from_pooler(
         &context,
@@ -171,22 +170,10 @@ async fn start_empty_marshal(
         write_buffer,
     };
 
-    let finalizations_archive = immutable::Archive::init(
-        context.child("marshal_finalizations"),
-        archive_fixture.config(
-            MarshalArchiveKind::Finalizations,
-            HybridScheme::<MinSig>::certificate_codec_config_unbounded(),
-        ),
-    )
-    .await
-    .expect("finalizations archive should initialize");
-
-    let blocks_archive = immutable::Archive::init(
-        context.child("marshal_blocks"),
-        archive_fixture.config(MarshalArchiveKind::Blocks, ()),
-    )
-    .await
-    .expect("blocks archive should initialize");
+    let (finalizations_archive, blocks_archive) = archive_fixture
+        .open(&context)
+        .await
+        .expect("marshal archives should initialize");
 
     let (actor, mailbox, _) = commonware_consensus::marshal::core::Actor::init(
         context.child("marshal"),
