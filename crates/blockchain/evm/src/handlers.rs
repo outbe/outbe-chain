@@ -723,7 +723,7 @@ pub mod vote {
         }
 
         #[test]
-        fn pfs_010_06_execution_error_retains_reservation_bond_and_pending_cap() {
+        fn pfs_010_06_execution_error_refunds_bond_once_and_retains_reservation() {
             let issuer = Address::repeat_byte(0x11);
             let raw = payload(issuer);
             let raw = core::str::from_utf8(&raw).unwrap();
@@ -768,16 +768,15 @@ pub mod vote {
                         .unwrap(),
                     ProposalStatus::Error
                 );
+                // The bond is refunded once and the liability closed; the
+                // target-owned reservation is admission state and stays.
                 assert_eq!(
                     vote.proposal_bond(proposal_id).unwrap().settlement,
-                    BondSettlement::Unsettled
+                    BondSettlement::Refunded
                 );
-                assert_eq!(vote.bond_liabilities().unwrap(), STABLECOIN_CREATE_BOND);
-                assert_eq!(
-                    storage.balance(VOTE_ADDRESS).unwrap(),
-                    STABLECOIN_CREATE_BOND
-                );
-                assert_eq!(storage.balance(issuer).unwrap(), U256::ZERO);
+                assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
+                assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), U256::ZERO);
+                assert_eq!(storage.balance(issuer).unwrap(), STABLECOIN_CREATE_BOND);
                 let factory = StablecoinFactoryContract::new(storage);
                 assert_eq!(factory.token_count().unwrap(), U256::ZERO);
                 let reservation = factory.reservations.get(proposal_id).unwrap().unwrap();
@@ -800,7 +799,8 @@ pub mod vote {
                     factory.pending_address.read(&reservation.token).unwrap(),
                     proposal_id
                 );
-                assert_eq!(vote.pending_proposal_count_by_proposer(issuer).unwrap(), 1);
+                // Error is terminal: it no longer occupies the proposer's pending cap.
+                assert_eq!(vote.pending_proposal_count_by_proposer(issuer).unwrap(), 0);
             }
             assert_eq!(
                 provider
@@ -808,8 +808,16 @@ pub mod vote {
                     .iter()
                     .filter(|event| {
                         event.topics().first() == Some(&IVote::ProposalBondRefunded::SIGNATURE_HASH)
-                            || event.topics().first()
-                                == Some(&IVote::ProposalBondBurned::SIGNATURE_HASH)
+                    })
+                    .count(),
+                1
+            );
+            assert_eq!(
+                provider
+                    .get_events(VOTE_ADDRESS)
+                    .iter()
+                    .filter(|event| {
+                        event.topics().first() == Some(&IVote::ProposalBondBurned::SIGNATURE_HASH)
                     })
                     .count(),
                 0
