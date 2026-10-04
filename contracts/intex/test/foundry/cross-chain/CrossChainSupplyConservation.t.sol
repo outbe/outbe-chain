@@ -7,6 +7,7 @@ import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {BatchSendParam, IIntexNFT1155Bridge} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
+import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 
 /// @dev Cross-chain conservation invariants for the IntexNFT1155 + IntexNFT1155Bridge pair:
 ///
@@ -155,6 +156,43 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         assertEq(tokenA.balanceOf(user, parkTokenId), minted, "owner whole on origin");
 
         // A second reclaim reverts - the entry is gone.
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.NoSuchFailedCrosschainMint.selector, receiveId, 0));
+        adapterB.reclaimToSource(receiveId, 0);
+    }
+
+    function test_FailedAndLateRetryPreserveTransportUntilReclaimRestoresOrigin() public {
+        uint32 day = 20260602;
+        bytes14 series = "20260602-USD-U";
+        uint256 id = uint256(uint112(series));
+        tokenA.createSeries(CreateSeriesLib.params(day, ISSUED_UNITS, 0));
+        tokenA.issueIntex(user, 100, series);
+        bytes32 receiveId = _send(adapterA, adapterB, A_CHAIN_ID, user, id, 60);
+
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, id));
+        adapterB.retryCrosschainMint(receiveId, 0);
+        (,, uint256 parked, bool exists) = adapterB.failedCrosschainMints(receiveId, 0);
+        assertTrue(exists, "failed retry must restore the deleted entry");
+        assertEq(tokenA.totalSupply(id) + tokenB.totalSupply(id) + parked, 100);
+
+        tokenB.createSeries(CreateSeriesLib.params(day, ISSUED_UNITS, 60));
+        uint32 calledAt = uint32(block.timestamp);
+        tokenB.markCalled(series, calledAt);
+        vm.warp(uint256(calledAt) + 61);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, id, calledAt + 60));
+        adapterB.retryCrosschainMint(receiveId, 0);
+        (,, parked, exists) = adapterB.failedCrosschainMints(receiveId, 0);
+        assertTrue(exists, "late retry preserves the transport obligation");
+        assertEq(parked, 60);
+        assertEq(tokenA.totalSupply(id), 40);
+        assertEq(tokenB.totalSupply(id), 0, "expired destination cannot regain live supply");
+
+        adapterB.reclaimToSource(receiveId, 0);
+        _deliver(B_CHAIN_ID, address(adapterB), address(adapterA), bridge.lastPayload());
+        (,,, exists) = adapterB.failedCrosschainMints(receiveId, 0);
+        assertFalse(exists);
+        assertEq(tokenA.totalSupply(id), 100);
+        assertEq(tokenA.balanceOf(user, id), 100);
+        assertEq(tokenB.totalSupply(id), 0);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.NoSuchFailedCrosschainMint.selector, receiveId, 0));
         adapterB.reclaimToSource(receiveId, 0);
     }

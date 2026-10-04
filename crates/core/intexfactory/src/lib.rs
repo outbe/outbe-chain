@@ -34,3 +34,6 @@ pub mod bench_support {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod capacity_conservation_tests;

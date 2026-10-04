@@ -20,3 +20,6 @@ mod tests;
 pub use errors::DesisError;
 pub use runtime::{tick_gate, tick_schedule};
 pub use schema::{AuctionConfig, AuctionStage, BidData, ClearingResult, DesisContract};
+
+#[cfg(test)]
+mod capacity_conservation_tests;
