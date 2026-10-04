@@ -24,6 +24,9 @@ mod state;
 mod tree_manager;
 mod tree_service;
 
+#[cfg(feature = "test-utils")]
+pub mod test_support;
+
 #[doc(hidden)]
 pub mod bench_support;
 

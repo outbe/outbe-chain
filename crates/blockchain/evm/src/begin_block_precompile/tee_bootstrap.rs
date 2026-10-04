@@ -19,7 +19,7 @@ pub(super) fn prepare_tee_bootstrap(
     let expected_policy = activation
         .policy_at(ctx.block.block_number)
         .map_err(|error| PrecompileError::Fatal(format!("invalid active TEE policy: {error}")))?;
-    if &payload.policy != expected_policy {
+    if &payload.authority.policy != expected_policy {
         return Err(PrecompileError::Revert(
             "OST3 policy does not match the active ChainSpec schedule".into(),
         ));
@@ -47,15 +47,15 @@ pub(crate) fn run_tee_bootstrap_v1(
             "TeeBootstrapV2: registry already bootstrapped".into(),
         ));
     }
-    if payload.committee_snapshot_block != ctx.block.block_number {
+    if payload.authority.committee_snapshot_block != ctx.block.block_number {
         return Err(PrecompileError::Revert(format!(
             "TeeBootstrapV2: committee snapshot block {} does not equal current block {}",
-            payload.committee_snapshot_block, ctx.block.block_number
+            payload.authority.committee_snapshot_block, ctx.block.block_number
         )));
     }
 
     let active_policy = registry.active_policy_v1()?;
-    if active_policy != payload.policy {
+    if active_policy != payload.authority.policy {
         return Err(PrecompileError::Revert(
             "TeeBootstrapV2: payload policy is not the authoritative active V1 policy".into(),
         ));
@@ -107,7 +107,7 @@ pub(crate) fn run_tee_bootstrap_v1(
                 )
             })?;
     let committee_snapshot_hash = outbe_validatorset::committee_set_hash_v2(0, &snapshot);
-    if payload.committee_snapshot_hash != committee_snapshot_hash {
+    if payload.authority.committee_snapshot_hash != committee_snapshot_hash {
         return Err(PrecompileError::Revert(
             "TeeBootstrapV2: committee snapshot hash mismatch".into(),
         ));
@@ -133,19 +133,19 @@ pub(crate) fn run_tee_bootstrap_v1(
         )?;
     }
 
-    let policy_hash = payload.policy.policy_hash().map_err(|error| {
+    let policy_hash = payload.authority.policy.policy_hash().map_err(|error| {
         PrecompileError::Fatal(format!(
             "authoritative TeeBootstrapV2 policy cannot be hashed: {error}"
         ))
     })?;
     registry.write_bootstrap(&TeeBootstrapData {
-        tribute_offer_public_key: payload.tribute_offer_public_key,
+        tribute_offer_public_key: payload.authority.tribute_offer_public_key,
         policy_hash,
-        key_epoch: payload.key_epoch,
-        tribute_offer_epoch: payload.tribute_offer_epoch,
-        dkg_transcript_hash: payload.dkg_transcript_hash,
-        committee_snapshot_block: payload.committee_snapshot_block,
+        key_epoch: payload.authority.key_epoch,
+        tribute_offer_epoch: payload.authority.tribute_offer_epoch,
+        dkg_transcript_hash: payload.authority.dkg_transcript_hash,
+        committee_snapshot_block: payload.authority.committee_snapshot_block,
         committee_snapshot_hash,
-        tribute_offer_group_public_key: payload.tribute_offer_group_public_key.clone(),
+        tribute_offer_group_public_key: payload.authority.tribute_offer_group_public_key.clone(),
     })
 }

@@ -25,6 +25,7 @@ serde.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
 ckb-smt-pristine = { package = "outbe-sparse-merkle-tree-v061-pristine", path = "vendor/sparse-merkle-tree-pristine" }
 criterion.workspace = true
 proptest.workspace = true

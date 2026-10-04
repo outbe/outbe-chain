@@ -1,12 +1,17 @@
-//! Digest-bound proposal/parent resolution and epoch-continuity error classification.
+//! Resolve immutable candidate and parent independently, preserving deterministic rejection.
 use super::{ApplicationShared, ResolvedVerifyBlocks, VerifyRequest};
 use crate::application::handler::parent_round;
 use crate::application::{
     epoch_boundary::{self, EpochBoundaryParentError},
     verify_resolution::{resolve_for_verify, VerifyResolveTarget},
 };
-use commonware_consensus::types::View;
+use crate::block::ConsensusBlock;
 use tracing::warn;
+
+enum ResolutionFailure {
+    InvalidParent,
+    Unavailable(eyre::Report),
+}
 
 impl ApplicationShared {
     pub(super) async fn resolve_verify_blocks(
@@ -14,13 +19,66 @@ impl ApplicationShared {
         clock: &impl commonware_runtime::Clock,
         request: &VerifyRequest,
     ) -> eyre::Result<Option<ResolvedVerifyBlocks>> {
+        // Candidate unavailability cannot override a known invalid parent.
+        let resolved = futures::try_join!(
+            async {
+                Ok::<_, ResolutionFailure>(
+                    self.resolve_verification_candidate(clock, request).await,
+                )
+            },
+            self.resolve_verification_parent(clock, request),
+        )
+        .and_then(|(candidate, parent_block)| {
+            candidate.map(|block| ResolvedVerifyBlocks {
+                block,
+                parent_block,
+            })
+        });
+        match resolved {
+            Ok(blocks) => Ok(Some(blocks)),
+            Err(ResolutionFailure::InvalidParent) => Ok(None),
+            Err(ResolutionFailure::Unavailable(error)) => Err(error),
+        }
+    }
+
+    async fn resolve_verification_candidate(
+        &self,
+        clock: &impl commonware_runtime::Clock,
+        request: &VerifyRequest,
+    ) -> Result<ConsensusBlock, ResolutionFailure> {
+        let round = request.context.round;
+        let block = resolve_for_verify(
+            &self.block_cache,
+            &self.marshal_mailbox,
+            clock,
+            round,
+            request.payload_digest,
+            VerifyResolveTarget::Block,
+        )
+        .await
+        .map_err(|error| {
+            ResolutionFailure::Unavailable(eyre::eyre!("candidate unavailable: {error:?}"))
+        })?;
+        // Persistence outlives parent resolution and response cancellation.
+        if self.epoch_fence.check(round, block.number()).is_ok() {
+            self.publication.store_candidate(
+                &self.marshal_mailbox,
+                round,
+                std::sync::Arc::new(block.clone()),
+            );
+        }
+        Ok(block)
+    }
+
+    async fn resolve_verification_parent(
+        &self,
+        clock: &impl commonware_runtime::Clock,
+        request: &VerifyRequest,
+    ) -> Result<Option<ConsensusBlock>, ResolutionFailure> {
         let round = request.context.round;
         let parent_view = request.context.parent.0;
         let parent_digest = request.parent_digest();
-        let payload_digest = request.payload_digest;
-        // epoch continuity: special-case epoch boundary parent
-        // before falling back to chain-genesis / generic verify resolution.
-        let maybe_epoch_anchor = match epoch_boundary::resolve_epoch_boundary_parent(
+        match epoch_boundary::resolve_epoch_boundary_parent(
             &self.finalization_view,
             &self.marshal_mailbox,
             clock,
@@ -30,80 +88,33 @@ impl ApplicationShared {
         )
         .await
         {
-            Ok(opt) => opt,
+            Ok(Some(anchor)) => return Ok(Some(anchor.block)),
+            Ok(None) => {}
             Err(EpochBoundaryParentError::ParentMismatch { .. }) => {
-                // Invalid proposal: proposer chose a parent that does not match
-                // the committed continuity anchor. Deterministic reject.
-                warn!(
-                    %round,
-                    parent = %parent_digest.0,
-                    "verify: epoch boundary parent mismatch with finalized anchor"
-                );
-                return Ok(None);
+                warn!(%round, parent = %parent_digest.0, "verify: epoch boundary parent mismatch with finalized anchor");
+                return Err(ResolutionFailure::InvalidParent);
             }
             Err(error) => {
-                // Local infrastructure issue (missing anchor / marshal miss / hash mismatch).
-                // Do NOT vote false - a validator with a temporarily lagging finalization view
-                // or marshal store must not reject a block that is in fact valid. Bubble Err
-                // so the response channel drops, matching existing `resolve_for_verify`
-                // behaviour for local timeouts.
-                return Err(eyre::eyre!(
+                return Err(ResolutionFailure::Unavailable(eyre::eyre!(
                     "could not resolve epoch boundary parent: {error}"
-                ));
+                )))
             }
-        };
-        debug_assert!(
-            !(round.epoch().get() > 0
-                && parent_view == View::new(0)
-                && maybe_epoch_anchor.is_none()),
-            "resolve_epoch_boundary_parent invariant: epoch>0 && parent_view=0 must \
-             resolve to Some(EpochBoundaryParent) or return an explicit error"
-        );
-
-        let block_resolution = resolve_for_verify(
+        }
+        if parent_digest.0 == self.genesis_hash {
+            return Ok(None);
+        }
+        resolve_for_verify(
             &self.block_cache,
             &self.marshal_mailbox,
             clock,
-            round,
-            payload_digest,
-            VerifyResolveTarget::Block,
-        );
-        let parent_resolution = async {
-            if let Some(anchor) = maybe_epoch_anchor {
-                Ok(Some(anchor.block))
-            } else if parent_digest.0 == self.genesis_hash {
-                Ok(None)
-            } else {
-                resolve_for_verify(
-                    &self.block_cache,
-                    &self.marshal_mailbox,
-                    clock,
-                    parent_round(round, parent_view),
-                    parent_digest,
-                    VerifyResolveTarget::Parent,
-                )
-                .await
-                .map(Some)
-            }
-        };
-
-        // `futures::try_join!` is runtime-agnostic (no tokio reactor needed); it polls
-        // both resolutions concurrently and short-circuits on the first `Err`,
-        // identical to the prior `tokio::try_join!`.
-        let (block, parent_block) = match futures::try_join!(block_resolution, parent_resolution) {
-            Ok(result) => result,
-            Err(error) => {
-                return Err(eyre::eyre!(
-                    "failed to resolve verify payload or parent: error={error:?} round={round} digest={} parent={}",
-                    payload_digest.0,
-                    parent_digest.0
-                ));
-            }
-        };
-
-        Ok(Some(ResolvedVerifyBlocks {
-            block,
-            parent_block,
-        }))
+            parent_round(round, parent_view),
+            parent_digest,
+            VerifyResolveTarget::Parent,
+        )
+        .await
+        .map(Some)
+        .map_err(|error| {
+            ResolutionFailure::Unavailable(eyre::eyre!("parent unavailable: {error:?}"))
+        })
     }
 }

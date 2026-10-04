@@ -137,7 +137,7 @@ where
             .committee_provider
             .register(self.state.current_epoch, ordered_addresses.clone());
 
-        let outbe_reporter = OutbeReporter::with_context(
+        let outbe_reporter = OutbeReporter::new(
             self.reporter_continuity.clone(),
             outbe_consensus::reporter::ReporterCommittee {
                 validator_addresses: ordered_addresses,

@@ -3,25 +3,44 @@ use super::*;
 use crate::block::ConsensusBlock;
 use crate::follow::upstream::{AncestorFinalityProof, CertifiedFinalizedBlock};
 
-pub(super) struct ReplayWindow {
-    pub(super) anchor_epoch: Epoch,
-    pub(super) lower: Height,
-    pub(super) upper: Height,
+/// Inclusive replay interval and its trusted anchor epoch.
+/// Validation occurs when replay starts, before any upstream or archive I/O.
+pub struct ReplayWindow {
+    pub anchor_epoch: Epoch,
+    pub lower: Height,
+    pub upper: Height,
 }
-pub(super) struct ReplayAuthority<'a, F> {
-    pub(super) chain: &'a SharedCommitteeChain,
-    pub(super) source: &'a F,
-    pub(super) epocher: &'a FollowerEpocher,
+/// Borrowed authentication context shared by every record in a replay interval.
+pub struct ReplayAuthority<'a, F> {
+    pub chain: &'a SharedCommitteeChain,
+    pub source: &'a F,
+    pub epocher: &'a FollowerEpocher,
 }
-pub(super) struct ReplayArchives<FC, FB> {
+/// Owned archives handed to replay and returned separately on success.
+/// The input keeps certificates-before-blocks drop order until replay is polled.
+pub struct ReplayArchives<FC, FB> {
+    certificates: FC,
+    blocks: FB,
+}
+impl<FC, FB> ReplayArchives<FC, FB> {
+    /// Transfer archive ownership without reading, writing or syncing either archive.
+    pub const fn new(certificates: FC, blocks: FB) -> Self {
+        Self {
+            certificates,
+            blocks,
+        }
+    }
+}
+
+struct ReplayProgress<FC, FB> {
     // Retain the original locals' blocks-before-certificates drop order.
     blocks: FB,
     certificates: FC,
     wrote_certificates: bool,
     wrote_blocks: bool,
 }
-impl<FC, FB> ReplayArchives<FC, FB> {
-    pub(super) fn new(certificates: FC, blocks: FB) -> Self {
+impl<FC, FB> ReplayProgress<FC, FB> {
+    fn new(certificates: FC, blocks: FB) -> Self {
         Self {
             blocks,
             certificates,
@@ -34,12 +53,13 @@ impl<F: FinalizedSource> ReplayAuthority<'_, F> {
     pub(super) async fn run<FC, FB>(
         self,
         window: ReplayWindow,
-        mut archives: ReplayArchives<FC, FB>,
+        archives: ReplayArchives<FC, FB>,
     ) -> Result<(Epoch, FC, FB)>
     where
         FC: Certificates<BlockDigest = Digest, Commitment = Digest, Scheme = HybridScheme<MinSig>>,
         FB: Blocks<Block = ConsensusBlock>,
     {
+        let mut archives = ReplayProgress::new(archives.certificates, archives.blocks);
         let ReplayWindow {
             anchor_epoch,
             lower,
@@ -218,7 +238,7 @@ impl RetainedReplayBlock {
         }
     }
 }
-impl<FC, FB> ReplayArchives<FC, FB>
+impl<FC, FB> ReplayProgress<FC, FB>
 where
     FC: Certificates<BlockDigest = Digest, Commitment = Digest, Scheme = HybridScheme<MinSig>>,
     FB: Blocks<Block = ConsensusBlock>,

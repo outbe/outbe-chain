@@ -8,7 +8,10 @@ struct PreparationViews {
     successor: FinalizedStagedSuccessorPolicyV1,
 }
 
-pub(super) async fn prepare_candidate_key_ready_v1<R: RenewalRpc + Sync, N: UpgradeNodeSignerV1>(
+pub(super) async fn prepare_candidate_key_ready_v1<
+    R: RegistryRpc + Sync,
+    N: UpgradeNodeSignerV1,
+>(
     service: &mut UpgradeSubmissionService<'_, R, N>,
 ) -> Result<()> {
     let views = load_views(service).await?;
@@ -19,7 +22,7 @@ pub(super) async fn prepare_candidate_key_ready_v1<R: RenewalRpc + Sync, N: Upgr
     persist_key_ready(service, &views, prepared)
 }
 
-async fn load_views<R: RenewalRpc + Sync, N>(
+async fn load_views<R: RegistryRpc + Sync, N>(
     service: &UpgradeSubmissionService<'_, R, N>,
 ) -> Result<PreparationViews> {
     let rpc = service.rpc;

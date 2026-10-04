@@ -6,24 +6,6 @@ pub(super) const TEST_BLOCK_TIMESTAMP_BASE: u64 = 1_700_000_000;
 
 pub(super) const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
 
-pub(super) fn seed_compressed_entities_genesis(storage: StorageHandle<'_>) {
-    let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
-    storage
-        .sstore(
-            outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-            U256::ZERO,
-            U256::from(4),
-        )
-        .unwrap();
-    storage
-        .sstore(
-            outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-            U256::from(1),
-            U256::from_be_slice(root.as_slice()),
-        )
-        .unwrap();
-}
-
 fn seed_cycle_genesis(storage: StorageHandle<'_>) {
     let cycle = storage.contract::<outbe_cycle::schema::Cycle<'_>>();
     cycle
@@ -100,7 +82,9 @@ pub(super) fn numbered_test_address(prefix: u8, n: u64) -> Address {
 }
 
 pub(super) fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
-    use outbe_primitives::tee_test_utils::{gramine_direct_policy_v1, tee_attestation_v1_extra_field};
+    use outbe_primitives::tee_test_utils::{
+        gramine_direct_policy_v1, tee_attestation_v1_extra_field,
+    };
 
     let mut spec = MAINNET.as_ref().clone();
     spec.chain = CHAIN_ID.into();
@@ -193,7 +177,7 @@ fn state_with_active_proposer_fixture(
     let proposer_key = dummy_pubkey(0xA2);
     let install = test_ocomp_fork_install(&chain_spec, &[(proposer, proposer_key)]);
     StorageHandle::enter(&mut seed_storage, |storage| {
-        seed_compressed_entities_genesis(storage.clone());
+        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         seed_cycle_genesis(storage.clone());
         seed_registered_active_validator_with_registration(
             storage.clone(),
@@ -280,7 +264,7 @@ pub(super) fn state_with_active_proposer_and_funded_account_fixture(
     let proposer_key = dummy_pubkey(0xA2);
     let install = test_ocomp_fork_install(&chain_spec, &[(proposer, proposer_key)]);
     StorageHandle::enter(&mut seed_storage, |storage| {
-        seed_compressed_entities_genesis(storage.clone());
+        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         seed_cycle_genesis(storage.clone());
         seed_registered_active_validator_with_registration(
             storage.clone(),
@@ -381,7 +365,7 @@ pub(super) fn state_with_active_validators_seeded_at_block_with_cycle_frames(
     let install = test_ocomp_fork_install(&chain_spec, validators);
     seed_storage.set_block_number(block_number);
     StorageHandle::enter(&mut seed_storage, |storage| {
-        seed_compressed_entities_genesis(storage.clone());
+        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         seed_cycle_genesis(storage.clone());
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
@@ -522,36 +506,51 @@ pub(super) fn execution_ctx_with_tee_bootstrap<'a>(
     ctx
 }
 
+pub(super) enum BootstrapFixture {
+    StandardForBlock,
+    Payload(Box<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>),
+    Absent,
+}
+
+impl BootstrapFixture {
+    pub(super) fn explicit(
+        payload: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
+    ) -> Self {
+        match payload {
+            Some(payload) => Self::Payload(Box::new(payload)),
+            None => Self::Absent,
+        }
+    }
+}
+
+pub(super) struct BeginBlockFixture<'a> {
+    pub(super) block_number: u64,
+    pub(super) parent_hash: B256,
+    pub(super) extra_data: &'a Bytes,
+    pub(super) parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
+    pub(super) proposer: Address,
+    pub(super) bootstrap: BootstrapFixture,
+}
+
 pub(super) fn begin_system_txs_for_test(
     config: &OutbeEvmConfig,
-    block_number: u64,
-    parent_hash: B256,
-    extra_data: &Bytes,
-    parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
-    proposer: Address,
+    input: BeginBlockFixture<'_>,
 ) -> Vec<reth_primitives_traits::Recovered<reth_ethereum::TransactionSigned>> {
-    let pending_tee_bootstrap =
-        (block_number == 1).then(|| sample_tee_bootstrap_payload(block_number));
-    begin_system_txs_for_test_with_bootstrap(
-        config,
+    let BeginBlockFixture {
         block_number,
         parent_hash,
         extra_data,
         parent_consensus_metadata,
         proposer,
-        pending_tee_bootstrap,
-    )
-}
-
-pub(super) fn begin_system_txs_for_test_with_bootstrap(
-    config: &OutbeEvmConfig,
-    block_number: u64,
-    parent_hash: B256,
-    extra_data: &Bytes,
-    parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
-    proposer: Address,
-    pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
-) -> Vec<reth_primitives_traits::Recovered<reth_ethereum::TransactionSigned>> {
+        bootstrap,
+    } = input;
+    let pending_tee_bootstrap = match bootstrap {
+        BootstrapFixture::StandardForBlock => {
+            (block_number == 1).then(|| sample_tee_bootstrap_payload(block_number))
+        }
+        BootstrapFixture::Payload(payload) => Some(*payload),
+        BootstrapFixture::Absent => None,
+    };
     config
         .build_begin_system_txs(
             block_number,
@@ -969,6 +968,7 @@ pub(super) fn empty_executor_inputs(parent_hash: B256) -> BlockExecutorInputs {
             block_extra_data: Bytes::new(),
             validate_execution_summary: false,
             block_hash: None,
+            block_state_root: None,
             parent_hash,
         },
         system_plan: BlockSystemPlan {
@@ -978,12 +978,15 @@ pub(super) fn empty_executor_inputs(parent_hash: B256) -> BlockExecutorInputs {
             proposer_evm_address: None,
             execute_outbe_block_hooks: true,
             prebuilt_phase1_tx: None,
+            pending_tee_bootstrap: None,
+            ocomp_lifecycle_active: false,
         },
         parent_accounting: ParentAccountingInputs {
             accounted_parent_artifact_provider: None,
             parent_consensus_metadata: None,
             parent_artifact_hint: None,
         },
+        runtime: empty_execution_runtime(),
         dependencies: BlockExecutionDependencies {
             bridge: None,
             evm_signer: None,
@@ -1009,6 +1012,7 @@ pub(super) fn executor_inputs_from_ctx(
             block_extra_data: Bytes::new(),
             validate_execution_summary,
             block_hash: None,
+            block_state_root: None,
             parent_hash: ctx.inner.parent_hash,
         },
         system_plan: BlockSystemPlan {
@@ -1018,17 +1022,39 @@ pub(super) fn executor_inputs_from_ctx(
             proposer_evm_address,
             execute_outbe_block_hooks,
             prebuilt_phase1_tx,
+            pending_tee_bootstrap: None,
+            ocomp_lifecycle_active: false,
         },
         parent_accounting: ParentAccountingInputs {
             accounted_parent_artifact_provider: None,
             parent_consensus_metadata,
             parent_artifact_hint,
         },
+        runtime: empty_execution_runtime(),
         dependencies: BlockExecutionDependencies {
             bridge: None,
             evm_signer,
         },
     }
+}
+
+fn empty_execution_runtime() -> BlockExecutionRuntime {
+    BlockExecutionRuntime {
+        compressed_entities_scope: Arc::new(ExecutionScope::new()),
+        compressed_tree_service: None,
+        runtime_body_readers: None,
+        execution_read_budget: None,
+    }
+}
+
+pub(super) fn executor_inputs_with_bootstrap(
+    ctx: &OutbeBlockExecutionCtx<'_>,
+    evm_signer: Option<SharedOutbeEvmSigner>,
+    validate_execution_summary: bool,
+) -> BlockExecutorInputs {
+    let mut inputs = executor_inputs_from_ctx(ctx, evm_signer, validate_execution_summary);
+    inputs.system_plan.pending_tee_bootstrap = ctx.pending_tee_bootstrap.clone();
+    inputs
 }
 
 /// Independent trie-root projection of the executed test bundle.
@@ -1070,4 +1096,82 @@ pub(super) fn seed_cycle_tick_genesis(
     let trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
     cycle.last_executed_at.write(&trigger, genesis_ts + 60)?;
     Ok(())
+}
+
+/// Observations from the executed prefix, without deriving any expected result.
+pub(super) struct CycleObservation {
+    pub(super) visible_gas: u64,
+    pub(super) internal_gas: u64,
+    pub(super) receipt_index: usize,
+}
+
+pub(super) fn observe_cycle_tick(
+    system_txs: Vec<Recovered<TransactionSigned>>,
+    decode_message: &str,
+    mut execute: impl FnMut(Recovered<TransactionSigned>) -> CycleObservation,
+) -> Option<CycleObservation> {
+    for tx in system_txs {
+        let kind = SystemTxInputV2::decode(tx.tx().input().as_ref())
+            .expect(decode_message)
+            .kind();
+        let observation = execute(tx);
+        if kind == SystemTxKind::CycleTick {
+            return Some(observation);
+        }
+    }
+    None
+}
+
+pub(super) struct ParentAccountingFixture {
+    pub(super) parent_hash: B256,
+    pub(super) metadata: CertifiedParentAccountingMetadata,
+    pub(super) artifact: AccountedParentArtifact,
+    pub(super) proposer: Address,
+}
+
+pub(super) fn parent_accounting_context(
+    input: ParentAccountingFixture,
+) -> OutbeBlockExecutionCtx<'static> {
+    let mut execution = execution_ctx(Some(0), Bytes::new());
+    execution.inner.parent_hash = input.parent_hash;
+    execution.parent_consensus_metadata = Some(input.metadata);
+    execution.parent_artifact_hint = Some(input.artifact);
+    execution.proposer_evm_address = Some(input.proposer);
+    execution
+}
+
+pub(super) struct BeginPrefixCheck<'a> {
+    pub(super) execution_message: &'a str,
+    pub(super) cumulative_receipts: bool,
+}
+
+pub(super) fn assert_begin_prefix_gas<E>(
+    executor: &mut E,
+    system_txs: Vec<Recovered<TransactionSigned>>,
+    check: BeginPrefixCheck<'_>,
+) -> u64
+where
+    E: alloy_evm::block::BlockExecutor<Transaction = TransactionSigned, Receipt = Receipt>,
+    E::Evm: reth_ethereum::evm::primitives::Evm<Tx = revm::context::TxEnv>,
+{
+    let mut visible_system_gas_used = 0u64;
+    for tx in system_txs {
+        let signed_gas_limit = tx.tx().gas_limit();
+        let gas_output = executor
+            .execute_transaction(tx)
+            .expect(check.execution_message);
+        assert!(gas_output.tx_gas_used() <= signed_gas_limit);
+        visible_system_gas_used += gas_output.tx_gas_used();
+        if check.cumulative_receipts {
+            assert_eq!(
+                executor
+                    .receipts()
+                    .last()
+                    .expect("system receipt should be present")
+                    .cumulative_gas_used,
+                visible_system_gas_used,
+            );
+        }
+    }
+    visible_system_gas_used
 }

@@ -12,6 +12,8 @@
 //! `Success` with empty returndata; here we assert the returndata equals the
 //! Poseidon hash of the input.
 
+mod sub_call_support;
+
 use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, B256, U256};
@@ -106,11 +108,7 @@ fn subcall_reaches_outbe_poseidon_precompile() {
 
     let result = sub_call::run(
         &mut ctx,
-        CALLER,
-        /* outer_is_static = */ false,
-        SpecId::PRAGUE,
-        None,
-        Arc::new(ExecutionScope::new()),
+        sub_call_support::fresh_environment(CALLER, SpecId::PRAGUE),
         SubCallInput {
             target: ZKPROOF_POSEIDON_ADDRESS,
             value: U256::ZERO,
@@ -158,11 +156,7 @@ fn subcall_reaches_stablecoin_policy_registry_with_canonical_view_output() {
 
     let result = sub_call::run(
         &mut ctx,
-        CALLER,
-        false,
-        SpecId::PRAGUE,
-        None,
-        Arc::new(ExecutionScope::new()),
+        sub_call_support::fresh_environment(CALLER, SpecId::PRAGUE),
         SubCallInput {
             target: STABLECOIN_POLICY_REGISTRY_ADDRESS,
             value: U256::ZERO,
@@ -223,11 +217,7 @@ fn contract_originated_poseidon_call_receives_its_calldata() {
 
     let result = sub_call::run(
         &mut ctx,
-        CALLER,
-        false,
-        SpecId::PRAGUE,
-        None,
-        Arc::new(ExecutionScope::new()),
+        sub_call_support::fresh_environment(CALLER, SpecId::PRAGUE),
         SubCallInput {
             target: POSEIDON_CALLER,
             value: U256::ZERO,
@@ -333,11 +323,13 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
 
     let result = sub_call::run(
         &mut ctx,
-        CALLER,
-        false,
-        SpecId::PRAGUE,
-        Some(readers),
-        scope,
+        sub_call::SubCallEnvironment {
+            self_address: CALLER,
+            outer_is_static: false,
+            spec: SpecId::PRAGUE,
+            runtime_body_readers: Some(readers),
+            execution_scope: scope,
+        },
         SubCallInput {
             target: NOD_ADDRESS,
             value: U256::ZERO,

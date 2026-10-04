@@ -109,37 +109,6 @@ pub struct EpochMuxHandles<'a, S: P2pSender, R: P2pReceiver<PublicKey = S::Publi
 pub async fn reacquire_epoch_subchannels<S, R, C>(
     epoch: Epoch,
     clock: &C,
-    timeout: Duration,
-    retry_interval: Duration,
-    vote_mux: &mut MuxHandle<S, R>,
-    cert_mux: &mut MuxHandle<S, R>,
-    res_mux: &mut MuxHandle<S, R>,
-) -> Result<EpochSubchannels<S, R>>
-where
-    S: P2pSender,
-    R: P2pReceiver<PublicKey = S::PublicKey>,
-    C: Clock,
-{
-    reacquire_epoch_subchannels_with_policy(
-        epoch,
-        clock,
-        SubchannelRetryPolicy {
-            timeout,
-            retry_interval,
-        },
-        EpochMuxHandles {
-            vote: vote_mux,
-            cert: cert_mux,
-            res: res_mux,
-        },
-    )
-    .await
-}
-
-/// Reacquire all three routes with explicit retry timing and exclusive mux custody.
-pub async fn reacquire_epoch_subchannels_with_policy<S, R, C>(
-    epoch: Epoch,
-    clock: &C,
     policy: SubchannelRetryPolicy,
     muxes: EpochMuxHandles<'_, S, R>,
 ) -> Result<EpochSubchannels<S, R>>

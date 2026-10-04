@@ -89,6 +89,7 @@ fn run_live_loop_propagates_fatal_executor_error() {
             fcu_heartbeat_interval: std::time::Duration::from_secs(3600),
             next_fcu_heartbeat_deadline: context.current() + std::time::Duration::from_secs(3600),
             pending_finalized_subscriptions: std::collections::BTreeMap::new(),
+            verification: Default::default(),
         };
 
         // Engine rejects the finalized block -> handle_finalize_inner Err.
@@ -151,6 +152,7 @@ fn mailbox_updates_are_processed_before_ready_heartbeat() {
             fcu_heartbeat_interval: std::time::Duration::ZERO,
             next_fcu_heartbeat_deadline: context.current(),
             pending_finalized_subscriptions: std::collections::BTreeMap::new(),
+            verification: Default::default(),
         };
 
         for (height, digest) in [

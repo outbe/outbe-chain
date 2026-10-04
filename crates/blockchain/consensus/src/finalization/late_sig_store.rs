@@ -89,7 +89,7 @@ pub struct LateFinalizeCommittee {
 /// `(epoch, view, parent_view)` for the same `fb_hash` (equivocation / a buggy or
 /// Byzantine validator gossiping across views) MUST NOT be merged into the
 /// canonical aggregate - it would fail `verify_same_message` and poison the whole
-/// per-block credit. We keep the per-vote binding so `resolve_finalized` can drop
+/// per-block credit. We keep the per-vote binding so `resolve_finalized_target` can drop
 /// any vote whose binding != the finalized certificate's.
 #[derive(Clone)]
 struct BoundVote {
@@ -107,7 +107,7 @@ struct PendingTarget {
     /// signer committee index -> that signer's bound individual MinPk finalize
     /// vote. The binding travels with each vote so cross-view votes for the same
     /// `fb_hash` are filtered out against the canonical certificate at
-    /// `resolve_finalized` time.
+    /// `resolve_finalized_target` time.
     votes: BTreeMap<u32, BoundVote>,
 }
 
@@ -156,29 +156,6 @@ impl LateFinalizeSigStore {
     /// after the eager quorum finalized the block - but ONLY if its binding
     /// matches the canonical certificate's; a cross-view vote for the same
     /// `fb_hash` is dropped so it cannot poison the canonical aggregate.
-    #[allow(clippy::too_many_arguments)]
-    pub fn record_vote(
-        &mut self,
-        epoch: u64,
-        view: u64,
-        parent_view: u64,
-        fb_hash: B256,
-        signer: u32,
-        sig: MinPkSig,
-    ) {
-        self.record_bound_vote(
-            FinalizeVoteTarget {
-                epoch,
-                view,
-                parent_view,
-                fb_hash,
-            },
-            signer,
-            sig,
-        );
-    }
-
-    /// Buffer a verified vote bound to its exact signed proposal.
     pub fn record_bound_vote(&mut self, target: FinalizeVoteTarget, signer: u32, sig: MinPkSig) {
         let binding = target;
         let FinalizeVoteTarget {
@@ -221,34 +198,11 @@ impl LateFinalizeSigStore {
         }
     }
 
-    /// Convenience over [`Self::record_vote`] taking the raw MinPk individual
+    /// Convenience over [`Self::record_bound_vote`] taking the raw MinPk individual
     /// vote as a `bls12381::Signature` (the `bls_individual_vote` carried in a
     /// consensus `HybridSignature`). Keeps the MinPk-variant conversion in one
-    /// place so callers in `reporter.rs` stay free of variant generics. The
+    /// place so callers stay free of variant generics. The
     /// caller MUST have verified the finalize vote's signature first.
-    #[allow(clippy::too_many_arguments)]
-    pub fn record_individual_vote(
-        &mut self,
-        epoch: u64,
-        view: u64,
-        parent_view: u64,
-        fb_hash: B256,
-        signer: u32,
-        bls_individual_vote: &bls12381::Signature,
-    ) {
-        self.record_bound_individual_vote(
-            FinalizeVoteTarget {
-                epoch,
-                view,
-                parent_view,
-                fb_hash,
-            },
-            signer,
-            bls_individual_vote,
-        );
-    }
-
-    /// Record a raw MinPk vote after the caller verified its exact proposal binding.
     pub fn record_bound_individual_vote(
         &mut self,
         target: FinalizeVoteTarget,
@@ -266,33 +220,6 @@ impl LateFinalizeSigStore {
     // The canonical certificate binding (epoch/view/parent_view/fb_hash/
     // committee_set_hash/committee_size) is irreducible here: every field is bound
     // into the per-block credit so a pure post-finalization vote still verifies.
-    #[allow(clippy::too_many_arguments)]
-    pub fn resolve_finalized(
-        &mut self,
-        epoch: u64,
-        view: u64,
-        parent_view: u64,
-        fb_number: u64,
-        fb_hash: B256,
-        committee_set_hash: B256,
-        committee_size: usize,
-    ) {
-        self.resolve_finalized_target(
-            FinalizeVoteTarget {
-                epoch,
-                view,
-                parent_view,
-                fb_hash,
-            },
-            fb_number,
-            LateFinalizeCommittee {
-                set_hash: committee_set_hash,
-                size: committee_size,
-            },
-        );
-    }
-
-    /// Resolve and prune a canonical proposal without separating its signed fields.
     pub fn resolve_finalized_target(
         &mut self,
         binding: FinalizeVoteTarget,
@@ -496,23 +423,29 @@ mod tests {
 
         let mut store = LateFinalizeSigStore::new(3);
         for i in [0u32, 1, 2] {
-            store.record_vote(
-                epoch,
-                view,
-                parent_view,
-                fb,
+            store.record_bound_vote(
+                FinalizeVoteTarget {
+                    epoch,
+                    view,
+                    parent_view,
+                    fb_hash: fb,
+                },
                 i,
                 finalize_sig(&keys, &keys[i as usize], epoch, view, parent_view, fb),
             );
         }
-        store.resolve_finalized(
-            epoch,
-            view,
-            parent_view,
+        store.resolve_finalized_target(
+            FinalizeVoteTarget {
+                epoch,
+                view,
+                parent_view,
+                fb_hash: fb,
+            },
             fb_number,
-            fb,
-            csh,
-            snapshot.committee.len(),
+            LateFinalizeCommittee {
+                set_hash: csh,
+                size: snapshot.committee.len(),
+            },
         );
 
         // Proposer of block 11: target 10 is in [11-3, 10] = [8, 10].
@@ -533,8 +466,29 @@ mod tests {
         let csh = committee_set_hash_v2(1, &snapshot);
         let fb = B256::repeat_byte(0x01);
         let mut store = LateFinalizeSigStore::new(3);
-        store.record_vote(1, 9, 8, fb, 0, finalize_sig(&keys, &keys[0], 1, 9, 8, fb));
-        store.resolve_finalized(1, 9, 8, 10, fb, csh, 4);
+        store.record_bound_vote(
+            FinalizeVoteTarget {
+                epoch: 1,
+                view: 9,
+                parent_view: 8,
+                fb_hash: fb,
+            },
+            0,
+            finalize_sig(&keys, &keys[0], 1, 9, 8, fb),
+        );
+        store.resolve_finalized_target(
+            FinalizeVoteTarget {
+                epoch: 1,
+                view: 9,
+                parent_view: 8,
+                fb_hash: fb,
+            },
+            10,
+            LateFinalizeCommittee {
+                set_hash: csh,
+                size: 4,
+            },
+        );
 
         // Proposer at block 14: window [11, 13] - target 10 is too old.
         assert!(store.build_artifact(14).batches.is_empty());
@@ -550,19 +504,54 @@ mod tests {
         let fb = B256::repeat_byte(0x02);
         let fb2 = B256::repeat_byte(0x22);
         let mut store = LateFinalizeSigStore::new(3);
-        store.record_vote(1, 9, 8, fb, 0, finalize_sig(&keys, &keys[0], 1, 9, 8, fb));
-        store.resolve_finalized(1, 9, 8, 10, fb, committee_set_hash_v2(1, &snapshot), 4);
+        store.record_bound_vote(
+            FinalizeVoteTarget {
+                epoch: 1,
+                view: 9,
+                parent_view: 8,
+                fb_hash: fb,
+            },
+            0,
+            finalize_sig(&keys, &keys[0], 1, 9, 8, fb),
+        );
+        store.resolve_finalized_target(
+            FinalizeVoteTarget {
+                epoch: 1,
+                view: 9,
+                parent_view: 8,
+                fb_hash: fb,
+            },
+            10,
+            LateFinalizeCommittee {
+                set_hash: committee_set_hash_v2(1, &snapshot),
+                size: 4,
+            },
+        );
         assert_eq!(store.resolved_len(), 1);
         // A much later finalization prunes the old target (10 < 100 - 3).
-        store.record_vote(
-            1,
-            99,
-            98,
-            fb2,
+        store.record_bound_vote(
+            FinalizeVoteTarget {
+                epoch: 1,
+                view: 99,
+                parent_view: 98,
+                fb_hash: fb2,
+            },
             0,
             finalize_sig(&keys, &keys[0], 1, 99, 98, fb2),
         );
-        store.resolve_finalized(1, 99, 98, 100, fb2, committee_set_hash_v2(1, &snapshot), 4);
+        store.resolve_finalized_target(
+            FinalizeVoteTarget {
+                epoch: 1,
+                view: 99,
+                parent_view: 98,
+                fb_hash: fb2,
+            },
+            100,
+            LateFinalizeCommittee {
+                set_hash: committee_set_hash_v2(1, &snapshot),
+                size: 4,
+            },
+        );
         assert_eq!(store.resolved_len(), 1);
     }
 
@@ -571,10 +560,40 @@ mod tests {
         let keys = keys(4);
         let fb = B256::repeat_byte(0x03);
         let mut store = LateFinalizeSigStore::new(3);
-        store.record_vote(1, 9, 8, fb, 0, finalize_sig(&keys, &keys[0], 1, 9, 8, fb));
+        store.record_bound_vote(
+            FinalizeVoteTarget {
+                epoch: 1,
+                view: 9,
+                parent_view: 8,
+                fb_hash: fb,
+            },
+            0,
+            finalize_sig(&keys, &keys[0], 1, 9, 8, fb),
+        );
         // Second vote from the same signer/fb_hash must not overwrite or duplicate.
-        store.record_vote(1, 9, 8, fb, 0, finalize_sig(&keys, &keys[0], 1, 9, 8, fb));
-        store.resolve_finalized(1, 9, 8, 10, fb, B256::ZERO, 4);
+        store.record_bound_vote(
+            FinalizeVoteTarget {
+                epoch: 1,
+                view: 9,
+                parent_view: 8,
+                fb_hash: fb,
+            },
+            0,
+            finalize_sig(&keys, &keys[0], 1, 9, 8, fb),
+        );
+        store.resolve_finalized_target(
+            FinalizeVoteTarget {
+                epoch: 1,
+                view: 9,
+                parent_view: 8,
+                fb_hash: fb,
+            },
+            10,
+            LateFinalizeCommittee {
+                set_hash: B256::ZERO,
+                size: 4,
+            },
+        );
         let artifact = store.build_artifact(11);
         assert_eq!(artifact.batches.len(), 1);
         // One signer bit set.
@@ -602,30 +621,38 @@ mod tests {
 
         let mut store = LateFinalizeSigStore::new(3);
         // Eager voter 0 before finalization.
-        store.record_vote(
-            epoch,
-            view,
-            parent_view,
-            fb,
+        store.record_bound_vote(
+            FinalizeVoteTarget {
+                epoch,
+                view,
+                parent_view,
+                fb_hash: fb,
+            },
             0,
             finalize_sig(&keys, &keys[0], epoch, view, parent_view, fb),
         );
-        store.resolve_finalized(
-            epoch,
-            view,
-            parent_view,
+        store.resolve_finalized_target(
+            FinalizeVoteTarget {
+                epoch,
+                view,
+                parent_view,
+                fb_hash: fb,
+            },
             fb_number,
-            fb,
-            csh,
-            snapshot.committee.len(),
+            LateFinalizeCommittee {
+                set_hash: csh,
+                size: snapshot.committee.len(),
+            },
         );
 
         // Slow voter 1 arrives AFTER finalization for the same fb_hash.
-        store.record_vote(
-            epoch,
-            view,
-            parent_view,
-            fb,
+        store.record_bound_vote(
+            FinalizeVoteTarget {
+                epoch,
+                view,
+                parent_view,
+                fb_hash: fb,
+            },
             1,
             finalize_sig(&keys, &keys[1], epoch, view, parent_view, fb),
         );
@@ -653,19 +680,23 @@ mod tests {
 
         let mut store = LateFinalizeSigStore::new(3);
         // Same signer signs two different proposals at the same view.
-        store.record_vote(
-            epoch,
-            view,
-            parent_view,
-            fb1,
+        store.record_bound_vote(
+            FinalizeVoteTarget {
+                epoch,
+                view,
+                parent_view,
+                fb_hash: fb1,
+            },
             0,
             finalize_sig(&keys, &keys[0], epoch, view, parent_view, fb1),
         );
-        store.record_vote(
-            epoch,
-            view,
-            parent_view,
-            fb2,
+        store.record_bound_vote(
+            FinalizeVoteTarget {
+                epoch,
+                view,
+                parent_view,
+                fb_hash: fb2,
+            },
             0,
             finalize_sig(&keys, &keys[0], epoch, view, parent_view, fb2),
         );
@@ -676,7 +707,7 @@ mod tests {
 
     /// a *pure* post-finalization vote - one
     /// where NOTHING was buffered before the block finalized - must still build a
-    /// credit that the verifier accepts. `resolve_finalized` creates the target
+    /// credit that the verifier accepts. `resolve_finalized_target` creates the target
     /// with the canonical `(epoch, parent_view)` from the finalized certificate,
     /// not `0`/`0`; the round-2 regression filled those with zero, so the rebuilt
     /// proposal mismatched what the signer signed and the aggregate failed.
@@ -691,23 +722,29 @@ mod tests {
 
         let mut store = LateFinalizeSigStore::new(3);
         // Finalization happens with NO vote buffered for this fb_hash.
-        store.resolve_finalized(
-            epoch,
-            view,
-            parent_view,
+        store.resolve_finalized_target(
+            FinalizeVoteTarget {
+                epoch,
+                view,
+                parent_view,
+                fb_hash: fb,
+            },
             fb_number,
-            fb,
-            csh,
-            snapshot.committee.len(),
+            LateFinalizeCommittee {
+                set_hash: csh,
+                size: snapshot.committee.len(),
+            },
         );
         assert_eq!(store.pending_vote_count(fb), 0);
 
         // The validator's own finalize vote arrives strictly after finalization.
-        store.record_vote(
-            epoch,
-            view,
-            parent_view,
-            fb,
+        store.record_bound_vote(
+            FinalizeVoteTarget {
+                epoch,
+                view,
+                parent_view,
+                fb_hash: fb,
+            },
             2,
             finalize_sig(&keys, &keys[2], epoch, view, parent_view, fb),
         );
@@ -746,38 +783,48 @@ mod tests {
         let mut store = LateFinalizeSigStore::new(3);
         // Pending-merge path: honest signer 0 at the canonical binding, plus a
         // cross-view signer 1 (valid over view=99) - both buffered before resolve.
-        store.record_vote(
-            epoch,
-            view,
-            parent_view,
-            fb,
+        store.record_bound_vote(
+            FinalizeVoteTarget {
+                epoch,
+                view,
+                parent_view,
+                fb_hash: fb,
+            },
             0,
             finalize_sig(&keys, &keys[0], epoch, view, parent_view, fb),
         );
-        store.record_vote(
-            epoch,
-            bad_view,
-            parent_view,
-            fb,
+        store.record_bound_vote(
+            FinalizeVoteTarget {
+                epoch,
+                view: bad_view,
+                parent_view,
+                fb_hash: fb,
+            },
             1,
             finalize_sig(&keys, &keys[1], epoch, bad_view, parent_view, fb),
         );
-        store.resolve_finalized(
-            epoch,
-            view,
-            parent_view,
+        store.resolve_finalized_target(
+            FinalizeVoteTarget {
+                epoch,
+                view,
+                parent_view,
+                fb_hash: fb,
+            },
             fb_number,
-            fb,
-            csh,
-            snapshot.committee.len(),
+            LateFinalizeCommittee {
+                set_hash: csh,
+                size: snapshot.committee.len(),
+            },
         );
 
         // Post-resolution late-arrival path: another cross-view signer 2.
-        store.record_vote(
-            epoch,
-            bad_view,
-            parent_view,
-            fb,
+        store.record_bound_vote(
+            FinalizeVoteTarget {
+                epoch,
+                view: bad_view,
+                parent_view,
+                fb_hash: fb,
+            },
             2,
             finalize_sig(&keys, &keys[2], epoch, bad_view, parent_view, fb),
         );

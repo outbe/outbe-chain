@@ -265,8 +265,17 @@ fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifact
         .with_evm_signer(signer)
         .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1))
         .with_ocomp_fork_install(install.clone());
-        let begin =
-            begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
+        let begin = begin_system_txs_for_test(
+            &config,
+            BeginBlockFixture {
+                block_number: 1,
+                parent_hash: B256::ZERO,
+                extra_data: &Bytes::new(),
+                parent_consensus_metadata: None,
+                proposer,
+                bootstrap: BootstrapFixture::StandardForBlock,
+            },
+        );
         let end = config
             .build_end_system_txs(1, CHAIN_ID, begin.len(), Some(proposer))
             .expect("terminal system tx builds");
@@ -480,11 +489,14 @@ fn proposer_validator_same_state_root() {
         });
         let system_txs = begin_system_txs_for_test(
             &config,
-            settle_block,
-            parent_hash,
-            &extra_data,
-            Some(metadata),
-            proposer,
+            BeginBlockFixture {
+                block_number: settle_block,
+                parent_hash,
+                extra_data: &extra_data,
+                parent_consensus_metadata: Some(metadata),
+                proposer,
+                bootstrap: BootstrapFixture::StandardForBlock,
+            },
         );
         for tx in system_txs {
             executor
@@ -672,11 +684,14 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
         parent_metadata.finalized_block_hash = seed_hash;
         let system_txs = begin_system_txs_for_test(
             &config,
-            2,
-            seed_hash,
-            &Bytes::new(),
-            Some(parent_metadata.clone()),
-            proposer,
+            BeginBlockFixture {
+                block_number: 2,
+                parent_hash: seed_hash,
+                extra_data: &Bytes::new(),
+                parent_consensus_metadata: Some(parent_metadata.clone()),
+                proposer,
+                bootstrap: BootstrapFixture::StandardForBlock,
+            },
         );
         let visible_envelopes: Vec<u64> = system_txs.iter().map(|tx| tx.tx().gas_limit()).collect();
         let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
@@ -1541,11 +1556,14 @@ mod factory_boundary {
         let (config, metadata, parent_hash) = execution_config(&fixture, signer);
         let system_txs = begin_system_txs_for_test(
             &config,
-            finalization_block,
-            parent_hash,
-            &Bytes::new(),
-            Some(metadata.clone()),
-            proposer,
+            BeginBlockFixture {
+                block_number: finalization_block,
+                parent_hash,
+                extra_data: &Bytes::new(),
+                parent_consensus_metadata: Some(metadata.clone()),
+                proposer,
+                bootstrap: BootstrapFixture::StandardForBlock,
+            },
         );
         let evm = config.evm_with_env(
             &mut state,

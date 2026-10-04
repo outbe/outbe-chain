@@ -4,6 +4,7 @@
 //! against seeded oracle history, so the breach count is recomputed from the
 //! finalized daily VWAP series exactly as it is in a block.
 
+use outbe_compressed_entities::test_support::seed_compressed_entities_genesis;
 use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, U256};
@@ -13,7 +14,7 @@ use outbe_offchain_storage::MemoryStorage;
 use outbe_oracle::{api::AddressPair, schema::OracleContract};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
-    addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS},
+    addresses::NOD_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     math::constants::MAX_BIN_ID,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
@@ -70,21 +71,8 @@ fn below_call() -> U256 {
     U256::from(4_000_000u64)
 }
 
-fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
-    storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-        .unwrap();
-    storage
-        .sstore(
-            COMPRESSED_ENTITIES_ADDRESS,
-            U256::from(1),
-            U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(B256::ZERO)
-                    .unwrap()
-                    .as_slice(),
-            ),
-        )
-        .unwrap();
+fn seed_production_nod_genesis(storage: &StorageHandle<'_>) {
+    seed_compressed_entities_genesis(storage).expect("CE genesis fixture");
     // These tests exercise the production call terms.
     NodContract::new(storage.clone())
         .config_profile
@@ -234,7 +222,7 @@ fn harness(body: impl FnOnce(&StorageHandle<'_>, &ExecutionScope, &NodRepository
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         register(&storage, ISO);
         body(&storage, &scope, &parent);
@@ -312,27 +300,24 @@ fn forfeited_event_loads(provider: &HashMapStorageProvider) -> U256 {
 
 // --- Sealed call terms -----------------------------------------------------
 
-/// Rewrites the terms a bucket sealed at issuance, the way a retuned constant
-/// would have if later checks still read the constants. Widens the currency's
-/// high-water mark alongside, exactly as `seal_bucket_call_terms` does.
-fn reterm(
-    storage: &StorageHandle<'_>,
-    bucket_key: B256,
-    iso: u16,
+struct SealedCallTerms {
     window_days: u32,
     threshold_days: u32,
     notice_days: u32,
-) {
+}
+
+/// Rewrites sealed terms and widens the currency high-water mark as at issuance.
+fn reterm(storage: &StorageHandle<'_>, bucket_key: B256, iso: u16, terms: SealedCallTerms) {
     let nod = NodContract::new(storage.clone());
-    let window = window_days * SECS_PER_DAY;
+    let window = terms.window_days * SECS_PER_DAY;
     nod.callable_bucket_call_window_seconds
         .write(&bucket_key, window)
         .unwrap();
     nod.callable_bucket_call_threshold_seconds
-        .write(&bucket_key, threshold_days * SECS_PER_DAY)
+        .write(&bucket_key, terms.threshold_days * SECS_PER_DAY)
         .unwrap();
     nod.callable_bucket_call_notice_period_seconds
-        .write(&bucket_key, notice_days * SECS_PER_DAY)
+        .write(&bucket_key, terms.notice_days * SECS_PER_DAY)
         .unwrap();
     if window > nod.max_call_window_seconds.read(&iso).unwrap() {
         nod.max_call_window_seconds.write(&iso, window).unwrap();
@@ -498,7 +483,16 @@ fn the_scan_follows_the_terms_sealed_on_the_bucket_not_the_constants() {
             "the constant's 21-of-28 threshold is unmet"
         );
 
-        reterm(storage, item.bucket_key, ISO, 3, 3, 1);
+        reterm(
+            storage,
+            item.bucket_key,
+            ISO,
+            SealedCallTerms {
+                window_days: 3,
+                threshold_days: 3,
+                notice_days: 1,
+            },
+        );
         assert_eq!(scan(storage, scope, parent, at), 1);
         assert_eq!(called_at(storage, item.bucket_key), at);
 
@@ -529,7 +523,16 @@ fn a_window_wider_than_the_constant_is_collected_in_full() {
         fill_days(storage, last_closed_day(at), WIDE_DAYS, above_call());
 
         // 35 of the 40 days must breach, which no 28-day window can supply.
-        reterm(storage, item.bucket_key, ISO, WIDE_DAYS, 35, 7);
+        reterm(
+            storage,
+            item.bucket_key,
+            ISO,
+            SealedCallTerms {
+                window_days: WIDE_DAYS,
+                threshold_days: 35,
+                notice_days: 7,
+            },
+        );
         assert_eq!(scan(storage, scope, parent, at), 1);
         assert_eq!(called_at(storage, item.bucket_key), at);
     });
@@ -1543,7 +1546,7 @@ fn a_node_local_failure_while_calling_a_bucket_fails_the_slice() {
     let scope = ExecutionScope::new();
     let at = START + 30 * DAY;
     let bucket_key = StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         register(&storage, ISO);
         let item = issue_qualified(&storage, &scope, &parent, Address::repeat_byte(0x61), ISO);
@@ -1585,7 +1588,7 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
     let scope = ExecutionScope::new();
     let (in_flight, skipped) = StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         register(&storage, ISO);
         issue_qualified(&storage, &scope, &parent, Address::repeat_byte(0x22), ISO);
@@ -1651,7 +1654,7 @@ fn forfeit_credits_distinct_unpaid_loads_and_ignores_paid_members() {
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         register(&storage, ISO);
         let (bucket_key, items) = arm_lapsed(
@@ -1748,7 +1751,7 @@ fn a_forfeit_out_of_gas_keeps_what_it_burned_and_resumes_on_the_bucket() {
     let past = START + 30 * DAY + NOTICE + 1;
     let arm = |provider: &mut HashMapStorageProvider, scope: &ExecutionScope| {
         StorageHandle::enter(provider, |storage| {
-            seed_compressed_entities_genesis(&storage);
+            seed_production_nod_genesis(&storage);
             begin_block(storage.clone(), scope).unwrap();
             register(&storage, ISO);
             arm_lapsed(&storage, scope, &parent, &specs).0
@@ -1819,7 +1822,7 @@ fn a_full_forfeit_budget_burns_in_one_slice_within_the_cycle_tick_gas_window() {
     let at = START + 30 * DAY;
     let past = at + NOTICE + 1;
     let expected = StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         register(&storage, ISO);
         let items: Vec<NodItemState> = (1..=MAX_NOD_FORFEITS_PER_BLOCK)
@@ -1888,7 +1891,7 @@ fn a_node_local_failure_while_forfeiting_fails_the_slice() {
     let scope = ExecutionScope::new();
     let past = START + 30 * DAY + NOTICE + 1;
     let bucket_key = StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         register(&storage, ISO);
         let bucket_key = arm_lapsed(&storage, &scope, &parent, &[(0x81, 3, false)]).0;
@@ -1936,7 +1939,7 @@ fn every_nod_forfeit_mutation_rolls_back_then_retries_the_same_credit() {
     let mut probe = HashMapStorageProvider::new(CHAIN_ID);
     let probe_scope = ExecutionScope::new();
     let probe_key = StorageHandle::enter(&mut probe, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &probe_scope).unwrap();
         register(&storage, ISO);
         arm_lapsed(&storage, &probe_scope, &parent, &specs).0
@@ -1970,7 +1973,7 @@ fn every_nod_forfeit_mutation_rolls_back_then_retries_the_same_credit() {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         let scope = ExecutionScope::new();
         let bucket_key = StorageHandle::enter(&mut provider, |storage| {
-            seed_compressed_entities_genesis(&storage);
+            seed_production_nod_genesis(&storage);
             begin_block(storage.clone(), &scope).unwrap();
             register(&storage, ISO);
             arm_lapsed(&storage, &scope, &parent, &specs).0
@@ -2045,7 +2048,7 @@ fn a_call_pass_announces_one_batch_metadata_update() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         register(&storage, ISO);
         register(&storage, OTHER_ISO);
@@ -2099,7 +2102,7 @@ fn token_uri_turns_forfeited_past_the_settlement_deadline() {
     let scope = ExecutionScope::new();
     let at = START + 30 * DAY;
     let item = StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         register(&storage, ISO);
         call_bucket(&storage, &scope, &parent, Address::repeat_byte(0x71), at)

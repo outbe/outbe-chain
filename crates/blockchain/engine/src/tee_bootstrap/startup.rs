@@ -1,25 +1,39 @@
 use super::*;
 
+/// Local submission and the complete authority for block-1 coordination.
+pub struct TeeBootstrapStartup<'a> {
+    pub local_submission: TeeBootstrapParticipantSubmissionV2,
+    pub authority: TeeBootstrapAuthorityV2,
+    pub committee: BTreeSet<Address>,
+    pub evm_signer: &'a OutbeEvmSigner,
+}
+
+/// Committee size and network namespace for the startup offer-key ceremony.
+pub struct TeeDkgStartup {
+    pub participant_count: usize,
+    pub network_binding: outbe_primitives::tee_attestation_v1::NetworkBindingV1,
+    pub tribute_offer_epoch: u64,
+}
+
 /// Bind the generic OST3 coordinator to the dedicated bounded Commonware
 /// bootstrap channel. The scope commits to the complete authority namespace so
 /// delivery acknowledgements from another chain, policy or ceremony cannot be
 /// replayed here.
-#[allow(clippy::too_many_arguments)]
 pub async fn run_tee_bootstrap_v2_at_startup<S, R, C>(
-    local_submission: TeeBootstrapParticipantSubmissionV2,
-    authority: TeeBootstrapAuthorityV2,
-    committee: BTreeSet<Address>,
-    evm_signer: &OutbeEvmSigner,
-    allowed_remote_peers: BTreeSet<bls12381::PublicKey>,
-    sender: S,
-    receiver: R,
-    clock: C,
+    request: TeeBootstrapStartup<'_>,
+    transport: StartupGossipTransport<S, R, C>,
 ) -> eyre::Result<TeeBootstrapV2>
 where
     S: P2pSender<PublicKey = bls12381::PublicKey>,
     R: P2pReceiver<PublicKey = bls12381::PublicKey>,
     C: Clock,
 {
+    let TeeBootstrapStartup {
+        local_submission,
+        authority,
+        committee,
+        evm_signer,
+    } = request;
     let policy_hash = authority
         .policy
         .policy_hash()
@@ -33,16 +47,18 @@ where
     scope.extend_from_slice(&authority.committee_snapshot_block.to_be_bytes());
     scope.extend_from_slice(authority.tribute_offer_public_key.as_slice());
     let mut gossip = CommonwareBootstrapGossip {
-        sender,
-        receiver,
-        clock,
-        delivery: new_delivery_tracker(keccak256(scope), allowed_remote_peers),
+        sender: transport.sender,
+        receiver: transport.receiver,
+        clock: transport.clock,
+        delivery: new_delivery_tracker(keccak256(scope), transport.allowed_remote_peers),
     };
     coordinate_tee_bootstrap_v2(
         local_submission,
-        authority,
-        &committee,
-        evm_signer,
+        TeeBootstrapCoordination {
+            authority,
+            committee: &committee,
+            evm_signer,
+        },
         &mut gossip,
     )
     .await
@@ -56,19 +72,14 @@ where
 /// `tribute_offer_public` every honest node derives. The offer *secret* never leaves the
 /// enclave; it is stored resident there and used to decrypt offers.
 ///
-/// `n` is the committee size; `chain_id`/`tribute_offer_epoch` bind the derived offer
+/// The request's participant count is the committee size; its network binding
+/// and offer epoch bind the derived offer
 /// key. Runs before [`run_tee_bootstrap_v2_at_startup`], whose OST3 payload registers the
 /// returned key on-chain at block 1.
-#[allow(clippy::too_many_arguments)]
 pub async fn run_tee_dkg_at_startup<E, S, R, C>(
     client: &mut E,
-    clock: C,
-    n: usize,
-    network_binding: outbe_primitives::tee_attestation_v1::NetworkBindingV1,
-    tribute_offer_epoch: u64,
-    allowed_remote_peers: BTreeSet<bls12381::PublicKey>,
-    sender: S,
-    receiver: R,
+    request: TeeDkgStartup,
+    transport: StartupGossipTransport<S, R, C>,
 ) -> eyre::Result<([u8; 32], Vec<u8>)>
 where
     E: outbe_tee::tee_dkg::EnclaveChannel,
@@ -76,6 +87,11 @@ where
     R: P2pReceiver<PublicKey = bls12381::PublicKey>,
     C: Clock,
 {
+    let TeeDkgStartup {
+        participant_count: n,
+        network_binding,
+        tribute_offer_epoch,
+    } = request;
     let my_bls = match client
         .request(&EnclaveRequest::GetPublicKeys)
         .map_err(|e| eyre::eyre!("TEE DKG GetPublicKeys failed: {e}"))?
@@ -90,13 +106,7 @@ where
     dkg_scope.extend_from_slice(chain_id.as_slice());
     dkg_scope.extend_from_slice(&tribute_offer_epoch.to_be_bytes());
     dkg_scope.extend_from_slice(b"tee-dkg");
-    let mut gossip = CommonwareDkgGossip::new(
-        sender,
-        receiver,
-        clock,
-        keccak256(dkg_scope),
-        allowed_remote_peers,
-    );
+    let mut gossip = CommonwareDkgGossip::new(transport, keccak256(dkg_scope));
     let PreparedDkg {
         ceremony_id,
         identities,
@@ -187,15 +197,19 @@ where
     // then network-bound inside each enclave before any share-recipient key is
     // trusted.
     let preliminary = gossip
-        .exchange_identities(
-            request.my_bls.clone(),
-            [0; 32],
-            Vec::new(),
-            B256::ZERO,
-            0,
-            B256::ZERO,
-            request.n,
-        )
+        .exchange_identities(IdentityExchange {
+            local: LocalIdentityAnnouncement {
+                bls: request.my_bls.clone(),
+                enc: [0; 32],
+                signature: Vec::new(),
+            },
+            binding: CeremonyBinding {
+                ceremony_id: B256::ZERO,
+                round: 0,
+                participant_set_hash: B256::ZERO,
+            },
+            participant_count: request.n,
+        })
         .await?;
     let participant_bls = preliminary
         .iter()
@@ -212,15 +226,19 @@ where
     .map_err(|error| eyre::eyre!("invalid TEE DKG ceremony binding: {error}"))?;
     let my_announcement = request_signed_announcement(client, ceremony_id, participant_bls)?;
     let identities = gossip
-        .exchange_identities(
-            my_announcement.bls_pub.clone(),
-            my_announcement.enc_pub,
-            my_announcement.enc_sig,
-            ceremony_id,
-            0,
-            participant_set_hash,
-            request.n,
-        )
+        .exchange_identities(IdentityExchange {
+            local: LocalIdentityAnnouncement {
+                bls: my_announcement.bls_pub.clone(),
+                enc: my_announcement.enc_pub,
+                signature: my_announcement.enc_sig,
+            },
+            binding: CeremonyBinding {
+                ceremony_id,
+                round: 0,
+                participant_set_hash,
+            },
+            participant_count: request.n,
+        })
         .await?;
     Ok(PreparedDkg {
         ceremony_id,

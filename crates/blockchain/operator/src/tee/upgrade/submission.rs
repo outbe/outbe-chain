@@ -46,7 +46,7 @@ pub(super) async fn run<R: RenewalRpc + Sync, N: UpgradeNodeSignerV1>(
     }
 }
 
-async fn reset_if_expired<R: RenewalRpc + Sync, N>(
+async fn reset_if_expired<R: RegistryRpc + Sync, N>(
     service: &UpgradeSubmissionService<'_, R, N>,
     snapshot: &UpgradeJournalSnapshotV1,
 ) -> Result<bool> {
@@ -80,7 +80,7 @@ fn terminal_outcome(lifecycle: &UpgradeJournalStateV1) -> Result<UpgradeSubmissi
     }
 }
 
-async fn submit_prepared<R: RenewalRpc + Sync, N>(
+async fn submit_prepared<R: RegistryRpc + RelayRpc + Sync, N>(
     service: &UpgradeSubmissionService<'_, R, N>,
     submission: &PreparedUpgradeSubmissionV1,
     replayed: bool,
@@ -114,10 +114,7 @@ async fn submit_prepared<R: RenewalRpc + Sync, N>(
     })
 }
 
-async fn send_prepared(
-    rpc: &(impl RenewalRpc + Sync),
-    raw: &RawRelayTransactionV1,
-) -> Result<B256> {
+async fn send_prepared(rpc: &(impl RelayRpc + Sync), raw: &RawRelayTransactionV1) -> Result<B256> {
     match rpc.send_raw_transaction(&raw.raw_transaction).await {
         Ok(returned) => returned
             .parse::<B256>()
@@ -127,7 +124,7 @@ async fn send_prepared(
     }
 }
 
-async fn replay_submitted<R: RenewalRpc + Sync, N>(
+async fn replay_submitted<R: RegistryRpc + RelayRpc + Sync, N>(
     service: &UpgradeSubmissionService<'_, R, N>,
     submission: &PreparedUpgradeSubmissionV1,
 ) -> Result<UpgradeSubmissionOutcomeV1> {
@@ -155,7 +152,7 @@ async fn replay_submitted<R: RenewalRpc + Sync, N>(
 }
 
 async fn replay_exact(
-    rpc: &(impl RenewalRpc + Sync),
+    rpc: &(impl RelayRpc + Sync),
     raw: &RawRelayTransactionV1,
     transaction_hash: B256,
 ) -> Result<()> {

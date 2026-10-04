@@ -1218,7 +1218,7 @@ mod copied_public_work {
             write_key(&result, 0x31);
             let uid = fs::metadata(&evm).unwrap().uid();
             (
-                OutbeEvmSigner::from_strict_file(evm, uid).unwrap(),
+                outbe_primitives::signer::load::from_strict_file(evm, uid).unwrap(),
                 OcompSigner::from_file(result, uid).unwrap(),
                 uid,
             )
@@ -1616,9 +1616,11 @@ mod copied_public_work {
                     advance_to_k(recipient.path(), &fixture)
                 };
                 assert_public_reopen(recipient.path(), &fixture, point, &built);
-                let own_evm =
-                    OutbeEvmSigner::from_strict_file(public.join("ocomp-evm-key.hex"), uid)
-                        .unwrap();
+                let own_evm = outbe_primitives::signer::load::from_strict_file(
+                    public.join("ocomp-evm-key.hex"),
+                    uid,
+                )
+                .unwrap();
                 assert_eq!(own_evm.address(), evm.address());
                 let own_signer =
                     OcompSigner::from_file(public.join("ocomp-key-v1.hex"), uid).unwrap();

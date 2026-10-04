@@ -9,7 +9,7 @@ pub(super) struct EndpointReceiveContext<'a, S> {
     pub(super) queued: &'a mut BTreeMap<PeerId, (SignedEndpointResponse, u64)>,
 }
 
-impl EndpointNetworkService {
+impl EndpointNetworkState {
     pub(super) async fn receive<S>(
         &self,
         context: EndpointReceiveContext<'_, S>,

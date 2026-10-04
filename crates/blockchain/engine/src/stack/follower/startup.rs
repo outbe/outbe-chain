@@ -236,14 +236,20 @@ async fn normalize_replay_suffix<E: FollowerRuntime>(
     if replay_suffix_upper > 0 {
         let (_, restored_finalizations, restored_blocks) =
             outbe_consensus::follow::engine::authenticate_and_reconcile_replay_suffix(
-                chain,
-                upstream_client,
-                epocher,
-                anchor_epoch,
-                Height::new(replay_suffix_lower),
-                Height::new(replay_suffix_upper),
-                finalizations_archive,
-                blocks_archive,
+                outbe_consensus::follow::engine::ReplayAuthority {
+                    chain,
+                    source: upstream_client,
+                    epocher,
+                },
+                outbe_consensus::follow::engine::ReplayWindow {
+                    anchor_epoch,
+                    lower: Height::new(replay_suffix_lower),
+                    upper: Height::new(replay_suffix_upper),
+                },
+                outbe_consensus::follow::engine::ReplayArchives::new(
+                    finalizations_archive,
+                    blocks_archive,
+                ),
             )
             .await
             .wrap_err("failed to authenticate and normalize follower replay suffix")?;

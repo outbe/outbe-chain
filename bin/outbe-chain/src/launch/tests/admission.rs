@@ -1,5 +1,36 @@
 use super::*;
 
+#[tokio::test]
+async fn pending_lease_guard_cancellation_is_a_clean_stop() {
+    let provider =
+        reth_provider::test_utils::MockEthProvider::<outbe_primitives::OutbePrimitives>::new();
+    let shutdown = tokio_util::sync::CancellationToken::new();
+    shutdown.cancel();
+    let verdict = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        super::run_tee_lease_guard_v1(
+            provider,
+            crate::launch::admission::TeeLeaseGuardConfigV1 {
+                chain: outbe_node::tee_remote_session::RegistryChainIdentity {
+                    chain_id: 676,
+                    genesis_hash: alloy_primitives::B256::repeat_byte(1),
+                },
+                identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1 {
+                    reth_p2p_public: [2; 33],
+                    expected_enclave_id: None,
+                    validator: None,
+                },
+                gate: super::TeeLeaseGuardGateV1::new(Some(full_node_admission_anchor())),
+            },
+            shutdown,
+        ),
+    )
+    .await
+    .expect("cancellation must not wait for the lease polling interval")
+    .expect("cancellation must not become a lease failure");
+    assert_eq!(verdict, None);
+}
+
 #[test]
 fn full_node_lease_guard_waits_strictly_below_authenticated_anchor() {
     let anchor = full_node_admission_anchor();

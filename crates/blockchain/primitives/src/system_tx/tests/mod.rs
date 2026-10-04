@@ -22,3 +22,5 @@ mod layout;
 mod phase;
 
 mod witness;
+
+mod binding;

@@ -9,7 +9,6 @@ use std::{
 };
 
 use eyre::WrapErr;
-use outbe_evm::OutbeEvmSigner;
 use outbe_snapshot::{
     layout::{validate_layout, ProtectedPaths},
     manifest::{DomainInventory, EntryKind, FileEntry, SnapshotManifestV1, MANIFEST_VERSION},
@@ -29,8 +28,8 @@ pub(crate) fn create(
     source: Option<String>,
     node_args: Vec<OsString>,
 ) -> eyre::Result<(SnapshotManifestV1, [u8; 33])> {
-    let signer =
-        OutbeEvmSigner::from_file(signing_key).wrap_err("load existing snapshot signing key")?;
+    let signer = outbe_primitives::signer::load::from_file(signing_key)
+        .wrap_err("load existing snapshot signing key")?;
     let inputs = parse_node_inputs(node_args)?;
     let mut layout = resolve_layout(&inputs)?;
     layout.protected.0.push(signing_key.to_path_buf());

@@ -68,10 +68,7 @@ fn public_v1_registration_emits_onboarding_only_for_created_binding() {
 
     let created = StorageHandle::enter(&mut provider, |storage| {
         dispatch_register_with_onboarding_after_verifier_for_test(
-            storage,
-            node_signer.address(),
-            &call,
-            &intent,
+            PostVerifierCall::new(storage, node_signer.address(), &call, &intent),
             PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
             |recipient| {
                 assert_eq!(recipient, intent.recipient_x25519);
@@ -94,10 +91,7 @@ fn public_v1_registration_emits_onboarding_only_for_created_binding() {
 
     let idempotent = StorageHandle::enter(&mut provider, |storage| {
         dispatch_register_with_onboarding_after_verifier_for_test(
-            storage,
-            node_signer.address(),
-            &call,
-            &intent,
+            PostVerifierCall::new(storage, node_signer.address(), &call, &intent),
             PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
             |_| panic!("idempotent registration must not ask the enclave to reseal the offer key"),
         )

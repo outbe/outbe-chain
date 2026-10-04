@@ -96,6 +96,36 @@ impl ProposalPublication {
         true
     }
 
+    /// Store a received candidate independently of its verification request.
+    /// Availability is not an application verdict; certification owns durability.
+    pub(crate) fn store_candidate(
+        &self,
+        marshal: &MarshalMailbox,
+        round: Round,
+        block: Arc<ConsensusBlock>,
+    ) {
+        let digest = block.digest();
+        let mut state = self.state.lock();
+        if state.finalized.is_some_and(|finalized| round <= finalized)
+            || state.entries.contains_key(&(round, digest))
+        {
+            return;
+        }
+        let (ack, receiver) = oneshot::channel();
+        let durable = await_durability(round, receiver).boxed().shared();
+        state.entries.insert(
+            (round, digest),
+            Entry {
+                staged: None,
+                durable: durable.clone(),
+            },
+        );
+        // Enqueue before publishing the gate to concurrent certification.
+        marshal.verified_deferred(round, block, ack);
+        drop(state);
+        (self.observe)(durable);
+    }
+
     /// First relay consumes the staged block atomically; later relays use
     /// marshal's digest lookup. Keep the gate until actual finalization.
     pub(crate) fn relay(

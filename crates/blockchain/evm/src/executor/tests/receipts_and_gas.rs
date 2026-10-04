@@ -1,5 +1,9 @@
 use super::*;
 
+mod capacity;
+mod expiry;
+mod factory_approval;
+
 fn test_priority_fee_tx() -> reth_ethereum::TransactionSigned {
     TxEip1559 {
         chain_id: CHAIN_ID,
@@ -99,15 +103,23 @@ fn apply_pre_execution_changes_executes_cycle_tick_system_tx_receipt() {
     let ctx = block_one_execution_ctx(Some(0), Bytes::new());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        fixtures::executor_inputs_from_ctx(&ctx, Some(signer.clone()), false),
-    )
-    .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
+        fixtures::executor_inputs_with_bootstrap(&ctx, Some(signer.clone()), false),
+    );
 
     executor
         .apply_pre_execution_changes()
         .expect("block 1 pre-execution changes should apply");
-    let system_txs =
-        begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
+    let system_txs = begin_system_txs_for_test(
+        &config,
+        BeginBlockFixture {
+            block_number: 1,
+            parent_hash: B256::ZERO,
+            extra_data: &Bytes::new(),
+            parent_consensus_metadata: None,
+            proposer,
+            bootstrap: BootstrapFixture::StandardForBlock,
+        },
+    );
     let mut visible_system_gas_used = 0u64;
     for tx in system_txs.clone() {
         let signed_gas_limit = tx.tx().gas_limit();
@@ -213,23 +225,31 @@ fn system_prefix_charges_visible_gas_and_receipt_cumulative_contract() {
     let ctx = block_one_execution_ctx(Some(3), Bytes::new());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        fixtures::executor_inputs_from_ctx(&ctx, Some(signer), false),
-    )
-    .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
+        fixtures::executor_inputs_with_bootstrap(&ctx, Some(signer), false),
+    );
 
     executor
         .apply_pre_execution_changes()
         .expect("block 1 pre-execution changes should apply");
-    let mut visible_system_gas = 0u64;
-    for tx in begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer) {
-        let signed_gas_limit = tx.tx().gas_limit();
-        let gas_used = executor
-            .execute_transaction(tx)
-            .expect("begin-zone system tx should execute")
-            .tx_gas_used();
-        assert!(gas_used <= signed_gas_limit);
-        visible_system_gas += gas_used;
-    }
+    let system_txs = begin_system_txs_for_test(
+        &config,
+        BeginBlockFixture {
+            block_number: 1,
+            parent_hash: B256::ZERO,
+            extra_data: &Bytes::new(),
+            parent_consensus_metadata: None,
+            proposer,
+            bootstrap: BootstrapFixture::StandardForBlock,
+        },
+    );
+    let visible_system_gas = fixtures::assert_begin_prefix_gas(
+        &mut executor,
+        system_txs,
+        fixtures::BeginPrefixCheck {
+            execution_message: "begin-zone system tx should execute",
+            cumulative_receipts: false,
+        },
+    );
 
     let system_receipt_cumulative = executor
         .receipts()
@@ -305,14 +325,16 @@ fn apply_pre_execution_changes_emits_cycle_tick_event_in_system_receipt() {
     executor
         .apply_pre_execution_changes()
         .expect("pre-execution changes should apply before begin-zone system txs");
-    let system_txs = begin_system_txs_for_test_with_bootstrap(
+    let system_txs = begin_system_txs_for_test(
         &config,
-        1,
-        B256::ZERO,
-        &Bytes::new(),
-        None,
-        proposer,
-        Some(tee_bootstrap),
+        BeginBlockFixture {
+            block_number: 1,
+            parent_hash: B256::ZERO,
+            extra_data: &Bytes::new(),
+            parent_consensus_metadata: None,
+            proposer,
+            bootstrap: BootstrapFixture::explicit(Some(tee_bootstrap)),
+        },
     );
     for tx in system_txs {
         executor
@@ -356,14 +378,16 @@ fn cycle_tick_utc_boundary_gas_usage() {
     executor
         .apply_pre_execution_changes()
         .expect("pre-execution changes should apply");
-    let system_txs = begin_system_txs_for_test_with_bootstrap(
+    let system_txs = begin_system_txs_for_test(
         &config,
-        1,
-        B256::ZERO,
-        &Bytes::new(),
-        None,
-        proposer,
-        Some(tee_bootstrap),
+        BeginBlockFixture {
+            block_number: 1,
+            parent_hash: B256::ZERO,
+            extra_data: &Bytes::new(),
+            parent_consensus_metadata: None,
+            proposer,
+            bootstrap: BootstrapFixture::explicit(Some(tee_bootstrap)),
+        },
     );
     let mut cycle_tick_visible_gas = None;
     for tx in system_txs {
@@ -394,243 +418,12 @@ fn cycle_tick_utc_boundary_gas_usage() {
 
 #[test]
 fn tee_expiry_worst_case_active_sweep_fits_cycle_tick_budget() {
-    const ACTIVE_COUNT: usize = 128;
-    const DEADLINE: u64 = 2;
-
-    let signer = test_evm_signer();
-    let proposer = signer.address();
-    let mut validators = Vec::with_capacity(ACTIVE_COUNT);
-    validators.push((proposer, dummy_pubkey(0x80)));
-    for index in 1..ACTIVE_COUNT {
-        validators.push((
-            numbered_test_address(0x81, index as u64),
-            dummy_pubkey(index as u8),
-        ));
-    }
-    let addresses: Vec<_> = validators.iter().map(|(address, _)| *address).collect();
-    let mut state = state_with_active_validators_seeded_at_block(&validators, 1, |storage| {
-        seed_expiring_tee_nodes(storage, &addresses, DEADLINE)
-            .expect("seed expiring tee nodes fixture succeeds");
-    });
-    let mut evm_env = test_evm_env(2, REWARDS_ADDRESS);
-    evm_env.block_env.timestamp = U256::from(DEADLINE);
-    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
-    let parent_hash = B256::repeat_byte(0x91);
-    let mut parent_metadata = metadata_with(addresses.clone(), vec![1; ACTIVE_COUNT], Vec::new());
-    parent_metadata.finalized_block_number = 1;
-    parent_metadata.finalized_block_hash = parent_hash;
-    let evm = config.evm_with_env(&mut state, evm_env);
-    let mut execution = execution_ctx(Some(0), Bytes::new());
-    execution.inner.parent_hash = parent_hash;
-    execution.parent_consensus_metadata = Some(parent_metadata.clone());
-    execution.parent_artifact_hint = Some(AccountedParentArtifact {
-        summary: ExecutionSummaryArtifact {
-            validator_fee_sum: U256::ZERO,
-        },
-        timestamp: 1,
-        state_root: Some(B256::repeat_byte(0x92)),
-    });
-    execution.proposer_evm_address = Some(proposer);
-    let mut executor = config.create_executor(evm, execution);
-    super::with_phase1_verify_disabled(|| {
-        executor
-            .apply_pre_execution_changes()
-            .expect("pre-execution changes should apply");
-    });
-
-    let system_txs = begin_system_txs_for_test(
-        &config,
-        2,
-        parent_hash,
-        &Bytes::new(),
-        Some(parent_metadata),
-        proposer,
-    );
-    let mut cycle_gas = None;
-    let mut cycle_internal_gas = None;
-    let mut cycle_receipt_index = None;
-    for tx in system_txs {
-        let kind = SystemTxInputV2::decode(tx.tx().input().as_ref())
-            .expect("valid begin-zone system transaction")
-            .kind();
-        let internal_before = executor.system_tx_execution_gas;
-        let output = executor
-            .execute_transaction(tx)
-            .expect("TEE expiry begin-zone prefix should execute");
-        if kind == SystemTxKind::CycleTick {
-            cycle_gas = Some(output.tx_gas_used());
-            cycle_internal_gas = Some(
-                executor
-                    .system_tx_execution_gas
-                    .saturating_sub(internal_before),
-            );
-            cycle_receipt_index = Some(executor.receipts().len() - 1);
-            break;
-        }
-    }
-    let cycle_gas = cycle_gas.expect("CycleTick gas must be captured");
-    let cycle_internal_gas = cycle_internal_gas.expect("CycleTick internal gas must be captured");
-    let receipt = &executor.receipts()[cycle_receipt_index.expect("CycleTick receipt index")];
-    assert!(receipt.success, "worst-case TEE expiry sweep must not OOG");
-    assert_eq!(
-        receipt
-            .logs
-            .iter()
-            .filter(|log| {
-                log.address == outbe_primitives::addresses::VALIDATOR_SET_ADDRESS
-                    && log.data.topics().first()
-                        == Some(&keccak256("ValidatorJailed(address,uint64)"))
-            })
-            .count(),
-        ACTIVE_COUNT
-    );
-    eprintln!(
-        "TEE expiry CycleTick gas: active={ACTIVE_COUNT}, visible={cycle_gas}, internal={cycle_internal_gas}, limit=30000000"
-    );
-    assert!(cycle_gas < 30_000_000);
-    assert!(cycle_internal_gas < 30_000_000);
+    expiry::run();
 }
 
 #[test]
 fn capacity_forfeiture_cycle_tick_keeps_twenty_percent_block_headroom() {
-    const BLOCK_GAS_LIMIT: u64 = 30_000_000;
-    const REQUIRED_HEADROOM_BPS: u64 = 2_000;
-    const BPS_DENOMINATOR: u64 = 10_000;
-
-    let run = || {
-        let signer = test_evm_signer();
-        let proposer = signer.address();
-        let CapacityParent {
-            mut state,
-            tree_directory,
-            tree_service,
-            seed_hash,
-            seed_root,
-            body_reader,
-            fire_at,
-        } = prepare_capacity_parent(proposer).expect("prepare populated capacity parent");
-
-        let mut evm_env = test_evm_env(2, REWARDS_ADDRESS);
-        evm_env.block_env.timestamp = U256::from(fire_at);
-        let config = OutbeEvmConfig::new_with_runtime_body_readers(
-            test_chain_spec(),
-            RuntimeBodyReaders::new(body_reader),
-        )
-        .with_evm_signer(signer.clone())
-        .with_compressed_tree_service(tree_service);
-        let mut parent_metadata = metadata_with(vec![proposer], vec![1], Vec::new());
-        parent_metadata.finalized_block_number = 1;
-        parent_metadata.finalized_block_hash = seed_hash;
-        let evm = config.evm_with_env(&mut state, evm_env);
-        let mut execution = execution_ctx(Some(0), Bytes::new());
-        execution.inner.parent_hash = seed_hash;
-        execution.parent_consensus_metadata = Some(parent_metadata.clone());
-        execution.parent_artifact_hint = Some(AccountedParentArtifact {
-            summary: ExecutionSummaryArtifact {
-                validator_fee_sum: U256::ZERO,
-            },
-            timestamp: 0,
-            state_root: Some(B256::repeat_byte(0x91)),
-        });
-        execution.proposer_evm_address = Some(proposer);
-        let mut executor = config.create_executor(evm, execution);
-        super::with_phase1_verify_disabled(|| {
-            executor
-                .apply_pre_execution_changes()
-                .expect("pre-execution changes should apply");
-        });
-        let system_txs = begin_system_txs_for_test(
-            &config,
-            2,
-            seed_hash,
-            &Bytes::new(),
-            Some(parent_metadata),
-            proposer,
-        );
-        let mut visible_gas = None;
-        let mut cycle_receipt_index = None;
-        for tx in system_txs {
-            let kind = SystemTxInputV2::decode(tx.tx().input().as_ref())
-                .expect("valid begin-zone system tx")
-                .kind();
-            let output = executor
-                .execute_transaction(tx)
-                .expect("begin-zone prefix through CapacityForfeiture CycleTick must execute");
-            if kind == SystemTxKind::CycleTick {
-                visible_gas = Some(output.tx_gas_used());
-                cycle_receipt_index = Some(executor.receipts().len() - 1);
-                break;
-            }
-        }
-        let visible_gas = visible_gas.expect("CycleTick visible gas");
-        let cycle_receipt_index = cycle_receipt_index.expect("CycleTick receipt index");
-        let maximum_used =
-            BLOCK_GAS_LIMIT * (BPS_DENOMINATOR - REQUIRED_HEADROOM_BPS) / BPS_DENOMINATOR;
-        eprintln!(
-            "CapacityForfeiture CycleTick visible gas: used={visible_gas}, max_for_20pct_headroom={maximum_used}"
-        );
-        assert!(executor.receipts()[cycle_receipt_index].success);
-        assert!(
-            visible_gas <= maximum_used,
-            "CapacityForfeiture CycleTick visible gas {visible_gas} leaves less than 20% headroom"
-        );
-        let capacity_event = keccak256(
-            "WorldwideDayCapacityForfeited(uint32,uint32,uint32,uint256,uint256,uint256,bytes32,uint32,uint256,uint64,uint64,uint8,uint64)",
-        );
-        assert!(executor.receipts()[cycle_receipt_index]
-            .logs
-            .iter()
-            .any(|log| {
-                log.address == outbe_primitives::addresses::METADOSIS_ADDRESS
-                    && log.data.topics().first() == Some(&capacity_event)
-            }));
-        let retirement_event = keccak256("TributePartitionRetired(uint32)");
-        assert!(executor.receipts()[cycle_receipt_index]
-            .logs
-            .iter()
-            .any(|log| {
-                log.address == outbe_primitives::addresses::TRIBUTE_ADDRESS
-                    && log.data.topics().first() == Some(&retirement_event)
-            }));
-        let capacity_log = executor.receipts()[cycle_receipt_index]
-            .logs
-            .iter()
-            .find_map(|log| {
-                outbe_metadosis::precompile::IMetadosis::WorldwideDayCapacityForfeited::decode_log(
-                    log,
-                )
-                .ok()
-            })
-            .expect("typed capacity-forfeiture event");
-        assert_eq!(capacity_log.forfeitedTributeCount, u32::MAX);
-        assert_eq!(capacity_log.forfeitedTributeNominalMinor, U256::MAX);
-        assert_eq!(capacity_log.retirementOutcome, 2);
-        let receipt = executor.receipts()[cycle_receipt_index].clone();
-        drop(executor);
-        (
-            visible_gas,
-            receipt,
-            post_state_root(&state.bundle_state),
-            seed_root,
-            tree_directory,
-        )
-    };
-
-    let proposer = run();
-    let replay = run();
-    assert_eq!(
-        proposer.0, replay.0,
-        "same-parent replay must reproduce visible gas"
-    );
-    assert_eq!(
-        proposer.1, replay.1,
-        "same-parent replay must reproduce the exact receipt and events"
-    );
-    assert_eq!(
-        proposer.2, replay.2,
-        "re-executing the same CapacityForfeiture CycleTick from the same parent must reproduce gas, receipt/events, and state root"
-    );
-    assert_eq!(proposer.3, replay.3, "seeded parent roots must match");
+    capacity::run();
 }
 
 #[test]
@@ -688,8 +481,17 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     executor
         .apply_pre_execution_changes()
         .expect("pre-execution changes should apply");
-    let mut system_txs =
-        begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
+    let mut system_txs = begin_system_txs_for_test(
+        &config,
+        BeginBlockFixture {
+            block_number: 1,
+            parent_hash: B256::ZERO,
+            extra_data: &Bytes::new(),
+            parent_consensus_metadata: None,
+            proposer,
+            bootstrap: BootstrapFixture::StandardForBlock,
+        },
+    );
     let cycle_tx = system_txs.remove(0);
     let delivery_tx = system_txs.remove(0);
     let cycle_signed_gas_limit = cycle_tx.tx().gas_limit();
@@ -754,16 +556,24 @@ fn gas_09_noncritical_system_oog_exhausts_aggregate_budget_atomically() {
     let ctx = block_one_execution_ctx(Some(3), Bytes::new());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        fixtures::executor_inputs_from_ctx(&ctx, Some(signer.clone()), true),
-    )
-    .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
+        fixtures::executor_inputs_with_bootstrap(&ctx, Some(signer.clone()), true),
+    );
 
     executor
         .apply_pre_execution_changes()
         .expect("pre-execution changes should apply");
-    let mut system_txs =
-        begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer)
-            .into_iter();
+    let mut system_txs = begin_system_txs_for_test(
+        &config,
+        BeginBlockFixture {
+            block_number: 1,
+            parent_hash: B256::ZERO,
+            extra_data: &Bytes::new(),
+            parent_consensus_metadata: None,
+            proposer,
+            bootstrap: BootstrapFixture::StandardForBlock,
+        },
+    )
+    .into_iter();
     let cycle_tx = system_txs
         .next()
         .expect("CycleTick system tx should be present");
@@ -838,15 +648,24 @@ fn gas_13_system_receipt_rpc_gas_delta_is_visible_envelope_gas() {
     let ctx = block_one_execution_ctx(Some(3), Bytes::new());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        fixtures::executor_inputs_from_ctx(&ctx, Some(signer.clone()), true),
-    )
-    .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
+        fixtures::executor_inputs_with_bootstrap(&ctx, Some(signer.clone()), true),
+    );
 
     executor
         .apply_pre_execution_changes()
         .expect("pre-execution changes should apply");
     let mut expected_rpc_gas_deltas = Vec::new();
-    for tx in begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer) {
+    for tx in begin_system_txs_for_test(
+        &config,
+        BeginBlockFixture {
+            block_number: 1,
+            parent_hash: B256::ZERO,
+            extra_data: &Bytes::new(),
+            parent_consensus_metadata: None,
+            proposer,
+            bootstrap: BootstrapFixture::StandardForBlock,
+        },
+    ) {
         let signed_gas_limit = tx.tx().gas_limit();
         let gas_used = executor
             .execute_transaction(tx)
@@ -980,15 +799,23 @@ fn gas_14_executor_finish_sets_visible_system_gas_for_fee_history_input() {
     let ctx = block_one_execution_ctx(Some(2), Bytes::new());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        fixtures::executor_inputs_from_ctx(&ctx, Some(signer.clone()), true),
-    )
-    .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
+        fixtures::executor_inputs_with_bootstrap(&ctx, Some(signer.clone()), true),
+    );
 
     executor
         .apply_pre_execution_changes()
         .expect("pre-execution changes should apply");
-    let system_txs =
-        begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
+    let system_txs = begin_system_txs_for_test(
+        &config,
+        BeginBlockFixture {
+            block_number: 1,
+            parent_hash: B256::ZERO,
+            extra_data: &Bytes::new(),
+            parent_consensus_metadata: None,
+            proposer,
+            bootstrap: BootstrapFixture::StandardForBlock,
+        },
+    );
     let mut visible_system_gas = 0u64;
     let mut expected_system_deltas = Vec::with_capacity(system_txs.len());
     for tx in system_txs {
@@ -1051,23 +878,31 @@ fn gas_16_mixed_system_and_user_block_finish_uses_visible_system_gas() {
     let ctx = block_one_execution_ctx(Some(3), Bytes::new());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        fixtures::executor_inputs_from_ctx(&ctx, Some(signer.clone()), true),
-    )
-    .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
+        fixtures::executor_inputs_with_bootstrap(&ctx, Some(signer.clone()), true),
+    );
 
     executor
         .apply_pre_execution_changes()
         .expect("pre-execution changes should apply");
-    let mut visible_system_gas = 0u64;
-    for tx in begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer) {
-        let signed_gas_limit = tx.tx().gas_limit();
-        let gas_used = executor
-            .execute_transaction(tx)
-            .expect("system tx should execute")
-            .tx_gas_used();
-        assert!(gas_used <= signed_gas_limit);
-        visible_system_gas += gas_used;
-    }
+    let system_txs = begin_system_txs_for_test(
+        &config,
+        BeginBlockFixture {
+            block_number: 1,
+            parent_hash: B256::ZERO,
+            extra_data: &Bytes::new(),
+            parent_consensus_metadata: None,
+            proposer,
+            bootstrap: BootstrapFixture::StandardForBlock,
+        },
+    );
+    let visible_system_gas = fixtures::assert_begin_prefix_gas(
+        &mut executor,
+        system_txs,
+        fixtures::BeginPrefixCheck {
+            execution_message: "system tx should execute",
+            cumulative_receipts: false,
+        },
+    );
     let user_gas = executor
         .execute_transaction(user_tx)
         .expect("funded regular user tx should execute")
@@ -1144,11 +979,14 @@ fn apply_pre_execution_changes_emits_phase1_slashing_logs_in_system_receipt() {
     });
     let system_txs = begin_system_txs_for_test(
         &config,
-        2,
-        parent_hash,
-        &Bytes::new(),
-        Some(metadata),
-        proposer,
+        BeginBlockFixture {
+            block_number: 2,
+            parent_hash,
+            extra_data: &Bytes::new(),
+            parent_consensus_metadata: Some(metadata),
+            proposer,
+            bootstrap: BootstrapFixture::StandardForBlock,
+        },
     );
     for tx in system_txs {
         executor
@@ -1310,171 +1148,7 @@ fn hook_events_receipt_carries_whitelisted_update_activation_log() {
 
 #[test]
 fn real_factory_approval_is_published_in_hook_events_receipt() {
-    const CREATION_BLOCK: u64 = 7;
-    const HOOK_EVENTS_GAS: u64 = 21_000;
-    let issuer = Address::repeat_byte(0x11);
-    let validators = [
-        (Address::repeat_byte(0xa1), dummy_pubkey(0xa1)),
-        (Address::repeat_byte(0xa2), dummy_pubkey(0xa2)),
-        (Address::repeat_byte(0xa3), dummy_pubkey(0xa3)),
-    ];
-    let payload = encode_canonical_stablecoin_create(&StablecoinCreatePayload {
-        issuer,
-        name: "Example Dollar".into(),
-        ticker: "EXUSD".into(),
-        iso4217: 840,
-        decimals: 6,
-        supply_cap: U256::from(1_000_000u64),
-        policy_id: U256::from(1u64),
-    })
-    .expect("canonical Factory payload");
-    let payload = core::str::from_utf8(&payload).expect("canonical payload is UTF-8");
-    let forced_surplus = U256::from(7u64);
-    let mut expected_token_id = B256::ZERO;
-    let mut expected_token = Address::ZERO;
-    let mut state =
-        state_with_active_validators_seeded_at_block(&validators, CREATION_BLOCK, |storage| {
-            storage
-                .set_balance(VOTE_ADDRESS, STABLECOIN_CREATE_BOND + forced_surplus)
-                .unwrap();
-            (expected_token_id, expected_token) = StablecoinFactoryContract::new(storage.clone())
-                .predict_token_address(issuer, "EXUSD")
-                .unwrap();
-            let mut vote = Vote::new(storage);
-            let proposal_id = vote
-                .create_proposal_with_value(
-                    issuer,
-                    STABLECOIN_FACTORY_ADDRESS,
-                    payload,
-                    CREATION_BLOCK,
-                    STABLECOIN_CREATE_BOND,
-                    crate::handlers::vote::registry(),
-                )
-                .unwrap();
-            assert_eq!(proposal_id, U256::from(1u64));
-            vote.cast_vote_approve(proposal_id, validators[0].0, true, CREATION_BLOCK + 1)
-                .unwrap();
-            vote.cast_vote_approve(proposal_id, validators[1].0, true, CREATION_BLOCK + 1)
-                .unwrap();
-        });
-
-    let finalization_block = CREATION_BLOCK + VOTING_WINDOW_BLOCKS + 1;
-    let block_context = BlockContext::new(
-        finalization_block,
-        1_700_000_000,
-        CHAIN_ID,
-        issuer,
-        validators.iter().map(|(address, _)| *address).collect(),
-    );
-    let (_, hook_events) =
-        super::run_atomic_storage_hooks(&mut state, block_context.clone(), |hook_ctx| {
-            super::run_outbe_pre_execution_hooks(hook_ctx, None)
-        })
-        .expect("real Vote -> Factory pre-exec lifecycle should commit");
-    let (receipt_logs, _) = partition_hook_events(&hook_events);
-
-    let factory_logs: Vec<_> = receipt_logs
-        .iter()
-        .filter(|log| {
-            log.address == STABLECOIN_FACTORY_ADDRESS
-                && log.data.topics().first()
-                    == Some(&IStablecoinFactory::StablecoinCreated::SIGNATURE_HASH)
-        })
-        .collect();
-    assert_eq!(factory_logs.len(), 1);
-    let factory_log_index = receipt_logs
-        .iter()
-        .position(|log| {
-            log.address == STABLECOIN_FACTORY_ADDRESS
-                && log.data.topics().first()
-                    == Some(&IStablecoinFactory::StablecoinCreated::SIGNATURE_HASH)
-        })
-        .unwrap();
-    let refund_log_index = receipt_logs
-        .iter()
-        .position(|log| {
-            log.address == VOTE_ADDRESS
-                && log.data.topics().first() == Some(&IVote::ProposalBondRefunded::SIGNATURE_HASH)
-        })
-        .expect("Approved proposal must emit one refund");
-    assert!(
-        factory_log_index < refund_log_index,
-        "target event must precede settlement event in committed hook order"
-    );
-
-    assert_approved_factory_state(
-        &mut state,
-        block_context.clone(),
-        ApprovedFactoryExpected {
-            issuer,
-            forced_surplus,
-            token_id: expected_token_id,
-            token: expected_token,
-        },
-    )
-    .expect("assert approved factory state fixture succeeds");
-    let token_account = state
-        .basic(expected_token)
-        .expect("token account read")
-        .expect("created token account");
-    assert_eq!(
-        token_account
-            .code
-            .as_ref()
-            .expect("created token marker")
-            .original_bytes()
-            .as_ref(),
-        outbe_primitives::addresses::STABLECOIN_MARKER_CODE
-    );
-
-    let config = OutbeEvmConfig::new(test_chain_spec());
-    let evm = config.evm_with_env(
-        &mut state,
-        test_evm_env(finalization_block, REWARDS_ADDRESS),
-    );
-    let mut executor = config.create_executor(evm, execution_ctx(None, Bytes::new()));
-    executor
-        .push_hook_events_receipt(
-            alloy_consensus::TxType::Legacy,
-            receipt_logs,
-            HOOK_EVENTS_GAS,
-        )
-        .expect("HookEvents receipt should publish committed Factory log");
-
-    let receipt = executor.receipts().last().expect("HookEvents receipt");
-    assert!(receipt.success);
-    assert_eq!(receipt.cumulative_gas_used, HOOK_EVENTS_GAS);
-    assert_eq!(
-        receipt
-            .logs
-            .iter()
-            .filter(|log| {
-                log.address == STABLECOIN_FACTORY_ADDRESS
-                    && log.data.topics().first()
-                        == Some(&IStablecoinFactory::StablecoinCreated::SIGNATURE_HASH)
-            })
-            .count(),
-        1
-    );
-    let with_factory_root =
-        alloy_consensus::proofs::calculate_receipt_root(&[receipt.with_bloom_ref()]);
-    let mut without_factory_log = receipt.clone();
-    without_factory_log.logs.retain(|log| {
-        log.address != STABLECOIN_FACTORY_ADDRESS
-            || log.data.topics().first()
-                != Some(&IStablecoinFactory::StablecoinCreated::SIGNATURE_HASH)
-    });
-    let without_factory_root =
-        alloy_consensus::proofs::calculate_receipt_root(&[without_factory_log.with_bloom_ref()]);
-    assert_ne!(
-        with_factory_root, without_factory_root,
-        "StablecoinCreated must contribute to the receipts root"
-    );
-    assert_ne!(
-        logs_bloom(receipt.logs.iter()),
-        logs_bloom(without_factory_log.logs.iter()),
-        "StablecoinCreated must contribute to the logs bloom"
-    );
+    factory_approval::run();
 }
 
 #[test]

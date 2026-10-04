@@ -1,7 +1,5 @@
 //! Verification stages preserve the distinction between rejection and local unavailability.
-use super::{
-    wait_for_projected_parent, ApplicationShared, ParentProjectionGate, VERIFY_SYNCING_RETRY_DELAY,
-};
+use super::ApplicationShared;
 use crate::{
     application::{
         ingress::SimplexContext,
@@ -24,9 +22,8 @@ use commonware_utils::channel::oneshot;
 use outbe_primitives::{
     projection::{ExecutionReadBudget, ProjectionCheckpoint},
     system_tx::OcompLifecycleActivation,
-    OutbeExecutionData,
 };
-use tracing::{debug, warn};
+use tracing::warn;
 
 mod execution;
 mod prechecks;
@@ -39,15 +36,6 @@ pub(super) struct VerifyTask {
     pub(super) payload_digest: Digest,
     pub(super) response: oneshot::Sender<bool>,
     pub(super) execution_read_budget: ExecutionReadBudget,
-}
-
-/// One immutable payload target and the borrowed cancellation state for retries.
-struct PayloadValidationRequest<'a> {
-    kind: &'static str,
-    digest: Digest,
-    execution_data: OutbeExecutionData,
-    response: &'a mut oneshot::Sender<bool>,
-    execution_read_budget: &'a ExecutionReadBudget,
 }
 
 /// Request identity stays in the canonical Simplex context throughout every stage.
@@ -65,21 +53,6 @@ impl VerifyRequest {
 struct ResolvedVerifyBlocks {
     block: ConsensusBlock,
     parent_block: Option<ConsensusBlock>,
-}
-
-/// Outcome of a `new_payload` execution validation with SYNCING retry. The single
-/// source of truth for how a verify path classifies execution status, so the
-/// parent and block validations can never drift in their SYNCING/retry policy.
-enum PayloadVerification {
-    /// Execution accepted the payload. `saw_syncing` is true if SYNCING was
-    /// observed before acceptance - in that case the verify request may have been
-    /// superseded by a view timeout, so the caller skips its side effects.
-    Valid { saw_syncing: bool },
-    /// Execution rejected the payload; the caller votes `false`.
-    Invalid,
-    /// The single-shot verify response channel closed while waiting; the caller
-    /// returns without side effects.
-    ChannelClosed,
 }
 
 /// Whether the local node validates live proposals. A share-less verifier (a TEE
@@ -181,80 +154,7 @@ pub(super) async fn validate_header_consensus_artifacts_for_activation(
 }
 
 impl ApplicationShared {
-    /// Drive `engine.new_payload` to a terminal verdict, retrying while execution
-    /// reports SYNCING. Owns the SYNCING/retry policy for both verify paths
-    /// (parent and proposed block) so they cannot diverge. Bails to
-    /// [`PayloadVerification::ChannelClosed`] if the single-shot verify response
-    /// channel closes mid-wait; `kind`/`digest` only scope the diagnostics.
-    async fn verify_payload_with_syncing_retry(
-        &self,
-        clock: &impl commonware_runtime::Clock,
-        request: PayloadValidationRequest<'_>,
-    ) -> eyre::Result<PayloadVerification> {
-        let PayloadValidationRequest {
-            kind,
-            digest,
-            execution_data,
-            response,
-            execution_read_budget,
-        } = request;
-        let mut saw_syncing = false;
-        loop {
-            if response.is_closed() {
-                execution_read_budget.cancel();
-                debug!(
-                    kind,
-                    target = %digest.0,
-                    "verify response channel closed while waiting for execution validation"
-                );
-                return Ok(PayloadVerification::ChannelClosed);
-            }
-            let execution = Box::pin(self.engine.new_payload(execution_data.clone()));
-            let cancelled = Box::pin(response.closed());
-            let status = match futures::future::select(execution, cancelled).await {
-                futures::future::Either::Left((status, _)) => status,
-                futures::future::Either::Right(((), _)) => {
-                    execution_read_budget.cancel();
-                    return Ok(PayloadVerification::ChannelClosed);
-                }
-            };
-            match status {
-                Ok(status) if status.is_valid() => {
-                    debug!(kind, target = %digest.0, ?status, "payload accepted during verify");
-                    return Ok(PayloadVerification::Valid { saw_syncing });
-                }
-                Ok(status) if status.is_syncing() => {
-                    saw_syncing = true;
-                    warn!(
-                        kind,
-                        target = %digest.0,
-                        ?status,
-                        "new_payload returned SYNCING during verify; keeping verification pending until execution validates"
-                    );
-                    clock.sleep(VERIFY_SYNCING_RETRY_DELAY).await;
-                }
-                Ok(status) => {
-                    warn!(kind, target = %digest.0, ?status, "payload rejected during verify");
-                    return Ok(PayloadVerification::Invalid);
-                }
-                Err(e) => {
-                    return Err(eyre::eyre!(
-                        "new_payload failed in verify: kind={kind} target={} error={e}",
-                        digest.0
-                    ));
-                }
-            }
-        }
-    }
-
-    /// Handle verify request.
-    ///
-    /// 1. Resolve proposed block (cache or marshal)
-    /// 2. Resolve parent block and send new_payload to Reth
-    /// 3. Canonicalize parent
-    /// 4. Send new_payload for proposed block
-    /// 5. Respond with execution validity
-    /// 6. If valid, canonicalize proposed block
+    /// One response owner races the entire decision against consensus cancellation.
     pub(super) async fn handle_verify(
         &self,
         clock: &(impl commonware_runtime::Clock + commonware_runtime::Supervisor),
@@ -266,90 +166,113 @@ impl ApplicationShared {
             mut response,
             execution_read_budget,
         } = task;
-        let round = context.round;
-        let (parent_view, parent) = context.parent;
-        let parent_digest = Digest(parent.0);
-
-        debug!(
-            %round,
-            %parent_view,
-            digest = %payload_digest.0,
-            parent = %parent_digest.0,
-            "verify requested"
-        );
-
-        if let Err(rejection) = self.epoch_fence.check(round, 0) {
-            debug!(
-                %round,
-                digest = %payload_digest.0,
-                ?rejection,
-                "dropping stale verify before block resolution"
-            );
-            let _ = response.send(false);
-            return Ok(());
-        }
-
         let request = VerifyRequest {
             context,
             payload_digest,
         };
-        let Some(resolved) = self.resolve_verify_blocks(clock, &request).await? else {
-            let _ = response.send(false);
-            return Ok(());
+        let decide = async {
+            match self
+                .decide_verification(clock, &request, &execution_read_budget)
+                .await
+            {
+                Ok(crate::executor::ingress::VerificationOutcome::Unavailable) => {
+                    std::future::pending().await
+                }
+                Err(error) => {
+                    warn!(%error, "local verification unavailable; withholding vote until cancellation");
+                    std::future::pending().await
+                }
+                Ok(outcome) => outcome,
+            }
         };
+        let outcome =
+            match futures::future::select(Box::pin(response.closed()), Box::pin(decide)).await {
+                futures::future::Either::Left(_) => {
+                    execution_read_budget.cancel();
+                    return Ok(());
+                }
+                futures::future::Either::Right((outcome, _)) => outcome,
+            };
+        self.publish_verify_verdict(&request, response, outcome);
+        Ok(())
+    }
+
+    async fn decide_verification(
+        &self,
+        clock: &(impl commonware_runtime::Clock + commonware_runtime::Supervisor),
+        request: &VerifyRequest,
+        execution_read_budget: &ExecutionReadBudget,
+    ) -> eyre::Result<crate::executor::ingress::VerificationOutcome> {
+        use crate::executor::ingress::{PendingParent, VerificationOutcome};
+        let round = request.context.round;
+        if self.epoch_fence.check(round, 0).is_err() {
+            return Ok(VerificationOutcome::Invalid);
+        }
+        let Some(resolved) = self.resolve_verify_blocks(clock, request).await? else {
+            return Ok(VerificationOutcome::Invalid);
+        };
+        let parent = resolved
+            .parent_block
+            .as_ref()
+            .map(|block| std::sync::Arc::new(block.clone()));
+        self.executor_mailbox.report_pending_parent(PendingParent {
+            round,
+            digest: request.parent_digest(),
+            height: commonware_consensus::types::Height::new(
+                parent.as_ref().map_or(0, |block| block.number()),
+            ),
+            block: parent,
+            epoch_fence: self.epoch_fence.clone(),
+        })?;
         if !self
-            .validate_verify_blocks(clock, &request, &resolved)
+            .validate_verify_blocks(clock, request, &resolved)
             .await?
         {
-            let _ = response.send(false);
-            return Ok(());
+            return Ok(VerificationOutcome::Invalid);
         }
-
+        if !self.verification_parent_ready(request, &resolved).await? {
+            return Ok(VerificationOutcome::Unavailable);
+        }
+        let outcome = self
+            .verify_block_execution(request, &resolved, execution_read_budget)
+            .await?;
+        Ok(
+            if self
+                .epoch_fence
+                .check(round, resolved.block.number())
+                .is_ok()
+            {
+                outcome
+            } else {
+                VerificationOutcome::Unavailable
+            },
+        )
+    }
+    async fn verification_parent_ready(
+        &self,
+        request: &VerifyRequest,
+        resolved: &ResolvedVerifyBlocks,
+    ) -> eyre::Result<bool> {
         let required_parent = ProjectionCheckpoint {
             block_number: resolved
                 .parent_block
                 .as_ref()
                 .map_or(0, ConsensusBlock::number),
-            block_hash: parent_digest.0,
+            block_hash: request.parent_digest().0,
         };
-        let projection_budget = execution_read_budget.clone();
-        if wait_for_projected_parent(self.projection_readiness.clone(), required_parent, async {
-            response.closed().await;
-            projection_budget.cancel();
-        })
-        .await?
-            == ParentProjectionGate::Withhold
-        {
-            return Ok(());
-        }
-
         match self
-            .verify_parent_execution(
-                clock,
-                &request,
-                &resolved,
-                &mut response,
-                &execution_read_budget,
-            )
-            .await?
-        {
-            PayloadVerification::ChannelClosed => return Ok(()),
-            PayloadVerification::Invalid => {
-                let _ = response.send(false);
-                return Ok(());
-            }
-            PayloadVerification::Valid { .. } => {}
-        }
-        let outcome = self
-            .verify_block_execution(
-                clock,
-                &request,
-                &resolved.block,
-                &mut response,
-                &execution_read_budget,
-            )
-            .await?;
-        self.publish_verify_verdict(&request, &resolved.block, response, outcome)
+            .projection_readiness
+            .clone()
+            .wait_for(required_parent, std::future::pending())
             .await
+        {
+            outbe_primitives::projection::WaitOutcome::Ready => {}
+            outbe_primitives::projection::WaitOutcome::Fatal(failure) => {
+                self.executor_mailbox.projection_failed(failure)?;
+                return Ok(false);
+            }
+            _ => return Ok(false),
+        }
+        Ok(true)
     }
 }

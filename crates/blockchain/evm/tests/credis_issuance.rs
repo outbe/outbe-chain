@@ -49,11 +49,13 @@ macro_rules! call {
         $evm.ctx.journaled_state.load_account($caller)?;
         outbe_evm::sub_call::run(
             &mut $evm.ctx,
-            $caller,
-            false,
-            SpecId::PRAGUE,
-            None,
-            $evm.scope.clone(),
+            outbe_evm::sub_call::SubCallEnvironment {
+                self_address: $caller,
+                outer_is_static: false,
+                spec: SpecId::PRAGUE,
+                runtime_body_readers: None,
+                execution_scope: $evm.scope.clone(),
+            },
             SubCallInput {
                 target: $target,
                 value: $value,

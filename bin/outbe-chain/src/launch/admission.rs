@@ -1,4 +1,7 @@
 use crate::*;
+use outbe_node::tee_remote_session::{
+    inspect_local_finalized_successor_status_v1, RegistryChainIdentity,
+};
 
 const TEE_LEASE_GUARD_POLL_SECS: u64 = 1;
 
@@ -326,12 +329,15 @@ pub(crate) async fn require_upstream_fullnode_tee_admission(
     })
 }
 
+pub(crate) struct TeeLeaseGuardConfigV1 {
+    pub(crate) chain: RegistryChainIdentity,
+    pub(crate) identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    pub(crate) gate: TeeLeaseGuardGateV1,
+}
+
 pub(crate) async fn run_tee_lease_guard_v1<P>(
     provider: P,
-    chain_id: u64,
-    genesis_hash: alloy_primitives::B256,
-    identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
-    mut gate: TeeLeaseGuardGateV1,
+    config: TeeLeaseGuardConfigV1,
     shutdown: tokio_util::sync::CancellationToken,
 ) -> eyre::Result<Option<String>>
 where
@@ -342,6 +348,15 @@ where
         + Sync
         + 'static,
 {
+    let TeeLeaseGuardConfigV1 {
+        chain,
+        identity,
+        mut gate,
+    } = config;
+    let RegistryChainIdentity {
+        chain_id,
+        genesis_hash,
+    } = chain;
     let mut retired_at = 0;
     let mut interval = tokio::time::interval(Duration::from_secs(TEE_LEASE_GUARD_POLL_SECS));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -355,12 +370,7 @@ where
                 .finalized_block_num_hash()?
                 .is_some_and(|head| head.number > 0)
         {
-            let status =
-                outbe_node::tee_remote_session::inspect_local_finalized_successor_status_v1(
-                    &provider,
-                    chain_id,
-                    genesis_hash,
-                )?;
+            let status = inspect_local_finalized_successor_status_v1(&provider, chain)?;
             if status.retirement_height > retired_at {
                 let activation_height = status.retirement_height;
                 let response = outbe_tee::try_with_enclave(|session| {

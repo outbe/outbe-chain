@@ -26,69 +26,89 @@ pub struct ConsensusStackServices {
     )>,
 }
 
+/// Execution-side services shared with the node's consensus stack.
+pub struct ConsensusExecutionServices {
+    /// Readiness of the finalized projection consumed by consensus.
+    pub projection_readiness: ProjectionReadinessHandle,
+    /// FullNode execution barrier; validator callers supply `None`.
+    pub ocomp_readiness: Option<ProjectionReadinessHandle>,
+    /// Retained Tribute bodies used by finalized execution.
+    pub retained_tribute_writer: Arc<RetainedTributeWriter>,
+    /// Protects projection bodies while execution still needs them.
+    pub projection_retention_fence: Arc<ProjectionRetentionFence>,
+    /// Selects the OCOMP bodies retained by the node.
+    pub retention_selector: Arc<SharedOcompRetentionSelector>,
+    /// Commits finalized compressed-entity state.
+    pub finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
+    /// Recovers compressed-entity state during startup.
+    pub ce_startup_recovery: Arc<dyn CeStartupRecovery>,
+}
+
+/// Shutdown barriers shared with the node runtime owner.
+pub struct ConsensusShutdownServices {
+    /// Drains application dependencies before transport stops.
+    pub application_drain: crate::application_shutdown::ApplicationDrain,
+    /// Pre-stop handshake required when starting a follower.
+    pub follower_shutdown: Option<crate::follower_shutdown::FollowerDrain>,
+}
+
+/// Radicle endpoint capabilities installed together for one consensus stack.
+pub struct ConsensusRadicleServices {
+    /// Status consumed by consensus voting gates.
+    pub status: outbe_radicle::integration::RadicleStatusHandle,
+    /// Network service used by endpoint discovery.
+    pub endpoint: outbe_radicle::integration::EndpointNetworkService,
+    /// Identity advertised by the local endpoint.
+    pub local_identity: outbe_radicle::integration::LocalEndpointIdentityHandle,
+    /// Keeps endpoint tasks owned until they drain.
+    pub task_owner: outbe_radicle::integration::EndpointTaskOwner,
+}
+
 impl ConsensusStackServices {
+    /// Creates a complete service bundle before the consensus stack starts.
     pub fn new(
-        projection_readiness: ProjectionReadinessHandle,
-        retained_tribute_writer: Arc<RetainedTributeWriter>,
-        projection_retention_fence: Arc<ProjectionRetentionFence>,
-        retention_selector: Arc<SharedOcompRetentionSelector>,
-        finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
-        ce_startup_recovery: Arc<dyn CeStartupRecovery>,
+        execution: ConsensusExecutionServices,
+        shutdown: ConsensusShutdownServices,
+        radicle: Option<ConsensusRadicleServices>,
     ) -> Self {
-        Self {
-            application_drain: crate::application_shutdown::ApplicationDrain::default(),
+        let ConsensusExecutionServices {
             projection_readiness,
-            follower_shutdown: None,
-            ocomp_readiness: None,
+            ocomp_readiness,
             retained_tribute_writer,
             projection_retention_fence,
             retention_selector,
             finalized_ce_committer,
             ce_startup_recovery,
-            radicle_status: outbe_radicle::integration::RadicleStatusChannel::disabled(),
-            radicle_endpoint: None,
+        } = execution;
+        let ConsensusShutdownServices {
+            application_drain,
+            follower_shutdown,
+        } = shutdown;
+        let (radicle_status, radicle_endpoint) = match radicle {
+            Some(ConsensusRadicleServices {
+                status,
+                endpoint,
+                local_identity,
+                task_owner,
+            }) => (status, Some((endpoint, local_identity, task_owner))),
+            None => (
+                outbe_radicle::integration::RadicleStatusChannel::disabled(),
+                None,
+            ),
+        };
+        Self {
+            application_drain,
+            follower_shutdown,
+            projection_readiness,
+            ocomp_readiness,
+            retained_tribute_writer,
+            projection_retention_fence,
+            retention_selector,
+            finalized_ce_committer,
+            ce_startup_recovery,
+            radicle_status,
+            radicle_endpoint,
         }
-    }
-
-    /// Install the application pre-stop barrier shared with the runtime owner.
-    #[must_use]
-    pub fn with_application_drain(
-        mut self,
-        drain: crate::application_shutdown::ApplicationDrain,
-    ) -> Self {
-        self.application_drain = drain;
-        self
-    }
-
-    /// Install the NodeHost-owned follower pre-stop handshake.
-    #[must_use]
-    pub fn with_follower_shutdown(
-        mut self,
-        shutdown: crate::follower_shutdown::FollowerDrain,
-    ) -> Self {
-        self.follower_shutdown = Some(shutdown);
-        self
-    }
-
-    /// Installs the FullNode-only OCOMP execution barrier. Validator callers
-    /// deliberately omit it.
-    #[must_use]
-    pub fn with_ocomp_readiness(mut self, readiness: ProjectionReadinessHandle) -> Self {
-        self.ocomp_readiness = Some(readiness);
-        self
-    }
-
-    #[must_use]
-    pub fn with_radicle(
-        mut self,
-        status: outbe_radicle::integration::RadicleStatusHandle,
-        endpoint: outbe_radicle::integration::EndpointNetworkService,
-        local: outbe_radicle::integration::LocalEndpointIdentityHandle,
-        owner: outbe_radicle::integration::EndpointTaskOwner,
-    ) -> Self {
-        self.radicle_status = status;
-        self.radicle_endpoint = Some((endpoint, local, owner));
-        self
     }
 }
 

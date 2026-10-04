@@ -3,7 +3,12 @@ use super::*;
 
 type ComponentIndices = BTreeMap<(u8, Vec<u8>), u16>;
 
-pub(super) fn assemble_unsigned(
+/// Assemble the deterministic unsigned body from complete per-validator
+/// evidence and the existing DKG/offer-key result. Committee signature
+/// records are installed in canonical validator order with zeroed bytes so
+/// every node derives the same signing hash; coordination replaces only
+/// those excluded signature bytes.
+pub fn assemble_unsigned(
     authority: TeeBootstrapAuthorityV2,
     submissions: Vec<TeeBootstrapParticipantSubmissionV2>,
 ) -> Result<TeeBootstrapV2, CodecError> {
@@ -35,18 +40,12 @@ pub(super) fn assemble_unsigned(
         })
         .collect::<Result<Vec<_>, CodecError>>()?;
     let payload = TeeBootstrapV2 {
-        policy: authority.policy,
-        committee_snapshot_hash: authority.committee_snapshot_hash,
-        committee_snapshot_block: authority.committee_snapshot_block,
-        key_epoch: authority.key_epoch,
-        tribute_offer_epoch: authority.tribute_offer_epoch,
-        dkg_transcript_hash: authority.dkg_transcript_hash,
-        tribute_offer_public_key: authority.tribute_offer_public_key,
-        tribute_offer_group_public_key: authority.tribute_offer_group_public_key,
+        authority,
         collateral_pool,
         participants,
         committee_signatures,
     };
+    payload.preflight()?;
     Ok(payload)
 }
 

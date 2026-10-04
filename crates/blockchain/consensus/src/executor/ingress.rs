@@ -2,7 +2,7 @@
 
 use crate::digest::Digest;
 use alloy_rpc_types_engine::PayloadId;
-use commonware_consensus::types::Height;
+use commonware_consensus::types::{Height, Round};
 use commonware_utils::channel::oneshot;
 use futures::channel::mpsc;
 use outbe_primitives::OutbePayloadAttributes;
@@ -27,6 +27,32 @@ pub struct Mailbox {
 }
 
 impl Mailbox {
+    pub(crate) fn projection_failed(
+        &self,
+        failure: outbe_primitives::projection::ProjectionFailure,
+    ) -> eyre::Result<()> {
+        self.inner
+            .unbounded_send(Message::ProjectionFailed(failure))
+            .map_err(|_| eyre::eyre!("executor mailbox closed"))
+    }
+
+    pub(crate) fn report_pending_parent(&self, parent: PendingParent) -> eyre::Result<()> {
+        self.inner
+            .unbounded_send(Message::PendingParent(parent))
+            .map_err(|_| eyre::eyre!("executor mailbox closed"))
+    }
+
+    /// Request a validity decision without selecting a canonical head.
+    pub(crate) fn verify_block(
+        &self,
+        request: VerificationRequest,
+    ) -> eyre::Result<futures::channel::oneshot::Receiver<VerificationOutcome>> {
+        let (response, receiver) = futures::channel::oneshot::channel();
+        self.inner
+            .unbounded_send(Message::VerifyBlock(VerifyBlock { request, response }))
+            .map_err(|_| eyre::eyre!("executor mailbox closed"))?;
+        Ok(receiver)
+    }
     /// Create from a sender.
     pub fn from_sender(tx: mpsc::UnboundedSender<Message>) -> Self {
         Self { inner: tx }
@@ -134,6 +160,9 @@ impl commonware_consensus::Reporter for Mailbox {
 /// Messages handled by the executor actor.
 #[allow(clippy::large_enum_variant)]
 pub enum Message {
+    ProjectionFailed(outbe_primitives::projection::ProjectionFailure),
+    PendingParent(PendingParent),
+    VerifyBlock(VerifyBlock),
     /// Request to make a block the canonical head.
     CanonicalizeHead(CanonicalizeHead),
     /// Canonicalize head and build a new payload (FCU with attributes).
@@ -142,6 +171,35 @@ pub enum Message {
     MarshalUpdate(Box<crate::marshal_types::MarshalUpdate>),
     /// Notify once executor finalization reaches the requested height.
     SubscribeFinalized(SubscribeFinalized),
+}
+
+/// A consensus-selected parent remains a convergence target after cancellation.
+pub struct PendingParent {
+    pub(crate) round: Round,
+    pub(crate) digest: Digest,
+    pub(crate) height: Height,
+    pub(crate) block: Option<std::sync::Arc<crate::block::ConsensusBlock>>,
+    pub(crate) epoch_fence: crate::application::epoch_boundary::ApplicationEpochFence,
+}
+
+pub struct VerificationRequest {
+    pub(crate) round: Round,
+    pub(crate) block: std::sync::Arc<crate::block::ConsensusBlock>,
+    pub(crate) parent: Option<std::sync::Arc<crate::block::ConsensusBlock>>,
+    pub(crate) epoch_fence: crate::application::epoch_boundary::ApplicationEpochFence,
+    pub(crate) execution_read_budget: outbe_primitives::projection::ExecutionReadBudget,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VerificationOutcome {
+    Valid,
+    Invalid,
+    Unavailable,
+}
+
+pub struct VerifyBlock {
+    pub(crate) request: VerificationRequest,
+    pub(crate) response: futures::channel::oneshot::Sender<VerificationOutcome>,
 }
 
 /// Canonicalize head request.

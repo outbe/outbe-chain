@@ -8,7 +8,7 @@ pub(super) struct RenewalSubmission {
 }
 
 pub(super) async fn submit_attempt(
-    rpc: &(impl RenewalRpc + Sync),
+    rpc: &(impl RelayRpc + Sync),
     journal: &RenewalJournalGuard,
     submission: RenewalSubmission,
 ) -> Result<RenewalOutcomeV1> {
@@ -49,7 +49,7 @@ pub(super) async fn submit_attempt(
 }
 
 pub(super) async fn send_exact_transaction(
-    rpc: &(impl RenewalRpc + Sync),
+    rpc: &(impl RelayRpc + Sync),
     raw: &crate::tx::RawRelayTransactionV1,
 ) -> Result<B256> {
     Ok(match rpc.send_raw_transaction(&raw.raw_transaction).await {
@@ -70,7 +70,7 @@ pub(super) async fn send_exact_transaction(
 }
 
 pub(super) async fn exact_transaction_receipt_exists(
-    rpc: &(impl RenewalRpc + Sync),
+    rpc: &(impl TransactionReceiptRpc + Sync),
     raw: &crate::tx::RawRelayTransactionV1,
 ) -> Result<bool> {
     let expected_hash = format!("{:#x}", raw.transaction_hash);

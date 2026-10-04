@@ -10,7 +10,10 @@ use outbe_primitives::tee_attestation_v1::AttestationMode;
 /// delivery acknowledgements use the production implementation.
 mod identity_phase_regression {
     use super::*;
-    use crate::tee_bootstrap::{CommonwareDkgGossip, DELIVERY_ACK, DKG_ENV_IDENTITY};
+    use crate::tee_bootstrap::{
+        CeremonyBinding, CommonwareDkgGossip, IdentityExchange, LocalIdentityAnnouncement,
+        StartupGossipTransport, DELIVERY_ACK, DKG_ENV_IDENTITY,
+    };
     use commonware_actor::{Feedback, Unreliable};
     use commonware_codec::Encode as _;
     use commonware_p2p::{CheckedSender, LimitedSender, Message, Receiver};
@@ -167,10 +170,19 @@ mod identity_phase_regression {
             enqueue_preliminary(&inbox, &peers, &preliminary, early_signed.then_some(&signed[0]));
             let sent = Sent::default();
             let mut gossip = CommonwareDkgGossip::new(
-                RecordingSender { peers: peers[1..].to_vec(), sent: sent.clone() },
-                OrderedReceiver(inbox.clone()), context, scope, peers[1..].iter().cloned().collect(),
+                StartupGossipTransport {
+                    sender: RecordingSender { peers: peers[1..].to_vec(), sent: sent.clone() },
+                    receiver: OrderedReceiver(inbox.clone()),
+                    clock: context,
+                    allowed_remote_peers: peers[1..].iter().cloned().collect(),
+                },
+                scope,
             );
-            let first = gossip.exchange_identities(bls[0].clone(), [0; 32], Vec::new(), B256::ZERO, 0, B256::ZERO, 4).await.unwrap();
+            let first = gossip.exchange_identities(IdentityExchange {
+                local: LocalIdentityAnnouncement { bls: bls[0].clone(), enc: [0; 32], signature: Vec::new() },
+                binding: CeremonyBinding { ceremony_id: B256::ZERO, round: 0, participant_set_hash: B256::ZERO },
+                participant_count: 4,
+            }).await.unwrap();
             assert_eq!(first.len(), 4, "preliminary exchange must complete");
 
             if early_signed {
@@ -181,7 +193,11 @@ mod identity_phase_regression {
                     inbox.lock().unwrap().push_back((peers[i].clone(), signed[i - 1].clone().into()));
                 }
             }
-            let result = gossip.exchange_identities(bls[0].clone(), [0x22; 32], vec![0x55; 96], B256::repeat_byte(0x41), 0, B256::repeat_byte(0x42), 4).await;
+            let result = gossip.exchange_identities(IdentityExchange {
+                local: LocalIdentityAnnouncement { bls: bls[0].clone(), enc: [0x22; 32], signature: vec![0x55; 96] },
+                binding: CeremonyBinding { ceremony_id: B256::repeat_byte(0x41), round: 0, participant_set_hash: B256::repeat_byte(0x42) },
+                participant_count: 4,
+            }).await;
             let identities = result.expect("all four signed identities were delivered; an ACKed early announcement must survive the phase transition");
             assert_eq!(identities.len(), 4);
             for (identity, expected_bls) in identities.iter().zip(bls.iter().collect::<std::collections::BTreeSet<_>>()) {

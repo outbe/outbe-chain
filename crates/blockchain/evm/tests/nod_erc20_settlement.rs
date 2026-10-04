@@ -219,11 +219,13 @@ impl World {
     ) -> SubCallOutput {
         sub_call::run(
             &mut self.ctx,
-            caller,
-            false,
-            SpecId::PRAGUE,
-            Some(self.readers.clone()),
-            self.scope.clone(),
+            sub_call::SubCallEnvironment {
+                self_address: caller,
+                outer_is_static: false,
+                spec: SpecId::PRAGUE,
+                runtime_body_readers: Some(self.readers.clone()),
+                execution_scope: self.scope.clone(),
+            },
             SubCallInput {
                 target,
                 value: U256::ZERO,

@@ -1,6 +1,6 @@
 use crate::executor::{
-    BlockExecutionDependencies, BlockExecutionIdentity, BlockExecutorInputs, BlockSystemPlan,
-    ParentAccountingInputs,
+    BlockExecutionDependencies, BlockExecutionIdentity, BlockExecutionRuntime, BlockExecutorInputs,
+    BlockSystemPlan, ParentAccountingInputs,
 };
 use crate::{executor::OutbeBlockExecutor, factory::OutbeEvmFactory};
 use alloy_evm::{
@@ -72,6 +72,7 @@ impl BlockExecutorFactory for OutbeEvmConfig {
         let execute_outbe_block_hooks = ctx.execute_outbe_block_hooks;
         let prebuilt_phase1_tx = ctx.prebuilt_phase1_tx.clone();
         let parent_artifact_hint = ctx.parent_artifact_hint;
+        let block_number = evm.block().number.saturating_to::<u64>();
         let mut system_plan = BlockSystemPlan {
             expected_begin_system_txs,
             expected_end_system_txs,
@@ -79,10 +80,10 @@ impl BlockExecutorFactory for OutbeEvmConfig {
             proposer_evm_address,
             execute_outbe_block_hooks,
             prebuilt_phase1_tx,
+            pending_tee_bootstrap: ctx.pending_tee_bootstrap.clone(),
+            ocomp_lifecycle_active: self.ocomp_lifecycle_active_at(block_number),
         };
-        let pending_tee_bootstrap = ctx.pending_tee_bootstrap.clone();
         let runtime_body_readers = evm.runtime_body_readers().cloned();
-        let block_number = evm.block().number.saturating_to::<u64>();
         let compressed_entities_scope = evm.execution_scope().clone();
         if let Err(error) = self.configure_compressed_entities_scope(
             &compressed_entities_scope,
@@ -114,6 +115,7 @@ impl BlockExecutorFactory for OutbeEvmConfig {
                         block_extra_data,
                         validate_execution_summary,
                         block_hash,
+                        block_state_root: ctx.block_state_root,
                         parent_hash,
                     },
                     system_plan,
@@ -123,14 +125,14 @@ impl BlockExecutorFactory for OutbeEvmConfig {
                         parent_artifact_hint,
                     },
                     dependencies: BlockExecutionDependencies { bridge, evm_signer },
+                    runtime: BlockExecutionRuntime {
+                        compressed_entities_scope,
+                        compressed_tree_service: self.compressed_tree_service.clone(),
+                        runtime_body_readers,
+                        execution_read_budget,
+                    },
                 },
             )
         }
-        .with_block_state_root(ctx.block_state_root)
-        .with_compressed_entities_scope(compressed_entities_scope)
-        .with_compressed_tree_service(self.compressed_tree_service.clone())
-        .with_runtime_body_readers(runtime_body_readers, execution_read_budget)
-        .with_pending_tee_bootstrap(pending_tee_bootstrap)
-        .with_ocomp_lifecycle_active(self.ocomp_lifecycle_active_at(block_number))
     }
 }

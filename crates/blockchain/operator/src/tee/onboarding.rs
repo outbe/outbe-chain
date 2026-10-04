@@ -249,7 +249,7 @@ mod tests {
     use outbe_primitives::tee_registry_abi_v1::NodeEnclaveBindingV1View;
 
     use crate::{
-        rpc::FinalityRpc,
+        rpc::{FinalizedStateRpc, TransactionReceiptRpc},
         tee::registry::{ExpectedOnboardingBindingV1, NodeBindingSelectorV1},
     };
 
@@ -262,14 +262,16 @@ mod tests {
         binding_call_block_tags: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     }
 
-    impl FinalityRpc for MockRpc {
+    impl TransactionReceiptRpc for MockRpc {
         async fn transaction_receipt(
             &self,
             _transaction_hash: &str,
         ) -> Result<Option<serde_json::Value>> {
             Ok(Some(self.receipt.clone()))
         }
+    }
 
+    impl FinalityRpc for MockRpc {
         async fn logs(
             &self,
             _address: Address,
@@ -283,7 +285,9 @@ mod tests {
         async fn block_by_number(&self, _block: u64) -> Result<serde_json::Value> {
             Ok(self.canonical_block.clone())
         }
+    }
 
+    impl FinalizedStateRpc for MockRpc {
         async fn finalized_block(&self) -> Result<serde_json::Value> {
             Ok(self.finalized_block.clone())
         }

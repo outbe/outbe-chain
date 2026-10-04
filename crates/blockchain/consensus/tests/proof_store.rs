@@ -44,7 +44,7 @@ use outbe_consensus::{
         },
     },
     hybrid::{election::HybridRandom, HybridScheme},
-    reporter::{OutbeReporter, ReporterContinuity},
+    reporter::{OutbeReporter, ReporterCommittee, ReporterContinuity, ReporterDependencies},
 };
 use outbe_primitives::consensus_metadata::ParentParticipationProof;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -172,14 +172,18 @@ fn build_reporter(
         );
     let reporter = OutbeReporter::new(
         ReporterContinuity::default(),
-        ordered_addresses(),
-        FinalizationMailbox::from_sender(tx),
-        None,
-        verifier_scheme_from(fx),
-        HybridRandom::default().build(&fx.participants),
-        Epoch::new(0),
-        std::sync::Arc::new(store.clone()),
-        verify_mailbox,
+        ReporterCommittee {
+            validator_addresses: ordered_addresses(),
+            verifier_scheme: verifier_scheme_from(fx),
+            elector: HybridRandom::default().build(&fx.participants),
+            epoch: Epoch::new(0),
+        },
+        ReporterDependencies {
+            finalization_mailbox: FinalizationMailbox::from_sender(tx),
+            bridge: None,
+            witness_sink: std::sync::Arc::new(store.clone()),
+            finalize_verify_mailbox: verify_mailbox,
+        },
     );
     (reporter, rx)
 }

@@ -5,11 +5,15 @@
 //! A separate legacy checkpoint supports copying an existing MRSIGNER seal.
 
 use super::journal_storage::{sync_directory, JournalPaths};
+use super::JournalSnapshotV1;
 
 mod storage;
 use storage::{
     read_private_bounded_file, read_snapshot, validate_directory, validate_private_file,
 };
+
+#[cfg(test)]
+mod compatibility_tests;
 
 mod context;
 mod identity;
@@ -23,6 +27,7 @@ use identity::{
 use journal_validation::{security_material, validate_checkpoint_transition};
 use relay::{finalized_transition_matches_v1, prepare_upgrade_relay_v1};
 mod submission;
+mod wire;
 
 use std::{
     fs::{self, DirBuilder, File, OpenOptions},
@@ -53,7 +58,7 @@ use outbe_tee::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    rpc::RenewalRpc,
+    rpc::{RegistryRpc, RelayPreparationRpc, RelayRpc, RenewalRpc},
     tx::{buffered_gas_price, RawRelayTransactionV1, RelaySignerV1},
 };
 
@@ -123,53 +128,49 @@ pub enum UpgradeSubmissionOutcomeV1 {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "state", rename_all = "camelCase", deny_unknown_fields)]
+/// Commitments established when the candidate key becomes ready.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UpgradeSecurityMaterialV1 {
+    pub sealed_root_hash: B256,
+    pub resident_offer_public: B256,
+    pub proof_hash: B256,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UpgradeJournalStateV1 {
     CandidatePrepared {
         context: UpgradeContextV1,
     },
-    #[serde(alias = "rootCopied")]
     KeyProvisioned {
         context: UpgradeContextV1,
         sealed_root_hash: B256,
     },
     CandidateKeyReady {
         context: UpgradeContextV1,
-        sealed_root_hash: B256,
-        resident_offer_public: B256,
-        proof_hash: B256,
+        security: UpgradeSecurityMaterialV1,
     },
     SubmissionPrepared {
         context: UpgradeContextV1,
-        sealed_root_hash: B256,
-        resident_offer_public: B256,
-        proof_hash: B256,
+        security: UpgradeSecurityMaterialV1,
         submission: PreparedUpgradeSubmissionV1,
     },
     Submitted {
         context: UpgradeContextV1,
-        sealed_root_hash: B256,
-        resident_offer_public: B256,
-        proof_hash: B256,
+        security: UpgradeSecurityMaterialV1,
         submission: PreparedUpgradeSubmissionV1,
         submitted_at_finalized_height: u64,
         transaction_hashes: Vec<B256>,
     },
     Finalized {
         context: UpgradeContextV1,
-        sealed_root_hash: B256,
-        resident_offer_public: B256,
-        proof_hash: B256,
+        security: UpgradeSecurityMaterialV1,
         submission: PreparedUpgradeSubmissionV1,
         finalized_height: u64,
         finalized_hash: B256,
     },
     Promoted {
         context: UpgradeContextV1,
-        sealed_root_hash: B256,
-        resident_offer_public: B256,
-        proof_hash: B256,
+        security: UpgradeSecurityMaterialV1,
         submission: PreparedUpgradeSubmissionV1,
         finalized_height: u64,
         finalized_hash: B256,
@@ -210,23 +211,10 @@ impl UpgradeJournalStateV1 {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct UpgradeJournalSnapshotV1 {
-    pub version: u8,
-    pub generation: u64,
-    pub lifecycle: UpgradeJournalStateV1,
-}
+/// V1 upgrade journal envelope, retaining the upgrade lifecycle type.
+pub type UpgradeJournalSnapshotV1 = JournalSnapshotV1<UpgradeJournalStateV1>;
 
 impl UpgradeJournalSnapshotV1 {
-    pub fn new(lifecycle: UpgradeJournalStateV1) -> Self {
-        Self {
-            version: 1,
-            generation: 1,
-            lifecycle,
-        }
-    }
-
     fn validate(&self) -> Result<()> {
         if self.version != 1 || self.generation == 0 {
             eyre::bail!("unsupported upgrade journal version or generation");
@@ -487,9 +475,11 @@ pub fn record_candidate_key_ready_v1(
     guard.store(UpgradeJournalSnapshotV1::new(
         UpgradeJournalStateV1::CandidateKeyReady {
             context,
-            sealed_root_hash,
-            resident_offer_public: B256::from(expected_offer_public),
-            proof_hash,
+            security: UpgradeSecurityMaterialV1 {
+                sealed_root_hash,
+                resident_offer_public: B256::from(expected_offer_public),
+                proof_hash,
+            },
         },
     ))?;
     guard
@@ -506,21 +496,13 @@ pub fn record_upgrade_submission_prepared_v1(
     let current = guard
         .load()?
         .ok_or_else(|| eyre::eyre!("upgrade candidate is not prepared"))?;
-    let UpgradeJournalStateV1::CandidateKeyReady {
-        context,
-        sealed_root_hash,
-        resident_offer_public,
-        proof_hash,
-    } = current.lifecycle
-    else {
+    let UpgradeJournalStateV1::CandidateKeyReady { context, security } = current.lifecycle else {
         eyre::bail!("upgrade submission requires candidate-key-ready checkpoint");
     };
     guard.store(UpgradeJournalSnapshotV1::new(
         UpgradeJournalStateV1::SubmissionPrepared {
             context,
-            sealed_root_hash,
-            resident_offer_public,
-            proof_hash,
+            security,
             submission,
         },
     ))?;
@@ -539,9 +521,7 @@ pub fn record_upgrade_submitted_v1(
         .ok_or_else(|| eyre::eyre!("upgrade candidate is not prepared"))?;
     let UpgradeJournalStateV1::SubmissionPrepared {
         context,
-        sealed_root_hash,
-        resident_offer_public,
-        proof_hash,
+        security,
         submission,
     } = current.lifecycle
     else {
@@ -555,9 +535,7 @@ pub fn record_upgrade_submitted_v1(
     guard.store(UpgradeJournalSnapshotV1::new(
         UpgradeJournalStateV1::Submitted {
             context,
-            sealed_root_hash,
-            resident_offer_public,
-            proof_hash,
+            security,
             submission,
             submitted_at_finalized_height: finalized_height,
             transaction_hashes,
@@ -582,9 +560,7 @@ pub fn record_upgrade_finalized_v1(
         .ok_or_else(|| eyre::eyre!("upgrade candidate is not prepared"))?;
     let UpgradeJournalStateV1::Submitted {
         context,
-        sealed_root_hash,
-        resident_offer_public,
-        proof_hash,
+        security,
         submission,
         ..
     } = current.lifecycle
@@ -594,9 +570,7 @@ pub fn record_upgrade_finalized_v1(
     guard.store(UpgradeJournalSnapshotV1::new(
         UpgradeJournalStateV1::Finalized {
             context,
-            sealed_root_hash,
-            resident_offer_public,
-            proof_hash,
+            security,
             submission,
             finalized_height,
             finalized_hash,
@@ -614,9 +588,7 @@ pub fn record_upgrade_promoted_v1(node_data_dir: &Path) -> Result<UpgradeJournal
         .ok_or_else(|| eyre::eyre!("upgrade candidate is not prepared"))?;
     let UpgradeJournalStateV1::Finalized {
         context,
-        sealed_root_hash,
-        resident_offer_public,
-        proof_hash,
+        security,
         submission,
         finalized_height,
         finalized_hash,
@@ -627,9 +599,7 @@ pub fn record_upgrade_promoted_v1(node_data_dir: &Path) -> Result<UpgradeJournal
     guard.store(UpgradeJournalSnapshotV1::new(
         UpgradeJournalStateV1::Promoted {
             context,
-            sealed_root_hash,
-            resident_offer_public,
-            proof_hash,
+            security,
             submission,
             finalized_height,
             finalized_hash,
@@ -671,35 +641,44 @@ pub fn record_upgrade_missed_cutoff_v1(
         .ok_or_else(|| eyre::eyre!("missed-cutoff checkpoint disappeared"))
 }
 
+/// RPC, relay and node signing capabilities for the replacement candidate.
+pub struct UpgradeSubmissionServicesV1<'a, R, N> {
+    pub rpc: &'a R,
+    pub relay: &'a RelaySignerV1,
+    pub candidate: &'a mut ReplacementCandidateEnclaveV1,
+    pub node_signer: &'a N,
+}
+
+/// Node storage and binding target for one durable upgrade submission.
+pub struct UpgradeSubmissionRequestV1<'a> {
+    pub node_data_dir: &'a Path,
+    pub selector: &'a NodeBindingSelectorV1,
+    pub binding_id: B256,
+    pub requested_valid_until: u64,
+}
+
 /// Resume one same-platform measurement transition from its durable
 /// checkpoints. The deployment manager must have already copied the root and
 /// restarted candidate B before calling this reducer.
-#[allow(clippy::too_many_arguments)]
-pub async fn run_upgrade_submission_v1(
-    rpc: &(impl RenewalRpc + Sync),
-    relay: &RelaySignerV1,
-    candidate: &mut ReplacementCandidateEnclaveV1,
-    node_signer: &impl UpgradeNodeSignerV1,
-    node_data_dir: &Path,
-    selector: &NodeBindingSelectorV1,
-    binding_id: B256,
-    requested_valid_until: u64,
+pub async fn run_upgrade_submission_v1<R: RenewalRpc + Sync, N: UpgradeNodeSignerV1>(
+    services: UpgradeSubmissionServicesV1<'_, R, N>,
+    request: UpgradeSubmissionRequestV1<'_>,
 ) -> Result<UpgradeSubmissionOutcomeV1> {
     let mut service = submission::UpgradeSubmissionService {
-        rpc,
-        relay,
-        candidate,
-        node_signer,
-        node_data_dir,
-        selector,
-        binding_id,
-        requested_valid_until,
+        rpc: services.rpc,
+        relay: services.relay,
+        candidate: services.candidate,
+        node_signer: services.node_signer,
+        node_data_dir: request.node_data_dir,
+        selector: request.selector,
+        binding_id: request.binding_id,
+        requested_valid_until: request.requested_valid_until,
     };
     submission::run(&mut service).await
 }
 
 async fn reset_expired_upgrade_submission_v1(
-    rpc: &(impl RenewalRpc + Sync),
+    rpc: &(impl RegistryRpc + Sync),
     node_data_dir: &Path,
     selector: &NodeBindingSelectorV1,
     snapshot: &UpgradeJournalSnapshotV1,
@@ -926,10 +905,71 @@ mod tests {
     fn key_ready(context: UpgradeContextV1, sealed_root_hash: B256) -> UpgradeJournalStateV1 {
         UpgradeJournalStateV1::CandidateKeyReady {
             context,
-            sealed_root_hash,
-            resident_offer_public: B256::repeat_byte(7),
-            proof_hash: B256::repeat_byte(8),
+            security: UpgradeSecurityMaterialV1 {
+                sealed_root_hash,
+                resident_offer_public: B256::repeat_byte(7),
+                proof_hash: B256::repeat_byte(8),
+            },
         }
+    }
+
+    #[test]
+    fn snapshot_legacy_json_loads_without_rewrite_and_keeps_exact_bytes() {
+        let legacy = concat!(
+            "{\"version\":1,\"generation\":7,\"lifecycle\":{\"state\":\"candidatePrepared\",",
+            "\"context\":{",
+            "\"predecessorManifestHash\":\"0x0101010101010101010101010101010101010101010101010101010101010101\",",
+            "\"candidateManifestHash\":\"0x0202020202020202020202020202020202020202020202020202020202020202\",",
+            "\"successorPolicyHash\":\"0x0303030303030303030303030303030303030303030303030303030303030303\",",
+            "\"activationHeight\":100,\"activeTeeDir\":\"/legacy/active\",",
+            "\"candidateTeeDir\":\"/legacy/candidate\"}}}"
+        );
+        let root = tempfile::tempdir().unwrap();
+        let guard = UpgradeJournalGuardV1::acquire(root.path()).unwrap();
+        let path = root.path().join(DIRECTORY).join("journal.json");
+        fs::write(&path, legacy).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(FILE_MODE)).unwrap();
+        let snapshot = guard.load().unwrap().unwrap();
+        assert_eq!(snapshot.generation, 7);
+        assert_eq!(snapshot.lifecycle.label(), "candidatePrepared");
+        assert_eq!(serde_json::to_vec(&snapshot).unwrap(), legacy.as_bytes());
+        assert_eq!(fs::read(&path).unwrap(), legacy.as_bytes());
+        let value: serde_json::Value = serde_json::from_str(legacy).unwrap();
+        for missing in ["version", "generation", "lifecycle"] {
+            let mut malformed = value.clone();
+            malformed.as_object_mut().unwrap().remove(missing);
+            assert!(serde_json::from_value::<UpgradeJournalSnapshotV1>(malformed).is_err());
+        }
+        let mut unknown = value;
+        unknown["unexpected"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<UpgradeJournalSnapshotV1>(unknown).is_err());
+    }
+
+    #[test]
+    fn snapshot_headers_reject_invalid_values_before_lifecycle_validation() {
+        let mut invalid_context = context(Path::new("/unused"));
+        invalid_context.activation_height = 0;
+        let lifecycle = UpgradeJournalStateV1::CandidatePrepared {
+            context: invalid_context,
+        };
+        for (version, generation) in [(0, 1), (2, 1), (1, 0)] {
+            let snapshot = UpgradeJournalSnapshotV1 {
+                version,
+                generation,
+                lifecycle: lifecycle.clone(),
+            };
+            assert_eq!(
+                snapshot.validate().unwrap_err().to_string(),
+                "unsupported upgrade journal version or generation"
+            );
+        }
+        assert_ne!(
+            UpgradeJournalSnapshotV1::new(lifecycle)
+                .validate()
+                .unwrap_err()
+                .to_string(),
+            "unsupported upgrade journal version or generation"
+        );
     }
 
     #[test]
@@ -980,7 +1020,7 @@ mod tests {
         fs::set_permissions(path, fs::Permissions::from_mode(DIRECTORY_MODE)).unwrap();
     }
 
-    fn context(root: &Path) -> UpgradeContextV1 {
+    pub(super) fn context(root: &Path) -> UpgradeContextV1 {
         UpgradeContextV1 {
             predecessor_manifest_hash: B256::repeat_byte(1),
             candidate_manifest_hash: B256::repeat_byte(2),
@@ -991,7 +1031,7 @@ mod tests {
         }
     }
 
-    fn submission() -> PreparedUpgradeSubmissionV1 {
+    pub(super) fn submission() -> PreparedUpgradeSubmissionV1 {
         let calldata = vec![1, 2];
         let raw_transaction = vec![3, 4];
         PreparedUpgradeSubmissionV1 {
@@ -1072,9 +1112,11 @@ mod tests {
             &guard,
             UpgradeJournalStateV1::SubmissionPrepared {
                 context: context.clone(),
-                sealed_root_hash: B256::repeat_byte(6),
-                resident_offer_public: B256::repeat_byte(7),
-                proof_hash: B256::repeat_byte(8),
+                security: UpgradeSecurityMaterialV1 {
+                    sealed_root_hash: B256::repeat_byte(6),
+                    resident_offer_public: B256::repeat_byte(7),
+                    proof_hash: B256::repeat_byte(8),
+                },
                 submission: submission(),
             },
         );
@@ -1082,9 +1124,11 @@ mod tests {
             &guard,
             UpgradeJournalStateV1::Submitted {
                 context: context.clone(),
-                sealed_root_hash: B256::repeat_byte(6),
-                resident_offer_public: B256::repeat_byte(7),
-                proof_hash: B256::repeat_byte(8),
+                security: UpgradeSecurityMaterialV1 {
+                    sealed_root_hash: B256::repeat_byte(6),
+                    resident_offer_public: B256::repeat_byte(7),
+                    proof_hash: B256::repeat_byte(8),
+                },
                 submission: submission(),
                 submitted_at_finalized_height: 90,
                 transaction_hashes: vec![submission().relay_variants[0].transaction_hash],
@@ -1094,9 +1138,11 @@ mod tests {
             &guard,
             UpgradeJournalStateV1::Finalized {
                 context: context.clone(),
-                sealed_root_hash: B256::repeat_byte(6),
-                resident_offer_public: B256::repeat_byte(7),
-                proof_hash: B256::repeat_byte(8),
+                security: UpgradeSecurityMaterialV1 {
+                    sealed_root_hash: B256::repeat_byte(6),
+                    resident_offer_public: B256::repeat_byte(7),
+                    proof_hash: B256::repeat_byte(8),
+                },
                 submission: submission(),
                 finalized_height: 91,
                 finalized_hash: B256::repeat_byte(9),
@@ -1106,9 +1152,11 @@ mod tests {
             &guard,
             UpgradeJournalStateV1::Promoted {
                 context,
-                sealed_root_hash: B256::repeat_byte(6),
-                resident_offer_public: B256::repeat_byte(7),
-                proof_hash: B256::repeat_byte(8),
+                security: UpgradeSecurityMaterialV1 {
+                    sealed_root_hash: B256::repeat_byte(6),
+                    resident_offer_public: B256::repeat_byte(7),
+                    proof_hash: B256::repeat_byte(8),
+                },
                 submission: submission(),
                 finalized_height: 91,
                 finalized_hash: B256::repeat_byte(9),
@@ -1127,9 +1175,11 @@ mod tests {
         let old = context(root.path());
         let completed = UpgradeJournalStateV1::Promoted {
             context: old.clone(),
-            sealed_root_hash: B256::repeat_byte(6),
-            resident_offer_public: B256::repeat_byte(7),
-            proof_hash: B256::repeat_byte(8),
+            security: UpgradeSecurityMaterialV1 {
+                sealed_root_hash: B256::repeat_byte(6),
+                resident_offer_public: B256::repeat_byte(7),
+                proof_hash: B256::repeat_byte(8),
+            },
             submission: submission(),
             finalized_height: 99,
             finalized_hash: B256::repeat_byte(9),

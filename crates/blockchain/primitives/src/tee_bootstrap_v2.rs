@@ -4,13 +4,13 @@
 //! A separate `GramineDirectDev` chain uses the same OST3 envelope with direct
 //! development evidence and an empty collateral pool.
 
-mod assembly;
-mod codec;
+pub mod assembly;
+pub mod codec;
 mod validation;
 
 use std::{cmp::Ordering, collections::BTreeMap};
 
-use alloy_primitives::{keccak256, Address, Bytes, B256};
+use alloy_primitives::{Address, B256, Bytes, keccak256};
 
 use crate::system_tx::{
     BOOTSTRAP_BLOCK_GAS_LIMIT, SYSTEM_TX_NON_ZERO_BYTE_GAS, SYSTEM_TX_VISIBLE_GAS_FLOOR,
@@ -18,10 +18,10 @@ use crate::system_tx::{
 use crate::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, CodecError,
     DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1, GramineDirectEvidenceV1,
+    MAX_ATTESTATION_EVIDENCE_BYTES, MAX_COLLATERAL_COMPONENT_BYTES,
+    MAX_EVIDENCE_CALL_FRAMING_BYTES, MAX_QUOTE_BYTES, MAX_TEE_BOOTSTRAP_BYTES,
     RegistrationIntentV1, SystemGasScheduleV1, TeeBootstrapGasInputV1, TeePolicyV1,
-    TeeRegistryGasScheduleV1, ValidatorNodeBindingV1, MAX_ATTESTATION_EVIDENCE_BYTES,
-    MAX_COLLATERAL_COMPONENT_BYTES, MAX_EVIDENCE_CALL_FRAMING_BYTES, MAX_QUOTE_BYTES,
-    MAX_TEE_BOOTSTRAP_BYTES,
+    TeeRegistryGasScheduleV1, ValidatorNodeBindingV1,
 };
 
 const MAGIC: &[u8; 4] = b"TTB2";
@@ -84,34 +84,13 @@ pub struct TeeBootstrapAuthorityV2 {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TeeBootstrapV2 {
-    pub policy: TeePolicyV1,
-    pub committee_snapshot_hash: B256,
-    pub committee_snapshot_block: u64,
-    pub key_epoch: u64,
-    pub tribute_offer_epoch: u64,
-    pub dkg_transcript_hash: B256,
-    pub tribute_offer_public_key: B256,
-    pub tribute_offer_group_public_key: Bytes,
+    pub authority: TeeBootstrapAuthorityV2,
     pub collateral_pool: Vec<DcapCollateralComponentV1>,
     pub participants: Vec<TeeBootstrapParticipantV2>,
     pub committee_signatures: Vec<TeeBootstrapCommitteeSignatureV2>,
 }
 
 impl TeeBootstrapV2 {
-    /// Assemble the deterministic unsigned body from complete per-validator
-    /// evidence and the existing DKG/offer-key result. Committee signature
-    /// records are installed in canonical validator order with zeroed bytes so
-    /// every node derives the same signing hash; coordination replaces only
-    /// those excluded signature bytes.
-    pub fn assemble_unsigned(
-        authority: TeeBootstrapAuthorityV2,
-        submissions: Vec<TeeBootstrapParticipantSubmissionV2>,
-    ) -> Result<Self, CodecError> {
-        let payload = assembly::assemble_unsigned(authority, submissions)?;
-        payload.preflight()?;
-        Ok(payload)
-    }
-
     /// Reject an assembled payload before committee signing when its canonical
     /// bytes or worst-case visible gas cannot fit the bootstrap block.
     pub fn preflight(&self) -> Result<(), CodecError> {
@@ -142,18 +121,6 @@ impl TeeBootstrapV2 {
             });
         }
         Ok(())
-    }
-
-    pub fn encode_canonical(&self) -> Result<Bytes, CodecError> {
-        self.validate()?;
-        let mut out = self.encode_body()?;
-        put_len_u16(&mut out, self.committee_signatures.len())?;
-        for signature in &self.committee_signatures {
-            out.extend_from_slice(signature.validator.as_slice());
-            out.extend_from_slice(&signature.signature);
-        }
-        enforce_full_calldata_cap(out.len())?;
-        Ok(Bytes::from(out))
     }
 
     pub fn signing_hash(&self) -> Result<B256, CodecError> {
@@ -187,7 +154,7 @@ impl TeeBootstrapV2 {
                     .len(),
             );
         }
-        let collateral_component_count = match self.policy.attestation_mode {
+        let collateral_component_count = match self.authority.policy.attestation_mode {
             AttestationMode::DcapRequired => self
                 .participants
                 .len()
@@ -200,7 +167,7 @@ impl TeeBootstrapV2 {
             TeeBootstrapGasInputV1 {
                 full_calldata_len,
                 logical_evidence_lengths: &logical_evidence_lengths,
-                active_rule_count: self.policy.measurement_rules.len(),
+                active_rule_count: self.authority.policy.measurement_rules.len(),
                 collateral_component_count,
                 committee_signature_count: self.committee_signatures.len(),
             },
@@ -212,14 +179,17 @@ impl TeeBootstrapV2 {
     }
 
     fn encoded_body_len(&self) -> Result<usize, CodecError> {
-        let policy_len = self.policy.encode_canonical()?.len();
+        let policy_len = self.authority.policy.encode_canonical()?.len();
         let mut len = 4usize;
         checked_add_len(&mut len, 4)?;
         checked_add_len(&mut len, policy_len)?;
         // committee hash + three epochs/heights + transcript hash + offer key
         checked_add_len(&mut len, 32 + 8 * 3 + 32 + 32)?;
         checked_add_len(&mut len, 4)?;
-        checked_add_len(&mut len, self.tribute_offer_group_public_key.len())?;
+        checked_add_len(
+            &mut len,
+            self.authority.tribute_offer_group_public_key.len(),
+        )?;
         checked_add_len(&mut len, 2)?;
         for component in &self.collateral_pool {
             checked_add_len(&mut len, 1 + 4)?;
@@ -257,12 +227,6 @@ impl TeeBootstrapV2 {
             .checked_add(2)
             .and_then(|len| len.checked_add(signature_bytes))
             .ok_or(CodecError::ArithmeticOverflow)
-    }
-
-    pub fn decode_canonical(input: &[u8]) -> Result<Self, CodecError> {
-        let payload = codec::decode_canonical(input)?;
-        payload.validate()?;
-        Ok(payload)
     }
 
     pub fn logical_evidence(

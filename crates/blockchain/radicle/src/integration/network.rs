@@ -1,4 +1,7 @@
+mod evidence;
 mod receive;
+
+pub use evidence::{EndpointEvidenceHandle, SignedEndpointEvidence};
 
 use crate::integration::{RadicleStatusHandle, RadicleVotingGate};
 use crate::{
@@ -17,7 +20,6 @@ use commonware_runtime::IoBuf;
 use std::{
     collections::BTreeMap,
     future::Future,
-    sync::{Arc, RwLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
@@ -96,33 +98,27 @@ impl LocalEndpointIdentityHandle {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SignedEndpointEvidence {
-    pub peer: PeerId,
-    pub response: SignedEndpointResponse,
-    pub encoded_frame: Vec<u8>,
-}
-
-#[derive(Clone, Default)]
-pub struct EndpointEvidenceHandle(Arc<RwLock<BTreeMap<PeerId, SignedEndpointEvidence>>>);
-
-impl EndpointEvidenceHandle {
-    #[must_use]
-    pub fn snapshot(&self) -> Vec<SignedEndpointEvidence> {
-        self.0
-            .read()
-            .expect("endpoint evidence lock poisoned")
-            .values()
-            .cloned()
-            .collect()
-    }
-}
-
 pub struct EndpointNetwork;
 
+/// Owned send and receive halves of the endpoint transport.
+pub struct EndpointTransport<S, R> {
+    pub sender: S,
+    pub receiver: R,
+}
+
+/// Signing key and current local identity used for endpoint responses.
+pub struct EndpointSigningIdentity {
+    pub signer: bls12381::PrivateKey,
+    pub local: LocalEndpointIdentityHandle,
+}
+
 pub struct EndpointNetworkService {
+    actor: EndpointActor<OsRequestIds>,
+    state: EndpointNetworkState,
+}
+
+struct EndpointNetworkState {
     chain: ChainIdentity,
-    actor: Option<EndpointActor<OsRequestIds>>,
     handle: EndpointHandle,
     commands: mpsc::Receiver<NetworkCommand>,
     evidence: EndpointEvidenceHandle,
@@ -166,12 +162,14 @@ impl EndpointNetwork {
         let evidence = EndpointEvidenceHandle::default();
         (
             EndpointNetworkService {
-                chain,
-                actor: Some(actor),
-                handle,
-                commands: receiver,
-                evidence: evidence.clone(),
-                status,
+                actor,
+                state: EndpointNetworkState {
+                    chain,
+                    handle,
+                    commands: receiver,
+                    evidence: evidence.clone(),
+                    status,
+                },
             },
             EndpointNetworkResolver { commands },
             evidence,
@@ -219,25 +217,39 @@ impl EndpointResolver for EndpointNetworkResolver {
 
 impl EndpointNetworkService {
     pub async fn run<S, R>(
-        mut self,
-        mut sender: S,
-        mut receiver: R,
-        signer: bls12381::PrivateKey,
-        local: LocalEndpointIdentityHandle,
+        self,
+        transport: EndpointTransport<S, R>,
+        identity: EndpointSigningIdentity,
     ) -> Result<(), ManagerError>
     where
         S: LimitedSender<PublicKey = bls12381::PublicKey> + Send + 'static,
         R: Receiver<PublicKey = bls12381::PublicKey> + Send + 'static,
         R::Error: std::fmt::Display,
     {
+        self.state.run(self.actor, transport, identity).await
+    }
+}
+
+impl EndpointNetworkState {
+    async fn run<S, R>(
+        mut self,
+        endpoint_actor: EndpointActor<OsRequestIds>,
+        transport: EndpointTransport<S, R>,
+        identity: EndpointSigningIdentity,
+    ) -> Result<(), ManagerError>
+    where
+        S: LimitedSender<PublicKey = bls12381::PublicKey> + Send + 'static,
+        R: Receiver<PublicKey = bls12381::PublicKey> + Send + 'static,
+        R::Error: std::fmt::Display,
+    {
+        let EndpointTransport {
+            mut sender,
+            mut receiver,
+        } = transport;
+        let EndpointSigningIdentity { signer, local } = identity;
         // Dropping or unwinding the network service also aborts its owned actor.
         let mut actor = JoinSet::new();
-        actor.spawn(
-            self.actor
-                .take()
-                .expect("endpoint service may only run once")
-                .run(),
-        );
+        actor.spawn(endpoint_actor.run());
         let mut current = None;
         let mut queued = BTreeMap::<PeerId, (SignedEndpointResponse, u64)>::new();
         let mut shutdown_ack = None;
@@ -342,7 +354,7 @@ impl EndpointNetworkService {
                 self.publish(resolved.peer, response, verified);
             }
         }
-        self.prune(snapshot);
+        self.evidence.prune(snapshot);
 
         for validator in snapshot
             .validators
@@ -371,34 +383,11 @@ impl EndpointNetworkService {
 
     fn publish(&self, peer: PeerId, response: SignedEndpointResponse, _verified: VerifiedEndpoint) {
         let encoded_frame = EndpointFrame::Response(Box::new(response.clone())).encode();
-        self.evidence
-            .0
-            .write()
-            .expect("endpoint evidence lock poisoned")
-            .insert(
-                peer,
-                SignedEndpointEvidence {
-                    peer,
-                    response,
-                    encoded_frame,
-                },
-            );
-    }
-
-    fn prune(&self, snapshot: &FinalizedSnapshot) {
-        self.evidence
-            .0
-            .write()
-            .expect("endpoint evidence lock poisoned")
-            .retain(|peer, proof| {
-                let body = proof.response.body();
-                body.valid_until > snapshot.block.number
-                    && snapshot.validators.iter().any(|validator| {
-                        validator.address == body.validator
-                            && validator.peer == *peer
-                            && validator.node_id == Some(body.node_id)
-                    })
-            });
+        self.evidence.publish(SignedEndpointEvidence {
+            peer,
+            response,
+            encoded_frame,
+        });
     }
 }
 
@@ -591,7 +580,7 @@ mod shutdown_tests {
             },
             status,
         );
-        let handle = service.handle.clone();
+        let handle = service.state.handle.clone();
         let (_, local) = LocalEndpointIdentityChannel::create(LocalEndpointIdentity {
             validator: Address::ZERO,
             node_id: [1; 32],
@@ -599,10 +588,14 @@ mod shutdown_tests {
         });
         let (incoming, receiver) = mpsc::unbounded_channel();
         let task = tokio::spawn(service.run(
-            NoSend,
-            TestReceiver(receiver),
-            bls12381::PrivateKey::from_seed(1),
-            local,
+            EndpointTransport {
+                sender: NoSend,
+                receiver: TestReceiver(receiver),
+            },
+            EndpointSigningIdentity {
+                signer: bls12381::PrivateKey::from_seed(1),
+                local,
+            },
         ));
         Running {
             task,

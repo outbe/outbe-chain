@@ -26,7 +26,6 @@ use outbe_ocomp::worker::{run_worker, WorkerConfig};
 use outbe_ocomp::worker_observability::SnapshotExporterObservabilityServerV1;
 use outbe_ocomp::worker_transport::MAX_REGISTERED_WORKERS;
 use outbe_offchain_storage::StorageConfig;
-use outbe_primitives::signer::OutbeEvmSigner;
 
 #[derive(Debug, Parser)]
 #[command(name = "outbe-ocomp")]
@@ -313,7 +312,10 @@ fn snapshot_exporter_observability_address(
 
 fn print_signer_address(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = RuntimeProfile::resolve(args)?;
-    let signer = OutbeEvmSigner::from_strict_file(runtime.ocomp_evm_key_path, runtime.owner_uid)?;
+    let signer = outbe_primitives::signer::load::from_strict_file(
+        runtime.ocomp_evm_key_path,
+        runtime.owner_uid,
+    )?;
     println!("{}", signer.address());
     Ok(())
 }

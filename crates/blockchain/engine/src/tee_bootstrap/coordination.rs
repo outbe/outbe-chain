@@ -1,5 +1,12 @@
 use super::*;
 
+/// Authority, committee membership and local signer for OST3 coordination.
+pub struct TeeBootstrapCoordination<'a> {
+    pub authority: TeeBootstrapAuthorityV2,
+    pub committee: &'a BTreeSet<Address>,
+    pub evm_signer: &'a OutbeEvmSigner,
+}
+
 fn insert_submission(
     submissions: &mut BTreeMap<Address, TeeBootstrapParticipantSubmissionV2>,
     submission: TeeBootstrapParticipantSubmissionV2,
@@ -24,11 +31,14 @@ fn insert_submission(
 /// the liveness bound; malformed or unauthenticated gossip is ignored.
 pub async fn coordinate_tee_bootstrap_v2<G: BootstrapGossip>(
     local_submission: TeeBootstrapParticipantSubmissionV2,
-    authority: TeeBootstrapAuthorityV2,
-    committee: &BTreeSet<Address>,
-    evm_signer: &OutbeEvmSigner,
+    coordination: TeeBootstrapCoordination<'_>,
     gossip: &mut G,
 ) -> eyre::Result<TeeBootstrapV2> {
+    let TeeBootstrapCoordination {
+        authority,
+        committee,
+        evm_signer,
+    } = coordination;
     if committee.is_empty() || committee.len() > 256 {
         return Err(eyre::eyre!(
             "OST3 committee size is outside protocol bounds"
@@ -44,9 +54,11 @@ pub async fn coordinate_tee_bootstrap_v2<G: BootstrapGossip>(
         early_signatures,
     } = collect_submissions(gossip, local_submission, &authority.policy, committee).await?;
 
-    let mut payload =
-        TeeBootstrapV2::assemble_unsigned(authority, submissions.into_values().collect())
-            .map_err(|error| eyre::eyre!("OST3 unsigned assembly failed: {error}"))?;
+    let mut payload = outbe_primitives::tee_bootstrap_v2::assembly::assemble_unsigned(
+        authority,
+        submissions.into_values().collect(),
+    )
+    .map_err(|error| eyre::eyre!("OST3 unsigned assembly failed: {error}"))?;
     let signing_hash = payload
         .signing_hash()
         .map_err(|error| eyre::eyre!("OST3 signing hash failed: {error}"))?;

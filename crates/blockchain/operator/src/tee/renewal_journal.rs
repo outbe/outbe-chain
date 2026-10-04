@@ -1,6 +1,7 @@
 //! Owner-only, crash-consistent journal for one manual TEE renewal intent.
 
 use super::journal_storage::{sync_directory, JournalPaths};
+use super::JournalSnapshotV1;
 
 mod validation;
 
@@ -100,23 +101,10 @@ impl RenewalJournalStateV1 {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct RenewalJournalSnapshotV1 {
-    pub version: u8,
-    pub generation: u64,
-    pub lifecycle: RenewalJournalStateV1,
-}
+/// V1 renewal journal envelope, retaining the renewal lifecycle type.
+pub type RenewalJournalSnapshotV1 = JournalSnapshotV1<RenewalJournalStateV1>;
 
 impl RenewalJournalSnapshotV1 {
-    pub fn new(lifecycle: RenewalJournalStateV1) -> Self {
-        Self {
-            version: 1,
-            generation: 1,
-            lifecycle,
-        }
-    }
-
     fn validate(&self) -> Result<()> {
         if self.version != 1 || self.generation == 0 {
             eyre::bail!("unsupported renewal journal version or generation");
@@ -480,6 +468,33 @@ mod tests {
         assert_eq!(guard.load().unwrap().unwrap().generation, 2);
         let metadata = fs::metadata(root.path().join(DIRECTORY).join("journal.json")).unwrap();
         assert_eq!(metadata.permissions().mode() & 0o777, FILE_MODE);
+    }
+
+    #[test]
+    fn snapshot_headers_reject_invalid_values_before_lifecycle_validation() {
+        let mut invalid_attempt = direct_attempt();
+        invalid_attempt.intent.clear();
+        let lifecycle = RenewalJournalStateV1::Prepared {
+            attempt: invalid_attempt,
+        };
+        for (version, generation) in [(0, 1), (2, 1), (1, 0)] {
+            let snapshot = RenewalJournalSnapshotV1 {
+                version,
+                generation,
+                lifecycle: lifecycle.clone(),
+            };
+            assert_eq!(
+                snapshot.validate().unwrap_err().to_string(),
+                "unsupported renewal journal version or generation"
+            );
+        }
+        assert_ne!(
+            RenewalJournalSnapshotV1::new(lifecycle)
+                .validate()
+                .unwrap_err()
+                .to_string(),
+            "unsupported renewal journal version or generation"
+        );
     }
 
     #[test]
