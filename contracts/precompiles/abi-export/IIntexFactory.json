@@ -306,6 +306,46 @@
   },
   {
     "type": "function",
+    "name": "recordContributorResidueRecipient",
+    "inputs": [
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "leaves",
+        "type": "tuple[]",
+        "internalType": "struct IIntexFactory.ContributorLeaf[]",
+        "components": [
+          {
+            "name": "owner",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "sourceTributeId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "nominal",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "proof",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "seriesUnitCounts",
     "inputs": [
       {

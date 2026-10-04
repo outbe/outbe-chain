@@ -14,8 +14,8 @@ use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 
 use super::creator_reward::{
-    abi_leaves, deliver_proceeds, deliver_proceeds_raw, install_generation,
-    install_generation_with_total, nominal_total, population, WWD,
+    abi_leaves, deliver_proceeds, install_generation, install_generation_with_total, nominal_total,
+    population, CHAIN, WWD,
 };
 use super::*;
 
@@ -419,20 +419,131 @@ fn zero_nominal_leaf_zero_receives_the_remainder() {
     });
 }
 
-/// Count above zero with a zero eligible total is not a certified generation.
-/// The reader rejects it, so an all-zero list opens no round and pays nobody.
+/// The final remainder transfer fails closed. Floor transfers, the paid bitmap,
+/// the round counters, and both payout events roll back with it. One retry
+/// after the balance is restored pays the pot once.
+///
+/// The hashmap harness wraps a recipient credit, so this forces the failure
+/// the direct journal reports as balance overflow: the factory is left holding
+/// only the floor sum, and the remainder transfer is the call that fails.
+#[test]
+fn completing_residue_transfer_failure_rolls_back_and_retry_pays_once() {
+    let leaves = [contributor_leaf(0, 1), contributor_leaf(1, 1)];
+    let amount = U256::from(3u64);
+    let provider = finish_factory(|s| {
+        install_generation(&s, &leaves);
+        deliver_proceeds(&s, amount);
+        s.decrease_balance(INTEX_FACTORY_ADDRESS, U256::from(1u64))
+            .unwrap();
+        let round_before = outbe_intex::api::certified_payout_round(&s, WWD)
+            .unwrap()
+            .unwrap();
+        let bitmap_before = paid_word(&s, 0);
+        let factory_before = s.balance(INTEX_FACTORY_ADDRESS).unwrap();
+        let err = pay(&s, &leaves, 0, 2).unwrap_err();
+        assert!(
+            format!("{err:?}").contains("insufficient balance"),
+            "{err:?}"
+        );
+
+        let round = outbe_intex::api::certified_payout_round(&s, WWD)
+            .unwrap()
+            .unwrap();
+        assert_eq!(round.amount, round_before.amount);
+        assert_eq!(round.paid_so_far, round_before.paid_so_far);
+        assert_eq!(round.paid_leaf_count, round_before.paid_leaf_count);
+        assert_eq!(round.active, round_before.active);
+        assert_eq!(round.residue_recipient, round_before.residue_recipient);
+        assert_eq!(
+            round.residue_recipient_set,
+            round_before.residue_recipient_set
+        );
+        assert_eq!(round.paid_so_far, U256::ZERO);
+        assert_eq!(round.paid_leaf_count, 0);
+        assert_eq!(round.residue_recipient_set, 0);
+        assert_eq!(paid_word(&s, 0), bitmap_before);
+        assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), factory_before);
+        assert_eq!(s.balance(leaves[0].owner).unwrap(), U256::ZERO);
+        assert_eq!(s.balance(leaves[1].owner).unwrap(), U256::ZERO);
+
+        s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(1u64))
+            .unwrap();
+        pay(&s, &leaves, 0, 2).unwrap();
+        assert_eq!(s.balance(leaves[0].owner).unwrap(), U256::from(2u64));
+        assert_eq!(s.balance(leaves[1].owner).unwrap(), U256::from(1u64));
+        assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
+        let closed = outbe_intex::api::certified_payout_round(&s, WWD)
+            .unwrap()
+            .unwrap();
+        assert_eq!(closed.paid_so_far, amount);
+        assert_eq!(closed.paid_leaf_count, 2);
+    });
+    assert_eq!(
+        event_count(
+            &provider,
+            IIntexFactory::ContributorBatchPaid::SIGNATURE_HASH
+        ),
+        1
+    );
+    assert_eq!(
+        event_count(
+            &provider,
+            IIntexFactory::ContributorRoundClosed::SIGNATURE_HASH
+        ),
+        1
+    );
+}
+
+/// Participating weights only. An excluded tribute is not a certified leaf and
+/// its nominal is not in the denominator: `output_finalize` attaches
+/// `contributor_action` only when `exclude_from_intex_issuance` is clear.
+#[test]
+fn mixed_exclusions_pay_against_the_participating_total() {
+    with_factory(|s| {
+        let excluded_nominal = U256::from(100u64);
+        let excluded = Address::repeat_byte(0xE1);
+        let leaves = [contributor_leaf(0, 1), contributor_leaf(1, 3)];
+        let eligible = nominal_total(&leaves);
+        let amount = U256::from(10u64);
+        install_generation(&s, &leaves);
+        let stored = IntexContract::new(s.clone())
+            .ocomp_eligible_nominal_total
+            .read(&outbe_primitives::time::WorldwideDay::new(WWD))
+            .unwrap();
+        assert_eq!(stored, eligible);
+        assert_ne!(stored, eligible + excluded_nominal);
+
+        deliver_proceeds(&s, amount);
+        pay(&s, &leaves, 0, 2).unwrap();
+        // 10 * 1 / 4 = 2 and 10 * 3 / 4 = 7. The leftover unit goes to leaf 0.
+        // Dividing by the gross 104 would floor both shares to zero.
+        assert_eq!(s.balance(leaves[0].owner).unwrap(), U256::from(3u64));
+        assert_eq!(s.balance(leaves[1].owner).unwrap(), U256::from(7u64));
+        assert_eq!(s.balance(excluded).unwrap(), U256::ZERO);
+        assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
+        let round = outbe_intex::api::certified_payout_round(&s, WWD)
+            .unwrap()
+            .unwrap();
+        assert_eq!(round.paid_so_far, amount);
+    });
+}
+
+/// A certified generation with contributors must have a positive eligible
+/// total. Amount records reject a zero nominal (`validate_amount_run`), and a
+/// contributor binding with a zero nominal is invalid. Count above zero with
+/// a zero total is malformed metadata: the call journal keeps the pot, the
+/// arrived count, balances, and the round unchanged.
 #[test]
 fn all_zero_nominals_do_not_open_a_round() {
     with_factory(|s| {
         let leaves = [contributor_leaf(0, 0), contributor_leaf(1, 0)];
-        let amount = U256::from(5u64);
         install_generation(&s, &leaves);
-        assert_zero_total_is_malformed(&s, &leaves, amount);
+        assert_zero_total_is_malformed(&s, &leaves, U256::from(5u64));
     });
 }
 
-/// A positive nominal stored against a zero certified total is the same
-/// malformed generation. Payout never reaches the zero-total share check.
+/// Same malformed generation when a positive nominal is stored against a zero
+/// certified total. Settlement rejects it before any share is computed.
 #[test]
 fn positive_nominal_against_a_zero_total_is_malformed() {
     with_factory(|s| {
@@ -447,13 +558,55 @@ fn assert_zero_total_is_malformed(
     leaves: &[ContributorLeafData],
     amount: U256,
 ) {
-    let err = deliver_proceeds_raw(storage, amount).unwrap_err();
+    let day = outbe_primitives::time::WorldwideDay::new(WWD);
+    outbe_intex::api::arm_proceeds(storage, day, &[CHAIN], 1_700_001_000).unwrap();
+    let registry = IntexContract::new(storage.clone());
+    let pot_before = registry.proceeds_pot.read(&day).unwrap();
+    let arrived_before = registry.proceeds_arrived_count.read(&day).unwrap();
+    let factory_before = storage.balance(INTEX_FACTORY_ADDRESS).unwrap();
+    // The EVM call journal reverts a Fatal from this precompile. Apply that
+    // same checkpoint here: `distribute` itself returns after crediting.
+    let err = storage
+        .with_checkpoint(|| {
+            storage.increase_balance(INTEX_FACTORY_ADDRESS, amount)?;
+            crate::runtime::distribute(
+                storage,
+                crate::constants::ORIGIN_ROUTER_ADDRESS,
+                day,
+                CHAIN,
+                amount,
+            )
+        })
+        .unwrap_err();
     assert!(format!("{err:?}").contains("malformed"), "{err:?}");
+    assert_eq!(registry.proceeds_pot.read(&day).unwrap(), pot_before);
+    assert_eq!(
+        registry.proceeds_arrived_count.read(&day).unwrap(),
+        arrived_before
+    );
+    assert_eq!(
+        storage.balance(INTEX_FACTORY_ADDRESS).unwrap(),
+        factory_before
+    );
     assert!(outbe_intex::api::certified_payout_round(storage, WWD)
         .unwrap()
         .is_none());
     for leaf in leaves {
         assert_eq!(storage.balance(leaf.owner).unwrap(), U256::ZERO);
     }
-    assert_eq!(storage.balance(INTEX_FACTORY_ADDRESS).unwrap(), amount);
+}
+
+fn paid_word(storage: &StorageHandle<'_>, word: u32) -> U256 {
+    IntexContract::new(storage.clone())
+        .ocomp_paid_leaves
+        .read(&IntexContract::paid_bitmap_key(WWD, word))
+        .unwrap()
+}
+
+fn event_count(provider: &HashMapStorageProvider, signature: B256) -> usize {
+    provider
+        .get_events(INTEX_FACTORY_ADDRESS)
+        .iter()
+        .filter(|log| log.topics().first() == Some(&signature))
+        .count()
 }
