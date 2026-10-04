@@ -32,7 +32,7 @@ contract IntexAuctionBondTest is Test {
     address iba1;
 
     bytes32 internal constant REVEAL_BID_TYPEHASH = keccak256(
-        "RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
+        "RevealBid(uint32 worldwideDay,address bidder,uint16 units,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
     );
 
     uint128 internal constant PROMIS_LOAD_MINOR = 100_000 * 1e6;
