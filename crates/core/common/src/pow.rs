@@ -290,4 +290,48 @@ mod tests {
         }
         panic!("no failing nonce found");
     }
+
+    /// The vectors the external miner is tested against, computed outside both
+    /// implementations; `mcp/src/mining/pow.test.ts` reads the same file.
+    #[test]
+    fn mining_pow_matches_the_shared_client_vectors() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../../../mcp/src/mining/pow.vectors.json"))
+                .unwrap();
+        assert_eq!(
+            fixture["difficulty_bytes"].as_u64(),
+            Some(POW_DIFFICULTY as u64)
+        );
+        let vectors = fixture["vectors"].as_array().unwrap();
+        assert!(!vectors.is_empty());
+        for vector in vectors {
+            let field = |name: &str| vector[name].as_str().unwrap();
+            let domain = match field("domain") {
+                "nod" => MiningDomain::Nod,
+                "gem" => MiningDomain::Gem,
+                other => panic!("unknown mining domain {other}"),
+            };
+            assert_eq!(domain.tag().as_slice(), field("domain_tag").as_bytes());
+            let right_id: U256 = field("right_id").parse().unwrap();
+            let owner: Address = field("owner").parse().unwrap();
+            let sequence = vector["mining_sequence"].as_u64().unwrap();
+            let hash = |nonce: u64| {
+                alloy_primitives::hex::encode(compute_mining_pow_hash(
+                    domain, right_id, owner, sequence, nonce,
+                ))
+            };
+            let nonce: u64 = field("nonce").parse().unwrap();
+            assert_eq!(format!("0x{}", hash(nonce)), field("hash"));
+            let first_valid: u64 = field("first_valid_nonce").parse().unwrap();
+            assert_eq!(
+                format!("0x{}", hash(first_valid)),
+                field("first_valid_hash")
+            );
+            assert!(validate_mining_pow(domain, right_id, owner, sequence, first_valid).is_ok());
+            assert!((0..first_valid)
+                .all(
+                    |nonce| validate_mining_pow(domain, right_id, owner, sequence, nonce).is_err()
+                ));
+        }
+    }
 }

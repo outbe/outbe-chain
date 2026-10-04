@@ -246,4 +246,122 @@ mod tests {
             U256::from(700u64)
         );
     }
+
+    #[test]
+    fn modify_mac_binds_every_input_and_is_separated_from_the_gratis_domain() {
+        use crate::confidential::GRATIS;
+        let sk = state_key();
+        let mk = PROMIS.derive_modify_key(&sk, alice()).unwrap();
+        let base = PROMIS.modify_mac(
+            &mk,
+            alice(),
+            PromisOp::Mint as u8,
+            U256::from(10u64),
+            3,
+            CHAIN,
+        );
+        let variants = [
+            PROMIS.modify_mac(
+                &mk,
+                Address::repeat_byte(0x22),
+                PromisOp::Mint as u8,
+                U256::from(10u64),
+                3,
+                CHAIN,
+            ),
+            PROMIS.modify_mac(
+                &mk,
+                alice(),
+                PromisOp::Burn as u8,
+                U256::from(10u64),
+                3,
+                CHAIN,
+            ),
+            PROMIS.modify_mac(
+                &mk,
+                alice(),
+                PromisOp::Mint as u8,
+                U256::from(11u64),
+                3,
+                CHAIN,
+            ),
+            PROMIS.modify_mac(
+                &mk,
+                alice(),
+                PromisOp::Mint as u8,
+                U256::from(10u64),
+                4,
+                CHAIN,
+            ),
+            PROMIS.modify_mac(
+                &mk,
+                alice(),
+                PromisOp::Mint as u8,
+                U256::from(10u64),
+                3,
+                B256::repeat_byte(0xC3),
+            ),
+            // Same key bytes and inputs under the Gratis tag must not authorize a Promis write.
+            GRATIS.modify_mac(
+                &mk,
+                alice(),
+                PromisOp::Mint as u8,
+                U256::from(10u64),
+                3,
+                CHAIN,
+            ),
+        ];
+        for (i, other) in variants.iter().enumerate() {
+            assert_ne!(base, *other, "variant {i} must change the authorization");
+            assert!(!PROMIS.verify_modify_auth(
+                &mk,
+                alice(),
+                PromisOp::Mint as u8,
+                U256::from(10u64),
+                3,
+                CHAIN,
+                other
+            ));
+        }
+        assert!(PROMIS.verify_modify_auth(
+            &mk,
+            alice(),
+            PromisOp::Mint as u8,
+            U256::from(10u64),
+            3,
+            CHAIN,
+            &base
+        ));
+    }
+
+    /// The vectors the wallet is tested against, computed outside both
+    /// implementations; `mcp/src/ledger/mac.test.ts` reads the same file.
+    #[test]
+    fn modify_mac_matches_the_shared_client_vectors() {
+        use crate::confidential::GRATIS;
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../../mcp/src/ledger/mac.vectors.json")).unwrap();
+        let vectors = fixture["vectors"].as_array().unwrap();
+        assert!(!vectors.is_empty());
+        for vector in vectors {
+            let field = |name: &str| vector[name].as_str().unwrap();
+            let domain = match field("ledger") {
+                "gratis" => &GRATIS,
+                "promis" => &PROMIS,
+                other => panic!("unknown ledger {other}"),
+            };
+            assert_eq!(domain.modify_tag, field("domain_tag").as_bytes());
+            let key: B256 = field("modify_key").parse().unwrap();
+            let account: Address = field("account").parse().unwrap();
+            let op_tag = u8::try_from(vector["op_tag"].as_u64().unwrap()).unwrap();
+            let amount: U256 = field("amount").parse().unwrap();
+            let op_nonce = vector["op_nonce"].as_u64().unwrap();
+            let chain_id: B256 = field("chain_id").parse().unwrap();
+            let expected: B256 = field("mac").parse().unwrap();
+            let mac = domain.modify_mac(&key.0, account, op_tag, amount, op_nonce, chain_id);
+            assert_eq!(B256::from(mac), expected, "{}", field("op"));
+            assert!(domain
+                .verify_modify_auth(&key.0, account, op_tag, amount, op_nonce, chain_id, &mac));
+        }
+    }
 }
