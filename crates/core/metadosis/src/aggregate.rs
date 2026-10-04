@@ -13,7 +13,6 @@ use outbe_primitives::{
 use crate::{
     constants::{MAX_ACTIVE_WWDS, MAX_RECORDS_KEPT, MAX_RETAINED_WWDS},
     errors::storage_corruption_message,
-    ocomp::poc_schema_limits,
     schema::{day_type, status, MetadosisContract},
     terminal::{model::WwdTerminalReceipt, TerminalReceiptValidationContext},
 };
@@ -330,11 +329,7 @@ fn validate_terminal_state(
         return Ok(());
     };
     let expected_value_routed = if matches!(receipt, WwdTerminalReceipt::MetadosisFailure(_)) {
-        contract
-            .request_limit_receipt(wwd, &poc_schema_limits())?
-            .map_or(record.metadosis_limit_amount, |receipt| {
-                receipt.lysis_limit_minor
-            })
+        contract.failure_value_routed(wwd, record.metadosis_limit_amount)?
     } else {
         record.metadosis_limit_amount
     };
