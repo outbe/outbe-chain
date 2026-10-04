@@ -131,3 +131,37 @@ fn a_retained_day_with_a_zero_creation_count_does_not_stamp_or_backfill() {
         assert!(!gem_api::is_qualified(storage, &fresh_item).unwrap());
     });
 }
+
+/// The id is owner, load, and block. Burn frees that id and leaves the privilege
+/// map untouched. Settled is only the burn precondition; this test claims no
+/// economic effect. A second Genesis issue in the same block, after a retained
+/// day, must store 0 over the stale 1.
+#[test]
+fn a_reissued_genesis_id_after_burn_drops_the_stale_privilege() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        let first = issue_through_api(storage).unwrap();
+        let expected =
+            GemContract::generate_gem_id(ALICE, genesis_load(), storage.block_number().unwrap());
+        assert_eq!(first, expected);
+        let gem = GemContract::new(storage.clone());
+        assert_eq!(gem.issued_before_first_wwd.read(&first).unwrap(), 1);
+
+        gem_api::set_state(storage, first, GemState::Settled).unwrap();
+        gem_api::burn(storage, first).unwrap();
+        assert!(gem_api::get_gem(storage, first).unwrap().is_none());
+
+        outbe_metadosis::test_support::seed_ready_worldwide_days_for_capacity(
+            storage.clone(),
+            &[WorldwideDay::new(20_240_101)],
+        )
+        .unwrap();
+        assert!(outbe_metadosis::api::has_created_worldwide_day(storage.clone()).unwrap());
+
+        let second = issue_through_api(storage).unwrap();
+        assert_eq!(second, first);
+        assert_eq!(gem.issued_before_first_wwd.read(&second).unwrap(), 0);
+        let item = gem_api::get_gem(storage, second).unwrap().unwrap();
+        assert!(!gem_api::is_qualified(storage, &item).unwrap());
+    });
+}
