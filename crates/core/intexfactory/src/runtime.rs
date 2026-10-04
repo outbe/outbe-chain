@@ -28,8 +28,12 @@ use IOriginRouter::IssuanceInstructionsParams;
 pub use crate::contributor_payout::distribute;
 pub(crate) use crate::contributor_payout::{
     contributor_payout_round, pay_contributor_batch, record_contributor_residue_recipient,
-    sweep_proceeds_deadlines, try_settle_proceeds,
+    sweep_proceeds_deadlines,
 };
+// Unit tests call this through `runtime`. Integration tests link the library
+// without `cfg(test)`, where a private re-export is an unused import.
+#[cfg(test)]
+pub(crate) use crate::contributor_payout::try_settle_proceeds;
 
 /// Emit an IntexFactory event from `INTEX_FACTORY_ADDRESS`.
 pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
