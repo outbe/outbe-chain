@@ -5,7 +5,10 @@
 
 use commonware_cryptography::bls12381::{self, primitives::variant::MinSig};
 use commonware_cryptography::Signer as _;
-use commonware_utils::{ordered::Set, TryCollect as _};
+use commonware_utils::{
+    ordered::{Quorum as _, Set},
+    TryCollect as _,
+};
 
 use super::HybridScheme;
 
@@ -24,4 +27,27 @@ pub(crate) fn test_participants(n: u8) -> (Vec<bls12381::PrivateKey>, Set<bls123
         .try_collect()
         .unwrap();
     (keys, participants)
+}
+
+/// Build signer schemes with shares indexed by the original ordered committee.
+pub(crate) fn signer_schemes(
+    namespace: &[u8],
+    keys: &[bls12381::PrivateKey],
+    participants: &Set<bls12381::PublicKey>,
+    dkg: &crate::bls::DkgBootstrapResult,
+) -> Vec<TestScheme> {
+    keys.iter()
+        .map(|key| {
+            let pk = bls12381::PublicKey::from(key.clone());
+            let idx = participants.index(&pk).unwrap();
+            HybridScheme::signer(
+                namespace,
+                participants.clone(),
+                key.clone(),
+                dkg.polynomial.clone(),
+                dkg.shares[idx.get() as usize].clone(),
+            )
+            .unwrap()
+        })
+        .collect()
 }

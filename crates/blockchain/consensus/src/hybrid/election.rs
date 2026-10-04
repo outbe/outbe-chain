@@ -277,12 +277,11 @@ impl<V: Variant> Default for HybridElectorConfigProvider<V> {
 mod tests {
     use super::*;
     use crate::bls::bootstrap_dkg;
-    use crate::hybrid::test_support::{test_participants, TestScheme, NAMESPACE};
+    use crate::hybrid::test_support::{signer_schemes, test_participants, NAMESPACE};
     use commonware_consensus::simplex::elector::{Config as _, Elector as _};
     use commonware_consensus::{simplex::types::Subject, types::View};
     use commonware_cryptography::{certificate::Scheme as _, sha256::Digest as Sha256Digest};
     use commonware_parallel::Sequential;
-    use commonware_utils::ordered::Quorum as _;
 
     #[test]
     fn test_hybrid_elector() {
@@ -301,21 +300,7 @@ mod tests {
         let (keys, participants) = test_participants(3);
         let dkg = bootstrap_dkg(3).unwrap();
 
-        let schemes: Vec<TestScheme> = keys
-            .iter()
-            .map(|key| {
-                let pk = bls12381::PublicKey::from(key.clone());
-                let idx = participants.index(&pk).unwrap();
-                HybridScheme::signer(
-                    NAMESPACE,
-                    participants.clone(),
-                    key.clone(),
-                    dkg.polynomial.clone(),
-                    dkg.shares[idx.get() as usize].clone(),
-                )
-                .unwrap()
-            })
-            .collect();
+        let schemes = signer_schemes(NAMESPACE, &keys, &participants, &dkg);
 
         let epoch = Epoch::new(0);
         let view = View::new(2);
@@ -350,21 +335,7 @@ mod tests {
         let (keys, participants) = test_participants(3);
         let dkg = bootstrap_dkg(3).unwrap();
 
-        let schemes: Vec<TestScheme> = keys
-            .iter()
-            .map(|key| {
-                let pk = bls12381::PublicKey::from(key.clone());
-                let idx = participants.index(&pk).unwrap();
-                HybridScheme::signer(
-                    NAMESPACE,
-                    participants.clone(),
-                    key.clone(),
-                    dkg.polynomial.clone(),
-                    dkg.shares[idx.get() as usize].clone(),
-                )
-                .unwrap()
-            })
-            .collect();
+        let schemes = signer_schemes(NAMESPACE, &keys, &participants, &dkg);
 
         let epoch = Epoch::new(1);
         let view = View::new(2);
@@ -420,21 +391,7 @@ mod tests {
         // Matching the base makes the scheme's seed-partials verify in `elect`,
         // exactly as in production.
         let base_ns = crate::proof::constants::outbe_app_namespace();
-        let schemes: Vec<TestScheme> = keys
-            .iter()
-            .map(|key| {
-                let pk = bls12381::PublicKey::from(key.clone());
-                let idx = participants.index(&pk).unwrap();
-                HybridScheme::signer(
-                    &base_ns,
-                    participants.clone(),
-                    key.clone(),
-                    dkg.polynomial.clone(),
-                    dkg.shares[idx.get() as usize].clone(),
-                )
-                .unwrap()
-            })
-            .collect();
+        let schemes = signer_schemes(&base_ns, &keys, &participants, &dkg);
         let subject = Subject::Nullify { round: cert_round };
         let attestations: Vec<_> = schemes
             .iter()
@@ -472,21 +429,7 @@ mod tests {
         let (keys, participants) = test_participants(4);
         let dkg = bootstrap_dkg(4).unwrap();
         let base_ns = crate::proof::constants::outbe_app_namespace();
-        let schemes: Vec<TestScheme> = keys
-            .iter()
-            .map(|key| {
-                let public_key = bls12381::PublicKey::from(key.clone());
-                let index = participants.index(&public_key).unwrap();
-                HybridScheme::signer(
-                    &base_ns,
-                    participants.clone(),
-                    key.clone(),
-                    dkg.polynomial.clone(),
-                    dkg.shares[index.get() as usize].clone(),
-                )
-                .unwrap()
-            })
-            .collect();
+        let schemes = signer_schemes(&base_ns, &keys, &participants, &dkg);
         let subject = Subject::Nullify { round: cert_round };
         let mut certificate = schemes[0]
             .assemble(

@@ -641,10 +641,9 @@ impl<V: Variant> certificate::Verifier for HybridScheme<V> {
         let namespace = self.namespace_ref();
 
         // Structural checks
-        if certificate.signers.len() != participants.len() {
-            return false;
-        }
-        if certificate.signers.count() < participants.quorum::<N3f1>() as usize {
+        if certificate.signers.len() != participants.len()
+            || certificate.signers.count() < participants.quorum::<N3f1>() as usize
+        {
             return false;
         }
 
@@ -1009,7 +1008,7 @@ mod tests {
     use commonware_parallel::Sequential;
     use rand_core_commonware::{TryCryptoRng, TryRng};
 
-    use super::test_support::{test_participants, TestScheme, NAMESPACE};
+    use super::test_support::{signer_schemes, test_participants, TestScheme, NAMESPACE};
 
     fn sample_proposal(epoch: Epoch, view: View, tag: u8) -> Proposal<Sha256Digest> {
         Proposal::new(
@@ -1087,21 +1086,7 @@ mod tests {
         let dkg = bootstrap_dkg(3).unwrap();
 
         // Create signer schemes for all participants
-        let schemes: Vec<TestScheme> = keys
-            .iter()
-            .map(|key| {
-                let pk = bls12381::PublicKey::from(key.clone());
-                let idx = participants.index(&pk).unwrap();
-                HybridScheme::signer(
-                    NAMESPACE,
-                    participants.clone(),
-                    key.clone(),
-                    dkg.polynomial.clone(),
-                    dkg.shares[idx.get() as usize].clone(),
-                )
-                .unwrap()
-            })
-            .collect();
+        let schemes = signer_schemes(NAMESPACE, &keys, &participants, &dkg);
 
         let verifier = HybridScheme::<MinSig>::verifier(
             NAMESPACE,
@@ -1162,21 +1147,7 @@ mod tests {
         let (keys, participants) = test_participants(3);
         let dkg = bootstrap_dkg(3).unwrap();
 
-        let schemes: Vec<TestScheme> = keys
-            .iter()
-            .map(|key| {
-                let pk = bls12381::PublicKey::from(key.clone());
-                let idx = participants.index(&pk).unwrap();
-                HybridScheme::signer(
-                    NAMESPACE,
-                    participants.clone(),
-                    key.clone(),
-                    dkg.polynomial.clone(),
-                    dkg.shares[idx.get() as usize].clone(),
-                )
-                .unwrap()
-            })
-            .collect();
+        let schemes = signer_schemes(NAMESPACE, &keys, &participants, &dkg);
 
         let verifier = HybridScheme::<MinSig>::verifier(
             NAMESPACE,
@@ -1260,21 +1231,7 @@ mod tests {
         let (keys, participants) = test_participants(3);
         let dkg = bootstrap_dkg(3).unwrap();
 
-        let schemes: Vec<TestScheme> = keys
-            .iter()
-            .map(|key| {
-                let pk = bls12381::PublicKey::from(key.clone());
-                let idx = participants.index(&pk).unwrap();
-                HybridScheme::signer(
-                    NAMESPACE,
-                    participants.clone(),
-                    key.clone(),
-                    dkg.polynomial.clone(),
-                    dkg.shares[idx.get() as usize].clone(),
-                )
-                .unwrap()
-            })
-            .collect();
+        let schemes = signer_schemes(NAMESPACE, &keys, &participants, &dkg);
 
         let verifier = HybridScheme::<MinSig>::verifier(
             NAMESPACE,
@@ -1324,21 +1281,7 @@ mod tests {
         let (keys, participants) = test_participants(3);
         let dkg = bootstrap_dkg(3).unwrap();
 
-        let schemes: Vec<TestScheme> = keys
-            .iter()
-            .map(|key| {
-                let pk = bls12381::PublicKey::from(key.clone());
-                let idx = participants.index(&pk).unwrap();
-                HybridScheme::signer(
-                    NAMESPACE,
-                    participants.clone(),
-                    key.clone(),
-                    dkg.polynomial.clone(),
-                    dkg.shares[idx.get() as usize].clone(),
-                )
-                .unwrap()
-            })
-            .collect();
+        let schemes = signer_schemes(NAMESPACE, &keys, &participants, &dkg);
 
         let verifier = HybridScheme::<MinSig>::verifier(
             NAMESPACE,
@@ -2006,21 +1949,7 @@ mod tests {
         let (keys, participants) = test_participants(3);
         let dkg = bootstrap_dkg(3).unwrap();
 
-        let schemes: Vec<TestScheme> = keys
-            .iter()
-            .map(|key| {
-                let pk = bls12381::PublicKey::from(key.clone());
-                let idx = participants.index(&pk).unwrap();
-                HybridScheme::signer(
-                    NAMESPACE,
-                    participants.clone(),
-                    key.clone(),
-                    dkg.polynomial.clone(),
-                    dkg.shares[idx.get() as usize].clone(),
-                )
-                .unwrap()
-            })
-            .collect();
+        let schemes = signer_schemes(NAMESPACE, &keys, &participants, &dkg);
 
         let verifier = HybridScheme::<MinSig>::verifier(
             NAMESPACE,
@@ -2099,21 +2028,7 @@ mod tests {
         let (keys, participants) = test_participants(3);
         let dkg = bootstrap_dkg(3).unwrap();
 
-        let schemes: Vec<TestScheme> = keys
-            .iter()
-            .map(|key| {
-                let pk = bls12381::PublicKey::from(key.clone());
-                let idx = participants.index(&pk).unwrap();
-                HybridScheme::signer(
-                    NAMESPACE,
-                    participants.clone(),
-                    key.clone(),
-                    dkg.polynomial.clone(),
-                    dkg.shares[idx.get() as usize].clone(),
-                )
-                .unwrap()
-            })
-            .collect();
+        let schemes = signer_schemes(NAMESPACE, &keys, &participants, &dkg);
 
         let epoch = Epoch::new(1);
         let view = View::new(2);
