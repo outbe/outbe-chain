@@ -14,8 +14,6 @@ pub enum RoundingError {
     UnsupportedDecimals(u8),
     ZeroRate,
     Overflow,
-    /// A positive obligation that floors to nothing would sell the right for free.
-    RoundsToZero,
 }
 
 impl fmt::Display for RoundingError {
@@ -26,7 +24,6 @@ impl fmt::Display for RoundingError {
             }
             Self::ZeroRate => f.write_str("settlement rate denominator is zero"),
             Self::Overflow => f.write_str("settlement conversion overflow"),
-            Self::RoundsToZero => f.write_str("settlement cost rounds to zero"),
         }
     }
 }
@@ -59,11 +56,8 @@ pub fn floor_to_asset_units(
             .ok_or(RoundingError::Overflow)?;
         (numerator, scaled)
     };
-    let units = numerator / denominator;
-    if units.is_zero() && !numerator.is_zero() {
-        return Err(RoundingError::RoundsToZero);
-    }
-    Ok(units)
+    // Dust belongs to the payer: the exact final floor may legitimately be zero.
+    Ok(numerator / denominator)
 }
 
 fn pow10(exponent: u32) -> U256 {
@@ -114,10 +108,10 @@ mod tests {
     }
 
     #[test]
-    fn a_positive_obligation_never_floors_to_nothing() {
+    fn positive_dust_and_zero_obligations_both_floor_to_zero() {
         assert_eq!(
             floor_to_asset_units(U256::ONE, U256::ONE, 12, 0),
-            Err(RoundingError::RoundsToZero)
+            Ok(U256::ZERO)
         );
         assert_eq!(
             floor_to_asset_units(U256::ZERO, U256::ONE, 12, 0),

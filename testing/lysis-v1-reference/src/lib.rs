@@ -579,12 +579,7 @@ fn try_evaluate(case: &CorpusCase) -> Result<Value, ReferenceFailure> {
             return Err(ReferenceFailure::ordinal("FIDELITY_MISMATCH", ordinal));
         }
         let cost = wrap_u256(&entry_price * &load) / &unit;
-        let cost = if !entry_price.is_zero() && !load.is_zero() {
-            cost.max(BigUint::one())
-        } else {
-            cost
-        };
-        if cost.is_zero() {
+        if entry_price.is_zero() || load.is_zero() {
             return Err(ReferenceFailure::ordinal("ZERO_COST", ordinal));
         }
         if !tribute.nod_target_available || owner_is_zero(&tribute.owner) {

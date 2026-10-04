@@ -78,12 +78,7 @@ pub fn store_entry_price_snapshot(
 /// the load on the Nod itself, and lysis mints the Nod from exactly this
 /// formula.
 pub fn settlement_cost_minor(entry_price_minor: U256, gratis_load_minor: U256) -> Result<U256> {
-    let cost = checked_mul_div_floor(entry_price_minor, gratis_load_minor, SCALE_1E6_U256)?;
-    if !entry_price_minor.is_zero() && !gratis_load_minor.is_zero() {
-        Ok(cost.max(U256::ONE))
-    } else {
-        Ok(cost)
-    }
+    checked_mul_div_floor(entry_price_minor, gratis_load_minor, SCALE_1E6_U256)
 }
 
 /// Timestamp by which a called bucket must be settled, or `0` while it is not
@@ -264,20 +259,20 @@ mod cost_tests {
     use alloy_primitives::U256;
 
     #[test]
-    fn positive_dust_cost_has_a_one_minor_unit_minimum() {
+    fn positive_dust_cost_floors_to_zero() {
         // Actual Rudis AmountMap failures and the smallest positive inputs.
         for (price, load) in [(19_u64, 25_629_u64), (19, 1_882), (19, 2_529), (1, 1)] {
             assert_eq!(
                 settlement_cost_minor(U256::from(price), U256::from(load)).unwrap(),
-                U256::from(1)
+                U256::ZERO
             );
         }
     }
 
     #[test]
-    fn non_dust_cost_keeps_floor_rounding() {
+    fn cost_keeps_floor_rounding_at_minor_unit_boundaries() {
         for (price, load, expected) in [
-            (19_u64, 52_631_u64, 1_u64),
+            (19_u64, 52_631_u64, 0_u64),
             (19, 52_632, 1),
             (19, 105_263, 1),
             (19, 105_264, 2),
@@ -291,7 +286,7 @@ mod cost_tests {
     }
 
     #[test]
-    fn minimum_does_not_mask_zero_inputs_or_overflow() {
+    fn zero_inputs_stay_zero_and_overflow_is_rejected() {
         for (price, load) in [(0_u64, 1_u64), (1, 0), (0, 0)] {
             assert_eq!(
                 settlement_cost_minor(U256::from(price), U256::from(load)).unwrap(),

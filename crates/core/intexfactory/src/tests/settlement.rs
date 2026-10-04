@@ -40,14 +40,16 @@ fn cost_amount_twelve_decimals() {
 }
 
 #[test]
-fn a_minimum_the_payment_asset_cannot_express_is_refused() {
-    let err = runtime::settlement_units(U256::ONE, U256::ONE, None, 0).unwrap_err();
-    assert!(err.to_string().contains("rounds to zero"), "{err}");
+fn a_payment_below_the_asset_atomic_unit_floors_to_zero() {
+    assert_eq!(
+        runtime::settlement_units(U256::ONE, U256::ONE, None, 0).unwrap(),
+        U256::ZERO
+    );
 }
 
 #[test]
-fn a_subunit_purchase_charges_one_minor_unit_once() {
-    for (amount, expected) in [(1u64, 1u64), (3, 1), (1_000, 1), (2_500_000, 2)] {
+fn a_subunit_purchase_floors_all_selected_units_once() {
+    for (amount, expected) in [(1u64, 0u64), (3, 0), (1_000, 0), (2_500_000, 2)] {
         assert_eq!(
             runtime::settlement_units(U256::ONE, U256::from(amount), None, 6).unwrap(),
             U256::from(expected)
@@ -56,21 +58,23 @@ fn a_subunit_purchase_charges_one_minor_unit_once() {
 }
 
 #[test]
-fn the_purchase_minimum_precedes_asset_and_currency_conversion() {
+fn a_dust_purchase_keeps_precision_through_currency_and_asset_conversion() {
     let fx = |to: u64, from: u64| Some((U256::from(to), U256::from(from)));
     for (rate, decimals, expected) in [
-        (None, 8, 100u64),
-        (None, 18, 1_000_000_000_000),
-        (fx(2, 1), 6, 2),
-        (fx(1, 2), 18, 500_000_000_000),
+        (None, 8, 0u64),
+        (None, 18, 1_000_000),
+        (fx(2, 1), 6, 0),
+        (fx(1, 2), 18, 500_000),
     ] {
         assert_eq!(
             runtime::settlement_units(U256::ONE, U256::ONE, rate, decimals).unwrap(),
             U256::from(expected)
         );
     }
-    let err = runtime::settlement_units(U256::ONE, U256::ONE, fx(1, 2), 6).unwrap_err();
-    assert!(err.to_string().contains("rounds to zero"), "{err}");
+    assert_eq!(
+        runtime::settlement_units(U256::ONE, U256::ONE, fx(1, 2), 6).unwrap(),
+        U256::ZERO
+    );
 }
 
 #[test]
@@ -201,6 +205,36 @@ fn settlement_quote_prices_an_accepted_token() {
             assert_eq!(cost, expected, "payment token decimals {decimals}");
         });
     }
+}
+
+#[test]
+fn a_dust_intex_purchase_quotes_zero_and_settles_selected_whole_units() {
+    // The token refuses transfers; a zero result must skip them entirely.
+    with_erc20_series(word(0), |s| {
+        let mut params = sample(8);
+        params.entry_price_minor = U256::from(19);
+        params.promis_load_minor = 25_629;
+        runtime::issue(&s, params).unwrap();
+        seed_qualifying_day(&s);
+        let (_, cost, snapshot) =
+            runtime::quote_settlement(&s, sid(8), payment_token(), U256::from(2)).unwrap();
+        // floor(19 * 25629 * 2 / 1e6) = 0; no per-unit minimum.
+        assert_eq!(cost, U256::ZERO);
+        assert_eq!(snapshot, U256::ZERO);
+        runtime::settle_intex(
+            &s,
+            sid(8),
+            owner(),
+            owner(),
+            U256::from(2),
+            payment_token(),
+            snapshot,
+        )
+        .unwrap();
+        let counts = outbe_intex::api::unit_counts(&s, sid(8)).unwrap();
+        assert_eq!(counts.settled, 2);
+        assert_eq!(counts.exercised, 0);
+    });
 }
 
 #[test]

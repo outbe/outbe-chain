@@ -11,7 +11,6 @@ use outbe_oracle::api::{settlement_fx_rates, VwapSnapshotId};
 use outbe_primitives::addresses::{NOD_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::SCALE_1E6_U256;
 
 use outbe_common::pow;
 use outbe_common::settlement::floor_to_asset_units;
@@ -496,7 +495,6 @@ fn cost_in_asset(
 }
 
 /// The Nod's cost in the settlement asset's minor units, floored once.
-/// Apply the one-reference-minor-unit minimum before asset/currency conversion.
 /// `rate` is `(COEN/issuance, COEN/reference)` on the issuance rail.
 pub(crate) fn settlement_units(
     entry_price_minor: U256,
@@ -509,13 +507,6 @@ pub(crate) fn settlement_units(
     let obligation = entry_price_minor
         .checked_mul(gratis_load_minor)
         .ok_or_else(overflow)?;
-    // The product has twelve decimals: 1e6 is one six-decimal reference unit.
-    // Preserve all precision above this minimum for the single-floor conversion.
-    let obligation = if obligation.is_zero() {
-        obligation
-    } else {
-        obligation.max(SCALE_1E6_U256)
-    };
     let (numerator, denominator) = match rate {
         Some((to, from)) => (obligation.checked_mul(to).ok_or_else(overflow)?, from),
         None => (obligation, U256::ONE),

@@ -429,19 +429,19 @@ pub(crate) fn calculate_cost(
     gratis_load_minor: U256,
     ordinal: usize,
 ) -> Result<U256, ProgramErrorV1> {
-    // Use the same minor-unit minimum as Nod reads and settlement.
-    let cost = outbe_nod::api::settlement_cost_minor(entry_price_minor, gratis_load_minor)
-        .map_err(|error| ProgramErrorV1::Arithmetic {
-            message: error.to_string(),
-        })?;
-    if cost.is_zero() {
+    if entry_price_minor.is_zero() || gratis_load_minor.is_zero() {
         return Err(ProgramErrorV1::ZeroCost {
             ordinal,
             entry_price_minor,
             gratis_load_minor,
         });
     }
-    Ok(cost)
+    // Positive terms remain issuable when the shared exact floor yields zero.
+    outbe_nod::api::settlement_cost_minor(entry_price_minor, gratis_load_minor).map_err(|error| {
+        ProgramErrorV1::Arithmetic {
+            message: error.to_string(),
+        }
+    })
 }
 
 pub(crate) fn validate_canonical_tributes(

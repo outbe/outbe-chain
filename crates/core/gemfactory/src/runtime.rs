@@ -9,7 +9,6 @@ use outbe_primitives::addresses::{
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
-use outbe_primitives::units::SCALE_1E6_U256;
 
 use outbe_common::pow;
 use outbe_common::settlement::floor_to_asset_units;
@@ -568,8 +567,7 @@ fn require_snapshot(required: Option<VwapSnapshotId>, authorized: U256) -> Resul
 }
 
 /// `floor(entry x load x percent x rate_to / (100 x rate_from))` in asset units,
-/// with `rate` as `(COEN/issuance, COEN/reference)` on the issuance rail. A
-/// positive cost is at least one reference-currency minor unit before conversion.
+/// with `rate` as `(COEN/issuance, COEN/reference)` on the issuance rail.
 pub(crate) fn settlement_units(
     item: &outbe_gem::GemData,
     rate: Option<(U256, U256)>,
@@ -583,12 +581,6 @@ pub(crate) fn settlement_units(
         .ok_or(GemFactoryError::Overflow)?
         .checked_mul(U256::from(cost_rate(item.gem_type)))
         .ok_or(GemFactoryError::Overflow)?;
-    // The obligation keeps the x100 of the rate: one reference minor unit is 1e8.
-    let obligation = if obligation.is_zero() {
-        obligation
-    } else {
-        obligation.max(SCALE_1E6_U256 * percent)
-    };
     let (numerator, denominator) = match rate {
         Some((to, from)) => (
             obligation

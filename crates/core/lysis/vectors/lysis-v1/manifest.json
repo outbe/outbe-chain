@@ -5,9 +5,9 @@
   "migration_baseline_revision": "04606071023a237e43d5a3ca47642ee202983e86",
   "decision_reference": "outbe-plan/off-chain-poc-lysis-v1-semantics.md",
   "reference_path": "testing/lysis-v1-reference/src/lib.rs",
-  "reference_sha256": "8f3237dfede357f0a938ff43ec602a972559d0f8b5e2bc3ff7bdf9b2bbd9371b",
+  "reference_sha256": "fea8616d066a3f42788c673240c4663249649f95d90987b2188d7295b1be0a4f",
   "case_path": "crates/core/lysis/vectors/lysis-v1/cases.jsonl",
-  "case_file_sha256": "95872f0307388940d9507c9e6fb06d9554966f1047c19e7773b79efcbae58788",
+  "case_file_sha256": "e0f9a112d6867265aed659c85a5336491e2dc2048619cd3e0a4f66210c0df058",
   "case_count": 16,
   "required_arithmetic_vectors": [
     "u256-wrapping-multiply",
@@ -30,10 +30,10 @@
   },
   "policy_amendments": [
     {
-      "name": "positive-input-minimum-monetary-cost",
-      "description": "Positive entry price and Gratis load produce at least one reference-currency minor unit; the independent reference includes this policy.",
-      "case_id": "positive-price-and-load-minimum-cost",
-      "expected_source": "Exact integer arithmetic: floor(1 * 1 / 1000000) is clamped to 1; Gratis load remains 1."
+      "name": "positive-input-exact-floored-monetary-cost",
+      "description": "Positive entry price and Gratis load use the exact reference-currency minor-unit floor, including zero; the independent reference includes this policy.",
+      "case_id": "positive-price-and-load-zero-floored-cost",
+      "expected_source": "Exact integer arithmetic: floor(1 * 1 / 1000000) = 0; Gratis load remains 1."
     },
     {
       "name": "entry-derived-nod-floor",
