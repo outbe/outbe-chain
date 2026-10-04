@@ -9,7 +9,6 @@ use outbe_oracle::api::{settlement_fx_rates, VwapSnapshotId};
 use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::units::PROTOCOL_AMOUNT_DECIMALS;
 
 use outbe_intex::IntexState;
@@ -18,7 +17,7 @@ use outbe_vaultrouter::api::IVaultRouter;
 use crate::config;
 use crate::constants::{
     INTEX_NFT1155_ADDRESS, MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE,
-    ORIGIN_ROUTER_ADDRESS, PRICE_RATE_DEN, SETTLED_TAG,
+    ORIGIN_ROUTER_ADDRESS, PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS, SETTLED_TAG,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
