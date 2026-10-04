@@ -80,6 +80,7 @@ pub(super) const VALIDATOR_OWNER: Address = address!("0xffffffffffffffffffffffff
 
 mod bond;
 mod characterization;
+mod error_bond;
 mod guards;
 mod precompile;
 
