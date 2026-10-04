@@ -98,7 +98,7 @@ fn a_retained_day_with_a_zero_creation_count_does_not_stamp_or_backfill() {
     with_storage(Some(rate), |storage| {
         let historical = runtime::issue_gem(
             storage,
-            ALICE,
+            BOB,
             GemTypes::Genesis,
             genesis_load(),
             840,
