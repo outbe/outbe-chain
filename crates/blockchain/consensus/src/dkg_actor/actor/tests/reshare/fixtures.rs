@@ -1,5 +1,5 @@
-use super::*;
 use super::super::network::{MockReceiver, MockSender};
+use super::*;
 use commonware_runtime::{Spawner as _, Supervisor as _};
 
 type PlayerHandle = commonware_runtime::Handle<eyre::Result<DkgComplete>>;

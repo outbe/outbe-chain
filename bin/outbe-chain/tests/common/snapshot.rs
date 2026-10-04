@@ -17,7 +17,10 @@ use outbe_compressed_entities::{
     CeMdbx, EnvironmentIdentity, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME,
 };
 use outbe_ocomp::discovery_spool::ContiguousCheckpointStoreV1;
-use outbe_offchain_storage::{Key, Namespace, RocksDbStorage, StorageWriter, Value};
+use outbe_offchain_storage::{
+    partitioned::adapters::RocksPartitionDataSource, Key, Namespace, PartitionedStorage,
+    StorageWriter, Value,
+};
 use outbe_primitives::{projection::ProjectionCheckpoint, OutbeHeader};
 use reth_ethereum::provider::db::{
     database::Database,
@@ -96,6 +99,12 @@ pub(crate) struct StoppedFixture {
     pub(crate) execution_hash: B256,
     pub(crate) genesis_hash: B256,
     pub(crate) pending_result: String,
+}
+
+/// Native snapshot guards reject symlinked ancestors. macOS's default /var
+/// temporary directory aliases /private/var, so fixtures need a physical root.
+pub(crate) fn physical_tempdir() -> tempfile::TempDir {
+    tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap()
 }
 
 pub(crate) fn stopped_fixture(donor: &Path) -> StoppedFixture {
@@ -198,7 +207,11 @@ pub(crate) fn stopped_fixture(donor: &Path) -> StoppedFixture {
 
     let projection_config = donor.join("configuration/offchain.toml");
     fs::write(&projection_config, "version = 1\nbackend = 'rocksdb'\nstart_block = 17\n[rocksdb]\npath = '../projection'\nsecondary_path = '../secondary'\n").unwrap();
-    let projection = RocksDbStorage::open(donor.join("projection")).unwrap();
+    // Use the same entity-owned schema-3 layout as the stopped-store reader.
+    let projection = PartitionedStorage::new(
+        std::sync::Arc::new(RocksPartitionDataSource::open(&donor.join("projection")).unwrap()),
+        outbe_offchain_data::entity_partition_routing().unwrap(),
+    );
     let state = outbe_offchain_data::ProjectionState {
         chain_id: chain_spec.chain().id(),
         genesis_hash,
