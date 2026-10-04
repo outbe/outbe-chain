@@ -3,8 +3,9 @@
 
 use super::*;
 
-/// The sequence at its maximum: the next mining is refused before any write,
-/// so the paid units, the sequence and the ledger nonce stay as they were.
+/// The sequence at its maximum: the next mining is refused before any write.
+/// The provider counts every persistent write and event it is asked to apply,
+/// so a zero count around the call is the proof, not the shape of the error.
 #[test]
 fn a_mining_sequence_at_its_maximum_refuses_the_next_mining_without_writes() {
     use crate::sol_ext::IERC1155;
@@ -15,21 +16,34 @@ fn a_mining_sequence_at_its_maximum_refuses_the_next_mining_without_writes() {
         IERC1155::balanceOfCall::SELECTOR,
         word(1),
     );
-    StorageHandle::enter(&mut storage, |s| {
+    let nonce = StorageHandle::enter(&mut storage, |s| {
         select_prod_profile(&s);
         runtime::issue(&s, sample(7)).unwrap();
+        outbe_intex::api::record_settled_units(&s, sid(7), 1).unwrap();
         let promis_amount = outbe_intex::api::read_series(&s, sid(7))
             .unwrap()
             .promis_load_minor;
         let mut factory = IntexFactoryContract::new(s.clone());
         factory.write_mine_seq(sid(7), owner(), u32::MAX).unwrap();
-        let nonce = (0u64..)
+        (0u64..)
             .find(|nonce| {
                 runtime::validate_pow(owner(), promis_amount, sid(7), u32::MAX, *nonce).is_ok()
             })
-            .unwrap();
+            .unwrap()
+    });
+    let slots = storage.storage.clone();
+    let events = storage.get_ordered_events().to_vec();
+    let (series, counts) = StorageHandle::enter(&mut storage, |s| {
+        (
+            outbe_intex::api::read_series(&s, sid(7)).unwrap(),
+            outbe_intex::api::unit_counts(&s, sid(7)).unwrap(),
+        )
+    });
+    // Reset the provider's write/event counter after the fixture.
+    storage.clear_mutation_failure();
 
-        let error = runtime::mine_promis(
+    let error = StorageHandle::enter(&mut storage, |s| {
+        runtime::mine_promis(
             &s,
             sid(7),
             owner(),
@@ -40,11 +54,21 @@ fn a_mining_sequence_at_its_maximum_refuses_the_next_mining_without_writes() {
                 op_nonce: 0,
             },
         )
-        .unwrap_err();
-        assert!(
-            format!("{error:?}").contains("mining sequence overflow"),
-            "{error:?}"
-        );
+        .unwrap_err()
+    });
+    assert!(
+        format!("{error:?}").contains("mining sequence overflow"),
+        "{error:?}"
+    );
+
+    assert_eq!(
+        storage.clear_mutation_failure(),
+        0,
+        "the refusal must reach the provider with no write or event"
+    );
+    assert_eq!(storage.storage, slots, "no slot changed");
+    assert_eq!(storage.get_ordered_events(), events, "no event was emitted");
+    StorageHandle::enter(&mut storage, |s| {
         assert_eq!(
             IntexFactoryContract::new(s.clone())
                 .read_mine_seq(sid(7), owner())
@@ -52,9 +76,29 @@ fn a_mining_sequence_at_its_maximum_refuses_the_next_mining_without_writes() {
             u32::MAX,
             "the sequence must not wrap"
         );
-        // The refusal precedes the checkpoint, so the settled balance stub was
-        // never debited: the same paid units remain minable once a sequence
-        // reset is designed, and no event was emitted.
-        assert!(outbe_intex::api::read_series(&s, sid(7)).is_ok());
+        let after = outbe_intex::api::read_series(&s, sid(7)).unwrap();
+        assert_eq!(after.state, series.state);
+        assert_eq!(after.issued_units, series.issued_units);
+        assert_eq!(after.promis_load_minor, series.promis_load_minor);
+        let after = outbe_intex::api::unit_counts(&s, sid(7)).unwrap();
+        assert_eq!(
+            [
+                after.issued,
+                after.active,
+                after.settled,
+                after.exercised,
+                after.gem_factory,
+                after.forfeited
+            ],
+            [
+                counts.issued,
+                counts.active,
+                counts.settled,
+                counts.exercised,
+                counts.gem_factory,
+                counts.forfeited
+            ],
+            "the paid unit stays settled and unexercised"
+        );
     });
 }
