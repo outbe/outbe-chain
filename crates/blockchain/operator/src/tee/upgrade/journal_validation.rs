@@ -53,12 +53,11 @@ impl UpgradeJournalStateV1 {
             Self::KeyProvisioned {
                 sealed_root_hash, ..
             } => validate_root(*sealed_root_hash),
-            Self::CandidateKeyReady {
-                sealed_root_hash,
-                resident_offer_public,
-                proof_hash,
-                ..
-            } => validate_key_ready(*sealed_root_hash, *resident_offer_public, *proof_hash),
+            Self::CandidateKeyReady { security, .. } => validate_key_ready(
+                security.sealed_root_hash,
+                security.resident_offer_public,
+                security.proof_hash,
+            ),
             Self::SubmissionPrepared { .. }
             | Self::Submitted { .. }
             | Self::Finalized { .. }
@@ -159,16 +158,13 @@ fn validate_expired_recovery(
     use UpgradeJournalStateV1::{CandidateKeyReady, KeyProvisioned, SubmissionPrepared, Submitted};
     if let (
         CandidateKeyReady {
-            sealed_root_hash: before,
-            ..
+            security: before, ..
         }
         | SubmissionPrepared {
-            sealed_root_hash: before,
-            ..
+            security: before, ..
         }
         | Submitted {
-            sealed_root_hash: before,
-            ..
+            security: before, ..
         },
         KeyProvisioned {
             sealed_root_hash: after,
@@ -176,7 +172,7 @@ fn validate_expired_recovery(
         },
     ) = (current, next)
     {
-        if before == after {
+        if before.sealed_root_hash == *after {
             return Ok(true);
         }
         eyre::bail!("expired submission recovery changed the sealed root");
@@ -203,43 +199,35 @@ pub(super) fn security_material(state: &UpgradeJournalStateV1) -> Option<Securit
         UpgradeJournalStateV1::KeyProvisioned {
             sealed_root_hash, ..
         } => Some((*sealed_root_hash, B256::ZERO, B256::ZERO, None)),
-        UpgradeJournalStateV1::CandidateKeyReady {
-            sealed_root_hash,
-            resident_offer_public,
-            proof_hash,
-            ..
-        } => Some((*sealed_root_hash, *resident_offer_public, *proof_hash, None)),
+        UpgradeJournalStateV1::CandidateKeyReady { security, .. } => Some((
+            security.sealed_root_hash,
+            security.resident_offer_public,
+            security.proof_hash,
+            None,
+        )),
         UpgradeJournalStateV1::SubmissionPrepared {
-            sealed_root_hash,
-            resident_offer_public,
-            proof_hash,
+            security,
             submission,
             ..
         }
         | UpgradeJournalStateV1::Submitted {
-            sealed_root_hash,
-            resident_offer_public,
-            proof_hash,
+            security,
             submission,
             ..
         }
         | UpgradeJournalStateV1::Finalized {
-            sealed_root_hash,
-            resident_offer_public,
-            proof_hash,
+            security,
             submission,
             ..
         }
         | UpgradeJournalStateV1::Promoted {
-            sealed_root_hash,
-            resident_offer_public,
-            proof_hash,
+            security,
             submission,
             ..
         } => Some((
-            *sealed_root_hash,
-            *resident_offer_public,
-            *proof_hash,
+            security.sealed_root_hash,
+            security.resident_offer_public,
+            security.proof_hash,
             Some(submission),
         )),
     }

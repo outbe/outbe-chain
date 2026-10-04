@@ -1057,7 +1057,7 @@ mod tests {
     ) {
         use super::super::{
             PreparedUpgradeSubmissionV1, UpgradeContextV1, UpgradeJournalGuardV1,
-            UpgradeJournalSnapshotV1, UpgradeJournalStateV1,
+            UpgradeJournalSnapshotV1, UpgradeJournalStateV1, UpgradeSecurityMaterialV1,
         };
         let context = UpgradeContextV1 {
             predecessor_manifest_hash: B256::repeat_byte(0xa1),
@@ -1078,9 +1078,11 @@ mod tests {
             UpgradeJournalStateV1::Promoted {
                 context,
                 submission,
-                sealed_root_hash: B256::repeat_byte(1),
-                resident_offer_public: B256::repeat_byte(2),
-                proof_hash: B256::repeat_byte(3),
+                security: UpgradeSecurityMaterialV1 {
+                    sealed_root_hash: B256::repeat_byte(1),
+                    resident_offer_public: B256::repeat_byte(2),
+                    proof_hash: B256::repeat_byte(3),
+                },
                 finalized_height: 100,
                 finalized_hash: B256::repeat_byte(4),
             }
@@ -1088,9 +1090,11 @@ mod tests {
             UpgradeJournalStateV1::Finalized {
                 context,
                 submission,
-                sealed_root_hash: B256::repeat_byte(1),
-                resident_offer_public: B256::repeat_byte(2),
-                proof_hash: B256::repeat_byte(3),
+                security: UpgradeSecurityMaterialV1 {
+                    sealed_root_hash: B256::repeat_byte(1),
+                    resident_offer_public: B256::repeat_byte(2),
+                    proof_hash: B256::repeat_byte(3),
+                },
                 finalized_height: 100,
                 finalized_hash: B256::repeat_byte(4),
             }

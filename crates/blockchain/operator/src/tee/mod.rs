@@ -30,6 +30,6 @@ pub use upgrade::{
     record_upgrade_submission_prepared_v1, record_upgrade_submitted_v1, run_upgrade_submission_v1,
     transition_intent_v1, NetworkUpgradeSubmissionV1, PreparedUpgradeSubmissionV1,
     UpgradeContextV1, UpgradeJournalGuardV1, UpgradeJournalSnapshotV1, UpgradeJournalStateV1,
-    UpgradeNodeSignerV1, UpgradeSubmissionOutcomeV1, UpgradeSubmissionRequestV1,
-    UpgradeSubmissionServicesV1,
+    UpgradeNodeSignerV1, UpgradeSecurityMaterialV1, UpgradeSubmissionOutcomeV1,
+    UpgradeSubmissionRequestV1, UpgradeSubmissionServicesV1,
 };

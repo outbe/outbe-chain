@@ -98,10 +98,7 @@ fn load_key_ready_material(
     let snapshot = inspect_upgrade_journal_v1(node_data_dir)?
         .ok_or_else(|| eyre::eyre!("upgrade candidate is not prepared"))?;
     let UpgradeJournalStateV1::CandidateKeyReady {
-        context,
-        resident_offer_public,
-        proof_hash,
-        ..
+        context, security, ..
     } = snapshot.lifecycle
     else {
         eyre::bail!("upgrade relay requires candidate-key-ready checkpoint");
@@ -117,8 +114,8 @@ fn load_key_ready_material(
     let encoded_proof = proof
         .encode_canonical()
         .map_err(|error| eyre::eyre!("encode durable key-ready proof: {error}"))?;
-    if keccak256(encoded_proof) != proof_hash
-        || B256::from(proof.resident_offer_public) != resident_offer_public
+    if keccak256(encoded_proof) != security.proof_hash
+        || B256::from(proof.resident_offer_public) != security.resident_offer_public
     {
         eyre::bail!("durable transition proof differs from the journaled key-ready checkpoint");
     }
