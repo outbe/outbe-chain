@@ -2,6 +2,15 @@
 
 use super::super::*;
 
+struct ValidatedReservedSystemTx {
+    body_index: usize,
+    expected_phase: SystemTxKind,
+    finalized_summary: Option<AccountedParentArtifact>,
+    visible_base_gas: u64,
+    visible_gas_limit: u64,
+    proposer: Address,
+}
+
 #[allow(private_bounds)]
 impl<DB, E> OutbeBlockExecutor<'_, E>
 where
@@ -32,40 +41,8 @@ where
         // main tx loop is the proposer-supplied Phase 1 tx - validate it
         // matches the cache (signature hash) and skip re-execution.
         // Receipt + state already exist from the pre-exec commit.
-        if let crate::system_tx::SystemTxPhase::Phase1Preexecuted {
-            tx_hash: cached_hash,
-            ..
-        } = self.system_tx_phase_cursor
-        {
-            if !cached_hash.is_zero() {
-                if tx.signature_hash() != cached_hash {
-                    return Err(BlockExecutionError::Internal(
-                    InternalBlockExecutionError::Other(
-                        format!(
-                            "Phase 1 body[0] witness signature_hash mismatch: expected {cached_hash}, got {}",
-                            tx.signature_hash()
-                        )
-                        .into(),
-                    ),
-                ));
-                }
-                // Advance cursor past Phase 1; CycleTick body_index=1 next.
-                let has_boundary_outcome = matches!(
-                    block_artifacts.consensus_header_artifact,
-                    Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
-                );
-                let has_tee_bootstrap = self.block_has_tee_bootstrap();
-                self.system_tx_phase_cursor =
-                    self.system_tx_phase_cursor.advance_after_commit_with_ocomp(
-                        has_boundary_outcome,
-                        has_tee_bootstrap,
-                        self.ocomp_lifecycle_active,
-                    );
-                // Ok(None) signals "no further commit" - pre-exec already
-                // pushed receipt[0] and committed state. The block builder
-                // still keeps this validated witness in body[0].
-                return Ok(None);
-            }
+        if self.consume_preexecuted_phase1_witness(tx, &block_artifacts)? {
+            return Ok(None);
         }
 
         // cursor-driven phase routing replaces the previous
@@ -74,84 +51,14 @@ where
         // exactly once per consumed begin-zone system tx (see the
         // `advance_after_commit` call below). This is the only
         // production reader of `self.system_tx_phase_cursor`.
-        let (
+        let ValidatedReservedSystemTx {
             body_index,
             expected_phase,
-            expected_input,
             finalized_summary,
             visible_base_gas,
-            planned_gas_limit,
-        ) = self.expected_system_tx_for_cursor(block_number, &block_artifacts)?;
-        let actual_input = SystemTxInputV2::decode(tx.input().as_ref()).map_err(|error| {
-            BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                format!("decode system tx at body_index={body_index}: {error}").into(),
-            ))
-        })?;
-        let actual_phase = actual_input.kind();
-        if actual_phase != expected_phase {
-            return Err(BlockExecutionError::Internal(
-            InternalBlockExecutionError::Other(
-                format!(
-                    "system tx phase mismatch at body_index={body_index}: expected {expected_phase:?}, got {actual_phase:?}"
-                )
-                .into(),
-            ),
-        ));
-        }
-        if actual_input != expected_input {
-            return Err(BlockExecutionError::Internal(
-                InternalBlockExecutionError::Other(
-                    format!(
-                    "system tx calldata mismatch at body_index={body_index} for {expected_phase:?}"
-                )
-                    .into(),
-                ),
-            ));
-        }
-
-        let ordinal = body_index.try_into().map_err(|_| {
-            BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                format!("system tx body_index {body_index} exceeds u8 range").into(),
-            ))
-        })?;
-        let unsigned = build_unsigned_system_tx_with_gas_limit(
-            expected_phase,
-            ordinal,
-            block_number,
-            self.inner.evm.chain_id(),
-            tx.input().clone(),
-            planned_gas_limit,
-        )
-        .map_err(|error| {
-            BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                format!("build expected system tx at body_index={body_index}: {error}").into(),
-            ))
-        })?;
-        if tx.signature_hash() != unsigned.signature_hash() {
-            return Err(BlockExecutionError::Internal(
-            InternalBlockExecutionError::Other(
-                format!(
-                    "system tx signature_hash mismatch at body_index={body_index} for {expected_phase:?}"
-                )
-                .into(),
-            ),
-        ));
-        }
-        let visible_gas_limit = tx.gas_limit();
-
-        let proposer = self
-            .begin_zone_proposer(block_number)?
-            .unwrap_or_else(|| self.inner.evm.block().beneficiary());
-        if signer != proposer {
-            return Err(BlockExecutionError::Internal(
-            InternalBlockExecutionError::Other(
-                format!(
-                    "system tx signer mismatch at body_index={body_index} for {expected_phase:?}: expected proposer {proposer}, got {signer}"
-                )
-                .into(),
-            ),
-        ));
-        }
+            visible_gas_limit,
+            proposer,
+        } = self.validate_reserved_system_tx((tx, signer), block_number, &block_artifacts)?;
 
         if expected_phase == SystemTxKind::HookEvents {
             let has_boundary_outcome = matches!(
@@ -233,18 +140,13 @@ where
         let has_tee_bootstrap = self.block_has_tee_bootstrap();
         // Only EVM result failures use the soft-failure receipt path.
         // Raw engine/provider `Err` was handled above as fatal.
-        let result = match transact_outcome {
-            Ok(value) => value,
-            Err(error) => {
-                let reason = format!(
-                    "system tx {expected_phase:?} execution failed at body_index={body_index}: {error}"
-                );
-                tracing::error!(target: "outbe::executor", %reason);
-                return Err(BlockExecutionError::Internal(
-                    InternalBlockExecutionError::Other(reason.into()),
-                ));
-            }
-        };
+        let result = transact_outcome.map_err(|error| {
+            let reason = format!(
+                "system tx {expected_phase:?} execution failed at body_index={body_index}: {error}"
+            );
+            tracing::error!(target: "outbe::executor", %reason);
+            BlockExecutionError::Internal(InternalBlockExecutionError::Other(reason.into()))
+        })?;
         let compressed_entities_gas = gas_window.gas_used().map_err(|error| {
             BlockExecutionError::Internal(InternalBlockExecutionError::Other(
                 format!(
@@ -352,6 +254,135 @@ where
                 );
         }
         commit_outcome
+    }
+
+    fn consume_preexecuted_phase1_witness(
+        &mut self,
+        tx: &TransactionSigned,
+        block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
+    ) -> Result<bool, BlockExecutionError> {
+        if let crate::system_tx::SystemTxPhase::Phase1Preexecuted {
+            tx_hash: cached_hash,
+            ..
+        } = self.system_tx_phase_cursor
+        {
+            if !cached_hash.is_zero() {
+                if tx.signature_hash() != cached_hash {
+                    return Err(BlockExecutionError::Internal(
+                    InternalBlockExecutionError::Other(
+                        format!(
+                            "Phase 1 body[0] witness signature_hash mismatch: expected {cached_hash}, got {}",
+                            tx.signature_hash()
+                        )
+                        .into(),
+                    ),
+                ));
+                }
+                // Advance cursor past Phase 1; CycleTick body_index=1 next.
+                let has_boundary_outcome = matches!(
+                    block_artifacts.consensus_header_artifact,
+                    Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
+                );
+                let has_tee_bootstrap = self.block_has_tee_bootstrap();
+                self.system_tx_phase_cursor =
+                    self.system_tx_phase_cursor.advance_after_commit_with_ocomp(
+                        has_boundary_outcome,
+                        has_tee_bootstrap,
+                        self.ocomp_lifecycle_active,
+                    );
+                // Returning true makes the caller skip a further commit: pre-exec
+                // already pushed receipt[0] and committed state. The block
+                // builder still keeps this validated witness in body[0].
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn validate_reserved_system_tx(
+        &self,
+        transaction: (&TransactionSigned, Address),
+        block_number: u64,
+        block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
+    ) -> Result<ValidatedReservedSystemTx, BlockExecutionError> {
+        let (tx, signer) = transaction;
+        let (
+            body_index,
+            expected_phase,
+            expected_input,
+            finalized_summary,
+            visible_base_gas,
+            planned_gas_limit,
+        ) = self.expected_system_tx_for_cursor(block_number, block_artifacts)?;
+        validate_reserved_system_input(tx, body_index, (expected_phase, &expected_input))?;
+
+        self.validate_reserved_system_envelope(
+            tx,
+            (body_index, expected_phase, planned_gas_limit),
+            block_number,
+        )?;
+        let visible_gas_limit = tx.gas_limit();
+
+        let proposer = self
+            .begin_zone_proposer(block_number)?
+            .unwrap_or_else(|| self.inner.evm.block().beneficiary());
+        if signer != proposer {
+            return Err(BlockExecutionError::Internal(
+            InternalBlockExecutionError::Other(
+                format!(
+                    "system tx signer mismatch at body_index={body_index} for {expected_phase:?}: expected proposer {proposer}, got {signer}"
+                )
+                .into(),
+            ),
+        ));
+        }
+
+        Ok(ValidatedReservedSystemTx {
+            body_index,
+            expected_phase,
+            finalized_summary,
+            visible_base_gas,
+            visible_gas_limit,
+            proposer,
+        })
+    }
+
+    fn validate_reserved_system_envelope(
+        &self,
+        tx: &TransactionSigned,
+        expected: (usize, SystemTxKind, u64),
+        block_number: u64,
+    ) -> Result<(), BlockExecutionError> {
+        let (body_index, expected_phase, planned_gas_limit) = expected;
+        let ordinal = body_index.try_into().map_err(|_| {
+            BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                format!("system tx body_index {body_index} exceeds u8 range").into(),
+            ))
+        })?;
+        let unsigned = build_unsigned_system_tx_with_gas_limit(
+            expected_phase,
+            ordinal,
+            block_number,
+            self.inner.evm.chain_id(),
+            tx.input().clone(),
+            planned_gas_limit,
+        )
+        .map_err(|error| {
+            BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                format!("build expected system tx at body_index={body_index}: {error}").into(),
+            ))
+        })?;
+        if tx.signature_hash() != unsigned.signature_hash() {
+            return Err(BlockExecutionError::Internal(
+                InternalBlockExecutionError::Other(
+                    format!(
+                        "system tx signature_hash mismatch at body_index={body_index} for {expected_phase:?}"
+                    )
+                    .into(),
+                ),
+            ));
+        }
+        Ok(())
     }
 
     /// `Ok(None)` is an ordinary transaction. A classified carrier is authorized
@@ -480,4 +511,40 @@ where
         self.commit_system_transaction(output, 0, 0, signed_gas_limit)
             .map(Some)
     }
+}
+
+fn validate_reserved_system_input(
+    tx: &TransactionSigned,
+    body_index: usize,
+    expected: (SystemTxKind, &SystemTxInputV2),
+) -> Result<(), BlockExecutionError> {
+    let (expected_phase, expected_input) = expected;
+    let actual_input = SystemTxInputV2::decode(tx.input().as_ref()).map_err(|error| {
+        BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+            format!("decode system tx at body_index={body_index}: {error}").into(),
+        ))
+    })?;
+    let actual_phase = actual_input.kind();
+    if actual_phase != expected_phase {
+        return Err(BlockExecutionError::Internal(
+            InternalBlockExecutionError::Other(
+                format!(
+                    "system tx phase mismatch at body_index={body_index}: expected {expected_phase:?}, got {actual_phase:?}"
+                )
+                .into(),
+            ),
+        ));
+    }
+    if &actual_input != expected_input {
+        return Err(BlockExecutionError::Internal(
+            InternalBlockExecutionError::Other(
+                format!(
+                    "system tx calldata mismatch at body_index={body_index} for {expected_phase:?}"
+                )
+                .into(),
+            ),
+        ));
+    }
+
+    Ok(())
 }
