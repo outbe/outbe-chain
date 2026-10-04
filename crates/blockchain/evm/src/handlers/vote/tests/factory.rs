@@ -128,6 +128,9 @@ fn pfs_010_05_expiry_releases_identity_and_pending_cap_and_burns_once() {
             .unwrap();
         register_active_validator(storage.clone(), VALIDATOR_D, 4);
 
+        let promis_limit_before = outbe_promislimit::PromisLimitContract::new(storage.clone())
+            .get_total_unallocated()
+            .unwrap();
         let deadline = 7 + VOTING_WINDOW_BLOCKS;
         vote.process_begin_block(
             &finalize_context(storage.clone(), deadline + 1, issuer),
@@ -143,6 +146,13 @@ fn pfs_010_05_expiry_releases_identity_and_pending_cap_and_burns_once() {
                 .proposal_status()
                 .unwrap(),
             ProposalStatus::Expired
+        );
+        // The expired bond is a native burn: no capacity credit of any kind.
+        assert_eq!(
+            outbe_promislimit::PromisLimitContract::new(storage.clone())
+                .get_total_unallocated()
+                .unwrap(),
+            promis_limit_before
         );
         assert_eq!(
             vote.proposal_bond(proposal_id).unwrap().settlement,

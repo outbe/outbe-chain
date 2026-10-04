@@ -306,3 +306,144 @@ fn a_failure_after_every_error_finalization_mutation_rolls_back_everything() {
         );
     }
 }
+
+/// Writes the shape the previous binary persisted for a target-execution
+/// Error: status `Error`, the id still in the pending vector, the bond still
+/// `Unsettled`. This is the upgrade boundary, not a corrupted record.
+fn persist_legacy_error(vote: &mut Vote<'_>, proposal_id: U256) {
+    let mut record = vote.proposals.get(proposal_id).unwrap().unwrap();
+    record.set_proposal_status(ProposalStatus::Error);
+    vote.proposals.update(&record).unwrap();
+    assert_eq!(vote.list_pending_proposal_ids().unwrap(), vec![proposal_id]);
+}
+
+#[test]
+fn a_persisted_legacy_bonded_error_is_released_and_refunded_once_on_the_next_pass() {
+    let (mut provider, proposal_id, deadline) = bonded_error_fixture();
+    {
+        let storage = StorageHandle::new(&mut provider);
+        let mut vote = Vote::new(storage.clone());
+        persist_legacy_error(&mut vote, proposal_id);
+        assert_eq!(
+            vote.proposal_bond(proposal_id).unwrap().settlement,
+            BondSettlement::Unsettled
+        );
+        assert_eq!(vote.bond_liabilities().unwrap(), U256::from(BOND));
+
+        vote.process_begin_block(
+            &block_context(storage.clone(), deadline + 5),
+            &PUBLIC_BONDED_REGISTRY,
+        )
+        .unwrap();
+
+        assert_eq!(
+            vote.proposals
+                .get(proposal_id)
+                .unwrap()
+                .unwrap()
+                .proposal_status()
+                .unwrap(),
+            ProposalStatus::Error
+        );
+        assert_eq!(
+            vote.list_pending_proposal_ids().unwrap(),
+            Vec::<U256>::new()
+        );
+        assert_eq!(vote.pending_proposal_count_by_proposer(OWNER).unwrap(), 0);
+        assert_eq!(
+            vote.proposal_bond(proposal_id).unwrap().settlement,
+            BondSettlement::Refunded
+        );
+        assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
+        assert_eq!(storage.balance(OWNER).unwrap(), U256::from(BOND));
+        assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), U256::from(SURPLUS));
+        // The target is not re-executed during cleanup.
+        assert_eq!(
+            storage.sload(UPDATE_ADDRESS, U256::from(996u64)).unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(
+            storage.sload(UPDATE_ADDRESS, U256::from(995u64)).unwrap(),
+            U256::ZERO
+        );
+
+        // A later pass finds nothing to settle.
+        vote.process_begin_block(
+            &block_context(storage.clone(), deadline + 6),
+            &PUBLIC_BONDED_REGISTRY,
+        )
+        .unwrap();
+        assert_eq!(storage.balance(OWNER).unwrap(), U256::from(BOND));
+        assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), U256::from(SURPLUS));
+    }
+    assert_eq!(
+        count_events(&provider, IVote::ProposalBondRefunded::SIGNATURE_HASH),
+        1
+    );
+    assert_eq!(
+        count_events(&provider, IVote::ProposalBondBurned::SIGNATURE_HASH),
+        0
+    );
+    assert_eq!(
+        count_events(&provider, IVote::ProposalErrored::SIGNATURE_HASH),
+        0,
+        "cleanup does not announce a second finalization"
+    );
+}
+
+#[test]
+fn a_persisted_legacy_unbonded_error_leaves_the_pending_index_without_settlement() {
+    let mut provider = super::test_provider();
+    provider.set_balance(VOTE_ADDRESS, U256::from(SURPLUS));
+    let proposal_id;
+    {
+        let storage = StorageHandle::new(&mut provider);
+        setup_default_validators(storage.clone());
+        let mut vote = Vote::new(storage.clone());
+        proposal_id = vote
+            .create_proposal(
+                PROPOSER,
+                UPDATE_ADDRESS,
+                "{\"kind\":\"legacy\"}",
+                10,
+                &REJECTING_REGISTRY,
+            )
+            .unwrap();
+        persist_legacy_error(&mut vote, proposal_id);
+        assert_eq!(
+            vote.pending_proposal_count_by_proposer(PROPOSER).unwrap(),
+            1
+        );
+
+        vote.process_begin_block(&block_context(storage.clone(), 11), &REJECTING_REGISTRY)
+            .unwrap();
+
+        assert_eq!(
+            vote.list_pending_proposal_ids().unwrap(),
+            Vec::<U256>::new()
+        );
+        assert_eq!(
+            vote.pending_proposal_count_by_proposer(PROPOSER).unwrap(),
+            0
+        );
+        assert_eq!(
+            vote.proposal_bond(proposal_id).unwrap().settlement,
+            BondSettlement::NoBond
+        );
+        assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
+        assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), U256::from(SURPLUS));
+        assert_eq!(
+            storage.sload(UPDATE_ADDRESS, U256::from(999u64)).unwrap(),
+            U256::ZERO,
+            "the rejecting target is not re-executed"
+        );
+    }
+    assert_eq!(
+        count_events(&provider, IVote::ProposalBondRefunded::SIGNATURE_HASH),
+        0
+    );
+    assert_eq!(
+        count_events(&provider, IVote::ProposalErrored::SIGNATURE_HASH),
+        0
+    );
+}
