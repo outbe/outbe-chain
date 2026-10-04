@@ -37,7 +37,7 @@ use outbe_tee::{
 };
 
 use crate::{
-    rpc::RenewalRpc,
+    rpc::{RelayPreparationRpc, RelayRpc, RenewalRpc, TransactionReceiptRpc},
     tx::{buffered_gas_price, RelaySignerV1},
 };
 
@@ -156,7 +156,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
-    use crate::rpc::FinalityRpc;
+    use crate::rpc::{ChainRpc, FinalizedStateRpc, RegistryRpc};
     use crate::tx::RawRelayTransactionV1;
     use alloy_consensus::{
         transaction::SignerRecoverable as _, EthereumTxEnvelope, Transaction as _, TxEip4844,
@@ -219,42 +219,13 @@ mod tests {
 
     struct PreparationRpc;
 
-    impl FinalityRpc for PreparationRpc {
-        async fn transaction_receipt(
-            &self,
-            _transaction_hash: &str,
-        ) -> Result<Option<serde_json::Value>> {
-            eyre::bail!("unused transaction_receipt");
-        }
-
-        async fn logs(
-            &self,
-            _address: Address,
-            _topics: &[Option<String>],
-            _from_block: &str,
-            _to_block: &str,
-        ) -> Result<Vec<serde_json::Value>> {
-            eyre::bail!("unused logs");
-        }
-
-        async fn block_by_number(&self, _block: u64) -> Result<serde_json::Value> {
-            eyre::bail!("unused block_by_number");
-        }
-
-        async fn finalized_block(&self) -> Result<serde_json::Value> {
-            eyre::bail!("unused finalized_block");
-        }
-
-        async fn call_at(&self, _to: Address, _data: &[u8], _block_tag: &str) -> Result<Vec<u8>> {
-            eyre::bail!("unused call_at");
-        }
-    }
-
-    impl RenewalRpc for PreparationRpc {
+    impl ChainRpc for PreparationRpc {
         async fn chain_id(&self) -> Result<u64> {
             Ok(DEVNET_CHAIN_ID)
         }
+    }
 
+    impl RelayPreparationRpc for PreparationRpc {
         async fn gas_price(&self) -> Result<U256> {
             Ok(U256::from(1_000_000_000_u64))
         }
@@ -265,14 +236,6 @@ mod tests {
 
         async fn balance(&self, _address: Address) -> Result<U256> {
             Ok(U256::MAX)
-        }
-
-        async fn send_raw_transaction(&self, _raw_transaction: &[u8]) -> Result<String> {
-            eyre::bail!("unused send_raw_transaction");
-        }
-
-        async fn tee_renewal_schedule_v1(&self) -> Result<TeeRenewalScheduleV1> {
-            eyre::bail!("unused tee_renewal_schedule_v1");
         }
     }
 
@@ -286,28 +249,16 @@ mod tests {
         sent: Arc<Mutex<Vec<Vec<u8>>>>,
     }
 
-    impl FinalityRpc for ReplayRpc {
+    impl TransactionReceiptRpc for ReplayRpc {
         async fn transaction_receipt(
             &self,
             _transaction_hash: &str,
         ) -> Result<Option<serde_json::Value>> {
             Ok(self.receipt.lock().unwrap().clone())
         }
+    }
 
-        async fn logs(
-            &self,
-            _address: Address,
-            _topics: &[Option<String>],
-            _from_block: &str,
-            _to_block: &str,
-        ) -> Result<Vec<serde_json::Value>> {
-            eyre::bail!("unused logs");
-        }
-
-        async fn block_by_number(&self, _block: u64) -> Result<serde_json::Value> {
-            eyre::bail!("unused block_by_number");
-        }
-
+    impl FinalizedStateRpc for ReplayRpc {
         async fn finalized_block(&self) -> Result<serde_json::Value> {
             Ok(serde_json::json!({
                 "number": format!("0x{:x}", self.schedule.finalized_height),
@@ -339,11 +290,13 @@ mod tests {
         }
     }
 
-    impl RenewalRpc for ReplayRpc {
+    impl ChainRpc for ReplayRpc {
         async fn chain_id(&self) -> Result<u64> {
             Ok(DEVNET_CHAIN_ID)
         }
+    }
 
+    impl RelayPreparationRpc for ReplayRpc {
         async fn gas_price(&self) -> Result<U256> {
             eyre::bail!("restart replay regenerated gas price");
         }
@@ -355,7 +308,9 @@ mod tests {
         async fn balance(&self, _address: Address) -> Result<U256> {
             eyre::bail!("restart replay rechecked preparation balance");
         }
+    }
 
+    impl RelayRpc for ReplayRpc {
         async fn send_raw_transaction(&self, raw_transaction: &[u8]) -> Result<String> {
             self.sent.lock().unwrap().push(raw_transaction.to_vec());
             if let Some(error) = self.send_error {
@@ -366,7 +321,9 @@ mod tests {
             }
             Ok(format!("{:#x}", keccak256(raw_transaction)))
         }
+    }
 
+    impl RegistryRpc for ReplayRpc {
         async fn tee_renewal_schedule_v1(&self) -> Result<TeeRenewalScheduleV1> {
             Ok(self.schedule)
         }
@@ -395,31 +352,20 @@ mod tests {
     }
 
     fn binding() -> RenewalBindingV1 {
-        RenewalBindingV1 {
-            node_id_hash: B256::repeat_byte(1),
-            enclave_id: B256::repeat_byte(2),
-            binding_id: B256::repeat_byte(3),
-            intent_hash: B256::repeat_byte(4),
-            evidence_hash: B256::repeat_byte(5),
-            policy_hash: B256::repeat_byte(6),
-            binding_version: 1,
-            registration_version: 1,
-            renewal_nonce: 1,
-            transition_nonce: 0,
-            lease_started_at: 100,
-            valid_until: 400,
-            collateral_valid_until: 500,
-            recipient_x25519: B256::repeat_byte(7),
-            attestation_ed25519: B256::repeat_byte(8),
-            noise_responder_x25519: B256::repeat_byte(9),
-            mrenclave: B256::repeat_byte(10),
-            mrsigner: B256::repeat_byte(11),
-            isv_prod_id: 1,
-            isv_svn: 1,
-            platform_tcb_status: 0,
-            verdict_hash: B256::repeat_byte(12),
-            node_host_authorization_hash: B256::repeat_byte(13),
-        }
+        crate::test_support::RenewalBindingFixtureV1::new(1)
+            .versions(1, 1)
+            .nonces(1, 0)
+            .lease(100, 400, 500)
+            .claims(1, 1, 0)
+            .build()
+    }
+
+    #[test]
+    fn renewal_input_fixture_preserves_its_independent_v1_json() {
+        assert_eq!(
+            serde_json::to_string(&binding()).unwrap(),
+            r#"{"nodeIdHash":"0x0101010101010101010101010101010101010101010101010101010101010101","enclaveId":"0x0202020202020202020202020202020202020202020202020202020202020202","bindingId":"0x0303030303030303030303030303030303030303030303030303030303030303","intentHash":"0x0404040404040404040404040404040404040404040404040404040404040404","evidenceHash":"0x0505050505050505050505050505050505050505050505050505050505050505","policyHash":"0x0606060606060606060606060606060606060606060606060606060606060606","bindingVersion":1,"registrationVersion":1,"renewalNonce":1,"transitionNonce":0,"leaseStartedAt":100,"validUntil":400,"collateralValidUntil":500,"recipientX25519":"0x0707070707070707070707070707070707070707070707070707070707070707","attestationEd25519":"0x0808080808080808080808080808080808080808080808080808080808080808","noiseResponderX25519":"0x0909090909090909090909090909090909090909090909090909090909090909","mrenclave":"0x0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a","mrsigner":"0x0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b","isvProdId":1,"isvSvn":1,"platformTcbStatus":0,"verdictHash":"0x0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c","nodeHostAuthorizationHash":"0x0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d"}"#
+        );
     }
 
     struct ReplayIdentity {

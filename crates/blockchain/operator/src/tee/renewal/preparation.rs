@@ -11,7 +11,7 @@ pub(super) struct RenewalPreparation<'a, R, E, N> {
 }
 
 pub(super) async fn prepare_attempt<
-    R: RenewalRpc + Sync,
+    R: RelayPreparationRpc + Sync,
     E: RenewalEnclaveV1,
     N: RenewalNodeSignerV1,
 >(

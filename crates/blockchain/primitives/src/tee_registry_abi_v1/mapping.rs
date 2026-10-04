@@ -11,39 +11,14 @@
 #[macro_export]
 macro_rules! impl_tee_registry_binding_v1_mapping {
     ($($request:tt)+) => {
-        $crate::__impl_tee_registry_binding_v1_mapping! {
-            $($request)+;
-            node_id_hash => nodeIdHash,
-            enclave_id => enclaveId,
-            binding_id => bindingId,
-            intent_hash => intentHash,
-            evidence_hash => evidenceHash,
-            policy_hash => policyHash,
-            binding_version => bindingVersion,
-            registration_version => registrationVersion,
-            renewal_nonce => renewalNonce,
-            transition_nonce => transitionNonce,
-            lease_started_at => leaseStartedAt,
-            valid_until => validUntil,
-            collateral_valid_until => collateralValidUntil,
-            recipient_x25519 => recipientX25519,
-            attestation_ed25519 => attestationEd25519,
-            noise_responder_x25519 => noiseResponderX25519,
-            mrenclave => mrenclave,
-            mrsigner => mrsigner,
-            isv_prod_id => isvProdId,
-            isv_svn => isvSvn,
-            platform_tcb_status => platformTcbStatus,
-            verdict_hash => verdictHash,
-            node_host_authorization_hash => nodeHostAuthorizationHash,
-        }
+        $crate::__tee_registry_binding_v1_fields! { @mapping $($request)+ }
     };
 }
 
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __impl_tee_registry_binding_v1_mapping {
-    (@default_view; $($field:ident => $abi:ident),+ $(,)?) => {
+    (@default_view; $($field:ident : $ty:ty => $abi:ident),+ $(,)?) => {
         impl ::core::default::Default
             for $crate::tee_registry_abi_v1::NodeEnclaveBindingV1View
         {
@@ -52,9 +27,9 @@ macro_rules! __impl_tee_registry_binding_v1_mapping {
             }
         }
     };
-    ($record:ty, decode_fields; $($field:ident => $abi:ident),+ $(,)?) => {
+    ($record:ty, decode_fields; $($field:ident : $ty:ty => $abi:ident),+ $(,)?) => {
         $crate::__impl_tee_registry_binding_v1_mapping! {
-            $record; $($field => $abi),+
+            $record; $($field : $ty => $abi),+
         }
         impl $record {
             /// Copy V1 fields after the consumer has checked record existence.
@@ -65,7 +40,7 @@ macro_rules! __impl_tee_registry_binding_v1_mapping {
             }
         }
     };
-    ($record:ty; $($field:ident => $abi:ident),+ $(,)?) => {
+    ($record:ty; $($field:ident : $ty:ty => $abi:ident),+ $(,)?) => {
         impl ::core::convert::From<&$record>
             for $crate::tee_registry_abi_v1::NodeEnclaveBindingV1View
         {
@@ -73,5 +48,63 @@ macro_rules! __impl_tee_registry_binding_v1_mapping {
                 Self { exists: true, $($abi: record.$field),+ }
             }
         }
+    };
+}
+
+/// Define a domain-owned Registry record using the canonical V1 field schema.
+/// Attributes, ownership and validation remain with the caller; this does not
+/// unify the resulting Rust types or change their wire representations.
+#[macro_export]
+macro_rules! define_tee_registry_binding_v1 {
+    ($(#[$attr:meta])* $visibility:vis struct $name:ident) => {
+        $crate::__tee_registry_binding_v1_fields! {
+            @record ($(#[$attr])*) ($visibility) ($name)
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __tee_registry_binding_v1_fields {
+    ($($request:tt)+) => {
+        $crate::__apply_tee_registry_binding_v1_fields! {
+            $($request)+;
+            node_id_hash: ::alloy_primitives::B256 => nodeIdHash,
+            enclave_id: ::alloy_primitives::B256 => enclaveId,
+            binding_id: ::alloy_primitives::B256 => bindingId,
+            intent_hash: ::alloy_primitives::B256 => intentHash,
+            evidence_hash: ::alloy_primitives::B256 => evidenceHash,
+            policy_hash: ::alloy_primitives::B256 => policyHash,
+            binding_version: u64 => bindingVersion,
+            registration_version: u64 => registrationVersion,
+            renewal_nonce: u64 => renewalNonce,
+            transition_nonce: u64 => transitionNonce,
+            lease_started_at: u64 => leaseStartedAt,
+            valid_until: u64 => validUntil,
+            collateral_valid_until: u64 => collateralValidUntil,
+            recipient_x25519: ::alloy_primitives::B256 => recipientX25519,
+            attestation_ed25519: ::alloy_primitives::B256 => attestationEd25519,
+            noise_responder_x25519: ::alloy_primitives::B256 => noiseResponderX25519,
+            mrenclave: ::alloy_primitives::B256 => mrenclave,
+            mrsigner: ::alloy_primitives::B256 => mrsigner,
+            isv_prod_id: u16 => isvProdId,
+            isv_svn: u16 => isvSvn,
+            platform_tcb_status: u8 => platformTcbStatus,
+            verdict_hash: ::alloy_primitives::B256 => verdictHash,
+            node_host_authorization_hash: ::alloy_primitives::B256 => nodeHostAuthorizationHash,
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __apply_tee_registry_binding_v1_fields {
+    (@record ($(#[$attr:meta])*) ($visibility:vis) ($name:ident);
+        $($field:ident : $ty:ty => $abi:ident),+ $(,)?) => {
+        $(#[$attr])*
+        $visibility struct $name { $(pub $field: $ty),+ }
+    };
+    (@mapping $($request:tt)+) => {
+        $crate::__impl_tee_registry_binding_v1_mapping! { $($request)+ }
     };
 }

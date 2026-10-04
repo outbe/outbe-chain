@@ -1,3 +1,4 @@
+use super::args::{UpgradeCandidateArgs, UpgradePrepareArgs, UpgradeSubmitArgs};
 use super::ensure_signer_matches_node_id;
 use super::load_secp256k1_key_file;
 use super::parse_nonzero_b256;
@@ -42,15 +43,21 @@ use std::time::{Duration, Instant};
 use outbe_tee::NodeHostIdentityV1;
 use outbe_tee::ReplacementCandidateEnclaveV1;
 
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn upgrade_prepare(
     client: &(impl Rpc + Sync),
-    candidate_enclave_socket: &str,
-    node_data_dir: &std::path::Path,
-    active_tee_dir: &std::path::Path,
-    candidate_tee_dir: &std::path::Path,
-    reth_p2p_secret_key: Option<&std::path::Path>,
+    args: &UpgradePrepareArgs,
 ) -> Result<()> {
+    let UpgradePrepareArgs {
+        candidate:
+            UpgradeCandidateArgs {
+                candidate_enclave_socket,
+                node_data_dir,
+            },
+        active_tee_dir,
+        candidate_tee_dir,
+        reth_p2p_secret_key,
+    } = args;
+    let reth_p2p_secret_key = reth_p2p_secret_key.as_deref();
     let active = load_committed_enclave_manifest_v1(node_data_dir)
         .map_err(|error| eyre::eyre!("load committed NodeHost manifest: {error}"))?;
     let rpc_chain_id = client.eth_chain_id().await?;
@@ -191,16 +198,22 @@ pub(super) fn upgrade_copy_root(node_data_dir: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn upgrade_submit(
     client: &(impl Rpc + Sync),
     private_key: Option<&str>,
-    candidate_enclave_socket: &str,
-    node_data_dir: &std::path::Path,
-    reth_p2p_secret_key: Option<&std::path::Path>,
-    binding_id: &str,
-    valid_until: u64,
+    args: &UpgradeSubmitArgs,
 ) -> Result<()> {
+    let UpgradeSubmitArgs {
+        candidate:
+            UpgradeCandidateArgs {
+                candidate_enclave_socket,
+                node_data_dir,
+            },
+        reth_p2p_secret_key,
+        binding_id,
+        valid_until,
+    } = args;
+    let reth_p2p_secret_key = reth_p2p_secret_key.as_deref();
     let private_key = private_key.ok_or_else(|| {
         eyre::eyre!("tee upgrade-submit requires the global --private-key EVM signer")
     })?;
@@ -230,7 +243,7 @@ pub(super) async fn upgrade_submit(
             node_data_dir,
             selector: &selector,
             binding_id: parse_nonzero_b256(binding_id, "--binding-id")?,
-            requested_valid_until: valid_until,
+            requested_valid_until: *valid_until,
         },
     )
     .await?;
@@ -249,7 +262,6 @@ pub(super) fn upgrade_status(node_data_dir: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn connect_upgrade_candidate_v1(
     candidate_enclave_socket: &str,
     node_data_dir: &std::path::Path,

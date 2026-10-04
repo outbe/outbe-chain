@@ -97,31 +97,9 @@ impl VerifiedEnclaveClaimsV1 {
     }
 }
 
+outbe_primitives::define_tee_registry_binding_v1! {
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NodeEnclaveBindingV1 {
-    pub node_id_hash: B256,
-    pub enclave_id: B256,
-    pub binding_id: B256,
-    pub intent_hash: B256,
-    pub evidence_hash: B256,
-    pub policy_hash: B256,
-    pub binding_version: u64,
-    pub registration_version: u64,
-    pub renewal_nonce: u64,
-    pub transition_nonce: u64,
-    pub lease_started_at: u64,
-    pub valid_until: u64,
-    pub collateral_valid_until: u64,
-    pub recipient_x25519: B256,
-    pub attestation_ed25519: B256,
-    pub noise_responder_x25519: B256,
-    pub mrenclave: B256,
-    pub mrsigner: B256,
-    pub isv_prod_id: u16,
-    pub isv_svn: u16,
-    pub platform_tcb_status: u8,
-    pub verdict_hash: B256,
-    pub node_host_authorization_hash: B256,
+pub struct NodeEnclaveBindingV1
 }
 
 impl TeeRegistry<'_> {

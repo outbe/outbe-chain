@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) async fn prepare_upgrade_relay_v1(
-    rpc: &(impl RenewalRpc + Sync),
+    rpc: &(impl RegistryRpc + RelayPreparationRpc + Sync),
     relay: &RelaySignerV1,
     node_data_dir: &Path,
     selector: &NodeBindingSelectorV1,
@@ -51,7 +51,7 @@ pub(super) async fn prepare_upgrade_relay_v1(
     Ok(())
 }
 async fn sign_transition_relay(
-    rpc: &(impl RenewalRpc + Sync),
+    rpc: &(impl RelayPreparationRpc + Sync),
     relay: &RelaySignerV1,
     durable: &ReplacementCandidateSubmissionV1,
     policy: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
@@ -124,7 +124,7 @@ fn load_key_ready_material(
 }
 
 pub(super) async fn finalized_transition_matches_v1(
-    rpc: &(impl RenewalRpc + Sync),
+    rpc: &(impl RegistryRpc + Sync),
     selector: &NodeBindingSelectorV1,
     node_data_dir: &Path,
     submission: &PreparedUpgradeSubmissionV1,

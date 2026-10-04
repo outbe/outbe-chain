@@ -112,7 +112,7 @@ pub(super) fn replacement_counters_match(
 }
 
 pub(super) async fn replay_journal(
-    rpc: &(impl RenewalRpc + Sync),
+    rpc: &(impl RelayRpc + Sync),
     journal: &RenewalJournalGuard,
     snapshot: RenewalJournalSnapshotV1,
     view: &FinalizedRenewalChainViewV1,
@@ -140,7 +140,7 @@ pub(super) async fn replay_journal(
 }
 
 pub(super) async fn replay_pending(
-    rpc: &(impl RenewalRpc + Sync),
+    rpc: &(impl RelayRpc + Sync),
     journal: &RenewalJournalGuard,
     attempt: PreparedRenewalV1,
     view: &FinalizedRenewalChainViewV1,

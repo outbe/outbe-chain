@@ -58,7 +58,7 @@ use outbe_tee::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    rpc::RenewalRpc,
+    rpc::{RegistryRpc, RelayPreparationRpc, RelayRpc, RenewalRpc},
     tx::{buffered_gas_price, RawRelayTransactionV1, RelaySignerV1},
 };
 
@@ -678,7 +678,7 @@ pub async fn run_upgrade_submission_v1<R: RenewalRpc + Sync, N: UpgradeNodeSigne
 }
 
 async fn reset_expired_upgrade_submission_v1(
-    rpc: &(impl RenewalRpc + Sync),
+    rpc: &(impl RegistryRpc + Sync),
     node_data_dir: &Path,
     selector: &NodeBindingSelectorV1,
     snapshot: &UpgradeJournalSnapshotV1,

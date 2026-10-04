@@ -82,3 +82,17 @@ fn absent_registry_binding_rejects_even_when_other_fields_are_populated() {
         "finalized Registry has no enclave binding for this node",
     );
 }
+
+#[test]
+fn renewal_json_still_requires_exact_v1_fields_and_integer_widths() {
+    let original: serde_json::Value = serde_json::from_str(LEGACY_RENEWAL_JSON).unwrap();
+    let mut unknown = original.clone();
+    unknown["unexpected"] = serde_json::json!(1);
+    assert!(serde_json::from_value::<RenewalBindingV1>(unknown).is_err());
+    let mut missing = original.clone();
+    missing.as_object_mut().unwrap().remove("enclaveId");
+    assert!(serde_json::from_value::<RenewalBindingV1>(missing).is_err());
+    let mut wide_product = original;
+    wide_product["isvProdId"] = serde_json::json!(u32::from(u16::MAX) + 1);
+    assert!(serde_json::from_value::<RenewalBindingV1>(wide_product).is_err());
+}
