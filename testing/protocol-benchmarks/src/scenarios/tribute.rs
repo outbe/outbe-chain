@@ -50,9 +50,9 @@ use outbe_protocol::protocol::imt::Imt;
 use outbe_protocol::protocol::key::{NftSecret, Signer};
 use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
 use outbe_protocol::protocol::zkproof::decode_public_words;
-use outbe_protocol_derive::Entity;
 use outbe_tee::protocol::TributePublicInputs as DemoTributePublicInputs;
 use outbe_tee::OFFER_HKDF_SALT;
+use outbe_tee_enclave::zk_claim::TributeDraftClaim;
 use outbe_tee_enclave::{
     crypto::ecdhe_tribute_offer_decrypt,
     process::{process_tribute_offer_batch, TributeOfferKeyMaterial},
@@ -135,24 +135,6 @@ mod abi {
     }
 }
 
-#[derive(Entity)]
-struct TributeDraftFixture {
-    #[outbe(id_seed)]
-    id: B256,
-    #[outbe(body, owner, pos = 0)]
-    derived_owner: B256,
-    #[outbe(body, pos = 1)]
-    worldwide_day: u64,
-    #[outbe(body, pos = 2)]
-    currency: u16,
-    #[outbe(body, pos = 3)]
-    base: u64,
-    #[outbe(body, pos = 4)]
-    atto: u64,
-    #[outbe(body, pos = 5)]
-    su_ids: Vec<B256>,
-}
-
 struct Fixture {
     plaintext: Vec<u8>,
     cipher_text: Bytes,
@@ -223,7 +205,7 @@ fn build_fixture() -> Fixture {
         let owner_nonce = Fr::rand(&mut proof_rng);
         let derived_owner = derive_owner(&public_key, owner_nonce).unwrap();
         let draft_id = B256::with_last_byte(0x11);
-        let draft = TributeDraftFixture {
+        let draft = TributeDraftClaim {
             id: draft_id,
             derived_owner: B256::from(field_bytes(&derived_owner)),
             worldwide_day: u64::from(TARGET_WWD.value()),

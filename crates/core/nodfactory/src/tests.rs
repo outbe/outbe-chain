@@ -216,18 +216,11 @@ impl World {
         paynote_proof: &[u8],
     ) -> Result<U256, PrecompileError> {
         self.settle(nod_id, caller, paynote_proof)?;
-        self.enter(|storage, scope, parent| {
-            api::mine_gratis(
-                &storage,
-                scope,
-                parent,
-                api::MineGratisRequest {
-                    caller,
-                    nod_id,
-                    nonce,
-                    auth,
-                },
-            )
+        self.mine_gratis(api::MineGratisRequest {
+            caller,
+            nod_id,
+            nonce,
+            auth,
         })
     }
 
@@ -335,28 +328,18 @@ impl World {
 
     /// Quotes `nod_id` and binds the proof to that snapshot. Panics if the nod
     /// cannot be quoted, so a missing rate cannot hide as a context mismatch.
-    fn fund_note(
+    fn fund_note<T>(
         &mut self,
         asset: Address,
         nod_id: WwdEntityId,
-        note_amount: u128,
-        spend_amount: u128,
-    ) -> (Vec<u8>, B256) {
-        self.fund_note_u256(
-            asset,
-            nod_id,
-            U256::from(note_amount),
-            U256::from(spend_amount),
-        )
-    }
-
-    fn fund_note_u256(
-        &mut self,
-        asset: Address,
-        nod_id: WwdEntityId,
-        note_amount: U256,
-        spend_amount: U256,
-    ) -> (Vec<u8>, B256) {
+        note_amount: T,
+        spend_amount: T,
+    ) -> (Vec<u8>, B256)
+    where
+        U256: alloy_primitives::ruint::UintTryFrom<T>,
+    {
+        let note_amount = U256::from(note_amount);
+        let spend_amount = U256::from(spend_amount);
         let snapshot = self.enter(|storage, scope, parent| {
             runtime::quote_settlement(&storage, scope, parent, nod_id, asset)
                 .expect("note is quoted against a settleable nod")
@@ -850,7 +833,7 @@ fn a_note_in_a_wider_asset_pays_the_cost_scaled_to_its_decimals() {
     world.register_reference_currency_asset(NOTE_ASSET);
     world.set_asset_decimals(NOTE_ASSET, 18);
     let cost = U256::from(cost_of(&input)) * U256::from(1_000_000_000_000u64);
-    let (proof, _nullifier) = world.fund_note_u256(NOTE_ASSET, nod_id, cost, cost);
+    let (proof, _nullifier) = world.fund_note(NOTE_ASSET, nod_id, cost, cost);
     let nonce = world.pow_nonce(nod_id);
 
     let minted = world
@@ -1251,7 +1234,7 @@ fn a_paynote_can_cover_a_nod_cost_above_u128() {
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     world.register_reference_currency_asset(NOTE_ASSET);
-    let (proof, nullifier) = world.fund_note_u256(NOTE_ASSET, nod_id, cost, cost);
+    let (proof, nullifier) = world.fund_note(NOTE_ASSET, nod_id, cost, cost);
     let nonce = world.pow_nonce(nod_id);
 
     let minted = world

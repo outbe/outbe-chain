@@ -1,6 +1,7 @@
 use alloy_primitives::{Address, U256};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use outbe_compressed_entities::bench_support::EmptyParentBodies;
+use outbe_compressed_entities::test_support::seed_compressed_entities_genesis;
 use outbe_compressed_entities::{
     list, mint, BodyInput, CompressedEntitiesLifecycle, CompressedEntitiesLifecycleContext,
     ExecutionScope, IdPageRequest, QueryRef, TributeBodyV1, WwdEntityId,
@@ -15,6 +16,14 @@ use outbe_primitives::{
 const BLOCK_GAS_LIMIT: u64 = 30_000_000;
 const DAY: WorldwideDay = WorldwideDay::new(20_260_716);
 const OWNER: Address = Address::repeat_byte(0x71);
+
+fn seeded_provider() -> HashMapStorageProvider {
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage).expect("CE benchmark genesis");
+    });
+    provider
+}
 
 fn body(index: u32) -> TributeBodyV1 {
     let mut digest = [0_u8; 32];
@@ -45,7 +54,7 @@ fn lifecycle<'a, 'storage>(
 fn bench_gas_saturated_touches(c: &mut Criterion) {
     c.bench_function("adr007_gas_saturated_touches_and_cleanup", |b| {
         b.iter(|| {
-            let mut provider = HashMapStorageProvider::new(1);
+            let mut provider = seeded_provider();
             provider.set_gas_limit(BLOCK_GAS_LIMIT);
             let scope = ExecutionScope::new();
             StorageHandle::enter(&mut provider, |storage| {
@@ -73,7 +82,7 @@ fn bench_gas_saturated_touches(c: &mut Criterion) {
 fn bench_touched_list_merge(c: &mut Criterion) {
     c.bench_function("adr007_touched_owner_list_merge", |b| {
         b.iter(|| {
-            let mut provider = HashMapStorageProvider::new(1);
+            let mut provider = seeded_provider();
             let scope = ExecutionScope::new();
             StorageHandle::enter(&mut provider, |storage| {
                 let lifecycle = lifecycle(storage.clone(), &scope);

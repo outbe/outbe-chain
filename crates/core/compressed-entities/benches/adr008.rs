@@ -1,7 +1,10 @@
 use alloy_primitives::B256;
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 use outbe_compressed_entities::{
-    bench_support::{field_b256, field_word, staged_batch, Adr008SmtHarness},
+    bench_support::{
+        field_b256, field_word, staged_batch, Adr008SmtHarness, StagedBatchIdentity,
+        StagedBatchRoots,
+    },
     CeMdbx, EnvironmentIdentity, FinalizedMarker, StagedTreeBatch, ACTIVE_COMMITMENT_SCHEME,
     LOCAL_STORAGE_SCHEMA_VERSION,
 };
@@ -121,11 +124,15 @@ fn next_batch(state: &BenchMdbx, record_count: usize) -> StagedTreeBatch {
         field_b256(height + 1)
     };
     staged_batch(
-        height,
-        block_hash,
-        state.marker.block_hash,
-        state.marker.new_root,
-        new_root,
+        StagedBatchIdentity {
+            block_number: height,
+            block_hash,
+            parent_block_hash: state.marker.block_hash,
+        },
+        StagedBatchRoots {
+            parent_root: state.marker.new_root,
+            new_root,
+        },
         record_count,
     )
     .unwrap()
