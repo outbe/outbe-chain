@@ -263,40 +263,12 @@ where
     let vrf_material_version = recovered_boundary_artifact
         .map(|artifact| artifact.vrf_material_version)
         .unwrap_or(0);
-    // These strict checks (saved polynomial / DKG output must equal the recovered
-    // finalized boundary) only matter for a SIGNER, which signs with its polynomial +
-    // share. A share-less VERIFIER follows finality via the certificate's PARTICIPANT
-    // set (not its polynomial), so its CLI `--public-polynomial`/`--dkg-output` may be
-    // off (e.g. a TEE chain's runtime-derived genesis consensus polynomial differs
-    // from the bootstrap file, or the chain has rotated past it) without affecting
-    // sync - only its local VRF/leader view is degraded (process-local, non-fatal,
-    // same as the post-rotation verifier-follower case). Enforcing these on a restarted
-    // verifier would fatally crash an otherwise-healthy follower, so gate them to
-    // signers; the verifier syncs and the running epoch loop advances it.
-    if signing_share.is_some() {
-        validate_recovered_vrf_material(&polynomial, recovered_boundary_artifact)?;
-        if let (Some(output), Some(boundary)) = (&last_dkg_output, recovered_boundary_artifact) {
-            let canonical_output = decode_boundary_output(boundary)
-                .wrap_err("failed to decode recovered DKG boundary output")?;
-            dkg_manager::assert_canonical_output(output, &canonical_output, "restart recovery")?;
-        }
-    } else if let Some(boundary) = recovered_boundary_artifact {
-        // Verifier-follower with a recovered on-chain DKG boundary (e.g. a restart, or
-        // a TEE chain whose runtime genesis consensus output differs from the bootstrap
-        // CLI files): adopt the chain's CURRENT canonical DKG output as both the
-        // polynomial and the reshare prev_output. The DKG reshare ceremony binds the
-        // FULL previous output into its `info_hash` (not just the group key), so if the
-        // verifier later becomes a frozen-target player it MUST present the committee's
-        // current output as prev_output - its stale `--consensus.dkg-output` would yield
-        // a divergent `info_hash`, the dealers' bundles get dropped, and the ceremony
-        // times out (the node never gets a share). The genesis/boundary artifact carries
-        // the full `Output`, so `decode_boundary_output` recovers exactly what the
-        // committee holds. Finality still verifies via the participant set regardless.
-        let canonical_output = decode_boundary_output(boundary)
-            .wrap_err("failed to decode recovered DKG boundary output for verifier")?;
-        polynomial = canonical_output.public().clone();
-        last_dkg_output = Some(canonical_output);
-    }
+    reconcile_recovered_vrf_material(
+        &mut polynomial,
+        &mut last_dkg_output,
+        signing_share.is_some(),
+        recovered_boundary_artifact,
+    )?;
     let vrf_materials = VrfMaterialProvider::new(
         vrf_material_version,
         polynomial.clone(),
@@ -928,4 +900,49 @@ where
     }
     .run(ctx, recovered_pending_boundary, recovery_anchor_height)
     .await
+}
+
+fn reconcile_recovered_vrf_material(
+    polynomial: &mut Sharing<MinSig>,
+    last_dkg_output: &mut Option<Output<MinSig, bls12381::PublicKey>>,
+    has_signing_share: bool,
+    recovered_boundary_artifact: Option<&DkgBoundaryArtifact>,
+) -> Result<()> {
+    // These strict checks (saved polynomial / DKG output must equal the recovered
+    // finalized boundary) only matter for a SIGNER, which signs with its polynomial +
+    // share. A share-less VERIFIER follows finality via the certificate's PARTICIPANT
+    // set (not its polynomial), so its CLI `--public-polynomial`/`--dkg-output` may be
+    // off (e.g. a TEE chain's runtime-derived genesis consensus polynomial differs
+    // from the bootstrap file, or the chain has rotated past it) without affecting
+    // sync - only its local VRF/leader view is degraded (process-local, non-fatal,
+    // same as the post-rotation verifier-follower case). Enforcing these on a restarted
+    // verifier would fatally crash an otherwise-healthy follower, so gate them to
+    // signers; the verifier syncs and the running epoch loop advances it.
+    if has_signing_share {
+        validate_recovered_vrf_material(polynomial, recovered_boundary_artifact)?;
+        if let (Some(output), Some(boundary)) =
+            (last_dkg_output.as_ref(), recovered_boundary_artifact)
+        {
+            let canonical_output = decode_boundary_output(boundary)
+                .wrap_err("failed to decode recovered DKG boundary output")?;
+            dkg_manager::assert_canonical_output(output, &canonical_output, "restart recovery")?;
+        }
+    } else if let Some(boundary) = recovered_boundary_artifact {
+        // Verifier-follower with a recovered on-chain DKG boundary (e.g. a restart, or
+        // a TEE chain whose runtime genesis consensus output differs from the bootstrap
+        // CLI files): adopt the chain's CURRENT canonical DKG output as both the
+        // polynomial and the reshare prev_output. The DKG reshare ceremony binds the
+        // FULL previous output into its `info_hash` (not just the group key), so if the
+        // verifier later becomes a frozen-target player it MUST present the committee's
+        // current output as prev_output - its stale `--consensus.dkg-output` would yield
+        // a divergent `info_hash`, the dealers' bundles get dropped, and the ceremony
+        // times out (the node never gets a share). The genesis/boundary artifact carries
+        // the full `Output`, so `decode_boundary_output` recovers exactly what the
+        // committee holds. Finality still verifies via the participant set regardless.
+        let canonical_output = decode_boundary_output(boundary)
+            .wrap_err("failed to decode recovered DKG boundary output for verifier")?;
+        *polynomial = canonical_output.public().clone();
+        *last_dkg_output = Some(canonical_output);
+    }
+    Ok(())
 }
