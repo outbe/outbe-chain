@@ -4,7 +4,7 @@ use fixtures::*;
 
 #[test]
 fn reshare_allows_new_player_without_previous_share() {
-    use commonware_runtime::{Runner as _};
+    use commonware_runtime::Runner as _;
     commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(600)).start(
         |context| async move {
             let PreviousCommittee {
@@ -96,7 +96,7 @@ fn reshare_allows_new_player_without_previous_share() {
 
 #[test]
 fn reshare_retry_gives_online_player_time_to_ack_before_dealer_finalizes() {
-    use commonware_runtime::{Runner as _};
+    use commonware_runtime::Runner as _;
     commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(600)).start(
         |context| async move {
             let PreviousCommittee {
@@ -182,7 +182,7 @@ fn reshare_retry_gives_online_player_time_to_ack_before_dealer_finalizes() {
 /// recovers a share (signer quorum preserved).
 #[test]
 fn reshare_survives_signed_but_garbage_dealer_log() {
-    use commonware_runtime::{Runner as _};
+    use commonware_runtime::Runner as _;
     commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(600)).start(
         |context| async move {
             // Old committee of 4 (f=1, log_threshold = 2f+1 = 3), resharing to the
@@ -281,7 +281,7 @@ fn reshare_survives_signed_but_garbage_dealer_log() {
 
 #[test]
 fn removed_old_validator_can_deal_without_being_target_player() {
-    use commonware_runtime::{Runner as _};
+    use commonware_runtime::Runner as _;
     commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(600)).start(
         |context| async move {
             let PreviousCommittee {

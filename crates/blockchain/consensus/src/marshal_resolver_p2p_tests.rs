@@ -37,30 +37,30 @@ use std::time::Duration;
 use commonware_broadcast::buffered;
 use commonware_codec::Encode as _;
 use commonware_consensus::{
-    Reporter as _,
-    marshal::{self, Start, core::DigestFallback},
+    marshal::{self, core::DigestFallback, Start},
     simplex::types::{Activity, Notarization, Notarize, Proposal},
     types::{Epoch, FixedEpocher, Round, View, ViewDelta},
+    Reporter as _,
 };
 use commonware_cryptography::{
-    Signer as _,
     bls12381::{self, primitives::variant::MinSig},
+    Signer as _,
 };
 use commonware_p2p::{
-    Manager as _,
     simulated::{Config as SimConfig, Link, Network},
+    Manager as _,
 };
 use commonware_parallel::Sequential;
 use commonware_runtime::{
-    Clock as _, Quota, Runner as _, Supervisor as _, buffer::paged::CacheRef, deterministic,
+    buffer::paged::CacheRef, deterministic, Clock as _, Quota, Runner as _, Supervisor as _,
 };
 use commonware_utils::{
-    NZU32, NZUsize, TryCollect as _,
     ordered::{Quorum as _, Set},
+    NZUsize, TryCollect as _, NZU32,
 };
 
 use alloy_primitives::Bytes;
-use reth_ethereum::{Block, primitives::SealedBlock};
+use reth_ethereum::{primitives::SealedBlock, Block};
 
 use crate::test_fixtures::marshal::MarshalArchiveFixture;
 

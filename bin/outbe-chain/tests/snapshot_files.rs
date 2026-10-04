@@ -39,8 +39,12 @@ mod snapshot;
 use snapshot::{binary, fingerprint, run, stopped_fixture, transcript, StoppedFixture};
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "snapshot creation requires Linux openat2"
+)]
 fn conventional_transfer_preserves_native_files_and_opens_without_donor_or_sidecars() {
-    let producer = tempfile::tempdir().unwrap();
+    let producer = snapshot::physical_tempdir();
     let fixture = stopped_fixture(&producer.path().join("donor"));
     let materialization_paths = add_portability_records(&fixture);
     let before = fingerprint(&fixture.donor);
@@ -59,7 +63,7 @@ fn conventional_transfer_preserves_native_files_and_opens_without_donor_or_sidec
     assert!(created.status.success(), "{}", transcript(&created));
     assert_eq!(fingerprint(&fixture.donor), before);
 
-    let receiver = tempfile::tempdir().unwrap();
+    let receiver = snapshot::physical_tempdir();
     let incoming = receiver.path().join("incoming");
     fs::create_dir(&incoming).unwrap();
     let transferred = incoming.join("received.tar");

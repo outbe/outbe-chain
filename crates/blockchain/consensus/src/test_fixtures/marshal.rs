@@ -1,11 +1,11 @@
 //! Shared archive settings for deterministic marshal test harnesses.
 
-use std::num::{NonZeroU64, NonZeroUsize};
 use eyre::WrapErr as _;
+use std::num::{NonZeroU64, NonZeroUsize};
 
+use commonware_cryptography::certificate::Verifier as _;
 use commonware_runtime::buffer::paged::CacheRef;
 use commonware_storage::archive::immutable;
-use commonware_cryptography::certificate::Verifier as _;
 
 pub(crate) enum MarshalArchiveKind {
     Finalizations,
