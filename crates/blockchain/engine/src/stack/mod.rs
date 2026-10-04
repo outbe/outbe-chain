@@ -122,7 +122,10 @@ pub use dkg::persistence::migrate_dkg_keys_if_needed;
 
 pub use epoch::run::run_consensus_stack;
 
-pub use services::ConsensusStackServices;
+pub use services::{
+    ConsensusExecutionServices, ConsensusRadicleServices, ConsensusShutdownServices,
+    ConsensusStackServices,
+};
 
 pub(crate) use startup::{build_peer_map, map_marshal_init_height};
 
