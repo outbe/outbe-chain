@@ -226,8 +226,17 @@ fn startup_pending_dkg_epoch_plan_keeps_future_epoch_separate_before_activation(
     let pending_epoch = Epoch::new(1);
 
     assert_eq!(
-        startup_pending_dkg_epoch_plan(current_epoch, pending_epoch, 299, 300, 30, Some(275))
-            .unwrap(),
+        startup_pending_dkg_epoch_plan(
+            current_epoch,
+            pending_epoch,
+            crate::stack::dkg::handoff::StartupPendingDkgHandoff {
+                finalized_height: 299,
+                planned_activation_height: 300,
+                activation_grace_blocks: 30,
+                exact_carrier_height: Some(275)
+            }
+        )
+        .unwrap(),
         StartupPendingDkgEpochPlan::Defer {
             active_epoch: current_epoch,
             preregister_after_current: pending_epoch,
@@ -241,8 +250,17 @@ fn startup_pending_dkg_epoch_plan_restores_activated_epoch_before_boundary_commi
     let pending_epoch = Epoch::new(1);
 
     assert_eq!(
-        startup_pending_dkg_epoch_plan(previous_epoch, pending_epoch, 300, 300, 30, Some(275))
-            .unwrap(),
+        startup_pending_dkg_epoch_plan(
+            previous_epoch,
+            pending_epoch,
+            crate::stack::dkg::handoff::StartupPendingDkgHandoff {
+                finalized_height: 300,
+                planned_activation_height: 300,
+                activation_grace_blocks: 30,
+                exact_carrier_height: Some(275)
+            }
+        )
+        .unwrap(),
         StartupPendingDkgEpochPlan::Activate {
             previous_epoch,
             active_epoch: pending_epoch,
@@ -255,15 +273,32 @@ fn startup_pending_dkg_epoch_plan_restores_activated_epoch_before_boundary_commi
 fn startup_pending_dkg_epoch_plan_fails_closed_on_invalid_or_expired_handoff() {
     let current_epoch = Epoch::new(4);
 
-    let wrong_epoch =
-        startup_pending_dkg_epoch_plan(current_epoch, Epoch::new(6), 500, 500, 30, Some(480))
-            .unwrap_err()
-            .to_string();
+    let wrong_epoch = startup_pending_dkg_epoch_plan(
+        current_epoch,
+        Epoch::new(6),
+        crate::stack::dkg::handoff::StartupPendingDkgHandoff {
+            finalized_height: 500,
+            planned_activation_height: 500,
+            activation_grace_blocks: 30,
+            exact_carrier_height: Some(480),
+        },
+    )
+    .unwrap_err()
+    .to_string();
     assert!(wrong_epoch.contains("does not follow active epoch"));
 
-    let expired = startup_pending_dkg_epoch_plan(current_epoch, Epoch::new(5), 530, 500, 30, None)
-        .unwrap_err()
-        .to_string();
+    let expired = startup_pending_dkg_epoch_plan(
+        current_epoch,
+        Epoch::new(5),
+        crate::stack::dkg::handoff::StartupPendingDkgHandoff {
+            finalized_height: 530,
+            planned_activation_height: 500,
+            activation_grace_blocks: 30,
+            exact_carrier_height: None,
+        },
+    )
+    .unwrap_err()
+    .to_string();
     assert!(expired.contains("missed activation deadline 530"));
 }
 

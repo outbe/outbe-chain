@@ -174,10 +174,14 @@ fn certified_follower_recovery_anchor_requires_matching_verified_records() {
     let (provider, finalization) = recovery_finalization_fixture(&block, round);
 
     let anchor = validate_certified_follower_recovery_record(
-        358,
-        block.block_hash(),
+        crate::stack::recovery::anchor::FollowerRecoveryBlock {
+            checkpoint: ProjectionCheckpoint {
+                block_number: 358,
+                block_hash: block.block_hash(),
+            },
+            block: &block,
+        },
         &finalization,
-        &block,
         &finalization,
         &block,
         &provider,
@@ -188,10 +192,14 @@ fn certified_follower_recovery_anchor_requires_matching_verified_records() {
 
     let wrong_block = recovery_block(359);
     let error = validate_certified_follower_recovery_record(
-        358,
-        block.block_hash(),
+        crate::stack::recovery::anchor::FollowerRecoveryBlock {
+            checkpoint: ProjectionCheckpoint {
+                block_number: 358,
+                block_hash: block.block_hash(),
+            },
+            block: &wrong_block,
+        },
         &finalization,
-        &wrong_block,
         &finalization,
         &block,
         &provider,
@@ -220,10 +228,14 @@ fn certified_follower_recovers_executed_ancestor_without_inventing_a_certificate
     };
     let epocher = outbe_consensus::follow::FollowerEpocher::new(500, 0);
     let recovered = validate_ancestor_follower_recovery_record(
-        358,
-        parent.block_hash(),
+        crate::stack::recovery::anchor::FollowerRecoveryBlock {
+            checkpoint: ProjectionCheckpoint {
+                block_number: 358,
+                block_hash: parent.block_hash(),
+            },
+            block: &parent,
+        },
         None,
-        &parent,
         &proof,
         &schemes,
         &epocher,
@@ -233,10 +245,14 @@ fn certified_follower_recovers_executed_ancestor_without_inventing_a_certificate
     assert_eq!(recovered.checkpoint.block_hash, parent.block_hash());
     assert!(recovered.finalization.is_none());
     assert!(validate_ancestor_follower_recovery_record(
-        358,
-        B256::ZERO,
+        crate::stack::recovery::anchor::FollowerRecoveryBlock {
+            checkpoint: ProjectionCheckpoint {
+                block_number: 358,
+                block_hash: B256::ZERO
+            },
+            block: &parent
+        },
         None,
-        &parent,
         &proof,
         &schemes,
         &epocher
@@ -246,10 +262,14 @@ fn certified_follower_recovers_executed_ancestor_without_inventing_a_certificate
     let (_, wrong_signature) = recovery_finalization_fixture(&parent, round);
     forged.certified.finalization.certificate = wrong_signature.certificate;
     assert!(validate_ancestor_follower_recovery_record(
-        358,
-        parent.block_hash(),
+        crate::stack::recovery::anchor::FollowerRecoveryBlock {
+            checkpoint: ProjectionCheckpoint {
+                block_number: 358,
+                block_hash: parent.block_hash()
+            },
+            block: &parent
+        },
         None,
-        &parent,
         &forged,
         &schemes,
         &epocher
@@ -258,10 +278,14 @@ fn certified_follower_recovers_executed_ancestor_without_inventing_a_certificate
     let mut omitted = proof;
     omitted.ancestors.clear();
     assert!(validate_ancestor_follower_recovery_record(
-        358,
-        parent.block_hash(),
+        crate::stack::recovery::anchor::FollowerRecoveryBlock {
+            checkpoint: ProjectionCheckpoint {
+                block_number: 358,
+                block_hash: parent.block_hash()
+            },
+            block: &parent
+        },
         None,
-        &parent,
         &omitted,
         &schemes,
         &epocher

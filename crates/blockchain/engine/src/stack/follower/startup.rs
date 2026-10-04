@@ -461,10 +461,14 @@ impl RecoveryAuthority<'_> {
                 )
             })?;
             validate_ancestor_follower_recovery_record(
-                recovery_height,
-                recovery_hash,
+                crate::stack::recovery::anchor::FollowerRecoveryBlock {
+                    checkpoint: ProjectionCheckpoint {
+                        block_number: recovery_height,
+                        block_hash: recovery_hash,
+                    },
+                    block: local_block,
+                },
                 archived_finalization.as_ref(),
-                local_block,
                 &upstream,
                 certificate_scheme_provider,
                 epocher,

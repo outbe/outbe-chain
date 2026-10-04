@@ -537,25 +537,19 @@ pub(in crate::stack) fn genesis_formation_gate_decision(
         return GenesisFormationGate::ExistingChainJoin;
     }
 
-    if evidence.peer_query_failed {
+    if evidence.peer_query_failed
+        || evidence.connected_peers < required_remote_peers
+        || evidence.peers.len() < required_remote_peers
+    {
         return GenesisFormationGate::WaitForExecutionSync;
     }
 
-    if evidence.connected_peers < required_remote_peers {
-        return GenesisFormationGate::WaitForExecutionSync;
-    }
-
-    if evidence.peers.len() < required_remote_peers {
-        return GenesisFormationGate::WaitForExecutionSync;
-    }
-
-    for peer in &evidence.peers {
-        if peer.genesis != genesis_hash {
-            return GenesisFormationGate::ExistingChainJoin;
-        }
-        if peer.blockhash != genesis_hash || peer.latest_block.unwrap_or(0) > 0 {
-            return GenesisFormationGate::ExistingChainJoin;
-        }
+    if evidence.peers.iter().any(|peer| {
+        peer.genesis != genesis_hash
+            || peer.blockhash != genesis_hash
+            || peer.latest_block.unwrap_or(0) > 0
+    }) {
+        return GenesisFormationGate::ExistingChainJoin;
     }
 
     GenesisFormationGate::Proven

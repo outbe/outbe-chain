@@ -233,14 +233,25 @@ pub(in crate::stack) fn pending_dkg_handoff_decision(
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(in crate::stack) struct StartupPendingDkgHandoff {
+    pub(in crate::stack) finalized_height: u64,
+    pub(in crate::stack) planned_activation_height: u64,
+    pub(in crate::stack) activation_grace_blocks: u64,
+    pub(in crate::stack) exact_carrier_height: Option<u64>,
+}
+
 pub(in crate::stack) fn startup_pending_dkg_epoch_plan(
     current_epoch: Epoch,
     pending_epoch: Epoch,
-    finalized_height: u64,
-    planned_activation_height: u64,
-    activation_grace_blocks: u64,
-    exact_carrier_height: Option<u64>,
+    handoff: StartupPendingDkgHandoff,
 ) -> Result<StartupPendingDkgEpochPlan> {
+    let StartupPendingDkgHandoff {
+        finalized_height,
+        planned_activation_height,
+        activation_grace_blocks,
+        exact_carrier_height,
+    } = handoff;
     let expected_epoch = next_consensus_epoch_after_dkg_activation(current_epoch);
     ensure!(
         pending_epoch == expected_epoch,
