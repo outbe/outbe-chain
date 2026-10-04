@@ -14,8 +14,8 @@ use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 
 use super::creator_reward::{
-    abi_leaves, deliver_proceeds, install_generation, install_generation_with_total, nominal_total,
-    population, WWD,
+    abi_leaves, deliver_proceeds, deliver_proceeds_raw, install_generation,
+    install_generation_with_total, nominal_total, population, WWD,
 };
 use super::*;
 
@@ -419,39 +419,41 @@ fn zero_nominal_leaf_zero_receives_the_remainder() {
     });
 }
 
+/// Count above zero with a zero eligible total is not a certified generation.
+/// The reader rejects it, so an all-zero list opens no round and pays nobody.
 #[test]
-fn all_zero_nominals_pay_the_whole_pot_to_leaf_zero() {
+fn all_zero_nominals_do_not_open_a_round() {
     with_factory(|s| {
         let leaves = [contributor_leaf(0, 0), contributor_leaf(1, 0)];
         let amount = U256::from(5u64);
         install_generation(&s, &leaves);
-        deliver_proceeds(&s, amount);
-        pay(&s, &leaves, 0, 2).unwrap();
-        assert_eq!(s.balance(leaves[0].owner).unwrap(), amount);
-        assert_eq!(s.balance(leaves[1].owner).unwrap(), U256::ZERO);
-        assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
+        assert_zero_total_is_malformed(&s, &leaves, amount);
     });
 }
 
+/// A positive nominal stored against a zero certified total is the same
+/// malformed generation. Payout never reaches the zero-total share check.
 #[test]
-fn zero_total_with_a_positive_nominal_pays_nothing() {
+fn positive_nominal_against_a_zero_total_is_malformed() {
     with_factory(|s| {
         let leaves = [contributor_leaf(0, 5)];
         install_generation_with_total(&s, &leaves, U256::ZERO);
-        let amount = U256::from(9u64);
-        deliver_proceeds(&s, amount);
-        let err = pay(&s, &leaves, 0, 1).unwrap_err();
-        assert!(
-            format!("{err:?}").contains("nominal total is zero"),
-            "{err:?}"
-        );
-        assert_eq!(s.balance(leaves[0].owner).unwrap(), U256::ZERO);
-        assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), amount);
-        let round = outbe_intex::api::certified_payout_round(&s, WWD)
-            .unwrap()
-            .unwrap();
-        assert_eq!(round.paid_leaf_count, 0);
-        assert_eq!(round.paid_so_far, U256::ZERO);
-        assert_eq!(round.residue_recipient_set, 0);
+        assert_zero_total_is_malformed(&s, &leaves, U256::from(9u64));
     });
+}
+
+fn assert_zero_total_is_malformed(
+    storage: &StorageHandle<'_>,
+    leaves: &[ContributorLeafData],
+    amount: U256,
+) {
+    let err = deliver_proceeds_raw(storage, amount).unwrap_err();
+    assert!(format!("{err:?}").contains("malformed"), "{err:?}");
+    assert!(outbe_intex::api::certified_payout_round(storage, WWD)
+        .unwrap()
+        .is_none());
+    for leaf in leaves {
+        assert_eq!(storage.balance(leaf.owner).unwrap(), U256::ZERO);
+    }
+    assert_eq!(storage.balance(INTEX_FACTORY_ADDRESS).unwrap(), amount);
 }

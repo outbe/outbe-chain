@@ -408,6 +408,8 @@ fn burn_ownerless_proceeds(
 /// a positive nominal is rejected, and a zero nominal takes nothing here so
 /// the whole pot can reach leaf 0 at completion.
 fn floor_share(amount: U256, nominal: U256, total: U256, worldwide_day: u32) -> Result<U256> {
+    // The generation reader already rejects count > 0 with a zero total.
+    // A caller that still passes that total must not pay a positive nominal.
     if total.is_zero() {
         return if nominal.is_zero() {
             Ok(U256::ZERO)

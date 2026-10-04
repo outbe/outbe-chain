@@ -244,17 +244,22 @@ pub(super) fn abi_leaves(leaves: &[ContributorLeafData]) -> Vec<IIntexFactory::C
 
 /// Arms the fan-in and delivers the whole pot from one winning chain.
 pub(super) fn deliver_proceeds(storage: &StorageHandle<'_>, amount: U256) {
+    deliver_proceeds_raw(storage, amount).unwrap();
+}
+
+/// Same delivery as [`deliver_proceeds`], keeping the settlement error.
+pub(super) fn deliver_proceeds_raw(
+    storage: &StorageHandle<'_>,
+    amount: U256,
+) -> outbe_primitives::error::Result<()> {
     outbe_intex::api::arm_proceeds(
         storage,
         outbe_primitives::time::WorldwideDay::new(WWD),
         &[CHAIN],
         DEADLINE_FUTURE,
-    )
-    .unwrap();
-    storage
-        .increase_balance(INTEX_FACTORY_ADDRESS, amount)
-        .unwrap();
-    runtime::distribute(storage, ORIGIN_ROUTER_ADDRESS, WWD.into(), CHAIN, amount).unwrap();
+    )?;
+    storage.increase_balance(INTEX_FACTORY_ADDRESS, amount)?;
+    runtime::distribute(storage, ORIGIN_ROUTER_ADDRESS, WWD.into(), CHAIN, amount)
 }
 
 #[test]
