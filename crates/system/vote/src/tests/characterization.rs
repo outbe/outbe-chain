@@ -561,7 +561,7 @@ fn public_reservation_failure_rolls_back_proposal_liability_and_logs() {
 }
 
 #[test]
-fn public_bonded_execution_error_rolls_back_target_only_and_retains_bond_and_reservation() {
+fn public_bonded_execution_error_rolls_back_target_refunds_bond_and_keeps_reservation() {
     let mut provider = super::test_provider();
     provider.set_balance(VOTE_ADDRESS, U256::from(123u64));
     let storage = StorageHandle::new(&mut provider);
@@ -598,16 +598,19 @@ fn public_bonded_execution_error_rolls_back_target_only_and_retains_bond_and_res
             .unwrap(),
         ProposalStatus::Error
     );
-    assert_eq!(vote.list_pending_proposal_ids().unwrap(), vec![proposal_id]);
+    assert_eq!(
+        vote.list_pending_proposal_ids().unwrap(),
+        Vec::<U256>::new()
+    );
     assert_eq!(
         vote.proposal_bond(proposal_id).unwrap().settlement,
-        BondSettlement::Unsettled
+        BondSettlement::Refunded
     );
-    assert_eq!(vote.bond_liabilities().unwrap(), U256::from(123u64));
-    assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), U256::from(123u64));
+    assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
+    assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), U256::ZERO);
     assert_eq!(
         storage.balance(Address::repeat_byte(0x99)).unwrap(),
-        U256::ZERO
+        U256::from(123u64)
     );
     assert_eq!(
         storage.sload(UPDATE_ADDRESS, U256::from(997u64)).unwrap(),
@@ -991,7 +994,10 @@ fn approved_handler_failure_rolls_back_target_and_records_error_without_replay()
                 .unwrap(),
             ProposalStatus::Error
         );
-        assert_eq!(vote.list_pending_proposal_ids().unwrap(), vec![proposal_id]);
+        assert_eq!(
+            vote.list_pending_proposal_ids().unwrap(),
+            Vec::<U256>::new()
+        );
         assert_eq!(
             storage.sload(UPDATE_ADDRESS, U256::from(999u64)).unwrap(),
             U256::ZERO
