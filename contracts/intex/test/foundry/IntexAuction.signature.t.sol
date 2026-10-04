@@ -27,7 +27,7 @@ contract AuctionSignatureTest is Test {
     address internal iba2;
 
     bytes32 internal constant REVEAL_BID_TYPEHASH = keccak256(
-        "RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
+        "RevealBid(uint32 worldwideDay,address bidder,uint16 units,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
     );
     bytes32 internal constant EIP712_DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
@@ -312,14 +312,14 @@ contract AuctionSignatureTest is Test {
     ///        verifyingContract = 0x..00cafe
     ///        worldwideDay          = 20260108
     ///        bidder            = 0x..00abcd
-    ///        quantity          = 5
+    ///        units             = 5
     ///        bidRate           = 1100
     ///        issuanceCurrency  = 840
     ///        referenceCurrency = 840
     function test_eip712_goldenDigest() public pure {
         address vc = 0x000000000000000000000000000000000000cafE;
         address bidder = 0x000000000000000000000000000000000000ABcD;
-        bytes32 expected = 0xdcb1a612bff25a4e281245ff212f41aa908bc240455f7ef28044d81c65d41d69;
+        bytes32 expected = 0x0f4f53a623b89d7da055cb75ef670072684205bcbe73d9761a76e54b93ee5976;
 
         bytes32 domain = keccak256(
             abi.encode(EIP712_DOMAIN_TYPEHASH, keccak256(bytes("IntexAuction")), keccak256(bytes("1")), uint256(56), vc)
@@ -374,5 +374,41 @@ contract AuctionSignatureTest is Test {
         emit IIntexAuction.BidRevealed(worldwideDay, iba1, 5, 50, ISSUANCE_CCY, REFERENCE_CCY);
         vm.prank(iba1);
         auction.revealBid(worldwideDay, 5, 50, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
+    }
+
+    function test_units_matchesTypeScriptSignatureVector() public pure {
+        address bidder = 0xFc32402667182d11B29fab5c5e323e80483e7800;
+        address vc = 0x000000000000000000000000000000000000cafE;
+        bytes32 digest = _digest(vc, 56, 20260108, bidder, 5, 1100);
+        assertEq(digest, 0x79d282877f73104ba843ec1a87de49b71c0069f3d25da66f0537abb0c9a3da61);
+        bytes memory signature = _signFor(0x100, vc, 56, 20260108, bidder, 5, 1100);
+        assertEq(
+            signature,
+            hex"8bb0a9136c704f6cd320eccaa0c7d00fbf5148e6973252284823c6aa66da0c916c3619e2142d3766b63fb6bc8a27e9a8f2454080239370f759e8c81109741ec91c"
+        );
+        assertEq(keccak256(signature), 0xe5530a4bac07b5ece7b7aab6d17308dac486432e646e13208cef87b9cafc961a);
+    }
+
+    function test_legacyQuantityCommitCannotRevealWithUnits() public {
+        uint32 day = 20260112;
+        _start(day);
+        bytes32 legacyType = keccak256(
+            "RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
+        );
+        bytes32 legacyStruct =
+            keccak256(abi.encode(legacyType, day, iba1, uint16(5), uint32(50), ISSUANCE_CCY, REFERENCE_CCY));
+        bytes32 legacyDigest =
+            keccak256(abi.encodePacked("\x19\x01", _domainSeparator(address(auction), block.chainid), legacyStruct));
+        (uint8 v, bytes32 r, bytes32 sigS) = vm.sign(iba1Pk, legacyDigest);
+        bytes memory signature = abi.encodePacked(r, sigS, v);
+        bytes32 committed = keccak256(signature);
+        _commit(auction, day, iba1, signature);
+        _enterReveal(day);
+        vm.expectRevert(IIntexAuction.RevealHashMismatch.selector);
+        vm.prank(iba1);
+        auction.revealBid(day, 5, 50, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), signature);
+        assertEq(auction.committedBidsByHash(day, iba1), committed);
+        assertFalse(auction.revealedBidsByBidder(day, iba1));
+        assertEq(auction.revealedBidsCount(day), 0);
     }
 }
