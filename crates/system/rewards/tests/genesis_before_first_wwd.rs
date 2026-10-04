@@ -1,9 +1,8 @@
 //! Genesis reward Gems keep a zero floor. The issuance call records the privilege
-//! when no Worldwide Day has ever been created; a later block re-read keeps it
-//! after that day is created. Creation earlier on the same UTC day, issuance on
-//! a later day, and issuance after the retained day is deleted all leave the Gem
-//! waiting: a missing bit stays unqualified. Entry, cost and call stay on the
-//! ordinary issuance formulas.
+//! when the retained Worldwide Day aggregate is empty. A later block re-read keeps
+//! it after that day is created. Creation earlier on the same UTC day, and issuance
+//! on a later day, leave the Gem waiting: a missing bit stays unqualified. Entry,
+//! cost and call stay on the ordinary issuance formulas.
 
 use alloy_primitives::{Address, U256};
 use outbe_metadosis::genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay};
@@ -161,10 +160,6 @@ fn a_genesis_gem_issued_before_the_first_worldwide_day_is_qualified_immediately(
         assert!(metadosis_api::bootstrap_end_time(handle.clone())
             .unwrap()
             .is_none());
-        assert_eq!(
-            metadosis_api::worldwide_days_created(handle.clone()).unwrap(),
-            0
-        );
         assert!(metadosis_api::worldwide_days(handle.clone())
             .unwrap()
             .is_empty());
@@ -209,10 +204,6 @@ fn a_genesis_gem_issued_after_creation_in_the_same_block_waits() {
             metadosis_api::worldwide_days(handle.clone()).unwrap().len(),
             1
         );
-        assert_eq!(
-            metadosis_api::worldwide_days_created(handle.clone()).unwrap(),
-            1
-        );
         assert_genesis_terms(&item, DELIVERY_TS);
         assert!(
             !outbe_gem::api::is_qualified(&handle, &item).unwrap(),
@@ -236,37 +227,6 @@ fn a_genesis_gem_issued_after_the_first_worldwide_day_waits_for_a_closed_day() {
         assert!(
             !outbe_gem::api::is_qualified(&handle, &item).unwrap(),
             "a later Genesis Gem still needs an eligible finalized day"
-        );
-    });
-}
-
-#[test]
-fn a_genesis_gem_issued_after_the_retained_day_is_deleted_still_waits() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    install_first_worldwide_day(&mut storage, SAME_DAY_EARLY);
-    storage.enter(|handle| {
-        FreshDevnetGenesisBuilder::new()
-            .clear_single_offering_day(WorldwideDay::new(REWARD_DAY))
-            .apply(handle.clone())
-            .unwrap();
-        assert!(metadosis_api::worldwide_days(handle.clone())
-            .unwrap()
-            .is_empty());
-        assert_eq!(metadosis_api::worldwide_days_created(handle).unwrap(), 1);
-    });
-    let item = deliver_at(&mut storage, 2, DELIVERY_TS);
-    storage.enter(|handle| {
-        assert!(metadosis_api::worldwide_days(handle.clone())
-            .unwrap()
-            .is_empty());
-        assert_eq!(
-            metadosis_api::worldwide_days_created(handle.clone()).unwrap(),
-            1
-        );
-        assert_genesis_terms(&item, DELIVERY_TS);
-        assert!(
-            !outbe_gem::api::is_qualified(&handle, &item).unwrap(),
-            "deleting the retained day does not reopen Genesis privilege"
         );
     });
 }

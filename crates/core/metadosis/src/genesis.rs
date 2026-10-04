@@ -169,7 +169,6 @@ impl GenesisOperation {
             current_vwap: day.current_vwap,
         })?;
         contract.active_wwd.insert(day.worldwide_day)?;
-        contract.note_worldwide_day_created()?;
         Ok(Some(true))
     }
     fn retime(

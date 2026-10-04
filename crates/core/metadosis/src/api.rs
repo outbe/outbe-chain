@@ -57,14 +57,6 @@ pub fn worldwide_days(storage: StorageHandle<'_>) -> Result<Vec<WwdProjection>> 
         .collect())
 }
 
-/// How many Worldwide Days have been created. This is one storage word.
-/// Deleting or retiring a retained day does not reduce it.
-pub fn worldwide_days_created(storage: StorageHandle<'_>) -> Result<u64> {
-    MetadosisContract::new(storage)
-        .worldwide_days_created
-        .read()
-}
-
 /// Typed query used by TributeFactory instead of a raw status byte read.
 pub fn is_offering_day(storage: StorageHandle<'_>, wwd: WorldwideDay) -> Result<bool> {
     Ok(worldwide_day(storage, wwd)?

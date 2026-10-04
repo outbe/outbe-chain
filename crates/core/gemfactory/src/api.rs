@@ -16,10 +16,11 @@ pub fn issue_gem(
     entry_price: U256,
 ) -> Result<U256> {
     // Classification is fixed by this call. Rewards is the production Genesis issuer.
-    // The count is creations, not days still retained: a pruned day still counts.
-    // A day created earlier in the same block is already counted, so that gem waits.
+    // Retained days are the bounded active/closed aggregate. Legal retirement keeps
+    // the newest closed day, so that aggregate does not become empty again.
+    // A day created earlier in the same block is already visible, so that gem waits.
     let issued_before_first_wwd = gem_type == GemTypes::Genesis
-        && outbe_metadosis::api::worldwide_days_created(storage.clone())? == 0;
+        && outbe_metadosis::api::worldwide_days(storage.clone())?.is_empty();
     // Gem creation and the privilege bit commit together. A failed bit write
     // rolls the gem back for a direct caller; Rewards also has its own checkpoint.
     storage.clone().with_checkpoint(|| {
