@@ -15,15 +15,28 @@ pub fn issue_gem(
     reference_currency: u16,
     entry_price: U256,
 ) -> Result<U256> {
-    runtime::issue_gem(
-        storage,
-        owner,
-        gem_type,
-        promis_load,
-        issuance_currency,
-        reference_currency,
-        entry_price,
-    )
+    // Classification is fixed by this call. Rewards is the production Genesis issuer.
+    // The count is creations, not days still retained: a pruned day still counts.
+    // A day created earlier in the same block is already counted, so that gem waits.
+    let issued_before_first_wwd = gem_type == GemTypes::Genesis
+        && outbe_metadosis::api::worldwide_days_created(storage.clone())? == 0;
+    // Gem creation and the privilege bit commit together. A failed bit write
+    // rolls the gem back for a direct caller; Rewards also has its own checkpoint.
+    storage.clone().with_checkpoint(|| {
+        let gem_id = runtime::issue_gem(
+            storage,
+            owner,
+            gem_type,
+            promis_load,
+            issuance_currency,
+            reference_currency,
+            entry_price,
+        )?;
+        if issued_before_first_wwd {
+            outbe_gem::api::record_issued_before_first_wwd(storage, gem_id)?;
+        }
+        Ok(gem_id)
+    })
 }
 
 pub fn issue_gem_position(

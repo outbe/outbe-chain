@@ -8883,6 +8883,7 @@ dependencies = [
  "outbe-gem",
  "outbe-intex",
  "outbe-macros",
+ "outbe-metadosis",
  "outbe-oracle",
  "outbe-paynote",
  "outbe-primitives",

@@ -21,6 +21,7 @@ pub fn verify_result(
     activation_payload: &ActivationPayloadV1,
     result: &LysisResultV1,
     limits: &SchemaLimits,
+    nod_issued_at: u64,
 ) -> Result<LysisApplyPlanV1, ProtocolError> {
     ensure(
         intent.intent_id(limits)? == intent_id,
@@ -88,6 +89,9 @@ pub fn verify_result(
         activation_call_id: call_core.activation_call_id(limits)?,
     };
     binding.validate_call(&call_core, limits)?;
+    // The Nod's logical issuance instant is the initial Lysis snapshot freeze.
+    // `logical_evaluation_time` stays the OCOMP job clock and is not that instant.
+    ensure(nod_issued_at != 0, "Lysis Nod issuance instant")?;
 
     Ok(LysisApplyPlanPartsV1 {
         call_core,
@@ -113,7 +117,7 @@ pub fn verify_result(
             exact_counts: result.counts.clone(),
             nod_amount_total: result.conservation.nod_cost_total,
             lysis_allocation_minor: result.conservation.lysis_allocation_minor,
-            issued_at: intent.logical_evaluation_time,
+            issued_at: nod_issued_at,
         }),
         contributors: contributor_apply(
             intent.activation_preconditions.contributors.clone(),

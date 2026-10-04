@@ -1,27 +1,51 @@
 // OCOMP-TEST-ID: OCM-APL-001
 mod support;
 
-use alloy_primitives::U256;
+use alloy_primitives::{B256, U256};
 use outbe_lysis::activation_v1::{
     verify_receipts, verify_result, LysisApplyPlanV1, LysisOwnerReceiptsV1,
 };
 use outbe_ocomp_protocol::{
-    intent::DayType,
+    intent::{DayType, JobIntentV1},
     receipts::{
         carry_over_state_event_digest, contributor_state_event_digest, nod_state_event_digest,
         tribute_state_event_digest, CarryOverReceiptV1, CarryOverStateEventProjectionV1,
         ContributorReceiptV1, ContributorStateEventProjectionV1, NodBatchReceiptV1,
         NodStateEventProjectionV1, TributeReceiptV1, TributeStateEventProjectionV1,
     },
+    result::{ActivationPayloadV1, LysisResultV1},
+    ProtocolError, SchemaLimits,
 };
 
 use support::{activation_fixture, hash, recommit_result};
+
+/// Stamps Nod issuance at the request clock. Production activation passes the
+/// Lysis freeze instant instead. These vectors keep the request clock so receipt
+/// equality stays about structure.
+fn verify_at_request_clock(
+    intent_id: B256,
+    expected_job_id: B256,
+    intent: &JobIntentV1,
+    activation_payload: &ActivationPayloadV1,
+    result: &LysisResultV1,
+    limits: &SchemaLimits,
+) -> Result<LysisApplyPlanV1, ProtocolError> {
+    verify_result(
+        intent_id,
+        expected_job_id,
+        intent,
+        activation_payload,
+        result,
+        limits,
+        intent.logical_evaluation_time,
+    )
+}
 
 #[test]
 fn structural_verifier_produces_one_closed_four_owner_plan() {
     for day_type in [DayType::Green, DayType::Red] {
         let fixture = activation_fixture(day_type);
-        let plan = verify_result(
+        let plan = verify_at_request_clock(
             fixture.intent_id,
             fixture.job_id,
             &fixture.intent,
@@ -46,6 +70,14 @@ fn structural_verifier_produces_one_closed_four_owner_plan() {
                 .receipt_hash(&fixture.limits)
                 .unwrap(),
             plan.request_limit_split_receipt_hash()
+        );
+        assert_eq!(
+            plan.nod().issued_at(),
+            fixture.intent.logical_evaluation_time
+        );
+        assert_eq!(
+            plan.logical_anchor(),
+            fixture.intent.logical_evaluation_time
         );
         assert_eq!(plan.nod().nod_root(), fixture.result.roots.nod_root);
         assert_eq!(plan.nod().bucket_root(), fixture.result.roots.bucket_root);
@@ -74,7 +106,7 @@ fn structural_verifier_rejects_result_and_completion_rebinding() {
 
     let mut wrong_job = fixture.result.clone();
     wrong_job.job_id = hash(200);
-    assert!(verify_result(
+    assert!(verify_at_request_clock(
         fixture.intent_id,
         fixture.job_id,
         &fixture.intent,
@@ -88,7 +120,7 @@ fn structural_verifier_rejects_result_and_completion_rebinding() {
     wrong_completion
         .metadosis_completion_summary
         .logical_evaluation_time += 1;
-    assert!(verify_result(
+    assert!(verify_at_request_clock(
         fixture.intent_id,
         fixture.job_id,
         &fixture.intent,
@@ -106,7 +138,7 @@ fn structural_verifier_rejects_result_and_completion_rebinding() {
     let payload = wrong_contributor_total
         .activation_payload(&fixture.limits)
         .unwrap();
-    assert!(verify_result(
+    assert!(verify_at_request_clock(
         fixture.intent_id,
         fixture.job_id,
         &fixture.intent,
@@ -118,7 +150,7 @@ fn structural_verifier_rejects_result_and_completion_rebinding() {
 
     let mut payload_rebinding = fixture.payload.clone();
     payload_rebinding.roots.nod_root = hash(201);
-    assert!(verify_result(
+    assert!(verify_at_request_clock(
         fixture.intent_id,
         fixture.job_id,
         &fixture.intent,
@@ -200,7 +232,7 @@ fn structural_verifier_rejects_catalog_completion_and_semantic_event_mutations()
 fn receipt_verifier_closes_green_and_red_conservation_equations() {
     for day_type in [DayType::Green, DayType::Red] {
         let fixture = activation_fixture(day_type);
-        let plan = verify_result(
+        let plan = verify_at_request_clock(
             fixture.intent_id,
             fixture.job_id,
             &fixture.intent,
@@ -234,7 +266,7 @@ fn structural_verifier_rejects_nonzero_attempt_or_pending_nonce() {
             .activation_preconditions
             .metadosis
             .pending_nonce = pending_nonce;
-        let result = verify_result(
+        let result = verify_at_request_clock(
             fixture.intent_id,
             fixture.job_id,
             &fixture.intent,
@@ -266,7 +298,7 @@ fn receipt_verifier_rejects_a_budget_effect_with_a_future_nonce_or_anchor() {
         .intent
         .intent_id(&nonce_fixture.limits)
         .unwrap();
-    let nonce_plan = verify_result(
+    let nonce_plan = verify_at_request_clock(
         nonce_fixture.intent_id,
         nonce_fixture.job_id,
         &nonce_fixture.intent,
@@ -307,7 +339,7 @@ fn receipt_verifier_rejects_a_budget_effect_with_a_future_nonce_or_anchor() {
         .intent
         .intent_id(&anchor_fixture.limits)
         .unwrap();
-    let anchor_plan = verify_result(
+    let anchor_plan = verify_at_request_clock(
         anchor_fixture.intent_id,
         anchor_fixture.job_id,
         &anchor_fixture.intent,
@@ -328,7 +360,7 @@ fn receipt_verifier_rejects_a_budget_effect_with_a_future_nonce_or_anchor() {
 #[test]
 fn receipt_verifier_rejects_owner_projection_and_request_mutations() {
     let fixture = activation_fixture(DayType::Green);
-    let plan = verify_result(
+    let plan = verify_at_request_clock(
         fixture.intent_id,
         fixture.job_id,
         &fixture.intent,
@@ -454,7 +486,7 @@ fn assert_result_rejected(
     result: &outbe_ocomp_protocol::result::LysisResultV1,
     payload: &outbe_ocomp_protocol::result::ActivationPayloadV1,
 ) {
-    assert!(verify_result(
+    assert!(verify_at_request_clock(
         fixture.intent_id,
         fixture.job_id,
         &fixture.intent,
@@ -550,4 +582,53 @@ fn owner_receipts(
             .unwrap(),
         },
     }
+}
+
+const FREEZE_AT: u64 = 1_704_067_200;
+
+#[test]
+fn nod_issued_at_is_the_freeze_instant_and_the_job_clock_stays_put() {
+    let fixture = activation_fixture(DayType::Green);
+    assert_ne!(FREEZE_AT, fixture.intent.logical_evaluation_time);
+    let plan = verify_result(
+        fixture.intent_id,
+        fixture.job_id,
+        &fixture.intent,
+        &fixture.payload,
+        &fixture.result,
+        &fixture.limits,
+        FREEZE_AT,
+    )
+    .unwrap();
+
+    assert_eq!(plan.nod().issued_at(), FREEZE_AT);
+    assert_eq!(
+        plan.logical_anchor(),
+        fixture.intent.logical_evaluation_time
+    );
+    assert_ne!(
+        outbe_primitives::time::first_full_day(plan.nod().issued_at()),
+        outbe_primitives::time::first_full_day(fixture.intent.logical_evaluation_time)
+    );
+    let receipts = owner_receipts(&plan, &fixture.limits);
+    verify_receipts(&plan, &fixture.request_receipt, &receipts, &fixture.limits).unwrap();
+}
+
+#[test]
+fn nod_issuance_instant_rejects_zero() {
+    let fixture = activation_fixture(DayType::Green);
+    let error = verify_result(
+        fixture.intent_id,
+        fixture.job_id,
+        &fixture.intent,
+        &fixture.payload,
+        &fixture.result,
+        &fixture.limits,
+        0,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        outbe_ocomp_protocol::ProtocolError::InvalidInvariant("Lysis Nod issuance instant")
+    ));
 }

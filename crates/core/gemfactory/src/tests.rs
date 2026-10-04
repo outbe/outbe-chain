@@ -468,6 +468,7 @@ fn merchant_entry_price(storage: &StorageHandle, source_entry: U256) -> U256 {
 }
 
 mod eligibility;
+mod genesis_flag_checkpoint;
 
 mod issuance;
 mod merchant;
