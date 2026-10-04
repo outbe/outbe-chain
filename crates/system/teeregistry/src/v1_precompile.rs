@@ -19,6 +19,11 @@ use outbe_primitives::{
 
 use crate::{NodeEnclaveBindingV1, TeeRegistry, V1RegistrationOutcome};
 
+#[cfg(test)]
+mod binding_tests;
+
+outbe_primitives::impl_tee_registry_binding_v1_mapping!(NodeEnclaveBindingV1);
+
 /// TeeRegistry V1 never accepts native token value on any selector.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
@@ -858,59 +863,9 @@ fn full_node_public_key(prefix: u8, x: B256) -> [u8; 33] {
 }
 
 fn binding_view(binding: Option<NodeEnclaveBindingV1>) -> NodeEnclaveBindingV1View {
-    let Some(binding) = binding else {
-        return NodeEnclaveBindingV1View {
-            exists: false,
-            nodeIdHash: B256::ZERO,
-            enclaveId: B256::ZERO,
-            bindingId: B256::ZERO,
-            intentHash: B256::ZERO,
-            evidenceHash: B256::ZERO,
-            policyHash: B256::ZERO,
-            bindingVersion: 0,
-            registrationVersion: 0,
-            renewalNonce: 0,
-            transitionNonce: 0,
-            leaseStartedAt: 0,
-            validUntil: 0,
-            collateralValidUntil: 0,
-            recipientX25519: B256::ZERO,
-            attestationEd25519: B256::ZERO,
-            noiseResponderX25519: B256::ZERO,
-            mrenclave: B256::ZERO,
-            mrsigner: B256::ZERO,
-            isvProdId: 0,
-            isvSvn: 0,
-            platformTcbStatus: 0,
-            verdictHash: B256::ZERO,
-            nodeHostAuthorizationHash: B256::ZERO,
-        };
-    };
-    NodeEnclaveBindingV1View {
-        exists: true,
-        nodeIdHash: binding.node_id_hash,
-        enclaveId: binding.enclave_id,
-        bindingId: binding.binding_id,
-        intentHash: binding.intent_hash,
-        evidenceHash: binding.evidence_hash,
-        policyHash: binding.policy_hash,
-        bindingVersion: binding.binding_version,
-        registrationVersion: binding.registration_version,
-        renewalNonce: binding.renewal_nonce,
-        transitionNonce: binding.transition_nonce,
-        leaseStartedAt: binding.lease_started_at,
-        validUntil: binding.valid_until,
-        collateralValidUntil: binding.collateral_valid_until,
-        recipientX25519: binding.recipient_x25519,
-        attestationEd25519: binding.attestation_ed25519,
-        noiseResponderX25519: binding.noise_responder_x25519,
-        mrenclave: binding.mrenclave,
-        mrsigner: binding.mrsigner,
-        isvProdId: binding.isv_prod_id,
-        isvSvn: binding.isv_svn,
-        platformTcbStatus: binding.platform_tcb_status,
-        verdictHash: binding.verdict_hash,
-        nodeHostAuthorizationHash: binding.node_host_authorization_hash,
+    match binding {
+        Some(binding) => (&binding).into(),
+        None => NodeEnclaveBindingV1View::default(),
     }
 }
 

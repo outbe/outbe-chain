@@ -391,32 +391,7 @@ mod tests {
     }
 
     fn renewal_binding_view(binding: &RenewalBindingV1) -> NodeEnclaveBindingV1View {
-        NodeEnclaveBindingV1View {
-            exists: true,
-            nodeIdHash: binding.node_id_hash,
-            enclaveId: binding.enclave_id,
-            bindingId: binding.binding_id,
-            intentHash: binding.intent_hash,
-            evidenceHash: binding.evidence_hash,
-            policyHash: binding.policy_hash,
-            bindingVersion: binding.binding_version,
-            registrationVersion: binding.registration_version,
-            renewalNonce: binding.renewal_nonce,
-            transitionNonce: binding.transition_nonce,
-            leaseStartedAt: binding.lease_started_at,
-            validUntil: binding.valid_until,
-            collateralValidUntil: binding.collateral_valid_until,
-            recipientX25519: binding.recipient_x25519,
-            attestationEd25519: binding.attestation_ed25519,
-            noiseResponderX25519: binding.noise_responder_x25519,
-            mrenclave: binding.mrenclave,
-            mrsigner: binding.mrsigner,
-            isvProdId: binding.isv_prod_id,
-            isvSvn: binding.isv_svn,
-            platformTcbStatus: binding.platform_tcb_status,
-            verdictHash: binding.verdict_hash,
-            nodeHostAuthorizationHash: binding.node_host_authorization_hash,
-        }
+        binding.into()
     }
 
     fn binding() -> RenewalBindingV1 {

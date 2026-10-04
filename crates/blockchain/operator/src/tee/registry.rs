@@ -14,6 +14,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::rpc::RenewalRpc;
 
+#[cfg(test)]
+mod abi_tests;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NodeBindingSelectorV1 {
     NodeHost([u8; 33]),
@@ -78,6 +81,8 @@ pub struct RenewalBindingV1 {
     pub node_host_authorization_hash: B256,
 }
 
+outbe_primitives::impl_tee_registry_binding_v1_mapping!(RenewalBindingV1, decode_fields);
+
 impl TryFrom<NodeEnclaveBindingV1View> for RenewalBindingV1 {
     type Error = eyre::Report;
 
@@ -85,31 +90,7 @@ impl TryFrom<NodeEnclaveBindingV1View> for RenewalBindingV1 {
         if !value.exists {
             eyre::bail!("finalized Registry has no enclave binding for this node");
         }
-        Ok(Self {
-            node_id_hash: value.nodeIdHash,
-            enclave_id: value.enclaveId,
-            binding_id: value.bindingId,
-            intent_hash: value.intentHash,
-            evidence_hash: value.evidenceHash,
-            policy_hash: value.policyHash,
-            binding_version: value.bindingVersion,
-            registration_version: value.registrationVersion,
-            renewal_nonce: value.renewalNonce,
-            transition_nonce: value.transitionNonce,
-            lease_started_at: value.leaseStartedAt,
-            valid_until: value.validUntil,
-            collateral_valid_until: value.collateralValidUntil,
-            recipient_x25519: value.recipientX25519,
-            attestation_ed25519: value.attestationEd25519,
-            noise_responder_x25519: value.noiseResponderX25519,
-            mrenclave: value.mrenclave,
-            mrsigner: value.mrsigner,
-            isv_prod_id: value.isvProdId,
-            isv_svn: value.isvSvn,
-            platform_tcb_status: value.platformTcbStatus,
-            verdict_hash: value.verdictHash,
-            node_host_authorization_hash: value.nodeHostAuthorizationHash,
-        })
+        Ok(Self::from_registry_binding_fields_v1(&value))
     }
 }
 
