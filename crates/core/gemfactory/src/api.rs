@@ -21,7 +21,9 @@ pub fn issue_gem(
     // The count stays set after those days leave the aggregate.
     let issued_before_first_wwd = gem_type == GemTypes::Genesis
         && !outbe_metadosis::api::has_created_worldwide_day(storage.clone())?;
-    // Gem creation and the privilege bit commit together. A failed bit write
+    // Gem creation and the privilege bit commit together. Every Genesis issue
+    // records 1 or 0: burn does not clear the map, and the id is only owner,
+    // load, and block, so skipping 0 would keep a stale 1. A failed bit write
     // rolls the gem back for a direct caller; Rewards also has its own checkpoint.
     storage.clone().with_checkpoint(|| {
         let gem_id = runtime::issue_gem(
@@ -33,8 +35,12 @@ pub fn issue_gem(
             reference_currency,
             entry_price,
         )?;
-        if issued_before_first_wwd {
-            outbe_gem::api::record_issued_before_first_wwd(storage, gem_id)?;
+        if gem_type == GemTypes::Genesis {
+            outbe_gem::api::record_genesis_issuance_privilege(
+                storage,
+                gem_id,
+                issued_before_first_wwd,
+            )?;
         }
         Ok(gem_id)
     })

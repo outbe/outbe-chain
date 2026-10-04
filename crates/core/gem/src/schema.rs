@@ -299,8 +299,9 @@ pub struct GemContract {
 
     /// Genesis gem id issued while no Worldwide Day existed. `1` is the
     /// issuance-time privilege; an absent key stays `0` and is never filled in
-    /// after the first day is created. Not a Qualified state and not part of
-    /// `GemData`.
+    /// for a gem issued earlier. A new Genesis issue writes `0` or `1` for that
+    /// call, including over an id that burn freed in the same block. Not a Qualified
+    /// state and not part of `GemData`.
     #[attribute(order = 54)]
     pub issued_before_first_wwd: outbe_primitives::storage::dsl::Map<U256, u8>,
 }
