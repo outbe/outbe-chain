@@ -2356,3 +2356,5 @@ fn quote_settlement_dispatch() {
     assert_eq!(ret.settlementCurrency, 978);
     assert_eq!(ret.paymentMinor, U256::from(cost_of(&input) / 2));
 }
+
+mod direct_fx_admission;
