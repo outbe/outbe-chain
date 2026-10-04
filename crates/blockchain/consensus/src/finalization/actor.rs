@@ -712,11 +712,13 @@ mod tests {
             rand_commonware::rngs::SysRng,
         ));
         let sig = key.sign(b"x", b"y");
-        store.lock().expect("store").record_individual_vote(
-            epoch,
-            view,
-            parent_view,
-            fb_hash,
+        store.lock().expect("store").record_bound_individual_vote(
+            late_sig_store::FinalizeVoteTarget {
+                epoch,
+                view,
+                parent_view,
+                fb_hash,
+            },
             0,
             &sig,
         );

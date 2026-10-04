@@ -325,7 +325,7 @@ pub struct RecoveredFinalizationMaterial<'a> {
     pub scheme: &'a HybridScheme<MinSig>,
 }
 
-/// marshal-recovered finalization.
+/// Rebuild the canonical V2 Finalization record from a recovered certificate.
 ///
 /// After a restart (or under brief finalization lag) the in-process
 /// `FinalizedParentCertStore` that the proposer selects from can be empty even
@@ -337,38 +337,6 @@ pub struct RecoveredFinalizationMaterial<'a> {
 /// pins this equality). The inputs are all derived from the recovered
 /// finalization plus the finalized epoch's committee scheme + ordered addresses;
 /// `missed_proposers` and `finalize_votes` are empty under the V2 contract.
-#[allow(clippy::too_many_arguments)]
-pub fn build_finalization_record_from_recovered(
-    finalized_epoch: u64,
-    finalized_view: u64,
-    parent_view: u64,
-    finalized_block_number: u64,
-    finalized_block_hash: B256,
-    ordered_committee: &[Address],
-    certificate: &HybridCertificate<MinSig>,
-    encoded_certificate: Bytes,
-    scheme: &HybridScheme<MinSig>,
-) -> Result<CertifiedParentProofRecord, SnapshotBuildError> {
-    build_recovered_finalization_record(
-        RecoveredFinalizedBlock {
-            proposal: crate::finalization::late_sig_store::FinalizeVoteTarget {
-                epoch: finalized_epoch,
-                view: finalized_view,
-                parent_view,
-                fb_hash: finalized_block_hash,
-            },
-            number: finalized_block_number,
-        },
-        RecoveredFinalizationMaterial {
-            ordered_committee,
-            certificate,
-            encoded_certificate,
-            scheme,
-        },
-    )
-}
-
-/// Rebuild the byte-identical durable record from cohesive certified inputs.
 pub fn build_recovered_finalization_record(
     block: RecoveredFinalizedBlock,
     material: RecoveredFinalizationMaterial<'_>,
@@ -514,16 +482,22 @@ mod tests {
         let block_number = 42u64;
         let encoded: Bytes = finalization.encode().into();
 
-        let record = build_finalization_record_from_recovered(
-            finalization.proposal.round.epoch().get(),
-            finalization.proposal.round.view().get(),
-            finalization.proposal.parent.get(),
-            block_number,
-            finalization.proposal.payload.0,
-            &addresses,
-            &finalization.certificate,
-            encoded.clone(),
-            &verifier,
+        let record = build_recovered_finalization_record(
+            RecoveredFinalizedBlock {
+                proposal: crate::finalization::late_sig_store::FinalizeVoteTarget {
+                    epoch: finalization.proposal.round.epoch().get(),
+                    view: finalization.proposal.round.view().get(),
+                    parent_view: finalization.proposal.parent.get(),
+                    fb_hash: finalization.proposal.payload.0,
+                },
+                number: block_number,
+            },
+            RecoveredFinalizationMaterial {
+                ordered_committee: &addresses,
+                certificate: &finalization.certificate,
+                encoded_certificate: encoded.clone(),
+                scheme: &verifier,
+            },
         )
         .expect("recovered record builds from valid 48-byte MinPk pubkeys");
 
