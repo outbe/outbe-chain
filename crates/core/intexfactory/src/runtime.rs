@@ -9,7 +9,7 @@ use outbe_oracle::api::{settlement_fx_rates, VwapSnapshotId};
 use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result, SweepFailure};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{first_full_day, WorldwideDay};
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::units::PROTOCOL_AMOUNT_DECIMALS;
 
 use outbe_intex::payout::ContributorLeafData;

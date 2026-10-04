@@ -23,12 +23,7 @@ pub fn is_qualified(
     storage: &StorageHandle<'_>,
     series: &outbe_intex::SeriesRecord,
 ) -> Result<bool> {
-    outbe_oracle::api::closed_above_floor(
-        storage.clone(),
-        series.reference_currency,
-        series.floor_price_minor,
-        first_full_day(u64::from(series.issued_at)),
-    )
+    outbe_intex::api::is_qualified(storage, series)
 }
 
 pub fn is_series_qualified(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<bool> {
