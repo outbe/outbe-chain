@@ -219,5 +219,6 @@ mod wwd_vwap_overflow;
 
 mod tribute_fixture;
 
+mod allocation_ceiling;
 #[cfg(feature = "test-utils")]
 mod api;
