@@ -469,6 +469,15 @@
       ],
       "package": "outbe-gemfactory",
       "binary": "outbe-gemfactory",
+      "test": "tests::genesis_flag_checkpoint::a_reissued_genesis_id_after_burn_drops_the_stale_privilege"
+    },
+    {
+      "acceptance": [
+        "A32",
+        "A14"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
       "test": "tests::genesis_flag_checkpoint::a_retained_day_with_a_zero_creation_count_does_not_stamp_or_backfill"
     },
     {
@@ -2470,6 +2479,14 @@
       "contract": "IntexNFT1155Test",
       "file": "test/foundry/IntexNFT1155.t.sol",
       "test": "test_TransferRestrictionsIssued"
+    },
+    {
+      "acceptance": [
+        "A24"
+      ],
+      "contract": "CrossChainSupplyConservationTest",
+      "file": "test/foundry/cross-chain/CrossChainSupplyConservation.t.sol",
+      "test": "test_CalledHop_KeepsCalledAtAndDeadlineOnBothChains"
     }
   ],
   "rust_features": [],
