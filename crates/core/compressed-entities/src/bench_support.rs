@@ -15,6 +15,29 @@ use crate::{
     ProvisionalTreeBatch, StagedTreeBatch, TreeChange,
 };
 
+/// Parent-body source for benchmarks starting with no persisted entities.
+pub struct EmptyParentBodies;
+
+impl crate::ParentBodySource for EmptyParentBodies {
+    fn get(
+        &self,
+        _entity: EntityRef,
+    ) -> Result<Option<crate::StoredBody>, crate::ParentBodySourceError> {
+        Ok(None)
+    }
+
+    fn list(
+        &self,
+        _query: crate::QueryRef,
+        _request: crate::IdPageRequest,
+    ) -> Result<crate::IdPage, crate::ParentBodySourceError> {
+        Ok(crate::IdPage {
+            ids: Vec::new(),
+            next_after: None,
+        })
+    }
+}
+
 /// Returns the protocol-derived shard for a real typed entity. This keeps the
 /// ADR-009 benchmark dataset on the production key-derivation path.
 pub fn derived_shard(entity: EntityRef, shard_count: u32) -> Result<u32, String> {

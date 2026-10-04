@@ -1,12 +1,10 @@
+pub(crate) use outbe_compressed_entities::bench_support::EmptyParentBodies;
 pub(crate) use outbe_compressed_entities::test_support::seed_compressed_entities_genesis;
 
 use std::collections::BTreeMap;
 use std::time::Instant;
 
 use alloy_primitives::Address;
-use outbe_compressed_entities::{
-    EntityRef, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef, StoredBody,
-};
 use outbe_intexfactory::constants::ORIGIN_ROUTER_ADDRESS;
 use outbe_primitives::{
     addresses::{
@@ -22,25 +20,6 @@ use outbe_primitives::{
 use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
 
 use crate::{EventCount, GasComponent, GasLedger, StorageOperationKind, StorageTraceEntry};
-
-pub(crate) struct EmptyParentBodies;
-
-impl ParentBodySource for EmptyParentBodies {
-    fn get(&self, _entity: EntityRef) -> Result<Option<StoredBody>, ParentBodySourceError> {
-        Ok(None)
-    }
-
-    fn list(
-        &self,
-        _query: QueryRef,
-        _request: IdPageRequest,
-    ) -> Result<IdPage, ParentBodySourceError> {
-        Ok(IdPage {
-            ids: Vec::new(),
-            next_after: None,
-        })
-    }
-}
 
 pub(crate) struct CapturedExecution {
     pub gas_total: u64,
@@ -103,6 +82,14 @@ pub(crate) fn storage_gas_components(
     trace: &[StorageTraceOperation],
     ledger: GasLedger,
 ) -> Vec<GasComponent> {
+    storage_gas_components_with_modules(trace, ledger, module_name)
+}
+
+pub(crate) fn storage_gas_components_with_modules(
+    trace: &[StorageTraceOperation],
+    ledger: GasLedger,
+    module_name: impl Fn(Address) -> &'static str,
+) -> Vec<GasComponent> {
     let mut grouped = BTreeMap::<(&'static str, StorageTraceKind), u64>::new();
     for operation in trace {
         *grouped
@@ -128,6 +115,13 @@ pub(crate) fn storage_gas_components(
 }
 
 pub(crate) fn aggregate_storage_trace(trace: &[StorageTraceOperation]) -> Vec<StorageTraceEntry> {
+    aggregate_storage_trace_with_modules(trace, module_name)
+}
+
+pub(crate) fn aggregate_storage_trace_with_modules(
+    trace: &[StorageTraceOperation],
+    module_name: impl Fn(Address) -> &'static str,
+) -> Vec<StorageTraceEntry> {
     let mut grouped = BTreeMap::<(String, String, String, StorageOperationKind), u64>::new();
     for operation in trace {
         let kind = match operation.kind {

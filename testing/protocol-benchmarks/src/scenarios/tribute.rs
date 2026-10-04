@@ -9,7 +9,6 @@
 //! single scenario uses the frozen Demo Tribute proof fixture, a registered L2,
 //! and a valid BLS MinSig signature over the proof's Merkle root.
 
-use std::collections::BTreeMap;
 use std::hint::black_box;
 use std::time::Instant;
 
@@ -22,10 +21,7 @@ use commonware_cryptography::bls12381::primitives::{
     ops::{self, sign_message},
     variant::MinSig,
 };
-use outbe_compressed_entities::{
-    begin_block, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
-    ParentBodySourceError, QueryRef, StoredBody,
-};
+use outbe_compressed_entities::{begin_block, ExecutionScope};
 use outbe_l2registry::L2RegistryContract;
 use outbe_metadosis::{
     genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay},
@@ -43,7 +39,7 @@ use outbe_primitives::{
         ORACLE_ADDRESS, TRIBUTE_ADDRESS, TRIBUTE_FACTORY_ADDRESS,
     },
     storage::{
-        hashmap::{HashMapStorageProvider, StorageTraceKind, StorageTraceOperation},
+        hashmap::{HashMapStorageProvider, StorageTraceKind},
         StorageHandle,
     },
     time::date_key_to_utc_timestamp,
@@ -79,9 +75,13 @@ use revm::precompile::bn254::{
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
 use crate::{
-    BenchmarkScenario, CalldataStats, CryptoMode, EventCount, ExecutionClass, GasComponent,
-    GasLedger, Observation, Profile, ScenarioMetadata, ScenarioReport, StorageOperationKind,
-    StorageTraceEntry,
+    BenchmarkScenario, CalldataStats, CryptoMode, ExecutionClass, GasComponent, GasLedger,
+    Observation, Profile, ScenarioMetadata, ScenarioReport,
+};
+
+use super::support::{
+    aggregate_events, aggregate_storage_trace_with_modules, elapsed_ns,
+    storage_gas_components_with_modules, EmptyParentBodies,
 };
 
 const CHAIN_ID: u64 = outbe_primitives::chain::DEVNET_CHAIN_ID;
@@ -151,25 +151,6 @@ struct TributeDraftFixture {
     atto: u64,
     #[outbe(body, pos = 5)]
     su_ids: Vec<B256>,
-}
-
-struct NoParentBodies;
-
-impl ParentBodySource for NoParentBodies {
-    fn get(&self, _entity: EntityRef) -> Result<Option<StoredBody>, ParentBodySourceError> {
-        Ok(None)
-    }
-
-    fn list(
-        &self,
-        _query: QueryRef,
-        _request: IdPageRequest,
-    ) -> Result<IdPage, ParentBodySourceError> {
-        Ok(IdPage {
-            ids: Vec::new(),
-            next_after: None,
-        })
-    }
 }
 
 struct Fixture {
@@ -612,7 +593,7 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
         let tribute_id = execute_offer_with_processor(
             storage.clone(),
             &scope,
-            &NoParentBodies,
+            &EmptyParentBodies,
             input,
             |offers| {
                 let enclave_started = Instant::now();
@@ -653,7 +634,7 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
 
     let stored = StorageHandle::enter(&mut provider, |storage| {
         TributeContract::new(storage)
-            .get_tribute(&scope, &NoParentBodies, tribute_id)
+            .get_tribute(&scope, &EmptyParentBodies, tribute_id)
             .map_err(|error| error.to_string())
     })?
     .ok_or_else(|| "created Tribute is not readable through the canonical contract".to_owned())?;
@@ -706,7 +687,11 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
             1,
         ),
     ];
-    gas_components.extend(storage_gas_components(&trace));
+    gas_components.extend(storage_gas_components_with_modules(
+        &trace,
+        GasLedger::UserTransaction,
+        module_name,
+    ));
     gas_components.extend([
         GasComponent::new(
             GasLedger::UserTransaction,
@@ -782,7 +767,7 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
                     alloy_primitives::keccak256(&fixture.proof)
                 ),
             );
-    observation.storage = aggregate_storage_trace(&trace);
+    observation.storage = aggregate_storage_trace_with_modules(&trace, module_name);
     observation.events = aggregate_events(&ordered_events);
     observation.postconditions.insert(
         "fixture.plaintext_bytes".to_owned(),
@@ -799,87 +784,6 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
     Ok(observation)
 }
 
-fn storage_gas_components(trace: &[StorageTraceOperation]) -> Vec<GasComponent> {
-    let mut grouped = BTreeMap::<(&'static str, StorageTraceKind), u64>::new();
-    for operation in trace {
-        *grouped
-            .entry((module_name(operation.address), operation.kind))
-            .or_default() += 1;
-    }
-    grouped
-        .into_iter()
-        .map(|((module, kind), count)| {
-            let (suffix, per_operation) = match kind {
-                StorageTraceKind::Read => ("read", WARM_STORAGE_READ_COST),
-                StorageTraceKind::Write => ("write", SSTORE_RESET),
-            };
-            GasComponent::new(
-                GasLedger::UserTransaction,
-                format!("storage.{module}.{suffix}"),
-                count.saturating_mul(per_operation),
-                count,
-            )
-            .attributed_to(module)
-        })
-        .collect()
-}
-
-fn aggregate_storage_trace(trace: &[StorageTraceOperation]) -> Vec<StorageTraceEntry> {
-    let mut grouped = BTreeMap::<(String, String, String, StorageOperationKind), u64>::new();
-    for operation in trace {
-        let kind = match operation.kind {
-            StorageTraceKind::Read => StorageOperationKind::Read,
-            StorageTraceKind::Write => StorageOperationKind::Write,
-        };
-        *grouped
-            .entry((
-                module_name(operation.address).to_owned(),
-                format!("{:#x}", operation.address),
-                format!("{:#x}", operation.slot),
-                kind,
-            ))
-            .or_default() += 1;
-    }
-    grouped
-        .into_iter()
-        .map(
-            |((module, address, slot, operation), count)| StorageTraceEntry {
-                module,
-                address,
-                slot,
-                operation,
-                count,
-                gas: count.saturating_mul(match operation {
-                    StorageOperationKind::Read => WARM_STORAGE_READ_COST,
-                    StorageOperationKind::Write => SSTORE_RESET,
-                }),
-            },
-        )
-        .collect()
-}
-
-fn aggregate_events(events: &[alloy_primitives::Log]) -> Vec<EventCount> {
-    let mut grouped = BTreeMap::<(String, String), u64>::new();
-    for event in events {
-        let topic = event
-            .data
-            .topics()
-            .first()
-            .map_or_else(|| "none".to_owned(), |topic| format!("{topic:#x}"));
-        *grouped
-            .entry((format!("{:#x}", event.address), topic))
-            .or_default() += 1;
-    }
-    grouped
-        .into_iter()
-        .map(|((emitter, event), count)| EventCount {
-            emitter,
-            event,
-            count,
-        })
-        .collect()
-}
-
 fn module_name(address: Address) -> &'static str {
     match address {
         COMPRESSED_ENTITIES_ADDRESS => "compressed_entities",
@@ -891,10 +795,6 @@ fn module_name(address: Address) -> &'static str {
         AGENT_REWARD_ADDRESS => "agent_reward",
         _ => "other",
     }
-}
-
-fn elapsed_ns(started: Instant) -> u64 {
-    u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)
 }
 
 fn ms_to_ns(milliseconds: f64) -> u64 {

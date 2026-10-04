@@ -1,9 +1,9 @@
 use alloy_primitives::{Address, U256};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use outbe_compressed_entities::bench_support::EmptyParentBodies;
 use outbe_compressed_entities::{
     list, mint, BodyInput, CompressedEntitiesLifecycle, CompressedEntitiesLifecycleContext,
-    EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceError,
-    QueryRef, StoredBody, TributeBodyV1, WwdEntityId,
+    ExecutionScope, IdPageRequest, QueryRef, TributeBodyV1, WwdEntityId,
 };
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
@@ -15,25 +15,6 @@ use outbe_primitives::{
 const BLOCK_GAS_LIMIT: u64 = 30_000_000;
 const DAY: WorldwideDay = WorldwideDay::new(20_260_716);
 const OWNER: Address = Address::repeat_byte(0x71);
-
-struct EmptyParent;
-
-impl ParentBodySource for EmptyParent {
-    fn get(&self, _entity: EntityRef) -> Result<Option<StoredBody>, ParentBodySourceError> {
-        Ok(None)
-    }
-
-    fn list(
-        &self,
-        _query: QueryRef,
-        _request: IdPageRequest,
-    ) -> Result<IdPage, ParentBodySourceError> {
-        Ok(IdPage {
-            ids: Vec::new(),
-            next_after: None,
-        })
-    }
-}
 
 fn body(index: u32) -> TributeBodyV1 {
     let mut digest = [0_u8; 32];
@@ -103,7 +84,7 @@ fn bench_touched_list_merge(c: &mut Criterion) {
                 let page = list(
                     storage.clone(),
                     &scope,
-                    &EmptyParent,
+                    &EmptyParentBodies,
                     QueryRef::TributeByOwner(OWNER),
                     IdPageRequest {
                         after: None,

@@ -193,6 +193,10 @@ impl World {
             .unwrap()
     }
 
+    fn mine_gratis(&mut self, request: api::MineGratisRequest) -> Result<U256, PrecompileError> {
+        self.enter(|storage, scope, parent| api::mine_gratis(&storage, scope, parent, request))
+    }
+
     fn pow_nonce(&mut self, nod_id: WwdEntityId) -> u64 {
         let owner = self.enter(|storage, scope, parent| {
             nod_api::get_item(&storage, scope, parent, nod_id)
@@ -601,18 +605,11 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
     world.settle(nod_id, input.owner, &proof).unwrap();
     let nonce = world.pow_nonce(nod_id);
     let minted = world
-        .enter(|storage, scope, parent| {
-            api::mine_gratis(
-                &storage,
-                scope,
-                parent,
-                api::MineGratisRequest {
-                    caller: input.owner,
-                    nod_id,
-                    nonce,
-                    auth: mine_auth(input.owner, input.gratis_load_minor),
-                },
-            )
+        .mine_gratis(api::MineGratisRequest {
+            caller: input.owner,
+            nod_id,
+            nonce,
+            auth: mine_auth(input.owner, input.gratis_load_minor),
         })
         .unwrap();
     assert_eq!(minted, input.gratis_load_minor);
@@ -671,18 +668,11 @@ fn a_nod_qualifying_after_issuance_still_mines() {
     world.settle(nod_id, input.owner, &proof).unwrap();
     let nonce = world.pow_nonce(nod_id);
     let minted = world
-        .enter(|storage, scope, parent| {
-            api::mine_gratis(
-                &storage,
-                scope,
-                parent,
-                api::MineGratisRequest {
-                    caller: input.owner,
-                    nod_id,
-                    nonce,
-                    auth: mine_auth(input.owner, input.gratis_load_minor),
-                },
-            )
+        .mine_gratis(api::MineGratisRequest {
+            caller: input.owner,
+            nod_id,
+            nonce,
+            auth: mine_auth(input.owner, input.gratis_load_minor),
         })
         .unwrap();
     assert_eq!(minted, input.gratis_load_minor);
@@ -1362,18 +1352,11 @@ fn a_called_nod_still_mines_at_the_settlement_deadline() {
     world.settle(nod_id, input.owner, &proof).unwrap();
     let nonce = world.pow_nonce(nod_id);
     let minted = world
-        .enter(|storage, scope, parent| {
-            api::mine_gratis(
-                &storage,
-                scope,
-                parent,
-                api::MineGratisRequest {
-                    caller: input.owner,
-                    nod_id,
-                    nonce,
-                    auth: mine_auth(input.owner, input.gratis_load_minor),
-                },
-            )
+        .mine_gratis(api::MineGratisRequest {
+            caller: input.owner,
+            nod_id,
+            nonce,
+            auth: mine_auth(input.owner, input.gratis_load_minor),
         })
         .unwrap();
     assert_eq!(minted, input.gratis_load_minor);
@@ -1520,18 +1503,11 @@ fn settlement_preserves_entitlement_and_failed_mining_can_retry_after_deadline()
         });
     }
     let minted = world
-        .enter(|storage, scope, parent| {
-            api::mine_gratis(
-                &storage,
-                scope,
-                parent,
-                api::MineGratisRequest {
-                    caller: input.owner,
-                    nod_id,
-                    nonce,
-                    auth: mine_auth(input.owner, input.gratis_load_minor),
-                },
-            )
+        .mine_gratis(api::MineGratisRequest {
+            caller: input.owner,
+            nod_id,
+            nonce,
+            auth: mine_auth(input.owner, input.gratis_load_minor),
         })
         .unwrap();
     assert_eq!(minted, input.gratis_load_minor);
@@ -1641,18 +1617,11 @@ fn settlement_leaves_fidelity_alone_and_mining_records_it() {
 
     let nonce = world.pow_nonce(nod_id);
     world
-        .enter(|storage, scope, parent| {
-            api::mine_gratis(
-                &storage,
-                scope,
-                parent,
-                api::MineGratisRequest {
-                    caller: input.owner,
-                    nod_id,
-                    nonce,
-                    auth: mine_auth(input.owner, input.gratis_load_minor),
-                },
-            )
+        .mine_gratis(api::MineGratisRequest {
+            caller: input.owner,
+            nod_id,
+            nonce,
+            auth: mine_auth(input.owner, input.gratis_load_minor),
         })
         .unwrap();
     assert_ne!(fidelity(&world), before, "the mint records the acquisition");
@@ -1672,18 +1641,11 @@ fn fidelity_persistence_failure_preserves_paid_entitlement_and_mint_nonce() {
     world
         .provider
         .fail_mutation_at_address(outbe_primitives::addresses::FIDELITY_ADDRESS);
-    let result = world.enter(|storage, scope, parent| {
-        api::mine_gratis(
-            &storage,
-            scope,
-            parent,
-            api::MineGratisRequest {
-                caller: input.owner,
-                nod_id,
-                nonce,
-                auth: mine_auth(input.owner, input.gratis_load_minor),
-            },
-        )
+    let result = world.mine_gratis(api::MineGratisRequest {
+        caller: input.owner,
+        nod_id,
+        nonce,
+        auth: mine_auth(input.owner, input.gratis_load_minor),
     });
     assert!(result.is_err());
     world.provider.clear_mutation_failure();

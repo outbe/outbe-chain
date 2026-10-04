@@ -301,27 +301,24 @@ fn forfeited_event_loads(provider: &HashMapStorageProvider) -> U256 {
 
 // --- Sealed call terms -----------------------------------------------------
 
-/// Rewrites the terms a bucket sealed at issuance, the way a retuned constant
-/// would have if later checks still read the constants. Widens the currency's
-/// high-water mark alongside, exactly as `seal_bucket_call_terms` does.
-fn reterm(
-    storage: &StorageHandle<'_>,
-    bucket_key: B256,
-    iso: u16,
+struct SealedCallTerms {
     window_days: u32,
     threshold_days: u32,
     notice_days: u32,
-) {
+}
+
+/// Rewrites sealed terms and widens the currency high-water mark as at issuance.
+fn reterm(storage: &StorageHandle<'_>, bucket_key: B256, iso: u16, terms: SealedCallTerms) {
     let nod = NodContract::new(storage.clone());
-    let window = window_days * SECS_PER_DAY;
+    let window = terms.window_days * SECS_PER_DAY;
     nod.callable_bucket_call_window
         .write(&bucket_key, window)
         .unwrap();
     nod.callable_bucket_call_threshold
-        .write(&bucket_key, threshold_days * SECS_PER_DAY)
+        .write(&bucket_key, terms.threshold_days * SECS_PER_DAY)
         .unwrap();
     nod.callable_bucket_call_notice_period
-        .write(&bucket_key, notice_days * SECS_PER_DAY)
+        .write(&bucket_key, terms.notice_days * SECS_PER_DAY)
         .unwrap();
     if window > nod.max_call_window.read(&iso).unwrap() {
         nod.max_call_window.write(&iso, window).unwrap();
@@ -487,7 +484,16 @@ fn the_scan_follows_the_terms_sealed_on_the_bucket_not_the_constants() {
             "the constant's 21-of-28 threshold is unmet"
         );
 
-        reterm(storage, item.bucket_key, ISO, 3, 3, 1);
+        reterm(
+            storage,
+            item.bucket_key,
+            ISO,
+            SealedCallTerms {
+                window_days: 3,
+                threshold_days: 3,
+                notice_days: 1,
+            },
+        );
         assert_eq!(scan(storage, scope, parent, at), 1);
         assert_eq!(called_at(storage, item.bucket_key), at);
 
@@ -518,7 +524,16 @@ fn a_window_wider_than_the_constant_is_collected_in_full() {
         fill_days(storage, last_closed_day(at), WIDE_DAYS, above_call());
 
         // 35 of the 40 days must breach, which no 28-day window can supply.
-        reterm(storage, item.bucket_key, ISO, WIDE_DAYS, 35, 7);
+        reterm(
+            storage,
+            item.bucket_key,
+            ISO,
+            SealedCallTerms {
+                window_days: WIDE_DAYS,
+                threshold_days: 35,
+                notice_days: 7,
+            },
+        );
         assert_eq!(scan(storage, scope, parent, at), 1);
         assert_eq!(called_at(storage, item.bucket_key), at);
     });

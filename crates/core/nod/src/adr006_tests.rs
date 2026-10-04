@@ -459,21 +459,38 @@ fn seed_bucket(
     owner: Address,
     iso: u16,
 ) -> WwdEntityId {
-    seed_bucket_issued(storage, scope, parent, owner, iso, item(owner).issued_at)
+    seed_bucket_issued(
+        storage,
+        scope,
+        parent,
+        BucketIssuance {
+            owner,
+            reference_currency: iso,
+            issued_at: item(owner).issued_at,
+        },
+    )
+}
+
+struct BucketIssuance {
+    owner: Address,
+    reference_currency: u16,
+    issued_at: u64,
 }
 
 fn seed_bucket_issued(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &NodRepositoryReader,
-    owner: Address,
-    iso: u16,
-    issued_at: u64,
+    issuance: BucketIssuance,
 ) -> WwdEntityId {
-    let mut body = item(owner);
-    body.reference_currency = iso;
-    body.issued_at = issued_at;
-    body.bucket_key = NodContract::bucket_key(body.worldwide_day, body.floor_price_minor, iso);
+    let mut body = item(issuance.owner);
+    body.reference_currency = issuance.reference_currency;
+    body.issued_at = issuance.issued_at;
+    body.bucket_key = NodContract::bucket_key(
+        body.worldwide_day,
+        body.floor_price_minor,
+        issuance.reference_currency,
+    );
     api::add_nod(storage, scope, parent, &body, U256::from(5)).unwrap();
     WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key)
 }
@@ -665,9 +682,11 @@ fn the_issue_day_qualifies_only_for_a_nod_issued_at_midnight() {
                 &storage,
                 &scope,
                 &parent,
-                Address::repeat_byte(0x66),
-                978,
-                issued_at,
+                BucketIssuance {
+                    owner: Address::repeat_byte(0x66),
+                    reference_currency: 978,
+                    issued_at,
+                },
             );
             assert_eq!(
                 is_qualified(&storage, &scope, &parent, bucket_id),
@@ -706,9 +725,11 @@ fn a_delayed_issuance_does_not_qualify_on_pre_issuance_days() {
             &storage,
             &scope,
             &parent,
-            Address::repeat_byte(0x66),
-            978,
-            issued_at,
+            BucketIssuance {
+                owner: Address::repeat_byte(0x66),
+                reference_currency: 978,
+                issued_at,
+            },
         );
         assert!(!is_qualified(&storage, &scope, &parent, bucket_id));
     });
@@ -737,9 +758,11 @@ fn a_bucket_qualifies_on_its_first_full_day_after_skipping_earlier_closes() {
             &storage,
             &scope,
             &parent,
-            Address::repeat_byte(0x66),
-            978,
-            issued_at,
+            BucketIssuance {
+                owner: Address::repeat_byte(0x66),
+                reference_currency: 978,
+                issued_at,
+            },
         );
         assert!(!is_qualified(&storage, &scope, &parent, bucket_id));
 
