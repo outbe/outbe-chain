@@ -297,7 +297,7 @@ where
                 EpochLoopAction::RestartEpoch => continue 'epoch_loop,
                 EpochLoopAction::ReplaceSigner => {
                     self.channels.replacement_epoch_subchannels = Some(
-                    outbe_consensus::epoch_subchannels::reacquire_epoch_subchannels_with_policy(
+                    outbe_consensus::epoch_subchannels::reacquire_epoch_subchannels(
                         self.state.current_epoch,
                         &ctx,
                         outbe_consensus::epoch_subchannels::SubchannelRetryPolicy {
