@@ -2289,3 +2289,208 @@ fn hour_first_block_is_recorded_once_per_hour() {
         assert_eq!(oracle.hour_first_block.read(&(day + 3_600)).unwrap(), 901);
     });
 }
+
+// -- D02/D03 trailing-window contract: one snapshot for both legs, hourly
+//    rollover of the authorization identity, immutability after cutoff, and
+//    rejection of a snapshot id that names a different pricing policy. --------
+
+#[test]
+fn settlement_fx_rates_read_both_legs_from_the_one_required_snapshot() {
+    let day = ATOMIC_DAY_START;
+    let hour = 3_600;
+    with_storage_at(day + 10 * hour + 37 * 60, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let usd = AddressPair::new_coen_to(840);
+        let eur = AddressPair::new_coen_to(978);
+        oracle.register_pair(usd).unwrap();
+        oracle.register_pair(eur).unwrap();
+        for k in 2..10 {
+            oracle
+                .write_snapshot(
+                    day + k * hour + 60,
+                    &[
+                        (usd, coen_iso(2), coen_iso(1)),
+                        (eur, coen_iso(3), coen_iso(1)),
+                    ],
+                )
+                .unwrap();
+        }
+
+        let fx = crate::api::settlement_fx_rates(storage.clone(), 978, 840)
+            .unwrap()
+            .expect("both legs are finalized for [02:00, 10:00)");
+        let required = default_snapshot_at(day + 10 * hour + 37 * 60);
+        assert_eq!(fx.snapshot, required);
+        assert_eq!(fx.snapshot.start(), day + 2 * hour);
+        assert_eq!(fx.snapshot.cutoff(), day + 10 * hour);
+        assert_eq!(fx.issuance_currency_vwap_minor, coen_iso(3));
+        assert_eq!(fx.reference_currency_vwap_minor, coen_iso(2));
+
+        // A leg without a registered pair yields no rates at all, never a
+        // one-sided or fallback quote.
+        assert_eq!(
+            crate::api::settlement_fx_rates(storage.clone(), 826, 840).unwrap(),
+            None
+        );
+    });
+}
+
+#[test]
+fn the_required_snapshot_identity_rolls_over_at_the_whole_hour_even_when_prices_are_equal() {
+    let day = ATOMIC_DAY_START;
+    let hour = 3_600;
+    let seed = |storage: &outbe_primitives::storage::StorageHandle<'_>| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let usd = AddressPair::new_coen_to(840);
+        let eur = AddressPair::new_coen_to(978);
+        oracle.register_pair(usd).unwrap();
+        oracle.register_pair(eur).unwrap();
+        // Flat prices through the whole day: the numbers never move.
+        for k in 0..12 {
+            oracle
+                .write_snapshot(
+                    day + k * hour + 60,
+                    &[
+                        (usd, coen_iso(2), coen_iso(1)),
+                        (eur, coen_iso(3), coen_iso(1)),
+                    ],
+                )
+                .unwrap();
+        }
+    };
+
+    let mut before = None;
+    with_storage_at(day + 10 * hour + 59 * 60 + 59, |storage| {
+        seed(&storage);
+        let fx = crate::api::settlement_fx_rates(storage.clone(), 978, 840)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fx.snapshot.cutoff(), day + 10 * hour);
+        before = Some(fx);
+    });
+    with_storage_at(day + 11 * hour, |storage| {
+        seed(&storage);
+        let fx = crate::api::settlement_fx_rates(storage.clone(), 978, 840)
+            .unwrap()
+            .unwrap();
+        let before = before.unwrap();
+        // Same numeric prices, different required context: an authorization
+        // carrying the 10:00 id is stale at 11:00:00 exactly.
+        assert_eq!(
+            fx.issuance_currency_vwap_minor,
+            before.issuance_currency_vwap_minor
+        );
+        assert_eq!(
+            fx.reference_currency_vwap_minor,
+            before.reference_currency_vwap_minor
+        );
+        assert_eq!(fx.snapshot.cutoff(), day + 11 * hour);
+        assert_eq!(fx.snapshot.start(), day + 3 * hour);
+        assert_ne!(fx.snapshot.to_u256(), before.snapshot.to_u256());
+    });
+}
+
+#[test]
+fn a_finalized_window_value_is_immutable_after_its_cutoff() {
+    let day = ATOMIC_DAY_START;
+    let hour = 3_600;
+    let usd = AddressPair::new_coen_to(840);
+    let snapshot = default_snapshot_at(day + 10 * hour + 5 * 60);
+
+    let mut first = None;
+    with_storage_at(day + 10 * hour + 5 * 60, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        oracle.register_pair(usd).unwrap();
+        oracle
+            .write_snapshot(day + 3 * hour, &[(usd, coen_iso(1), coen_iso(1))])
+            .unwrap();
+        oracle
+            .write_snapshot(
+                day + 9 * hour + 59 * 60 + 59,
+                &[(usd, coen_iso(3), coen_iso(1))],
+            )
+            .unwrap();
+        // An observation stamped exactly at the cutoff belongs to the next window.
+        oracle
+            .write_snapshot(day + 10 * hour, &[(usd, coen_iso(9), coen_iso(100))])
+            .unwrap();
+        first = oracle.finalized_window_vwap(usd, snapshot).unwrap();
+        assert_eq!(first, Some(coen_iso(2)));
+    });
+
+    with_storage_at(day + 20 * hour, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        oracle.register_pair(usd).unwrap();
+        oracle
+            .write_snapshot(day + 3 * hour, &[(usd, coen_iso(1), coen_iso(1))])
+            .unwrap();
+        oracle
+            .write_snapshot(
+                day + 9 * hour + 59 * 60 + 59,
+                &[(usd, coen_iso(3), coen_iso(1))],
+            )
+            .unwrap();
+        oracle
+            .write_snapshot(day + 10 * hour, &[(usd, coen_iso(9), coen_iso(100))])
+            .unwrap();
+        // Ten more hours of very different prices after the cutoff.
+        for k in 10..20 {
+            oracle
+                .write_snapshot(
+                    day + k * hour + 30 * 60,
+                    &[(usd, coen_iso(50), coen_iso(100))],
+                )
+                .unwrap();
+        }
+        assert_eq!(oracle.finalized_window_vwap(usd, snapshot).unwrap(), first);
+    });
+}
+
+#[test]
+fn an_authorization_naming_another_pricing_policy_never_matches_the_required_snapshot() {
+    let day = ATOMIC_DAY_START;
+    let hour = 3_600;
+    with_storage_at(day + 10 * hour + 5 * 60, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let usd = AddressPair::new_coen_to(840);
+        oracle.register_pair(usd).unwrap();
+        for k in 2..10 {
+            oracle
+                .write_snapshot(day + k * hour + 60, &[(usd, coen_iso(2), coen_iso(1))])
+                .unwrap();
+        }
+        // The required snapshot is derived from block time and the active
+        // policy only; this is the identity every direct settlement compares
+        // its authorization against.
+        let required = crate::api::current_vwap_snapshot(storage.clone()).unwrap();
+        assert_eq!(required, default_snapshot_at(day + 10 * hour + 5 * 60));
+        assert_eq!(required.policy(), crate::window::active_vwap_policy());
+
+        // Same cutoff, well-formed ids, but they name a policy that is not the
+        // chain's active one: a different version and a different lookback.
+        // They can never equal the required identity, so a direct settlement
+        // authorized under them is rejected by the factories' snapshot check.
+        // The reader itself keeps pricing them: finalized history is readable
+        // and unchanged across a policy change (see
+        // a_policy_change_leaves_an_old_snapshot_readable_and_unchanged).
+        let other_version = crate::window::VwapPolicy {
+            policy_version: 2,
+            ..crate::window::DEFAULT_VWAP_POLICY
+        };
+        let other_lookback = crate::window::VwapPolicy {
+            vwap_lookback_seconds: 4 * hour,
+            ..crate::window::DEFAULT_VWAP_POLICY
+        };
+        for foreign in [other_version, other_lookback] {
+            let id =
+                crate::window::get_vwap_snapshot_id(day + 10 * hour + 5 * 60, &foreign).unwrap();
+            assert_eq!(id.cutoff(), required.cutoff());
+            assert_ne!(id, required, "{foreign:?}");
+            assert_ne!(id.to_u256(), required.to_u256(), "{foreign:?}");
+            assert_eq!(
+                crate::window::VwapSnapshotId::from_u256(id.to_u256()).unwrap(),
+                id
+            );
+        }
+    });
+}
