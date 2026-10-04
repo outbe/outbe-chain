@@ -396,6 +396,16 @@ fn recovery_rejects_a_different_owner() {
     });
 }
 
+/// Schema and payout accept one zero-nominal leaf when the certified total
+/// stays positive: this fixture installs that leaf directly and the remainder
+/// lands on it.
+///
+/// That leaf is not publicly reachable. `validate_amount_run` rejects a zero
+/// nominal, and a contributor binding with a zero nominal is an invalid
+/// finalized artifact. `output_finalize` only copies a nominal that already
+/// passed that gate. The payout artifact writer does not apply a second
+/// filter; it stores the nominal it is given. The all-zero generation is a
+/// different gate: count above zero with a zero total is malformed metadata.
 #[test]
 fn zero_nominal_leaf_zero_receives_the_remainder() {
     with_factory(|s| {
