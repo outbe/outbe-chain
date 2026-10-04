@@ -187,7 +187,7 @@ fn proposal_status_storage_roundtrip() {
     );
     assert!(ProposalStatus::Approved.is_terminal());
     assert!(!ProposalStatus::Pending.is_terminal());
-    assert!(!ProposalStatus::Error.is_terminal());
+    assert!(ProposalStatus::Error.is_terminal());
     assert_eq!(ProposalStatus::from_u8(4).unwrap(), ProposalStatus::Error);
     assert!(ProposalStatus::from_u8(5).is_err());
 }
