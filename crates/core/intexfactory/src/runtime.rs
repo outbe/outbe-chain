@@ -293,8 +293,6 @@ pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
 /// on the six-decimal scale independently of native COEN denomination.
 const PRODUCT_DECIMALS: u32 = 2 * PROTOCOL_AMOUNT_DECIMALS as u32;
 
-
-
 /// Disjoint unit counts of a series, for a reader that must not redo the arithmetic.
 pub(crate) fn series_unit_counts(
     storage: &StorageHandle<'_>,

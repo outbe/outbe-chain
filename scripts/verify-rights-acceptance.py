@@ -51,7 +51,7 @@ def validate_manifest(manifest):
     if not cases or len(keys) != len(set(keys)):
         raise ValueError("Rust cases must be nonempty and unique by package/binary/test")
     for case in cases + manifest["forge_cases"]:
-        if not case["acceptance"] or EXCLUDED.intersection(case["acceptance"]):
+        if not (case.get("acceptance") or case.get("requirements")) or EXCLUDED.intersection(case.get("acceptance", [])):
             raise ValueError(f"Missing or excluded acceptance IDs: {case}")
     for case in cases:
         for field in ("package", "binary", "test"):
@@ -89,7 +89,7 @@ def rust(manifest, output, report, refresh):
     available = {}
     for suite in inventory["rust-suites"].values():
         for name, detail in suite["testcases"].items():
-            key = (suite["package-name"], suite["binary-name"], name)
+            key = (suite["package-name"], suite["binary-id"], name)
             available[key] = detail
     for case in cases:
         key = (case["package"], case["binary"], case["test"])
@@ -97,7 +97,7 @@ def rust(manifest, output, report, refresh):
             raise RuntimeError(f"Mapped case missing or ignored: {key}")
     report["rust_cases_found"] = len(cases)
     selection = " | ".join(
-        f'(package(={c["package"]}) & binary(={c["binary"]}) & test(={c["test"]}))'
+        f'(binary_id(={c["binary"]}) & test(={c["test"]}))'
         for c in cases
     )
     command(["cargo", "nextest", "run", "--locked", *package_args, *feature_args,

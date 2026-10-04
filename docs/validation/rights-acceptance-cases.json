@@ -130,15 +130,6 @@
     },
     {
       "acceptance": [
-        "A05",
-        "A25"
-      ],
-      "package": "outbe-evm",
-      "binary": "intex_transfer_settlement",
-      "test": "transferred_unsettled_intex_units_settle_to_their_new_owner_and_never_to_the_sender"
-    },
-    {
-      "acceptance": [
         "A38"
       ],
       "package": "outbe-evm",
@@ -187,39 +178,21 @@
     },
     {
       "acceptance": [
+        "A03"
+      ],
+      "package": "outbe-evm",
+      "binary": "outbe-evm::intex_gem_erc20_settlement",
+      "test": "gem_deadline::a_called_gem_settles_at_its_deadline_and_is_refused_a_second_later"
+    },
+    {
+      "acceptance": [
         "A05",
-        "A24"
+        "A24",
+        "A25"
       ],
       "package": "outbe-evm",
       "binary": "outbe-evm::intex_transfer_settlement",
       "test": "transferred_unsettled_intex_units_settle_to_their_new_owner_and_never_to_the_sender"
-    },
-    {
-      "acceptance": [
-        "A18",
-        "A36"
-      ],
-      "package": "outbe-gem",
-      "binary": "capacity_conservation",
-      "test": "a_paid_then_mined_gem_returns_no_capacity_while_unpaid_siblings_forfeit"
-    },
-    {
-      "acceptance": [
-        "A18",
-        "A36"
-      ],
-      "package": "outbe-gem",
-      "binary": "capacity_conservation",
-      "test": "every_included_gem_subtype_returns_its_full_load_once_after_forfeiture"
-    },
-    {
-      "acceptance": [
-        "A18",
-        "A36"
-      ],
-      "package": "outbe-gem",
-      "binary": "capacity_conservation",
-      "test": "failures_before_and_after_every_expiry_mutation_conserve_load_and_retry_once"
     },
     {
       "acceptance": [
@@ -236,6 +209,14 @@
       "package": "outbe-gem",
       "binary": "outbe-gem",
       "test": "tests::a_called_bucket_wider_than_the_budget_burns_over_several_blocks"
+    },
+    {
+      "acceptance": [
+        "A02"
+      ],
+      "package": "outbe-gem",
+      "binary": "outbe-gem",
+      "test": "tests::a_finished_sweep_closes_itself_and_idle_blocks_do_nothing"
     },
     {
       "acceptance": [
@@ -271,12 +252,28 @@
     },
     {
       "acceptance": [
+        "A02"
+      ],
+      "package": "outbe-gem",
+      "binary": "outbe-gem",
+      "test": "tests::a_newer_day_pushes_out_the_waiting_call_day_and_names_it"
+    },
+    {
+      "acceptance": [
         "A03",
         "A18"
       ],
       "package": "outbe-gem",
       "binary": "outbe-gem",
       "test": "tests::a_settled_gem_is_never_forfeited"
+    },
+    {
+      "acceptance": [
+        "A02"
+      ],
+      "package": "outbe-gem",
+      "binary": "outbe-gem",
+      "test": "tests::a_trigger_during_a_running_call_sweep_queues_its_day"
     },
     {
       "acceptance": [
@@ -344,11 +341,38 @@
     },
     {
       "acceptance": [
+        "A18",
+        "A36"
+      ],
+      "package": "outbe-gem",
+      "binary": "outbe-gem::capacity_conservation",
+      "test": "a_paid_then_mined_gem_returns_no_capacity_while_unpaid_siblings_forfeit"
+    },
+    {
+      "acceptance": [
+        "A18",
+        "A36"
+      ],
+      "package": "outbe-gem",
+      "binary": "outbe-gem::capacity_conservation",
+      "test": "every_included_gem_subtype_returns_its_full_load_once_after_forfeiture"
+    },
+    {
+      "acceptance": [
+        "A18",
+        "A36"
+      ],
+      "package": "outbe-gem",
+      "binary": "outbe-gem::capacity_conservation",
+      "test": "failures_before_and_after_every_expiry_mutation_conserve_load_and_retry_once"
+    },
+    {
+      "acceptance": [
         "A01",
         "A02"
       ],
       "package": "outbe-gem",
-      "binary": "qualified_view",
+      "binary": "outbe-gem::qualified_view",
       "test": "qualified_gem_projection_preserves_called_deadline_and_settled_states"
     },
     {
@@ -357,7 +381,7 @@
         "A02"
       ],
       "package": "outbe-gem",
-      "binary": "qualified_view",
+      "binary": "outbe-gem::qualified_view",
       "test": "qualified_gem_view_uses_the_permanent_full_day_reference_predicate"
     },
     {
@@ -482,7 +506,6 @@
     },
     {
       "acceptance": [
-        "A03",
         "A17"
       ],
       "package": "outbe-gemfactory",
@@ -523,7 +546,6 @@
     },
     {
       "acceptance": [
-        "A03",
         "A17"
       ],
       "package": "outbe-gemfactory",
@@ -867,7 +889,7 @@
         "A02"
       ],
       "package": "outbe-intex",
-      "binary": "qualified_view",
+      "binary": "outbe-intex::qualified_view",
       "test": "qualified_intex_projection_preserves_called_deadline_and_internal_issued_routing"
     },
     {
@@ -876,7 +898,7 @@
         "A02"
       ],
       "package": "outbe-intex",
-      "binary": "qualified_view",
+      "binary": "outbe-intex::qualified_view",
       "test": "qualified_intex_view_uses_the_permanent_full_day_reference_predicate"
     },
     {
@@ -1424,96 +1446,6 @@
     },
     {
       "acceptance": [
-        "A26",
-        "A36",
-        "A42"
-      ],
-      "package": "outbe-lysis",
-      "binary": "activation_receipt_vectors",
-      "test": "nod_issuance_instant_rejects_zero"
-    },
-    {
-      "acceptance": [
-        "A26",
-        "A36",
-        "A42"
-      ],
-      "package": "outbe-lysis",
-      "binary": "activation_receipt_vectors",
-      "test": "nod_issued_at_is_the_freeze_instant_and_the_job_clock_stays_put"
-    },
-    {
-      "acceptance": [
-        "A26",
-        "A36",
-        "A42"
-      ],
-      "package": "outbe-lysis",
-      "binary": "activation_receipt_vectors",
-      "test": "receipt_verifier_closes_green_and_red_conservation_equations"
-    },
-    {
-      "acceptance": [
-        "A26",
-        "A36",
-        "A42"
-      ],
-      "package": "outbe-lysis",
-      "binary": "activation_receipt_vectors",
-      "test": "receipt_verifier_rejects_a_budget_effect_with_a_future_nonce_or_anchor"
-    },
-    {
-      "acceptance": [
-        "A26",
-        "A36",
-        "A42"
-      ],
-      "package": "outbe-lysis",
-      "binary": "activation_receipt_vectors",
-      "test": "receipt_verifier_rejects_owner_projection_and_request_mutations"
-    },
-    {
-      "acceptance": [
-        "A26",
-        "A36",
-        "A42"
-      ],
-      "package": "outbe-lysis",
-      "binary": "activation_receipt_vectors",
-      "test": "structural_verifier_produces_one_closed_four_owner_plan"
-    },
-    {
-      "acceptance": [
-        "A26",
-        "A36",
-        "A42"
-      ],
-      "package": "outbe-lysis",
-      "binary": "activation_receipt_vectors",
-      "test": "structural_verifier_rejects_catalog_completion_and_semantic_event_mutations"
-    },
-    {
-      "acceptance": [
-        "A26",
-        "A36",
-        "A42"
-      ],
-      "package": "outbe-lysis",
-      "binary": "activation_receipt_vectors",
-      "test": "structural_verifier_rejects_nonzero_attempt_or_pending_nonce"
-    },
-    {
-      "acceptance": [
-        "A26",
-        "A36",
-        "A42"
-      ],
-      "package": "outbe-lysis",
-      "binary": "activation_receipt_vectors",
-      "test": "structural_verifier_rejects_result_and_completion_rebinding"
-    },
-    {
-      "acceptance": [
         "A42"
       ],
       "package": "outbe-lysis",
@@ -1527,6 +1459,96 @@
       "package": "outbe-lysis",
       "binary": "outbe-lysis",
       "test": "tests::zero_or_over_limit_gratis_load_is_a_hard_failure_without_consumption"
+    },
+    {
+      "acceptance": [
+        "A26",
+        "A36",
+        "A42"
+      ],
+      "package": "outbe-lysis",
+      "binary": "outbe-lysis::activation_receipt_vectors",
+      "test": "nod_issuance_instant_rejects_zero"
+    },
+    {
+      "acceptance": [
+        "A26",
+        "A36",
+        "A42"
+      ],
+      "package": "outbe-lysis",
+      "binary": "outbe-lysis::activation_receipt_vectors",
+      "test": "nod_issued_at_is_the_freeze_instant_and_the_job_clock_stays_put"
+    },
+    {
+      "acceptance": [
+        "A26",
+        "A36",
+        "A42"
+      ],
+      "package": "outbe-lysis",
+      "binary": "outbe-lysis::activation_receipt_vectors",
+      "test": "receipt_verifier_closes_green_and_red_conservation_equations"
+    },
+    {
+      "acceptance": [
+        "A26",
+        "A36",
+        "A42"
+      ],
+      "package": "outbe-lysis",
+      "binary": "outbe-lysis::activation_receipt_vectors",
+      "test": "receipt_verifier_rejects_a_budget_effect_with_a_future_nonce_or_anchor"
+    },
+    {
+      "acceptance": [
+        "A26",
+        "A36",
+        "A42"
+      ],
+      "package": "outbe-lysis",
+      "binary": "outbe-lysis::activation_receipt_vectors",
+      "test": "receipt_verifier_rejects_owner_projection_and_request_mutations"
+    },
+    {
+      "acceptance": [
+        "A26",
+        "A36",
+        "A42"
+      ],
+      "package": "outbe-lysis",
+      "binary": "outbe-lysis::activation_receipt_vectors",
+      "test": "structural_verifier_produces_one_closed_four_owner_plan"
+    },
+    {
+      "acceptance": [
+        "A26",
+        "A36",
+        "A42"
+      ],
+      "package": "outbe-lysis",
+      "binary": "outbe-lysis::activation_receipt_vectors",
+      "test": "structural_verifier_rejects_catalog_completion_and_semantic_event_mutations"
+    },
+    {
+      "acceptance": [
+        "A26",
+        "A36",
+        "A42"
+      ],
+      "package": "outbe-lysis",
+      "binary": "outbe-lysis::activation_receipt_vectors",
+      "test": "structural_verifier_rejects_nonzero_attempt_or_pending_nonce"
+    },
+    {
+      "acceptance": [
+        "A26",
+        "A36",
+        "A42"
+      ],
+      "package": "outbe-lysis",
+      "binary": "outbe-lysis::activation_receipt_vectors",
+      "test": "structural_verifier_rejects_result_and_completion_rebinding"
     },
     {
       "acceptance": [
@@ -1835,6 +1857,14 @@
     },
     {
       "acceptance": [
+        "A34"
+      ],
+      "package": "outbe-nodfactory",
+      "binary": "outbe-nodfactory",
+      "test": "tests::costs::settlement_floors_the_exact_obligation_after_asset_and_currency_conversion"
+    },
+    {
+      "acceptance": [
         "A41"
       ],
       "package": "outbe-nodfactory",
@@ -1848,6 +1878,14 @@
       "package": "outbe-nodfactory",
       "binary": "outbe-nodfactory",
       "test": "tests::currency_snapshots::an_issuance_payment_must_name_the_snapshot_required_at_execution"
+    },
+    {
+      "acceptance": [
+        "A34"
+      ],
+      "package": "outbe-nodfactory",
+      "binary": "outbe-nodfactory",
+      "test": "tests::currency_snapshots::issuance_erc20_admission_uses_the_quoted_converted_cost"
     },
     {
       "acceptance": [
@@ -1881,6 +1919,15 @@
       "package": "outbe-nodfactory",
       "binary": "outbe-nodfactory",
       "test": "tests::materialization::a_certified_nod_id_its_owner_does_not_give_is_rejected_before_any_write"
+    },
+    {
+      "acceptance": [
+        "A02",
+        "A42"
+      ],
+      "package": "outbe-nodfactory",
+      "binary": "outbe-nodfactory",
+      "test": "tests::materialization::a_later_block_materializes_the_certified_issuance_instant"
     },
     {
       "acceptance": [
@@ -1967,7 +2014,7 @@
         "A37"
       ],
       "package": "outbe-ocomp-protocol",
-      "binary": "typed_protocol",
+      "binary": "outbe-ocomp-protocol::typed_protocol",
       "test": "mutating_lysis_plus_desis_above_tribute_nominal_is_detected"
     },
     {
@@ -1975,7 +2022,7 @@
         "A37"
       ],
       "package": "outbe-ocomp-protocol",
-      "binary": "typed_protocol",
+      "binary": "outbe-ocomp-protocol::typed_protocol",
       "test": "wwd_allocation_ceiling_holds_at_equality_and_rejects_a_one_unit_mutation"
     },
     {
@@ -2087,7 +2134,7 @@
         "A32"
       ],
       "package": "outbe-rewards",
-      "binary": "genesis_before_first_wwd",
+      "binary": "outbe-rewards::genesis_before_first_wwd",
       "test": "a_genesis_gem_issued_after_creation_in_the_same_block_waits"
     },
     {
@@ -2095,7 +2142,7 @@
         "A32"
       ],
       "package": "outbe-rewards",
-      "binary": "genesis_before_first_wwd",
+      "binary": "outbe-rewards::genesis_before_first_wwd",
       "test": "a_genesis_gem_issued_after_the_first_worldwide_day_waits_for_a_closed_day"
     },
     {
@@ -2103,7 +2150,7 @@
         "A32"
       ],
       "package": "outbe-rewards",
-      "binary": "genesis_before_first_wwd",
+      "binary": "outbe-rewards::genesis_before_first_wwd",
       "test": "a_genesis_gem_issued_before_the_first_worldwide_day_is_qualified_immediately"
     },
     {
@@ -2182,116 +2229,116 @@
   ],
   "forge_cases": [
     {
-      "acceptance": [
-        "A39"
-      ],
       "contract": "AuctionSignatureTest",
       "file": "test/foundry/IntexAuction.signature.t.sol",
-      "test": "test_commitBid_revertsOnZeroHash"
+      "test": "test_commitBid_revertsOnZeroHash",
+      "requirements": [
+        "Q016"
+      ]
     },
     {
-      "acceptance": [
-        "A39"
-      ],
       "contract": "AuctionSignatureTest",
       "file": "test/foundry/IntexAuction.signature.t.sol",
-      "test": "test_eip712_goldenDigest"
+      "test": "test_eip712_goldenDigest",
+      "requirements": [
+        "Q016"
+      ]
     },
     {
-      "acceptance": [
-        "A39"
-      ],
       "contract": "AuctionSignatureTest",
       "file": "test/foundry/IntexAuction.signature.t.sol",
-      "test": "test_emit_BidCommitted"
+      "test": "test_emit_BidCommitted",
+      "requirements": [
+        "Q016"
+      ]
     },
     {
-      "acceptance": [
-        "A39"
-      ],
       "contract": "AuctionSignatureTest",
       "file": "test/foundry/IntexAuction.signature.t.sol",
-      "test": "test_emit_BidRevealed"
+      "test": "test_emit_BidRevealed",
+      "requirements": [
+        "Q016"
+      ]
     },
     {
-      "acceptance": [
-        "A39"
-      ],
       "contract": "AuctionSignatureTest",
       "file": "test/foundry/IntexAuction.signature.t.sol",
-      "test": "test_emit_CommitCancelled"
+      "test": "test_emit_CommitCancelled",
+      "requirements": [
+        "Q016"
+      ]
     },
     {
-      "acceptance": [
-        "A39"
-      ],
       "contract": "AuctionSignatureTest",
       "file": "test/foundry/IntexAuction.signature.t.sol",
-      "test": "test_legacyQuantityCommitCannotRevealWithUnits"
+      "test": "test_legacyQuantityCommitCannotRevealWithUnits",
+      "requirements": [
+        "Q016"
+      ]
     },
     {
-      "acceptance": [
-        "A39"
-      ],
       "contract": "AuctionSignatureTest",
       "file": "test/foundry/IntexAuction.signature.t.sol",
-      "test": "test_replay_revertsAcrossChains"
+      "test": "test_replay_revertsAcrossChains",
+      "requirements": [
+        "Q016"
+      ]
     },
     {
-      "acceptance": [
-        "A39"
-      ],
       "contract": "AuctionSignatureTest",
       "file": "test/foundry/IntexAuction.signature.t.sol",
-      "test": "test_replay_revertsAcrossInstances"
+      "test": "test_replay_revertsAcrossInstances",
+      "requirements": [
+        "Q016"
+      ]
     },
     {
-      "acceptance": [
-        "A39"
-      ],
       "contract": "AuctionSignatureTest",
       "file": "test/foundry/IntexAuction.signature.t.sol",
-      "test": "test_revealBid_revertsAfterChainidFlip"
+      "test": "test_revealBid_revertsAfterChainidFlip",
+      "requirements": [
+        "Q016"
+      ]
     },
     {
-      "acceptance": [
-        "A39"
-      ],
       "contract": "AuctionSignatureTest",
       "file": "test/foundry/IntexAuction.signature.t.sol",
-      "test": "test_revealBid_revertsOnAllZeroSignature"
+      "test": "test_revealBid_revertsOnAllZeroSignature",
+      "requirements": [
+        "Q016"
+      ]
     },
     {
-      "acceptance": [
-        "A39"
-      ],
       "contract": "AuctionSignatureTest",
       "file": "test/foundry/IntexAuction.signature.t.sol",
-      "test": "test_revealBid_revertsOnMalleableSignature"
+      "test": "test_revealBid_revertsOnMalleableSignature",
+      "requirements": [
+        "Q016"
+      ]
     },
     {
-      "acceptance": [
-        "A39"
-      ],
       "contract": "AuctionSignatureTest",
       "file": "test/foundry/IntexAuction.signature.t.sol",
-      "test": "test_revealBid_revertsOnWrongChain_paramMismatch"
+      "test": "test_revealBid_revertsOnWrongChain_paramMismatch",
+      "requirements": [
+        "Q016"
+      ]
     },
     {
-      "acceptance": [
-        "A39"
-      ],
       "contract": "AuctionSignatureTest",
       "file": "test/foundry/IntexAuction.signature.t.sol",
-      "test": "test_revealBid_revertsOnWrongLengthSignature"
+      "test": "test_revealBid_revertsOnWrongLengthSignature",
+      "requirements": [
+        "Q016"
+      ]
     },
     {
-      "acceptance": [
-        "A39"
-      ],
       "contract": "AuctionSignatureTest",
       "file": "test/foundry/IntexAuction.signature.t.sol",
-      "test": "test_units_matchesTypeScriptSignatureVector"
+      "test": "test_units_matchesTypeScriptSignatureVector",
+      "requirements": [
+        "Q016"
+      ]
     },
     {
       "acceptance": [
