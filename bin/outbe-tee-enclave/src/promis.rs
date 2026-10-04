@@ -333,4 +333,35 @@ mod tests {
             &base
         ));
     }
+
+    /// The vectors the wallet is tested against, computed outside both
+    /// implementations; `mcp/src/ledger/mac.test.ts` reads the same file.
+    #[test]
+    fn modify_mac_matches_the_shared_client_vectors() {
+        use crate::confidential::GRATIS;
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../../mcp/src/ledger/mac.vectors.json")).unwrap();
+        let vectors = fixture["vectors"].as_array().unwrap();
+        assert!(!vectors.is_empty());
+        for vector in vectors {
+            let field = |name: &str| vector[name].as_str().unwrap();
+            let domain = match field("ledger") {
+                "gratis" => &GRATIS,
+                "promis" => &PROMIS,
+                other => panic!("unknown ledger {other}"),
+            };
+            assert_eq!(domain.modify_tag, field("domain_tag").as_bytes());
+            let key: B256 = field("modify_key").parse().unwrap();
+            let account: Address = field("account").parse().unwrap();
+            let op_tag = u8::try_from(vector["op_tag"].as_u64().unwrap()).unwrap();
+            let amount: U256 = field("amount").parse().unwrap();
+            let op_nonce = vector["op_nonce"].as_u64().unwrap();
+            let chain_id: B256 = field("chain_id").parse().unwrap();
+            let expected: B256 = field("mac").parse().unwrap();
+            let mac = domain.modify_mac(&key.0, account, op_tag, amount, op_nonce, chain_id);
+            assert_eq!(B256::from(mac), expected, "{}", field("op"));
+            assert!(domain
+                .verify_modify_auth(&key.0, account, op_tag, amount, op_nonce, chain_id, &mac));
+        }
+    }
 }
