@@ -17,7 +17,7 @@ use crate::{
     schema::{BondSettlement, ProposalStatus, Vote},
 };
 
-use super::characterization::{PUBLIC_BONDED_REGISTRY, REJECTING_REGISTRY};
+use super::targets::{PUBLIC_BONDED_REGISTRY, REJECTING_REGISTRY};
 use super::{setup_default_validators, PROPOSER, VOTER_A};
 
 const OWNER: Address = Address::repeat_byte(0x99);
