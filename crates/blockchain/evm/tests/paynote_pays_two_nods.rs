@@ -22,6 +22,7 @@
 
 #[path = "common/nod_qualification.rs"]
 mod qualify_fixture;
+use outbe_compressed_entities::test_support::seed_compressed_entities_genesis;
 use qualify_fixture::qualify;
 
 use outbe_protocol::codec::field_to_b256;
@@ -42,8 +43,7 @@ use outbe_paynote::client::new_tree;
 use outbe_paynote::precompile::IPayNote;
 use outbe_paynote::test_support::{change_note, note, spend_proof, Note};
 use outbe_primitives::addresses::{
-    COMPRESSED_ENTITIES_ADDRESS, GRATIS_ADDRESS, NOD_FACTORY_ADDRESS, PAYNOTE_ADDRESS,
-    VAULT_ROUTER_ADDRESS,
+    GRATIS_ADDRESS, NOD_FACTORY_ADDRESS, PAYNOTE_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
 use outbe_primitives::chain::CHAIN_ID;
 use outbe_primitives::time::WorldwideDay;
@@ -200,23 +200,6 @@ fn seed_vault_router(storage: &StorageHandle<'_>) {
         .unwrap();
 }
 
-fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
-    storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4_u64))
-        .unwrap();
-    storage
-        .sstore(
-            COMPRESSED_ENTITIES_ADDRESS,
-            U256::from(1_u64),
-            U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(B256::ZERO)
-                    .unwrap()
-                    .as_slice(),
-            ),
-        )
-        .unwrap();
-}
-
 /// A chain with the vault registry seeded and two qualified, costed Nods
 /// already issued to `ALICE1` — everything the scenario needs before the first
 /// note exists.
@@ -251,7 +234,7 @@ fn fixture_with_cost(
     let block = BlockContext::new(1, BLOCK_TIMESTAMP, CHAIN_ID, ALICE1, vec![ALICE1]);
     let mut provider = DirectStorageProvider::new(&mut database, block);
     let nods = StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), scope.as_ref()).unwrap();
         seed_vault_router(&storage);
         DAYS.map(|day| {

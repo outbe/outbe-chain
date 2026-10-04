@@ -326,7 +326,7 @@ impl BenchmarkScenario for NodScenario {
             NodPath::Certified => Some(certified_fixture(count)?),
         };
         StorageHandle::enter(&mut provider, |storage| {
-            seed_compressed_entities_genesis(&storage)?;
+            seed_compressed_entities_genesis(&storage).map_err(|error| error.to_string())?;
             if let Some(fixture) = &certified {
                 seed_certified_world(&storage, fixture)?;
             }

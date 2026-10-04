@@ -17,6 +17,7 @@ serde.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
 alloy-primitives = { workspace = true, features = ["rand"] }
 mongodb.workspace = true
 revm.workspace = true

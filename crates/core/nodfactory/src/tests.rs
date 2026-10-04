@@ -1,3 +1,4 @@
+use outbe_compressed_entities::test_support::seed_compressed_entities_genesis;
 use std::sync::Arc;
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
@@ -12,7 +13,7 @@ use outbe_nod::{
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
-    addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS, NOD_FACTORY_ADDRESS},
+    addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS},
     error::PrecompileError,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
@@ -67,21 +68,8 @@ fn mine_auth(owner: Address, amount: U256) -> ModifyAuth {
     }
 }
 
-fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
-    storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-        .unwrap();
-    storage
-        .sstore(
-            COMPRESSED_ENTITIES_ADDRESS,
-            U256::from(1),
-            U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(B256::ZERO)
-                    .unwrap()
-                    .as_slice(),
-            ),
-        )
-        .unwrap();
+fn seed_production_nod_genesis(storage: &StorageHandle<'_>) {
+    seed_compressed_entities_genesis(storage).expect("CE genesis fixture");
     // These tests exercise the production call terms.
     NodContract::new(storage.clone())
         .config_profile
@@ -181,7 +169,7 @@ impl World {
             Bytes::from(IVaultRouter::depositCall::abi_encode_returns(&U256::ONE)),
         );
         StorageHandle::enter(&mut provider, |storage| {
-            seed_compressed_entities_genesis(&storage);
+            seed_production_nod_genesis(&storage);
             begin_block(storage, &scope).unwrap();
         });
         Self {

@@ -24,10 +24,10 @@ use fixtures::{
     cache_db_from_storage, dummy_pubkey, execution_ctx, execution_ctx_with_tee_bootstrap,
     metadata_with, numbered_test_address, persistent_test_tree, persistent_test_tree_with_marker,
     post_state_root, register_and_activate_with_ocomp_registration, sample_tee_bootstrap_payload,
-    sample_tee_bootstrap_payload_at, sample_tee_bootstrap_payload_for,
-    seed_compressed_entities_genesis, seed_cycle_tick_genesis, seed_previous_day_vwap,
-    seed_registered_active_validator, seed_test_committee_snapshot, seed_test_ocomp_profile,
-    signer_balance, state_with_active_proposer, state_with_active_proposer_and_funded_account,
+    sample_tee_bootstrap_payload_at, sample_tee_bootstrap_payload_for, seed_cycle_tick_genesis,
+    seed_previous_day_vwap, seed_registered_active_validator, seed_test_committee_snapshot,
+    seed_test_ocomp_profile, signer_balance, state_with_active_proposer,
+    state_with_active_proposer_and_funded_account,
     state_with_active_proposer_and_funded_account_fixture,
     state_with_active_proposer_without_ocomp, state_with_active_validators_seeded,
     state_with_active_validators_seeded_at_block,
@@ -38,6 +38,7 @@ use fixtures::{
     TEST_BLOCK_TIMESTAMP_BASE,
 };
 use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+use outbe_compressed_entities::test_support::seed_compressed_entities_genesis;
 use outbe_compressed_entities::{
     CandidateCacheLimits, CeMdbx, CeWorkConfig, CompressedTreeService, EnvironmentIdentity,
     ExactParentIdentity, ExecutionScope, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME,

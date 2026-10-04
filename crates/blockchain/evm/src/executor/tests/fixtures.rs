@@ -6,24 +6,6 @@ pub(super) const TEST_BLOCK_TIMESTAMP_BASE: u64 = 1_700_000_000;
 
 pub(super) const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
 
-pub(super) fn seed_compressed_entities_genesis(storage: StorageHandle<'_>) {
-    let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
-    storage
-        .sstore(
-            outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-            U256::ZERO,
-            U256::from(4),
-        )
-        .unwrap();
-    storage
-        .sstore(
-            outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-            U256::from(1),
-            U256::from_be_slice(root.as_slice()),
-        )
-        .unwrap();
-}
-
 fn seed_cycle_genesis(storage: StorageHandle<'_>) {
     let cycle = storage.contract::<outbe_cycle::schema::Cycle<'_>>();
     cycle
@@ -195,7 +177,7 @@ fn state_with_active_proposer_fixture(
     let proposer_key = dummy_pubkey(0xA2);
     let install = test_ocomp_fork_install(&chain_spec, &[(proposer, proposer_key)]);
     StorageHandle::enter(&mut seed_storage, |storage| {
-        seed_compressed_entities_genesis(storage.clone());
+        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         seed_cycle_genesis(storage.clone());
         seed_registered_active_validator_with_registration(
             storage.clone(),
@@ -282,7 +264,7 @@ pub(super) fn state_with_active_proposer_and_funded_account_fixture(
     let proposer_key = dummy_pubkey(0xA2);
     let install = test_ocomp_fork_install(&chain_spec, &[(proposer, proposer_key)]);
     StorageHandle::enter(&mut seed_storage, |storage| {
-        seed_compressed_entities_genesis(storage.clone());
+        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         seed_cycle_genesis(storage.clone());
         seed_registered_active_validator_with_registration(
             storage.clone(),
@@ -383,7 +365,7 @@ pub(super) fn state_with_active_validators_seeded_at_block_with_cycle_frames(
     let install = test_ocomp_fork_install(&chain_spec, validators);
     seed_storage.set_block_number(block_number);
     StorageHandle::enter(&mut seed_storage, |storage| {
-        seed_compressed_entities_genesis(storage.clone());
+        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         seed_cycle_genesis(storage.clone());
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();

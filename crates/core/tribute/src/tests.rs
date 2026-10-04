@@ -1,3 +1,4 @@
+use outbe_compressed_entities::test_support::seed_compressed_entities_genesis;
 use std::collections::BTreeSet;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
@@ -9,7 +10,7 @@ use outbe_compressed_entities::{
     ExecutionScope, PartitionRef, WwdEntityId,
 };
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
-use outbe_primitives::addresses::{COMPRESSED_ENTITIES_ADDRESS, TRIBUTE_ADDRESS};
+use outbe_primitives::addresses::TRIBUTE_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result as PrecompileResult};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -109,29 +110,12 @@ fn body_repository() -> (TributeRepositoryReader, TributeRepositoryWriter) {
     )
 }
 
-fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
-    storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-        .unwrap();
-    storage
-        .sstore(
-            COMPRESSED_ENTITIES_ADDRESS,
-            U256::from(1),
-            U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(B256::ZERO)
-                    .unwrap()
-                    .as_slice(),
-            ),
-        )
-        .unwrap();
-}
-
 fn with_tribute<R>(f: impl FnOnce(&mut TestTribute<'_, '_>) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(1);
     let (reader, _writer) = body_repository();
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut storage, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), &scope).unwrap();
         let mut tc = TestTribute {
             contract: TributeContract::new(storage.clone()),
@@ -151,7 +135,7 @@ fn with_provider<R>(
     let (reader, _writer) = body_repository();
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut storage, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage, &scope).unwrap()
     });
     let result = f(&mut storage, &reader, &scope);
@@ -336,7 +320,7 @@ fn sealed_pre_admission_projection_is_immutable() {
     let tribute = sample_tribute();
 
     StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), &scope).unwrap();
         let mut contract = TributeContract::new(storage);
         contract.initialize_fresh_ocomp_profile().unwrap();
@@ -360,7 +344,7 @@ fn sealed_pre_admission_projection_is_immutable() {
         alloy_primitives::Address::repeat_byte(0x62),
     );
     StorageHandle::enter(&mut sibling_provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), &sibling_scope).unwrap();
         let mut contract = TributeContract::new(storage);
         contract.unseal_day(sibling_tribute.worldwide_day).unwrap();

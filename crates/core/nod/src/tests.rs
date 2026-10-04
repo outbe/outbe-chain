@@ -1,14 +1,14 @@
 //! Currency-aware bucket qualification: storage layout, key derivation, bin
 //! namespacing, and the issuance guards that keep a bucket reachable.
 
+use outbe_compressed_entities::test_support::seed_compressed_entities_genesis;
 use std::sync::Arc;
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::time::{first_full_day, timestamp_to_date_key, WorldwideDay};
 use outbe_primitives::{
-    addresses::COMPRESSED_ENTITIES_ADDRESS,
     math::{constants::MAX_BIN_ID, tree_math},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
@@ -18,21 +18,8 @@ use crate::{api, state::CallBins, NodBucketState, NodContract, NodItemState, Nod
 const USD: u16 = 840;
 const EUR: u16 = 978;
 
-fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
-    storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-        .unwrap();
-    storage
-        .sstore(
-            COMPRESSED_ENTITIES_ADDRESS,
-            U256::from(1),
-            U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(B256::ZERO)
-                    .unwrap()
-                    .as_slice(),
-            ),
-        )
-        .unwrap();
+fn seed_production_nod_genesis(storage: &StorageHandle<'_>) {
+    seed_compressed_entities_genesis(storage).expect("CE genesis fixture");
     // These tests exercise the production call terms.
     NodContract::new(storage.clone())
         .config_profile
@@ -196,7 +183,7 @@ fn same_day_and_floor_in_two_currencies_are_two_buckets_in_two_bins() {
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         api::add_nod(&storage, &scope, &parent, &usd, U256::from(5)).unwrap();
         api::add_nod(&storage, &scope, &parent, &eur, U256::from(5)).unwrap();
@@ -254,7 +241,7 @@ fn qualification_skips_days_before_first_full_day() {
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap();
         let qualified =
@@ -276,7 +263,7 @@ fn zero_reference_currency_is_rejected_at_issuance() {
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         let error = api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap_err();
         assert!(
@@ -301,7 +288,7 @@ fn a_bucket_key_that_does_not_match_its_inputs_is_rejected() {
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         let error = api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap_err();
         assert!(
@@ -322,7 +309,7 @@ fn settled_state_is_exposed_in_nod_data_and_metadata() {
     let scope = ExecutionScope::new();
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
     StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         let item = item(Address::repeat_byte(0x86), U256::from(13), USD);
         api::add_nod(&storage, &scope, &parent, &item, U256::from(20)).unwrap();
@@ -400,7 +387,7 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
         let scope = ExecutionScope::new();
         let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
         StorageHandle::enter(&mut provider, |storage| {
-            seed_compressed_entities_genesis(&storage);
+            seed_production_nod_genesis(&storage);
             begin_block(storage.clone(), &scope).unwrap();
             let item = item(Address::repeat_byte(0x87), U256::from(13), USD);
             api::add_nod(&storage, &scope, &parent, &item, U256::from(20)).unwrap();
@@ -607,7 +594,7 @@ fn qualification_announces_nothing_and_settlement_updates_the_nod() {
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         for body in [&first, &second] {
             api::add_nod(&storage, &scope, &parent, body, U256::from(5)).unwrap();
@@ -659,7 +646,7 @@ fn transfer_logs_announce_issuance_and_removal() {
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap();
         let bucket_id = WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key);
@@ -784,7 +771,7 @@ fn token_uri_renders_the_nod_image_and_metadata() {
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         api::add_nod(&storage, &scope, &parent, &body, U256::from(400_000)).unwrap();
         let read = || {
@@ -872,7 +859,7 @@ fn nod_card_hides_call_rows_it_cannot_honour() {
     let scope = ExecutionScope::new();
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
     let json = StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         let item = item(Address::repeat_byte(0x88), U256::from(13), USD);
         api::add_nod(&storage, &scope, &parent, &item, U256::from(20)).unwrap();

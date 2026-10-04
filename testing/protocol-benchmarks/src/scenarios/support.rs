@@ -1,7 +1,9 @@
+pub(crate) use outbe_compressed_entities::test_support::seed_compressed_entities_genesis;
+
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::Address;
 use outbe_compressed_entities::{
     EntityRef, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef, StoredBody,
 };
@@ -38,25 +40,6 @@ impl ParentBodySource for EmptyParentBodies {
             next_after: None,
         })
     }
-}
-
-pub(crate) fn seed_compressed_entities_genesis(
-    storage: &outbe_primitives::storage::StorageHandle<'_>,
-) -> Result<(), String> {
-    storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-        .map_err(|error| error.to_string())?;
-    storage
-        .sstore(
-            COMPRESSED_ENTITIES_ADDRESS,
-            U256::from(1),
-            U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(B256::ZERO)
-                    .map_err(|error| error.to_string())?
-                    .as_slice(),
-            ),
-        )
-        .map_err(|error| error.to_string())
 }
 
 pub(crate) struct CapturedExecution {

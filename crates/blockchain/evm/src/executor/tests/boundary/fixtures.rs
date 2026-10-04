@@ -17,7 +17,7 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
     let active_key = dummy_pubkey(0xA2);
     let install = test_ocomp_fork_install(&chain_spec, &[(active, active_key)]);
     StorageHandle::enter(&mut seed_storage, |storage| {
-        seed_compressed_entities_genesis(storage.clone());
+        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();

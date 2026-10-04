@@ -14,7 +14,7 @@ ark-ff.workspace = true
 commonware-codec.workspace = true
 commonware-cryptography.workspace = true
 hex.workspace = true
-outbe-compressed-entities.workspace = true
+outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
 outbe-credis.workspace = true
 outbe-credisfactory.workspace = true
 outbe-fidelity = { workspace = true, features = ["test-enclave"] }
