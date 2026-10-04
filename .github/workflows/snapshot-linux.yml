@@ -1,0 +1,49 @@
+name: Snapshot Linux regressions
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/snapshot-linux.yml'
+      - 'bin/outbe-chain/src/snapshot/**'
+      - 'bin/outbe-chain/src/launch/tests/state_sync.rs'
+      - 'bin/outbe-chain/tests/snapshot_*.rs'
+  push:
+    branches: ['main']
+    paths:
+      - '.github/workflows/snapshot-linux.yml'
+      - 'bin/outbe-chain/src/snapshot/**'
+      - 'bin/outbe-chain/src/launch/tests/state_sync.rs'
+      - 'bin/outbe-chain/tests/snapshot_*.rs'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: snapshot-linux-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  snapshot-linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+      # These are preinstalled SDKs in the disposable hosted runner, not repo data.
+      - name: Make room for the pinned Rust toolchain container
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: Execute real Linux donor export and projection regressions
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" -w /workspace \
+            -e SOURCE_DATE_EPOCH=0 -e CARGO_INCREMENTAL=0 \
+            -e CARGO_BUILD_JOBS=2 -e CARGO_PROFILE_TEST_DEBUG=0 \
+            ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268 \
+            bash -lc '
+              set -euo pipefail
+              git config --global --add safe.directory /workspace
+              cargo nextest run --locked --package outbe-chain \
+                --features snapshot-integration --test-threads 2 \
+                -E "binary(snapshot_create) | binary(snapshot_files) | binary(snapshot_validate) | test(copied_projection_uses_native_checkpoint_and_recipient_configuration_on_each_restart)"
+            '
