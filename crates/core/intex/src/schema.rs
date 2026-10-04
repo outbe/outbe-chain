@@ -281,14 +281,19 @@ impl SeriesRecord {
     }
 }
 
+/// A round opened with residue tracking pays its floor remainder to leaf 0.
+///
+/// An unwritten slot is zero, which is a round opened before that rule.
+pub const RESIDUE_RULE_PAY_LEAF_ZERO: u8 = 1;
+
 /// Open payout round over a certified contributor root.
 ///
 /// `amount` is frozen when the round opens (the proceeds pot at that moment) so
 /// every share derives from the same denominator regardless of when a batch
 /// lands; `active != 0` is the existence sentinel. The record outlives the
 /// payout: once `paid_leaf_count` reaches the certified contributor count the
-/// caller burns what floor rounding left and the paid bitmap refuses further
-/// batches, but the counters stay readable as the day's final accounting.
+/// floor remainder is paid to `residue_recipient` and the paid bitmap refuses
+/// further batches. Orders 0–3 stay in place; the recipient fields are appended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[storage_record(exists_field = active)]
 pub struct CertifiedPayoutRound {
@@ -310,6 +315,20 @@ pub struct CertifiedPayoutRound {
     /// Existence sentinel: 1 while the round is open.
     #[attribute(order = 3)]
     pub active: u8,
+
+    /// Owner of certified eligible leaf 0. Address zero is a real owner when
+    /// `residue_recipient_set` is set; it is not the unset sentinel.
+    #[attribute(order = 4)]
+    pub residue_recipient: Address,
+
+    /// 1 once `residue_recipient` was recorded from a verified leaf 0.
+    #[attribute(order = 5)]
+    pub residue_recipient_set: u8,
+
+    /// 0 for a round opened before residue tracking; [`RESIDUE_RULE_PAY_LEAF_ZERO`]
+    /// for a round that pays the floor remainder instead of burning it.
+    #[attribute(order = 6)]
+    pub residue_rule: u8,
 }
 
 /// Constant-size certified contributor authority for one Intex series.

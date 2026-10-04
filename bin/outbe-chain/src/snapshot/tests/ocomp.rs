@@ -464,6 +464,9 @@ fn payout_owner(unpaid: bool, with_round: bool) -> HashMapStorageProvider {
                     paid_so_far: U256::from(10),
                     paid_leaf_count: if unpaid { 256 } else { 257 },
                     active: 1,
+                    residue_recipient: Address::ZERO,
+                    residue_recipient_set: 0,
+                    residue_rule: 0,
                 })
                 .unwrap();
             intex
@@ -559,6 +562,9 @@ fn canonical_index_duplicates_and_inconsistent_rounds_cannot_hide_required_data(
                             paid_so_far: U256::ZERO,
                             paid_leaf_count: 0,
                             active: 1,
+                            residue_recipient: Address::ZERO,
+                            residue_recipient_set: 0,
+                            residue_rule: 0,
                         })
                         .unwrap();
                 }
@@ -589,6 +595,9 @@ fn canonical_index_duplicates_and_inconsistent_rounds_cannot_hide_required_data(
                             paid_so_far: U256::from(if damage == "paid-amount" { 101 } else { 10 }),
                             paid_leaf_count: if damage == "paid-count" { 258 } else { 256 },
                             active: 1,
+                            residue_recipient: Address::ZERO,
+                            residue_recipient_set: 0,
+                            residue_rule: 0,
                         })
                         .unwrap();
                 }

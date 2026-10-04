@@ -291,6 +291,9 @@ fn typed_owner_reads_enumerate_all_nod_sequences_and_intex_words_at_e() {
             paid_so_far: U256::from(20),
             paid_leaf_count: 1,
             active: 1,
+            residue_recipient: Address::ZERO,
+            residue_recipient_set: 0,
+            residue_rule: 0,
         });
         let generations = StorageHandle::enter(&mut owner, |storage| {
             let nod = NodContract::new(storage.clone());

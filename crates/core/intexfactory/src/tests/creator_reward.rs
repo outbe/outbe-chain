@@ -158,26 +158,26 @@ use outbe_intex::payout::ContributorLeafData;
 
 use crate::constants::ORIGIN_ROUTER_ADDRESS;
 
-const WWD: u32 = 20_260_725;
-const CHAIN: u32 = 10;
-fn population(count: u32) -> Vec<ContributorLeafData> {
+pub(super) const WWD: u32 = 20_260_725;
+pub(super) const CHAIN: u32 = 10;
+pub(super) fn population(count: u32) -> Vec<ContributorLeafData> {
     (0..count)
         .map(|i| contributor_leaf(i, u64::from(i) + 1))
         .collect()
 }
 
-fn nominal_total(leaves: &[ContributorLeafData]) -> U256 {
+pub(super) fn nominal_total(leaves: &[ContributorLeafData]) -> U256 {
     leaves
         .iter()
         .fold(U256::ZERO, |acc, leaf| acc + leaf.nominal)
 }
 
 /// Writes the constant-size authority that OCOMP activation installs.
-fn install_generation(storage: &StorageHandle<'_>, leaves: &[ContributorLeafData]) {
+pub(super) fn install_generation(storage: &StorageHandle<'_>, leaves: &[ContributorLeafData]) {
     install_generation_with_total(storage, leaves, nominal_total(leaves));
 }
 
-fn install_generation_with_total(
+pub(super) fn install_generation_with_total(
     storage: &StorageHandle<'_>,
     leaves: &[ContributorLeafData],
     eligible_nominal_total: U256,
@@ -231,7 +231,7 @@ fn install_empty_generation(storage: &StorageHandle<'_>) {
         .unwrap();
 }
 
-fn abi_leaves(leaves: &[ContributorLeafData]) -> Vec<IIntexFactory::ContributorLeaf> {
+pub(super) fn abi_leaves(leaves: &[ContributorLeafData]) -> Vec<IIntexFactory::ContributorLeaf> {
     leaves
         .iter()
         .map(|leaf| IIntexFactory::ContributorLeaf {
@@ -243,18 +243,23 @@ fn abi_leaves(leaves: &[ContributorLeafData]) -> Vec<IIntexFactory::ContributorL
 }
 
 /// Arms the fan-in and delivers the whole pot from one winning chain.
-fn deliver_proceeds(storage: &StorageHandle<'_>, amount: U256) {
+pub(super) fn deliver_proceeds(storage: &StorageHandle<'_>, amount: U256) {
+    deliver_proceeds_raw(storage, amount).unwrap();
+}
+
+/// Same delivery as [`deliver_proceeds`], keeping the settlement error.
+pub(super) fn deliver_proceeds_raw(
+    storage: &StorageHandle<'_>,
+    amount: U256,
+) -> outbe_primitives::error::Result<()> {
     outbe_intex::api::arm_proceeds(
         storage,
         outbe_primitives::time::WorldwideDay::new(WWD),
         &[CHAIN],
         DEADLINE_FUTURE,
-    )
-    .unwrap();
-    storage
-        .increase_balance(INTEX_FACTORY_ADDRESS, amount)
-        .unwrap();
-    runtime::distribute(storage, ORIGIN_ROUTER_ADDRESS, WWD.into(), CHAIN, amount).unwrap();
+    )?;
+    storage.increase_balance(INTEX_FACTORY_ADDRESS, amount)?;
+    runtime::distribute(storage, ORIGIN_ROUTER_ADDRESS, WWD.into(), CHAIN, amount)
 }
 
 #[test]
@@ -295,8 +300,14 @@ fn batches_pay_every_certified_contributor() {
         }
 
         let total = nominal_total(&leaves);
+        let mut floor_sum = U256::ZERO;
         for leaf in &leaves {
-            let expected = amount * leaf.nominal / total;
+            floor_sum += amount * leaf.nominal / total;
+        }
+        let remainder = amount - floor_sum;
+        for (index, leaf) in leaves.iter().enumerate() {
+            let share = amount * leaf.nominal / total;
+            let expected = if index == 0 { share + remainder } else { share };
             assert_eq!(
                 s.balance(leaf.owner).unwrap(),
                 expected,
@@ -309,9 +320,11 @@ fn batches_pay_every_certified_contributor() {
             .unwrap()
             .unwrap();
         assert_eq!(round.paid_leaf_count, 300);
-        // The last batch closed the round and burned what floor division left,
-        // so nothing of this day remains on the precompile.
-        assert!(round.paid_so_far < amount, "floor shares must fall short");
+        // The completing batch paid the floor remainder to leaf 0, so the
+        // frozen pot is fully distributed and nothing of this day remains.
+        assert_eq!(round.paid_so_far, amount);
+        assert_eq!(round.residue_recipient, leaves[0].owner);
+        assert_eq!(round.residue_recipient_set, 1);
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
     });
 }

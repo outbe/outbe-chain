@@ -6,6 +6,7 @@ pub mod api;
 pub mod called;
 pub mod config;
 pub mod constants;
+pub(crate) mod contributor_payout;
 pub mod errors;
 pub(crate) mod expired;
 pub mod hooks;
