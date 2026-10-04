@@ -1,0 +1,2425 @@
+{
+  "rust_cases": [
+    {
+      "acceptance": [
+        "A16"
+      ],
+      "package": "outbe-common",
+      "binary": "outbe-common",
+      "test": "pow::tests::mining_pow_golden_vectors"
+    },
+    {
+      "acceptance": [
+        "A16"
+      ],
+      "package": "outbe-common",
+      "binary": "outbe-common",
+      "test": "pow::tests::mining_pow_matches_the_shared_client_vectors"
+    },
+    {
+      "acceptance": [
+        "A34"
+      ],
+      "package": "outbe-common",
+      "binary": "outbe-common",
+      "test": "settlement::tests::the_rate_leg_is_floored_together_with_the_scaling"
+    },
+    {
+      "acceptance": [
+        "A38"
+      ],
+      "package": "outbe-cycle",
+      "binary": "outbe-cycle",
+      "test": "tests::calendar::a_day_whose_limit_a_multi_day_halt_skipped_misses_its_offering"
+    },
+    {
+      "acceptance": [
+        "A38"
+      ],
+      "package": "outbe-cycle",
+      "binary": "outbe-cycle",
+      "test": "tests::calendar::a_multi_day_halt_issues_no_emission_and_credits_no_capacity_or_native_balance"
+    },
+    {
+      "acceptance": [
+        "A15",
+        "A38"
+      ],
+      "package": "outbe-cycle",
+      "binary": "outbe-cycle",
+      "test": "tests::calendar::protocol_cycle_forfeits_every_completed_day_after_a_multi_day_halt"
+    },
+    {
+      "acceptance": [
+        "A02"
+      ],
+      "package": "outbe-cycle",
+      "binary": "outbe-cycle",
+      "test": "tests::genesis_nod::nod_daily_calls_and_does_not_repeat_between_utc_days"
+    },
+    {
+      "acceptance": [
+        "A18",
+        "A37",
+        "A39"
+      ],
+      "package": "outbe-desis",
+      "binary": "outbe-desis",
+      "test": "capacity_conservation_tests::every_clearing_write_failure_rolls_back_allocation_and_return_then_retries_once"
+    },
+    {
+      "acceptance": [
+        "A18",
+        "A37",
+        "A39"
+      ],
+      "package": "outbe-desis",
+      "binary": "outbe-desis",
+      "test": "capacity_conservation_tests::no_sale_returns_all_capacity_and_dust_once_after_cleanup"
+    },
+    {
+      "acceptance": [
+        "A18",
+        "A37",
+        "A39"
+      ],
+      "package": "outbe-desis",
+      "binary": "outbe-desis",
+      "test": "capacity_conservation_tests::partial_sale_returns_only_two_unsold_loads_and_dust_once"
+    },
+    {
+      "acceptance": [
+        "A18"
+      ],
+      "package": "outbe-desis",
+      "binary": "outbe-desis",
+      "test": "tests::a_day_cancelled_at_start_records_a_zero_desis_allocation"
+    },
+    {
+      "acceptance": [
+        "A18"
+      ],
+      "package": "outbe-desis",
+      "binary": "outbe-desis",
+      "test": "tests::a_limit_short_of_one_unit_is_cancelled_at_start"
+    },
+    {
+      "acceptance": [
+        "A18",
+        "A39"
+      ],
+      "package": "outbe-desis",
+      "binary": "outbe-desis",
+      "test": "tests::clearing_reports_the_desis_allocation_and_the_unused_limit"
+    },
+    {
+      "acceptance": [
+        "A18"
+      ],
+      "package": "outbe-desis",
+      "binary": "outbe-desis",
+      "test": "tests::clearing_returns_the_unused_limit_and_dust_to_promis"
+    },
+    {
+      "acceptance": [
+        "A37"
+      ],
+      "package": "outbe-desis",
+      "binary": "outbe-desis",
+      "test": "tests::strict_request_desis_limit_rejects_an_oversized_limit_without_state"
+    },
+    {
+      "acceptance": [
+        "A05",
+        "A25"
+      ],
+      "package": "outbe-evm",
+      "binary": "intex_transfer_settlement",
+      "test": "transferred_unsettled_intex_units_settle_to_their_new_owner_and_never_to_the_sender"
+    },
+    {
+      "acceptance": [
+        "A38"
+      ],
+      "package": "outbe-evm",
+      "binary": "outbe-evm",
+      "test": "executor::tests::receipts_and_gas::native_sinks::base_fee_is_burned_tip_reaches_rewards_and_promis_limit_is_untouched"
+    },
+    {
+      "acceptance": [
+        "A38"
+      ],
+      "package": "outbe-evm",
+      "binary": "outbe-evm",
+      "test": "executor::tests::receipts_and_gas::priority_fees_credit_rewards_escrow_in_production_fee_path"
+    },
+    {
+      "acceptance": [
+        "A38"
+      ],
+      "package": "outbe-evm",
+      "binary": "outbe-evm",
+      "test": "handlers::vote::tests::factory::pfs_010_05_expiry_releases_identity_and_pending_cap_and_burns_once"
+    },
+    {
+      "acceptance": [
+        "A38"
+      ],
+      "package": "outbe-evm",
+      "binary": "outbe-evm",
+      "test": "handlers::vote::tests::factory::pfs_010_06_execution_error_refunds_bond_once_and_retains_reservation"
+    },
+    {
+      "acceptance": [
+        "A05"
+      ],
+      "package": "outbe-evm",
+      "binary": "outbe-evm::intex_gem_erc20_settlement",
+      "test": "a_third_party_pays_and_the_units_stay_with_the_owner"
+    },
+    {
+      "acceptance": [
+        "A34"
+      ],
+      "package": "outbe-evm",
+      "binary": "outbe-evm::intex_gem_erc20_settlement",
+      "test": "erc20_settlement_moves_exactly_the_quoted_cost_into_the_reserve"
+    },
+    {
+      "acceptance": [
+        "A05",
+        "A24"
+      ],
+      "package": "outbe-evm",
+      "binary": "outbe-evm::intex_transfer_settlement",
+      "test": "transferred_unsettled_intex_units_settle_to_their_new_owner_and_never_to_the_sender"
+    },
+    {
+      "acceptance": [
+        "A18",
+        "A36"
+      ],
+      "package": "outbe-gem",
+      "binary": "capacity_conservation",
+      "test": "a_paid_then_mined_gem_returns_no_capacity_while_unpaid_siblings_forfeit"
+    },
+    {
+      "acceptance": [
+        "A18",
+        "A36"
+      ],
+      "package": "outbe-gem",
+      "binary": "capacity_conservation",
+      "test": "every_included_gem_subtype_returns_its_full_load_once_after_forfeiture"
+    },
+    {
+      "acceptance": [
+        "A18",
+        "A36"
+      ],
+      "package": "outbe-gem",
+      "binary": "capacity_conservation",
+      "test": "failures_before_and_after_every_expiry_mutation_conserve_load_and_retry_once"
+    },
+    {
+      "acceptance": [
+        "A15"
+      ],
+      "package": "outbe-gem",
+      "binary": "outbe-gem",
+      "test": "tests::a_bin_wider_than_the_budget_resumes_inside_it"
+    },
+    {
+      "acceptance": [
+        "A15"
+      ],
+      "package": "outbe-gem",
+      "binary": "outbe-gem",
+      "test": "tests::a_called_bucket_wider_than_the_budget_burns_over_several_blocks"
+    },
+    {
+      "acceptance": [
+        "A02"
+      ],
+      "package": "outbe-gem",
+      "binary": "outbe-gem",
+      "test": "tests::a_gem_is_qualified_by_its_reference_currency_not_its_issuance_one"
+    },
+    {
+      "acceptance": [
+        "A01"
+      ],
+      "package": "outbe-gem",
+      "binary": "outbe-gem",
+      "test": "tests::a_gem_qualifies_on_a_closed_day_above_its_floor"
+    },
+    {
+      "acceptance": [
+        "A03"
+      ],
+      "package": "outbe-gem",
+      "binary": "outbe-gem",
+      "test": "tests::a_gem_reads_forfeited_past_the_call_deadline"
+    },
+    {
+      "acceptance": [
+        "A32"
+      ],
+      "package": "outbe-gem",
+      "binary": "outbe-gem",
+      "test": "tests::a_gem_without_a_floor_qualifies_on_its_first_closed_day"
+    },
+    {
+      "acceptance": [
+        "A03",
+        "A18"
+      ],
+      "package": "outbe-gem",
+      "binary": "outbe-gem",
+      "test": "tests::a_settled_gem_is_never_forfeited"
+    },
+    {
+      "acceptance": [
+        "A01"
+      ],
+      "package": "outbe-gem",
+      "binary": "outbe-gem",
+      "test": "tests::call_skips_below_threshold"
+    },
+    {
+      "acceptance": [
+        "A01"
+      ],
+      "package": "outbe-gem",
+      "binary": "outbe-gem",
+      "test": "tests::call_then_forfeit_lifecycle"
+    },
+    {
+      "acceptance": [
+        "A02"
+      ],
+      "package": "outbe-gem",
+      "binary": "outbe-gem",
+      "test": "tests::each_currency_qualifies_against_its_own_day_price"
+    },
+    {
+      "acceptance": [
+        "A18"
+      ],
+      "package": "outbe-gem",
+      "binary": "outbe-gem",
+      "test": "tests::forfeiting_a_gem_returns_its_load_to_the_pool"
+    },
+    {
+      "acceptance": [
+        "A15"
+      ],
+      "package": "outbe-gem",
+      "binary": "outbe-gem",
+      "test": "tests::hooks::empty_expiry_slots_spend_budget_and_legacy_gems_resume_next_block"
+    },
+    {
+      "acceptance": [
+        "A32"
+      ],
+      "package": "outbe-gem",
+      "binary": "outbe-gem",
+      "test": "tests::only_a_genesis_gem_is_issued_without_a_floor"
+    },
+    {
+      "acceptance": [
+        "A02"
+      ],
+      "package": "outbe-gem",
+      "binary": "outbe-gem",
+      "test": "tests::the_issue_day_counts_only_for_a_gem_issued_at_midnight"
+    },
+    {
+      "acceptance": [
+        "A02"
+      ],
+      "package": "outbe-gem",
+      "binary": "outbe-gem",
+      "test": "tests::the_issue_day_qualifies_only_a_gem_issued_at_midnight"
+    },
+    {
+      "acceptance": [
+        "A01",
+        "A02"
+      ],
+      "package": "outbe-gem",
+      "binary": "qualified_view",
+      "test": "qualified_gem_projection_preserves_called_deadline_and_settled_states"
+    },
+    {
+      "acceptance": [
+        "A01",
+        "A02"
+      ],
+      "package": "outbe-gem",
+      "binary": "qualified_view",
+      "test": "qualified_gem_view_uses_the_permanent_full_day_reference_predicate"
+    },
+    {
+      "acceptance": [
+        "A23",
+        "A36"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "capacity_conservation_tests::every_position_expiry_write_failure_preserves_remaining_load_then_retries_once"
+    },
+    {
+      "acceptance": [
+        "A23",
+        "A36"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "capacity_conservation_tests::position_expiry_and_queue_prune_never_credit_the_remainder_twice"
+    },
+    {
+      "acceptance": [
+        "A03",
+        "A14",
+        "A21"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "mining_after_deadline_tests::a_settled_gem_mines_after_the_settlement_deadline_while_its_unpaid_twin_is_refused"
+    },
+    {
+      "acceptance": [
+        "A14"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "mining_atomicity_tests::a_rejected_promis_mint_leaves_the_settled_gem_and_its_nonce_untouched"
+    },
+    {
+      "acceptance": [
+        "A41",
+        "A43"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::direct_fx_admission::a_direct_settlement_through_a_leg_the_window_never_priced_is_refused_without_writes"
+    },
+    {
+      "acceptance": [
+        "A05"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::eligibility::anyone_may_pay_for_a_gem_and_it_stays_with_its_owner"
+    },
+    {
+      "acceptance": [
+        "A41"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::eligibility::cross_currency_settlement_rejects_a_leg_the_window_never_priced"
+    },
+    {
+      "acceptance": [
+        "A32",
+        "A14"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::genesis_flag_checkpoint::a_failed_genesis_flag_write_rolls_the_new_gem_back"
+    },
+    {
+      "acceptance": [
+        "A32",
+        "A14"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::genesis_flag_checkpoint::a_retained_day_with_a_zero_creation_count_does_not_stamp_or_backfill"
+    },
+    {
+      "acceptance": [
+        "A32",
+        "A14"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::genesis_flag_checkpoint::api_issue_gem_stamps_genesis_and_runtime_issue_gem_does_not"
+    },
+    {
+      "acceptance": [
+        "A32"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::issuance::a_genesis_gem_settles_once_its_first_day_closes"
+    },
+    {
+      "acceptance": [
+        "A32"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::issuance::issue_genesis_pays_like_agents_but_carries_no_floor"
+    },
+    {
+      "acceptance": [
+        "A31"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::issuance::issue_sra_applies_64_percent_discount"
+    },
+    {
+      "acceptance": [
+        "A01"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::issuance::issue_wallet_cost_and_floor_markup_state_issued"
+    },
+    {
+      "acceptance": [
+        "A03",
+        "A17"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::merchant::a_called_series_at_its_deadline_cannot_be_sent"
+    },
+    {
+      "acceptance": [
+        "A32"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::merchant::a_genesis_floor_is_zero_at_every_entry_price"
+    },
+    {
+      "acceptance": [
+        "A23"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::merchant::a_merchant_gem_issues_until_the_second_its_position_expires"
+    },
+    {
+      "acceptance": [
+        "A17"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::merchant::a_qualified_series_is_sent_once_without_a_promis_limit_credit"
+    },
+    {
+      "acceptance": [
+        "A17"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::merchant::a_series_called_in_the_same_block_cannot_be_sent"
+    },
+    {
+      "acceptance": [
+        "A03",
+        "A17"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::merchant::a_series_past_its_deadline_cannot_be_sent"
+    },
+    {
+      "acceptance": [
+        "A23"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::merchant::an_expired_position_returns_its_remainder"
+    },
+    {
+      "acceptance": [
+        "A17"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::merchant::issue_gem_position_burns_sends_and_issues_nft"
+    },
+    {
+      "acceptance": [
+        "A23"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::merchant::issue_merchant_gem_after_expiry_rejects"
+    },
+    {
+      "acceptance": [
+        "A33"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::merchant::issue_merchant_gem_anchors_entry_and_floor_to_source"
+    },
+    {
+      "acceptance": [
+        "A33",
+        "A42"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::merchant::issue_merchant_gem_ignores_a_spot_above_the_previous_day_vwap"
+    },
+    {
+      "acceptance": [
+        "A33"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::merchant::issue_merchant_gem_ignores_the_trailing_settlement_window"
+    },
+    {
+      "acceptance": [
+        "A23"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::merchant::issue_merchant_gem_mints_issued_and_drains_capacity"
+    },
+    {
+      "acceptance": [
+        "A23"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::merchant::issue_merchant_gem_over_capacity_rejects"
+    },
+    {
+      "acceptance": [
+        "A33"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::merchant::issue_merchant_gem_prices_at_the_previous_day_vwap"
+    },
+    {
+      "acceptance": [
+        "A33"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::merchant::issue_merchant_gem_rejects_a_missing_previous_day_vwap"
+    },
+    {
+      "acceptance": [
+        "A23"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::merchant::issue_merchant_gem_rejects_non_merchant"
+    },
+    {
+      "acceptance": [
+        "A33"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::merchant::issue_merchant_gem_source_entry_dominates_the_market_price"
+    },
+    {
+      "acceptance": [
+        "A33"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::merchant::issue_merchant_gem_takes_each_maximum_independently"
+    },
+    {
+      "acceptance": [
+        "A17"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::merchant::sending_marks_the_units_realized_on_the_source_series"
+    },
+    {
+      "acceptance": [
+        "A05"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::mining::anyone_may_relay_mining_and_the_promis_lands_with_the_owner"
+    },
+    {
+      "acceptance": [
+        "A31",
+        "A34"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::settlement::a_dust_gem_quotes_zero_and_settles_without_asset_transfer"
+    },
+    {
+      "acceptance": [
+        "A41"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::settlement::an_issuance_payment_must_name_the_snapshot_required_at_execution"
+    },
+    {
+      "acceptance": [
+        "A31"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::settlement::an_sra_gem_keeps_its_sixty_four_percent_through_the_currency_conversion"
+    },
+    {
+      "acceptance": [
+        "A41"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::settlement::an_unassigned_issuance_code_mints_and_settles_on_the_reference_rail"
+    },
+    {
+      "acceptance": [
+        "A04",
+        "A34"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::settlement::the_issuance_rail_floors_the_whole_obligation_in_the_payers_favour"
+    },
+    {
+      "acceptance": [
+        "A41"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::settlement::the_reference_currency_settles_without_reading_any_issuance_rate"
+    },
+    {
+      "acceptance": [
+        "A23"
+      ],
+      "package": "outbe-gemfactory",
+      "binary": "outbe-gemfactory",
+      "test": "tests::settlement::two_merchants_sending_one_series_in_a_block_get_separate_positions"
+    },
+    {
+      "acceptance": [
+        "A14"
+      ],
+      "package": "outbe-gratis",
+      "binary": "outbe-gratis",
+      "test": "tests::folded_fidelity_section_failure_reverts_the_whole_op"
+    },
+    {
+      "acceptance": [
+        "A21"
+      ],
+      "package": "outbe-gratisfactory",
+      "binary": "outbe-gratisfactory",
+      "test": "tests::mine_mints_gratis_and_records_fidelity_cohort"
+    },
+    {
+      "acceptance": [
+        "A27"
+      ],
+      "package": "outbe-intex",
+      "binary": "outbe-intex",
+      "test": "certified::tests::all_excluded_fixture_installs_the_canonical_empty_contributor_commitment"
+    },
+    {
+      "acceptance": [
+        "A27"
+      ],
+      "package": "outbe-intex",
+      "binary": "outbe-intex",
+      "test": "certified::tests::mixed_exclusion_fixture_installs_only_eligible_contributor_commitment"
+    },
+    {
+      "acceptance": [
+        "A03"
+      ],
+      "package": "outbe-intex",
+      "binary": "outbe-intex",
+      "test": "tests::a_called_series_reads_expired_from_its_deadline_not_from_the_sweep"
+    },
+    {
+      "acceptance": [
+        "A03"
+      ],
+      "package": "outbe-intex",
+      "binary": "outbe-intex",
+      "test": "tests::a_fully_realized_series_forfeits_nothing"
+    },
+    {
+      "acceptance": [
+        "A12",
+        "A25"
+      ],
+      "package": "outbe-intex",
+      "binary": "outbe-intex",
+      "test": "tests::exercising_more_than_was_settled_is_refused"
+    },
+    {
+      "acceptance": [
+        "A12",
+        "A25"
+      ],
+      "package": "outbe-intex",
+      "binary": "outbe-intex",
+      "test": "tests::exercising_moves_units_out_of_the_settled_ledger"
+    },
+    {
+      "acceptance": [
+        "A18"
+      ],
+      "package": "outbe-intex",
+      "binary": "outbe-intex",
+      "test": "tests::expiry_forfeits_every_unrealized_unit"
+    },
+    {
+      "acceptance": [
+        "A12",
+        "A25"
+      ],
+      "package": "outbe-intex",
+      "binary": "outbe-intex",
+      "test": "tests::expiry_forfeits_only_what_was_left_unrealized"
+    },
+    {
+      "acceptance": [
+        "A12",
+        "A25"
+      ],
+      "package": "outbe-intex",
+      "binary": "outbe-intex",
+      "test": "tests::expiry_moves_the_active_units_into_forfeited"
+    },
+    {
+      "acceptance": [
+        "A27"
+      ],
+      "package": "outbe-intex",
+      "binary": "outbe-intex",
+      "test": "tests::paid_bitmap_blocks_a_second_payment"
+    },
+    {
+      "acceptance": [
+        "A27"
+      ],
+      "package": "outbe-intex",
+      "binary": "outbe-intex",
+      "test": "tests::payout_round_opens_once"
+    },
+    {
+      "acceptance": [
+        "A04",
+        "A25"
+      ],
+      "package": "outbe-intex",
+      "binary": "outbe-intex",
+      "test": "tests::realized_units_can_never_exceed_the_issued_count"
+    },
+    {
+      "acceptance": [
+        "A12",
+        "A25"
+      ],
+      "package": "outbe-intex",
+      "binary": "outbe-intex",
+      "test": "tests::settled_units_alone_count_nothing_as_exercised"
+    },
+    {
+      "acceptance": [
+        "A12",
+        "A25"
+      ],
+      "package": "outbe-intex",
+      "binary": "outbe-intex",
+      "test": "tests::the_unit_classes_are_disjoint_and_sum_to_the_issued_count"
+    },
+    {
+      "acceptance": [
+        "A12",
+        "A25"
+      ],
+      "package": "outbe-intex",
+      "binary": "outbe-intex",
+      "test": "tests::the_unpaid_remainder_excludes_settled_exercised_and_gem_factory_units"
+    },
+    {
+      "acceptance": [
+        "A04"
+      ],
+      "package": "outbe-intex",
+      "binary": "outbe-intex",
+      "test": "tests::the_view_carries_the_whole_split"
+    },
+    {
+      "acceptance": [
+        "A01",
+        "A02"
+      ],
+      "package": "outbe-intex",
+      "binary": "qualified_view",
+      "test": "qualified_intex_projection_preserves_called_deadline_and_internal_issued_routing"
+    },
+    {
+      "acceptance": [
+        "A01",
+        "A02"
+      ],
+      "package": "outbe-intex",
+      "binary": "qualified_view",
+      "test": "qualified_intex_view_uses_the_permanent_full_day_reference_predicate"
+    },
+    {
+      "acceptance": [
+        "A18",
+        "A25",
+        "A36"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "capacity_conservation_tests::every_intex_expiry_write_failure_preserves_credit_debt_and_retries_exactly_once"
+    },
+    {
+      "acceptance": [
+        "A18",
+        "A25",
+        "A36"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "capacity_conservation_tests::partial_intex_expiry_returns_only_five_unpaid_units_and_never_paid_or_converted_load"
+    },
+    {
+      "acceptance": [
+        "A27"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::contributor_residue::all_zero_nominals_do_not_open_a_round"
+    },
+    {
+      "acceptance": [
+        "A27"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::contributor_residue::completing_residue_transfer_failure_rolls_back_and_retry_pays_once"
+    },
+    {
+      "acceptance": [
+        "A27"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::contributor_residue::head_before_tail_pays_the_same_leaf_zero"
+    },
+    {
+      "acceptance": [
+        "A27"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::contributor_residue::legacy_closed_round_recovery_moves_nothing"
+    },
+    {
+      "acceptance": [
+        "A27"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::contributor_residue::legacy_recovery_then_tail_pays_the_residue_once"
+    },
+    {
+      "acceptance": [
+        "A27"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::contributor_residue::legacy_tail_without_recovery_rolls_back"
+    },
+    {
+      "acceptance": [
+        "A27"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::contributor_residue::mixed_exclusions_pay_against_the_participating_total"
+    },
+    {
+      "acceptance": [
+        "A27"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::contributor_residue::positive_nominal_against_a_zero_total_is_malformed"
+    },
+    {
+      "acceptance": [
+        "A27"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::contributor_residue::public_batch_pays_exact_pot_and_rejects_replay"
+    },
+    {
+      "acceptance": [
+        "A27"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::contributor_residue::recovery_rejects_a_different_owner"
+    },
+    {
+      "acceptance": [
+        "A27"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::contributor_residue::tail_before_head_pays_the_same_leaf_zero"
+    },
+    {
+      "acceptance": [
+        "A27"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::contributor_residue::zero_nominal_leaf_zero_receives_the_remainder"
+    },
+    {
+      "acceptance": [
+        "A27"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::creator_reward::a_corrupt_total_reverts_cleanly_before_any_transfer"
+    },
+    {
+      "acceptance": [
+        "A27"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::creator_reward::an_understated_nominal_total_cannot_spend_another_days_proceeds"
+    },
+    {
+      "acceptance": [
+        "A27"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::creator_reward::batches_pay_every_certified_contributor"
+    },
+    {
+      "acceptance": [
+        "A27"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::creator_reward::certified_day_opens_a_payout_round_instead_of_burning_the_pot"
+    },
+    {
+      "acceptance": [
+        "A27"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::creator_reward::certified_day_without_contributors_burns_the_pot"
+    },
+    {
+      "acceptance": [
+        "A38"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::creator_reward::day_without_contributor_authority_holds_the_pot_until_the_deadline"
+    },
+    {
+      "acceptance": [
+        "A38"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::creator_reward::distribute_no_contributors_burns"
+    },
+    {
+      "acceptance": [
+        "A38"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::creator_reward::late_proceeds_after_an_ownerless_certified_day_burn"
+    },
+    {
+      "acceptance": [
+        "A38"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::creator_reward::past_the_deadline_the_round_pays_what_arrived_and_burns_the_straggler"
+    },
+    {
+      "acceptance": [
+        "A41",
+        "A43"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::direct_fx_admission::a_direct_settlement_in_a_currency_the_window_never_priced_is_refused_without_writes"
+    },
+    {
+      "acceptance": [
+        "A41"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::issuance::a_reference_payment_ignores_the_snapshot_it_names"
+    },
+    {
+      "acceptance": [
+        "A41"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::issuance::an_issuance_payment_must_name_the_snapshot_required_at_execution"
+    },
+    {
+      "acceptance": [
+        "A01"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::issuance::floor_and_call_derivation"
+    },
+    {
+      "acceptance": [
+        "A34"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::issuance::issuance_currency_settlement_floors_a_non_divisible_fx_result_once"
+    },
+    {
+      "acceptance": [
+        "A41"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::issuance::issuance_currency_settlement_rejects_fx_overflow"
+    },
+    {
+      "acceptance": [
+        "A03"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::issuance::the_hourly_rollover_at_the_call_deadline_grants_no_grace"
+    },
+    {
+      "acceptance": [
+        "A41"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::issuance::the_reference_currency_settles_without_reading_any_rate"
+    },
+    {
+      "acceptance": [
+        "A01"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::lifecycle::a_series_qualifies_on_a_closed_day_above_its_floor_from_its_first_full_day"
+    },
+    {
+      "acceptance": [
+        "A18"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::lifecycle::call_sweep::a_group_credits_every_member_exactly_once"
+    },
+    {
+      "acceptance": [
+        "A18"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::lifecycle::call_sweep::a_group_walked_again_credits_only_the_member_left_behind"
+    },
+    {
+      "acceptance": [
+        "A18"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::lifecycle::call_sweep::a_second_pass_over_an_expired_group_credits_nothing"
+    },
+    {
+      "acceptance": [
+        "A02"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::lifecycle::call_sweep::a_sweep_that_runs_past_midnight_keeps_deciding_against_its_own_day"
+    },
+    {
+      "acceptance": [
+        "A18"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::lifecycle::call_sweep::expiry_returns_only_the_load_nobody_realized"
+    },
+    {
+      "acceptance": [
+        "A01"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::lifecycle::called_pstar::a_trigger_equal_to_the_window_price_is_not_breached"
+    },
+    {
+      "acceptance": [
+        "A01"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::lifecycle::try_call_excludes_pre_issuance_days"
+    },
+    {
+      "acceptance": [
+        "A01"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::lifecycle::try_call_marks_called_when_threshold_met"
+    },
+    {
+      "acceptance": [
+        "A01"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::lifecycle::try_call_skips_when_below_threshold"
+    },
+    {
+      "acceptance": [
+        "A03",
+        "A14",
+        "A21"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::mining_after_deadline::a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_closed"
+    },
+    {
+      "acceptance": [
+        "A14"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::mining_sequence::a_mining_sequence_at_its_maximum_refuses_the_next_mining_without_writes"
+    },
+    {
+      "acceptance": [
+        "A02"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::scans::a_currency_rate_never_qualifies_another_currency_series"
+    },
+    {
+      "acceptance": [
+        "A15"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::scans::call_survives_router_failure"
+    },
+    {
+      "acceptance": [
+        "A02"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::scans::scan_and_call_reads_daily_vwap_at_midnight"
+    },
+    {
+      "acceptance": [
+        "A02"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::scans::the_issue_day_counts_only_for_a_series_issued_at_midnight"
+    },
+    {
+      "acceptance": [
+        "A02"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::scans::the_issue_day_qualifies_only_a_series_issued_at_midnight"
+    },
+    {
+      "acceptance": [
+        "A42"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::scans::the_scan_range_covers_terms_the_live_profile_no_longer_names"
+    },
+    {
+      "acceptance": [
+        "A34"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::settlement::a_dust_intex_purchase_quotes_zero_and_settles_selected_whole_units"
+    },
+    {
+      "acceptance": [
+        "A34"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::settlement::a_hundred_dollars_converts_to_ninety_euros_at_every_asset_scale"
+    },
+    {
+      "acceptance": [
+        "A14"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::settlement::a_mining_that_fails_after_any_write_changes_nothing"
+    },
+    {
+      "acceptance": [
+        "A34"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::settlement::a_payment_below_the_asset_atomic_unit_floors_to_zero"
+    },
+    {
+      "acceptance": [
+        "A05"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::settlement::a_proof_bound_to_one_owner_cannot_settle_another"
+    },
+    {
+      "acceptance": [
+        "A03"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::settlement::a_qualified_series_called_past_its_deadline_stays_closed"
+    },
+    {
+      "acceptance": [
+        "A04"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::settlement::a_subunit_purchase_floors_all_selected_units_once"
+    },
+    {
+      "acceptance": [
+        "A05"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::settlement::anyone_may_settle_and_the_units_stay_with_the_owner"
+    },
+    {
+      "acceptance": [
+        "A16"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::settlement::compute_pow_hash_matches_manual_sha256"
+    },
+    {
+      "acceptance": [
+        "A16"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::settlement::compute_pow_hash_matches_the_shared_client_vectors"
+    },
+    {
+      "acceptance": [
+        "A25"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::settlement::mine_promis_rejects_missing_series"
+    },
+    {
+      "acceptance": [
+        "A25"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::settlement::mine_promis_rejects_zero_amount"
+    },
+    {
+      "acceptance": [
+        "A03"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::settlement::settle_rejects_expired_deadline"
+    },
+    {
+      "acceptance": [
+        "A34"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::settlement::the_fx_leg_is_floored_together_with_the_units"
+    },
+    {
+      "acceptance": [
+        "A04"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::settlement::the_selected_units_are_floored_once_not_one_by_one"
+    },
+    {
+      "acceptance": [
+        "A25"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::settlement::the_unit_counts_view_reports_the_disjoint_classes"
+    },
+    {
+      "acceptance": [
+        "A04"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::settlement::three_units_convert_as_one_operation_before_the_floor"
+    },
+    {
+      "acceptance": [
+        "A25"
+      ],
+      "package": "outbe-intexfactory",
+      "binary": "outbe-intexfactory",
+      "test": "tests::settlement::validate_pow_accepts_valid_and_rejects_invalid_nonce"
+    },
+    {
+      "acceptance": [
+        "A26",
+        "A36",
+        "A42"
+      ],
+      "package": "outbe-lysis",
+      "binary": "activation_receipt_vectors",
+      "test": "nod_issuance_instant_rejects_zero"
+    },
+    {
+      "acceptance": [
+        "A26",
+        "A36",
+        "A42"
+      ],
+      "package": "outbe-lysis",
+      "binary": "activation_receipt_vectors",
+      "test": "nod_issued_at_is_the_freeze_instant_and_the_job_clock_stays_put"
+    },
+    {
+      "acceptance": [
+        "A26",
+        "A36",
+        "A42"
+      ],
+      "package": "outbe-lysis",
+      "binary": "activation_receipt_vectors",
+      "test": "receipt_verifier_closes_green_and_red_conservation_equations"
+    },
+    {
+      "acceptance": [
+        "A26",
+        "A36",
+        "A42"
+      ],
+      "package": "outbe-lysis",
+      "binary": "activation_receipt_vectors",
+      "test": "receipt_verifier_rejects_a_budget_effect_with_a_future_nonce_or_anchor"
+    },
+    {
+      "acceptance": [
+        "A26",
+        "A36",
+        "A42"
+      ],
+      "package": "outbe-lysis",
+      "binary": "activation_receipt_vectors",
+      "test": "receipt_verifier_rejects_owner_projection_and_request_mutations"
+    },
+    {
+      "acceptance": [
+        "A26",
+        "A36",
+        "A42"
+      ],
+      "package": "outbe-lysis",
+      "binary": "activation_receipt_vectors",
+      "test": "structural_verifier_produces_one_closed_four_owner_plan"
+    },
+    {
+      "acceptance": [
+        "A26",
+        "A36",
+        "A42"
+      ],
+      "package": "outbe-lysis",
+      "binary": "activation_receipt_vectors",
+      "test": "structural_verifier_rejects_catalog_completion_and_semantic_event_mutations"
+    },
+    {
+      "acceptance": [
+        "A26",
+        "A36",
+        "A42"
+      ],
+      "package": "outbe-lysis",
+      "binary": "activation_receipt_vectors",
+      "test": "structural_verifier_rejects_nonzero_attempt_or_pending_nonce"
+    },
+    {
+      "acceptance": [
+        "A26",
+        "A36",
+        "A42"
+      ],
+      "package": "outbe-lysis",
+      "binary": "activation_receipt_vectors",
+      "test": "structural_verifier_rejects_result_and_completion_rebinding"
+    },
+    {
+      "acceptance": [
+        "A42"
+      ],
+      "package": "outbe-lysis",
+      "binary": "outbe-lysis",
+      "test": "tests::entry_price_map_is_frozen_once_for_all_available_currencies"
+    },
+    {
+      "acceptance": [
+        "A36"
+      ],
+      "package": "outbe-lysis",
+      "binary": "outbe-lysis",
+      "test": "tests::zero_or_over_limit_gratis_load_is_a_hard_failure_without_consumption"
+    },
+    {
+      "acceptance": [
+        "A01"
+      ],
+      "package": "outbe-lysis",
+      "binary": "outbe-lysis::planner_reducer_vectors",
+      "test": "planner_vectors::prefixes::an_entry_beyond_the_call_price_bound_is_never_certified"
+    },
+    {
+      "acceptance": [
+        "A01"
+      ],
+      "package": "outbe-lysis",
+      "binary": "outbe-lysis::program_v1_reference",
+      "test": "the_nod_floor_follows_the_entry_price_not_the_tribute_price"
+    },
+    {
+      "acceptance": [
+        "A37"
+      ],
+      "package": "outbe-metadosis",
+      "binary": "outbe-metadosis",
+      "test": "tests::allocation_ceiling::a_green_activation_preserves_the_sealed_nominal_bound_and_returns_unused_lysis"
+    },
+    {
+      "acceptance": [
+        "A37"
+      ],
+      "package": "outbe-metadosis",
+      "binary": "outbe-metadosis",
+      "test": "tests::allocation_ceiling::activation_rejects_a_tampered_over_limit_receipt_before_any_owner_write"
+    },
+    {
+      "acceptance": [
+        "A02",
+        "A42"
+      ],
+      "package": "outbe-metadosis",
+      "binary": "outbe-metadosis",
+      "test": "tests::nod_issuance_instant::certified_nod_issued_at_is_the_initial_lysis_freeze"
+    },
+    {
+      "acceptance": [
+        "A37"
+      ],
+      "package": "outbe-metadosis",
+      "binary": "outbe-metadosis",
+      "test": "tests::ocomp_request::a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse"
+    },
+    {
+      "acceptance": [
+        "A36"
+      ],
+      "package": "outbe-metadosis",
+      "binary": "outbe-metadosis",
+      "test": "tests::ocomp_request::awaiting_finality_expires_at_own_deadline_and_releases_live_capacity"
+    },
+    {
+      "acceptance": [
+        "A32"
+      ],
+      "package": "outbe-metadosis",
+      "binary": "outbe-metadosis",
+      "test": "tests::worldwide_day_created::a_creation_count_without_a_retained_day_still_counts_as_created"
+    },
+    {
+      "acceptance": [
+        "A15"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::a_bin_walk_that_runs_out_resumes_inside_the_bin"
+    },
+    {
+      "acceptance": [
+        "A01"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::a_breach_run_that_predates_the_bucket_does_not_call_it"
+    },
+    {
+      "acceptance": [
+        "A26"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::a_bucket_is_not_called_while_its_generation_is_materializing"
+    },
+    {
+      "acceptance": [
+        "A15"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::a_bucket_over_the_forfeit_budget_burns_across_slices_of_one_sweep"
+    },
+    {
+      "acceptance": [
+        "A15"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::a_call_arm_out_of_visits_resumes_on_its_currency_before_any_forfeit"
+    },
+    {
+      "acceptance": [
+        "A01"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::a_day_exactly_at_the_call_price_does_not_count_as_a_breach"
+    },
+    {
+      "acceptance": [
+        "A02"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::a_delayed_issuance_does_not_count_pre_issuance_wwd_days"
+    },
+    {
+      "acceptance": [
+        "A01"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::a_full_window_above_the_call_price_calls_the_bucket"
+    },
+    {
+      "acceptance": [
+        "A03"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::a_fully_paid_bucket_is_not_called_and_corrupt_paid_membership_is_not_forfeited"
+    },
+    {
+      "acceptance": [
+        "A18"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::a_lapsed_bucket_returns_every_forfeited_load_to_the_promis_reserve"
+    },
+    {
+      "acceptance": [
+        "A26"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::a_lapsed_bucket_waits_for_its_generation_to_materialize_before_forfeiting"
+    },
+    {
+      "acceptance": [
+        "A02"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::a_running_call_sweep_keeps_its_day"
+    },
+    {
+      "acceptance": [
+        "A02"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::an_unfinalized_day_skips_the_run_without_touching_state"
+    },
+    {
+      "acceptance": [
+        "A02"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::each_bucket_reads_its_own_currency_series"
+    },
+    {
+      "acceptance": [
+        "A18"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::every_member_of_a_lapsed_bucket_burns_in_one_pass"
+    },
+    {
+      "acceptance": [
+        "A18"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::forfeit_credits_distinct_unpaid_loads_and_ignores_paid_members"
+    },
+    {
+      "acceptance": [
+        "A15"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::forfeiting_a_bucket_mid_list_does_not_skip_its_neighbours"
+    },
+    {
+      "acceptance": [
+        "A01"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::missing_days_do_not_count_as_breaches"
+    },
+    {
+      "acceptance": [
+        "A03"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exercise"
+    },
+    {
+      "acceptance": [
+        "A01"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::one_breach_day_short_of_the_threshold_does_not_call"
+    },
+    {
+      "acceptance": [
+        "A01"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::the_call_price_is_the_entry_price_times_the_call_rate"
+    },
+    {
+      "acceptance": [
+        "A02"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::the_issue_day_counts_only_for_a_nod_issued_at_midnight"
+    },
+    {
+      "acceptance": [
+        "A03"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::the_notice_period_expires_strictly_after_the_deadline"
+    },
+    {
+      "acceptance": [
+        "A42"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::the_scan_follows_the_terms_sealed_on_the_bucket_not_the_constants"
+    },
+    {
+      "acceptance": [
+        "A01"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "called_tests::the_window_absorbs_below_call_days_up_to_the_slack"
+    },
+    {
+      "acceptance": [
+        "A01"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "tests::a_nod_floor_is_its_entry_marked_up_and_rounded_down"
+    },
+    {
+      "acceptance": [
+        "A42"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "tests::an_issuable_entry_keeps_the_call_price_at_any_rate_in_range"
+    },
+    {
+      "acceptance": [
+        "A02"
+      ],
+      "package": "outbe-nod",
+      "binary": "outbe-nod",
+      "test": "tests::qualification_skips_days_before_first_full_day"
+    },
+    {
+      "acceptance": [
+        "A26"
+      ],
+      "package": "outbe-nodfactory",
+      "binary": "outbe-nodfactory",
+      "test": "certified::tests::exact_replay_is_idempotent_and_wrong_generation_is_side_effect_free"
+    },
+    {
+      "acceptance": [
+        "A34"
+      ],
+      "package": "outbe-nodfactory",
+      "binary": "outbe-nodfactory",
+      "test": "tests::costs::a_dust_cost_nod_quotes_zero_and_settles_without_asset_transfer"
+    },
+    {
+      "acceptance": [
+        "A41"
+      ],
+      "package": "outbe-nodfactory",
+      "binary": "outbe-nodfactory",
+      "test": "tests::currency_snapshots::a_snapshot_of_another_policy_is_rejected"
+    },
+    {
+      "acceptance": [
+        "A41"
+      ],
+      "package": "outbe-nodfactory",
+      "binary": "outbe-nodfactory",
+      "test": "tests::currency_snapshots::an_issuance_payment_must_name_the_snapshot_required_at_execution"
+    },
+    {
+      "acceptance": [
+        "A03"
+      ],
+      "package": "outbe-nodfactory",
+      "binary": "outbe-nodfactory",
+      "test": "tests::currency_snapshots::the_hourly_rollover_at_the_settlement_deadline_grants_no_grace"
+    },
+    {
+      "acceptance": [
+        "A41",
+        "A43"
+      ],
+      "package": "outbe-nodfactory",
+      "binary": "outbe-nodfactory",
+      "test": "tests::direct_fx_admission::a_direct_settlement_in_a_currency_the_window_never_priced_is_refused_without_writes"
+    },
+    {
+      "acceptance": [
+        "A01"
+      ],
+      "package": "outbe-nodfactory",
+      "binary": "outbe-nodfactory",
+      "test": "tests::materialization::a_certified_entry_beyond_the_call_price_bound_is_rejected_before_any_write"
+    },
+    {
+      "acceptance": [
+        "A26"
+      ],
+      "package": "outbe-nodfactory",
+      "binary": "outbe-nodfactory",
+      "test": "tests::materialization::a_certified_nod_id_its_owner_does_not_give_is_rejected_before_any_write"
+    },
+    {
+      "acceptance": [
+        "A42"
+      ],
+      "package": "outbe-nodfactory",
+      "binary": "outbe-nodfactory",
+      "test": "tests::materialization::a_materialized_nod_keeps_the_batch_entry_price"
+    },
+    {
+      "acceptance": [
+        "A26"
+      ],
+      "package": "outbe-nodfactory",
+      "binary": "outbe-nodfactory",
+      "test": "tests::materialization::certified_nods_cannot_be_mined_until_the_generation_is_complete"
+    },
+    {
+      "acceptance": [
+        "A05"
+      ],
+      "package": "outbe-nodfactory",
+      "binary": "outbe-nodfactory",
+      "test": "tests::note_regressions::a_stranger_can_mine_with_the_owners_auth"
+    },
+    {
+      "acceptance": [
+        "A41"
+      ],
+      "package": "outbe-nodfactory",
+      "binary": "outbe-nodfactory",
+      "test": "tests::note_regressions::any_asset_registered_for_the_reference_currency_pays_the_nod"
+    },
+    {
+      "acceptance": [
+        "A03"
+      ],
+      "package": "outbe-nodfactory",
+      "binary": "outbe-nodfactory",
+      "test": "tests::paid_entitlement::a_called_nod_still_mines_at_the_settlement_deadline"
+    },
+    {
+      "acceptance": [
+        "A03"
+      ],
+      "package": "outbe-nodfactory",
+      "binary": "outbe-nodfactory",
+      "test": "tests::paid_entitlement::erc20_settlement_uses_the_existing_inclusive_deadline"
+    },
+    {
+      "acceptance": [
+        "A14"
+      ],
+      "package": "outbe-nodfactory",
+      "binary": "outbe-nodfactory",
+      "test": "tests::paid_entitlement::fidelity_persistence_failure_preserves_paid_entitlement_and_mint_nonce"
+    },
+    {
+      "acceptance": [
+        "A03"
+      ],
+      "package": "outbe-nodfactory",
+      "binary": "outbe-nodfactory",
+      "test": "tests::paid_entitlement::settlement_is_rejected_once_the_deadline_has_passed"
+    },
+    {
+      "acceptance": [
+        "A21"
+      ],
+      "package": "outbe-nodfactory",
+      "binary": "outbe-nodfactory",
+      "test": "tests::paid_entitlement::settlement_leaves_fidelity_alone_and_mining_records_it"
+    },
+    {
+      "acceptance": [
+        "A03"
+      ],
+      "package": "outbe-nodfactory",
+      "binary": "outbe-nodfactory",
+      "test": "tests::paid_entitlement::settlement_preserves_entitlement_and_failed_mining_can_retry_after_deadline"
+    },
+    {
+      "acceptance": [
+        "A37"
+      ],
+      "package": "outbe-ocomp-protocol",
+      "binary": "typed_protocol",
+      "test": "mutating_lysis_plus_desis_above_tribute_nominal_is_detected"
+    },
+    {
+      "acceptance": [
+        "A37"
+      ],
+      "package": "outbe-ocomp-protocol",
+      "binary": "typed_protocol",
+      "test": "wwd_allocation_ceiling_holds_at_equality_and_rejects_a_one_unit_mutation"
+    },
+    {
+      "acceptance": [
+        "A43"
+      ],
+      "package": "outbe-oracle",
+      "binary": "outbe-oracle",
+      "test": "tests::state::a_policy_change_leaves_an_old_snapshot_readable_and_unchanged"
+    },
+    {
+      "acceptance": [
+        "A43"
+      ],
+      "package": "outbe-oracle",
+      "binary": "outbe-oracle",
+      "test": "tests::state::finalized_window_vwap_requires_two_thirds_round_coverage"
+    },
+    {
+      "acceptance": [
+        "A43"
+      ],
+      "package": "outbe-oracle",
+      "binary": "outbe-oracle",
+      "test": "tests::window::a_finalized_window_value_is_immutable_after_its_cutoff"
+    },
+    {
+      "acceptance": [
+        "A43"
+      ],
+      "package": "outbe-oracle",
+      "binary": "outbe-oracle",
+      "test": "tests::window::an_authorization_naming_another_pricing_policy_never_matches_the_required_snapshot"
+    },
+    {
+      "acceptance": [
+        "A41"
+      ],
+      "package": "outbe-oracle",
+      "binary": "outbe-oracle",
+      "test": "tests::window::settlement_fx_rates_read_both_legs_from_the_one_required_snapshot"
+    },
+    {
+      "acceptance": [
+        "A41"
+      ],
+      "package": "outbe-oracle",
+      "binary": "outbe-oracle",
+      "test": "tests::window::the_required_snapshot_identity_rolls_over_at_the_whole_hour_even_when_prices_are_equal"
+    },
+    {
+      "acceptance": [
+        "A43"
+      ],
+      "package": "outbe-oracle",
+      "binary": "outbe-oracle",
+      "test": "window::tests::lookback_and_cadence_are_independent_parameters"
+    },
+    {
+      "acceptance": [
+        "A43"
+      ],
+      "package": "outbe-oracle",
+      "binary": "outbe-oracle",
+      "test": "window::tests::the_default_policy_selects_the_eight_hours_before_the_last_whole_hour"
+    },
+    {
+      "acceptance": [
+        "A14"
+      ],
+      "package": "outbe-promis",
+      "binary": "outbe-promis",
+      "test": "tests::mine_rejects_replayed_op_nonce"
+    },
+    {
+      "acceptance": [
+        "A21"
+      ],
+      "package": "outbe-promisfactory",
+      "binary": "outbe-promisfactory",
+      "test": "tests::mine_gratis_burns_promis_mints_gratis_creating_fidelity_cohort"
+    },
+    {
+      "acceptance": [
+        "A36"
+      ],
+      "package": "outbe-promislimit",
+      "binary": "outbe-promislimit",
+      "test": "certified::tests::unused_lysis_plus_allocation_equals_the_limit_and_credits_once"
+    },
+    {
+      "acceptance": [
+        "A36"
+      ],
+      "package": "outbe-promislimit",
+      "binary": "outbe-promislimit",
+      "test": "certified::tests::wrong_binding_or_limit_conservation_is_side_effect_free"
+    },
+    {
+      "acceptance": [
+        "A37"
+      ],
+      "package": "outbe-promislimit",
+      "binary": "outbe-promislimit",
+      "test": "certified::tests::zero_unused_lysis_limit_preserves_the_accumulator_and_returns_exact_receipt"
+    },
+    {
+      "acceptance": [
+        "A32"
+      ],
+      "package": "outbe-rewards",
+      "binary": "genesis_before_first_wwd",
+      "test": "a_genesis_gem_issued_after_creation_in_the_same_block_waits"
+    },
+    {
+      "acceptance": [
+        "A32"
+      ],
+      "package": "outbe-rewards",
+      "binary": "genesis_before_first_wwd",
+      "test": "a_genesis_gem_issued_after_the_first_worldwide_day_waits_for_a_closed_day"
+    },
+    {
+      "acceptance": [
+        "A32"
+      ],
+      "package": "outbe-rewards",
+      "binary": "genesis_before_first_wwd",
+      "test": "a_genesis_gem_issued_before_the_first_worldwide_day_is_qualified_immediately"
+    },
+    {
+      "acceptance": [
+        "A38"
+      ],
+      "package": "outbe-staking",
+      "binary": "outbe-staking",
+      "test": "native_sink_tests::slashing_burns_exactly_the_slashed_stake_from_the_escrow_and_credits_nothing"
+    },
+    {
+      "acceptance": [
+        "A16"
+      ],
+      "package": "outbe-tee-enclave",
+      "binary": "outbe-tee-enclave",
+      "test": "gratis::tests::gratis_known_answer_vectors"
+    },
+    {
+      "acceptance": [
+        "A14"
+      ],
+      "package": "outbe-tee-enclave",
+      "binary": "outbe-tee-enclave",
+      "test": "promis::tests::modify_mac_binds_every_input_and_is_separated_from_the_gratis_domain"
+    },
+    {
+      "acceptance": [
+        "A16"
+      ],
+      "package": "outbe-tee-enclave",
+      "binary": "outbe-tee-enclave",
+      "test": "promis::tests::modify_mac_matches_the_shared_client_vectors"
+    },
+    {
+      "acceptance": [
+        "A14"
+      ],
+      "package": "outbe-vote",
+      "binary": "outbe-vote",
+      "test": "tests::characterization::approved_handler_failure_rolls_back_target_and_records_error_without_replay"
+    },
+    {
+      "acceptance": [
+        "A38"
+      ],
+      "package": "outbe-vote",
+      "binary": "outbe-vote",
+      "test": "tests::characterization::expired_public_bond_burns_once_and_preserves_forced_surplus"
+    },
+    {
+      "acceptance": [
+        "A38"
+      ],
+      "package": "outbe-vote",
+      "binary": "outbe-vote",
+      "test": "tests::error_bond::a_bonded_target_error_refunds_the_bond_once_and_closes_the_liability"
+    },
+    {
+      "acceptance": [
+        "A38"
+      ],
+      "package": "outbe-vote",
+      "binary": "outbe-vote",
+      "test": "tests::error_bond::a_failure_after_every_error_finalization_mutation_rolls_back_everything"
+    },
+    {
+      "acceptance": [
+        "A14",
+        "A38"
+      ],
+      "package": "outbe-vote",
+      "binary": "outbe-vote",
+      "test": "tests::error_bond::a_persisted_legacy_bonded_error_is_released_and_refunded_once_on_the_next_pass"
+    }
+  ],
+  "forge_cases": [
+    {
+      "acceptance": [
+        "A39"
+      ],
+      "contract": "AuctionSignatureTest",
+      "file": "test/foundry/IntexAuction.signature.t.sol",
+      "test": "test_commitBid_revertsOnZeroHash"
+    },
+    {
+      "acceptance": [
+        "A39"
+      ],
+      "contract": "AuctionSignatureTest",
+      "file": "test/foundry/IntexAuction.signature.t.sol",
+      "test": "test_eip712_goldenDigest"
+    },
+    {
+      "acceptance": [
+        "A39"
+      ],
+      "contract": "AuctionSignatureTest",
+      "file": "test/foundry/IntexAuction.signature.t.sol",
+      "test": "test_emit_BidCommitted"
+    },
+    {
+      "acceptance": [
+        "A39"
+      ],
+      "contract": "AuctionSignatureTest",
+      "file": "test/foundry/IntexAuction.signature.t.sol",
+      "test": "test_emit_BidRevealed"
+    },
+    {
+      "acceptance": [
+        "A39"
+      ],
+      "contract": "AuctionSignatureTest",
+      "file": "test/foundry/IntexAuction.signature.t.sol",
+      "test": "test_emit_CommitCancelled"
+    },
+    {
+      "acceptance": [
+        "A39"
+      ],
+      "contract": "AuctionSignatureTest",
+      "file": "test/foundry/IntexAuction.signature.t.sol",
+      "test": "test_legacyQuantityCommitCannotRevealWithUnits"
+    },
+    {
+      "acceptance": [
+        "A39"
+      ],
+      "contract": "AuctionSignatureTest",
+      "file": "test/foundry/IntexAuction.signature.t.sol",
+      "test": "test_replay_revertsAcrossChains"
+    },
+    {
+      "acceptance": [
+        "A39"
+      ],
+      "contract": "AuctionSignatureTest",
+      "file": "test/foundry/IntexAuction.signature.t.sol",
+      "test": "test_replay_revertsAcrossInstances"
+    },
+    {
+      "acceptance": [
+        "A39"
+      ],
+      "contract": "AuctionSignatureTest",
+      "file": "test/foundry/IntexAuction.signature.t.sol",
+      "test": "test_revealBid_revertsAfterChainidFlip"
+    },
+    {
+      "acceptance": [
+        "A39"
+      ],
+      "contract": "AuctionSignatureTest",
+      "file": "test/foundry/IntexAuction.signature.t.sol",
+      "test": "test_revealBid_revertsOnAllZeroSignature"
+    },
+    {
+      "acceptance": [
+        "A39"
+      ],
+      "contract": "AuctionSignatureTest",
+      "file": "test/foundry/IntexAuction.signature.t.sol",
+      "test": "test_revealBid_revertsOnMalleableSignature"
+    },
+    {
+      "acceptance": [
+        "A39"
+      ],
+      "contract": "AuctionSignatureTest",
+      "file": "test/foundry/IntexAuction.signature.t.sol",
+      "test": "test_revealBid_revertsOnWrongChain_paramMismatch"
+    },
+    {
+      "acceptance": [
+        "A39"
+      ],
+      "contract": "AuctionSignatureTest",
+      "file": "test/foundry/IntexAuction.signature.t.sol",
+      "test": "test_revealBid_revertsOnWrongLengthSignature"
+    },
+    {
+      "acceptance": [
+        "A39"
+      ],
+      "contract": "AuctionSignatureTest",
+      "file": "test/foundry/IntexAuction.signature.t.sol",
+      "test": "test_units_matchesTypeScriptSignatureVector"
+    },
+    {
+      "acceptance": [
+        "A24",
+        "A25",
+        "A36"
+      ],
+      "contract": "CrossChainSupplyConservationTest",
+      "file": "test/foundry/cross-chain/CrossChainSupplyConservation.t.sol",
+      "test": "test_FailedAndLateRetryPreserveTransportUntilReclaimRestoresOrigin"
+    },
+    {
+      "acceptance": [
+        "A24",
+        "A25",
+        "A36"
+      ],
+      "contract": "CrossChainSupplyConservationTest",
+      "file": "test/foundry/cross-chain/CrossChainSupplyConservation.t.sol",
+      "test": "test_HopAToB_TotalSupplyPreserved"
+    },
+    {
+      "acceptance": [
+        "A24",
+        "A25",
+        "A36"
+      ],
+      "contract": "CrossChainSupplyConservationTest",
+      "file": "test/foundry/cross-chain/CrossChainSupplyConservation.t.sol",
+      "test": "test_ParkBranch_ConservesAcrossCrosschainBurnAndPark"
+    },
+    {
+      "acceptance": [
+        "A24",
+        "A25",
+        "A36"
+      ],
+      "contract": "CrossChainSupplyConservationTest",
+      "file": "test/foundry/cross-chain/CrossChainSupplyConservation.t.sol",
+      "test": "test_ReclaimToSource_ReMintsHolderOnOriginAndConservesSupply"
+    },
+    {
+      "acceptance": [
+        "A24",
+        "A25",
+        "A36"
+      ],
+      "contract": "CrossChainSupplyConservationTest",
+      "file": "test/foundry/cross-chain/CrossChainSupplyConservation.t.sol",
+      "test": "test_RoundTripAToBToA_TotalSupplyPreserved"
+    },
+    {
+      "acceptance": [
+        "A24"
+      ],
+      "contract": "IntexNFT1155ExpiredTest",
+      "file": "test/foundry/IntexNFT1155.expired.t.sol",
+      "test": "test_BridgeStaysClosedAfterExpiry"
+    },
+    {
+      "acceptance": [
+        "A05"
+      ],
+      "contract": "IntexNFT1155ExpiredTest",
+      "file": "test/foundry/IntexNFT1155.expired.t.sol",
+      "test": "test_TransferStaysFrozenAfterExpiry"
+    },
+    {
+      "acceptance": [
+        "A24"
+      ],
+      "contract": "IntexNFT1155Test",
+      "file": "test/foundry/IntexNFT1155.t.sol",
+      "test": "test_CrosschainBurn_AllowedInIssuedAndCalled_ForSystemRelayer"
+    },
+    {
+      "acceptance": [
+        "A05",
+        "A24"
+      ],
+      "contract": "IntexNFT1155Test",
+      "file": "test/foundry/IntexNFT1155.t.sol",
+      "test": "test_CrosschainBurn_InCalled_RefusesAChangeOfHolder"
+    },
+    {
+      "acceptance": [
+        "A24"
+      ],
+      "contract": "IntexNFT1155Test",
+      "file": "test/foundry/IntexNFT1155.t.sol",
+      "test": "test_CrosschainMintInCalledState"
+    },
+    {
+      "acceptance": [
+        "A25"
+      ],
+      "contract": "IntexNFT1155Test",
+      "file": "test/foundry/IntexNFT1155.t.sol",
+      "test": "test_OwnerBalances_AboveUint16NoTruncation"
+    },
+    {
+      "acceptance": [
+        "A05"
+      ],
+      "contract": "IntexNFT1155Test",
+      "file": "test/foundry/IntexNFT1155.t.sol",
+      "test": "test_Settle_TransferredUnitsSettleToTheirNewOwner"
+    },
+    {
+      "acceptance": [
+        "A05"
+      ],
+      "contract": "IntexNFT1155Test",
+      "file": "test/foundry/IntexNFT1155.t.sol",
+      "test": "test_TransferRestrictions"
+    },
+    {
+      "acceptance": [
+        "A05"
+      ],
+      "contract": "IntexNFT1155Test",
+      "file": "test/foundry/IntexNFT1155.t.sol",
+      "test": "test_TransferRestrictionsIssued"
+    }
+  ],
+  "rust_features": [],
+  "notes": [
+    "Selected assertions cover only the approved direct and independent subsets; see rights-acceptance.md for boundaries.",
+    "Full Rust package regression runs may include existing excluded-product fixtures without extending the acceptance claim."
+  ]
+}
