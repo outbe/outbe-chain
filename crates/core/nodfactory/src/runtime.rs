@@ -70,11 +70,14 @@ fn issue_nod_inner(
 ) -> Result<WwdEntityId> {
     let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day)?;
 
+    if !NodContract::is_issuable_entry(params.entry_price_minor) {
+        return Err(NodFactoryError::EntryPriceOutOfBounds.into());
+    }
     let floor_price_minor = NodContract::floor_price_minor(params.entry_price_minor)
-        .ok_or(NodFactoryError::FloorPriceOverflow)?;
+        .ok_or(NodFactoryError::EntryPriceOutOfBounds)?;
     let bucket_key = NodContract::bucket_key(
         params.worldwide_day,
-        floor_price_minor,
+        params.entry_price_minor,
         params.reference_currency,
     );
 
@@ -85,7 +88,6 @@ fn issue_nod_inner(
         gratis_load_minor: params.gratis_load_minor,
         worldwide_day: params.worldwide_day,
         league_id: params.league_id,
-        floor_price_minor,
         bucket_key,
         issuance_currency: params.issuance_currency,
         reference_currency: params.reference_currency,

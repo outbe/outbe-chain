@@ -35,7 +35,7 @@ pub(crate) fn derived_call_terms(
         return Ok(None);
     }
     let call_price = entry_price_minor
-        .checked_mul(U256::from(100 + params.call_rate))
+        .checked_mul(U256::from(100 + u32::from(params.call_rate)))
         .ok_or_else(|| {
             outbe_primitives::error::PrecompileError::Fatal("Nod call price overflow".into())
         })?
@@ -239,7 +239,7 @@ impl NodContract<'_> {
 
         let canonical_bucket_key = Self::bucket_key(
             item.worldwide_day,
-            item.floor_price_minor,
+            entry_price_minor,
             item.reference_currency,
         );
         if item.bucket_key != canonical_bucket_key {
@@ -277,7 +277,6 @@ impl NodContract<'_> {
                     settled_nods: 0,
                     bucket_key: item.bucket_key,
                     worldwide_day: item.worldwide_day,
-                    floor_price_minor: item.floor_price_minor,
                     entry_price_minor,
                     reference_currency: item.reference_currency,
                 };
@@ -432,7 +431,7 @@ impl NodContract<'_> {
 
     // --- Bin index helpers (PancakeSwap LB-style ladder) -------------------
 
-    /// Maps a six-decimal `floor_price_minor` (or oracle rate) to a 24-bit
+    /// Maps a six-decimal call price (or oracle rate) to a 24-bit
     /// bin id on the LB log-spaced ladder. Saturates to `[0, MAX_BIN_ID]` -
     /// see `lb_math::get_id_from_price` for the deviation from LB's revert.
     pub fn price_to_bin(price_minor: U256) -> Result<u32> {

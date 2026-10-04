@@ -771,7 +771,6 @@ mod tests {
             settled_nods: 0,
             bucket_key: B256::repeat_byte(last),
             worldwide_day: WorldwideDay::new(20_260_717),
-            floor_price_minor: U256::from(10),
             entry_price_minor: U256::from(11),
             reference_currency: 840,
         };
@@ -1031,8 +1030,7 @@ mod tests {
             settled_nods: 0,
             bucket_key: B256::repeat_byte(7),
             worldwide_day: WorldwideDay::new(20_260_717),
-            floor_price_minor: U256::from(999),
-            entry_price_minor: U256::from(11),
+            entry_price_minor: U256::from(999),
             reference_currency: 840,
         };
         assert_eq!(changed.entity_id(), id);
@@ -1087,7 +1085,6 @@ mod tests {
             gratis_load_minor: U256::from(1),
             worldwide_day: day,
             league_id: 7,
-            floor_price_minor: U256::from(2),
             bucket_key: B256::repeat_byte(0x43),
             issuance_currency: 840,
             reference_currency: 978,
@@ -1215,19 +1212,19 @@ mod tests {
                     "a975d4736ef74939d9eca29e329d6ab1aa2aad157cc971d6315e3dc1bdf5fe9b"
                 ),
                 alloy_primitives::b256!(
-                    "37fc86dbe097723b0bda2d83b6558bc4c059f54cf181d2d9ab257416c3c3bc49"
+                    "8ed2779d38f590a0fd94e7b041f87f926ae652a92cd98d1e0972364ab38d8e85"
                 ),
                 alloy_primitives::b256!(
-                    "75f42cf8413503971fe749902ab06d199bcad96e39e49ba68ec24c8f5a1666fd"
+                    "0b54a1b25bbc243d2af8300de61ffaa7ccbe95026e8f6ca8aad5c98349a01c4a"
                 ),
                 alloy_primitives::b256!(
                     "d4382908cd4da41da05e5df6cbe86c130c0609e7818077c7d38184b87d127748"
                 ),
                 alloy_primitives::b256!(
-                    "732f02affd4804847bb91227814a74f9e20c76aa9c3c55551e52082f49ac8414"
+                    "8deeb1348b96868ef16855e168750ab5ea5fa0cdc62ff086576b9178e3eb9131"
                 ),
                 alloy_primitives::b256!(
-                    "15222a402c03a1f3a876736e3227fa582efd3b74e7011dca3d89d1e25575a574"
+                    "33675e9d83faf9a605413e64d6054d7e948106c866d5cb7d99a3e0e96eea83af"
                 ),
                 alloy_primitives::b256!(
                     "c401b4fc8759510f0def36b6a90258d98bb4317347ecc84395a776fd5968b18f"

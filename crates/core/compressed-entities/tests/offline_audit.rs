@@ -93,7 +93,6 @@ fn bodies() -> Vec<Body> {
         gratis_load_minor: U256::from(1),
         worldwide_day: day,
         league_id: 7,
-        floor_price_minor: U256::from(2),
         bucket_key: B256::repeat_byte(0x43),
         issuance_currency: 840,
         reference_currency: 978,
@@ -103,7 +102,6 @@ fn bodies() -> Vec<Body> {
         settled_nods: 0,
         bucket_key: B256::repeat_byte(0x33),
         worldwide_day: day,
-        floor_price_minor: U256::from(10),
         entry_price_minor: U256::from(11),
         reference_currency: 840,
     };

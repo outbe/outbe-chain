@@ -146,7 +146,8 @@ impl World {
             let nod = outbe_nodfactory::api::issue_nod(&storage, &scope, &parent, &params).unwrap();
             let floor_price_minor =
                 NodContract::floor_price_minor(params.entry_price_minor).unwrap();
-            let bucket = NodContract::bucket_key(params.worldwide_day, floor_price_minor, 840);
+            let bucket =
+                NodContract::bucket_key(params.worldwide_day, params.entry_price_minor, 840);
             qualify(&storage, bucket, floor_price_minor, 840).expect("bucket qualifies");
             nod
         });
