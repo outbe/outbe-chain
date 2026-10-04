@@ -1,5 +1,9 @@
 mod common;
 mod e2e;
+mod layout;
 mod lifecycle;
+mod snapshots;
 mod state;
 mod vote_bounds;
+mod votes;
+mod window;
