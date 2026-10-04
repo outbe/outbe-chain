@@ -54,7 +54,8 @@ impl VoteTarget for RejectingApprovedTarget {
 
 static REJECTING_TARGET: RejectingApprovedTarget = RejectingApprovedTarget;
 static REJECTING_HANDLERS: &[&dyn VoteTarget] = &[&REJECTING_TARGET];
-static REJECTING_REGISTRY: VoteTargetRegistry = VoteTargetRegistry::new(REJECTING_HANDLERS);
+pub(super) static REJECTING_REGISTRY: VoteTargetRegistry =
+    VoteTargetRegistry::new(REJECTING_HANDLERS);
 
 struct TechnicallyFailingTarget;
 
