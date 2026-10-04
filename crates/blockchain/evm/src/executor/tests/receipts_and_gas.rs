@@ -4,6 +4,7 @@ mod capacity;
 mod expiry;
 mod factory_approval;
 mod hook_events;
+mod native_sinks;
 mod support;
 
 use support::*;
