@@ -41,23 +41,35 @@ use revm::{
 };
 use std::sync::Arc;
 
+/// Execution environment shared by a sub-call's child frame and precompiles.
+pub struct SubCallEnvironment {
+    pub self_address: Address,
+    pub outer_is_static: bool,
+    pub spec: SpecId,
+    pub runtime_body_readers: Option<RuntimeBodyReaders>,
+    pub execution_scope: Arc<ExecutionScope>,
+}
+
 /// Runs a sub-call with the executor-owned compressed-entity lifecycle scope.
 ///
-/// `outer_is_static = true` forces the child to STATICCALL regardless of the
+/// `environment.outer_is_static = true` forces the child to STATICCALL regardless of the
 /// caller's `input.is_static` field (outer STATIC propagates inward).
 pub fn run<DB>(
     ctx: &mut EthEvmContext<DB>,
-    self_address: Address,
-    outer_is_static: bool,
-    spec: SpecId,
-    runtime_body_readers: Option<RuntimeBodyReaders>,
-    execution_scope: Arc<ExecutionScope>,
+    environment: SubCallEnvironment,
     input: SubCallInput,
 ) -> std::result::Result<SubCallOutput, SubCallError>
 where
     DB: Database + Debug,
     DB::Error: Debug,
 {
+    let SubCallEnvironment {
+        self_address,
+        outer_is_static,
+        spec,
+        runtime_body_readers,
+        execution_scope,
+    } = environment;
     run_with_ocomp_context(
         ctx,
         SubCallContext {

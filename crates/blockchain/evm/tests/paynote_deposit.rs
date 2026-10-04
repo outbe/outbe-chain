@@ -17,13 +17,13 @@
 //!   * the appended leaf is the runtime-derived commitment, readable through
 //!     the public view ABI.
 
+mod sub_call_support;
+
 use outbe_paynote::Field;
 use outbe_protocol::codec::field_to_b256;
-use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_evm::sub_call;
 use outbe_paynote::hash::{note_commitment, note_sn};
 use outbe_paynote::precompile::IPayNote;
@@ -145,11 +145,7 @@ macro_rules! run_call {
     ($ctx:expr, $caller:expr, $target:expr, $calldata:expr, $is_static:expr) => {
         sub_call::run(
             $ctx,
-            $caller,
-            false,
-            SpecId::PRAGUE,
-            None,
-            Arc::new(ExecutionScope::new()),
+            sub_call_support::fresh_environment($caller, SpecId::PRAGUE),
             SubCallInput {
                 target: $target,
                 value: U256::ZERO,

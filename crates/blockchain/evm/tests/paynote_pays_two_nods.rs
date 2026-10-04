@@ -120,9 +120,13 @@ fn fund_depositors(ctx: &mut EvmCtx, scope: &Arc<ExecutionScope>) {
     let mut setup = |caller: Address, calldata: Vec<u8>| {
         let out = call(
             ctx,
-            scope.clone(),
-            None,
-            caller,
+            sub_call::SubCallEnvironment {
+                execution_scope: scope.clone(),
+                runtime_body_readers: None,
+                self_address: caller,
+                outer_is_static: false,
+                spec: SpecId::PRAGUE,
+            },
             ASSET,
             calldata.into(),
             false,
@@ -283,20 +287,14 @@ fn fixture_with_cost(
 
 fn call(
     ctx: &mut EvmCtx,
-    scope: Arc<ExecutionScope>,
-    readers: Option<RuntimeBodyReaders>,
-    caller: Address,
+    environment: sub_call::SubCallEnvironment,
     target: Address,
     calldata: Bytes,
     is_static: bool,
 ) -> outbe_primitives::storage::SubCallOutput {
     sub_call::run(
         ctx,
-        caller,
-        false,
-        SpecId::PRAGUE,
-        readers,
-        scope,
+        environment,
         SubCallInput {
             target,
             value: U256::ZERO,
@@ -318,9 +316,13 @@ fn view<C: SolCall>(
 ) -> C::Return {
     let out = call(
         ctx,
-        scope.clone(),
-        None,
-        ALICE1,
+        sub_call::SubCallEnvironment {
+            execution_scope: scope.clone(),
+            runtime_body_readers: None,
+            self_address: ALICE1,
+            outer_is_static: false,
+            spec: SpecId::PRAGUE,
+        },
         target,
         Bytes::from(c.abi_encode()),
         true,
@@ -383,9 +385,13 @@ fn settle_and_mine(
 ) -> outbe_primitives::storage::SubCallOutput {
     let settled = call(
         ctx,
-        scope.clone(),
-        Some(readers.clone()),
-        ALICE1,
+        sub_call::SubCallEnvironment {
+            execution_scope: scope.clone(),
+            runtime_body_readers: Some(readers.clone()),
+            self_address: ALICE1,
+            outer_is_static: false,
+            spec: SpecId::PRAGUE,
+        },
         NOD_FACTORY_ADDRESS,
         Bytes::from(
             INodFactory::settleNodWithPayNoteCall {
@@ -421,9 +427,13 @@ fn settle_and_mine(
         .expect("every nod id has a PoW nonce in the bounded search");
     call(
         ctx,
-        scope.clone(),
-        Some(readers.clone()),
-        ALICE1,
+        sub_call::SubCallEnvironment {
+            execution_scope: scope.clone(),
+            runtime_body_readers: Some(readers.clone()),
+            self_address: ALICE1,
+            outer_is_static: false,
+            spec: SpecId::PRAGUE,
+        },
         NOD_FACTORY_ADDRESS,
         Bytes::from(
             INodFactory::mineGratisCall {
@@ -453,9 +463,13 @@ fn assert_mined(out: &outbe_primitives::storage::SubCallOutput, what: &str) -> U
 fn deposit(ctx: &mut EvmCtx, scope: &Arc<ExecutionScope>, depositor: Address, note: &Note) {
     let out = call(
         ctx,
-        scope.clone(),
-        None,
-        depositor,
+        sub_call::SubCallEnvironment {
+            execution_scope: scope.clone(),
+            runtime_body_readers: None,
+            self_address: depositor,
+            outer_is_static: false,
+            spec: SpecId::PRAGUE,
+        },
         PAYNOTE_ADDRESS,
         Bytes::from(
             IPayNote::depositCall {
@@ -745,9 +759,13 @@ fn merged_12_8_5_pays_a_20_nod_and_preserves_five_as_ordinary_change() {
         .collect::<std::collections::BTreeMap<_, _>>();
     let out = call(
         &mut ctx,
-        scope.clone(),
-        None,
-        Address::repeat_byte(0x77),
+        sub_call::SubCallEnvironment {
+            execution_scope: scope.clone(),
+            runtime_body_readers: None,
+            self_address: Address::repeat_byte(0x77),
+            outer_is_static: false,
+            spec: SpecId::PRAGUE,
+        },
         PAYNOTE_ADDRESS,
         IPayNote::mergePayNotesCall {
             proof: proof.into(),

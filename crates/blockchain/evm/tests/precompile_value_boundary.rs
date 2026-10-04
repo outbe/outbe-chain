@@ -9,6 +9,8 @@
 //! `msg.value`, and how a contract would act under its own caller's identity
 //! against the precompile's global state.
 
+mod sub_call_support;
+
 #[path = "common/borrowed_precompile.rs"]
 mod borrow_code_fixture;
 use borrow_code_fixture::borrow_code;
@@ -856,11 +858,7 @@ fn borrowed_delegation_outcome(
     evm.ctx_mut().journal_mut().load_account_with_code(EOA)?;
     let outcome = outbe_evm::sub_call::run(
         evm.ctx_mut(),
-        EOA,
-        false,
-        SpecId::PRAGUE,
-        None,
-        std::sync::Arc::new(outbe_compressed_entities::ExecutionScope::new()),
+        sub_call_support::fresh_environment(EOA, SpecId::PRAGUE),
         SubCallInput {
             target: if nested { forwarder } else { BORROWER },
             value: U256::from(if is_static { 0 } else { 10 }),

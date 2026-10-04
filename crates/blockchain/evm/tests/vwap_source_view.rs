@@ -76,11 +76,13 @@ fn a_solidity_view_reads_the_factory_as_its_vwap_source() {
     let mut read = |iso_code: u16, from_utc_day: u32| {
         let out = sub_call::run(
             &mut ctx,
-            CALLER,
-            false,
-            SpecId::PRAGUE,
-            Some(readers.clone()),
-            scope.clone(),
+            sub_call::SubCallEnvironment {
+                self_address: CALLER,
+                outer_is_static: false,
+                spec: SpecId::PRAGUE,
+                runtime_body_readers: Some(readers.clone()),
+                execution_scope: scope.clone(),
+            },
             SubCallInput {
                 target: READER,
                 value: U256::ZERO,
