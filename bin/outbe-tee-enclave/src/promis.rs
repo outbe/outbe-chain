@@ -246,4 +246,91 @@ mod tests {
             U256::from(700u64)
         );
     }
+
+    #[test]
+    fn modify_mac_binds_every_input_and_is_separated_from_the_gratis_domain() {
+        use crate::confidential::GRATIS;
+        let sk = state_key();
+        let mk = PROMIS.derive_modify_key(&sk, alice()).unwrap();
+        let base = PROMIS.modify_mac(
+            &mk,
+            alice(),
+            PromisOp::Mint as u8,
+            U256::from(10u64),
+            3,
+            CHAIN,
+        );
+        let variants = [
+            PROMIS.modify_mac(
+                &mk,
+                Address::repeat_byte(0x22),
+                PromisOp::Mint as u8,
+                U256::from(10u64),
+                3,
+                CHAIN,
+            ),
+            PROMIS.modify_mac(
+                &mk,
+                alice(),
+                PromisOp::Burn as u8,
+                U256::from(10u64),
+                3,
+                CHAIN,
+            ),
+            PROMIS.modify_mac(
+                &mk,
+                alice(),
+                PromisOp::Mint as u8,
+                U256::from(11u64),
+                3,
+                CHAIN,
+            ),
+            PROMIS.modify_mac(
+                &mk,
+                alice(),
+                PromisOp::Mint as u8,
+                U256::from(10u64),
+                4,
+                CHAIN,
+            ),
+            PROMIS.modify_mac(
+                &mk,
+                alice(),
+                PromisOp::Mint as u8,
+                U256::from(10u64),
+                3,
+                B256::repeat_byte(0xC3),
+            ),
+            // Same key bytes and inputs under the Gratis tag must not authorize a Promis write.
+            GRATIS.modify_mac(
+                &mk,
+                alice(),
+                PromisOp::Mint as u8,
+                U256::from(10u64),
+                3,
+                CHAIN,
+            ),
+        ];
+        for (i, other) in variants.iter().enumerate() {
+            assert_ne!(base, *other, "variant {i} must change the authorization");
+            assert!(!PROMIS.verify_modify_auth(
+                &mk,
+                alice(),
+                PromisOp::Mint as u8,
+                U256::from(10u64),
+                3,
+                CHAIN,
+                other
+            ));
+        }
+        assert!(PROMIS.verify_modify_auth(
+            &mk,
+            alice(),
+            PromisOp::Mint as u8,
+            U256::from(10u64),
+            3,
+            CHAIN,
+            &base
+        ));
+    }
 }
