@@ -123,6 +123,7 @@ fn sample(worldwide_day: u32) -> IssuanceParams {
     }
 }
 
+mod contributor_residue;
 mod creator_reward;
 mod entrypoints;
 mod groups;

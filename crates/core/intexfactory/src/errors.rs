@@ -55,6 +55,16 @@ pub enum IntexFactoryError {
     BadContributorBatch,
     #[error("contributor payout would exceed the round amount for day {0}")]
     PayoutExceedsRound(u32),
+    #[error("certified nominal total is zero for day {0}")]
+    ZeroEligibleNominal(u32),
+    #[error("contributor residue recipient is not recorded for day {0}")]
+    ResidueRecipientUnknown(u32),
+    #[error("legacy contributor round for day {0} is already closed")]
+    LegacyRoundAlreadyClosed(u32),
+    #[error("contributor residue recipient conflicts for day {0}")]
+    ResidueRecipientConflict(u32),
+    #[error("contributor leaf 0 is unpaid for day {0}")]
+    LeafZeroUnpaid(u32),
     #[error(
         "currency {iso} day {worldwide_day} is indexed in bin {expected}, series priced into {got}"
     )]

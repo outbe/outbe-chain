@@ -296,6 +296,14 @@ pub fn dispatch(
                         &c.proof,
                     )
                 }),
+                recordContributorResidueRecipient(c) => mutate_void(c, caller, |_sender, c| {
+                    runtime::record_contributor_residue_recipient(
+                        &storage,
+                        c.worldwideDay,
+                        &c.leaves,
+                        &c.proof,
+                    )
+                }),
                 contributorPayoutRound(c) => view(c, |c| {
                     runtime::contributor_payout_round(&storage, c.worldwideDay)
                 }),

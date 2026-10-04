@@ -432,7 +432,40 @@ pub fn open_certified_payout_round(
         paid_so_far: U256::ZERO,
         paid_leaf_count: 0,
         active: 1,
+        residue_recipient: Address::ZERO,
+        residue_recipient_set: 0,
+        residue_rule: crate::schema::RESIDUE_RULE_PAY_LEAF_ZERO,
     })
+}
+
+/// Records the residue recipient on an open round. Does not move a balance
+/// and does not change the paid bitmap.
+pub fn set_certified_residue_recipient(
+    storage: &StorageHandle<'_>,
+    wwd: u32,
+    recipient: Address,
+) -> Result<()> {
+    let mut registry = IntexContract::new(storage.clone());
+    let mut round = registry
+        .get_payout_round(wwd)?
+        .ok_or(IntexError::BadContributorBatch("payout round is not open"))?;
+    round.residue_recipient = recipient;
+    round.residue_recipient_set = 1;
+    registry.update_payout_round(&round)
+}
+
+/// Sets `paid_so_far` after the floor remainder has been transferred.
+pub fn set_certified_paid_so_far(
+    storage: &StorageHandle<'_>,
+    wwd: u32,
+    paid_so_far: U256,
+) -> Result<()> {
+    let mut registry = IntexContract::new(storage.clone());
+    let mut round = registry
+        .get_payout_round(wwd)?
+        .ok_or(IntexError::BadContributorBatch("payout round is not open"))?;
+    round.paid_so_far = paid_so_far;
+    registry.update_payout_round(&round)
 }
 
 /// Rejects a batch whose leaves were already paid.

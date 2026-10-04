@@ -86,6 +86,9 @@ interface IIntexFactory {
     /// @dev Permissionless: correctness comes from `proof`, not from the caller.
     ///      Each leaf receives `roundAmount * nominal / eligibleNominalTotal` and
     ///      is marked paid, so a replayed batch reverts before any transfer.
+    ///      When the batch starts at index 0, its first leaf's owner is stored
+    ///      as the residue recipient. The batch that pays the last unpaid leaf
+    ///      also pays `amount - paidSoFar` to that owner.
     /// @param worldwideDay Day whose payout round is open.
     /// @param startIndex Global index of the first leaf; must be a multiple of 256.
     /// @param leaves Records of one result chunk: a full 256-leaf chunk, or the
@@ -94,6 +97,17 @@ interface IIntexFactory {
     function payContributorBatch(
         uint32 worldwideDay,
         uint32 startIndex,
+        ContributorLeaf[] calldata leaves,
+        bytes32[] calldata proof
+    ) external;
+
+    /// @notice Record the residue recipient of an open round whose index-0
+    ///         chunk was paid before that owner was stored.
+    /// @dev Proof only. The chunk is always global index 0. This call does not
+    ///      transfer and does not change the paid bitmap. A round that already
+    ///      paid every leaf under the old burn rule is rejected.
+    function recordContributorResidueRecipient(
+        uint32 worldwideDay,
         ContributorLeaf[] calldata leaves,
         bytes32[] calldata proof
     ) external;
@@ -198,9 +212,10 @@ interface IIntexFactory {
     ///         `startIndex` was paid `paidAmount` native COEN in total.
     event ContributorBatchPaid(uint32 indexed worldwideDay, uint32 startIndex, uint32 leafCount, uint256 paidAmount);
 
-    /// @notice Every contributor of `worldwideDay` has been paid. `burnedAmount`
-    ///         is what per-leaf floor division left behind and was destroyed;
-    ///         the day accepts no further batches.
+    /// @notice Every contributor of `worldwideDay` has been paid. `paidAmount`
+    ///         includes the floor remainder paid to certified leaf 0.
+    ///         `burnedAmount` is zero for a round that had contributors.
+    ///         The day accepts no further batches.
     event ContributorRoundClosed(uint32 indexed worldwideDay, uint256 paidAmount, uint256 burnedAmount);
 
     /// @notice Proceeds arrived for `worldwideDay` after its payout round had
