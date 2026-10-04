@@ -542,15 +542,18 @@ fn factory_boundaries_are_byte_equal_across_proposer_and_validator_execution() {
                 assert_eq!(proposer.token_total_supply, U256::ZERO);
             }
             Boundary::Error => {
+                // A target-execution error is terminal: the bond goes back to
+                // the issuer in the same pass and the liability closes, while
+                // the reservation stays until the registry releases it.
                 assert_eq!(proposer.created_logs, 0);
-                assert_eq!(proposer.refunded_logs, 0);
+                assert_eq!(proposer.refunded_logs, 1);
                 assert_eq!(proposer.burned_logs, 0);
                 assert_eq!(proposer.status, ProposalStatus::Error);
-                assert_eq!(proposer.settlement, BondSettlement::Unsettled);
+                assert_eq!(proposer.settlement, BondSettlement::Refunded);
                 assert_eq!(proposer.factory_count, U256::ZERO);
-                assert_eq!(proposer.issuer_balance, U256::ZERO);
-                assert_eq!(proposer.vote_balance, STABLECOIN_CREATE_BOND);
-                assert_eq!(proposer.liabilities, STABLECOIN_CREATE_BOND);
+                assert_eq!(proposer.issuer_balance, STABLECOIN_CREATE_BOND);
+                assert_eq!(proposer.vote_balance, U256::ZERO);
+                assert_eq!(proposer.liabilities, U256::ZERO);
                 assert!(proposer.reservation_exists);
                 assert!(proposer.registered_token_id.is_none());
                 assert_eq!(proposer.token_by_id, Address::ZERO);
