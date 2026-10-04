@@ -1215,10 +1215,21 @@ fn real_factory_execution_error_has_no_factory_receipt_log() {
             || log.data.topics().first()
                 != Some(&IStablecoinFactory::StablecoinCreated::SIGNATURE_HASH)
     }));
+    // A target Error refunds the bond once and burns nothing.
+    assert_eq!(
+        receipt_logs
+            .iter()
+            .filter(|log| {
+                log.address == VOTE_ADDRESS
+                    && log.data.topics().first()
+                        == Some(&IVote::ProposalBondRefunded::SIGNATURE_HASH)
+            })
+            .count(),
+        1
+    );
     assert!(receipt_logs.iter().all(|log| {
         log.address != VOTE_ADDRESS
-            || (log.data.topics().first() != Some(&IVote::ProposalBondRefunded::SIGNATURE_HASH)
-                && log.data.topics().first() != Some(&IVote::ProposalBondBurned::SIGNATURE_HASH))
+            || log.data.topics().first() != Some(&IVote::ProposalBondBurned::SIGNATURE_HASH)
     }));
     {
         let config = OutbeEvmConfig::new(test_chain_spec());
@@ -1253,13 +1264,10 @@ fn real_factory_execution_error_has_no_factory_receipt_log() {
     );
     assert_eq!(
         vote.proposal_bond(U256::from(1u64)).unwrap().settlement,
-        BondSettlement::Unsettled
+        BondSettlement::Refunded
     );
-    assert_eq!(vote.bond_liabilities().unwrap(), STABLECOIN_CREATE_BOND);
-    assert_eq!(
-        storage.balance(VOTE_ADDRESS).unwrap(),
-        STABLECOIN_CREATE_BOND
-    );
+    assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
+    assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), U256::ZERO);
     assert_eq!(factory.token_count().unwrap(), U256::ZERO);
     assert!(factory.reservations.exists(U256::from(1u64)).unwrap());
 }
