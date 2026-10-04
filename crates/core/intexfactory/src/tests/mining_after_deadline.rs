@@ -4,7 +4,7 @@
 use super::*;
 use alloy_sol_types::SolEvent;
 use outbe_tee::protocol::PromisOp;
-use outbe_tee_enclave::promis::{derive_modify_key, modify_mac};
+use outbe_tee_enclave::promis::{decrypt_balance, derive_modify_key, derive_view_key, modify_mac};
 
 fn promis_auth(account: Address, amount: U256, nonce: u64) -> outbe_promisfactory::api::ModifyAuth {
     let sk = outbe_promis::enclave_client::test_enclave::state_key();
@@ -91,6 +91,13 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
         .unwrap();
         assert_eq!(minted, promis_minor);
         assert_eq!(outbe_intex::api::exercised_units(&s, sid(7)).unwrap(), 1);
+
+        // The Promis landed on the owner's confidential ledger and consumed one op nonce.
+        let sk = outbe_promis::enclave_client::test_enclave::state_key();
+        let vk = derive_view_key(&sk, owner()).unwrap();
+        let blob = outbe_promis::api::balance_ct(s.clone(), owner()).unwrap();
+        assert_eq!(decrypt_balance(&vk, owner(), &blob).unwrap(), promis_minor);
+        assert_eq!(outbe_promis::api::op_nonce(s.clone(), owner()).unwrap(), 1);
         assert_eq!(
             IntexFactoryContract::new(s.clone())
                 .read_mine_seq(sid(7), owner())
