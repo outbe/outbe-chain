@@ -1501,21 +1501,7 @@ mod tests {
     ) -> (Vec<bls12381::PrivateKey>, Vec<TestScheme>, TestScheme) {
         let (keys, participants) = test_participants(n);
         let dkg = bootstrap_dkg(n as u32).unwrap();
-        let signers = keys
-            .iter()
-            .map(|key| {
-                let pk = bls12381::PublicKey::from(key.clone());
-                let idx = participants.index(&pk).unwrap();
-                HybridScheme::signer(
-                    NAMESPACE,
-                    participants.clone(),
-                    key.clone(),
-                    dkg.polynomial.clone(),
-                    dkg.shares[idx.get() as usize].clone(),
-                )
-                .unwrap()
-            })
-            .collect();
+        let signers = signer_schemes(NAMESPACE, &keys, &participants, &dkg);
         let verifier =
             HybridScheme::<MinSig>::verifier(NAMESPACE, participants, dkg.polynomial).unwrap();
         (keys, signers, verifier)
