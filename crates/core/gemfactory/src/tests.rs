@@ -467,6 +467,7 @@ fn merchant_entry_price(storage: &StorageHandle, source_entry: U256) -> U256 {
         .entry_price_minor
 }
 
+mod direct_fx_admission;
 mod eligibility;
 
 mod issuance;

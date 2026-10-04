@@ -124,6 +124,7 @@ fn sample(worldwide_day: u32) -> IssuanceParams {
 }
 
 mod creator_reward;
+mod direct_fx_admission;
 mod entrypoints;
 mod groups;
 mod issuance;
