@@ -103,6 +103,15 @@ pub struct RenewalServiceConfigV1 {
     pub manifest: EnclaveInitializationManifestV1,
 }
 
+/// RPC, enclave and signing capabilities used by one locked renewal attempt.
+/// The configured node identity and storage location are supplied separately.
+pub struct RenewalServicesV1<'a, R, E, N> {
+    pub rpc: &'a R,
+    pub evm_signer: &'a RelaySignerV1,
+    pub enclave: &'a mut E,
+    pub node_signer: &'a N,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RenewalOutcomeV1 {
     NotDue {
@@ -123,18 +132,19 @@ pub enum RenewalOutcomeV1 {
     },
 }
 
-pub async fn run_renewal_once_v1(
-    rpc: &(impl RenewalRpc + Sync),
-    evm_signer: &RelaySignerV1,
-    enclave: &mut impl RenewalEnclaveV1,
-    node_signer: &impl RenewalNodeSignerV1,
+pub async fn run_renewal_once_v1<
+    R: RenewalRpc + Sync,
+    E: RenewalEnclaveV1,
+    N: RenewalNodeSignerV1,
+>(
+    services: RenewalServicesV1<'_, R, E, N>,
     config: &RenewalServiceConfigV1,
 ) -> Result<RenewalOutcomeV1> {
     let mut preparation = RenewalPreparation {
-        rpc,
-        evm_signer,
-        enclave,
-        node_signer,
+        rpc: services.rpc,
+        evm_signer: services.evm_signer,
+        enclave: services.enclave,
+        node_signer: services.node_signer,
         config,
     };
     run_locked_renewal(&mut preparation).await
@@ -165,6 +175,20 @@ mod tests {
         tee_operator_v1::TeeRenewalScheduleV1,
         tee_registry_abi_v1::NodeEnclaveBindingV1View,
     };
+
+    fn renewal_services<'a, R, E, N>(
+        rpc: &'a R,
+        evm_signer: &'a RelaySignerV1,
+        enclave: &'a mut E,
+        node_signer: &'a N,
+    ) -> RenewalServicesV1<'a, R, E, N> {
+        RenewalServicesV1 {
+            rpc,
+            evm_signer,
+            enclave,
+            node_signer,
+        }
+    }
 
     struct DirectOnlyEnclave {
         signer: ed25519_dalek::SigningKey,
@@ -867,9 +891,12 @@ mod tests {
             let mut enclave = ReplayMustNotPrepare;
             let signer = |_hash: B256| -> Result<[u8; 65]> { panic!("unexpected signing") };
             assert!(matches!(
-                run_renewal_once_v1(&rpc, &relay, &mut enclave, &signer, &config)
-                    .await
-                    .unwrap(),
+                run_renewal_once_v1(
+                    renewal_services(&rpc, &relay, &mut enclave, &signer),
+                    &config
+                )
+                .await
+                .unwrap(),
                 RenewalOutcomeV1::NotDue { .. }
             ));
             RenewalJournalGuard::acquire(dir.path())
@@ -880,9 +907,12 @@ mod tests {
                     },
                 ))
                 .unwrap();
-            let outcome = run_renewal_once_v1(&rpc, &relay, &mut enclave, &signer, &config)
-                .await
-                .unwrap();
+            let outcome = run_renewal_once_v1(
+                renewal_services(&rpc, &relay, &mut enclave, &signer),
+                &config,
+            )
+            .await
+            .unwrap();
             assert_eq!(
                 outcome,
                 RenewalOutcomeV1::Submitted {
@@ -940,7 +970,11 @@ mod tests {
         store_upgrade_checkpoint(&config, &attempt, true);
         let mut enclave = ReplayMustNotPrepare;
         let signer = |_hash: B256| -> Result<[u8; 65]> { panic!("unexpected signing") };
-        let result = run_renewal_once_v1(&rpc, &relay, &mut enclave, &signer, &config).await;
+        let result = run_renewal_once_v1(
+            renewal_services(&rpc, &relay, &mut enclave, &signer),
+            &config,
+        )
+        .await;
         if case < 2 {
             assert!(matches!(result.unwrap(), RenewalOutcomeV1::NotDue { .. }));
         } else {
@@ -999,10 +1033,13 @@ mod tests {
             }
             let mut enclave = ReplayMustNotPrepare;
             let signer = |_hash: B256| -> Result<[u8; 65]> { panic!("unexpected signing") };
-            let error = run_renewal_once_v1(&rpc, &relay, &mut enclave, &signer, &config)
-                .await
-                .unwrap_err()
-                .to_string();
+            let error = run_renewal_once_v1(
+                renewal_services(&rpc, &relay, &mut enclave, &signer),
+                &config,
+            )
+            .await
+            .unwrap_err()
+            .to_string();
             let expected = [
                 "renewal is blocked",
                 "does not match the promoted enclave",
@@ -1095,10 +1132,8 @@ mod tests {
                 let node_signer = |_hash: B256| -> Result<[u8; 65]> {
                     panic!("restart replay regenerated a NodeHost signature")
                 };
-                let outcome =
-                    run_renewal_once_v1(&rpc, &relay, &mut enclave, &node_signer, &config)
-                        .await
-                        .unwrap();
+                let services = renewal_services(&rpc, &relay, &mut enclave, &node_signer);
+                let outcome = run_renewal_once_v1(services, &config).await.unwrap();
                 assert_eq!(
                     outcome,
                     RenewalOutcomeV1::Submitted {
@@ -1151,9 +1186,12 @@ mod tests {
         let node_signer = |_hash: B256| -> Result<[u8; 65]> {
             panic!("receipt reconciliation regenerated a NodeHost signature")
         };
-        let outcome = run_renewal_once_v1(&rpc, &relay, &mut enclave, &node_signer, &config)
-            .await
-            .unwrap();
+        let outcome = run_renewal_once_v1(
+            renewal_services(&rpc, &relay, &mut enclave, &node_signer),
+            &config,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
             outcome,
@@ -1190,9 +1228,12 @@ mod tests {
         let node_signer = |_hash: B256| -> Result<[u8; 65]> {
             panic!("nonce conflict handling regenerated a NodeHost signature")
         };
-        let error = run_renewal_once_v1(&rpc, &relay, &mut enclave, &node_signer, &config)
-            .await
-            .expect_err("a consumed nonce without the exact receipt must fail closed");
+        let error = run_renewal_once_v1(
+            renewal_services(&rpc, &relay, &mut enclave, &node_signer),
+            &config,
+        )
+        .await
+        .expect_err("a consumed nonce without the exact receipt must fail closed");
 
         assert!(
             error
@@ -1229,9 +1270,12 @@ mod tests {
         let node_signer = |_hash: B256| -> Result<[u8; 65]> {
             panic!("nonce race handling regenerated a NodeHost signature")
         };
-        let outcome = run_renewal_once_v1(&rpc, &relay, &mut enclave, &node_signer, &config)
-            .await
-            .unwrap();
+        let outcome = run_renewal_once_v1(
+            renewal_services(&rpc, &relay, &mut enclave, &node_signer),
+            &config,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
             outcome,

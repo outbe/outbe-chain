@@ -671,29 +671,38 @@ pub fn record_upgrade_missed_cutoff_v1(
         .ok_or_else(|| eyre::eyre!("missed-cutoff checkpoint disappeared"))
 }
 
+/// RPC, relay and node signing capabilities for the replacement candidate.
+pub struct UpgradeSubmissionServicesV1<'a, R, N> {
+    pub rpc: &'a R,
+    pub relay: &'a RelaySignerV1,
+    pub candidate: &'a mut ReplacementCandidateEnclaveV1,
+    pub node_signer: &'a N,
+}
+
+/// Node storage and binding target for one durable upgrade submission.
+pub struct UpgradeSubmissionRequestV1<'a> {
+    pub node_data_dir: &'a Path,
+    pub selector: &'a NodeBindingSelectorV1,
+    pub binding_id: B256,
+    pub requested_valid_until: u64,
+}
+
 /// Resume one same-platform measurement transition from its durable
 /// checkpoints. The deployment manager must have already copied the root and
 /// restarted candidate B before calling this reducer.
-#[allow(clippy::too_many_arguments)]
-pub async fn run_upgrade_submission_v1(
-    rpc: &(impl RenewalRpc + Sync),
-    relay: &RelaySignerV1,
-    candidate: &mut ReplacementCandidateEnclaveV1,
-    node_signer: &impl UpgradeNodeSignerV1,
-    node_data_dir: &Path,
-    selector: &NodeBindingSelectorV1,
-    binding_id: B256,
-    requested_valid_until: u64,
+pub async fn run_upgrade_submission_v1<R: RenewalRpc + Sync, N: UpgradeNodeSignerV1>(
+    services: UpgradeSubmissionServicesV1<'_, R, N>,
+    request: UpgradeSubmissionRequestV1<'_>,
 ) -> Result<UpgradeSubmissionOutcomeV1> {
     let mut service = submission::UpgradeSubmissionService {
-        rpc,
-        relay,
-        candidate,
-        node_signer,
-        node_data_dir,
-        selector,
-        binding_id,
-        requested_valid_until,
+        rpc: services.rpc,
+        relay: services.relay,
+        candidate: services.candidate,
+        node_signer: services.node_signer,
+        node_data_dir: request.node_data_dir,
+        selector: request.selector,
+        binding_id: request.binding_id,
+        requested_valid_until: request.requested_valid_until,
     };
     submission::run(&mut service).await
 }

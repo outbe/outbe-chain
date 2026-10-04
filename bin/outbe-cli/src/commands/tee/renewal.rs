@@ -16,6 +16,7 @@ use outbe_operator::tee::NodeBindingSelectorV1;
 
 use outbe_operator::tee::RenewalOutcomeV1;
 use outbe_operator::tee::RenewalServiceConfigV1;
+use outbe_operator::tee::RenewalServicesV1;
 
 use outbe_operator::tx::RelaySignerV1;
 
@@ -73,10 +74,12 @@ pub(super) async fn renew(
     let started = Instant::now();
     loop {
         let outcome = run_renewal_once_v1(
-            &CliFinalityRpc(client),
-            &evm_signer,
-            &mut enclave,
-            &signer,
+            RenewalServicesV1 {
+                rpc: &CliFinalityRpc(client),
+                evm_signer: &evm_signer,
+                enclave: &mut enclave,
+                node_signer: &signer,
+            },
             &config,
         )
         .await?;

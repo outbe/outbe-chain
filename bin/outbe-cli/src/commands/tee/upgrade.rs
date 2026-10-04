@@ -19,7 +19,9 @@ use outbe_operator::tee::{
     record_upgrade_finalized_v1, record_upgrade_promoted_v1, UpgradeJournalStateV1,
 };
 
-use outbe_operator::tee::run_upgrade_submission_v1;
+use outbe_operator::tee::{
+    run_upgrade_submission_v1, UpgradeSubmissionRequestV1, UpgradeSubmissionServicesV1,
+};
 
 use outbe_operator::tee::NodeBindingSelectorV1;
 
@@ -218,14 +220,18 @@ pub(super) async fn upgrade_submit(
             .map_err(|error| eyre::eyre!("node authority signing failed: {error}"))
     };
     let outcome = run_upgrade_submission_v1(
-        &CliFinalityRpc(client),
-        &evm_signer,
-        &mut candidate,
-        &signer,
-        node_data_dir,
-        &selector,
-        parse_nonzero_b256(binding_id, "--binding-id")?,
-        valid_until,
+        UpgradeSubmissionServicesV1 {
+            rpc: &CliFinalityRpc(client),
+            relay: &evm_signer,
+            candidate: &mut candidate,
+            node_signer: &signer,
+        },
+        UpgradeSubmissionRequestV1 {
+            node_data_dir,
+            selector: &selector,
+            binding_id: parse_nonzero_b256(binding_id, "--binding-id")?,
+            requested_valid_until: valid_until,
+        },
     )
     .await?;
     println!("{outcome:#?}");

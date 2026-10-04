@@ -16,7 +16,7 @@ pub use registry::{
 };
 pub use renewal::{
     run_renewal_once_v1, RenewalEnclaveV1, RenewalNodeSignerV1, RenewalOutcomeV1,
-    RenewalServiceConfigV1,
+    RenewalServiceConfigV1, RenewalServicesV1,
 };
 pub use renewal_journal::{RenewalJournalSnapshotV1, RenewalJournalStateV1};
 pub use status::{read_renewal_status_v1, RenewalAlertLevelV1, RenewalStatusV1};
@@ -28,5 +28,6 @@ pub use upgrade::{
     record_upgrade_submission_prepared_v1, record_upgrade_submitted_v1, run_upgrade_submission_v1,
     transition_intent_v1, NetworkUpgradeSubmissionV1, PreparedUpgradeSubmissionV1,
     UpgradeContextV1, UpgradeJournalGuardV1, UpgradeJournalSnapshotV1, UpgradeJournalStateV1,
-    UpgradeNodeSignerV1, UpgradeSubmissionOutcomeV1,
+    UpgradeNodeSignerV1, UpgradeSubmissionOutcomeV1, UpgradeSubmissionRequestV1,
+    UpgradeSubmissionServicesV1,
 };
