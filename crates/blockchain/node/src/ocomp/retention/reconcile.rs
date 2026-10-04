@@ -788,17 +788,15 @@ impl OcompRetentionCoordinator {
                     },
                 )
             }
-            PinStateV1::Finalized {
-                candidate,
-                job_id,
-                finality_recorded_height,
-                open_height,
-                deadline_height,
-            } if candidate == finalized.candidate
-                && job_id == finalized.job_id
-                && finality_recorded_height == finalized.finality_recorded_height
-                && open_height == finalized.open_height
-                && deadline_height == finalized.deadline_height =>
+            state @ PinStateV1::Finalized { .. }
+                if state
+                    == (PinStateV1::Finalized {
+                        candidate: finalized.candidate,
+                        job_id: finalized.job_id,
+                        finality_recorded_height: finalized.finality_recorded_height,
+                        open_height: finalized.open_height,
+                        deadline_height: finalized.deadline_height,
+                    }) =>
             {
                 Ok(ack_for(record))
             }

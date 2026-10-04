@@ -693,13 +693,16 @@ impl FinalizedParentCertStore {
         _parent_block_number: u64,
     ) -> Option<ParentProofSelection> {
         let state = self.lock_read();
-        if let Some(record) = state.finalization.get(&key) {
-            return Some(ParentProofSelection::Finalization(record.clone()));
-        }
         state
-            .certified_notarization
+            .finalization
             .get(&key)
-            .map(|record| ParentProofSelection::CertifiedNotarization(record.clone()))
+            .map(|record| ParentProofSelection::Finalization(record.clone()))
+            .or_else(|| {
+                state
+                    .certified_notarization
+                    .get(&key)
+                    .map(|record| ParentProofSelection::CertifiedNotarization(record.clone()))
+            })
     }
 
     /// Subscribe to proof-store writes. The payload is a monotonic revision
@@ -982,10 +985,14 @@ fn is_missing_table_error(error: &DatabaseError) -> bool {
         DatabaseError::Open(info) => {
             let message = info.message.to_ascii_lowercase();
             info.code == -30798
-                || message.contains("notfound")
-                || message.contains("not found")
-                || message.contains("mdbx_notfound")
-                || message.contains("no matching key/data")
+                || [
+                    "notfound",
+                    "not found",
+                    "mdbx_notfound",
+                    "no matching key/data",
+                ]
+                .iter()
+                .any(|fragment| message.contains(fragment))
         }
         _ => false,
     }
