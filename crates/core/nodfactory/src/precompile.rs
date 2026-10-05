@@ -1,5 +1,7 @@
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{SolCall, SolInterface};
+#[cfg(feature = "e2e-test")]
+use alloy_sol_types::SolCall;
+use alloy_sol_types::SolInterface;
 use outbe_primitives::dispatch::{dispatch_call, mutate, view};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
@@ -74,13 +76,8 @@ fn issue_for_test(
     Ok(())
 }
 
-pub fn base_gas(input: &[u8]) -> u64 {
-    match input.first_chunk::<4>() {
-        Some(&INodFactory::settleNodWithPayNoteCall::SELECTOR) => {
-            outbe_primitives::storage::gas::ZK_VERIFY_GAS
-        }
-        _ => PRECOMPILE_BASE_GAS,
-    }
+pub fn base_gas(_input: &[u8]) -> u64 {
+    PRECOMPILE_BASE_GAS
 }
 
 /// Dispatches NodFactory calls through the block-scoped compressed-body lifecycle.
@@ -117,16 +114,6 @@ pub fn dispatch(
                     c.snapshotId,
                 )?;
                 Ok(INodFactory::settleNodReturn {})
-            }),
-            settleNodWithPayNote(c) => mutate(c, caller, |_, c| {
-                runtime::settle_nod_with_paynote(
-                    &storage,
-                    scope,
-                    parent,
-                    WwdEntityId::from(c.nodId),
-                    &c.payNoteProof,
-                )?;
-                Ok(INodFactory::settleNodWithPayNoteReturn {})
             }),
             quoteSettlement(c) => view(c, |c| {
                 let (settlement_currency, amount, snapshot_id) = runtime::quote_settlement(

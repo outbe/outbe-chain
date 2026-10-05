@@ -124,7 +124,6 @@ fn third_party_settles_and_mines(world: &mut World) {
             owner,
             nodId: id.to_u256(),
             asset,
-            nullifier: B256::ZERO,
             paymentMinor: body.settlementCostMinor,
         },
     );

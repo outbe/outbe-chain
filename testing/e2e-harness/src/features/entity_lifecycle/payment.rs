@@ -1,7 +1,7 @@
 //! Paying for a lifecycle holding by ERC20, from its owner or a third party, in any
 //! currency it accepts.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 
 use super::chain::{finalized_checkpoint, verify_checkpoint};
@@ -265,11 +265,6 @@ fn assert_paid_event(
                 (paid.owner, paid.nodId, paid.asset, paid.paymentMinor),
                 (target.owner, *id, asset, payable),
                 "NodPaid does not record this payment"
-            );
-            assert_eq!(
-                paid.nullifier,
-                B256::ZERO,
-                "an ERC20 payment spends no nullifier"
             );
         }
     }

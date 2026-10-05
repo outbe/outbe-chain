@@ -5,7 +5,7 @@
 //! state exclusively through [`outbe_nod::api`] and emits its own events at
 //! [`NOD_FACTORY_ADDRESS`].
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_oracle::api::{settlement_fx_rates, VwapSnapshotId};
 use outbe_primitives::addresses::{NOD_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
@@ -176,28 +176,9 @@ pub fn settle_nod(
         }
         Ok(PaidCost {
             asset,
-            nullifier: B256::ZERO,
             spend_amount: cost,
         })
     })
-}
-
-/// Pays a qualified or called Nod's exact cost by spending a PayNote.
-pub fn settle_nod_with_paynote(
-    storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-    nod_id: WwdEntityId,
-    paynote_proof: &[u8],
-) -> Result<()> {
-    settle(
-        storage,
-        scope,
-        parent,
-        nod_id,
-        |_, _| Ok(()),
-        |terms, entry_price, ()| discharge_cost(storage, nod_id, terms, entry_price, paynote_proof),
-    )
 }
 
 /// Currency pair and load a settlement charges against. Copied off the item
@@ -252,7 +233,6 @@ fn settle<Q>(
                 owner,
                 nodId: nod_id.to_u256(),
                 asset: paid.asset,
-                nullifier: paid.nullifier,
                 paymentMinor: paid.spend_amount,
             },
         )
@@ -350,62 +330,10 @@ fn load_nod(
     Ok((item, bucket))
 }
 
-/// One discharged Nod cost, as it is reported by `NodPaid`.
+/// One paid Nod cost, as it is reported by `NodPaid`.
 struct PaidCost {
     asset: Address,
-    nullifier: B256,
     spend_amount: U256,
-}
-
-/// Discharges a Nod's cost by spending one PayNote.
-///
-/// The proof is the payment. `consume` books its nullifier before returning, so
-/// the note cannot be spent twice; running inside the caller's checkpoint means
-/// a later failure un-books it. It is called last, after the cheap
-/// qualification/deadline guards, so rejected settlement never pays for
-/// verification.
-fn discharge_cost(
-    storage: &StorageHandle<'_>,
-    nod_id: WwdEntityId,
-    terms: &SettlementTerms,
-    entry_price_minor: U256,
-    paynote_proof: &[u8],
-) -> Result<PaidCost> {
-    let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
-
-    let currency = accept_payment_asset(
-        storage,
-        claim.asset,
-        terms.issuance_currency,
-        terms.reference_currency,
-    )?;
-    let (cost, snapshot) = cost_in_asset(storage, terms, entry_price_minor, claim.asset, currency)?;
-    let expected = outbe_paynote::api::settlement_context(
-        outbe_paynote::api::SettlementDomain::Nod,
-        B256::from(nod_id.to_u256()),
-        U256::ONE,
-        snapshot.map_or(U256::ZERO, VwapSnapshotId::to_u256),
-    )?;
-    if claim.context != expected {
-        return Err(NodFactoryError::PayNoteContextMismatch {
-            expected,
-            actual: claim.context,
-        }
-        .into());
-    }
-    if claim.spend_amount != cost {
-        return Err(NodFactoryError::PayNoteCostMismatch {
-            covered: claim.spend_amount,
-            required: cost,
-        }
-        .into());
-    }
-
-    Ok(PaidCost {
-        asset: claim.asset,
-        nullifier: claim.nullifier,
-        spend_amount: claim.spend_amount,
-    })
 }
 
 /// Which of a Nod's two currencies a payment asset is denominated in.
