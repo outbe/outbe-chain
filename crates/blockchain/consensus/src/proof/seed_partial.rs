@@ -57,6 +57,15 @@ pub fn seed_partial_attest_message(
     msg
 }
 
+/// The round, material version and encoded partial bound by an identity signature.
+#[derive(Clone, Copy, Debug)]
+pub struct SeedPartialAttestation<'a> {
+    pub round_epoch: u64,
+    pub round_view: u64,
+    pub vrf_material_version: u64,
+    pub partial_bytes: &'a [u8],
+}
+
 /// Verify a seed-partial identity signature against the author's MinPk identity
 /// key. Returns `true` iff `signature` is `identity_pubkey`'s signature over
 /// [`seed_partial_attest_message`] under [`OUTBE_SEED_ATTEST_NAMESPACE_V2`].
@@ -65,12 +74,16 @@ pub fn seed_partial_attest_message(
 /// deliberately emitted exactly this `(round, version, partial)` triple.
 pub fn verify_seed_partial_attest(
     identity_pubkey: &bls12381::PublicKey,
-    round_epoch: u64,
-    round_view: u64,
-    vrf_material_version: u64,
-    partial_bytes: &[u8],
+    subject: SeedPartialAttestation<'_>,
     signature: &bls12381::Signature,
 ) -> bool {
+    let SeedPartialAttestation {
+        round_epoch,
+        round_view,
+        vrf_material_version,
+        partial_bytes,
+    } = subject;
+
     let message =
         seed_partial_attest_message(round_epoch, round_view, vrf_material_version, partial_bytes);
     identity_pubkey.verify(&seed_attest_namespace(), &message, signature)
@@ -83,10 +96,7 @@ pub fn verify_seed_partial_attest(
 /// than panicking. Determinism: this is a plain pairing check, no RNG.
 pub fn verify_seed_partial_attest_bytes(
     identity_pubkey: &[u8],
-    round_epoch: u64,
-    round_view: u64,
-    vrf_material_version: u64,
-    partial_bytes: &[u8],
+    subject: SeedPartialAttestation<'_>,
     signature: &[u8],
 ) -> bool {
     let Ok(pubkey) =
@@ -98,14 +108,7 @@ pub fn verify_seed_partial_attest_bytes(
     else {
         return false;
     };
-    verify_seed_partial_attest(
-        &pubkey,
-        round_epoch,
-        round_view,
-        vrf_material_version,
-        partial_bytes,
-        &sig,
-    )
+    verify_seed_partial_attest(&pubkey, subject, &sig)
 }
 
 /// The single plain-pairing core for threshold-VRF seed signatures.

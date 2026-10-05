@@ -469,10 +469,12 @@ impl<V: Variant> HybridScheme<V> {
         let partial_bytes = signature.bls_seed_partial.encode();
         crate::proof::verify_seed_partial_attest(
             public_key,
-            round.epoch().get(),
-            round.view().get(),
-            signature.vrf_material_version,
-            partial_bytes.as_ref(),
+            crate::proof::SeedPartialAttestation {
+                round_epoch: round.epoch().get(),
+                round_view: round.view().get(),
+                vrf_material_version: signature.vrf_material_version,
+                partial_bytes: partial_bytes.as_ref(),
+            },
             &signature.seed_partial_identity_sig,
         )
     }

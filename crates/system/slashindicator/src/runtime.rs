@@ -4,7 +4,7 @@ use commonware_cryptography::bls12381;
 use commonware_utils::ordered::Set;
 use outbe_consensus::proof::{
     invalid_vrf_evidence_hash_v2, verify_seed_partial_against_commitment,
-    verify_seed_partial_attest_bytes, verify_v2_proof, V2VerifyError,
+    verify_seed_partial_attest_bytes, verify_v2_proof, SeedPartialAttestation, V2VerifyError,
 };
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::protocol_schedule::OutbeProtocolSchedule;
@@ -1077,18 +1077,22 @@ impl SlashIndicator<'_> {
         // it proves the accused signer itself produced both distinct partials.
         let ok1 = verify_seed_partial_attest_bytes(
             &ev.signer_pubkey,
-            ev.round_epoch,
-            ev.round_view,
-            ev.vrf_version,
-            &ev.partial_1,
+            SeedPartialAttestation {
+                round_epoch: ev.round_epoch,
+                round_view: ev.round_view,
+                vrf_material_version: ev.vrf_version,
+                partial_bytes: &ev.partial_1,
+            },
             &ev.identity_sig_1,
         );
         let ok2 = verify_seed_partial_attest_bytes(
             &ev.signer_pubkey,
-            ev.round_epoch,
-            ev.round_view,
-            ev.vrf_version,
-            &ev.partial_2,
+            SeedPartialAttestation {
+                round_epoch: ev.round_epoch,
+                round_view: ev.round_view,
+                vrf_material_version: ev.vrf_version,
+                partial_bytes: &ev.partial_2,
+            },
             &ev.identity_sig_2,
         );
         if !(ok1 && ok2) {
@@ -1252,10 +1256,12 @@ impl SlashIndicator<'_> {
         // (a relay cannot forge it).
         if !verify_seed_partial_attest_bytes(
             &ev.signer_pubkey,
-            ev.round_epoch,
-            ev.round_view,
-            ev.vrf_version,
-            &ev.partial,
+            SeedPartialAttestation {
+                round_epoch: ev.round_epoch,
+                round_view: ev.round_view,
+                vrf_material_version: ev.vrf_version,
+                partial_bytes: &ev.partial,
+            },
             &ev.identity_sig,
         ) {
             return Err(PrecompileError::Revert(
