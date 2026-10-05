@@ -112,6 +112,18 @@ struct World {
 
 impl World {
     fn new(factory: Factory, payer: Address, registered: bool) -> Self {
+        Self::build(factory, payer, registered, None).0
+    }
+
+    /// Like [`World::new`]; with `gem_called_at` the Gem's bucket is marked called
+    /// at that instant the way the call sweep records it, and the settlement
+    /// deadline (`called_at + notice`) is returned beside the world.
+    fn build(
+        factory: Factory,
+        payer: Address,
+        registered: bool,
+        gem_called_at: Option<u64>,
+    ) -> (Self, u64) {
         let mut db = CacheDB::new(EmptyDB::default());
         let code = Bytecode::new_raw(Bytes::from(
             alloy_primitives::hex::decode(include_str!("fixtures/FactorySettlement.hex").trim())
@@ -131,7 +143,7 @@ impl World {
         let scope = Arc::new(ExecutionScope::new());
         let block = BlockContext::new(1, TIMESTAMP, CHAIN_ID, OWNER, vec![OWNER]);
         let mut provider = DirectStorageProvider::new(&mut db, block);
-        let gem_id = StorageHandle::enter(&mut provider, |storage| {
+        let (gem_id, deadline) = StorageHandle::enter(&mut provider, |storage| {
             let router = VaultRouterContract::new(storage.clone());
             router.assets.insert(ASSET).unwrap();
             router.asset_vault_set(ASSET).insert(VAULT).unwrap();
@@ -186,24 +198,38 @@ impl World {
                         },
                     )
                     .unwrap();
-                    U256::ZERO
+                    (U256::ZERO, 0)
                 }
-                Factory::Gem => outbe_gem::api::add_gem(
-                    &storage,
-                    GemAddParams {
-                        owner: OWNER,
-                        gem_type: outbe_gemfactory::schema::GemTypes::Wallet as u8,
-                        promis_load_minor: U256::from(1_500_000),
-                        entry_price_minor: U256::from(2_000_000),
-                        floor_price_minor: U256::from(2_160_000),
-                        call_price_minor: U256::from(4_560_000),
-                        call_rate: 128,
-                        issuance_currency: 840,
-                        reference_currency: 840,
-                        issued_at: TIMESTAMP,
-                    },
-                )
-                .unwrap(),
+                Factory::Gem => {
+                    let gem_id = outbe_gem::api::add_gem(
+                        &storage,
+                        GemAddParams {
+                            owner: OWNER,
+                            gem_type: outbe_gemfactory::schema::GemTypes::Wallet as u8,
+                            promis_load_minor: U256::from(1_500_000),
+                            entry_price_minor: U256::from(2_000_000),
+                            floor_price_minor: U256::from(2_160_000),
+                            call_price_minor: U256::from(4_560_000),
+                            call_rate: 128,
+                            issuance_currency: 840,
+                            reference_currency: 840,
+                            issued_at: TIMESTAMP,
+                        },
+                    )
+                    .unwrap();
+                    let mut deadline = 0;
+                    if let Some(called_at) = gem_called_at {
+                        let bucket = outbe_gem::api::bucket_of(&storage, gem_id).unwrap();
+                        outbe_gem::GemContract::new(storage.clone())
+                            .bucket_called_at
+                            .write(&bucket, called_at)
+                            .unwrap();
+                        let item = outbe_gem::api::get_gem(&storage, gem_id).unwrap().unwrap();
+                        assert_eq!(item.state, outbe_gem::GemState::Called as u8);
+                        deadline = item.called_at + u64::from(item.call_notice_period_seconds);
+                    }
+                    (gem_id, deadline)
+                }
             }
         });
         provider.flush().unwrap();
@@ -264,7 +290,7 @@ impl World {
                 amount: U256::MAX,
             },
         );
-        world
+        (world, deadline)
     }
 
     fn call(
@@ -542,3 +568,6 @@ fn the_payer_cannot_reenter_settlement_during_transfer() {
         assert_eq!(world.balances(), world.paid_balances(), "{factory:?}");
     }
 }
+
+#[path = "intex_gem_erc20_settlement/gem_deadline.rs"]
+mod gem_deadline;
