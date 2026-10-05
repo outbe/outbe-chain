@@ -234,14 +234,24 @@ pub(super) fn restore_player(
     Ok((player, snapshot))
 }
 
+/// Owned dealer identity and transcript received by a recovering player.
+pub(super) struct PlayerDealerBundle {
+    pub(super) dealer: bls12381::PublicKey,
+    pub(super) pub_msg: DealerPubMsg<MinSig>,
+    pub(super) priv_msg: DealerPrivMsg,
+}
+
 pub(super) fn handle_player_bundle(
     player: &mut Player<MinSig, bls12381::PrivateKey>,
     snapshot: &mut DkgPlayerRetrySnapshot,
     retry_store: Option<&DkgRetryStore>,
-    dealer: bls12381::PublicKey,
-    pub_msg: DealerPubMsg<MinSig>,
-    priv_msg: DealerPrivMsg,
+    bundle: PlayerDealerBundle,
 ) -> Result<PlayerBundleAction> {
+    let PlayerDealerBundle {
+        dealer,
+        pub_msg,
+        priv_msg,
+    } = bundle;
     let received = dealer_bundle_hash(&pub_msg, &priv_msg);
     if let Some(accepted) = snapshot.accepted_dealings.get(&dealer) {
         let previous = dealer_bundle_hash(&accepted.pub_msg, &accepted.priv_msg);
@@ -591,9 +601,11 @@ mod tests {
             &mut player,
             &mut snapshot,
             Some(&store),
-            dealer.clone(),
-            pub_msg.clone(),
-            priv_msg.clone(),
+            crate::dkg_actor::recovery::PlayerDealerBundle {
+                dealer: dealer.clone(),
+                pub_msg: pub_msg.clone(),
+                priv_msg: priv_msg.clone(),
+            },
         )
         .unwrap();
         let PlayerBundleAction::SendAck(first_ack) = first else {
@@ -606,9 +618,11 @@ mod tests {
             &mut restarted,
             &mut recovered,
             Some(&store),
-            dealer,
-            pub_msg,
-            priv_msg,
+            crate::dkg_actor::recovery::PlayerDealerBundle {
+                dealer,
+                pub_msg,
+                priv_msg,
+            },
         )
         .unwrap();
         let PlayerBundleAction::DuplicateAck(replayed_ack) = duplicate else {
@@ -660,9 +674,11 @@ mod tests {
             &mut player,
             &mut snapshot,
             Some(&store),
-            dealer,
-            pub_msg,
-            priv_msg,
+            crate::dkg_actor::recovery::PlayerDealerBundle {
+                dealer,
+                pub_msg,
+                priv_msg,
+            },
         )
         .unwrap_err();
 
@@ -712,8 +728,17 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            handle_player_bundle(&mut player, &mut snapshot, None, dealer, pub_msg, priv_msg,)
-                .unwrap(),
+            handle_player_bundle(
+                &mut player,
+                &mut snapshot,
+                None,
+                crate::dkg_actor::recovery::PlayerDealerBundle {
+                    dealer,
+                    pub_msg,
+                    priv_msg
+                }
+            )
+            .unwrap(),
             PlayerBundleAction::SendAck(_)
         ));
         let encoded = encode_player_retry_snapshot(&snapshot).unwrap();
@@ -788,9 +813,11 @@ mod tests {
                         &mut target_player,
                         &mut snapshot,
                         Some(&store),
-                        dealer_pk.clone(),
-                        pub_msg.clone(),
-                        priv_msg,
+                        crate::dkg_actor::recovery::PlayerDealerBundle {
+                            dealer: dealer_pk.clone(),
+                            pub_msg: pub_msg.clone(),
+                            priv_msg,
+                        },
                     )
                     .unwrap()
                     {
@@ -876,9 +903,11 @@ mod tests {
             &mut player,
             &mut snapshot,
             None,
-            dealer.clone(),
-            pub_msg,
-            priv_msg,
+            crate::dkg_actor::recovery::PlayerDealerBundle {
+                dealer: dealer.clone(),
+                pub_msg,
+                priv_msg,
+            },
         )
         .unwrap();
 
