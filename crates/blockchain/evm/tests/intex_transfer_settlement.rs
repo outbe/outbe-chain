@@ -1,20 +1,5 @@
-//! Issued Intex units change hands on the real `IntexNFT1155` contract and the
-//! Rust IntexFactory settles them for whoever holds them at execution time.
-//!
-//! `fixtures/IntexNFT1155.hex` is the runtime bytecode of
-//! `contracts/intex/src/shared/IntexNFT1155.sol` as last changed in commit c3f9957dc
-//! (file sha1 b5cba6a2e47aef23df56c7546183b351d818ff30), built with
-//! `cd contracts/intex && forge build --skip test --skip script`
-//! (forge Version: 1.7.1; `foundry.toml`: solc 0.8.30+commit.73712a01, evm_version Prague,
-//! via_ir, optimizer runs 200, bytecode_hash none, cbor_metadata false) and taken from
-//! `out/IntexNFT1155.sol/IntexNFT1155.json` `.deployedBytecode.object` without the `0x`.
-//! The contract links the external `IntexMetadata` library (`uri` rendering only): its
-//! two placeholders `__$8f4dd77c78045e03dd038e986f080c9801$__` are replaced by
-//! [`METADATA_LIB`] and the library's own `deployedBytecode.object` from
-//! `out/IntexMetadata.sol/IntexMetadata.json` is `fixtures/IntexMetadata.hex`.
-//! Re-run the build, link the same way and compare both files byte for byte to
-//! re-verify the fixtures. The contract is installed directly, without a proxy or
-//! constructor, so the initializer runs once against empty storage.
+//! Issued Intex units change hands on the real `IntexNFT1155` bytecode (`fixtures/*.hex`: forge
+//! `deployedBytecode`, `IntexMetadata` linked at [`METADATA_LIB`]) and settle for their holder.
 use std::sync::Arc;
 
 use alloy_primitives::{keccak256, Address, Bytes, FixedBytes, U256};
@@ -239,9 +224,8 @@ impl World {
         world
     }
 
-    /// The contract is initialized in place: the admin grants the relayer role to
-    /// the issuer and the settlement role to the factory precompile, exactly as
-    /// the production deployment does.
+    /// Initialized in place: the admin grants the relayer role to the issuer and the
+    /// settlement role to the factory precompile.
     fn install_nft(&mut self) {
         self.ok(
             ADMIN,

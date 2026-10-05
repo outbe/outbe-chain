@@ -10,7 +10,7 @@ fn mine_promis_full_genesis_flow() {
         // deposits into the Reserve vault, which the storage-only harness
         // can't service - force `Settled` directly so this test still covers
         // the mine -> burn -> Promis path. The paid settle is exercised on
-        // localnet with a real Reserve (see TODO below).
+        // localnet with a real Reserve (see the TODO in `tests.rs`).
         let gem_id = issue_at_live_rate(storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
 
         gem_api::set_state(storage, gem_id, GemState::Settled).unwrap();

@@ -1,6 +1,5 @@
-//! A called Gem settles on the direct ERC-20 rail up to and including its
-//! settlement deadline, and not one second later: by then the public status
-//! already projects Forfeited, before any cleanup sweep has run.
+//! A called Gem settles on the ERC-20 rail up to and including its deadline and is refused
+//! a second later, when its status already reads Forfeited.
 
 use super::*;
 

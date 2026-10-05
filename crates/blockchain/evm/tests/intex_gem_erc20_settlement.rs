@@ -115,9 +115,8 @@ impl World {
         Self::build(factory, payer, registered, None).0
     }
 
-    /// Like [`World::new`]; with `gem_called_at` the Gem's bucket is marked called
-    /// at that instant the way the call sweep records it, and the settlement
-    /// deadline (`called_at + notice`) is returned beside the world.
+    /// Like [`World::new`]; `gem_called_at` stamps the bucket's `called_at` and returns the
+    /// settlement deadline (`called_at + notice`).
     fn build(
         factory: Factory,
         payer: Address,

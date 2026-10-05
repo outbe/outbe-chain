@@ -114,7 +114,6 @@ fn planner_bindings(tribute_count: u32) -> LysisPlannerBindingsV1 {
     }
 }
 
-// OCM-SEM-002: planner, unit coverage and fixed reducer topology.
 fn entity_id(ordinal: u32) -> B256 {
     let mut bytes = [0_u8; 32];
     bytes[28..].copy_from_slice(&ordinal.to_be_bytes());
