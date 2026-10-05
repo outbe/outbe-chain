@@ -17,6 +17,7 @@ pub mod error;
 pub mod governance_journal;
 pub mod header;
 pub mod hook_events;
+mod journal_writer;
 pub mod math;
 pub mod participation;
 pub mod payload;
