@@ -537,8 +537,7 @@ fn seed_requested_job(
             forming_end: 2,
             lookback_end: 3,
             offering_end: 4,
-            // Certified Nod issued_at; equal to the request clock in this fixture.
-            scheduled_process_time: TEST_LOGICAL_TIME,
+            scheduled_process_time: 5,
             metadosis_limit_minor: U256::from(100),
             previous_vwap: U256::from(8),
             current_vwap: U256::from(10),
