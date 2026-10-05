@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
 use outbe_intex::{IntexState, SeriesId};
@@ -38,7 +38,6 @@ pub fn issue_gem(
     if entry_price.is_zero() {
         return Err(GemFactoryError::OracleUnavailable.into());
     }
-    // A zero load makes the cost zero, and a PayNote cannot spend zero.
     if promis_load.is_zero() {
         return Err(GemFactoryError::ZeroPromisLoad.into());
     }
@@ -233,7 +232,6 @@ pub fn issue_merchant_gem(
     if owner.is_zero() {
         return Err(GemFactoryError::InvalidOwner.into());
     }
-    // A zero load makes the cost zero, and a PayNote cannot spend zero.
     if promis_load.is_zero() {
         return Err(GemFactoryError::ZeroPromisLoad.into());
     }
@@ -320,51 +318,6 @@ pub fn settle_gem(
         |_, (settlement_currency, amount_paid)| {
             deposit_payment(storage, caller, asset, amount_paid)?;
             Ok((asset, settlement_currency, amount_paid))
-        },
-    )
-}
-
-/// Settles a gem by spending a PayNote bound to this gem. Any address may relay it.
-pub fn settle_gem_with_paynote(
-    storage: &StorageHandle<'_>,
-    _caller: Address,
-    gem_id: U256,
-    paynote_proof: &[u8],
-) -> Result<()> {
-    settle(
-        storage,
-        gem_id,
-        |_| Ok(()),
-        |item, ()| {
-            let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
-            let currency = accept_payment_asset(storage, claim.asset, item)?;
-            let (amount_paid, snapshot) = cost_in_asset(storage, item, claim.asset, currency)?;
-            let expected = outbe_paynote::api::settlement_context(
-                outbe_paynote::api::SettlementDomain::Gem,
-                B256::from(gem_id),
-                U256::ONE,
-                snapshot.map_or(U256::ZERO, VwapSnapshotId::to_u256),
-            )?;
-            if claim.context != expected {
-                return Err(GemFactoryError::PayNoteContextMismatch {
-                    expected,
-                    actual: claim.context,
-                }
-                .into());
-            }
-            // Exact: the surplus of an over-spend is already in the reserve vault.
-            if claim.spend_amount != amount_paid {
-                return Err(GemFactoryError::PayNoteCostMismatch {
-                    covered: claim.spend_amount,
-                    required: amount_paid,
-                }
-                .into());
-            }
-            Ok((
-                claim.asset,
-                settlement_currency(item, currency),
-                amount_paid,
-            ))
         },
     )
 }
