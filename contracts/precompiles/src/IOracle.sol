@@ -210,8 +210,12 @@ interface IOracle {
     ///         window, at six decimals.
     /// @dev Any well-formed closed snapshot is readable; compare `snapshotId` with
     ///      `getVwapSnapshotId()` to price against the current one. Reverts for an
-    ///      unregistered currency, a malformed or open snapshot and a window without
-    ///      a positive price.
+    ///      unregistered currency, a malformed or open snapshot, a window without
+    ///      a positive price, and a window with too little coverage. An hour
+    ///      counts only when its snapshots cover two thirds of the tally rounds
+    ///      its blocks allowed; hours that do not count are left out of the
+    ///      VWAP, and the hours that count must together cover two thirds of
+    ///      the whole window's rounds.
     function getFinalizedWindowVwap(uint16 currency, uint256 snapshotId) external view returns (uint256 vwap);
 
     /// @notice Returns the finalized VWAP for a full UTC calendar day.

@@ -23,8 +23,11 @@ pub(crate) const VWAP_HOUR_SECONDS: u64 = 60 * 60;
 pub(crate) const HOURLY_VWAP_CELLS: u64 = 24;
 
 /// Minimum share of possible tally rounds that must have produced a snapshot
-/// for a pair before its finalized window VWAP is usable: two thirds. The
-/// possible rounds are the window's blocks divided by `vote_period`.
+/// for a pair: two thirds. Applied to every hour of a finalized window (an
+/// hour below it is left out of the VWAP) and again to the window as a whole
+/// over the hours that count. Possible rounds are blocks divided by
+/// `vote_period`. Eight hours at exactly two thirds pass; six full hours pass;
+/// five full hours, or six hours at two thirds each, do not.
 pub(crate) const MIN_WINDOW_COVERAGE: (u64, u64) = (2, 3);
 
 /// Maximum number of closed UTC days the begin-block lifecycle finalizes in a
