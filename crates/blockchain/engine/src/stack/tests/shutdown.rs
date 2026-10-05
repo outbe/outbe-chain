@@ -287,58 +287,14 @@ fn application_drain_retains_transport_on_terminal_startup_and_panic_paths() {
     }
 }
 
+type ShutdownNullSender<P> = outbe_consensus::test_harness::ObservedSender<P, SendSignal>;
+
 #[derive(Clone)]
-struct ShutdownNullSender<P> {
-    participants: Vec<P>,
-    votes: Option<mpsc::Sender<()>>,
-}
+struct SendSignal(mpsc::Sender<()>);
 
-struct ShutdownNullCheckedSender<P> {
-    recipients: Vec<P>,
-    votes: Option<mpsc::Sender<()>>,
-}
-
-impl<P> CheckedSender for ShutdownNullCheckedSender<P>
-where
-    P: commonware_cryptography::PublicKey,
-{
-    type PublicKey = P;
-
-    fn recipients(&self) -> Vec<Self::PublicKey> {
-        self.recipients.clone()
-    }
-
-    fn send(self, _message: impl Into<IoBufs> + Send, _priority: bool) -> Unreliable<Feedback> {
-        if let Some(votes) = self.votes {
-            let _ = votes.send(());
-        }
-        Unreliable::Outcome(Feedback::Ok)
-    }
-}
-
-impl<P> LimitedSender for ShutdownNullSender<P>
-where
-    P: commonware_cryptography::PublicKey,
-{
-    type PublicKey = P;
-    type Checked<'a>
-        = ShutdownNullCheckedSender<P>
-    where
-        Self: 'a;
-
-    fn check(
-        &mut self,
-        recipients: Recipients<Self::PublicKey>,
-    ) -> Result<Self::Checked<'_>, SystemTime> {
-        let recipients = match recipients {
-            Recipients::All => self.participants.clone(),
-            Recipients::Some(recipients) => recipients,
-            Recipients::One(recipient) => vec![recipient],
-        };
-        Ok(ShutdownNullCheckedSender {
-            recipients,
-            votes: self.votes.clone(),
-        })
+impl outbe_consensus::test_harness::SendObserver for SendSignal {
+    fn on_send(self, _message: impl Into<IoBufs> + Send) {
+        let _ = self.0.send(());
     }
 }
 
@@ -403,10 +359,10 @@ fn global_stop_completes_with_a_stopping_sibling_and_real_voter() {
         let (votes_tx, votes_rx) = mpsc::channel();
         let sender = ShutdownNullSender {
             participants: vec![public_key.clone()],
-            votes: None,
+            observer: None,
         };
         let vote_network = (
-            ShutdownNullSender { votes: Some(votes_tx), ..sender.clone() },
+            ShutdownNullSender { observer: Some(SendSignal(votes_tx)), ..sender.clone() },
             ShutdownNullReceiver::<commonware_cryptography::bls12381::PublicKey>(PhantomData),
         );
         let certificate_network = (
@@ -509,15 +465,15 @@ fn fatal_stack_exit_preserves_error_and_voter_journal_can_resume() {
         let (votes_tx, votes_rx) = mpsc::channel();
         let vote_sender = ShutdownNullSender {
             participants: vec![first_public_key.clone()],
-            votes: Some(votes_tx),
+            observer: Some(SendSignal(votes_tx)),
         };
         let certificate_sender = ShutdownNullSender {
             participants: vec![first_public_key.clone()],
-            votes: None,
+            observer: None,
         };
         let resolver_sender = ShutdownNullSender {
             participants: vec![first_public_key.clone()],
-            votes: None,
+            observer: None,
         };
         let vote_network = (
             vote_sender,
@@ -614,11 +570,11 @@ fn fatal_stack_exit_preserves_error_and_voter_journal_can_resume() {
         let (votes_tx, votes_rx) = mpsc::channel();
         let sender = ShutdownNullSender {
             participants: vec![public_key.clone()],
-            votes: None,
+            observer: None,
         };
         let vote_network = (
             ShutdownNullSender {
-                votes: Some(votes_tx),
+                observer: Some(SendSignal(votes_tx)),
                 ..sender.clone()
             },
             ShutdownNullReceiver::<commonware_cryptography::bls12381::PublicKey>(PhantomData),

@@ -8401,6 +8401,7 @@ dependencies = [
  "keyring",
  "metrics",
  "metrics-util",
+ "outbe-consensus",
  "outbe-primitives",
  "parking_lot",
  "proptest",

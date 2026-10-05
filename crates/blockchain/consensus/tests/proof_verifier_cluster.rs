@@ -41,7 +41,7 @@ use outbe_consensus::hybrid::{HybridScheme, VrfMaterialProvider};
 use outbe_consensus::proof::constants::{
     finalize_namespace, notarize_namespace, outbe_app_namespace,
 };
-use outbe_consensus::proof::{committee_set_hash_v2, CommitteeEntry, CommitteeSnapshot};
+use outbe_consensus::proof::{committee_set_hash_v2, CommitteeSnapshot};
 use outbe_consensus::proof::{
     hybrid_seed_namespace, verify_v2_proof, HybridCertificate, V2VerifyError, VrfProof,
 };
@@ -82,25 +82,11 @@ fn build_dkg(n: u32) -> Dkg {
 }
 
 fn build_snapshot(dkg: &Dkg) -> CommitteeSnapshot {
-    let committee: Vec<CommitteeEntry> = dkg
-        .pubkeys
-        .iter()
-        .enumerate()
-        .map(|(i, pk)| {
-            let mut consensus_pubkey = [0u8; 48];
-            consensus_pubkey.copy_from_slice(pk.encode().as_ref());
-            CommitteeEntry {
-                address: Address::with_last_byte((i + 1) as u8),
-                consensus_pubkey,
-            }
-        })
-        .collect();
-    CommitteeSnapshot {
-        committee,
-        vrf_material_version: VRF_MATERIAL_VERSION,
-        vrf_group_public_key_bytes: dkg.vrf_group_public_key.encode().to_vec(),
-        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
-    }
+    outbe_consensus::test_harness::committee_snapshot(
+        &dkg.pubkeys,
+        &dkg.vrf_group_public_key,
+        VRF_MATERIAL_VERSION,
+    )
 }
 
 /// Build a `(Round, Proposal, vote_message_bytes, seed_message_bytes)`
@@ -341,18 +327,7 @@ fn assembled_finalization_passes_hybrid_and_phase1_verification() {
     ));
 
     let snapshot = CommitteeSnapshot {
-        committee: participants
-            .iter()
-            .enumerate()
-            .map(|(index, public_key)| {
-                let mut consensus_pubkey = [0u8; 48];
-                consensus_pubkey.copy_from_slice(public_key.encode().as_ref());
-                CommitteeEntry {
-                    address: Address::with_last_byte((index + 1) as u8),
-                    consensus_pubkey,
-                }
-            })
-            .collect(),
+        committee: outbe_consensus::test_harness::committee_entries(participants.iter()),
         vrf_material_version: VRF_MATERIAL_VERSION,
         vrf_group_public_key_bytes: dkg.polynomial.public().encode().to_vec(),
         vrf_public_polynomial_hash: B256::ZERO,

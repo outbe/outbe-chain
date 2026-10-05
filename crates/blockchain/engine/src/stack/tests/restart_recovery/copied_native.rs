@@ -11,9 +11,6 @@ use outbe_compressed_entities::{
 use outbe_primitives::{
     addresses::COMPRESSED_ENTITIES_ADDRESS,
     projection::{projection_readiness, ProjectionStatus},
-    reshare_artifact::{
-        encode_outbe_block_artifacts, CompressedEntitiesRootArtifact, OutbeBlockArtifacts,
-    },
 };
 use reth_ethereum::{
     chainspec::ChainSpec,
@@ -469,23 +466,14 @@ impl DiskFixture {
 
     pub(in crate::stack::tests) fn with_ce_height(processed: u64, ce_height: u64) -> Self {
         let root = tempfile::tempdir().unwrap();
-        let mut headers = vec![genesis_header()];
-        assert_eq!(headers[0].hash_slow(), genesis_block().block_hash());
-        for height in 1..=K {
-            headers.push(OutbeHeader::new(Header {
-                number: height,
-                parent_hash: headers.last().unwrap().hash_slow(),
-                extra_data: encode_outbe_block_artifacts(&OutbeBlockArtifacts {
-                    compressed_entities_root: Some(CompressedEntitiesRootArtifact {
-                        commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                        r_sealed: genesis_marker().new_root,
-                    }),
-                    ..Default::default()
-                })
-                .unwrap(),
-                ..Default::default()
-            }));
-        }
+        let genesis = genesis_header();
+        assert_eq!(genesis.hash_slow(), genesis_block().block_hash());
+        let headers = outbe_consensus::test_harness::linked_headers(
+            genesis,
+            K,
+            ACTIVE_COMMITMENT_SCHEME,
+            || genesis_marker().new_root,
+        );
         let blocks: Vec<_> = headers
             .iter()
             .map(|header| {

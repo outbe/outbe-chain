@@ -3,11 +3,10 @@ use std::{
     marker::PhantomData,
     num::{NonZeroU16, NonZeroUsize},
     sync::mpsc,
-    time::{Duration, SystemTime},
+    time::Duration,
 };
 
-use eyre::WrapErr as _;
-use commonware_actor::{Feedback, Unreliable};
+use commonware_actor::Feedback;
 use commonware_codec::DecodeExt as _;
 use commonware_consensus::{
     simplex::{
@@ -20,12 +19,13 @@ use commonware_cryptography::{
     bls12381::{primitives::variant::MinSig, PrivateKey},
     Sha256, Signer as _,
 };
-use commonware_p2p::{Blocker, CheckedSender, LimitedSender, Message, Receiver, Recipients};
+use commonware_p2p::{Blocker, Message, Receiver};
 use commonware_parallel::Sequential;
 use commonware_runtime::{
     buffer::paged::CacheRef, tokio, Clock as _, IoBufs, Runner as _, Spawner as _, Supervisor as _,
 };
 use commonware_utils::{ordered::Set, NZUsize};
+use eyre::WrapErr as _;
 
 use crate::{
     bls::bootstrap_dkg,
@@ -38,60 +38,15 @@ type RecordedVote = Vote<HybridScheme<MinSig>, commonware_cryptography::sha256::
 const PAGE_SIZE: NonZeroU16 = NonZeroU16::new(1024).expect("page size is non-zero");
 const PAGE_CACHE_SIZE: NonZeroUsize = NZUsize!(10);
 
+type NullSender<P> = crate::test_harness::ObservedSender<P, VoteObserver>;
+
 #[derive(Clone)]
-struct NullSender<P> {
-    participants: Vec<P>,
-    send_notifications: Option<mpsc::Sender<RecordedVote>>,
-}
+struct VoteObserver(mpsc::Sender<RecordedVote>);
 
-struct NullCheckedSender<P> {
-    recipients: Vec<P>,
-    send_notifications: Option<mpsc::Sender<RecordedVote>>,
-}
-
-impl<P> CheckedSender for NullCheckedSender<P>
-where
-    P: commonware_cryptography::PublicKey,
-{
-    type PublicKey = P;
-
-    fn recipients(&self) -> Vec<Self::PublicKey> {
-        self.recipients.clone()
-    }
-
-    fn send(self, message: impl Into<IoBufs> + Send, _priority: bool) -> Unreliable<Feedback> {
-        if let Some(notifications) = self.send_notifications {
-            let vote =
-                RecordedVote::decode(message.into()).expect("outbound Simplex vote must decode");
-            let _ = notifications.send(vote);
-        }
-        Unreliable::Outcome(Feedback::Ok)
-    }
-}
-
-impl<P> LimitedSender for NullSender<P>
-where
-    P: commonware_cryptography::PublicKey,
-{
-    type PublicKey = P;
-    type Checked<'a>
-        = NullCheckedSender<P>
-    where
-        Self: 'a;
-
-    fn check(
-        &mut self,
-        recipients: Recipients<Self::PublicKey>,
-    ) -> Result<Self::Checked<'_>, SystemTime> {
-        let recipients = match recipients {
-            Recipients::All => self.participants.clone(),
-            Recipients::Some(recipients) => recipients,
-            Recipients::One(recipient) => vec![recipient],
-        };
-        Ok(NullCheckedSender {
-            recipients,
-            send_notifications: self.send_notifications.clone(),
-        })
+impl crate::test_harness::SendObserver for VoteObserver {
+    fn on_send(self, message: impl Into<IoBufs> + Send) {
+        let vote = RecordedVote::decode(message.into()).expect("outbound Simplex vote must decode");
+        let _ = self.0.send(vote);
     }
 }
 
@@ -206,12 +161,12 @@ fn global_stop_reopens_voter_journal_and_resumes_without_conflicting_votes() {
         let votes = tokio::Runner::new(config).start(|context| async move {
             let sender = NullSender {
                 participants: vec![public_key.clone()],
-                send_notifications: None,
+                observer: None,
             };
             let (votes_tx, votes_rx) = mpsc::channel();
             let vote_network = (
                 NullSender {
-                    send_notifications: Some(votes_tx),
+                    observer: Some(VoteObserver(votes_tx)),
                     ..sender.clone()
                 },
                 NullReceiver(PhantomData),
@@ -353,11 +308,11 @@ fn planned_abort_during_pending_sync_reopens_the_same_voter_journal() {
         let networks = || {
             let vote_sender = NullSender {
                 participants: vec![public_key.clone()],
-                send_notifications: Some(durable_vote_tx.clone()),
+                observer: Some(VoteObserver(durable_vote_tx.clone())),
             };
             let other_sender = NullSender {
                 participants: vec![public_key.clone()],
-                send_notifications: None,
+                observer: None,
             };
             (
                 (vote_sender, NullReceiver(PhantomData)),

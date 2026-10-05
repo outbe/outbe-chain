@@ -78,6 +78,17 @@ pub use dealings::{acknowledge_fixture_dealings, FixtureDealings};
 mod marshal_resolver;
 pub use marshal_resolver::NoopMarshalResolver;
 
+#[path = "test_harness/fixtures.rs"]
+mod fixtures;
+pub use fixtures::{
+    boundary_artifact, committee_entries, committee_snapshot, linked_headers,
+    signed_resolver_proposal, BoundaryFixtureSettings, ResolverVote, SignedResolverProposal,
+};
+
+#[path = "test_harness/send_observer.rs"]
+mod send_observer;
+pub use send_observer::{ObservedSender, SendObserver};
+
 fn namespace() -> Vec<u8> {
     crate::config::outbe_app_namespace()
 }

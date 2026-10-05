@@ -355,19 +355,17 @@ fn boundary_for_epoch(
         bls12381::PublicKey,
     >,
 ) -> outbe_primitives::consensus::DkgBoundaryArtifact {
-    dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-        epoch: Epoch::new(epoch),
+    crate::test_harness::boundary_artifact(
+        epoch,
         validator_set,
         output,
-        is_full_dkg: true,
-        dkg_cycle: epoch,
-        freeze_height: 0,
-        planned_activation_height: 0,
-        vrf_material_version: epoch,
-        is_validator_set_change: true,
-        tee_expired_target_exclusions: Vec::new(),
-    })
-    .unwrap()
+        crate::test_harness::BoundaryFixtureSettings {
+            is_full_dkg: true,
+            freeze_height: 0,
+            planned_activation_height: 0,
+            is_validator_set_change: true,
+        },
+    )
 }
 
 struct CarriedHeaderFixture<'a> {

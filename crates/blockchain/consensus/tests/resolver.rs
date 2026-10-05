@@ -13,19 +13,14 @@ use std::{
 
 use alloy_primitives::{address, Address, B256};
 use commonware_consensus::{
-    simplex::types::{Notarization, Proposal, Subject},
+    simplex::types::Notarization,
     types::{Epoch, Round, View},
 };
 use commonware_cryptography::{
     bls12381::{self, primitives::variant::MinSig},
-    certificate::Scheme as _,
     Hasher as _, Sha256, Signer as _,
 };
-use commonware_parallel::Sequential;
-use commonware_utils::{
-    ordered::{Quorum as _, Set},
-    TryCollect as _,
-};
+use commonware_utils::{ordered::Set, TryCollect as _};
 use outbe_consensus::{
     bls::bootstrap_dkg,
     digest::Digest as OutbeDigest,
@@ -74,40 +69,16 @@ fn notarization_for(
     Notarization<HybridScheme<MinSig>, OutbeDigest>,
     HybridScheme<MinSig>,
 ) {
-    let (keys, participants) = test_participants(3);
-    let dkg = bootstrap_dkg(3).unwrap();
-    let schemes: Vec<HybridScheme<MinSig>> = keys
-        .iter()
-        .map(|key| {
-            let pk = bls12381::PublicKey::from(key.clone());
-            let idx = participants.index(&pk).unwrap();
-            HybridScheme::signer(
-                b"resolver-test",
-                participants.clone(),
-                key.clone(),
-                dkg.polynomial.clone(),
-                dkg.shares[idx.get() as usize].clone(),
-            )
-            .unwrap()
-        })
-        .collect();
-    let verifier =
-        HybridScheme::<MinSig>::verifier(b"resolver-test", participants, dkg.polynomial).unwrap();
-    let payload = OutbeDigest::from(B256::from_slice(Sha256::hash(&[payload_bytes]).as_ref()));
-    let proposal = Proposal::new(round, parent_view, payload);
-    let subject = Subject::Notarize {
-        proposal: &proposal,
-    };
-    let attestations: Vec<_> = schemes
-        .iter()
-        .map(|scheme| scheme.sign::<OutbeDigest>(subject).unwrap())
-        .collect();
-    let certificate = verifier
-        .assemble(
-            commonware_utils::iter::NonEmpty::try_new(attestations.into_iter()).unwrap(),
-            &Sequential,
-        )
-        .unwrap();
+    let outbe_consensus::test_harness::SignedResolverProposal {
+        proposal,
+        certificate,
+        verifier,
+    } = outbe_consensus::test_harness::signed_resolver_proposal(
+        round,
+        parent_view,
+        payload_bytes,
+        outbe_consensus::test_harness::ResolverVote::Notarize,
+    );
     (
         Notarization {
             proposal,
