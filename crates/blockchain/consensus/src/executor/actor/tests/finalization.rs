@@ -93,10 +93,8 @@ fn finalized_syncing_delivery_acks_and_heartbeat_repeats_fcu() {
                     assert_eq!(state.head_block_hash, finalized_hash);
                     assert_eq!(state.finalized_block_hash, finalized_hash);
                     assert!(payload_attrs.is_none());
-                    tx.send(Ok(OnForkChoiceUpdated::valid(PayloadStatus::from_status(
-                        PayloadStatusEnum::Valid,
-                    ))))
-                    .expect("heartbeat FCU response receiver must be alive");
+                    tx.send(Ok(valid_forkchoice_response()))
+                        .expect("heartbeat FCU response receiver must be alive");
                 }
                 other => panic!("unexpected third engine message: {other:?}"),
             }

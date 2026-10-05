@@ -46,10 +46,8 @@ fn heartbeat_sends_fcu_to_last_forkchoice_without_payload_attributes() {
                     assert_eq!(state.head_block_hash, target);
                     assert_eq!(state.finalized_block_hash, target);
                     assert!(payload_attrs.is_none());
-                    tx.send(Ok(OnForkChoiceUpdated::valid(PayloadStatus::from_status(
-                        PayloadStatusEnum::Valid,
-                    ))))
-                    .expect("test engine response receiver must be alive");
+                    tx.send(Ok(valid_forkchoice_response()))
+                        .expect("test engine response receiver must be alive");
                 }
                 other => panic!("unexpected engine message: {other:?}"),
             }
