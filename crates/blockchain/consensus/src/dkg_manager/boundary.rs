@@ -110,6 +110,12 @@ pub(super) struct BoundaryStatusCacheEntry {
     pub(super) status: BoundaryStatus,
 }
 
+struct BoundaryScanQuery<'a> {
+    pending: &'a DkgBoundaryArtifact,
+    pending_hash: B256,
+    original_parent_hash: B256,
+}
+
 impl Mailbox {
     pub fn boundary_artifact_hash(artifact: &DkgBoundaryArtifact) -> Result<B256> {
         let bytes = encode_boundary_artifact(artifact)
@@ -223,66 +229,21 @@ impl Mailbox {
             .map_err(|error| BoundaryRequirementError::Unavailable(error.to_string()))?;
 
         if let Some(status) = self.cached_boundary_status(original_parent_hash, pending_hash) {
-            return match status {
-                BoundaryStatus::NoBoundarySeen => Ok(BoundaryRequirement::MustEmit),
-                BoundaryStatus::BoundaryCommitted(committed) => {
-                    if committed.artifact_hash == pending_hash && committed.artifact == *pending {
-                        Ok(BoundaryRequirement::AlreadyCommitted)
-                    } else {
-                        Err(BoundaryRequirementError::Conflict(
-                            "cached DKG BoundaryOutcome conflicts with pending boundary"
-                                .to_string(),
-                        ))
-                    }
-                }
-                BoundaryStatus::Conflict => Err(BoundaryRequirementError::Conflict(
-                    "cached parent ancestry carries conflicting DKG BoundaryOutcome".to_string(),
-                )),
-            };
+            return Self::cached_boundary_requirement(status, pending, pending_hash);
         }
 
-        if !ancestry.is_ready() {
-            return Err(BoundaryRequirementError::Unavailable(
-                "DKG boundary ancestry unavailable: marshal ancestry reader is not ready"
-                    .to_string(),
-            ));
-        }
+        ensure_boundary_ancestry_ready(ancestry)?;
 
         let mut current = parent.clone();
         let scan_floor = boundary_scan_floor(pending);
+        let query = BoundaryScanQuery {
+            pending,
+            pending_hash,
+            original_parent_hash,
+        };
         loop {
-            if let Some(boundary) =
-                block_boundary_artifact(&current).map_err(BoundaryRequirementError::Unavailable)?
-            {
-                let boundary_hash = Self::boundary_artifact_hash(&boundary)
-                    .map_err(|error| BoundaryRequirementError::Unavailable(error.to_string()))?;
-                if boundary_hash == pending_hash && boundary == *pending {
-                    let committed = CommittedDkgBoundary {
-                        artifact: boundary,
-                        artifact_hash: boundary_hash,
-                        block_number: current.number(),
-                        block_hash: current.block_hash(),
-                    };
-                    self.record_boundary_status(
-                        original_parent_hash,
-                        pending_hash,
-                        BoundaryStatus::BoundaryCommitted(committed),
-                    );
-                    return Ok(BoundaryRequirement::AlreadyCommitted);
-                }
-                if boundary.epoch == pending.epoch {
-                    self.record_boundary_status(
-                        original_parent_hash,
-                        pending_hash,
-                        BoundaryStatus::Conflict,
-                    );
-                    return Err(BoundaryRequirementError::Conflict(
-                        // Outbe has one DKG boundary artifact per epoch. Same
-                        // epoch with different bytes means a local state bug or a
-                        // conflicting proposal, not an alternate valid activation.
-                        "parent ancestry carries conflicting DKG BoundaryOutcome".to_string(),
-                    ));
-                }
+            if let Some(requirement) = self.observed_boundary_requirement(&current, &query)? {
+                return Ok(requirement);
             }
 
             if current.number() == 0 || current.number() <= scan_floor {
@@ -296,6 +257,74 @@ impl Mailbox {
 
             current = self.next_boundary_ancestor(&current, ancestry).await?;
         }
+    }
+
+    fn cached_boundary_requirement(
+        status: BoundaryStatus,
+        pending: &DkgBoundaryArtifact,
+        pending_hash: B256,
+    ) -> Result<BoundaryRequirement, BoundaryRequirementError> {
+        match status {
+            BoundaryStatus::NoBoundarySeen => Ok(BoundaryRequirement::MustEmit),
+            BoundaryStatus::BoundaryCommitted(committed) => {
+                if committed.artifact_hash == pending_hash && committed.artifact == *pending {
+                    Ok(BoundaryRequirement::AlreadyCommitted)
+                } else {
+                    Err(BoundaryRequirementError::Conflict(
+                        "cached DKG BoundaryOutcome conflicts with pending boundary".to_string(),
+                    ))
+                }
+            }
+            BoundaryStatus::Conflict => Err(BoundaryRequirementError::Conflict(
+                "cached parent ancestry carries conflicting DKG BoundaryOutcome".to_string(),
+            )),
+        }
+    }
+
+    fn observed_boundary_requirement(
+        &self,
+        current: &ConsensusBlock,
+        query: &BoundaryScanQuery<'_>,
+    ) -> Result<Option<BoundaryRequirement>, BoundaryRequirementError> {
+        let BoundaryScanQuery {
+            pending,
+            pending_hash,
+            original_parent_hash,
+        } = *query;
+        if let Some(boundary) =
+            block_boundary_artifact(current).map_err(BoundaryRequirementError::Unavailable)?
+        {
+            let boundary_hash = Self::boundary_artifact_hash(&boundary)
+                .map_err(|error| BoundaryRequirementError::Unavailable(error.to_string()))?;
+            if boundary_hash == pending_hash && boundary == *pending {
+                let committed = CommittedDkgBoundary {
+                    artifact: boundary,
+                    artifact_hash: boundary_hash,
+                    block_number: current.number(),
+                    block_hash: current.block_hash(),
+                };
+                self.record_boundary_status(
+                    original_parent_hash,
+                    pending_hash,
+                    BoundaryStatus::BoundaryCommitted(committed),
+                );
+                return Ok(Some(BoundaryRequirement::AlreadyCommitted));
+            }
+            if boundary.epoch == pending.epoch {
+                self.record_boundary_status(
+                    original_parent_hash,
+                    pending_hash,
+                    BoundaryStatus::Conflict,
+                );
+                return Err(BoundaryRequirementError::Conflict(
+                    // Outbe has one DKG boundary artifact per epoch. Same
+                    // epoch with different bytes means a local state bug or a
+                    // conflicting proposal, not an alternate valid activation.
+                    "parent ancestry carries conflicting DKG BoundaryOutcome".to_string(),
+                ));
+            }
+        }
+        Ok(None)
     }
 
     /// Read one parent without holding the state lock across ancestry lookups.
@@ -339,4 +368,15 @@ impl Mailbox {
         };
         Ok(next)
     }
+}
+
+fn ensure_boundary_ancestry_ready(
+    ancestry: &impl AncestryReader,
+) -> Result<(), BoundaryRequirementError> {
+    if !ancestry.is_ready() {
+        return Err(BoundaryRequirementError::Unavailable(
+            "DKG boundary ancestry unavailable: marshal ancestry reader is not ready".to_string(),
+        ));
+    }
+    Ok(())
 }

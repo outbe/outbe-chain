@@ -495,10 +495,14 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             tokio::sync::mpsc::unbounded_channel();
         let lease_check = run_tee_lease_guard_v1(
             node.provider.clone(),
-            proof_chain_id,
-            genesis_hash,
-            local_tee_identity,
-            tee_lease_guard_gate,
+            super::admission::TeeLeaseGuardConfigV1 {
+                chain: outbe_node::tee_remote_session::RegistryChainIdentity {
+                    chain_id: proof_chain_id,
+                    genesis_hash,
+                },
+                identity: local_tee_identity,
+                gate: tee_lease_guard_gate,
+            },
             shutdown_token.clone(),
         );
         let lease_outcome = shutdown.clone();

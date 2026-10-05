@@ -28,12 +28,16 @@
 //! validates and stores it. This is the same `Handler`/`Receiver` pair the
 //! marshal `start` consumes, obtained from [`handler::init`].
 
+mod resolution;
+
+pub(super) use resolution::FetchResolution;
+
 use commonware_actor::Feedback;
 use commonware_codec::Encode as _;
 use commonware_consensus::marshal::resolver::handler::{self, Annotation, Key};
 use commonware_consensus::types::Height;
 use commonware_cryptography::bls12381;
-use commonware_resolver::{Consumer as _, Delivery, Fetch, Resolver, TargetedResolver};
+use commonware_resolver::{Delivery, Fetch, Resolver, TargetedResolver};
 use commonware_runtime::{Clock, Metrics, Spawner};
 use commonware_utils::vec::NonEmptyVec;
 use futures::StreamExt as _;
@@ -76,11 +80,14 @@ pub(super) struct ResolverActor<E, F, L> {
 pub(super) fn init<E, F, L>(
     context: E,
     handler: handler::Handler<Digest>,
-    upstream: F,
-    local: L,
-    chain: SharedCommitteeChain,
-    epocher: FollowerEpocher,
+    resolution: FetchResolution<F, L>,
 ) -> (ResolverActor<E, F, L>, FollowResolver) {
+    let FetchResolution {
+        upstream,
+        local,
+        chain,
+        epocher,
+    } = resolution;
     let (tx, rx) = futures::channel::mpsc::unbounded();
     let actor = ResolverActor {
         context,
@@ -123,136 +130,16 @@ where
                     let chain = chain.clone();
                     let epocher = epocher.clone();
                     task_ctx.spawn(move |_| {
-                        resolve_one(fetch, handler, upstream, local, chain, epocher)
+                        FetchResolution {
+                            upstream,
+                            local,
+                            chain,
+                            epocher,
+                        }
+                        .resolve(fetch, handler)
                     });
                 }
             })
-    }
-}
-
-/// Resolve a single fetch and deliver the value to the marshal.
-async fn resolve_one<F, L>(
-    fetch: Fetch<ResolverKey, Annotation>,
-    mut handler: handler::Handler<Digest>,
-    upstream: F,
-    local: L,
-    chain: SharedCommitteeChain,
-    epocher: FollowerEpocher,
-) where
-    F: FinalizedSource,
-    L: LocalBlockSource,
-{
-    let Fetch {
-        key,
-        subscriber,
-        span,
-    } = fetch;
-    debug!(%key, "resolver received fetch");
-    let value = match &key {
-        Key::Block(commitment) => {
-            // First try the local EL (a block the follower already imported).
-            if let Some(block) = local.get_block_by_digest(*commitment).await {
-                block.encode()
-            } else if let Some(height) = block_request_height(&subscriber) {
-                // The follower has no block P2P, so a parent/ancestor block the
-                // marshal needs for chain repair must come from the UPSTREAM.
-                // The annotation carries the block's height; fetch that height's
-                // finalized block and verify its digest matches the requested
-                // commitment (the marshal re-checks too).
-                match upstream.get_block(height).await {
-                    Some(block)
-                        if block.number() == height.get() && block.digest() == *commitment =>
-                    {
-                        block.encode()
-                    }
-                    Some(_) => {
-                        debug!(%key, %height, "upstream block at height did not match requested commitment; dropping fetch");
-                        return;
-                    }
-                    None => {
-                        debug!(%key, %height, "upstream did not have requested block; dropping fetch");
-                        return;
-                    }
-                }
-            } else {
-                // A round-bound (`ByRound`/`Notarization`) block request has no
-                // height; the follower cannot map it to an upstream height. The
-                // marshal re-requests finalized-chain blocks by height, so this
-                // is a benign drop.
-                debug!(%key, "block request without a height annotation; dropping fetch");
-                return;
-            }
-        }
-        Key::Finalized { height } => {
-            let Some(proof) = upstream.get_finality_proof(*height).await else {
-                debug!(%key, "upstream did not have finality proof; dropping fetch");
-                return;
-            };
-            if let Err(error) =
-                super::engine::authenticate_ancestor_proof(&chain, &epocher, *height, &proof)
-            {
-                warn!(%key, %error, "failed to authenticate follower finality proof; dropping fetch");
-                return;
-            }
-            let certified = &proof.certified;
-            let mut buf = certified.finalization.encode().to_vec();
-            buf.extend_from_slice(certified.block.encode().as_ref());
-            if proof.ancestors.is_empty() {
-                buf.into()
-            } else {
-                let anchor_height = Height::new(certified.block.number());
-                let delivery = Delivery {
-                    key: Key::Finalized {
-                        height: anchor_height,
-                    },
-                    subscribers: NonEmptyVec::new((
-                        Annotation::Finalized(handler::Finalized::ByHeight {
-                            height: anchor_height,
-                        }),
-                        span.clone(),
-                    )),
-                };
-                if !matches!(handler.deliver(delivery, buf.into()).await, Ok(true)) {
-                    return;
-                }
-                for block in proof.ancestors.iter().rev() {
-                    let height = Height::new(block.number());
-                    let delivery = Delivery {
-                        key: Key::Block(block.digest()),
-                        subscribers: NonEmptyVec::new((
-                            Annotation::Finalized(handler::Finalized::ByHeight { height }),
-                            span.clone(),
-                        )),
-                    };
-                    if !matches!(handler.deliver(delivery, block.encode()).await, Ok(true)) {
-                        return;
-                    }
-                }
-                return;
-            }
-        }
-        Key::Notarized { .. } => {
-            debug!(%key, "ignoring notarized backfill request (follower)");
-            return;
-        }
-    };
-
-    let delivery = Delivery {
-        key,
-        subscribers: NonEmptyVec::new((subscriber, span)),
-    };
-    // AWAIT the marshal's validation response. Dropping the returned receiver is
-    // the resolver-protocol CANCELLATION signal: the marshal checks
-    // `response.is_closed()` at dequeue and silently skips a delivery whose
-    // receiver is gone (see `handler::Message::response_closed`). Since this
-    // fetch runs on its own spawned task, holding the receiver open until the
-    // marshal answers costs nothing - and the answer tells us whether the value
-    // was accepted. We do not retry on rejection (the marshal re-requests if it
-    // still needs the height).
-    match handler.deliver(delivery, value).await {
-        Ok(true) => debug!(%key, "delivery accepted by marshal"),
-        Ok(false) => warn!(%key, "delivery rejected by marshal"),
-        Err(_) => debug!(%key, "marshal dropped delivery response (shutdown or batch prune)"),
     }
 }
 

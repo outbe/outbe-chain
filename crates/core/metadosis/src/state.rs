@@ -26,6 +26,23 @@ pub enum DayLimitFormationReceipt {
 }
 
 impl MetadosisContract<'_> {
+    pub(crate) fn validate_day_limit_binding(
+        &self,
+        current: &crate::aggregate::WwdProjection,
+        reason: &'static str,
+    ) -> Result<()> {
+        match self.ocomp_day_limit_formation(current.worldwide_day)? {
+            Some(formation) if formation.day_limit == current.metadosis_limit_minor => Ok(()),
+            Some(_) => Err(crate::errors::storage_corruption(format!(
+                "{reason} formed day limit does not match WWD state"
+            ))),
+            None if current.metadosis_limit_minor.is_zero() => Ok(()),
+            None => Err(crate::errors::storage_corruption(format!(
+                "{reason} has a day limit with no formation"
+            ))),
+        }
+    }
+
     // --- WorldwideDay Management ---
 
     pub(crate) fn commit_create_worldwide_day(
@@ -34,28 +51,19 @@ impl MetadosisContract<'_> {
         wwd: WorldwideDayKey,
         schedule: crate::commit::NewWwdSchedule,
     ) -> Result<()> {
-        self.create_worldwide_day_raw(
-            wwd,
-            schedule.forming_start,
-            schedule.forming_period_seconds,
-            schedule.lookback_delay_seconds,
-            schedule.offering_period_seconds,
-            schedule.waiting_period_seconds,
-        )
+        self.create_worldwide_day_raw(wwd, schedule)
     }
 
     pub(crate) fn commit_set_wwd_rate_resolution(
         &mut self,
         _permit: &crate::commit::CommitPermit<'_>,
         wwd: WorldwideDayKey,
-        previous_vwap: U256,
-        current_vwap: U256,
-        day_type: WwdDayType,
+        resolution: crate::commit::WwdRateResolution,
     ) -> Result<()> {
         let day = self.worldwide_days.entry(wwd);
-        day.previous_vwap().write(previous_vwap)?;
-        day.current_vwap().write(current_vwap)?;
-        day.day_type().write(day_type.as_u8())
+        day.previous_vwap().write(resolution.previous_vwap)?;
+        day.current_vwap().write(resolution.current_vwap)?;
+        day.day_type().write(resolution.day_type.as_u8())
     }
 
     pub(crate) fn commit_write_day_limit_formation(
@@ -75,22 +83,22 @@ impl MetadosisContract<'_> {
         }
         self.worldwide_days
             .entry(formation.worldwide_day)
-            .metadosis_limit_amount()
+            .metadosis_limit_minor()
             .write(formation.day_limit)?;
         let receipt = self
             .day_limit_formation_receipts
             .entry(formation.worldwide_day);
-        receipt.base_limit().write(formation.base_limit)?;
+        receipt.base_limit_minor().write(formation.base_limit)?;
         receipt
-            .carry_over_before()
+            .promis_limit_before_minor()
             .write(formation.carry_over_before)?;
         receipt
-            .carry_over_taken()
+            .promis_limit_taken_minor()
             .write(formation.carry_over_taken)?;
         receipt
-            .carry_over_after()
+            .promis_limit_after_minor()
             .write(formation.carry_over_after)?;
-        receipt.formed_day_limit().write(formation.day_limit)?;
+        receipt.metadosis_limit_minor().write(formation.day_limit)?;
         receipt.block_number().write(formation.block_number)
     }
 
@@ -108,12 +116,15 @@ impl MetadosisContract<'_> {
     fn create_worldwide_day_raw(
         &mut self,
         wwd: WorldwideDayKey,
-        forming_start: u64,
-        forming_period_seconds: u64,
-        lookback_delay_seconds: u64,
-        offering_period_seconds: u64,
-        waiting_period_seconds: u64,
+        schedule: crate::commit::NewWwdSchedule,
     ) -> Result<()> {
+        let crate::commit::NewWwdSchedule {
+            forming_start,
+            forming_period_seconds,
+            lookback_delay_seconds,
+            offering_period_seconds,
+            waiting_period_seconds,
+        } = schedule;
         let forming_end = forming_start
             .checked_add(forming_period_seconds)
             .ok_or_else(|| crate::errors::caller_rejection("Metadosis forming window overflow"))?;
@@ -136,7 +147,7 @@ impl MetadosisContract<'_> {
             lookback_end,
             offering_end,
             scheduled_process_time,
-            metadosis_limit_amount: U256::ZERO,
+            metadosis_limit_minor: U256::ZERO,
             previous_vwap: U256::ZERO,
             current_vwap: U256::ZERO,
         })
@@ -153,19 +164,18 @@ impl MetadosisContract<'_> {
         let persisted_day_limit = self
             .worldwide_days
             .entry(wwd_key)
-            .metadosis_limit_amount()
+            .metadosis_limit_minor()
             .read()?;
-        let base_limit = receipt.base_limit().read()?;
-        let carry_over_before = receipt.carry_over_before().read()?;
-        let carry_over_taken = receipt.carry_over_taken().read()?;
-        let carry_over_after = receipt.carry_over_after().read()?;
-        let day_limit = receipt.formed_day_limit().read()?;
+        let base_limit = receipt.base_limit_minor().read()?;
+        let carry_over_before = receipt.promis_limit_before_minor().read()?;
+        let carry_over_taken = receipt.promis_limit_taken_minor().read()?;
+        let carry_over_after = receipt.promis_limit_after_minor().read()?;
+        let day_limit = receipt.metadosis_limit_minor().read()?;
         let block_number = receipt.block_number().read()?;
-        if base_limit.checked_add(carry_over_taken) != Some(day_limit)
-            || carry_over_before.checked_sub(carry_over_taken) != Some(carry_over_after)
-            || day_limit != persisted_day_limit
-            || block_number == 0
-        {
+        let valid_arithmetic = base_limit.checked_add(carry_over_taken) == Some(day_limit)
+            && carry_over_before.checked_sub(carry_over_taken) == Some(carry_over_after);
+        let valid_binding = day_limit == persisted_day_limit && block_number != 0;
+        if !valid_arithmetic || !valid_binding {
             return Err(crate::errors::storage_corruption(
                 "formed OCOMP day-limit receipt is inconsistent".into(),
             ));
@@ -202,12 +212,9 @@ impl MetadosisContract<'_> {
             // The day's terminal-evidence index dies with the day; without
             // this, retired days would leak index entries forever.
             self.delete_terminal_index(wwd_key)?;
-            if self.worldwide_day_terminal_receipts.get(wwd_key)?.is_some() {
-                self.worldwide_day_terminal_receipts.delete(wwd_key)?;
-            }
-            if self.capacity_forfeiture_receipts.get(wwd_key)?.is_some() {
-                self.capacity_forfeiture_receipts.delete(wwd_key)?;
-            }
+            self.worldwide_day_terminal_receipts
+                .get_bytes(&wwd_key)
+                .clear()?;
             self.worldwide_days.delete(wwd_key)?;
             if self
                 .day_limit_formation_receipts

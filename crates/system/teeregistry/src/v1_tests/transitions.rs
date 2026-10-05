@@ -1,4 +1,5 @@
 use super::*;
+use crate::v1::{NodeHostAssociationV1, VerifiedIntentV1};
 
 fn transition_evidence(
     intent: &RegistrationIntentV1,
@@ -244,34 +245,40 @@ fn activation_preserves_old_lease_but_old_policy_cannot_register_renew_or_replac
             .unwrap());
         assert!(revert_message(
             registry
-                .register_enclave_after_verifier_for_test(
-                    &newcomer,
-                    &newcomer_node,
-                    &newcomer_signature,
-                    PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate,)),
-                )
+                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &newcomer,
+                    node_signature: &newcomer_node,
+                    enclave_signature: &newcomer_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(verdict(
+                        DcapPlatformTcbStatusV1::UpToDate,
+                    ))
+                })
                 .unwrap_err()
         )
         .contains("authoritative V1 policy"));
         assert!(revert_message(
             registry
-                .renew_enclave_after_verifier_for_test(
-                    &renewal,
-                    &renewal_node,
-                    &renewal_enclave,
-                    PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate,)),
-                )
+                .renew_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &renewal,
+                    node_signature: &renewal_node,
+                    enclave_signature: &renewal_enclave,
+                    capability: PostVerifierDcapCapabilityV1::new(verdict(
+                        DcapPlatformTcbStatusV1::UpToDate,
+                    ))
+                })
                 .unwrap_err()
         )
         .contains("authoritative V1 policy"));
         assert!(revert_message(
             registry
-                .replace_enclave_binding_after_verifier_for_test(
-                    &replacement,
-                    &replacement_node,
-                    &replacement_signature,
-                    PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate,)),
-                )
+                .replace_enclave_binding_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &replacement,
+                    node_signature: &replacement_node,
+                    enclave_signature: &replacement_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(verdict(
+                        DcapPlatformTcbStatusV1::UpToDate,
+                    ))
+                })
                 .unwrap_err()
         )
         .contains("authoritative V1 policy"));
@@ -329,13 +336,19 @@ fn full_node_uses_the_same_bounded_transition_abi_and_staged_policy() {
         install_offer_key(&mut registry, &current);
         registry
             .register_enclave_and_bind_after_verifier_for_test(
-                &initial,
-                &initial_node,
-                &initial_enclave,
-                &node_binding,
-                &validator_signature,
-                &node_binding_signature,
-                PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+                VerifiedIntentV1 {
+                    intent: &initial,
+                    node_signature: &initial_node,
+                    enclave_signature: &initial_enclave,
+                    capability: PostVerifierDcapCapabilityV1::new(verdict(
+                        DcapPlatformTcbStatusV1::UpToDate,
+                    )),
+                },
+                NodeHostAssociationV1 {
+                    binding: &node_binding,
+                    validator_signature: &validator_signature,
+                    node_binding_signature: &node_binding_signature,
+                },
             )
             .unwrap();
         registry

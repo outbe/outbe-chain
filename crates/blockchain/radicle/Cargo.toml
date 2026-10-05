@@ -21,6 +21,7 @@ multibase.workspace = true
 outbe-primitives.workspace = true
 outbe-radicleregistry.workspace = true
 outbe-validatorset.workspace = true
+parking_lot.workspace = true
 rand_core.workspace = true
 reqwest.workspace = true
 reth-chain-state.workspace = true

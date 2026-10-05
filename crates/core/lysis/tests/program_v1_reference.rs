@@ -8,6 +8,7 @@ use outbe_lysis::program_v1::{
     execute, FidelityPhaseV1, ObservationValueV1, ObservedTributeV1, ProgramErrorV1,
     ProgramInputV1, ProgramResultV1, SemanticObservationV1, TributeInputV1,
 };
+use outbe_nod::NodContract;
 use outbe_primitives::time::WorldwideDay;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
@@ -163,13 +164,11 @@ fn success_json(input: &CorpusInput, result: ProgramResultV1) -> Value {
                 "owner": lowercase_address(action.owner),
                 "worldwide_day": u32::from(action.worldwide_day),
                 "league": action.league_id,
-                "floor_price": action.floor_price_minor.to_string(),
                 "gratis_load": action.gratis_load_minor.to_string(),
                 "entry_price": action.entry_price_minor.to_string(),
                 "cost": action.settlement_cost_minor.to_string(),
                 "issuance_currency": action.issuance_currency,
                 "reference_currency": action.reference_currency,
-                "issued_at": action.issued_at,
             })
         })
         .collect::<Vec<_>>();
@@ -340,12 +339,9 @@ fn the_nod_floor_follows_the_entry_price_not_the_tribute_price() {
     .map(|price| {
         input.tributes[0].tribute.tribute_price_minor = price;
         let result = execute(input.clone()).unwrap();
-        (
-            result.nod_actions[0].floor_price_minor,
-            result.nod_actions[0].bucket_key,
-        )
+        NodContract::floor_price_minor(result.nod_actions[0].entry_price_minor).unwrap()
     });
-    assert_eq!(floors[0].0, U256::from(2_160_000u64));
+    assert_eq!(floors[0], U256::from(2_160_000u64));
     assert!(floors.iter().all(|floor| *floor == floors[0]));
 }
 

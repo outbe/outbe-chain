@@ -83,6 +83,20 @@ where
         })
 }
 
+/// Timeout and cadence for waiting for the prior epoch receivers to deregister.
+#[derive(Clone, Copy, Debug)]
+pub struct SubchannelRetryPolicy {
+    pub timeout: Duration,
+    pub retry_interval: Duration,
+}
+
+/// Exclusive borrowed routes for one vote/cert/res registration attempt.
+pub struct EpochMuxHandles<'a, S: P2pSender, R: P2pReceiver<PublicKey = S::PublicKey>> {
+    pub vote: &'a mut MuxHandle<S, R>,
+    pub cert: &'a mut MuxHandle<S, R>,
+    pub res: &'a mut MuxHandle<S, R>,
+}
+
 /// Reacquire the three routes for an engine replacement in the same epoch.
 ///
 /// Aborting the old Simplex root recursively aborts its actor descendants, but
@@ -95,17 +109,23 @@ where
 pub async fn reacquire_epoch_subchannels<S, R, C>(
     epoch: Epoch,
     clock: &C,
-    timeout: Duration,
-    retry_interval: Duration,
-    vote_mux: &mut MuxHandle<S, R>,
-    cert_mux: &mut MuxHandle<S, R>,
-    res_mux: &mut MuxHandle<S, R>,
+    policy: SubchannelRetryPolicy,
+    muxes: EpochMuxHandles<'_, S, R>,
 ) -> Result<EpochSubchannels<S, R>>
 where
     S: P2pSender,
     R: P2pReceiver<PublicKey = S::PublicKey>,
     C: Clock,
 {
+    let SubchannelRetryPolicy {
+        timeout,
+        retry_interval,
+    } = policy;
+    let EpochMuxHandles {
+        vote: vote_mux,
+        cert: cert_mux,
+        res: res_mux,
+    } = muxes;
     let deadline = clock
         .current()
         .checked_add(timeout)

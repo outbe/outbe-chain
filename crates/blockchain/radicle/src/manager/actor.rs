@@ -1,3 +1,5 @@
+mod reconcile;
+
 use super::{
     fsm::{evaluate_phase, PhaseInput, PhaseMode},
     types::{
@@ -188,38 +190,38 @@ impl Runtime {
     }
 
     async fn accept_target(&mut self, target: FinalizedBlock) -> Option<bool> {
-        if let Some(pending) = self.pending {
-            if target.number < pending.number {
-                self.status.finality_regressions += 1;
-                self.publish();
-                return None;
-            }
-            if target.number == pending.number {
-                if target.hash != pending.hash {
-                    self.status.finality_conflicts += 1;
-                    self.publish();
-                }
-                return None;
-            }
-        }
-        if let Some(seen) = self.status.last_seen_finalized {
-            if target.number < seen.number {
-                self.status.finality_regressions += 1;
-                self.publish();
-                return None;
-            }
-            if target.number == seen.number {
-                if target.hash != seen.hash {
-                    self.status.finality_conflicts += 1;
-                    self.publish();
-                }
-                return None;
-            }
+        if self.target_precedes_reference(target, self.pending)
+            || self.target_precedes_reference(target, self.status.last_seen_finalized)
+        {
+            return None;
         }
         self.retry_attempt = 0;
         self.next_retry = None;
         self.pending = Some(target);
         Some(self.load_pending().await)
+    }
+
+    fn target_precedes_reference(
+        &mut self,
+        target: FinalizedBlock,
+        reference: Option<FinalizedBlock>,
+    ) -> bool {
+        let Some(reference) = reference else {
+            return false;
+        };
+        if target.number < reference.number {
+            self.status.finality_regressions += 1;
+            self.publish();
+            return true;
+        }
+        if target.number == reference.number {
+            if target.hash != reference.hash {
+                self.status.finality_conflicts += 1;
+                self.publish();
+            }
+            return true;
+        }
+        false
     }
 
     async fn load_pending(&mut self) -> bool {
@@ -273,15 +275,7 @@ impl Runtime {
         let Some(snapshot) = self.current.clone() else {
             return false;
         };
-        let mut retry = false;
-        if let Ok(refreshed) = self.dependencies.endpoints.refresh(&snapshot).await {
-            for endpoint in refreshed {
-                self.endpoint_cache.insert(endpoint.validator, endpoint);
-            }
-        } else {
-            self.status.endpoint_failures += 1;
-            retry = true;
-        }
+        let mut retry = self.refresh_endpoints(&snapshot).await;
         self.retain_current_endpoints(&snapshot);
 
         let self_binding = snapshot
@@ -299,31 +293,12 @@ impl Runtime {
             .saturating_sub(desired.len());
         self.status.signed_peers = desired.values().cloned().collect();
 
-        let local_node_id = match self.dependencies.control.node_id().await {
-            Ok(node_id) if node_id == self.config.local_node_id => Some(node_id),
-            Ok(_) => {
-                self.status.uds_failures += 1;
-                self.set_phase_error(PhaseError::BindingMismatch);
-                self.observe_repositories(&snapshot).await;
-                self.publish();
-                return true;
-            }
-            Err(_) => None,
-        };
-        let phase = evaluate_phase(PhaseInput {
-            mode: PhaseMode::Validator,
-            sidecar_available: local_node_id.is_some(),
-            local_node_id,
-            finalized_binding: self_binding,
-            was_ready: self.was_ready,
-        });
-        let phase = match phase {
+        let phase = match self.binding_phase(self_binding).await {
             Ok(phase) => {
                 self.status.phase_error = None;
                 phase
             }
             Err(error) => {
-                self.status.uds_failures += u64::from(local_node_id.is_none());
                 self.set_phase_error(error);
                 self.observe_repositories(&snapshot).await;
                 self.publish();
@@ -359,6 +334,42 @@ impl Runtime {
         }
         self.publish();
         retry
+    }
+
+    async fn refresh_endpoints(&mut self, snapshot: &FinalizedSnapshot) -> bool {
+        if let Ok(refreshed) = self.dependencies.endpoints.refresh(snapshot).await {
+            for endpoint in refreshed {
+                self.endpoint_cache.insert(endpoint.validator, endpoint);
+            }
+        } else {
+            self.status.endpoint_failures += 1;
+            return true;
+        }
+        false
+    }
+    async fn binding_phase(
+        &mut self,
+        self_binding: Option<[u8; 32]>,
+    ) -> Result<ManagerPhase, PhaseError> {
+        let local_node_id = match self.dependencies.control.node_id().await {
+            Ok(node_id) if node_id == self.config.local_node_id => Some(node_id),
+            Ok(_) => {
+                self.status.uds_failures += 1;
+                return Err(PhaseError::BindingMismatch);
+            }
+            Err(_) => None,
+        };
+        let phase = evaluate_phase(PhaseInput {
+            mode: PhaseMode::Validator,
+            sidecar_available: local_node_id.is_some(),
+            local_node_id,
+            finalized_binding: self_binding,
+            was_ready: self.was_ready,
+        });
+        if phase.is_err() {
+            self.status.uds_failures += u64::from(local_node_id.is_none());
+        }
+        phase
     }
 
     fn set_phase_error(&mut self, error: PhaseError) {
@@ -401,130 +412,6 @@ impl Runtime {
                 Some((node_id, endpoint.clone()))
             })
             .collect()
-    }
-
-    async fn reconcile_control(
-        &mut self,
-        snapshot: &FinalizedSnapshot,
-        desired: &BTreeMap<[u8; 32], VerifiedEndpoint>,
-    ) -> ControlReconciliation {
-        let Ok(mut sessions) = self.dependencies.control.sessions().await else {
-            self.status.uds_failures += 1;
-            return ControlReconciliation {
-                sidecar_available: false,
-                converged: false,
-            };
-        };
-        let mut converged = true;
-
-        for session in sessions
-            .iter()
-            .filter(|session| session.direction == SessionDirection::Outbound)
-        {
-            self.managed
-                .insert(session.node_id, session.address.clone());
-        }
-
-        let mut blocked = BTreeSet::new();
-        let stale = self
-            .managed
-            .iter()
-            .filter_map(|(node_id, address)| {
-                let keep = desired
-                    .get(node_id)
-                    .is_some_and(|peer| peer.addresses.contains(address));
-                (!keep).then_some((*node_id, address.clone()))
-            })
-            .collect::<Vec<_>>();
-        for (node_id, address) in stale {
-            match self
-                .dependencies
-                .control
-                .disconnect(node_id, &address)
-                .await
-            {
-                Ok(DisconnectDisposition::Disconnected | DisconnectDisposition::AlreadyAbsent) => {
-                    self.managed.remove(&node_id);
-                    sessions.retain(|session| {
-                        session.node_id != node_id
-                            || session.direction != SessionDirection::Outbound
-                            || session.address != address
-                    });
-                }
-                Ok(DisconnectDisposition::Inbound) => {
-                    self.managed.remove(&node_id);
-                }
-                Ok(DisconnectDisposition::NotConnected | DisconnectDisposition::AddressChanged)
-                | Err(_) => {
-                    blocked.insert(node_id);
-                    converged = false;
-                }
-            }
-        }
-
-        for (node_id, endpoint) in desired {
-            if blocked.contains(node_id) {
-                continue;
-            }
-            let connected = sessions.iter().any(|session| {
-                session.node_id == *node_id
-                    && session.connected
-                    && (session.direction == SessionDirection::Inbound
-                        || endpoint.addresses.contains(&session.address))
-            });
-            if connected {
-                if let Some(session) = sessions.iter().find(|session| {
-                    session.node_id == *node_id
-                        && session.connected
-                        && session.direction == SessionDirection::Outbound
-                        && endpoint.addresses.contains(&session.address)
-                }) {
-                    self.managed.insert(*node_id, session.address.clone());
-                }
-                continue;
-            }
-            match self
-                .dependencies
-                .control
-                .connect(*node_id, &endpoint.addresses)
-                .await
-            {
-                Ok(address) => {
-                    self.managed.insert(*node_id, address);
-                }
-                Err(_) => {
-                    converged = false;
-                }
-            }
-        }
-
-        for repo in &snapshot.repositories {
-            if self.dependencies.control.seed(*repo).await.is_err() {
-                converged = false;
-            }
-        }
-        match self.dependencies.control.sessions().await {
-            Ok(sessions) => {
-                self.status.connected_peer_count = sessions
-                    .into_iter()
-                    .filter(|session| session.connected && desired.contains_key(&session.node_id))
-                    .map(|session| session.node_id)
-                    .collect::<BTreeSet<_>>()
-                    .len();
-                ControlReconciliation {
-                    sidecar_available: true,
-                    converged,
-                }
-            }
-            Err(_) => {
-                self.status.uds_failures += 1;
-                self.status.connected_peer_count = 0;
-                ControlReconciliation {
-                    sidecar_available: false,
-                    converged: false,
-                }
-            }
-        }
     }
 
     async fn observe_repositories(&mut self, snapshot: &FinalizedSnapshot) -> bool {

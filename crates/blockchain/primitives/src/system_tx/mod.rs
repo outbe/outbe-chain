@@ -46,6 +46,8 @@ pub use outbe_ocomp_protocol::abi::{
     OCOMP_LIFECYCLE_BEGIN_SELECTOR, OCOMP_TERMINAL_REQUEST_SELECTOR,
 };
 
+pub mod binding;
+
 mod envelope;
 mod gas;
 mod input;
@@ -73,6 +75,7 @@ pub use gas::{system_tx_intrinsic_gas, system_tx_visible_gas_limit, SystemTxVisi
 
 pub use envelope::{
     build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit, system_tx_nonce,
+    SystemTxEnvelopeInput,
 };
 
 pub use witness::{recover_phase1_proposer, validate_phase1_witness_against};

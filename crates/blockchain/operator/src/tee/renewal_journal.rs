@@ -1,12 +1,19 @@
 //! Owner-only, crash-consistent journal for one manual TEE renewal intent.
 
+use super::journal_storage::{sync_directory, JournalPaths};
+use super::JournalSnapshotV1;
+#[cfg(test)]
+use crate::tx::UnsignedRelayTransactionV1;
+
+mod validation;
+
 use std::{
     fs::{self, DirBuilder, File, OpenOptions},
-    io::{Read as _, Write as _},
+    io::Read as _,
     os::unix::fs::{
         DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _,
     },
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use alloy_primitives::{keccak256, Address, B256};
@@ -26,9 +33,6 @@ use crate::tx::RawRelayTransactionV1;
 use super::registry::RenewalBindingV1;
 
 const DIRECTORY: &str = "tee-renewal-v1";
-const JOURNAL: &str = "journal.json";
-const NEXT: &str = "journal.next";
-const LOCK: &str = "state.lock";
 const DIRECTORY_MODE: u32 = 0o700;
 const FILE_MODE: u32 = 0o600;
 const MAX_JOURNAL_BYTES: u64 = 4 * 1024 * 1024;
@@ -51,153 +55,6 @@ pub struct PreparedRenewalV1 {
     pub collateral_margin: u64,
     pub relay: Address,
     pub relay_variants: Vec<RawRelayTransactionV1>,
-}
-
-impl PreparedRenewalV1 {
-    fn validate(&self) -> Result<()> {
-        if self.intent.is_empty()
-            || self.evidence.is_empty()
-            || self.calldata.is_empty()
-            || self.node_signature.len() != 65
-            || self.enclave_signature.len() != 64
-            || self.relay_variants.is_empty()
-            || self.relay_variants.len() > MAX_RELAY_VARIANTS
-        {
-            eyre::bail!("renewal journal contains invalid bounded material");
-        }
-        let intent = RegistrationIntentV1::decode_canonical(&self.intent)
-            .map_err(|error| eyre::eyre!("decode renewal journal intent: {error}"))?;
-        let intent_hash = intent
-            .intent_hash()
-            .map_err(|error| eyre::eyre!("hash renewal journal intent: {error}"))?;
-        let node_signature: &[u8; 65] = self
-            .node_signature
-            .as_slice()
-            .try_into()
-            .map_err(|_| eyre::eyre!("renewal journal node signature length changed"))?;
-        let enclave_signature: &[u8; 64] = self
-            .enclave_signature
-            .as_slice()
-            .try_into()
-            .map_err(|_| eyre::eyre!("renewal journal enclave signature length changed"))?;
-        let next_registration_version = self
-            .source
-            .registration_version
-            .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("renewal journal source registration version exhausted"))?;
-        let next_renewal_nonce = self
-            .source
-            .renewal_nonce
-            .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("renewal journal source nonce exhausted"))?;
-        let node_id_hash = intent
-            .node_id
-            .node_id_hash()
-            .map_err(|error| eyre::eyre!("hash renewal journal NodeHost identity: {error}"))?;
-        let derived_enclave_id = intent
-            .derived_enclave_id()
-            .map_err(|error| eyre::eyre!("derive renewal journal enclave identity: {error}"))?;
-        if intent.operation != AttestationOperationV1::RenewEnclave
-            || node_id_hash != self.source.node_id_hash
-            || intent.enclave_id != self.source.enclave_id
-            || derived_enclave_id != intent.enclave_id
-            || intent.binding_id != self.source.binding_id
-            || intent.policy_hash != self.source.policy_hash
-            || intent.binding_version != self.source.binding_version
-            || intent.registration_version != next_registration_version
-            || intent.renewal_nonce != next_renewal_nonce
-            || intent.transition_nonce != self.source.transition_nonce
-            || intent.requested_valid_until != self.requested_valid_until
-            || B256::from(intent.recipient_x25519) != self.source.recipient_x25519
-            || B256::from(intent.attestation_ed25519) != self.source.attestation_ed25519
-            || B256::from(intent.noise_responder_x25519) != self.source.noise_responder_x25519
-            || intent.node_host_authorization_hash != self.source.node_host_authorization_hash
-            || !intent.verify_node_signature(node_signature)
-            || !intent.verify_enclave_signature(enclave_signature)
-        {
-            eyre::bail!("renewal journal intent is not the exact next binding transition");
-        }
-        let evidence = AttestationEvidenceV1::decode_canonical(&self.evidence)
-            .map_err(|error| eyre::eyre!("decode renewal journal evidence: {error}"))?;
-        let (evidence_intent, evidence_hash) = match &evidence {
-            AttestationEvidenceV1::Dcap(value) => {
-                if intent.attestation_mode != AttestationMode::DcapRequired {
-                    eyre::bail!("renewal journal evidence variant does not match intent mode");
-                }
-                (
-                    &value.intent,
-                    dcap_evidence_hash_v1(&self.evidence).map_err(|code| {
-                        eyre::eyre!("hash renewal journal DCAP evidence: {code:?}")
-                    })?,
-                )
-            }
-            AttestationEvidenceV1::GramineDirectDev(value) => {
-                if intent.attestation_mode != AttestationMode::GramineDirectDev
-                    || value.dev_attestation_public != value.intent.attestation_ed25519
-                    || value.dev_signature.as_slice() != self.enclave_signature.as_slice()
-                    || !value.intent.verify_enclave_signature(&value.dev_signature)
-                {
-                    eyre::bail!("renewal journal contains invalid GramineDirectDev evidence");
-                }
-                (
-                    &value.intent,
-                    evidence
-                        .evidence_hash()
-                        .map_err(|error| eyre::eyre!("hash renewal journal evidence: {error}"))?,
-                )
-            }
-        };
-        if intent_hash != self.intent_hash
-            || evidence_intent != &intent
-            || evidence_hash != self.evidence_hash
-            || keccak256(&self.calldata) != self.calldata_hash
-        {
-            eyre::bail!("renewal journal hash commitment mismatch");
-        }
-        let canonical_calldata = ITeeRegistryV1::renewEnclaveCall {
-            evidence: self.evidence.clone().into(),
-            nodeSignature: self.node_signature.clone().into(),
-            enclaveSignature: self.enclave_signature.clone().into(),
-        }
-        .abi_encode();
-        if self.calldata != canonical_calldata {
-            eyre::bail!("renewal journal calldata is not the canonical renewal call");
-        }
-        let first = &self.relay_variants[0];
-        if first.relay != self.relay || first.calldata_hash != self.calldata_hash {
-            eyre::bail!("renewal journal relay binding mismatch");
-        }
-        for variant in &self.relay_variants {
-            if variant.relay != self.relay
-                || variant.chain_id != first.chain_id
-                || variant.account_nonce != first.account_nonce
-                || variant.gas_limit != first.gas_limit
-                || variant.calldata_hash != self.calldata_hash
-                || keccak256(&variant.raw_transaction) != variant.transaction_hash
-            {
-                eyre::bail!("renewal journal contains a competing relay variant");
-            }
-        }
-        match evidence {
-            AttestationEvidenceV1::Dcap(_) => {
-                let ceiling = self
-                    .collateral_valid_until
-                    .checked_sub(self.collateral_margin)
-                    .ok_or_else(|| eyre::eyre!("renewal collateral margin underflow"))?;
-                if self.requested_valid_until > ceiling {
-                    eyre::bail!("renewal journal lease exceeds collateral ceiling");
-                }
-            }
-            AttestationEvidenceV1::GramineDirectDev(_) => {
-                if self.collateral_valid_until != u64::MAX || self.collateral_margin != 0 {
-                    eyre::bail!(
-                        "renewal journal has non-canonical GramineDirectDev collateral fields"
-                    );
-                }
-            }
-        }
-        Ok(())
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -244,65 +101,12 @@ impl RenewalJournalStateV1 {
             Self::Abandoned { .. } => "abandoned",
         }
     }
-
-    fn validate(&self) -> Result<()> {
-        self.attempt().validate()?;
-        if let Self::Submitted {
-            attempt,
-            transaction_hashes,
-            ..
-        } = self
-        {
-            if transaction_hashes.is_empty()
-                || transaction_hashes.len() > attempt.relay_variants.len()
-                || transaction_hashes
-                    .iter()
-                    .enumerate()
-                    .any(|(index, hash)| attempt.relay_variants[index].transaction_hash != *hash)
-            {
-                eyre::bail!("submitted renewal journal transaction list is non-canonical");
-            }
-        }
-        if let Self::Finalized {
-            attempt,
-            finalized_binding,
-            finalized_hash,
-            ..
-        } = self
-        {
-            if finalized_hash.is_zero()
-                || finalized_binding.intent_hash != attempt.intent_hash
-                || finalized_binding.evidence_hash != attempt.evidence_hash
-            {
-                eyre::bail!("finalized renewal journal binding mismatch");
-            }
-        }
-        if let Self::Abandoned { reason, .. } = self {
-            if reason.is_empty() || reason.len() > 512 {
-                eyre::bail!("abandoned renewal journal reason is invalid");
-            }
-        }
-        Ok(())
-    }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct RenewalJournalSnapshotV1 {
-    pub version: u8,
-    pub generation: u64,
-    pub lifecycle: RenewalJournalStateV1,
-}
+/// V1 renewal journal envelope, retaining the renewal lifecycle type.
+pub type RenewalJournalSnapshotV1 = JournalSnapshotV1<RenewalJournalStateV1>;
 
 impl RenewalJournalSnapshotV1 {
-    pub fn new(lifecycle: RenewalJournalStateV1) -> Self {
-        Self {
-            version: 1,
-            generation: 1,
-            lifecycle,
-        }
-    }
-
     fn validate(&self) -> Result<()> {
         if self.version != 1 || self.generation == 0 {
             eyre::bail!("unsupported renewal journal version or generation");
@@ -318,7 +122,7 @@ pub(crate) struct RenewalJournalGuard {
 
 impl RenewalJournalGuard {
     pub(crate) fn acquire(node_data_dir: &Path) -> Result<Self> {
-        let paths = JournalPaths::new(node_data_dir);
+        let paths = JournalPaths::new(node_data_dir, DIRECTORY);
         create_or_validate_directory(&paths.root)?;
         let lock = open_private_file(&paths.lock, true)?;
         if let Err(error) =
@@ -346,51 +150,21 @@ impl RenewalJournalGuard {
                 .ok_or_else(|| eyre::eyre!("renewal journal generation exhausted"))?;
         }
         snapshot.validate()?;
-        let encoded = serde_json::to_vec(&snapshot).wrap_err("encode renewal journal")?;
-        if encoded.len() as u64 > MAX_JOURNAL_BYTES {
-            eyre::bail!("renewal journal exceeds its size cap");
-        }
-        let mut next = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(FILE_MODE)
-            .open(&self.paths.next)
-            .wrap_err("create renewal journal scratch")?;
-        next.write_all(&encoded)
-            .wrap_err("write renewal journal scratch")?;
-        next.sync_all().wrap_err("fsync renewal journal scratch")?;
-        fs::rename(&self.paths.next, &self.paths.journal).wrap_err("commit renewal journal")?;
-        sync_directory(&self.paths.root)
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true).mode(FILE_MODE);
+        self.paths
+            .commit("renewal")
+            .commit_json(&snapshot, &options, MAX_JOURNAL_BYTES)
     }
 }
 
 pub(crate) fn inspect_journal(node_data_dir: &Path) -> Result<Option<RenewalJournalSnapshotV1>> {
-    let paths = JournalPaths::new(node_data_dir);
+    let paths = JournalPaths::new(node_data_dir, DIRECTORY);
     if !paths.root.exists() {
         return Ok(None);
     }
     validate_directory(&paths.root)?;
     read_snapshot(&paths.journal)
-}
-
-#[derive(Clone)]
-struct JournalPaths {
-    root: PathBuf,
-    journal: PathBuf,
-    next: PathBuf,
-    lock: PathBuf,
-}
-
-impl JournalPaths {
-    fn new(node_data_dir: &Path) -> Self {
-        let root = node_data_dir.join(DIRECTORY);
-        Self {
-            journal: root.join(JOURNAL),
-            next: root.join(NEXT),
-            lock: root.join(LOCK),
-            root,
-        }
-    }
 }
 
 fn create_or_validate_directory(path: &Path) -> Result<()> {
@@ -418,12 +192,7 @@ fn validate_directory(path: &Path) -> Result<()> {
 }
 
 fn open_private_file(path: &Path, create: bool) -> Result<File> {
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(create)
-        .mode(FILE_MODE)
-        .custom_flags(libc::O_NOFOLLOW)
+    let file = crate::tee::journal_storage::private_file_options(create)
         .open(path)
         .wrap_err_with(|| format!("open private renewal file {}", path.display()))?;
     validate_private_file(path)?;
@@ -472,13 +241,6 @@ fn read_snapshot(path: &Path) -> Result<Option<RenewalJournalSnapshotV1>> {
         serde_json::from_slice(&bytes).wrap_err("decode renewal journal")?;
     snapshot.validate()?;
     Ok(Some(snapshot))
-}
-
-fn sync_directory(path: &Path) -> Result<()> {
-    File::open(path)
-        .wrap_err_with(|| format!("open directory {} for fsync", path.display()))?
-        .sync_all()
-        .wrap_err_with(|| format!("fsync directory {}", path.display()))
 }
 
 #[cfg(test)]
@@ -547,14 +309,14 @@ mod tests {
         .abi_encode();
         let relay = RelaySignerV1::new(&hex::encode([0x41; 32])).unwrap();
         let raw = relay
-            .sign_renewal(
-                1,
-                2,
-                U256::from(3),
-                1_000_000,
-                TEE_REGISTRY_ADDRESS,
-                &calldata,
-            )
+            .sign_renewal(UnsignedRelayTransactionV1 {
+                chain_id: 1,
+                account_nonce: 2,
+                gas_price: U256::from(3),
+                gas_limit: 1_000_000,
+                to: TEE_REGISTRY_ADDRESS,
+                calldata: &calldata,
+            })
             .unwrap();
         (calldata, relay.address(), vec![raw])
     }
@@ -563,14 +325,14 @@ mod tests {
         let relay = RelaySignerV1::new(&hex::encode([0x41; 32])).unwrap();
         let first = &attempt.relay_variants[0];
         let replacement = relay
-            .sign_renewal(
-                first.chain_id,
-                first.account_nonce,
-                first.gas_price + U256::from(1),
-                first.gas_limit,
-                TEE_REGISTRY_ADDRESS,
-                &attempt.calldata,
-            )
+            .sign_renewal(UnsignedRelayTransactionV1 {
+                chain_id: first.chain_id,
+                account_nonce: first.account_nonce,
+                gas_price: first.gas_price + U256::from(1),
+                gas_limit: first.gas_limit,
+                to: TEE_REGISTRY_ADDRESS,
+                calldata: &attempt.calldata,
+            })
             .unwrap();
         attempt.relay_variants.push(replacement);
     }
@@ -706,8 +468,35 @@ mod tests {
         });
         guard.store(second).unwrap();
         assert_eq!(guard.load().unwrap().unwrap().generation, 2);
-        let metadata = fs::metadata(root.path().join(DIRECTORY).join(JOURNAL)).unwrap();
+        let metadata = fs::metadata(root.path().join(DIRECTORY).join("journal.json")).unwrap();
         assert_eq!(metadata.permissions().mode() & 0o777, FILE_MODE);
+    }
+
+    #[test]
+    fn snapshot_headers_reject_invalid_values_before_lifecycle_validation() {
+        let mut invalid_attempt = direct_attempt();
+        invalid_attempt.intent.clear();
+        let lifecycle = RenewalJournalStateV1::Prepared {
+            attempt: invalid_attempt,
+        };
+        for (version, generation) in [(0, 1), (2, 1), (1, 0)] {
+            let snapshot = RenewalJournalSnapshotV1 {
+                version,
+                generation,
+                lifecycle: lifecycle.clone(),
+            };
+            assert_eq!(
+                snapshot.validate().unwrap_err().to_string(),
+                "unsupported renewal journal version or generation"
+            );
+        }
+        assert_ne!(
+            RenewalJournalSnapshotV1::new(lifecycle)
+                .validate()
+                .unwrap_err()
+                .to_string(),
+            "unsupported renewal journal version or generation"
+        );
     }
 
     #[test]
@@ -736,12 +525,16 @@ mod tests {
                 .unwrap();
         }
         let directory = root.path().join(DIRECTORY);
-        fs::write(directory.join(NEXT), b"partial").unwrap();
-        fs::set_permissions(directory.join(NEXT), fs::Permissions::from_mode(FILE_MODE)).unwrap();
+        fs::write(directory.join("journal.next"), b"partial").unwrap();
+        fs::set_permissions(
+            directory.join("journal.next"),
+            fs::Permissions::from_mode(FILE_MODE),
+        )
+        .unwrap();
         let guard = RenewalJournalGuard::acquire(root.path()).unwrap();
-        assert!(!directory.join(NEXT).exists());
+        assert!(!directory.join("journal.next").exists());
         drop(guard);
-        fs::write(directory.join(JOURNAL), b"corrupt").unwrap();
+        fs::write(directory.join("journal.json"), b"corrupt").unwrap();
         assert!(inspect_journal(root.path()).is_err());
     }
 

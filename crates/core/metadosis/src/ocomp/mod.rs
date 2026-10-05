@@ -9,6 +9,7 @@ mod codec;
 pub mod expiry;
 pub mod fork;
 mod index;
+mod live_index;
 mod profile;
 pub mod request;
 pub mod schema;

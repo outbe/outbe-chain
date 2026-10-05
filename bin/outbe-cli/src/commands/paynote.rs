@@ -70,10 +70,12 @@ use settlement_abi::{IGemFactory, IIntexFactory, INodFactory};
 ///   outbe-cli --rpc-url http://localhost:8545 \
 ///     paynote spend-proof ./paynotes/0xCOMMITMENT.json 600000 --nod "$NOD_ID"
 ///
-///   Bind an Intex series. The series id is exactly 14 bytes, and --units is
-///   the number of units being settled, which can differ from the token amount:
+///   Bind an Intex holding. The series id is exactly 14 bytes, --owner owns the
+///   units, and --units is the number of units being settled, which can differ
+///   from the token amount:
 ///   outbe-cli --rpc-url http://localhost:8545 \
-///     paynote spend-proof 0xCOMMITMENT 600000 --intex 20260212-TRY-U --units 2
+///     paynote spend-proof 0xCOMMITMENT 600000 --intex 20260212-TRY-U \
+///     --owner "$OWNER_ADDRESS" --units 2
 #[derive(Subcommand)]
 #[command(verbatim_doc_comment)]
 pub enum PaynoteCmd {
@@ -107,8 +109,11 @@ pub enum PaynoteCmd {
         #[command(flatten)]
         target: SpendTarget,
         /// Units of `--intex` this proof settles.
-        #[arg(long, requires = "intex", value_parser = parse_amount)]
+        #[arg(long, conflicts_with_all = ["nod", "gem"], value_parser = parse_amount)]
         units: Option<U256>,
+        /// Owner of the `--intex` units this proof settles.
+        #[arg(long, conflicts_with_all = ["nod", "gem"])]
+        owner: Option<Address>,
     },
 }
 
@@ -123,7 +128,7 @@ pub(crate) struct SpendTarget {
     #[arg(long)]
     gem: Option<U256>,
     /// 14-byte Intex series id this proof may settle.
-    #[arg(long, requires = "units")]
+    #[arg(long, requires_all = ["units", "owner"])]
     intex: Option<String>,
 }
 
@@ -147,9 +152,10 @@ impl PaynoteCmd {
                 amount,
                 target,
                 units,
+                owner,
             } => {
                 let note = load_note(&resolve_note(dir, &paynote))?;
-                let target = target.into_settlement(units)?;
+                let target = target.into_settlement(units, owner)?;
                 spend_proof(client, dir, &note, amount, target).await?
             }
         };
@@ -163,11 +169,19 @@ impl PaynoteCmd {
 enum SettlementTarget {
     Nod(U256),
     Gem(U256),
-    Intex { series: [u8; 14], units: U256 },
+    Intex {
+        series: [u8; 14],
+        owner: Address,
+        units: U256,
+    },
 }
 
 impl SpendTarget {
-    fn into_settlement(self, units: Option<U256>) -> Result<SettlementTarget> {
+    fn into_settlement(
+        self,
+        units: Option<U256>,
+        owner: Option<Address>,
+    ) -> Result<SettlementTarget> {
         if let Some(nod) = self.nod {
             return Ok(SettlementTarget::Nod(nod));
         }
@@ -180,6 +194,10 @@ impl SpendTarget {
         let Some(units) = units else {
             return Err(eyre::eyre!("--intex requires --units"));
         };
+        let Some(owner) = owner else {
+            return Err(eyre::eyre!("--intex requires --owner"));
+        };
+        ensure!(!owner.is_zero(), "--owner must not be the zero address");
         let bytes = series.as_bytes();
         ensure!(
             bytes.len() == 14,
@@ -189,6 +207,7 @@ impl SpendTarget {
         series_id.copy_from_slice(bytes);
         Ok(SettlementTarget::Intex {
             series: series_id,
+            owner,
             units,
         })
     }
@@ -198,6 +217,8 @@ struct QuotedSettlement {
     context: B256,
     domain: &'static str,
     target: B256,
+    series: Option<String>,
+    owner: Option<Address>,
     units: U256,
     snapshot_id: U256,
 }
@@ -208,7 +229,7 @@ async fn quote_settlement(
     amount: U256,
     target: SettlementTarget,
 ) -> Result<QuotedSettlement> {
-    let (domain, target_word, units, quote_units, snapshot_id, domain_tag) = match target {
+    let (domain, target_word, owner, units, quote_units, snapshot_id, domain_tag) = match target {
         SettlementTarget::Nod(id) => {
             let quote = call(
                 client,
@@ -222,8 +243,9 @@ async fn quote_settlement(
             (
                 "nod",
                 B256::from(id),
+                None,
                 U256::ONE,
-                quote.payableUnits,
+                quote.paymentMinor,
                 quote.snapshotId,
                 SettlementDomain::Nod,
             )
@@ -241,28 +263,34 @@ async fn quote_settlement(
             (
                 "gem",
                 B256::from(id),
+                None,
                 U256::ONE,
-                quote.payableUnits,
+                quote.paymentMinor,
                 quote.snapshotId,
                 SettlementDomain::Gem,
             )
         }
-        SettlementTarget::Intex { series, units } => {
+        SettlementTarget::Intex {
+            series,
+            owner,
+            units,
+        } => {
             let quote = call(
                 client,
                 INTEX_FACTORY_ADDRESS,
                 IIntexFactory::quoteSettlementCall {
                     seriesId: FixedBytes::from(series),
-                    paymentToken: note.asset,
-                    amount: units,
+                    asset: note.asset,
+                    units,
                 },
             )
             .await?;
             (
                 "intex",
-                outbe_paynote::api::intex_series_target(&series),
+                outbe_paynote::api::intex_holding_target(&series, owner),
+                Some(owner),
                 units,
-                quote.payableUnits,
+                quote.paymentMinor,
                 quote.snapshotId,
                 SettlementDomain::Intex,
             )
@@ -278,6 +306,13 @@ async fn quote_settlement(
         context,
         domain,
         target: target_word,
+        series: match target {
+            SettlementTarget::Intex { series, .. } => {
+                Some(String::from_utf8_lossy(&series).into_owned())
+            }
+            SettlementTarget::Nod(_) | SettlementTarget::Gem(_) => None,
+        },
+        owner,
         units,
         snapshot_id,
     })
@@ -446,7 +481,7 @@ fn private_dir(dir: &Path) -> Result<()> {
 }
 
 /// Immutable, durable publication: interruption leaves either no file or all of it.
-fn save_json(dir: &Path, name: &str, value: &impl Serialize) -> Result<PathBuf> {
+pub(super) fn save_json(dir: &Path, name: &str, value: &impl Serialize) -> Result<PathBuf> {
     private_dir(dir)?;
     let path = dir.join(name);
     let bytes = Zeroizing::new(serde_json::to_vec_pretty(value)?);
@@ -804,21 +839,26 @@ async fn spend_proof(
         .as_ref()
         .map(|note| save_note(dir, note))
         .transpose()?;
-    let output = json!({ "version": 1, "circuit": format!("{}@{}", Paynote::LABEL, Paynote::VERSION), "proof": format!("0x{}", hex::encode(&combined)),
-        "source_commitment": note.commitment, "chain_id": note.chain_id, "pool": PAYNOTE_ADDRESS,
-        "asset": note.asset, "context": quoted.context, "domain": quoted.domain,
-        "target": quoted.target, "units": quoted.units.to_string(),
-        "snapshotId": quoted.snapshot_id.to_string(), "spend_amount": amount.to_string(),
-        "root": public.root, "nullifier": public.nullifier, "change_commitment": public.change_commitment });
+    // This file alone can be sent to a relayer, so it never names the spent note.
+    let mut output = spend_artifact(&combined, &public, &quoted);
     let proof_path = save_json(
         &dir.join("proofs"),
         &format!("{:#x}.json", keccak256(&combined)),
         &output,
     )?;
-    let mut output = output;
+    output["source_commitment"] = json!(note.commitment);
     output["proof_file"] = json!(proof_path);
     output["change_note"] = json!(change_path);
     Ok(output)
+}
+
+fn spend_artifact(combined: &[u8], public: &PublicInputs, quoted: &QuotedSettlement) -> Value {
+    json!({ "version": 1, "circuit": format!("{}@{}", Paynote::LABEL, Paynote::VERSION), "proof": format!("0x{}", hex::encode(combined)),
+        "chain_id": public.chain_id, "pool": PAYNOTE_ADDRESS,
+        "asset": public.asset, "context": public.context, "domain": quoted.domain,
+        "target": quoted.target, "series": quoted.series, "owner": quoted.owner, "units": quoted.units.to_string(),
+        "snapshotId": quoted.snapshot_id.to_string(), "spend_amount": public.spend_amount.to_string(),
+        "root": public.root, "nullifier": public.nullifier, "change_commitment": public.change_commitment })
 }
 
 #[cfg(test)]

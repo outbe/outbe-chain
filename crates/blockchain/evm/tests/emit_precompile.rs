@@ -3,6 +3,10 @@
 //! `outbe.emit.mint@1.5.0` proofs, plus frame/value boundary cases extending
 //! the `precompile_value_boundary` patterns.
 
+#[path = "common/borrowed_precompile.rs"]
+mod borrow_code_fixture;
+use borrow_code_fixture::borrow_code;
+
 use alloy_evm::{Evm as _, EvmFactory as _};
 use alloy_primitives::{Address, Bytes, LogData, B256, U256};
 use alloy_sol_types::{SolCall, SolError, SolEvent};
@@ -69,14 +73,22 @@ fn base_db() -> CacheDB<EmptyDB> {
     db
 }
 
-fn run(
-    mut db: CacheDB<EmptyDB>,
+struct EmitCallFixture {
     caller: Address,
     to: Address,
     value: u64,
     gas_limit: u64,
     calldata: Bytes,
-) -> ResultAndState {
+}
+
+fn run(mut db: CacheDB<EmptyDB>, call: EmitCallFixture) -> ResultAndState {
+    let EmitCallFixture {
+        caller,
+        to,
+        value,
+        gas_limit,
+        calldata,
+    } = call;
     use revm::Database;
     let nonce = db
         .basic(caller)
@@ -98,7 +110,16 @@ fn run(
 }
 
 fn view(db: CacheDB<EmptyDB>, calldata: Bytes) -> Bytes {
-    let outcome = run(db, ALICE, EMIT_ADDRESS, 0, 100_000, calldata);
+    let outcome = run(
+        db,
+        EmitCallFixture {
+            caller: ALICE,
+            to: EMIT_ADDRESS,
+            value: 0,
+            gas_limit: 100_000,
+            calldata,
+        },
+    );
     match outcome.result {
         ExecutionResult::Success {
             output: Output::Call(output),
@@ -184,14 +205,20 @@ fn b256(field: Field) -> B256 {
 
 // ---- reference tree and proof fixture --------------------------------------
 
-fn prove_mint(
-    tree: &EmitTree,
+struct MintNoteFixture {
     owner: Address,
     key: Field,
     note_amount: u128,
     leaf_index: u32,
-    mint_units: u128,
-) -> Vec<u8> {
+}
+
+fn prove_mint(tree: &EmitTree, note: MintNoteFixture, mint_units: u128) -> Vec<u8> {
+    let MintNoteFixture {
+        owner,
+        key,
+        note_amount,
+        leaf_index,
+    } = note;
     let serial = derive_note_sn(owner, key).unwrap();
     let nullifier = derive_nullifier(
         note_commitment(CHAIN_ID, serial, U256::from(note_amount)).unwrap(),
@@ -248,15 +275,27 @@ fn burn_tx(sn: Field) -> Bytes {
     IEmit::burnCall { noteSn: b256(sn) }.abi_encode().into()
 }
 
-fn mint_tx(
+#[derive(Clone, Copy)]
+struct MintCallFixture<'a> {
     payout: Address,
     root: Field,
     nullifier: Field,
     owner: Address,
     units: u128,
     change: Field,
-    proof: &[u8],
-) -> Bytes {
+    proof: &'a [u8],
+}
+
+fn mint_tx(call: MintCallFixture<'_>) -> Bytes {
+    let MintCallFixture {
+        payout,
+        root,
+        nullifier,
+        owner,
+        units,
+        change,
+        proof,
+    } = call;
     IEmit::mintCall {
         payoutRecipient: payout,
         root: b256(root),
@@ -268,40 +307,6 @@ fn mint_tx(
     }
     .abi_encode()
     .into()
-}
-
-/// Bytecode that copies its calldata into memory and forwards it to `target`
-/// through `opcode` (CALLCODE `0xf2` with the frame's value, DELEGATECALL
-/// `0xf4`, or STATICCALL `0xfa`), then bubbles the inner returndata up.
-fn borrow_code(opcode: u8, target: Address) -> Bytes {
-    let mut code = vec![
-        0x36, // CALLDATASIZE          size
-        0x60, 0x00, // PUSH1 0         offset
-        0x60, 0x00, // PUSH1 0         destOffset
-        0x37, // CALLDATACOPY
-        0x60, 0x00, // PUSH1 0         retLength
-        0x60, 0x00, // PUSH1 0         retOffset
-        0x36, // CALLDATASIZE          argsLength
-        0x60, 0x00, // PUSH1 0         argsOffset
-    ];
-    if opcode == 0xf2 {
-        code.push(0x34); // CALLVALUE   value
-    }
-    code.push(0x73); // PUSH20         address
-    code.extend_from_slice(target.as_slice());
-    code.push(0x5a); // GAS
-    code.push(opcode);
-    code.extend_from_slice(&[
-        0x50, // POP                   drop the success flag
-        0x3d, // RETURNDATASIZE        size
-        0x60, 0x00, // PUSH1 0         offset
-        0x60, 0x00, // PUSH1 0         destOffset
-        0x3e, // RETURNDATACOPY
-        0x3d, // RETURNDATASIZE        size
-        0x60, 0x00, // PUSH1 0         offset
-        0xf3, // RETURN                bubble the inner frame's returndata up
-    ]);
-    Bytes::from(code)
 }
 
 fn db_with_borrower(opcode: u8) -> CacheDB<EmptyDB> {
@@ -348,11 +353,13 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
     .unwrap();
     let outcome = run(
         base_db(),
-        ALICE,
-        EMIT_ADDRESS,
-        100,
-        5_000_000,
-        burn_tx(serial),
+        EmitCallFixture {
+            caller: ALICE,
+            to: EMIT_ADDRESS,
+            value: 100,
+            gas_limit: 5_000_000,
+            calldata: burn_tx(serial),
+        },
     );
     assert!(
         matches!(outcome.result, ExecutionResult::Success { .. }),
@@ -395,23 +402,35 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
     let next_key = change_key(key, nullifier).unwrap();
     let change =
         note_commitment(pool, derive_note_sn(BOB, next_key).unwrap(), U256::from(60)).unwrap();
-    let partial_proof = prove_mint(&tree, BOB, key, 100, note_leaf, 40);
+    let partial_proof = prove_mint(
+        &tree,
+        MintNoteFixture {
+            owner: BOB,
+            key,
+            note_amount: 100,
+            leaf_index: note_leaf,
+        },
+        40,
+    );
     let change_leaf = u32::try_from(tree.append(change).unwrap().0).unwrap();
+    let partial_mint = MintCallFixture {
+        payout: CAROL,
+        root: root_after_burn,
+        nullifier,
+        owner: BOB,
+        units: 40,
+        change,
+        proof: &partial_proof,
+    };
     let outcome = run(
         db.clone(),
-        BOB,
-        EMIT_ADDRESS,
-        0,
-        20_000_000,
-        mint_tx(
-            CAROL,
-            root_after_burn,
-            nullifier,
-            BOB,
-            40,
-            change,
-            &partial_proof,
-        ),
+        EmitCallFixture {
+            caller: BOB,
+            to: EMIT_ADDRESS,
+            value: 0,
+            gas_limit: 20_000_000,
+            calldata: mint_tx(partial_mint),
+        },
     );
     assert!(
         matches!(outcome.result, ExecutionResult::Success { .. }),
@@ -439,22 +458,33 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
 
     // Bob's successor proof mints the remaining 60 to Dave — NoteUsed only.
     let next_nullifier = derive_nullifier(change, next_key).unwrap();
-    let full_proof = prove_mint(&tree, BOB, next_key, 60, change_leaf, 60);
+    let full_proof = prove_mint(
+        &tree,
+        MintNoteFixture {
+            owner: BOB,
+            key: next_key,
+            note_amount: 60,
+            leaf_index: change_leaf,
+        },
+        60,
+    );
     let outcome = run(
         db.clone(),
-        BOB,
-        EMIT_ADDRESS,
-        0,
-        20_000_000,
-        mint_tx(
-            DAVE,
-            tree.root(),
-            next_nullifier,
-            BOB,
-            60,
-            Field::from(0u64),
-            &full_proof,
-        ),
+        EmitCallFixture {
+            caller: BOB,
+            to: EMIT_ADDRESS,
+            value: 0,
+            gas_limit: 20_000_000,
+            calldata: mint_tx(MintCallFixture {
+                payout: DAVE,
+                root: tree.root(),
+                nullifier: next_nullifier,
+                owner: BOB,
+                units: 60,
+                change: Field::from(0u64),
+                proof: &full_proof,
+            }),
+        },
     );
     assert!(
         matches!(outcome.result, ExecutionResult::Success { .. }),
@@ -530,29 +560,25 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
     let mut db = base_db();
     let burned = run(
         db.clone(),
-        ALICE,
-        EMIT_ADDRESS,
-        100,
-        5_000_000,
-        burn_tx(serial),
+        EmitCallFixture {
+            caller: ALICE,
+            to: EMIT_ADDRESS,
+            value: 100,
+            gas_limit: 5_000_000,
+            calldata: burn_tx(serial),
+        },
     );
     assert!(matches!(burned.result, ExecutionResult::Success { .. }));
     db = chained_db(db, burned);
     let first = run(
         db.clone(),
-        BOB,
-        EMIT_ADDRESS,
-        0,
-        20_000_000,
-        mint_tx(
-            CAROL,
-            root_after_burn,
-            nullifier,
-            BOB,
-            40,
-            change,
-            &partial_proof,
-        ),
+        EmitCallFixture {
+            caller: BOB,
+            to: EMIT_ADDRESS,
+            value: 0,
+            gas_limit: 20_000_000,
+            calldata: mint_tx(partial_mint),
+        },
     );
     assert!(
         matches!(first.result, ExecutionResult::Success { .. }),
@@ -567,19 +593,13 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
     );
     let replayed = run(
         db.clone(),
-        BOB,
-        EMIT_ADDRESS,
-        0,
-        20_000_000,
-        mint_tx(
-            CAROL,
-            root_after_burn,
-            nullifier,
-            BOB,
-            40,
-            change,
-            &partial_proof,
-        ),
+        EmitCallFixture {
+            caller: BOB,
+            to: EMIT_ADDRESS,
+            value: 0,
+            gas_limit: 20_000_000,
+            calldata: mint_tx(partial_mint),
+        },
     );
     assert!(matches!(replayed.result, ExecutionResult::Revert { .. }));
     assert_eq!(
@@ -641,16 +661,27 @@ fn root_evicted_by_32_later_appends_is_stale() {
     let mut db = base_db();
     let outcome = run(
         db.clone(),
-        ALICE,
-        EMIT_ADDRESS,
-        100,
-        5_000_000,
-        burn_tx(serial),
+        EmitCallFixture {
+            caller: ALICE,
+            to: EMIT_ADDRESS,
+            value: 100,
+            gas_limit: 5_000_000,
+            calldata: burn_tx(serial),
+        },
     );
     assert!(matches!(outcome.result, ExecutionResult::Success { .. }));
     db = chained_db(db, outcome);
     let old_root = tree.root();
-    let proof = prove_mint(&tree, BOB, key, 100, note_leaf, 40);
+    let proof = prove_mint(
+        &tree,
+        MintNoteFixture {
+            owner: BOB,
+            key,
+            note_amount: 100,
+            leaf_index: note_leaf,
+        },
+        40,
+    );
     let nullifier =
         derive_nullifier(note_commitment(pool, serial, U256::from(100)).unwrap(), key).unwrap();
     let change = note_commitment(
@@ -665,18 +696,37 @@ fn root_evicted_by_32_later_appends_is_stale() {
         let sn = Field::from(1_000u64 + index);
         tree.append(note_commitment(pool, sn, U256::from(1)).unwrap())
             .unwrap();
-        let outcome = run(db.clone(), ALICE, EMIT_ADDRESS, 1, 5_000_000, burn_tx(sn));
+        let outcome = run(
+            db.clone(),
+            EmitCallFixture {
+                caller: ALICE,
+                to: EMIT_ADDRESS,
+                value: 1,
+                gas_limit: 5_000_000,
+                calldata: burn_tx(sn),
+            },
+        );
         assert!(matches!(outcome.result, ExecutionResult::Success { .. }));
         db = chained_db(db, outcome);
     }
 
     let outcome = run(
         db,
-        BOB,
-        EMIT_ADDRESS,
-        0,
-        20_000_000,
-        mint_tx(CAROL, old_root, nullifier, BOB, 40, change, &proof),
+        EmitCallFixture {
+            caller: BOB,
+            to: EMIT_ADDRESS,
+            value: 0,
+            gas_limit: 20_000_000,
+            calldata: mint_tx(MintCallFixture {
+                payout: CAROL,
+                root: old_root,
+                nullifier,
+                owner: BOB,
+                units: 40,
+                change,
+                proof: &proof,
+            }),
+        },
     );
     assert!(matches!(outcome.result, ExecutionResult::Revert { .. }));
     assert_eq!(
@@ -703,7 +753,16 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
         .unwrap();
 
     // Value on the mint selector: refused before dispatch touches state.
-    let proof = prove_mint(&tree, BOB, Field::from(17u64), 100, 0, 40);
+    let proof = prove_mint(
+        &tree,
+        MintNoteFixture {
+            owner: BOB,
+            key: Field::from(17u64),
+            note_amount: 100,
+            leaf_index: 0,
+        },
+        40,
+    );
     let nullifier = derive_nullifier(
         note_commitment(pool, serial, U256::from(100)).unwrap(),
         Field::from(17u64),
@@ -715,8 +774,25 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
         U256::from(60),
     )
     .unwrap();
-    let calldata = mint_tx(CAROL, tree.root(), nullifier, BOB, 40, change, &proof);
-    let outcome = run(base_db(), BOB, EMIT_ADDRESS, 7, 20_000_000, calldata);
+    let calldata = mint_tx(MintCallFixture {
+        payout: CAROL,
+        root: tree.root(),
+        nullifier,
+        owner: BOB,
+        units: 40,
+        change,
+        proof: &proof,
+    });
+    let outcome = run(
+        base_db(),
+        EmitCallFixture {
+            caller: BOB,
+            to: EMIT_ADDRESS,
+            value: 7,
+            gas_limit: 20_000_000,
+            calldata,
+        },
+    );
     assert!(matches!(outcome.result, ExecutionResult::Revert { .. }));
     assert_eq!(
         revert_reason(&outcome.result).as_deref(),
@@ -730,11 +806,13 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
     for opcode in [0xf2u8, 0xf4] {
         let outcome = run(
             db_with_borrower(opcode),
-            ALICE,
-            BORROWER,
-            100,
-            5_000_000,
-            burn_tx(serial),
+            EmitCallFixture {
+                caller: ALICE,
+                to: BORROWER,
+                value: 100,
+                gas_limit: 5_000_000,
+                calldata: burn_tx(serial),
+            },
         );
         assert_eq!(
             revert_reason(&outcome.result).as_deref(),
@@ -758,11 +836,13 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
     // and never reaches a write. The borrower bubbles the inner revert up.
     let outcome = run(
         db_with_borrower(0xfa),
-        ALICE,
-        BORROWER,
-        0,
-        5_000_000,
-        burn_tx(serial),
+        EmitCallFixture {
+            caller: ALICE,
+            to: BORROWER,
+            value: 0,
+            gas_limit: 5_000_000,
+            calldata: burn_tx(serial),
+        },
     );
     assert!(
         matches!(outcome.result, ExecutionResult::Success { .. }),
@@ -800,11 +880,13 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
         let mut db = base_db();
         let burned = run(
             db.clone(),
-            ALICE,
-            EMIT_ADDRESS,
-            100,
-            5_000_000,
-            burn_tx(owner_serial),
+            EmitCallFixture {
+                caller: ALICE,
+                to: EMIT_ADDRESS,
+                value: 100,
+                gas_limit: 5_000_000,
+                calldata: burn_tx(owner_serial),
+            },
         );
         assert!(matches!(burned.result, ExecutionResult::Success { .. }));
         db = chained_db(db, burned);
@@ -819,18 +901,36 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
             U256::from(60),
         )
         .unwrap();
-        let proof = prove_mint(&owner_tree, BORROWER, key, 100, leaf, 40);
-        let calldata = mint_tx(
-            CAROL,
-            owner_tree.root(),
-            owner_nullifier,
-            BORROWER,
+        let proof = prove_mint(
+            &owner_tree,
+            MintNoteFixture {
+                owner: BORROWER,
+                key,
+                note_amount: 100,
+                leaf_index: leaf,
+            },
             40,
-            owner_change,
-            &proof,
         );
+        let calldata = mint_tx(MintCallFixture {
+            payout: CAROL,
+            root: owner_tree.root(),
+            nullifier: owner_nullifier,
+            owner: BORROWER,
+            units: 40,
+            change: owner_change,
+            proof: &proof,
+        });
         let db = db_with_borrower_on(0xfa, db);
-        let outcome = run(db.clone(), ALICE, BORROWER, 0, 20_000_000, calldata);
+        let outcome = run(
+            db.clone(),
+            EmitCallFixture {
+                caller: ALICE,
+                to: BORROWER,
+                value: 0,
+                gas_limit: 20_000_000,
+                calldata,
+            },
+        );
         assert!(
             matches!(outcome.result, ExecutionResult::Success { .. }),
             "the borrower swallows the inner halt: {:?}",
@@ -856,11 +956,13 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
     // through the same borrower path (opcode CALL via a direct transaction).
     let outcome = run(
         base_db(),
-        ALICE,
-        EMIT_ADDRESS,
-        100,
-        5_000_000,
-        burn_tx(serial),
+        EmitCallFixture {
+            caller: ALICE,
+            to: EMIT_ADDRESS,
+            value: 100,
+            gas_limit: 5_000_000,
+            calldata: burn_tx(serial),
+        },
     );
     assert!(
         matches!(outcome.result, ExecutionResult::Success { .. }),
@@ -878,11 +980,13 @@ fn funded_malformed_calldata_fails_without_stranding_value() {
     // never leaves the caller.
     let outcome = run(
         base_db(),
-        ALICE,
-        EMIT_ADDRESS,
-        5,
-        1_000_000,
-        Bytes::from(vec![0xde, 0xad, 0xbe, 0xef]),
+        EmitCallFixture {
+            caller: ALICE,
+            to: EMIT_ADDRESS,
+            value: 5,
+            gas_limit: 1_000_000,
+            calldata: Bytes::from(vec![0xde, 0xad, 0xbe, 0xef]),
+        },
     );
     assert!(
         matches!(outcome.result, ExecutionResult::Halt { .. }),
@@ -894,7 +998,16 @@ fn funded_malformed_calldata_fails_without_stranding_value() {
 
     // Funded empty calldata: same halt — no selector is published, so the
     // base gas is `u64::MAX` and the call dies before the value gate.
-    let outcome = run(base_db(), ALICE, EMIT_ADDRESS, 5, 1_000_000, Bytes::new());
+    let outcome = run(
+        base_db(),
+        EmitCallFixture {
+            caller: ALICE,
+            to: EMIT_ADDRESS,
+            value: 5,
+            gas_limit: 1_000_000,
+            calldata: Bytes::new(),
+        },
+    );
     assert!(
         matches!(outcome.result, ExecutionResult::Halt { .. }),
         "empty calldata must halt out-of-gas, got {:?}",
@@ -908,11 +1021,13 @@ fn funded_malformed_calldata_fails_without_stranding_value() {
     // reverting transaction must refund it in full.
     let outcome = run(
         base_db(),
-        ALICE,
-        EMIT_ADDRESS,
-        5,
-        1_000_000,
-        Bytes::from(IEmit::burnCall::SELECTOR.to_vec()),
+        EmitCallFixture {
+            caller: ALICE,
+            to: EMIT_ADDRESS,
+            value: 5,
+            gas_limit: 1_000_000,
+            calldata: Bytes::from(IEmit::burnCall::SELECTOR.to_vec()),
+        },
     );
     assert!(
         matches!(outcome.result, ExecutionResult::Revert { .. }),
@@ -928,11 +1043,13 @@ fn funded_malformed_calldata_fails_without_stranding_value() {
     // selector-sensitive charge is actually routed.
     let outcome = run(
         base_db(),
-        BOB,
-        EMIT_ADDRESS,
-        0,
-        20_000_000,
-        Bytes::from(IEmit::mintCall::SELECTOR.to_vec()),
+        EmitCallFixture {
+            caller: BOB,
+            to: EMIT_ADDRESS,
+            value: 0,
+            gas_limit: 20_000_000,
+            calldata: Bytes::from(IEmit::mintCall::SELECTOR.to_vec()),
+        },
     );
     assert!(
         matches!(outcome.result, ExecutionResult::Revert { .. }),
@@ -949,23 +1066,25 @@ fn funded_malformed_calldata_fails_without_stranding_value() {
     // Below-base gas limits halt out-of-gas before dispatch with no state
     // change: mint at base + 30k cannot cover the fixed charge plus the
     // calldata, and burn at base + 5k cannot cover its charge either.
-    let mint_head = mint_tx(
-        CAROL,
-        Field::from(0u64),
-        Field::from(0u64),
-        BOB,
-        1,
-        Field::from(0u64),
-        hex!("00000000").as_ref(),
-    );
+    let mint_head = mint_tx(MintCallFixture {
+        payout: CAROL,
+        root: Field::from(0u64),
+        nullifier: Field::from(0u64),
+        owner: BOB,
+        units: 1,
+        change: Field::from(0u64),
+        proof: hex!("00000000").as_ref(),
+    });
     let oog_db = base_db();
     let outcome = run(
         oog_db.clone(),
-        BOB,
-        EMIT_ADDRESS,
-        0,
-        817_500 + 30_000,
-        mint_head,
+        EmitCallFixture {
+            caller: BOB,
+            to: EMIT_ADDRESS,
+            value: 0,
+            gas_limit: 817_500 + 30_000,
+            calldata: mint_head,
+        },
     );
     assert!(
         !matches!(outcome.result, ExecutionResult::Success { .. }),
@@ -977,11 +1096,13 @@ fn funded_malformed_calldata_fails_without_stranding_value() {
 
     let outcome = run(
         base_db(),
-        ALICE,
-        EMIT_ADDRESS,
-        1,
-        530_000 + 5_000,
-        burn_tx(Field::from(1u64)),
+        EmitCallFixture {
+            caller: ALICE,
+            to: EMIT_ADDRESS,
+            value: 1,
+            gas_limit: 530_000 + 5_000,
+            calldata: burn_tx(Field::from(1u64)),
+        },
     );
     assert!(
         !matches!(outcome.result, ExecutionResult::Success { .. }),

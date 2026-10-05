@@ -222,14 +222,15 @@ pub fn validate_system_tx_set_for_activation(
     let actual_begin = layout.begin_block_kinds()?;
     let actual_end = layout.end_block_kinds()?;
     if actual_begin != expected_begin || actual_end != expected_end {
-        return Err(SystemTxError::ActiveSystemTxSetMismatch {
+        Err(SystemTxError::ActiveSystemTxSetMismatch {
             expected_begin,
             expected_end,
             actual_begin,
             actual_end,
-        });
+        })
+    } else {
+        Ok(())
     }
-    Ok(())
 }
 
 fn ensure_system_tx_in_zone(kind: SystemTxKind, actual: BodyZone) -> Result<(), SystemTxError> {

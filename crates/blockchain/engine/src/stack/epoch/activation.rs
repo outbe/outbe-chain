@@ -22,6 +22,24 @@ where
         current_height: u64,
         engine: &mut commonware_runtime::Handle<()>,
     ) -> Result<EventAction> {
+        if let Some(action) = self
+            .activate_completed_player(ctx, current_height, engine)
+            .await?
+        {
+            return Ok(action);
+        }
+        if let Some(action) = self.prepare_observed_boundary(current_height).await? {
+            return Ok(action);
+        }
+        self.activate_dealer_handoff(ctx, current_height, engine)
+            .await
+    }
+    async fn activate_completed_player(
+        &mut self,
+        ctx: &E,
+        current_height: u64,
+        engine: &mut commonware_runtime::Handle<()>,
+    ) -> Result<Option<EventAction>> {
         if let Some(pending) = self.rotation.pending_dkg_activation.as_ref() {
             let consensus_finalized_height = self
                 .finalization_view
@@ -63,7 +81,7 @@ where
                             activation_height,
                             "DKG activation height reached but canonical finalized-log output is not ready"
                         );
-                        return Ok(EventAction::Continue);
+                        return Ok(Some(EventAction::Continue));
                     };
                     let Some(pending) = self.rotation.pending_dkg_activation.take() else {
                         return Err(eyre::eyre!(
@@ -172,13 +190,17 @@ where
                                                );
                     publish_randomness_status(&self.bridge, &self.vrf_safety);
                     register_epoch_validation_providers(
-                        next_epoch,
-                        &activated_participants,
-                        &activated_validator_set,
-                        None,
-                        &self.vrf_materials,
-                        &self.certificate_scheme_provider,
-                        &self.committee_provider,
+                        EpochValidationCommittee {
+                            epoch: next_epoch,
+                            participants: &activated_participants,
+                            validator_set: &activated_validator_set,
+                            recovered_boundary: None,
+                        },
+                        EpochValidationProviders {
+                            vrf_materials: &self.vrf_materials,
+                            certificate_scheme: &self.certificate_scheme_provider,
+                            committee: &self.committee_provider,
+                        },
                     )?;
                     self.state.validator_set = activated_validator_set;
                     self.rotation.frozen_dkg_target = None;
@@ -212,11 +234,16 @@ where
                         super::continuity::AnchorTransition::Dkg,
                     )
                     .await?;
-                    return Ok(EventAction::Outcome(EpochLoopOutcome::RestartEpoch));
+                    return Ok(Some(EventAction::Outcome(EpochLoopOutcome::RestartEpoch)));
                 }
             }
         }
-
+        Ok(None)
+    }
+    async fn prepare_observed_boundary(
+        &mut self,
+        current_height: u64,
+    ) -> Result<Option<EventAction>> {
         if self
             .rotation
             .dealer_only_dkg_activation
@@ -240,24 +267,28 @@ where
                     .await?
                     == BoundaryPromotion::LocalExcluded
                 {
-                    return Ok(EventAction::Outcome(EpochLoopOutcome::StackExit));
+                    return Ok(Some(EventAction::Outcome(EpochLoopOutcome::StackExit)));
                 }
                 let boundary_artifact = if let Some(ref keys_dir) = self.args.keys_dir {
                     persist_observed_dkg_boundary_before_activation(
                         keys_dir,
-                        self.state.current_epoch,
-                        self.state.vrf_material_version,
-                        &self.state.participants,
-                        &target,
+                        DkgBoundaryContext {
+                            current_epoch: self.state.current_epoch,
+                            vrf_material_version: self.state.vrf_material_version,
+                            current_participants: &self.state.participants,
+                            target: &target,
+                        },
                         &canonical_output,
                         current_height,
                     )?
                 } else {
                     build_completed_dkg_boundary(
-                        self.state.current_epoch,
-                        self.state.vrf_material_version,
-                        &self.state.participants,
-                        &target,
+                        DkgBoundaryContext {
+                            current_epoch: self.state.current_epoch,
+                            vrf_material_version: self.state.vrf_material_version,
+                            current_participants: &self.state.participants,
+                            target: &target,
+                        },
                         &canonical_output,
                         &target.participants,
                     )?
@@ -299,7 +330,14 @@ where
                 );
             }
         }
-
+        Ok(None)
+    }
+    async fn activate_dealer_handoff(
+        &mut self,
+        ctx: &E,
+        current_height: u64,
+        engine: &mut commonware_runtime::Handle<()>,
+    ) -> Result<EventAction> {
         let dealer_only_decision =
             self.rotation
                 .dealer_only_dkg_activation
@@ -428,13 +466,17 @@ where
                         None,
                     );
                     register_epoch_validation_providers(
-                        next_epoch,
-                        &self.state.participants,
-                        &self.state.validator_set,
-                        None,
-                        &self.vrf_materials,
-                        &self.certificate_scheme_provider,
-                        &self.committee_provider,
+                        EpochValidationCommittee {
+                            epoch: next_epoch,
+                            participants: &self.state.participants,
+                            validator_set: &self.state.validator_set,
+                            recovered_boundary: None,
+                        },
+                        EpochValidationProviders {
+                            vrf_materials: &self.vrf_materials,
+                            certificate_scheme: &self.certificate_scheme_provider,
+                            committee: &self.committee_provider,
+                        },
                     )?;
                     let anchored_height = activation_height;
                     self.state.last_dkg_activation_height = activation_height;

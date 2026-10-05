@@ -273,7 +273,7 @@ fn seed_followup_public_day(
                 lookback_end: first.lookback_end,
                 offering_end: second_processing_time,
                 scheduled_process_time: second_processing_time,
-                metadosis_limit_amount: first.metadosis_limit_amount,
+                metadosis_limit_minor: first.metadosis_limit_minor,
                 previous_vwap: first.previous_vwap,
                 current_vwap: first.current_vwap,
             })

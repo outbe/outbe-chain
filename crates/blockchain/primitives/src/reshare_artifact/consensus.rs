@@ -151,27 +151,10 @@ pub(super) fn decode_boundary_payload(payload: &[u8]) -> Result<DkgBoundaryArtif
     let committee_set_hash = B256::from_slice(&payload[offset..offset + 32]);
     offset += 32;
 
-    let is_validator_set_change = match payload[offset] {
-        0 => false,
-        1 => true,
-        other => {
-            return Err(PrecompileError::Fatal(format!(
-                "invalid boundary is_validator_set_change flag: {other}"
-            )));
-        }
-    };
-    offset += 1;
+    let is_validator_set_change =
+        decode_boundary_flag(payload, &mut offset, "is_validator_set_change")?;
 
-    let is_full_dkg = match payload[offset] {
-        0 => false,
-        1 => true,
-        other => {
-            return Err(PrecompileError::Fatal(format!(
-                "invalid boundary is_full_dkg flag: {other}"
-            )));
-        }
-    };
-    offset += 1;
+    let is_full_dkg = decode_boundary_flag(payload, &mut offset, "is_full_dkg")?;
 
     let active_set_hash = B256::from_slice(&payload[offset..offset + 32]);
     offset += 32;
@@ -216,95 +199,12 @@ pub(super) fn decode_boundary_payload(payload: &[u8]) -> Result<DkgBoundaryArtif
     let outcome = Bytes::copy_from_slice(&payload[offset..offset + outcome_len]);
     offset += outcome_len;
 
-    let vrf_group_pk_len = u32::from_be_bytes(
-        payload[offset..offset + 4]
-            .try_into()
-            .map_err(|_| PrecompileError::Fatal("invalid vrf group pk length bytes".into()))?,
-    ) as usize;
-    offset += 4;
-    let needed_after_vrf = offset + vrf_group_pk_len;
-    if payload.len() < needed_after_vrf {
-        return Err(PrecompileError::Fatal(format!(
-            "invalid boundary header artifact payload length: {} < {needed_after_vrf}",
-            payload.len()
-        )));
-    }
-    let vrf_group_public_key_bytes =
-        Bytes::copy_from_slice(&payload[offset..offset + vrf_group_pk_len]);
-    offset += vrf_group_pk_len;
+    let vrf_group_public_key_bytes = decode_boundary_vrf_key(payload, &mut offset)?;
 
-    // V0.07: tee_recipient_pubkeys (u16 count + entries of Address(20)+B256(32)).
-    if payload.len() < offset + 2 {
-        return Err(PrecompileError::Fatal(
-            "invalid boundary header artifact: missing tee recipient count".into(),
-        ));
-    }
-    let tee_count = u16::from_be_bytes([payload[offset], payload[offset + 1]]) as usize;
-    offset += 2;
-    let tee_bytes = tee_count
-        .checked_mul(20 + 32)
-        .ok_or_else(|| PrecompileError::Fatal("tee recipient pubkeys length overflow".into()))?;
-    let needed_after_recipients = offset
-        .checked_add(tee_bytes)
-        .and_then(|v| v.checked_add(32 + 2))
-        .ok_or_else(|| PrecompileError::Fatal("boundary payload length overflow".into()))?;
-    if payload.len() < needed_after_recipients {
-        return Err(PrecompileError::Fatal(format!(
-            "invalid boundary header artifact payload length: {} < {needed_after_recipients}",
-            payload.len()
-        )));
-    }
-    let mut tee_recipient_pubkeys = Vec::with_capacity(tee_count);
-    for _ in 0..tee_count {
-        let address = Address::from_slice(&payload[offset..offset + 20]);
-        offset += 20;
-        let recipient_pubkey = B256::from_slice(&payload[offset..offset + 32]);
-        offset += 32;
-        tee_recipient_pubkeys.push((address, recipient_pubkey));
-    }
+    let tee_recipient_pubkeys = decode_boundary_recipients(payload, &mut offset)?;
 
-    // V0.0B: domain-separated commitment plus bounded ordered unique list.
-    let carried_tee_expired_target_exclusions_hash =
-        B256::from_slice(&payload[offset..offset + 32]);
-    offset += 32;
-    let exclusions_count = u16::from_be_bytes([payload[offset], payload[offset + 1]]) as usize;
-    offset += 2;
-    if exclusions_count > MAX_TEE_EXPIRED_TARGET_EXCLUSIONS {
-        return Err(PrecompileError::Fatal(format!(
-            "TEE expiry exclusions exceed protocol cap: {exclusions_count} > {MAX_TEE_EXPIRED_TARGET_EXCLUSIONS}"
-        )));
-    }
-    let exclusions_bytes = exclusions_count
-        .checked_mul(20)
-        .ok_or_else(|| PrecompileError::Fatal("TEE expiry exclusions length overflow".into()))?;
-    let needed_after_exclusions = offset
-        .checked_add(exclusions_bytes)
-        .ok_or_else(|| PrecompileError::Fatal("boundary payload length overflow".into()))?;
-    if payload.len() < needed_after_exclusions {
-        return Err(PrecompileError::Fatal(format!(
-            "invalid boundary header artifact payload length: {} < {needed_after_exclusions}",
-            payload.len()
-        )));
-    }
-    let mut tee_expired_target_exclusions = Vec::with_capacity(exclusions_count);
-    for _ in 0..exclusions_count {
-        tee_expired_target_exclusions.push(Address::from_slice(&payload[offset..offset + 20]));
-        offset += 20;
-    }
-    let expected_exclusions_hash =
-        tee_expired_target_exclusions_hash(&tee_expired_target_exclusions)?;
-    if expected_exclusions_hash != carried_tee_expired_target_exclusions_hash {
-        return Err(PrecompileError::Fatal(
-            "boundary TEE expiry exclusions commitment mismatch".into(),
-        ));
-    }
-
-    if payload.len() != offset {
-        return Err(PrecompileError::Fatal(format!(
-            "invalid boundary header artifact payload length: {} != {offset}",
-            payload.len()
-        )));
-    }
+    let (tee_expired_target_exclusions, carried_tee_expired_target_exclusions_hash) =
+        decode_boundary_exclusions(payload, &mut offset)?;
 
     Ok(DkgBoundaryArtifact {
         epoch,
@@ -340,4 +240,123 @@ fn read_u64(payload: &[u8], offset: &mut usize, name: &str) -> Result<u64> {
     Ok(u64::from_be_bytes(bytes.try_into().map_err(|_| {
         PrecompileError::Fatal(format!("invalid {name} bytes"))
     })?))
+}
+
+fn decode_boundary_vrf_key(payload: &[u8], offset: &mut usize) -> Result<Bytes> {
+    let vrf_group_pk_len = u32::from_be_bytes(
+        payload[*offset..*offset + 4]
+            .try_into()
+            .map_err(|_| PrecompileError::Fatal("invalid vrf group pk length bytes".into()))?,
+    ) as usize;
+    *offset += 4;
+    let needed_after_vrf = *offset + vrf_group_pk_len;
+    if payload.len() < needed_after_vrf {
+        return Err(PrecompileError::Fatal(format!(
+            "invalid boundary header artifact payload length: {} < {needed_after_vrf}",
+            payload.len()
+        )));
+    }
+    let vrf_group_public_key_bytes =
+        Bytes::copy_from_slice(&payload[*offset..*offset + vrf_group_pk_len]);
+    *offset += vrf_group_pk_len;
+
+    Ok(vrf_group_public_key_bytes)
+}
+
+fn decode_boundary_recipients(payload: &[u8], offset: &mut usize) -> Result<Vec<(Address, B256)>> {
+    // V0.07: tee_recipient_pubkeys (u16 count + entries of Address(20)+B256(32)).
+    if payload.len() < *offset + 2 {
+        return Err(PrecompileError::Fatal(
+            "invalid boundary header artifact: missing tee recipient count".into(),
+        ));
+    }
+    let tee_count = u16::from_be_bytes([payload[*offset], payload[*offset + 1]]) as usize;
+    *offset += 2;
+    let tee_bytes = tee_count
+        .checked_mul(20 + 32)
+        .ok_or_else(|| PrecompileError::Fatal("tee recipient pubkeys length overflow".into()))?;
+    let needed_after_recipients = offset
+        .checked_add(tee_bytes)
+        .and_then(|v| v.checked_add(32 + 2))
+        .ok_or_else(|| PrecompileError::Fatal("boundary payload length overflow".into()))?;
+    if payload.len() < needed_after_recipients {
+        return Err(PrecompileError::Fatal(format!(
+            "invalid boundary header artifact payload length: {} < {needed_after_recipients}",
+            payload.len()
+        )));
+    }
+    let mut tee_recipient_pubkeys = Vec::with_capacity(tee_count);
+    for _ in 0..tee_count {
+        let address = Address::from_slice(&payload[*offset..*offset + 20]);
+        *offset += 20;
+        let recipient_pubkey = B256::from_slice(&payload[*offset..*offset + 32]);
+        *offset += 32;
+        tee_recipient_pubkeys.push((address, recipient_pubkey));
+    }
+
+    Ok(tee_recipient_pubkeys)
+}
+
+fn decode_boundary_exclusions(payload: &[u8], offset: &mut usize) -> Result<(Vec<Address>, B256)> {
+    // V0.0B: domain-separated commitment plus bounded ordered unique list.
+    let carried_tee_expired_target_exclusions_hash =
+        B256::from_slice(&payload[*offset..*offset + 32]);
+    *offset += 32;
+    let exclusions_count = u16::from_be_bytes([payload[*offset], payload[*offset + 1]]) as usize;
+    *offset += 2;
+    if exclusions_count > MAX_TEE_EXPIRED_TARGET_EXCLUSIONS {
+        return Err(PrecompileError::Fatal(format!(
+            "TEE expiry exclusions exceed protocol cap: {exclusions_count} > {MAX_TEE_EXPIRED_TARGET_EXCLUSIONS}"
+        )));
+    }
+    let exclusions_bytes = exclusions_count
+        .checked_mul(20)
+        .ok_or_else(|| PrecompileError::Fatal("TEE expiry exclusions length overflow".into()))?;
+    let needed_after_exclusions = offset
+        .checked_add(exclusions_bytes)
+        .ok_or_else(|| PrecompileError::Fatal("boundary payload length overflow".into()))?;
+    if payload.len() < needed_after_exclusions {
+        return Err(PrecompileError::Fatal(format!(
+            "invalid boundary header artifact payload length: {} < {needed_after_exclusions}",
+            payload.len()
+        )));
+    }
+    let mut tee_expired_target_exclusions = Vec::with_capacity(exclusions_count);
+    for _ in 0..exclusions_count {
+        tee_expired_target_exclusions.push(Address::from_slice(&payload[*offset..*offset + 20]));
+        *offset += 20;
+    }
+    let expected_exclusions_hash =
+        tee_expired_target_exclusions_hash(&tee_expired_target_exclusions)?;
+    if expected_exclusions_hash != carried_tee_expired_target_exclusions_hash {
+        return Err(PrecompileError::Fatal(
+            "boundary TEE expiry exclusions commitment mismatch".into(),
+        ));
+    }
+
+    if payload.len() != *offset {
+        return Err(PrecompileError::Fatal(format!(
+            "invalid boundary header artifact payload length: {} != {offset}",
+            payload.len()
+        )));
+    }
+
+    Ok((
+        tee_expired_target_exclusions,
+        carried_tee_expired_target_exclusions_hash,
+    ))
+}
+
+fn decode_boundary_flag(payload: &[u8], offset: &mut usize, field: &str) -> Result<bool> {
+    let flag = match payload[*offset] {
+        0 => false,
+        1 => true,
+        other => {
+            return Err(PrecompileError::Fatal(format!(
+                "invalid boundary {field} flag: {other}"
+            )))
+        }
+    };
+    *offset += 1;
+    Ok(flag)
 }

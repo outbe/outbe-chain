@@ -247,12 +247,13 @@ pub(super) fn assert_clearing(
         bids.extend(submitted);
     }
     let params = params.expect("auction inputs on named chains");
-    let supply =
+    let desis_limit_units =
         input.frozen_metadosis_values.desis_limit_minor / U256::from(params.promisLoadMinor);
-    let supply = u32::try_from(supply.min(U256::from(u32::MAX))).expect("capped auction units");
+    let desis_limit_units =
+        u32::try_from(desis_limit_units.min(U256::from(u32::MAX))).expect("capped auction units");
     let expected = auction_reference::clear(
         bids,
-        supply,
+        desis_limit_units,
         params.promisLoadMinor,
         params.minIntexBidRate,
         params.minIntexBidQuantity,
@@ -301,7 +302,7 @@ pub(super) fn assert_clearing(
             assert_eq!(auction.result.auctionClearingRate, u64::from(expected.rate));
             assert_eq!(auction.result.issuedUnits, expected.units);
             assert_eq!(
-                auction.result.issuedIntexLoadedPromis,
+                auction.result.issuedPromisLoadMinor,
                 u128::from(expected.units) * params.promisLoadMinor
             );
             assert_eq!(
@@ -390,7 +391,7 @@ pub(super) fn assert_clearing(
             "AUCTION_EXPECTATION {}",
             json!({"day": day, "chain_id": side.chain_id,
                 "height": height, "block_hash": block_hash, "input_desis_limit_minor": input.frozen_metadosis_values.desis_limit_minor,
-                "input_supply_units": supply, "expected": expected,
+                "input_desis_limit_units": desis_limit_units, "expected": expected,
             })
         );
     }

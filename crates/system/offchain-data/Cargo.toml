@@ -19,6 +19,7 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 
 [dev-dependencies]
+outbe-offchain-storage = { workspace = true, features = ["test-utils"] }
 mongodb.workspace = true
 tempfile.workspace = true
 

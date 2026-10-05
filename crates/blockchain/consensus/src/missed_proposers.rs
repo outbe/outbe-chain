@@ -17,6 +17,14 @@ use commonware_utils::Participant;
 use crate::hybrid::election::HybridRandomElector;
 use crate::hybrid::HybridCertificate;
 
+/// Open view interval and maximum number of attributed leaders.
+#[derive(Clone, Copy)]
+pub(crate) struct SkippedViewRange {
+    pub(crate) last_view: u64,
+    pub(crate) current_view: u64,
+    pub(crate) cap: usize,
+}
+
 /// Elect the expected leader for each skipped view in the open range
 /// `(last_view, current_view)` (i.e. `last_view + 1 ..= current_view - 1`),
 /// stopping after `cap` entries.
@@ -29,10 +37,13 @@ pub(crate) fn elected_leaders_for_gap(
     epoch: Epoch,
     elector: &HybridRandomElector<MinSig>,
     certificate: Option<&HybridCertificate<MinSig>>,
-    last_view: u64,
-    current_view: u64,
-    cap: usize,
+    range: SkippedViewRange,
 ) -> Vec<Participant> {
+    let SkippedViewRange {
+        last_view,
+        current_view,
+        cap,
+    } = range;
     let span = current_view.saturating_sub(last_view).saturating_sub(1);
     let mut leaders = Vec::with_capacity((span as usize).min(cap));
     for v in (last_view + 1)..current_view {
@@ -61,8 +72,28 @@ mod tests {
     fn no_gap_returns_empty() {
         let elector = round_robin_elector(3);
         // current_view <= last_view + 1 => no skipped views.
-        assert!(elected_leaders_for_gap(Epoch::new(0), &elector, None, 5, 6, 255).is_empty());
-        assert!(elected_leaders_for_gap(Epoch::new(0), &elector, None, 5, 5, 255).is_empty());
+        assert!(elected_leaders_for_gap(
+            Epoch::new(0),
+            &elector,
+            None,
+            crate::missed_proposers::SkippedViewRange {
+                last_view: 5,
+                current_view: 6,
+                cap: 255
+            }
+        )
+        .is_empty());
+        assert!(elected_leaders_for_gap(
+            Epoch::new(0),
+            &elector,
+            None,
+            crate::missed_proposers::SkippedViewRange {
+                last_view: 5,
+                current_view: 5,
+                cap: 255
+            }
+        )
+        .is_empty());
     }
 
     #[test]
@@ -73,7 +104,16 @@ mod tests {
         // Default elector with no certificate falls back to round-robin:
         // leader index = (epoch + view) % n. Gap is views 6,7,8,9 for
         // last_view=5, current_view=10.
-        let leaders = elected_leaders_for_gap(epoch, &elector, None, 5, 10, 255);
+        let leaders = elected_leaders_for_gap(
+            epoch,
+            &elector,
+            None,
+            crate::missed_proposers::SkippedViewRange {
+                last_view: 5,
+                current_view: 10,
+                cap: 255,
+            },
+        );
         let expected: Vec<Participant> = (6..10)
             .map(|v| Participant::new(((epoch.get() + v) % n as u64) as u32))
             .collect();
@@ -84,7 +124,16 @@ mod tests {
     fn caps_to_limit() {
         let elector = round_robin_elector(3);
         // Gap of 400 views capped to 255 entries.
-        let leaders = elected_leaders_for_gap(Epoch::new(0), &elector, None, 0, 401, 255);
+        let leaders = elected_leaders_for_gap(
+            Epoch::new(0),
+            &elector,
+            None,
+            crate::missed_proposers::SkippedViewRange {
+                last_view: 0,
+                current_view: 401,
+                cap: 255,
+            },
+        );
         assert_eq!(leaders.len(), 255);
     }
 }

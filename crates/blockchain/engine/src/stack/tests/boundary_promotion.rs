@@ -23,19 +23,17 @@ fn boundary(
     validator_set: &validators::ValidatorSet,
     output: &Output<MinSig, bls12381::PublicKey>,
 ) -> DkgBoundaryArtifact {
-    dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-        epoch: Epoch::new(epoch),
+    outbe_consensus::test_harness::boundary_artifact(
+        epoch,
         validator_set,
         output,
-        is_full_dkg: false,
-        dkg_cycle: epoch,
-        freeze_height: 90,
-        planned_activation_height: 120,
-        vrf_material_version: epoch,
-        is_validator_set_change: false,
-        tee_expired_target_exclusions: Vec::new(),
-    })
-    .unwrap()
+        outbe_consensus::test_harness::BoundaryFixtureSettings {
+            is_full_dkg: false,
+            freeze_height: 90,
+            planned_activation_height: 120,
+            is_validator_set_change: false,
+        },
+    )
 }
 
 #[tokio::test]
@@ -47,7 +45,15 @@ async fn promotion_before_next_ceremony_completes_keeps_the_committed_boundary()
     let dir = tempfile::tempdir().unwrap();
     let backend = bls::KeyBackend::Plaintext;
     // Stale E+1 pending material plus the live E+2 ceremony's retry store.
-    save_pending_dkg_state(dir.path(), &share, &polynomial, &output, &backend).unwrap();
+    save_pending_dkg_state(
+        DkgStateStore::new(dir.path(), &backend),
+        DkgStateMaterial {
+            share: &share,
+            polynomial: &polynomial,
+            output: &output,
+        },
+    )
+    .unwrap();
     std::fs::write(dir.path().join(DKG_DEALER_RETRY_FILE), b"live-e2-ceremony").unwrap();
 
     let manager = DkgManagerMailbox::new();
@@ -133,19 +139,20 @@ async fn promoted_and_next_pending_material_are_both_restorable() {
     .unwrap();
     // Crash cut: the E+2 ceremony completed and persisted, E+2 not yet active.
     persist_completed_dkg_before_activation(
-        dir.path(),
-        &backend,
-        Epoch::new(1),
-        2,
-        &participants,
-        &FrozenDkgTarget {
-            dkg_cycle: 2,
-            freeze_height: 90,
-            planned_activation_height: 120,
-            validator_set: validator_set(&next_keys),
-            participants: participants.clone(),
-            tee_expired_target_exclusions: Vec::new(),
-            is_validator_set_change: false,
+        DkgStateStore::new(dir.path(), &backend),
+        DkgBoundaryContext {
+            current_epoch: Epoch::new(1),
+            vrf_material_version: 2,
+            current_participants: &participants,
+            target: &FrozenDkgTarget {
+                dkg_cycle: 2,
+                freeze_height: 90,
+                planned_activation_height: 120,
+                validator_set: validator_set(&next_keys),
+                participants: participants.clone(),
+                tee_expired_target_exclusions: Vec::new(),
+                is_validator_set_change: false,
+            },
         },
         &dkg_actor::DkgComplete {
             output: next_output.clone(),

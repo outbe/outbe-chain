@@ -97,6 +97,7 @@ outbe-fidelity-math.workspace = true
 # FFI inappropriate for the enclave.
 outbe-poseidon.workspace = true
 outbe-protocol.workspace = true
+outbe-zk-canonical.workspace = true
 outbe-protocol-derive.workspace = true
 ark-bn254.workspace = true
 ark-ff.workspace = true
@@ -117,6 +118,7 @@ rand-commonware.workspace = true
 rand-core-commonware.workspace = true
 
 [dev-dependencies]
+outbe-ocomp-protocol = { workspace = true, features = ["test-utils"] }
 tempfile.workspace = true
 alloy-primitives.workspace = true
 tokio = { workspace = true }

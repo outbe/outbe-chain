@@ -203,8 +203,8 @@ contract AuctionTest is Test {
         assertEq(fin.result.issuedUnits, 100);
         assertEq(fin.result.wonBidsCount, 2);
         assertEq(fin.params.promisLoadMinor, PROMIS_LOAD_MINOR);
-        // issuedIntexLoadedPromis is derived on-chain as issuedUnits * promisLoadMinor.
-        assertEq(fin.result.issuedIntexLoadedPromis, uint128(100) * PROMIS_LOAD_MINOR);
+        // issuedPromisLoadMinor is derived on-chain as issuedUnits * promisLoadMinor.
+        assertEq(fin.result.issuedPromisLoadMinor, uint128(100) * PROMIS_LOAD_MINOR);
     }
 
     function test_CommitCancel_And_Reverts() public {
@@ -689,7 +689,7 @@ contract AuctionTest is Test {
         assertEq(fin.result.wonBidsCount, 0);
         assertEq(fin.result.issuedUnits, 0);
         assertEq(fin.result.auctionClearingRate, floor);
-        assertEq(fin.result.issuedIntexLoadedPromis, 0);
+        assertEq(fin.result.issuedPromisLoadMinor, 0);
     }
 
     /// @dev No-sale with no supply: even when `minIntexBidRate > 0`, the clearing rate can be 0
@@ -719,7 +719,7 @@ contract AuctionTest is Test {
         assertEq(fin.result.auctionClearingRate, 0);
         assertEq(fin.result.issuedUnits, 0);
         assertEq(fin.result.wonBidsCount, 0);
-        assertEq(fin.result.issuedIntexLoadedPromis, 0);
+        assertEq(fin.result.issuedPromisLoadMinor, 0);
 
         // Idempotent: re-clearing a completed auction is rejected on the stage gate.
         vm.expectRevert(

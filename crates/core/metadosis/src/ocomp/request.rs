@@ -145,23 +145,60 @@ fn run_terminal_request_inner(
 // These are the complete inputs to one atomic terminal-request transition.
 // Keeping them explicit prevents an ambient or partially initialized mutation
 // context from crossing the commit boundary.
+struct RequestCandidate {
+    stored_tribute_projection: TributePreAdmissionProjection,
+    current_vwap: alloy_primitives::U256,
+    snapshot_root: B256,
+    pre_admission_context: PreAdmissionContext,
+    candidate_envelope: Box<outbe_ocomp_protocol::intent::PreAdmissionEnvelopeV1>,
+}
+
+struct RequestTargets {
+    nod: outbe_nod::schema::NodOcompTargetProjection,
+    contributors: outbe_intex::api::OcompContributorTargetProjection,
+}
+
+struct AdmittedRequest {
+    tribute: TributePreAdmissionProjection,
+    targets: RequestTargets,
+    envelope_projection: crate::pre_admission::MetadosisPreAdmissionProjection,
+    envelope_hash: B256,
+    current_vwap: alloy_primitives::U256,
+}
+
+struct FrozenRequest {
+    calculation: crate::settlement::MetadosisCalculation,
+    day_type: DayType,
+    receipt: RequestLimitSplitReceiptV1,
+    receipt_hash: B256,
+}
+
 fn build_and_commit_request(
     metadosis: &mut MetadosisContract<'_>,
     request: &TerminalRequestContext<'_, '_>,
 ) -> Result<TerminalRequestOutcome> {
+    let Some(candidate) = inspect_request_candidate(metadosis, request)? else {
+        return Ok(TerminalRequestOutcome::Deferred);
+    };
+    let admitted = seal_request_admission(metadosis, request, candidate)?;
+    let frozen = freeze_request_limits(metadosis, request, &admitted)?;
+    let intent = build_request_intent(metadosis, request, &admitted, &frozen)?;
+    commit_and_emit_request(metadosis, request, &intent, &frozen.receipt)
+}
+
+fn inspect_request_candidate(
+    metadosis: &mut MetadosisContract<'_>,
+    request: &TerminalRequestContext<'_, '_>,
+) -> Result<Option<RequestCandidate>> {
     let TerminalRequestContext {
         ctx,
         profile,
         wwd,
-        pending_nonce,
-        outer_transition: _,
         roots,
+        ..
     } = *request;
-    let schema_limits = poc_schema_limits();
     let exact_collection = roots.tribute;
-    let ce_sealed_root = roots.sealed_root;
-
-    let mut tribute = TributeContract::new(ctx.storage.clone());
+    let tribute = TributeContract::new(ctx.storage.clone());
     let stored_tribute_projection = tribute.pre_admission_projection(wwd)?;
     let candidate_tribute_projection =
         candidate_tribute_projection(stored_tribute_projection, exact_collection)?;
@@ -194,9 +231,35 @@ fn build_and_commit_request(
     )?;
     let PreAdmissionDecision::Eligible(candidate_envelope) = candidate_decision else {
         defer_ready(metadosis, wwd, ctx.block.block_number, profile)?;
-        return Ok(TerminalRequestOutcome::Deferred);
+        return Ok(None);
     };
 
+    Ok(Some(RequestCandidate {
+        stored_tribute_projection,
+        current_vwap,
+        snapshot_root,
+        pre_admission_context,
+        candidate_envelope,
+    }))
+}
+
+fn seal_request_admission(
+    metadosis: &mut MetadosisContract<'_>,
+    request: &TerminalRequestContext<'_, '_>,
+    candidate: RequestCandidate,
+) -> Result<AdmittedRequest> {
+    let TerminalRequestContext {
+        ctx, wwd, roots, ..
+    } = *request;
+    let RequestCandidate {
+        stored_tribute_projection,
+        current_vwap,
+        snapshot_root,
+        pre_admission_context,
+        candidate_envelope,
+    } = candidate;
+    let exact_collection = roots.tribute;
+    let mut tribute = TributeContract::new(ctx.storage.clone());
     let nod_target = NodContract::new(ctx.storage.clone()).ocomp_target_projection(wwd)?;
     let contributor_target =
         outbe_intex::api::ocomp_contributor_target_projection(&ctx.storage, wwd)?;
@@ -225,8 +288,29 @@ fn build_and_commit_request(
         ));
     }
 
+    let (envelope_projection, envelope_hash) =
+        persist_sealed_admission(metadosis, wwd, &sealed_envelope)?;
+
+    Ok(AdmittedRequest {
+        tribute: sealed_tribute_projection,
+        targets: RequestTargets {
+            nod: nod_target,
+            contributors: contributor_target,
+        },
+        envelope_projection,
+        envelope_hash,
+        current_vwap,
+    })
+}
+
+fn persist_sealed_admission(
+    metadosis: &mut MetadosisContract<'_>,
+    wwd: WorldwideDay,
+    sealed_envelope: &outbe_ocomp_protocol::intent::PreAdmissionEnvelopeV1,
+) -> Result<(crate::pre_admission::MetadosisPreAdmissionProjection, B256)> {
+    let schema_limits = poc_schema_limits();
     let envelope_projection =
-        metadosis.commit_pre_admission_envelope(wwd, &sealed_envelope, &schema_limits)?;
+        metadosis.commit_pre_admission_envelope(wwd, sealed_envelope, &schema_limits)?;
     let envelope_hash = sealed_envelope
         .envelope_hash(&schema_limits)
         .map_err(|error| {
@@ -238,18 +322,35 @@ fn build_and_commit_request(
         ));
     }
 
+    Ok((envelope_projection, envelope_hash))
+}
+
+fn freeze_request_limits(
+    metadosis: &MetadosisContract<'_>,
+    request: &TerminalRequestContext<'_, '_>,
+    admitted: &AdmittedRequest,
+) -> Result<FrozenRequest> {
+    let TerminalRequestContext {
+        ctx,
+        profile,
+        wwd,
+        pending_nonce,
+        ..
+    } = *request;
+    let schema_limits = poc_schema_limits();
+    let sealed_tribute_projection = admitted.tribute;
     let day_limit = metadosis
         .worldwide_days
         .entry(wwd)
-        .metadosis_limit_amount()
+        .metadosis_limit_minor()
         .read()?;
     let calculation = metadosis.calculate_metadosis(
         wwd,
-        sealed_tribute_projection.tribute_nominal_amount,
+        sealed_tribute_projection.tribute_nominal_total_minor,
         day_limit,
     )?;
     let lysis_limit_minor = calculation.lysis_limit_minor;
-    let nominal_total = sealed_tribute_projection.tribute_nominal_amount;
+    let nominal_total = sealed_tribute_projection.tribute_nominal_total_minor;
     let protocol_day_type = protocol_day_type(metadosis.get_wwd_day_type(wwd)?)?;
     let effect = RequestLimitEffect {
         protocol_bundle_hash: profile.protocol_bundle_hash,
@@ -273,10 +374,25 @@ fn build_and_commit_request(
         storage_corruption_message(format!("hash OCOMP request receipt: {error}"))
     })?;
 
-    let attempt = u32::try_from(pending_nonce)
-        .map_err(|_| storage_corruption_message("OCOMP pending nonce exceeds u32"))?;
-    let (_, collection_key) = partition_collection_key(PartitionRef::TributeWwd(wwd))
-        .map_err(|error| storage_corruption_message(error.to_string()))?;
+    Ok(FrozenRequest {
+        calculation,
+        day_type: protocol_day_type,
+        receipt,
+        receipt_hash,
+    })
+}
+
+fn request_activation_preconditions(
+    request: &TerminalRequestContext<'_, '_>,
+    admitted: &AdmittedRequest,
+    collection_key: &outbe_compressed_entities::CollectionKey,
+) -> ActivationPreconditionsV1 {
+    let wwd = request.wwd;
+    let pending_nonce = request.pending_nonce;
+    let sealed_tribute_projection = admitted.tribute;
+    let nod_target = &admitted.targets.nod;
+    let contributor_target = &admitted.targets.contributors;
+    let envelope_projection = admitted.envelope_projection;
     let activation_preconditions = ActivationPreconditionsV1 {
         tribute: TributeInputBindingV1 {
             wwd: wwd.value(),
@@ -284,7 +400,7 @@ fn build_and_commit_request(
             collection_key: B256::from_slice(collection_key.as_bytes()),
             sealed_collection_root: sealed_tribute_projection.sealed_collection_root,
             exact_count: sealed_tribute_projection.tribute_count,
-            exact_nominal_total: sealed_tribute_projection.tribute_nominal_amount,
+            exact_nominal_total: sealed_tribute_projection.tribute_nominal_total_minor,
         },
         nod: NodTargetPreconditionV1 {
             wwd: wwd.value(),
@@ -296,7 +412,7 @@ fn build_and_commit_request(
             worldwide_day: wwd.value(),
             expected_series_version: contributor_target.expected_series_version,
             max_contributor_count: sealed_tribute_projection.tribute_count,
-            max_eligible_nominal_total: sealed_tribute_projection.tribute_nominal_amount,
+            max_eligible_nominal_total: sealed_tribute_projection.tribute_nominal_total_minor,
         },
         metadosis: MetadosisAttemptPreconditionV1 {
             wwd: wwd.value(),
@@ -305,6 +421,38 @@ fn build_and_commit_request(
             state_version: envelope_projection.state_version,
         },
     };
+    activation_preconditions
+}
+
+fn build_request_intent(
+    metadosis: &MetadosisContract<'_>,
+    request: &TerminalRequestContext<'_, '_>,
+    admitted: &AdmittedRequest,
+    frozen: &FrozenRequest,
+) -> Result<JobIntentV1> {
+    let TerminalRequestContext {
+        ctx,
+        profile,
+        wwd,
+        pending_nonce,
+        roots,
+        ..
+    } = *request;
+    let sealed_tribute_projection = admitted.tribute;
+    let envelope_hash = admitted.envelope_hash;
+    let current_vwap = admitted.current_vwap;
+    let calculation = frozen.calculation;
+    let protocol_day_type = frozen.day_type;
+    let receipt = &frozen.receipt;
+    let receipt_hash = frozen.receipt_hash;
+    let lysis_limit_minor = calculation.lysis_limit_minor;
+    let ce_sealed_root = roots.sealed_root;
+    let attempt = u32::try_from(pending_nonce)
+        .map_err(|_| storage_corruption_message("OCOMP pending nonce exceeds u32"))?;
+    let (_, collection_key) = partition_collection_key(PartitionRef::TributeWwd(wwd))
+        .map_err(|error| storage_corruption_message(error.to_string()))?;
+    let activation_preconditions =
+        request_activation_preconditions(request, admitted, &collection_key);
     let previous_vwap = metadosis.worldwide_days.entry(wwd).previous_vwap().read()?;
     let result_snapshot = current_ocomp_attempt_snapshot(ctx.storage.clone())?;
     let intent = JobIntentV1 {
@@ -319,7 +467,7 @@ fn build_and_commit_request(
         sealed_tribute_collection_key: B256::from_slice(collection_key.as_bytes()),
         sealed_tribute_collection_root: sealed_tribute_projection.sealed_collection_root,
         authenticated_day_count: sealed_tribute_projection.tribute_count,
-        authenticated_day_nominal: sealed_tribute_projection.tribute_nominal_amount,
+        authenticated_day_nominal: sealed_tribute_projection.tribute_nominal_total_minor,
         pre_admission_envelope_hash: envelope_hash,
         source_availability_policy_id: profile.source_availability_policy_id,
         frozen_metadosis_values: FrozenMetadosisValuesV1 {
@@ -344,7 +492,7 @@ fn build_and_commit_request(
         result_quorum_threshold: result_snapshot.quorum_threshold,
         custody_committee_epoch_hash: None,
     };
-    commit_and_emit_request(metadosis, request, &intent, &receipt)
+    Ok(intent)
 }
 
 fn commit_and_emit_request(

@@ -8,6 +8,8 @@
 //! artifacts, and the in-memory `AncestryReader`. Promoting them here keeps a
 //! single definition instead of duplicating across modules.
 
+pub(crate) mod marshal;
+
 use std::{
     collections::BTreeMap,
     sync::{
@@ -33,7 +35,10 @@ use commonware_cryptography::{
 };
 use commonware_math::algebra::Random;
 use commonware_parallel::Sequential;
-use commonware_utils::{ordered::Set, N3f1, TryCollect as _};
+use commonware_utils::{
+    ordered::{Quorum, Set},
+    N3f1, TryCollect as _,
+};
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use outbe_primitives::reshare_artifact::{
     encode_consensus_header_artifact, ConsensusHeaderArtifact,
@@ -236,24 +241,15 @@ pub(crate) fn dkg_runtime_artifacts() -> (
         .map(|k| Player::new(info.clone(), k.clone()).unwrap())
         .collect();
 
-    for (dealer_idx, (pub_msg, priv_msgs)) in pub_msgs.iter().zip(all_priv_msgs.iter()).enumerate()
-    {
-        let dealer_pk = keys[dealer_idx].public_key();
-        for (player_pk, priv_msg) in priv_msgs {
-            let player_idx = keys
-                .iter()
-                .position(|k| &k.public_key() == player_pk)
-                .unwrap();
-            if let Some(ack) = players[player_idx]
-                .dealer_message::<N3f1>(dealer_pk.clone(), pub_msg.clone(), priv_msg.clone())
-                .expect("fixture dealing must be valid")
-            {
-                dealers[dealer_idx]
-                    .receive_player_ack(player_pk.clone(), ack)
-                    .unwrap();
-            }
-        }
-    }
+    crate::test_harness::acknowledge_fixture_dealings(
+        &keys,
+        crate::test_harness::FixtureDealings {
+            public_messages: &pub_msgs,
+            private_messages: &all_priv_msgs,
+        },
+        &mut dealers,
+        &mut players,
+    );
 
     let mut logs = std::collections::BTreeMap::new();
     let mut first_log = None;
@@ -356,34 +352,38 @@ pub(crate) fn finalized_metadata(finalized_block_hash: B256) -> CertifiedParentA
     }
 }
 
+pub(crate) struct SystemBlockFixture {
+    pub(crate) block_number: u64,
+    pub(crate) parent_hash: B256,
+    pub(crate) extra_data: Bytes,
+    pub(crate) inputs: Vec<SystemTxInputV2>,
+    pub(crate) chain_id: u64,
+}
+
 pub(crate) fn block_with_system_inputs(
     signer: &OutbeEvmSigner,
-    block_number: u64,
-    parent_hash: B256,
-    extra_data: Bytes,
-    inputs: Vec<SystemTxInputV2>,
-    chain_id: u64,
+    fixture: SystemBlockFixture,
 ) -> ConsensusBlock {
+    let block_number = fixture.block_number;
     block_with_gas_planned_system_inputs(
         signer,
-        block_number,
-        parent_hash,
-        extra_data,
-        inputs,
-        chain_id,
+        fixture,
         outbe_primitives::system_tx::protocol_block_gas_limit(block_number),
     )
 }
 
 pub(crate) fn block_with_gas_planned_system_inputs(
     signer: &OutbeEvmSigner,
-    block_number: u64,
-    parent_hash: B256,
-    extra_data: Bytes,
-    inputs: Vec<SystemTxInputV2>,
-    chain_id: u64,
+    fixture: SystemBlockFixture,
     block_gas_limit: u64,
 ) -> ConsensusBlock {
+    let SystemBlockFixture {
+        block_number,
+        parent_hash,
+        extra_data,
+        inputs,
+        chain_id,
+    } = fixture;
     let encoded_inputs = inputs
         .into_iter()
         .map(|input| {
@@ -402,14 +402,16 @@ pub(crate) fn block_with_gas_planned_system_inputs(
     block.header.gas_limit = block_gas_limit;
     for (ordinal, (kind, calldata)) in encoded_inputs.into_iter().enumerate() {
         let unsigned = build_unsigned_system_tx_with_gas_limit(
-            kind,
-            ordinal.try_into().expect("test ordinal fits"),
-            block_number,
-            chain_id,
-            calldata,
-            gas_plan
-                .gas_limit(ordinal)
-                .expect("gas plan covers every system tx"),
+            outbe_primitives::system_tx::SystemTxEnvelopeInput {
+                kind,
+                ordinal: ordinal.try_into().expect("test ordinal fits"),
+                block_number,
+                chain_id,
+                calldata,
+                gas_limit: gas_plan
+                    .gas_limit(ordinal)
+                    .expect("gas plan covers every system tx"),
+            },
         )
         .expect("system tx builds");
         block
@@ -430,21 +432,59 @@ pub(crate) fn block_with_system_tx(signer: &OutbeEvmSigner) -> ConsensusBlock {
     let parent_hash = B256::ZERO;
     block_with_system_inputs(
         signer,
-        2,
-        parent_hash,
-        Bytes::new(),
-        vec![
-            SystemTxInputV2::CertifiedParentAccounting {
-                metadata: finalized_metadata(parent_hash),
-            },
-            SystemTxInputV2::LateFinalizeCredits {
-                artifact: Default::default(),
-            },
-            SystemTxInputV2::CycleTick,
-            SystemTxInputV2::RewardsGemDelivery,
-            SystemTxInputV2::OracleSlashWindow,
-            SystemTxInputV2::HookEvents,
-        ],
-        outbe_primitives::chain::CHAIN_ID,
+        SystemBlockFixture {
+            block_number: 2,
+            parent_hash,
+            extra_data: Bytes::new(),
+            inputs: vec![
+                SystemTxInputV2::CertifiedParentAccounting {
+                    metadata: finalized_metadata(parent_hash),
+                },
+                SystemTxInputV2::LateFinalizeCredits {
+                    artifact: Default::default(),
+                },
+                SystemTxInputV2::CycleTick,
+                SystemTxInputV2::RewardsGemDelivery,
+                SystemTxInputV2::OracleSlashWindow,
+                SystemTxInputV2::HookEvents,
+            ],
+            chain_id: outbe_primitives::chain::CHAIN_ID,
+        },
     )
+}
+
+pub(crate) struct SignerSharing<'a> {
+    pub polynomial: &'a Sharing<MinSig>,
+    pub shares: &'a [commonware_cryptography::bls12381::primitives::group::Share],
+}
+
+pub(crate) struct SignerFixtureExpectations {
+    pub participant_index: &'static str,
+    pub signer: &'static str,
+}
+
+/// Build signer material while keeping each scenario's failure diagnostics.
+pub(crate) fn signer_schemes(
+    keys: &[bls12381::PrivateKey],
+    participants: &Set<bls12381::PublicKey>,
+    sharing: SignerSharing<'_>,
+    expectations: SignerFixtureExpectations,
+) -> Vec<HybridScheme<MinSig>> {
+    let SignerSharing { polynomial, shares } = sharing;
+    keys.iter()
+        .map(|key| {
+            let pk = bls12381::PublicKey::from(key.clone());
+            let idx = participants
+                .index(&pk)
+                .expect(expectations.participant_index);
+            HybridScheme::signer(
+                &crate::config::outbe_app_namespace(),
+                participants.clone(),
+                key.clone(),
+                polynomial.clone(),
+                shares[idx.get() as usize].clone(),
+            )
+            .expect(expectations.signer)
+        })
+        .collect()
 }

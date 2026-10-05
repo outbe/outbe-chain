@@ -23,10 +23,7 @@ use commonware_cryptography::{
     Hasher as _, Sha256, Signer as _,
 };
 use commonware_parallel::Sequential;
-use commonware_utils::{
-    ordered::{Quorum as _, Set},
-    TryCollect as _,
-};
+use commonware_utils::{ordered::Set, TryCollect as _};
 use futures::channel::mpsc;
 use outbe_consensus::{
     bls::bootstrap_dkg,
@@ -39,7 +36,7 @@ use outbe_consensus::{
         },
     },
     hybrid::{election::HybridRandom, HybridScheme},
-    reporter::{OutbeReporter, ReporterContinuity},
+    reporter::{OutbeReporter, ReporterCommittee, ReporterContinuity, ReporterDependencies},
 };
 use outbe_primitives::consensus_metadata::ParentParticipationProof;
 use std::sync::{
@@ -77,21 +74,15 @@ type NotarizationFixture = (
 fn valid_notarization() -> NotarizationFixture {
     let (keys, participants) = test_participants(3);
     let dkg = bootstrap_dkg(3).unwrap();
-    let schemes: Vec<HybridScheme<MinSig>> = keys
-        .iter()
-        .map(|key| {
-            let pk = bls12381::PublicKey::from(key.clone());
-            let idx = participants.index(&pk).unwrap();
-            HybridScheme::signer(
-                b"reporter-test",
-                participants.clone(),
-                key.clone(),
-                dkg.polynomial.clone(),
-                dkg.shares[idx.get() as usize].clone(),
-            )
-            .unwrap()
-        })
-        .collect();
+    let schemes: Vec<HybridScheme<MinSig>> = outbe_consensus::test_harness::fixture_signer_schemes(
+        b"reporter-test",
+        &keys,
+        &participants,
+        outbe_consensus::test_harness::FixtureSignerSharing {
+            polynomial: &dkg.polynomial,
+            shares: &dkg.shares,
+        },
+    );
     let verifier =
         HybridScheme::<MinSig>::verifier(b"reporter-test", participants.clone(), dkg.polynomial)
             .unwrap();
@@ -146,14 +137,18 @@ fn build_reporter(
         );
     let reporter = OutbeReporter::new(
         ReporterContinuity::default(),
-        ordered_addresses(),
-        FinalizationMailbox::from_sender(tx),
-        None,
-        verifier,
-        HybridRandom::default().build(participants),
-        Epoch::new(0),
-        witness_sink,
-        verify_mailbox,
+        ReporterCommittee {
+            validator_addresses: ordered_addresses(),
+            verifier_scheme: verifier,
+            elector: HybridRandom::default().build(participants),
+            epoch: Epoch::new(0),
+        },
+        ReporterDependencies {
+            finalization_mailbox: FinalizationMailbox::from_sender(tx),
+            bridge: None,
+            witness_sink,
+            finalize_verify_mailbox: verify_mailbox,
+        },
     );
     (reporter, rx)
 }

@@ -12,7 +12,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_paynote::api::{intex_series_target, settlement_context, SettlementDomain};
+use outbe_paynote::api::{intex_holding_target, settlement_context, SettlementDomain};
 use outbe_paynote::client::{new_tree, witness};
 use outbe_paynote::hash::{note_commitment, note_nullifier, note_sn};
 use outbe_paynote::test_support::combined_from;
@@ -89,11 +89,16 @@ pub(crate) fn gem_context(gem_id: U256, snapshot: U256) -> B256 {
     .expect("gem settlement context")
 }
 
-/// Context word for an Intex spend: left-aligned series id, selected units, snapshot.
-pub(crate) fn intex_context(series_id: &[u8; 14], units: U256, snapshot: U256) -> B256 {
+/// Context word for an Intex spend: the owner's units of the series, selected units, snapshot.
+pub(crate) fn intex_context(
+    series_id: &[u8; 14],
+    owner: Address,
+    units: U256,
+    snapshot: U256,
+) -> B256 {
     settlement_context(
         SettlementDomain::Intex,
-        intex_series_target(series_id),
+        intex_holding_target(series_id, owner),
         units,
         snapshot,
     )

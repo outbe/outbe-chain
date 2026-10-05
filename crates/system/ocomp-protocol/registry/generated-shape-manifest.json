@@ -5,25 +5,25 @@
   "generator": {
     "invocation": "cargo xtask ocomp shape",
     "source_sha256": "03d1fb4ec66fd75c07e858ea42b623b244417c9d2a3ce5f3a075f840ae818360",
-    "input_set_sha256": "49fa674b9dfdd88db1bce3b3be5c260ab4ce461c97fc46c07c83cb9da0bb30dd"
+    "input_set_sha256": "790cac2f87adac35c2205b3fb3c8173d9534ca8ece6eca95df993782f7980216"
   },
   "registries": {
     "object_domain_list_sha256": "b8225cdb139be9c8db9460c1cebc37a105d01a63d03974f301ef9fe21762c86f",
-    "input_codecs_sha256": "9af8b0d2bcf0fbd5771f8d8cddcb2fa3fabcd54b0e688e40eb4e064f35ee02de",
+    "input_codecs_sha256": "e7d8f11ac0f9d9aeac9253e4ed1839c3179a4f7589b0451088b9b9ddcfa9a110",
     "canonical_schema_sha256": "ab78cca79bcf4b6202366574bbf675ed6d77afaf4e5dc68d7801396da99776d3",
     "domain_preimage_sha256": "8826b2d80bae80b286eb06be30b5af61a455e240495cf52a5279207b07edc764",
     "object_count": 36,
     "tribute_body_codec_id": "52e3d1c35620ae70cc1da8e840348c60c4b58971960badea704a37fe3340ffca",
-    "fidelity_opening_codec_id": "7c460c232d33196a3a9c512884727bf11551d1d7fe58c9b4237cb6bb26d62126",
+    "fidelity_opening_codec_id": "8e655521b1f67dd006f714236eefb1fc9bbd1b7f619ab5083c26d6e2251cee96",
     "oracle_opening_codec_id": "58013002e9b3fe62af5e4a873a675f18265943ea6637947e3521c6ab3f5ebb7c",
-    "opening_codec_registry_hash": "5f5613b6c75542c9c1bbb2f3f46e84079d8d594cbda6279dd1e28a656aab131a"
+    "opening_codec_registry_hash": "9d4f743556692dddb4c20e2c096c37e0da97009047c5fb4ea2c23d16eaab9aec"
   },
   "profiles": {
     "correctness_profile_sha256": "e400f91e97aea2367adfacd0e7f684cce9d00615be57a5d82e5fbcddbca754b2",
     "candidate_compile_ceiling_sha256": "a3c6ad4cf52140a9ebfc48eef7aafb8af80af59104f0070d09959cd042b13150",
     "minimum_devnet_hardware_profile_sha256": "a54ca8d53824f9dcf439267cbd93a939d3f09823703d1678540acb9a588720b7",
     "headroom_policy_sha256": "3a44462d5a5a61bb9065dce7549f727b160757ec50ac574ebe69121feeaa0aaf",
-    "bundle_template_sha256": "5c993e8a77ddeb7f7bb65bd7796a2862ee848f9800cc81c892e8e37ca6d5894d"
+    "bundle_template_sha256": "a1eda26c8bb429dc97fd5ab405a9df83a12dcfb7f63777f92560636e6d1d6695"
   },
   "independent_verification": {
     "result": "PASS",

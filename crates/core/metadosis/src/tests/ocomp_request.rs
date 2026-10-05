@@ -5,7 +5,7 @@ use outbe_desis::{AuctionStage, DesisContract};
 use outbe_nod::NodContract;
 use outbe_ocomp_protocol::state::{OcompJobStatus, OcompTerminalOutcome};
 use outbe_primitives::{
-    addresses::{COMPRESSED_ENTITIES_ADDRESS, METADOSIS_ADDRESS},
+    addresses::METADOSIS_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     chain,
     storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag, StorageHandle},
@@ -82,7 +82,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
 
     StorageHandle::enter(&mut provider, |storage| {
         let expected_ocomp_snapshot = seed_active_ocomp_snapshot(storage.clone(), 5);
-        seed_ce_genesis(&storage);
+        crate::fixture_kernel::seed_ce_genesis(&storage).unwrap();
         begin_block(storage.clone(), &scope).unwrap();
 
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
@@ -140,26 +140,16 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         metadosis.enqueue_ocomp_ready(wwd, block_number).unwrap();
 
         let mut tribute = TributeContract::new(storage.clone());
-        tribute.initialize_fresh_ocomp_profile().unwrap();
-        tribute.unseal_day(wwd).unwrap();
-        tribute
-            .issue(
-                &scope,
-                &parent,
-                &TributeData {
-                    tribute_id: NodContract::generate_nod_id(owner, wwd).unwrap(),
-                    owner,
-                    worldwide_day: wwd,
-                    issuance_amount_minor: nominal,
-                    issuance_currency: 840,
-                    nominal_amount_minor: nominal,
-                    reference_currency: 840,
-                    exclude_from_intex_issuance: false,
-                    tribute_price_minor: U256::from(2),
-                },
-            )
-            .unwrap();
-        tribute.seal_day(wwd).unwrap();
+        crate::tests::tribute_fixture::issue_sealed_tribute(
+            &mut tribute,
+            &scope,
+            &parent,
+            crate::tests::tribute_fixture::FixtureTribute {
+                owner,
+                wwd,
+                nominal,
+            },
+        );
 
         // Mirror production: the price and league snapshots are built in the active CE phase
         // (process_ocomp_ready_candidate) before the post-seal terminal request.
@@ -190,7 +180,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             .unwrap());
         assert_eq!(
             NodContract::new(storage.clone())
-                .entry_price_value
+                .entry_price_minor
                 .get_nested(&wwd)
                 .read(&840)
                 .unwrap(),
@@ -469,7 +459,7 @@ fn ineligible_request_defers_only_the_ready_key_without_effects() {
         assert!(after.fsm.live_intent_id.is_none());
         assert_eq!(after.receipt, None);
         assert_eq!(after.desis_stage, AuctionStage::None as u8);
-        assert_eq!(after.desis_supply, U256::ZERO);
+        assert_eq!(after.desis_limit_minor, U256::ZERO);
         assert_eq!(after.nod_supply, 0);
         assert_eq!(after.tribute_supply, 1);
         assert!(!after.tribute_pre_admission.is_sealed);
@@ -1157,23 +1147,6 @@ fn request_storage_failure_rolls_back_every_observable_effect() {
         .all(|log| IMetadosis::OffchainJobRequested::decode_log(log).is_err()));
 }
 
-fn seed_ce_genesis(storage: &StorageHandle<'_>) {
-    storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-        .unwrap();
-    storage
-        .sstore(
-            COMPRESSED_ENTITIES_ADDRESS,
-            U256::from(1),
-            U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(B256::ZERO)
-                    .unwrap()
-                    .as_slice(),
-            ),
-        )
-        .unwrap();
-}
-
 struct PreparedRequestFixture {
     scope: ExecutionScope,
     wwd: outbe_primitives::time::WorldwideDay,
@@ -1214,7 +1187,7 @@ fn prepare_request_fixture_with_day_type(
     outbe_fidelity::enclave_client::test_enclave::install();
     StorageHandle::enter(provider, |storage| {
         seed_active_ocomp_snapshot(storage.clone(), 5);
-        seed_ce_genesis(&storage);
+        crate::fixture_kernel::seed_ce_genesis(&storage).unwrap();
         begin_block(storage.clone(), &scope).unwrap();
 
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
@@ -1256,26 +1229,16 @@ fn prepare_request_fixture_with_day_type(
         metadosis.enqueue_ocomp_ready(wwd, block_number).unwrap();
 
         let mut tribute = TributeContract::new(storage.clone());
-        tribute.initialize_fresh_ocomp_profile().unwrap();
-        tribute.unseal_day(wwd).unwrap();
-        tribute
-            .issue(
-                &scope,
-                &parent,
-                &TributeData {
-                    tribute_id: NodContract::generate_nod_id(owner, wwd).unwrap(),
-                    owner,
-                    worldwide_day: wwd,
-                    issuance_amount_minor: nominal,
-                    issuance_currency: 840,
-                    nominal_amount_minor: nominal,
-                    reference_currency: 840,
-                    exclude_from_intex_issuance: false,
-                    tribute_price_minor: U256::from(2),
-                },
-            )
-            .unwrap();
-        tribute.seal_day(wwd).unwrap();
+        crate::tests::tribute_fixture::issue_sealed_tribute(
+            &mut tribute,
+            &scope,
+            &parent,
+            crate::tests::tribute_fixture::FixtureTribute {
+                owner,
+                wwd,
+                nominal,
+            },
+        );
         // Mirror production: the league snapshot is built in the active CE phase
         // before the post-seal terminal request reads its committed root.
         metadosis
@@ -1309,7 +1272,7 @@ fn prepare_ready_days_fixture(
     outbe_fidelity::enclave_client::test_enclave::install();
     StorageHandle::enter(provider, |storage| {
         seed_active_ocomp_snapshot(storage.clone(), 5);
-        seed_ce_genesis(&storage);
+        crate::fixture_kernel::seed_ce_genesis(&storage).unwrap();
         begin_block(storage.clone(), &scope).unwrap();
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
@@ -1403,7 +1366,7 @@ struct RequestObservables {
     fsm: crate::ocomp::state::JobFsmProjection,
     receipt: Option<outbe_ocomp_protocol::receipts::RequestLimitSplitReceiptV1>,
     desis_stage: u8,
-    desis_supply: U256,
+    desis_limit_minor: U256,
     nod_supply: u64,
     nod_prices_frozen: bool,
     tribute_supply: u64,
@@ -1426,7 +1389,7 @@ fn request_observables(
             .auction_stage
             .read(&wwd)
             .unwrap(),
-        desis_supply: DesisContract::new(storage.clone())
+        desis_limit_minor: DesisContract::new(storage.clone())
             .pending_desis_limit_minor
             .read(&wwd)
             .unwrap(),
@@ -1463,7 +1426,7 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
 
     StorageHandle::enter(&mut provider, |storage| {
         seed_active_ocomp_snapshot(storage.clone(), 5);
-        seed_ce_genesis(&storage);
+        crate::fixture_kernel::seed_ce_genesis(&storage).unwrap();
         begin_block(storage.clone(), &scope).unwrap();
 
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
@@ -1500,26 +1463,16 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
         metadosis.enqueue_ocomp_ready(wwd, block_number).unwrap();
 
         let mut tribute = TributeContract::new(storage.clone());
-        tribute.initialize_fresh_ocomp_profile().unwrap();
-        tribute.unseal_day(wwd).unwrap();
-        tribute
-            .issue(
-                &scope,
-                &parent,
-                &TributeData {
-                    tribute_id: NodContract::generate_nod_id(owner, wwd).unwrap(),
-                    owner,
-                    worldwide_day: wwd,
-                    issuance_amount_minor: nominal,
-                    issuance_currency: 840,
-                    nominal_amount_minor: nominal,
-                    reference_currency: 840,
-                    exclude_from_intex_issuance: false,
-                    tribute_price_minor: U256::from(2),
-                },
-            )
-            .unwrap();
-        tribute.seal_day(wwd).unwrap();
+        crate::tests::tribute_fixture::issue_sealed_tribute(
+            &mut tribute,
+            &scope,
+            &parent,
+            crate::tests::tribute_fixture::FixtureTribute {
+                owner,
+                wwd,
+                nominal,
+            },
+        );
         metadosis
             .build_fidelity_league_snapshot(&scope, &parent, wwd, wwd.start_timestamp())
             .unwrap();
@@ -1553,8 +1506,8 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
             outbe_promislimit::PromisLimitContract::new(storage.clone())
                 .get_total_unallocated()
                 .unwrap(),
-            U256::from(968),
-            "the request credits what Lysis left of the day's own emission"
+            U256::from(900),
+            "the request credits what Lysis left and reserves the Desis Limit"
         );
     });
 }

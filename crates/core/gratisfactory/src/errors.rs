@@ -22,7 +22,7 @@ pub enum GratisFactoryError {
     AssetDecimalsUndecodable,
     #[error("unsupported pledge asset decimals")]
     UnsupportedAssetDecimals,
-    #[error("pledge cost exceeds maxGratis")]
+    #[error("pledge cost exceeds maxGratisMinor")]
     GratisCapExceeded,
 }
 

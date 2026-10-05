@@ -16,11 +16,13 @@
 //! The driver itself does NOT take an extra checkpoint - `make_call_frame`
 //! handles per-frame journal checkpoints internally.
 
+use crate::precompiles::{
+    OcompActivationBlockMeter, OutbePrecompileExecutionContext, OutbePrecompileRuntime,
+};
 use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, B256, U256};
 use core::fmt::Debug;
 use outbe_compressed_entities::ExecutionScope;
-use outbe_metadosis::api::OcompFinalizedIntentAuthority;
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::storage::{SubCallError, SubCallInput, SubCallOutput, SubCallStatus};
 use revm::{
@@ -39,57 +41,71 @@ use revm::{
 };
 use std::sync::Arc;
 
+/// Execution environment shared by a sub-call's child frame and precompiles.
+pub struct SubCallEnvironment {
+    pub self_address: Address,
+    pub outer_is_static: bool,
+    pub spec: SpecId,
+    pub runtime_body_readers: Option<RuntimeBodyReaders>,
+    pub execution_scope: Arc<ExecutionScope>,
+}
+
 /// Runs a sub-call with the executor-owned compressed-entity lifecycle scope.
 ///
-/// `outer_is_static = true` forces the child to STATICCALL regardless of the
+/// `environment.outer_is_static = true` forces the child to STATICCALL regardless of the
 /// caller's `input.is_static` field (outer STATIC propagates inward).
 pub fn run<DB>(
     ctx: &mut EthEvmContext<DB>,
-    self_address: Address,
-    outer_is_static: bool,
-    spec: SpecId,
-    runtime_body_readers: Option<RuntimeBodyReaders>,
-    execution_scope: Arc<ExecutionScope>,
+    environment: SubCallEnvironment,
     input: SubCallInput,
 ) -> std::result::Result<SubCallOutput, SubCallError>
 where
     DB: Database + Debug,
     DB::Error: Debug,
 {
-    run_with_ocomp_context(
-        ctx,
+    let SubCallEnvironment {
         self_address,
         outer_is_static,
         spec,
-        B256::ZERO,
         runtime_body_readers,
         execution_scope,
-        None,
-        Arc::new(crate::precompiles::OcompActivationBlockMeter),
-        false,
+    } = environment;
+    run_with_ocomp_context(
+        ctx,
+        SubCallContext {
+            self_address,
+            outer_is_static,
+            execution: OutbePrecompileExecutionContext::new(spec, B256::ZERO),
+            runtime: OutbePrecompileRuntime::new(
+                runtime_body_readers,
+                execution_scope,
+                None,
+                false,
+            ),
+            activation_meter: Arc::new(OcompActivationBlockMeter),
+        },
         input,
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+pub(crate) struct SubCallContext {
+    pub(crate) self_address: Address,
+    pub(crate) outer_is_static: bool,
+    pub(crate) execution: OutbePrecompileExecutionContext,
+    pub(crate) runtime: OutbePrecompileRuntime,
+    pub(crate) activation_meter: Arc<OcompActivationBlockMeter>,
+}
+
 pub(crate) fn run_with_ocomp_context<DB>(
     ctx: &mut EthEvmContext<DB>,
-    self_address: Address,
-    outer_is_static: bool,
-    spec: SpecId,
-    genesis_hash: B256,
-    runtime_body_readers: Option<RuntimeBodyReaders>,
-    execution_scope: Arc<ExecutionScope>,
-    ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
-    ocomp_activation_block_meter: Arc<crate::precompiles::OcompActivationBlockMeter>,
-    ocomp_lifecycle_active: bool,
+    context: SubCallContext,
     input: SubCallInput,
 ) -> std::result::Result<SubCallOutput, SubCallError>
 where
     DB: Database + Debug,
     DB::Error: Debug,
 {
-    let effective_is_static = outer_is_static || input.is_static;
+    let effective_is_static = context.outer_is_static || input.is_static;
 
     // Static context + non-zero value -> reject early.
     if effective_is_static && !input.value.is_zero() {
@@ -105,45 +121,25 @@ where
     // Handles EIP-7702 delegation by re-loading from the delegate's address.
     let (bytecode_hash, bytecode) = load_target_bytecode(ctx, input.target)?;
 
-    // Build CallInputs.
-    let call_inputs = CallInputs {
-        input: CallInput::Bytes(input.calldata.clone()),
-        return_memory_offset: 0..0,
-        gas_limit: input.gas_limit,
-        reservoir: 0,
-        bytecode_address: input.target,
-        known_bytecode: (bytecode_hash, bytecode),
-        target_address: input.target,
-        caller: self_address,
-        value: if effective_is_static {
-            CallValue::Transfer(U256::ZERO)
-        } else {
-            CallValue::Transfer(input.value)
-        },
-        scheme: if effective_is_static {
-            CallScheme::StaticCall
-        } else {
-            CallScheme::Call
-        },
-        is_static: effective_is_static,
-        charged_new_account_state_gas: false,
-    };
+    let call_inputs = build_call_inputs(
+        &input,
+        context.self_address,
+        effective_is_static,
+        (bytecode_hash, bytecode),
+    );
 
     // Construct fresh borrow-mode Evm wrapping &mut ctx.
     // CTX = &mut EthEvmContext<DB> impls ContextTr via #[auto_impl(&mut, Box)]
     // on the trait.
     let mut instructions =
-        EthInstructions::<EthInterpreter, &mut EthEvmContext<DB>>::new_mainnet_with_spec(spec);
+        EthInstructions::<EthInterpreter, &mut EthEvmContext<DB>>::new_mainnet_with_spec(
+            context.execution.spec_id(),
+        );
     crate::create_guard::install(&mut instructions);
     let precompiles = crate::precompiles::OutbeSubCallPrecompiles::<DB>::new(
-        crate::precompiles::OutbePrecompileExecutionContext::new(spec, genesis_hash),
-        crate::precompiles::OutbePrecompileRuntime::new(
-            runtime_body_readers,
-            execution_scope,
-            ocomp_finality_authority,
-            ocomp_lifecycle_active,
-        ),
-        ocomp_activation_block_meter,
+        context.execution,
+        context.runtime,
+        context.activation_meter,
     );
     // A precompile resolves contract-originated calldata through `ctx.local()`, so the child
     // frame has to carve its memory out of that buffer.
@@ -185,6 +181,36 @@ where
         call_outcome,
         input.gas_limit,
     ))
+}
+
+fn build_call_inputs(
+    input: &SubCallInput,
+    caller: Address,
+    effective_is_static: bool,
+    target_code: (B256, Bytecode),
+) -> CallInputs {
+    CallInputs {
+        input: CallInput::Bytes(input.calldata.clone()),
+        return_memory_offset: 0..0,
+        gas_limit: input.gas_limit,
+        reservoir: 0,
+        bytecode_address: input.target,
+        known_bytecode: target_code,
+        target_address: input.target,
+        caller,
+        value: if effective_is_static {
+            CallValue::Transfer(U256::ZERO)
+        } else {
+            CallValue::Transfer(input.value)
+        },
+        scheme: if effective_is_static {
+            CallScheme::StaticCall
+        } else {
+            CallScheme::Call
+        },
+        is_static: effective_is_static,
+        charged_new_account_state_gas: false,
+    }
 }
 
 /// Gives the child context back even when the frame loop unwinds: the buffer outlives the sub-call.
@@ -257,15 +283,8 @@ where
         let call_or_result = evm
             .frame_run()
             .map_err(|e| SubCallError::Fatal(format!("frame_run: {e:?}")))?;
-        let result = match call_or_result {
-            ItemOrResult::Item(init) => match evm
-                .frame_init(init)
-                .map_err(|e| SubCallError::Fatal(format!("frame_init nested: {e:?}")))?
-            {
-                ItemOrResult::Item(_) => continue,
-                ItemOrResult::Result(r) => r,
-            },
-            ItemOrResult::Result(r) => r,
+        let Some(result) = finish_or_initialize_frame(evm, call_or_result)? else {
+            continue;
         };
         if let Some(r) = evm
             .frame_return_result(result)
@@ -273,6 +292,27 @@ where
         {
             return Ok(r);
         }
+    }
+}
+
+fn finish_or_initialize_frame<E>(
+    evm: &mut E,
+    call_or_result: ItemOrResult<FrameInit, FrameResult>,
+) -> std::result::Result<Option<FrameResult>, SubCallError>
+where
+    E: EvmTr<Frame = EthFrame<EthInterpreter>>,
+    <E as EvmTr>::Context: ContextTr,
+{
+    let init = match call_or_result {
+        ItemOrResult::Result(result) => return Ok(Some(result)),
+        ItemOrResult::Item(init) => init,
+    };
+    match evm
+        .frame_init(init)
+        .map_err(|e| SubCallError::Fatal(format!("frame_init nested: {e:?}")))?
+    {
+        ItemOrResult::Item(_) => Ok(None),
+        ItemOrResult::Result(result) => Ok(Some(result)),
     }
 }
 

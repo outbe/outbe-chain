@@ -14,38 +14,20 @@ fn finalized_targets_coalesce_to_the_latest_height() {
 
 #[test]
 fn finalized_target_regression_is_rejected() {
-    let current = FinalizedTarget::new(10, B256::repeat_byte(1));
-    let mut latest = Some(current);
-    let mut pending = Some(current);
-
-    let error = record_finalized_target(
-        &mut latest,
-        &mut pending,
+    assert_rejected_finalized_target(
+        FinalizedTarget::new(10, B256::repeat_byte(1)),
         FinalizedTarget::new(9, B256::repeat_byte(2)),
-    )
-    .unwrap_err();
-
-    assert!(error.to_string().contains("regressed"));
-    assert_eq!(latest, Some(current));
-    assert_eq!(pending, Some(current));
+        "regressed",
+    );
 }
 
 #[test]
 fn conflicting_hash_at_same_finalized_height_is_rejected() {
-    let current = FinalizedTarget::new(10, B256::repeat_byte(1));
-    let mut latest = Some(current);
-    let mut pending = Some(current);
-
-    let error = record_finalized_target(
-        &mut latest,
-        &mut pending,
+    assert_rejected_finalized_target(
+        FinalizedTarget::new(10, B256::repeat_byte(1)),
         FinalizedTarget::new(10, B256::repeat_byte(2)),
-    )
-    .unwrap_err();
-
-    assert!(error.to_string().contains("hash changed"));
-    assert_eq!(latest, Some(current));
-    assert_eq!(pending, Some(current));
+        "hash changed",
+    );
 }
 
 #[test]
@@ -98,4 +80,17 @@ fn finalized_target_conflict_publishes_fatal_exit_on_every_ingress_path() {
         exit_rx.try_recv().unwrap().failure.class,
         ProjectionFailureClass::CheckpointMismatch,
     );
+}
+
+fn assert_rejected_finalized_target(
+    current: FinalizedTarget,
+    incoming: FinalizedTarget,
+    expected_message: &str,
+) {
+    let mut latest = Some(current);
+    let mut pending = Some(current);
+    let error = record_finalized_target(&mut latest, &mut pending, incoming).unwrap_err();
+    assert!(error.to_string().contains(expected_message));
+    assert_eq!(latest, Some(current));
+    assert_eq!(pending, Some(current));
 }

@@ -44,6 +44,10 @@ pub const VOID: State = State {
     label: "Void",
     color: "#6b7280",
 };
+pub const FORFEITED: State = State {
+    label: "Forfeited",
+    color: "#6b7280",
+};
 pub const SETTLED: State = State {
     label: "Settled",
     color: "#a855f7",

@@ -29,11 +29,12 @@
 //! [`init`] is called once at node startup with the data directory. If
 //! [`init`] is not called (e.g. tests), [`record`] silently no-ops.
 
+use crate::journal_writer::Journal;
+
 use serde::{Deserialize, Serialize};
-use std::fs::{File, OpenOptions};
-use std::io::{BufWriter, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 /// Filename of the journal inside the configured data directory.
 pub const JOURNAL_FILENAME: &str = "slashing-journal.jsonl";
@@ -205,10 +206,6 @@ pub enum JournalRecord {
     },
 }
 
-struct Journal {
-    writer: Mutex<BufWriter<File>>,
-}
-
 static JOURNAL: OnceLock<Journal> = OnceLock::new();
 
 /// Initialize the journal. Must be called once at node startup before any
@@ -222,15 +219,7 @@ pub fn init(datadir: &Path) -> std::io::Result<()> {
     }
 
     let path = journal_path(datadir);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let file = OpenOptions::new().create(true).append(true).open(&path)?;
-    let writer = BufWriter::new(file);
-
-    let _ = JOURNAL.set(Journal {
-        writer: Mutex::new(writer),
-    });
+    let _ = JOURNAL.set(Journal::open(&path)?);
     tracing::info!(
         target: "outbe::slashing::journal",
         path = %path.display(),

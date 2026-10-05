@@ -125,7 +125,7 @@ contract BridgeMsgCodecHardeningTest is Test {
             callThreshold: 0,
             callPriceMinor: 0,
             recipients: recipients,
-            quantities: quantities
+            units: quantities
         });
         vm.expectRevert(
             abi.encodeWithSelector(BridgeMsgCodec.IssuanceArrayLengthMismatch.selector, uint256(2), uint256(1))
@@ -139,7 +139,7 @@ contract BridgeMsgCodecHardeningTest is Test {
         payload.worldwideDay = 20_260_212;
         payload.issuedAt = uint32(block.timestamp);
         payload.recipients = new address[](0);
-        payload.quantities = new uint256[](0);
+        payload.units = new uint256[](0);
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.IssuanceDayMismatch.selector, payload.seriesId, uint32(20_260_212), uint32(20_260_213)

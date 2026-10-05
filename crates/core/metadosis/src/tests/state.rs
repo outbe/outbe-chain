@@ -270,7 +270,7 @@ fn test_set_metadosis_limit_overwrites() {
         assert_eq!(
             m.worldwide_days
                 .entry(date)
-                .metadosis_limit_amount()
+                .metadosis_limit_minor()
                 .read()
                 .unwrap(),
             U256::from(100u64)
@@ -280,7 +280,7 @@ fn test_set_metadosis_limit_overwrites() {
         assert_eq!(
             m.worldwide_days
                 .entry(date)
-                .metadosis_limit_amount()
+                .metadosis_limit_minor()
                 .read()
                 .unwrap(),
             U256::from(250u64)
@@ -516,26 +516,10 @@ fn test_query_worldwide_days_by_status_via_precompile() {
 /// The committed layout string must describe the live schema, not only hash to its pin.
 #[test]
 fn storage_layout_string_matches_the_live_schema() {
-    use crate::schema::{
-        CapacityForfeitureReceiptState, DayLimitFormationReceiptState,
-        WorldwideDayTerminalReceiptState,
-    };
-
     with_contract(|m| {
         let live = format!(
-            "OUTBE_METADOSIS_STORAGE_LAYOUT_V1|worldwide_day_slots={}|active_wwd_count_slot={}\
-             |closed_wwd_base_slot={}|terminal_receipt_base_slot={}|terminal_receipt_slots={}\
-             |capacity_forfeiture_base_slot={}|capacity_forfeiture_slots={}\
-             |day_limit_receipt_base_slot={}|day_limit_receipt_slots={}",
-            <WorldwideDay as StorageRecord>::SLOTS,
-            m.active_wwd_count.slot(),
-            m.closed_wwd.base_slot(),
-            m.worldwide_day_terminal_receipts.base_slot(),
-            <WorldwideDayTerminalReceiptState as StorageRecord>::SLOTS,
-            m.capacity_forfeiture_receipts.base_slot(),
-            <CapacityForfeitureReceiptState as StorageRecord>::SLOTS,
-            m.day_limit_formation_receipts.base_slot(),
-            <DayLimitFormationReceiptState as StorageRecord>::SLOTS,
+            "OUTBE_METADOSIS_STORAGE_LAYOUT_V1|worldwide_day_slots={}|closed_wwd_base_slot={}|ocomp_job_records_base_slot={}|league_snapshot_base_slot={}|terminal_receipt_base_slot={}|terminal_receipt_codec=OMTR1|live_index_codec=OMLI2|day_limit_receipt_base_slot={}|day_limit_receipt_slots={}",
+            <WorldwideDay as StorageRecord>::SLOTS, m.closed_wwd.base_slot(), m.ocomp_job_records.base_slot(), m.ocomp_fidelity_league_snapshot.base_slot(), m.worldwide_day_terminal_receipts.base_slot(), m.day_limit_formation_receipts.base_slot(), <crate::schema::DayLimitFormationReceiptState as StorageRecord>::SLOTS,
         );
         assert_eq!(
             live.as_bytes(),
@@ -549,29 +533,18 @@ fn test_storage_dsl_layout_slots() {
     with_contract(|m| {
         assert_eq!(m.bootstrap_end_time.slot(), U256::ZERO);
         assert_eq!(m.worldwide_days.base_slot(), U256::from(1u64));
-        // WorldwideDay gained `metadosis_limit_amount`, so the record is now
+        // WorldwideDay gained `metadosis_limit_minor`, so the record is now
         // 10 scalar slots (was 9); worldwide_days occupies slots 1..=10.
         assert_eq!(<WorldwideDay as StorageRecord>::SLOTS, 10);
-        assert_eq!(m.active_wwd_count.slot(), U256::from(11u64));
-        // `active_wwd` is a Set (2 slots: 12 = length, 13 = positions), so the
-        // next schema field lands at 14 - this pins the Set's position too.
-        // `closed_wwd` is a Deque (2 slots: 14 = begin, 15 = end).
-        assert_eq!(m.closed_wwd.base_slot(), U256::from(14u64));
+        assert_eq!(m.closed_wwd.base_slot(), U256::from(13u64));
+        assert_eq!(m.ocomp_job_records.base_slot(), U256::from(19u64));
         assert_eq!(
-            <crate::schema::WorldwideDayTerminalReceiptState as StorageRecord>::SLOTS,
-            6
+            m.ocomp_fidelity_league_snapshot.base_slot(),
+            U256::from(28u64)
         );
         assert_eq!(
             m.worldwide_day_terminal_receipts.base_slot(),
-            U256::from(31u64)
-        );
-        assert_eq!(
-            <crate::schema::CapacityForfeitureReceiptState as StorageRecord>::SLOTS,
-            13
-        );
-        assert_eq!(
-            m.capacity_forfeiture_receipts.base_slot(),
-            U256::from(37u64)
+            U256::from(30u64)
         );
         assert_eq!(
             <crate::schema::DayLimitFormationReceiptState as StorageRecord>::SLOTS,
@@ -579,12 +552,11 @@ fn test_storage_dsl_layout_slots() {
         );
         assert_eq!(
             m.day_limit_formation_receipts.base_slot(),
-            U256::from(50u64)
+            U256::from(31u64)
         );
-        assert_eq!(m.ocomp_terminal_intents.base_slot(), U256::from(23u64));
-        assert_eq!(m.ocomp_vote_accountability.base_slot(), U256::from(27u64));
-        // Day-limit receipts occupy 50..=56.
-        assert_eq!(m.ocomp_terminal_counts.base_slot(), U256::from(57u64));
+        assert_eq!(m.ocomp_terminal_intents.base_slot(), U256::from(22u64));
+        assert_eq!(m.ocomp_vote_accountability.base_slot(), U256::from(26u64));
+        assert_eq!(m.ocomp_terminal_counts.base_slot(), U256::from(38u64));
         assert_eq!(
             alloy_primitives::keccak256(crate::proof_layout::METADOSIS_STORAGE_LAYOUT_V1_CANONICAL),
             crate::proof_layout::METADOSIS_STORAGE_LAYOUT_V1_HASH

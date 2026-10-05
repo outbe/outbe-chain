@@ -93,19 +93,14 @@ fn recover_pending_material(
             && dkg_output_matches_recovered_boundary(&output, startup_dkg_context)
         {
             if startup_dkg_context.recovered_boundary_finalized {
-                save_dkg_state(keys_dir, &signing_share, &polynomial, &output, key_backend)
-                    .wrap_err("failed to promote pending DKG state after boundary finalization")?;
-                remove_pending_dkg_state(keys_dir);
-                clear_pending_dkg_boundary(keys_dir);
-                dkg_actor::DkgRetryStore::in_keys_dir(keys_dir, key_backend.clone())
-                    .clear()
-                    .wrap_err("failed to retire recovered DKG retry state")?;
-                info!(
-                    keys_dir = %keys_dir.display(),
-                    vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
-                    dkg_output_hash = %dkg_manager::dkg_output_hash(&output),
-                    "threshold material ready from promoted pending DKG state"
-                );
+                promote_recovered_pending_material(
+                    DkgStateStore::new(keys_dir, key_backend),
+                    DkgStateMaterial {
+                        share: &signing_share,
+                        polynomial: &polynomial,
+                        output: &output,
+                    },
+                )?;
             } else {
                 info!(
                     keys_dir = %keys_dir.display(),
@@ -132,6 +127,32 @@ fn recover_pending_material(
     }
 
     Ok(None)
+}
+
+fn promote_recovered_pending_material(
+    store: DkgStateStore<'_>,
+    material: DkgStateMaterial<'_>,
+) -> Result<()> {
+    let DkgStateStore {
+        directory: keys_dir,
+        key_backend,
+    } = store;
+    let polynomial = material.polynomial;
+    let output = material.output;
+    save_dkg_state(DkgStateStore::new(keys_dir, key_backend), material)
+        .wrap_err("failed to promote pending DKG state after boundary finalization")?;
+    remove_pending_dkg_state(keys_dir);
+    clear_pending_dkg_boundary(keys_dir);
+    dkg_actor::DkgRetryStore::in_keys_dir(keys_dir, key_backend.clone())
+        .clear()
+        .wrap_err("failed to retire recovered DKG retry state")?;
+    info!(
+        keys_dir = %keys_dir.display(),
+        vrf_group_public_key = %vrf_group_public_key_hash(polynomial),
+        dkg_output_hash = %dkg_manager::dkg_output_hash(output),
+        "threshold material ready from promoted pending DKG state"
+    );
+    Ok(())
 }
 
 fn validate_local_fallback(

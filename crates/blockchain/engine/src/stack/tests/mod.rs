@@ -18,8 +18,6 @@ use commonware_cryptography::{Hasher as _, Sha256};
 use commonware_math::algebra::Random;
 use commonware_p2p::{Blocker, CheckedSender, LimitedSender, Message, Receiver, Recipients};
 use commonware_parallel::Sequential;
-use commonware_resolver::Resolver;
-use commonware_resolver::TargetedResolver;
 use commonware_runtime::{
     buffer::paged::CacheRef, tokio as commonware_tokio, IoBufs, Runner as _, Supervisor as _,
 };
@@ -28,7 +26,6 @@ use commonware_utils::{
     acknowledgement::Acknowledgement,
     channel::oneshot,
     ordered::{Quorum as _, Set},
-    vec::NonEmptyVec,
     NZUsize,
 };
 use futures::FutureExt as _;

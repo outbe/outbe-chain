@@ -691,26 +691,29 @@ fn fixture_for_identity(
     scheduler.extend_from_slice(&live.retained_effect.lysis_limit_minor.to_be_bytes::<32>());
     scheduler.extend_from_slice(live.retained_effect.receipt_hash.as_slice());
     assert_eq!(scheduler.len(), 148);
+    // OMLI/v2 stores only the WWD/IntentId keys; the FSM is persisted separately.
     let mut live_index = b"OMLI".to_vec();
+    live_index.extend_from_slice(&2_u16.to_be_bytes());
     live_index.extend_from_slice(&1_u16.to_be_bytes());
-    live_index.extend_from_slice(&1_u16.to_be_bytes());
-    live_index.extend_from_slice(&scheduler);
+    live_index.extend_from_slice(&snapshot.worldwide_day.value().to_be_bytes());
+    live_index.extend_from_slice(live.intent_id.as_slice());
+    assert_eq!(live_index.len(), 44);
     StorageHandle::enter(&mut owner, |storage| {
         let write = |slot, bytes: &[u8]| {
             StorageBytes::new(slot, METADOSIS_ADDRESS, storage.clone())
                 .write(bytes)
                 .unwrap();
         };
-        write(U256::from(19), &live_index);
+        write(U256::from(18), &live_index);
         write(
-            DAY.mapping_slot(U256::from(21)),
+            DAY.mapping_slot(U256::from(20)),
             &receipt.encode_canonical(&limits).unwrap(),
         );
-        write(DAY.mapping_slot(U256::from(24)), &scheduler);
+        write(DAY.mapping_slot(U256::from(23)), &scheduler);
         write(
             outbe_ocomp_protocol::intent::intent_storage_key(intent_id)
                 .unwrap()
-                .mapping_slot(U256::from(20)),
+                .mapping_slot(U256::from(19)),
             &job.encode_canonical(&limits).unwrap(),
         );
         if let Some(finalized) = &job.finalized {
@@ -720,7 +723,7 @@ fn fixture_for_identity(
             response.extend_from_slice(&finalized.deadline_height.to_be_bytes());
             response.extend_from_slice(finalized.job_id.as_slice());
             response.extend_from_slice(intent_id.as_slice());
-            write(U256::from(28), &response);
+            write(U256::from(27), &response);
         }
         assert_eq!(
             read_live_ocomp_jobs(storage).unwrap(),

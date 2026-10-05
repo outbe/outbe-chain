@@ -12,6 +12,7 @@ pub(super) mod ceremony;
 pub(super) mod completion;
 pub(super) mod continuity;
 pub(super) mod execution_monitor;
+mod expiry;
 pub(super) mod marshal_recovery;
 pub(super) mod pending_recovery;
 pub(super) mod run;

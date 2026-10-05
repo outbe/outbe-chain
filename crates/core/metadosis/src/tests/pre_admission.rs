@@ -62,7 +62,7 @@ fn inputs() -> PreAdmissionInputs {
             is_sealed: true,
             sealed_collection_root: B256::repeat_byte(0x51),
             tribute_count: 256,
-            tribute_nominal_amount: U256::from(1_000),
+            tribute_nominal_total_minor: U256::from(1_000),
             canonical_body_bytes: 40_000,
             distinct_owner_count: 256,
             distinct_reference_currency_count: 16,
@@ -240,4 +240,45 @@ fn pre_admission_state_version_overflow_is_fatal() {
             Err(PrecompileError::Fatal(_))
         ));
     });
+}
+
+#[test]
+fn admission_deferral_preserves_policy_precedence_and_overflow_reason() {
+    let mut unsealed = inputs();
+    unsealed.tribute.is_sealed = false;
+    unsealed.oracle.profile_ready = false;
+    let mut empty = inputs();
+    empty.tribute.tribute_count = 0;
+    empty.oracle.profile_ready = false;
+    let mut currencies = inputs();
+    currencies.tribute.distinct_reference_currency_count = 17;
+    currencies.oracle.profile_ready = false;
+    let mut encoded_overflow = inputs();
+    encoded_overflow.tribute.canonical_body_bytes = u64::MAX;
+    let mut records_overflow = inputs();
+    records_overflow.tribute.tribute_count = u32::MAX;
+    for (input, reason) in [
+        (unsealed, PreAdmissionDeferredReason::TributeNotSealed),
+        (empty, PreAdmissionDeferredReason::EmptyTributeDay),
+        (
+            currencies,
+            PreAdmissionDeferredReason::ReferenceCurrencyCountExceeded {
+                actual: 17,
+                limit: 16,
+            },
+        ),
+        (
+            encoded_overflow,
+            PreAdmissionDeferredReason::ArithmeticOverflow,
+        ),
+        (
+            records_overflow,
+            PreAdmissionDeferredReason::ArithmeticOverflow,
+        ),
+    ] {
+        assert_eq!(
+            evaluate_pre_admission(&context(), &input).unwrap(),
+            PreAdmissionDecision::Deferred(reason)
+        );
+    }
 }

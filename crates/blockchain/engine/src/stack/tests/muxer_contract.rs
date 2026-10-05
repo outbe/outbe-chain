@@ -125,11 +125,15 @@ fn same_epoch_routes_are_reacquired_only_after_old_receivers_drop() {
         let replacement = outbe_consensus::epoch_subchannels::reacquire_epoch_subchannels(
             epoch,
             &context,
-            Duration::from_secs(1),
-            Duration::from_millis(10),
-            &mut vote_mux,
-            &mut cert_mux,
-            &mut res_mux,
+            outbe_consensus::epoch_subchannels::SubchannelRetryPolicy {
+                timeout: Duration::from_secs(1),
+                retry_interval: Duration::from_millis(10),
+            },
+            outbe_consensus::epoch_subchannels::EpochMuxHandles {
+                vote: &mut vote_mux,
+                cert: &mut cert_mux,
+                res: &mut res_mux,
+            },
         )
         .await
         .expect("same-epoch routes must become available after old receivers drop");

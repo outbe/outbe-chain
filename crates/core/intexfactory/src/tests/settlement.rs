@@ -46,8 +46,8 @@ fn a_minimum_the_payment_asset_cannot_express_is_refused() {
 }
 
 #[test]
-fn a_subunit_cost_charges_one_minor_unit_per_selected_unit() {
-    for (amount, expected) in [(1u64, 1u64), (3, 3), (1_000, 1_000)] {
+fn a_subunit_purchase_charges_one_minor_unit_once() {
+    for (amount, expected) in [(1u64, 1u64), (3, 1), (1_000, 1), (2_500_000, 2)] {
         assert_eq!(
             runtime::settlement_units(U256::ONE, U256::from(amount), None, 6).unwrap(),
             U256::from(expected)
@@ -56,7 +56,7 @@ fn a_subunit_cost_charges_one_minor_unit_per_selected_unit() {
 }
 
 #[test]
-fn the_unit_minimum_precedes_asset_and_currency_conversion() {
+fn the_purchase_minimum_precedes_asset_and_currency_conversion() {
     let fx = |to: u64, from: u64| Some((U256::from(to), U256::from(from)));
     for (rate, decimals, expected) in [
         (None, 8, 100u64),
@@ -233,8 +233,8 @@ fn settlement_quote_dispatch() {
             s.clone(),
             &IIntexFactory::quoteSettlementCall {
                 seriesId: sid(7).into(),
-                paymentToken: payment_token(),
-                amount: U256::from(2u64),
+                asset: payment_token(),
+                units: U256::from(2u64),
             }
             .abi_encode(),
             owner(),
@@ -243,17 +243,17 @@ fn settlement_quote_dispatch() {
         .unwrap();
         let ret = IIntexFactory::quoteSettlementCall::abi_decode_returns(&out).unwrap();
         assert_eq!(ret.settlementCurrency, 840);
-        assert_eq!(ret.payableUnits, U256::from(2_000_000_000_000_000_000u64));
+        assert_eq!(ret.paymentMinor, U256::from(2_000_000_000_000_000_000u64));
     });
 }
 
 /// Two units of `sample(7)` cost this at six decimals.
 const TWO_UNIT_COST: U256 = U256::from_limbs([2_000_000, 0, 0, 0]);
 
-fn intex_context(series: SeriesId, units: U256) -> B256 {
+fn intex_context(series: SeriesId, owner: Address, units: U256) -> B256 {
     outbe_paynote::api::settlement_context(
         outbe_paynote::api::SettlementDomain::Intex,
-        outbe_paynote::api::intex_series_target(series.as_bytes()),
+        outbe_paynote::api::intex_holding_target(series.as_bytes(), owner),
         units,
         U256::ZERO,
     )
@@ -278,8 +278,14 @@ fn settle_two_units_spending_from(
     HashMapStorageProvider,
     outbe_primitives::error::Result<U256>,
 ) {
-    let (storage, outcome, _) =
-        settle_bound(spend, merged, sid(7), U256::from(2u64), U256::from(2u64));
+    let (storage, outcome, _) = settle_bound(
+        spend,
+        merged,
+        sid(7),
+        owner(),
+        U256::from(2u64),
+        U256::from(2u64),
+    );
     (storage, outcome)
 }
 
@@ -287,6 +293,7 @@ fn settle_bound(
     spend: U256,
     merged: bool,
     bound_series: SeriesId,
+    bound_owner: Address,
     bound_units: U256,
     settle_units: U256,
 ) -> (
@@ -318,7 +325,7 @@ fn settle_bound(
     );
     storage.stub_sub_call_at_selector(payment_token(), IERC20::decimalsCall::SELECTOR, word(6));
 
-    let context = intex_context(bound_series, bound_units);
+    let context = intex_context(bound_series, bound_owner, bound_units);
     let (proof, nullifier) = if merged {
         let (proof, nullifier) = outbe_paynote::test_support::merged_note_spend_proof(
             &mut storage,
@@ -377,8 +384,8 @@ fn anyone_may_settle_and_the_units_stay_with_the_owner() {
         .map(|log| IIntexFactory::Settled::decode_log_data(log).unwrap())
         .collect();
     assert_eq!(settled.len(), 1);
-    assert_eq!(settled[0].intexOwner, owner(), "the payer keeps nothing");
-    assert_eq!(settled[0].amount, U256::from(2u64));
+    assert_eq!(settled[0].owner, owner(), "the payer keeps nothing");
+    assert_eq!(settled[0].units, U256::from(2u64));
 }
 
 #[test]
@@ -387,6 +394,7 @@ fn a_proof_bound_to_two_units_cannot_settle_one() {
         TWO_UNIT_COST,
         false,
         sid(7),
+        owner(),
         U256::from(2u64),
         U256::from(1u64),
     );
@@ -404,6 +412,26 @@ fn a_proof_bound_to_another_series_cannot_settle_this_one() {
         TWO_UNIT_COST,
         false,
         sid(8),
+        owner(),
+        U256::from(2u64),
+        U256::from(2u64),
+    );
+    let error = outcome.unwrap_err().to_string();
+    assert!(error.contains("does not match settlement"), "{error}");
+    StorageHandle::enter(&mut storage, |s| {
+        assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
+        assert!(!outbe_paynote::api::is_spent(&s, nullifier).unwrap());
+    });
+}
+
+/// Another owner of the same series cannot spend a note bound to someone else's units.
+#[test]
+fn a_proof_bound_to_one_owner_cannot_settle_another() {
+    let (mut storage, outcome, nullifier) = settle_bound(
+        TWO_UNIT_COST,
+        false,
+        sid(7),
+        PAYER,
         U256::from(2u64),
         U256::from(2u64),
     );
@@ -528,16 +556,16 @@ fn only_the_paynote_settle_pays_for_proof_verification() {
 
     let erc20 = IIntexFactory::settleIntexCall {
         seriesId: sid(7).into(),
-        intexOwner: owner(),
-        amount: U256::ONE,
+        owner: owner(),
+        units: U256::ONE,
         asset: payment_token(),
         snapshotId: U256::ZERO,
     }
     .abi_encode();
     let paynote = IIntexFactory::settleIntexWithPayNoteCall {
         seriesId: sid(7).into(),
-        intexOwner: owner(),
-        amount: U256::ONE,
+        owner: owner(),
+        units: U256::ONE,
         payNoteProof: Default::default(),
     }
     .abi_encode();
@@ -852,6 +880,56 @@ fn the_unit_counts_view_reports_the_disjoint_classes() {
         assert_eq!(counts.exercisedUnits, 15);
         assert_eq!(counts.gemFactoryUnits, 10);
         assert_eq!(counts.forfeitedUnits, 0);
+    });
+}
+
+/// Live balances count until the series expires; the owner's history stays with the owner.
+#[test]
+fn the_owner_balances_view_reports_live_units_and_owner_history() {
+    use crate::sol_ext::IERC1155;
+
+    let read = |s: &StorageHandle<'_>| {
+        let out = precompile::dispatch(
+            s.clone(),
+            &IIntexFactory::ownerBalancesCall {
+                seriesId: sid(7).into(),
+                owner: owner(),
+            }
+            .abi_encode(),
+            owner(),
+            U256::ZERO,
+        )
+        .unwrap();
+        IIntexFactory::ownerBalancesCall::abi_decode_returns(&out).unwrap()
+    };
+    let mut storage = factory_provider();
+    storage.stub_sub_call_at_selector(
+        crate::constants::INTEX_NFT1155_ADDRESS,
+        IERC1155::balanceOfCall::SELECTOR,
+        word(3),
+    );
+    let deadline = StorageHandle::enter(&mut storage, |s| {
+        select_prod_profile(&s);
+        runtime::issue(&s, sample(7)).unwrap();
+        outbe_intex::api::record_settled_units(&s, sid(7), 40).unwrap();
+        outbe_intex::api::record_gem_factory_units(&s, sid(7), owner(), 10).unwrap();
+        outbe_intex::api::record_exercised_units(&s, sid(7), owner(), 15).unwrap();
+        outbe_intex::api::mark_called(&s, sid(7), ISSUED_AT).unwrap();
+
+        let live = read(&s);
+        assert_eq!((live.issuedUnits, live.settledUnits), (3, 3));
+        assert_eq!((live.exercisedUnits, live.gemFactoryUnits), (15, 10));
+        assert_eq!(live.ownerUnits, 6);
+        let series = outbe_intex::api::read_series(&s, sid(7)).unwrap();
+        u64::from(series.called_at) + u64::from(series.call_notice_period_seconds)
+    });
+
+    storage.set_timestamp(U256::from(deadline + 1));
+    StorageHandle::enter(&mut storage, |s| {
+        let expired = read(&s);
+        assert_eq!((expired.issuedUnits, expired.settledUnits), (0, 3));
+        assert_eq!((expired.exercisedUnits, expired.gemFactoryUnits), (15, 10));
+        assert_eq!(expired.ownerUnits, 3);
     });
 }
 

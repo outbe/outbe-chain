@@ -23,7 +23,6 @@ fn action_for(materialization_wwd: u32, ordinal: u32) -> NodActionV1 {
     let owner = Address::from_word(B256::from(U256::from(ordinal + 1)));
     let worldwide_day = WorldwideDay::new(materialization_wwd);
     let entry_price_minor = U256::from(500_000);
-    let floor_price_minor = NodContract::floor_price_minor(entry_price_minor).unwrap();
     let tribute_id =
         WwdEntityId::from_day_and_digest(worldwide_day, B256::from(U256::from(ordinal + 1_000)));
     let nod_id = NodContract::generate_nod_id(owner, worldwide_day).unwrap();
@@ -34,14 +33,11 @@ fn action_for(materialization_wwd: u32, ordinal: u32) -> NodActionV1 {
         owner,
         wwd: materialization_wwd,
         league_id: 1,
-        floor_price_minor,
         gratis_load_minor: U256::from(1_000),
         entry_price_minor,
         settlement_cost_minor: U256::from(500),
         issuance_currency: 840,
         reference_currency: 840,
-        issued_at: 1_600_000_000,
-        bucket_key: NodContract::bucket_key(worldwide_day, floor_price_minor, 840),
     }
 }
 
@@ -416,9 +412,15 @@ fn a_materialized_nod_keeps_the_batch_entry_price() {
     apply(&mut world, &batch(&population, 0, 8)).unwrap();
 
     let action = action_for(MATERIALIZATION_WWD, 0);
+    let worldwide_day = WorldwideDay::new(MATERIALIZATION_WWD);
     let bucket_id = WwdEntityId::from_day_and_digest(
-        WorldwideDay::new(MATERIALIZATION_WWD),
-        action.bucket_key.0,
+        worldwide_day,
+        NodContract::bucket_key(
+            worldwide_day,
+            action.entry_price_minor,
+            action.reference_currency,
+        )
+        .0,
     );
     let bucket = world
         .enter(|storage, scope, parent| nod_api::get_bucket(&storage, scope, parent, bucket_id))
@@ -474,8 +476,27 @@ fn multiple_batches_create_ordinary_nods_and_advance_fifo_atomically() {
         })
         .unwrap()
         .unwrap();
-    assert_eq!(first_item.issued_at, 1_700_000_000);
-    assert_ne!(first_item.issued_at, population.actions[0].issued_at);
+    assert_eq!(first_item.issued_at, 1_600_000_000, "the generation's time");
+    let last_item = world
+        .enter(|storage, scope, parent| {
+            nod_api::get_item(
+                &storage,
+                scope,
+                parent,
+                ledger_entity(population.actions[9].nod_id),
+            )
+        })
+        .unwrap()
+        .unwrap();
+    assert_eq!(last_item.issued_at, 1_600_000_000);
+    let bucket_issued_at = world
+        .enter(|storage, _, _| {
+            NodContract::new(storage)
+                .callable_bucket_issued_at
+                .read(&first_item.bucket_key)
+        })
+        .unwrap();
+    assert_eq!(bucket_issued_at, 1_600_000_000, "call windows start there");
     assert_eq!(
         world
             .enter(|storage, scope, parent| {
@@ -488,17 +509,29 @@ fn multiple_batches_create_ordinary_nods_and_advance_fifo_atomically() {
 }
 
 #[test]
-fn a_certified_floor_its_entry_does_not_give_is_rejected_before_any_write() {
+fn a_certified_nod_id_its_owner_does_not_give_is_rejected_before_any_write() {
     let mut actions = (0..8)
         .map(|ordinal| action_for(MATERIALIZATION_WWD, ordinal))
         .collect::<Vec<_>>();
-    let tampered = &mut actions[3];
-    tampered.floor_price_minor = U256::from(3_240_000);
-    tampered.bucket_key = NodContract::bucket_key(
+    actions[3].nod_id = *NodContract::generate_nod_id(
+        Address::repeat_byte(0xee),
         WorldwideDay::new(MATERIALIZATION_WWD),
-        tampered.floor_price_minor,
-        tampered.reference_currency,
-    );
+    )
+    .unwrap();
+    assert_rejected_before_any_write(actions);
+}
+
+#[test]
+fn a_certified_entry_beyond_the_call_price_bound_is_rejected_before_any_write() {
+    let mut actions = (0..8)
+        .map(|ordinal| action_for(MATERIALIZATION_WWD, ordinal))
+        .collect::<Vec<_>>();
+    actions[3].entry_price_minor =
+        U256::MAX / U256::from(100 + u32::from(u16::MAX)) + U256::from(1);
+    assert_rejected_before_any_write(actions);
+}
+
+fn assert_rejected_before_any_write(actions: Vec<NodActionV1>) {
     let population = population_of(actions);
     let mut world = World::new();
     seed_generation(&mut world, &population);

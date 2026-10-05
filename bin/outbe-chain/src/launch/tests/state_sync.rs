@@ -107,7 +107,11 @@ fn copied_projection_uses_native_checkpoint_and_recipient_configuration_on_each_
                 }),
             }
         );
+        let completion = prepared.storage_completion();
         drop(prepared);
+        completion
+            .wait_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
         let (_, public) =
             super::load_reth_p2p_node_host_signer(&network, default_secret.clone()).unwrap();
         assert_eq!(public, own_public);
@@ -137,14 +141,27 @@ fn copied_projection_uses_native_checkpoint_and_recipient_configuration_on_each_
     .err()
     .expect("snapshot height is not a replacement for native start_block");
     assert!(error.to_string().contains("start_block 1"));
+    // A rejected preflight also owns an asynchronous storage close. Observe it
+    // before opening storage so the process cannot exit while RocksDB tears down.
+    let completions = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed = completions.clone();
     assert!(
-        prepare_offchain_data_projection(OffchainDataProjectionConfig {
-            chain_id: config.chain_id,
-            genesis_hash: B256::repeat_byte(0x72),
-            storage,
-        })
+        outbe_node::projection::prepare_offchain_data_projection_with_retention(
+            OffchainDataProjectionConfig {
+                chain_id: config.chain_id,
+                genesis_hash: B256::repeat_byte(0x72),
+                storage,
+            },
+            Arc::new(outbe_node::ocomp::retention::SharedOcompRetentionSelector::new()),
+            move |completion| observed.lock().unwrap().push(completion),
+        )
         .is_err()
     );
+    let completions = completions.lock().unwrap();
+    assert_eq!(completions.len(), 1);
+    completions[0]
+        .wait_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
     assert_eq!(fs::read(&secret).unwrap(), own_key_bytes);
 }
 
@@ -173,9 +190,6 @@ mod copied_unequal_ce_projection {
         addresses::COMPRESSED_ENTITIES_ADDRESS,
         chain::TESTNET_CHAIN_ID,
         projection::{ProjectionCheckpoint, ProjectionReadinessHandle, ProjectionStatus},
-        reshare_artifact::{
-            encode_outbe_block_artifacts, CompressedEntitiesRootArtifact, OutbeBlockArtifacts,
-        },
         OutbeHeader, OutbePrimitives,
     };
     use reth_ethereum::{
@@ -233,23 +247,12 @@ mod copied_unequal_ce_projection {
     }
 
     fn headers() -> Vec<OutbeHeader> {
-        let mut headers = vec![genesis_header()];
-        for height in 1..=H {
-            headers.push(OutbeHeader::new(Header {
-                number: height,
-                parent_hash: headers.last().unwrap().hash_slow(),
-                extra_data: encode_outbe_block_artifacts(&OutbeBlockArtifacts {
-                    compressed_entities_root: Some(CompressedEntitiesRootArtifact {
-                        commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                        r_sealed: genesis_marker().new_root,
-                    }),
-                    ..Default::default()
-                })
-                .unwrap(),
-                ..Default::default()
-            }));
-        }
-        headers
+        outbe_consensus::test_harness::linked_headers(
+            genesis_header(),
+            H,
+            ACTIVE_COMMITMENT_SCHEME,
+            || genesis_marker().new_root,
+        )
     }
 
     fn point(headers: &[OutbeHeader], height: u64) -> ProjectionCheckpoint {

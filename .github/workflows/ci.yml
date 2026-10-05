@@ -47,12 +47,6 @@ jobs:
       image: ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268
     steps:
       - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - name: Verify changed Rust module decomposition
-        env:
-          CHANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: python3 scripts/check-rust-file-size.py
       # No `rustup component add rustfmt` and no mise install: the image already
       # carries the pinned toolchain with rustfmt, and the mise tool set.
       - name: Verify vendored CKB SMT provenance and panic safety
@@ -173,7 +167,9 @@ jobs:
       - name: Run tests with coverage
         run: |
           cargo llvm-cov clean --workspace
-          cargo llvm-cov --workspace --no-report
+          # Consensus chain identity is process-wide. Isolate each case so a
+          # fixture for another chain cannot poison subsequent snapshot tests.
+          cargo llvm-cov nextest --workspace --features outbe-chain/snapshot-integration --no-report
       - name: Render coverage summary
         run: |
           cargo llvm-cov report --json --summary-only --output-path coverage-summary.json

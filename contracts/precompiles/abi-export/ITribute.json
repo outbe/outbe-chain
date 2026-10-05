@@ -35,7 +35,7 @@
         "internalType": "uint32"
       },
       {
-        "name": "tributeNominalAmount",
+        "name": "tributeNominalTotalMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -216,7 +216,7 @@
         "internalType": "uint32"
       },
       {
-        "name": "consumedNominalTotal",
+        "name": "consumedNominalTotalMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

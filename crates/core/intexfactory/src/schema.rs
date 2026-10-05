@@ -20,7 +20,7 @@ pub struct IssuanceParams {
     pub reference_currency: u16,
     /// Auction winners: per-address issue recipients for ISSUANCE_INSTRUCTIONS.
     pub recipients: Vec<Address>,
-    pub quantities: Vec<U256>,
+    pub units: Vec<U256>,
     /// Source chain of each winner (parallel to `recipients`); routes each issue to its chain.
     pub recipient_chains: Vec<u32>,
     /// Every target chain of the day's snapshot; each gets an ISSUANCE (empty recipients = create only).
@@ -88,8 +88,8 @@ pub struct IntexFactoryContract {
     pub notify_head: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 25)]
     pub notify_tail: outbe_primitives::storage::dsl::Value<u32>,
-    /// Queue index -> a Called series' word packed with its call time: the group has left the
-    /// index, so the notice carries its own.
+    /// Queue index -> a Called series' word packed with its call time and the router calls it
+    /// was refused: the group has left the index, so the notice carries its own.
     #[attribute(order = 26)]
     pub notify_at: outbe_primitives::storage::dsl::Map<u32, U256>,
 

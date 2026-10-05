@@ -1,8 +1,9 @@
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use outbe_offchain_storage::{
     AtomicWriteBatch, AtomicWriteOperation, Key, MemoryStorage, Namespace, PendingOverlayStorage,
-    ScanRequest, StorageReader, StorageWriter, Value,
+    ScanRequest, StorageError, StorageMetadata, StorageReader, StorageScope, StorageWriter,
+    StoredValue, Value, MAX_SCAN_PAGE_VALUE_BYTES,
 };
 
 #[test]
@@ -171,4 +172,150 @@ fn durable_ack_only_retires_overlay_mutations_through_its_generation() {
         b"base-after-ack",
         "after the latest ACK the overlay must fall back to the durable base"
     );
+}
+
+fn ordered_overlay_case(
+    seed: u8,
+) -> Result<(PendingOverlayStorage, BTreeMap<Key, Value>), StorageError> {
+    let base = Arc::new(MemoryStorage::new());
+    let namespace = Namespace::new("records")?;
+    let mut expected = BTreeMap::new();
+    for n in (0_u8..64).step_by(2) {
+        let key = Key::new(vec![b'p', n])?;
+        let value = Value::new(vec![n])?;
+        base.put(namespace.clone(), &key, &value)?;
+        expected.insert(key, value);
+    }
+    base.put(
+        namespace.clone(),
+        &Key::new(vec![b'q', 0])?,
+        &Value::new(vec![0])?,
+    )?;
+    let overlay = PendingOverlayStorage::new(base.clone(), base);
+    let mut batch = AtomicWriteBatch::new();
+    for n in 0_u8..64 {
+        let key = Key::new(vec![b'p', n])?;
+        if (n + seed).is_multiple_of(3) {
+            batch.push(AtomicWriteOperation::delete(namespace.clone(), key.clone()));
+            expected.remove(&key);
+        } else if (n + seed) % 3 == 1 {
+            let value = Value::new(vec![n, seed])?;
+            batch.push(AtomicWriteOperation::put(
+                namespace.clone(),
+                key.clone(),
+                value.clone(),
+            ));
+            expected.insert(key, value);
+        }
+    }
+    drop(overlay.stage(batch)?);
+    Ok((overlay, expected))
+}
+
+fn collect_pages(
+    overlay: &PendingOverlayStorage,
+    limit: usize,
+    after: Option<Key>,
+) -> Result<Vec<(Key, Value)>, StorageError> {
+    let namespace = Namespace::new("records")?;
+    let mut cursor = after;
+    let mut collected = Vec::new();
+    loop {
+        let page = overlay.scan_prefix(
+            namespace.clone(),
+            ScanRequest::new(b"p", cursor.as_ref(), limit)?,
+        )?;
+        assert!(page.entries.len() <= limit);
+        if let Some(next) = &page.next_after {
+            assert_eq!(Some(next), page.entries.last().map(|entry| &entry.key));
+            assert!(cursor.as_ref().is_none_or(|after| next > after));
+        }
+        collected.extend(
+            page.entries
+                .into_iter()
+                .map(|entry| (entry.key, entry.value)),
+        );
+        cursor = page.next_after;
+        if cursor.is_none() {
+            return Ok(collected);
+        }
+    }
+}
+
+fn check_reference_pagination(seed: u8) -> Result<(), StorageError> {
+    let (overlay, expected) = ordered_overlay_case(seed)?;
+    for limit in [1, 2, 7, 64] {
+        for after in [None, Some(Key::new(vec![b'p', 17])?)] {
+            let reference = expected
+                .iter()
+                .filter(|(key, _)| after.as_ref().is_none_or(|after| *key > after))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect::<Vec<_>>();
+            assert_eq!(collect_pages(&overlay, limit, after)?, reference);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn merged_pages_match_an_independent_ordered_reference_map() -> Result<(), StorageError> {
+    for seed in 0..8 {
+        check_reference_pagination(seed)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn mixed_base_and_pending_pages_count_metadata_in_the_byte_budget() -> Result<(), StorageError> {
+    let base = Arc::new(MemoryStorage::new());
+    let namespace = Namespace::new("records")?;
+    let metadata = StorageMetadata::new(BTreeMap::from([("kind".into(), "large".into())]))?;
+    // Two values alone fit exactly; their metadata must force a second page.
+    let value_len = MAX_SCAN_PAGE_VALUE_BYTES / 2;
+    let large = StoredValue::with_metadata(Value::new(vec![1; value_len])?, metadata);
+    let first = Key::new(b"a".to_vec())?;
+    let second = Key::new(b"b".to_vec())?;
+    let last = Key::new(b"c".to_vec())?;
+    base.apply_atomic(&AtomicWriteBatch::from_operations(vec![
+        AtomicWriteOperation::put_record(namespace.clone(), first.clone(), large.clone()),
+    ]))?;
+    let overlay = PendingOverlayStorage::new(base.clone(), base);
+    drop(overlay.stage(AtomicWriteBatch::from_operations(vec![
+        AtomicWriteOperation::put_record(namespace.clone(), second.clone(), large),
+        AtomicWriteOperation::put(namespace.clone(), last.clone(), Value::new(vec![3])?),
+    ]))?);
+    let page = overlay.scan_prefix(namespace.clone(), ScanRequest::new(&[], None, 10)?)?;
+    assert_eq!(page.entries.len(), 1);
+    assert_eq!(page.next_after.as_ref(), Some(&first));
+    let tail = overlay.scan_prefix(namespace, ScanRequest::new(&[], Some(&first), 10)?)?;
+    assert_eq!(tail.entries.len(), 2);
+    assert_eq!(tail.entries[0].key, second);
+    assert_eq!(tail.entries[1].key, last);
+    assert_eq!(tail.next_after, None);
+    Ok(())
+}
+
+#[test]
+fn retired_scope_filters_base_and_pending_before_deciding_continuation() -> Result<(), StorageError>
+{
+    let base = Arc::new(MemoryStorage::new());
+    let scope = StorageScope::shared("retired")?;
+    let namespace = Namespace::new("records")?.with_scope(scope.clone());
+    base.put(
+        namespace.clone(),
+        &Key::new(b"a".to_vec())?,
+        &Value::new(vec![1])?,
+    )?;
+    let overlay = PendingOverlayStorage::new(base.clone(), base);
+    let mut batch = AtomicWriteBatch::from_operations(vec![AtomicWriteOperation::put(
+        namespace.clone(),
+        Key::new(b"b".to_vec())?,
+        Value::new(vec![2])?,
+    )]);
+    batch.retire_scope(scope);
+    drop(overlay.stage(batch)?);
+    let page = overlay.scan_prefix(namespace, ScanRequest::new(&[], None, 1)?)?;
+    assert!(page.entries.is_empty());
+    assert_eq!(page.next_after, None);
+    Ok(())
 }

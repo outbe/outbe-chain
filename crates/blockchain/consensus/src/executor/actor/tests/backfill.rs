@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_fixtures::marshal::MarshalArchiveFixture;
 
 // Unique partition prefix per backfill-test marshal so the immutable
 // archives never collide between concurrent test runs.
@@ -144,12 +145,11 @@ async fn start_empty_marshal(
     commonware_consensus::marshal::resolver::handler::Handler<Digest>,
     commonware_runtime::Handle<()>,
 ) {
-    use commonware_cryptography::{bls12381::primitives::variant::MinSig, certificate::Verifier};
+    use commonware_cryptography::bls12381::primitives::variant::MinSig;
     use commonware_runtime::buffer::paged::CacheRef;
-    use commonware_storage::archive::immutable;
     use std::num::{NonZeroU16, NonZeroU64, NonZeroUsize};
 
-    use crate::hybrid::{HybridScheme, HybridSchemeProvider};
+    use crate::hybrid::HybridSchemeProvider;
 
     let page_cache = CacheRef::from_pooler(
         &context,
@@ -162,55 +162,18 @@ async fn start_empty_marshal(
     let replay_buffer = NonZeroUsize::new(1024).expect("non-zero replay buffer");
     let write_buffer = NonZeroUsize::new(1024).expect("non-zero write buffer");
 
-    let finalizations_archive = immutable::Archive::init(
-        context.child("marshal_finalizations"),
-        immutable::Config {
-            metadata_partition: format!("{partition_prefix}-finalizations-metadata"),
-            freezer_table_partition: format!("{partition_prefix}-finalizations-freezer-table"),
-            freezer_table_initial_size: 64,
-            freezer_table_resize_frequency: 10,
-            freezer_table_resize_chunk_size: 10,
-            freezer_key_partition: format!("{partition_prefix}-finalizations-freezer-key"),
-            freezer_key_page_cache: page_cache.clone(),
-            freezer_value_partition: format!("{partition_prefix}-finalizations-freezer-value"),
-            freezer_value_target_size: 1024,
-            freezer_value_compression: None,
-            ordinal_partition: format!("{partition_prefix}-finalizations-ordinal"),
-            items_per_section,
-            codec_config: HybridScheme::<MinSig>::certificate_codec_config_unbounded(),
-            replay_buffer,
-            freezer_key_write_buffer: write_buffer,
-            freezer_value_write_buffer: write_buffer,
-            ordinal_write_buffer: write_buffer,
-        },
-    )
-    .await
-    .expect("finalizations archive should initialize");
+    let archive_fixture = MarshalArchiveFixture {
+        partition_prefix: &partition_prefix,
+        page_cache: &page_cache,
+        items_per_section,
+        replay_buffer,
+        write_buffer,
+    };
 
-    let blocks_archive = immutable::Archive::init(
-        context.child("marshal_blocks"),
-        immutable::Config {
-            metadata_partition: format!("{partition_prefix}-blocks-metadata"),
-            freezer_table_partition: format!("{partition_prefix}-blocks-freezer-table"),
-            freezer_table_initial_size: 64,
-            freezer_table_resize_frequency: 10,
-            freezer_table_resize_chunk_size: 10,
-            freezer_key_partition: format!("{partition_prefix}-blocks-freezer-key"),
-            freezer_key_page_cache: page_cache.clone(),
-            freezer_value_partition: format!("{partition_prefix}-blocks-freezer-value"),
-            freezer_value_target_size: 1024,
-            freezer_value_compression: None,
-            ordinal_partition: format!("{partition_prefix}-blocks-ordinal"),
-            items_per_section,
-            codec_config: (),
-            replay_buffer,
-            freezer_key_write_buffer: write_buffer,
-            freezer_value_write_buffer: write_buffer,
-            ordinal_write_buffer: write_buffer,
-        },
-    )
-    .await
-    .expect("blocks archive should initialize");
+    let (finalizations_archive, blocks_archive) = archive_fixture
+        .open(&context)
+        .await
+        .expect("marshal archives should initialize");
 
     let (actor, mailbox, _) = commonware_consensus::marshal::core::Actor::init(
         context.child("marshal"),
@@ -292,9 +255,11 @@ fn run_backfill_fails_fast_when_marshal_missing_finalized_block() {
             let (actor, _mailbox) = super::ExecutorActor::new(
                 context.child("exec"),
                 engine,
-                genesis,
-                0,
-                genesis,
+                crate::executor::actor::RecoveredFinalizedState {
+                    genesis_hash: genesis,
+                    last_finalized_height: 0,
+                    last_finalized_hash: genesis,
+                },
                 projection_readiness,
                 None,
             );

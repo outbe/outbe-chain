@@ -120,16 +120,17 @@ impl ApplicationShared {
         let scheme = self.certificate_scheme_provider.scoped(epoch)?;
         let ordered = self.committee_provider.ordered_committee(epoch)?;
         let encoded: alloy_primitives::Bytes = finalization.encode().into();
-        match crate::finalization::resolver::build_finalization_record_from_recovered(
-            epoch.get(),
-            finalization.proposal.round.view().get(),
-            finalization.proposal.parent.get(),
-            parent_height,
-            finalization.proposal.payload.0,
-            ordered.as_ref(),
-            &finalization.certificate,
-            encoded,
-            scheme.as_ref(),
+        match crate::finalization::resolver::build_recovered_finalization_record(
+            crate::finalization::resolver::RecoveredFinalizedBlock::from_proposal(
+                parent_height,
+                &finalization.proposal,
+            ),
+            crate::finalization::resolver::RecoveredFinalizationMaterial {
+                ordered_committee: ordered.as_ref(),
+                certificate: &finalization.certificate,
+                encoded_certificate: encoded,
+                scheme: scheme.as_ref(),
+            },
         ) {
             Ok(record) => Some(record),
             Err(error) => {

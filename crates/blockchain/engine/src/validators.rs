@@ -183,48 +183,28 @@ pub fn read_local_tee_runtime_admission_from_state(
     }
 
     if let Some(validator) = identity.validator {
-        let Some(validator_binding) = registry
-            .validator_enclave_binding_v1(validator)
-            .map_err(|error| eyre::eyre!("read local validator TEE binding: {error}"))?
-        else {
-            return Ok(LocalTeeRuntimeAdmissionV1::Rejected(
-                LocalTeeRuntimeRejectionV1::MissingBinding,
-            ));
-        };
-        if validator_binding.node_id_hash != node_binding.node_id_hash
-            || validator_binding.enclave_id != node_binding.enclave_id
-            || validator_binding.binding_id != node_binding.binding_id
+        if let Some(rejection) =
+            read_local_validator_tee_rejection(&registry, storage, &node_binding, validator)?
         {
-            return Ok(LocalTeeRuntimeAdmissionV1::Rejected(
-                LocalTeeRuntimeRejectionV1::ValidatorBindingMismatch,
-            ));
-        }
-        let validator_set = outbe_validatorset::contract::ValidatorSet::new(storage);
-        if validator_set
-            .get_validator(validator)?
-            .is_some_and(|record| record.status == outbe_validatorset::runtime::status::JAILED)
-        {
-            return Ok(LocalTeeRuntimeAdmissionV1::Rejected(
-                LocalTeeRuntimeRejectionV1::ValidatorJailed,
-            ));
+            return Ok(LocalTeeRuntimeAdmissionV1::Rejected(rejection));
         }
     }
 
     if !registry.binding_code_admitted_at_v1(&node_binding, context.block_number)? {
-        return Ok(LocalTeeRuntimeAdmissionV1::Rejected(
+        Ok(LocalTeeRuntimeAdmissionV1::Rejected(
             LocalTeeRuntimeRejectionV1::RetiredEnclave,
-        ));
-    }
-    if node_binding.valid_until <= context.timestamp {
-        return Ok(LocalTeeRuntimeAdmissionV1::Rejected(
+        ))
+    } else if node_binding.valid_until <= context.timestamp {
+        Ok(LocalTeeRuntimeAdmissionV1::Rejected(
             LocalTeeRuntimeRejectionV1::Expired {
                 valid_until: node_binding.valid_until,
             },
-        ));
+        ))
+    } else {
+        Ok(LocalTeeRuntimeAdmissionV1::Ready {
+            valid_until: node_binding.valid_until,
+        })
     }
-    Ok(LocalTeeRuntimeAdmissionV1::Ready {
-        valid_until: node_binding.valid_until,
-    })
 }
 
 /// Reads the ordinary ValidatorSet reshare target after `CycleTick` has already
@@ -631,6 +611,34 @@ fn read_waiting_scheduled_updates_at_latest(
         }
     }
     Ok(scheduled)
+}
+
+fn read_local_validator_tee_rejection(
+    registry: &outbe_teeregistry::TeeRegistry<'_>,
+    storage: StorageHandle<'_>,
+    node_binding: &outbe_teeregistry::NodeEnclaveBindingV1,
+    validator: Address,
+) -> Result<Option<LocalTeeRuntimeRejectionV1>> {
+    let Some(validator_binding) = registry
+        .validator_enclave_binding_v1(validator)
+        .map_err(|error| eyre::eyre!("read local validator TEE binding: {error}"))?
+    else {
+        return Ok(Some(LocalTeeRuntimeRejectionV1::MissingBinding));
+    };
+    if validator_binding.node_id_hash != node_binding.node_id_hash
+        || validator_binding.enclave_id != node_binding.enclave_id
+        || validator_binding.binding_id != node_binding.binding_id
+    {
+        return Ok(Some(LocalTeeRuntimeRejectionV1::ValidatorBindingMismatch));
+    }
+    let validator_set = outbe_validatorset::contract::ValidatorSet::new(storage);
+    if validator_set
+        .get_validator(validator)?
+        .is_some_and(|record| record.status == outbe_validatorset::runtime::status::JAILED)
+    {
+        return Ok(Some(LocalTeeRuntimeRejectionV1::ValidatorJailed));
+    }
+    Ok(None)
 }
 
 #[cfg(test)]

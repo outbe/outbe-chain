@@ -113,6 +113,13 @@ impl<C: commonware_runtime::Clock> AncestryReader for MarshalAncestryReader<C> {
     }
 }
 
+/// Round fallback and timeout for one ancestry lookup.
+#[derive(Clone, Copy)]
+pub(crate) struct AncestryLookupPolicy {
+    pub(crate) round: Option<Round>,
+    pub(crate) timeout: Duration,
+}
+
 /// Build the production [`AncestryReader`] adapter backed by the marshal mailbox.
 ///
 /// The returned reader is short-lived - one propose/verify boundary resolution.
@@ -122,10 +129,10 @@ pub(crate) fn marshal_ancestry_reader<C: commonware_runtime::Clock>(
     marshal: MarshalMailbox,
     block_cache: BlockCache,
     readiness: AncestryReadiness,
-    round: Option<Round>,
-    timeout: Duration,
+    policy: AncestryLookupPolicy,
     clock: C,
 ) -> impl AncestryReader {
+    let AncestryLookupPolicy { round, timeout } = policy;
     MarshalAncestryReader {
         marshal: Some(marshal),
         block_cache,

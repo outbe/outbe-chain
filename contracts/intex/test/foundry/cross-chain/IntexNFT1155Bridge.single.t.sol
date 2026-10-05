@@ -61,7 +61,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         tokenB.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
 
         // Mint initial tokens to user on chain A
-        tokenA.issue(user, AMOUNT, SERIES_ID);
+        tokenA.issueIntex(user, AMOUNT, SERIES_ID);
     }
 
     /// @dev Deliver the packet the source adapter just handed the bridge to `dst` as if from `src` on A.
@@ -95,7 +95,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
 
     function test_send() public {
         SendParam memory sendParam =
-            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenId: TOKEN_ID, amount: AMOUNT});
+            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenId: TOKEN_ID, units: AMOUNT});
 
         uint256 fee = adapterA.quoteSend(sendParam);
 
@@ -119,7 +119,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         uint256 sendAmount = AMOUNT / 2;
 
         SendParam memory sendParam = SendParam({
-            dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenId: TOKEN_ID, amount: sendAmount
+            dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenId: TOKEN_ID, units: sendAmount
         });
 
         uint256 fee = adapterA.quoteSend(sendParam);
@@ -136,7 +136,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         address recipient = address(0x2);
 
         SendParam memory sendParam = SendParam({
-            dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(recipient))), tokenId: TOKEN_ID, amount: AMOUNT
+            dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(recipient))), tokenId: TOKEN_ID, units: AMOUNT
         });
 
         uint256 fee = adapterA.quoteSend(sendParam);
@@ -152,7 +152,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
     function test_roundtrip() public {
         // Send A -> B
         SendParam memory sendParamAB =
-            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenId: TOKEN_ID, amount: AMOUNT});
+            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenId: TOKEN_ID, units: AMOUNT});
 
         uint256 feeAB = adapterA.quoteSend(sendParamAB);
         vm.prank(user);
@@ -163,7 +163,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
 
         // Send B -> A
         SendParam memory sendParamBToA =
-            SendParam({dstChainId: A_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenId: TOKEN_ID, amount: AMOUNT});
+            SendParam({dstChainId: A_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenId: TOKEN_ID, units: AMOUNT});
 
         uint256 feeBToA = adapterB.quoteSend(sendParamBToA);
         vm.prank(user);
@@ -176,7 +176,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
 
     function test_revert_invalid_receiver() public {
         SendParam memory sendParam =
-            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(0), tokenId: TOKEN_ID, amount: AMOUNT});
+            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(0), tokenId: TOKEN_ID, units: AMOUNT});
 
         vm.expectRevert(IIntexNFT1155Bridge.InvalidReceiver.selector);
         adapterA.quoteSend(sendParam);
@@ -187,7 +187,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
             dstChainId: B_CHAIN_ID,
             to: bytes32(uint256(uint160(user))),
             tokenId: TOKEN_ID,
-            amount: AMOUNT + 1 // More than balance
+            units: AMOUNT + 1 // More than balance
         });
 
         uint256 fee = adapterA.quoteSend(sendParam);
@@ -203,7 +203,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
 
         // Send tokens A -> B
         SendParam memory sendParam =
-            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenId: TOKEN_ID, amount: AMOUNT});
+            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenId: TOKEN_ID, units: AMOUNT});
 
         uint256 fee = adapterA.quoteSend(sendParam);
         vm.prank(user);
@@ -264,10 +264,10 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         bytes14 failSeries = "20260402-USD-U";
         uint256 failTokenId = uint256(uint112(failSeries));
         tokenA.createSeries(CreateSeriesLib.params(failDay, ISSUED_UNITS, 0));
-        tokenA.issue(user, AMOUNT, failSeries);
+        tokenA.issueIntex(user, AMOUNT, failSeries);
 
         SendParam memory sendParam = SendParam({
-            dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenId: failTokenId, amount: AMOUNT
+            dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenId: failTokenId, units: AMOUNT
         });
         uint256 fee = adapterA.quoteSend(sendParam);
         vm.prank(user);
@@ -307,10 +307,10 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         bytes14 failSeries = "20260402-USD-U";
         uint256 failTokenId = uint256(uint112(failSeries));
         tokenA.createSeries(CreateSeriesLib.params(failDay, ISSUED_UNITS, 0));
-        tokenA.issue(user, AMOUNT, failSeries);
+        tokenA.issueIntex(user, AMOUNT, failSeries);
 
         SendParam memory sendParam = SendParam({
-            dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenId: failTokenId, amount: AMOUNT
+            dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenId: failTokenId, units: AMOUNT
         });
         uint256 fee = adapterA.quoteSend(sendParam);
         vm.prank(user);

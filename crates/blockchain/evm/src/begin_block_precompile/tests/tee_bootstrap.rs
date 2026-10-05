@@ -218,14 +218,16 @@ fn tee_payload_v1(
         })
         .collect();
     let mut payload = TeeBootstrapV2 {
-        policy,
-        committee_snapshot_hash,
-        committee_snapshot_block: block_number,
-        key_epoch: 0,
-        tribute_offer_epoch: 0,
-        dkg_transcript_hash: B256::ZERO,
-        tribute_offer_public_key: B256::repeat_byte(0x23),
-        tribute_offer_group_public_key: Bytes::from(vec![0x24; 96]),
+        authority: outbe_primitives::tee_bootstrap_v2::TeeBootstrapAuthorityV2 {
+            policy,
+            committee_snapshot_hash,
+            committee_snapshot_block: block_number,
+            key_epoch: 0,
+            tribute_offer_epoch: 0,
+            dkg_transcript_hash: B256::ZERO,
+            tribute_offer_public_key: B256::repeat_byte(0x23),
+            tribute_offer_group_public_key: Bytes::from(vec![0x24; 96]),
+        },
         collateral_pool,
         participants,
         committee_signatures,
@@ -239,11 +241,11 @@ fn tee_payload_v1(
 
 fn run_bootstrap_v1(provider: &mut HashMapStorageProvider, payload: TeeBootstrapV2) -> Result<()> {
     let policy_schedule = TeePolicyScheduleV1 {
-        chain_id: payload.policy.chain_id,
-        genesis_hash: payload.policy.genesis_hash,
+        chain_id: payload.authority.policy.chain_id,
+        genesis_hash: payload.authority.policy.genesis_hash,
         entries: vec![TeePolicyScheduleEntryV1 {
-            activation_height: payload.policy.activation_height,
-            policy: payload.policy.clone(),
+            activation_height: payload.authority.policy.activation_height,
+            policy: payload.authority.policy.clone(),
         }],
     };
     let activation = crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::Active(
@@ -252,7 +254,7 @@ fn run_bootstrap_v1(provider: &mut HashMapStorageProvider, payload: TeeBootstrap
                 manifest: TeeAttestationManifestV1 {
                     activation_height: 1,
                     policy_schedule_hash: policy_schedule.schedule_hash().unwrap(),
-                    resource_schedule_hash: payload.policy.resource_schedule_hash,
+                    resource_schedule_hash: payload.authority.policy.resource_schedule_hash,
                 },
                 policy_schedule,
             },
@@ -265,9 +267,11 @@ fn run_bootstrap_v1(provider: &mut HashMapStorageProvider, payload: TeeBootstrap
             &input,
             SYSTEM_ADDRESS,
             U256::ZERO,
-            None,
-            None,
-            &activation,
+            DispatchAuthorities {
+                body_readers: None,
+                ocomp_fork_install: None,
+                tee_attestation_v1: &activation,
+            },
         )
         .map(|_| ())
     })

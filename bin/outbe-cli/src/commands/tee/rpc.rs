@@ -12,8 +12,10 @@ use alloy_sol_types::SolValue;
 use eyre::Result;
 use eyre::WrapErr;
 
-use outbe_operator::rpc::FinalityRpc;
-use outbe_operator::rpc::RenewalRpc;
+use outbe_operator::rpc::{
+    ChainRpc, FinalityRpc, FinalizedStateRpc, RegistryRpc, RelayPreparationRpc, RelayRpc,
+    TransactionReceiptRpc,
+};
 
 pub(super) struct CliFinalityRpc<'a, R>(pub(super) &'a R);
 
@@ -60,14 +62,16 @@ pub(super) async fn refresh_call_context(
     .map_err(eyre::Report::msg)
 }
 
-impl<R: Rpc + Sync> FinalityRpc for CliFinalityRpc<'_, R> {
+impl<R: Rpc + Sync> TransactionReceiptRpc for CliFinalityRpc<'_, R> {
     async fn transaction_receipt(
         &self,
         transaction_hash: &str,
     ) -> Result<Option<serde_json::Value>> {
         self.0.eth_get_transaction_receipt(transaction_hash).await
     }
+}
 
+impl<R: Rpc + Sync> FinalityRpc for CliFinalityRpc<'_, R> {
     async fn logs(
         &self,
         address: Address,
@@ -83,7 +87,9 @@ impl<R: Rpc + Sync> FinalityRpc for CliFinalityRpc<'_, R> {
     async fn block_by_number(&self, block: u64) -> Result<serde_json::Value> {
         self.0.eth_get_block_by_number(block).await
     }
+}
 
+impl<R: Rpc + Sync> FinalizedStateRpc for CliFinalityRpc<'_, R> {
     async fn finalized_block(&self) -> Result<serde_json::Value> {
         self.0.eth_get_finalized_block().await
     }
@@ -93,11 +99,13 @@ impl<R: Rpc + Sync> FinalityRpc for CliFinalityRpc<'_, R> {
     }
 }
 
-impl<R: Rpc + Sync> RenewalRpc for CliFinalityRpc<'_, R> {
+impl<R: Rpc + Sync> ChainRpc for CliFinalityRpc<'_, R> {
     async fn chain_id(&self) -> Result<u64> {
         self.0.eth_chain_id().await
     }
+}
 
+impl<R: Rpc + Sync> RelayPreparationRpc for CliFinalityRpc<'_, R> {
     async fn gas_price(&self) -> Result<U256> {
         self.0.eth_gas_price().await
     }
@@ -109,11 +117,15 @@ impl<R: Rpc + Sync> RenewalRpc for CliFinalityRpc<'_, R> {
     async fn balance(&self, address: Address) -> Result<U256> {
         self.0.eth_get_balance(address).await
     }
+}
 
+impl<R: Rpc + Sync> RelayRpc for CliFinalityRpc<'_, R> {
     async fn send_raw_transaction(&self, raw_transaction: &[u8]) -> Result<String> {
         self.0.eth_send_raw_transaction(raw_transaction).await
     }
+}
 
+impl<R: Rpc + Sync> RegistryRpc for CliFinalityRpc<'_, R> {
     async fn tee_renewal_schedule_v1(
         &self,
     ) -> Result<outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1> {

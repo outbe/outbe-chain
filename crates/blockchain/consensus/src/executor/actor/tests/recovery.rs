@@ -14,9 +14,11 @@ fn recovered_forkchoice_attempt_sends_exact_finalized_identity_without_attribute
         let (actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
-            genesis,
-            recovered.block_number,
-            recovered.block_hash,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: recovered.block_number,
+                last_finalized_hash: recovered.block_hash,
+            },
             projection_readiness,
             None,
         );
@@ -68,9 +70,11 @@ fn recovered_forkchoice_attempt_rejects_anchor_mismatch_before_engine_io() {
         let (actor, _mailbox) = super::ExecutorActor::new(
             context,
             engine,
-            genesis,
-            recovered.block_number,
-            recovered.block_hash,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: recovered.block_number,
+                last_finalized_hash: recovered.block_hash,
+            },
             projection_readiness,
             None,
         );
@@ -100,9 +104,11 @@ fn recovered_forkchoice_attempt_repeats_identical_state_after_syncing() {
         let (actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
-            genesis,
-            recovered.block_number,
-            recovered.block_hash,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: recovered.block_number,
+                last_finalized_hash: recovered.block_hash,
+            },
             projection_readiness,
             None,
         );
@@ -157,9 +163,11 @@ fn recovered_forkchoice_attempt_distinguishes_payload_invalid_from_hard_error() 
         let (actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
-            genesis,
-            recovered.block_number,
-            recovered.block_hash,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: recovered.block_number,
+                last_finalized_hash: recovered.block_hash,
+            },
             projection_readiness,
             None,
         );
@@ -212,9 +220,11 @@ fn recovered_forkchoice_attempt_can_repeat_after_lost_response() {
         let (actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
-            genesis,
-            recovered.block_number,
-            recovered.block_hash,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: recovered.block_number,
+                last_finalized_hash: recovered.block_hash,
+            },
             projection_readiness,
             None,
         );

@@ -38,10 +38,11 @@ const GEM_LOAD_MINOR: u128 = 100_003;
 const REFERENCE_BYTE: u8 = b'U';
 /// `GemTypes::Merchant`.
 const MERCHANT_GEM_TYPE: u8 = 5;
-/// `GemState::Issued` / `Called` / `Settled`.
+/// `GemState::Issued` / `Called` / `Settled` / `Forfeited`; the last is read-time only.
 const ISSUED: u8 = 0;
 const CALLED: u8 = 2;
 const SETTLED: u8 = 3;
+const FORFEITED_STATE: u8 = 4;
 const HOLDER_SEED: u64 = 0x0e6e_0000;
 /// Issuance mints through a message, not inside the issuing call.
 const ISSUANCE_TIMEOUT_SECS: u64 = 180;
@@ -148,7 +149,7 @@ fn park_units(world: &mut World) {
 
     let call = eth::IGemFactory::issueGemPositionCall {
         sourceIntexId: series,
-        amount: U256::from(PARKED_UNITS),
+        units: U256::from(PARKED_UNITS),
     };
     // The precompile reports a decode failure rather than the collection's own
     // revert, so simulate first: that keeps the real reason in the failure.
@@ -182,7 +183,7 @@ fn position_holds_capacity(world: &mut World) {
     let position = read_position(world);
 
     assert_eq!(
-        position.remainingCapacity,
+        position.remainingCapacityMinor,
         U256::from(PROMIS_LOAD_MINOR) * U256::from(PARKED_UNITS),
         "the position did not take the parked units' whole load as capacity"
     );
@@ -224,7 +225,7 @@ fn issue_five_gems(world: &mut World) {
             &eth::IGemFactory::issueGemCall {
                 positionId: position_id,
                 owner: owner_address(index),
-                promisLoad: U256::from(GEM_LOAD_MINOR),
+                promisLoadMinor: U256::from(GEM_LOAD_MINOR),
             },
             None,
         )
@@ -265,7 +266,7 @@ fn issue_five_gems(world: &mut World) {
         height,
     )
     .expect("position at the pool baseline");
-    assert_eq!(position.remainingCapacity, unissued_capacity());
+    assert_eq!(position.remainingCapacityMinor, unissued_capacity());
     let pool = eth::read_call_at(
         &url,
         addresses::PROMIS_LIMIT_ADDR,
@@ -278,11 +279,11 @@ fn issue_five_gems(world: &mut World) {
 
 impl Lifecycle for GemLifecycle {
     fn floor(&self, world: &World) -> U256 {
-        read_gem(world, gem(world, 0)).floorPrice
+        read_gem(world, gem(world, 0)).floorPriceMinor
     }
 
     fn call_price(&self, world: &World) -> U256 {
-        read_gem(world, gem(world, 0)).callPrice
+        read_gem(world, gem(world, 0)).callPriceMinor
     }
 
     fn terms(&self, world: &World, item: &Item) -> Terms {
@@ -291,15 +292,15 @@ impl Lifecycle for GemLifecycle {
         };
         let data = read_gem(world, *id);
         Terms {
-            entry_price: data.entryPrice,
-            load: data.promisLoad,
+            entry_price: data.entryPriceMinor,
+            load: data.promisLoadMinor,
         }
     }
 
     fn assert_issued(&self, world: &World) {
         let position = read_position(world);
         assert_eq!(
-            position.remainingCapacity,
+            position.remainingCapacityMinor,
             unissued_capacity(),
             "issuing the gems did not drain exactly their load from the position"
         );
@@ -324,7 +325,7 @@ impl Lifecycle for GemLifecycle {
                 data.gemType, MERCHANT_GEM_TYPE,
                 "a gem issued from a parked position is a Merchant gem"
             );
-            assert_eq!(data.promisLoad, U256::from(GEM_LOAD_MINOR));
+            assert_eq!(data.promisLoadMinor, U256::from(GEM_LOAD_MINOR));
             assert_eq!(
                 (data.issuanceCurrency, data.referenceCurrency),
                 (position.issuanceCurrency, position.referenceCurrency),
@@ -332,12 +333,20 @@ impl Lifecycle for GemLifecycle {
             );
             // The anti-dilution floor: never below the Intex the position came from.
             assert!(
-                data.entryPrice >= position.sourceEntryPrice,
+                data.entryPriceMinor >= position.sourceEntryPriceMinor,
                 "gem {id} priced below the Intex it was parked from"
             );
             assert_eq!(
-                (data.entryPrice, data.floorPrice, data.callPrice),
-                (first.entryPrice, first.floorPrice, first.callPrice),
+                (
+                    data.entryPriceMinor,
+                    data.floorPriceMinor,
+                    data.callPriceMinor
+                ),
+                (
+                    first.entryPriceMinor,
+                    first.floorPriceMinor,
+                    first.callPriceMinor
+                ),
                 "every gem must share one set of terms"
             );
         }
@@ -382,7 +391,11 @@ impl Lifecycle for GemLifecycle {
         let url = world_url(world);
         let id = gem(world, FORFEITED);
         let called = read_gem(world, id);
-        assert_eq!(called.state, CALLED);
+        assert!(
+            matches!(called.state, CALLED | FORFEITED_STATE),
+            "gem {id} reads state {} after its call",
+            called.state
+        );
         let notice = u64::from(called.callNoticePeriod);
         assert!(
             notice <= EXPIRY_BUCKET_SECS,
@@ -395,6 +408,20 @@ impl Lifecycle for GemLifecycle {
             || format!("gem {id} never reached its call deadline {notice_end}"),
             || head_time(world) >= notice_end,
         );
+        match eth::read_call(
+            &url,
+            addresses::GEM_ADDR,
+            &eth::IGem::getGemStatusCall { gemId: id },
+        ) {
+            Some(lapsed) => assert_eq!(
+                lapsed.state, FORFEITED_STATE,
+                "gem {id} past its call deadline must read Forfeited until the sweep burns it"
+            ),
+            None => assert!(
+                gem_count(&url, owner_address(FORFEITED)).is_zero(),
+                "gem {id} is unreadable past its call deadline but was not burned"
+            ),
+        }
         eth::send_call(
             &url,
             addresses::GEM_ADDR,
@@ -501,7 +528,7 @@ fn position_returns_capacity(world: &mut World) {
                 },
             )
             .expect("the position reads back after its deadline")
-            .remainingCapacity
+            .remainingCapacityMinor
             .is_zero()
         },
     );
@@ -534,11 +561,11 @@ fn assert_expiry_returns(world: &World, height: u64, require_position_expiry: bo
         height,
     )
     .expect("finalized position after return");
-    let position_expired = position.remainingCapacity.is_zero();
+    let position_expired = position.remainingCapacityMinor.is_zero();
     if require_position_expiry {
         assert!(position_expired, "position retained unissued capacity");
     } else if !position_expired {
-        assert_eq!(position.remainingCapacity, unissued_capacity());
+        assert_eq!(position.remainingCapacityMinor, unissued_capacity());
     }
     assert_single_event(
         &url,
@@ -548,7 +575,7 @@ fn assert_expiry_returns(world: &World, height: u64, require_position_expiry: bo
         eth::IGem::GemExpired {
             gemId: gem(world, FORFEITED),
             owner: owner_address(FORFEITED),
-            promisLoad: U256::from(GEM_LOAD_MINOR),
+            promisLoadMinor: U256::from(GEM_LOAD_MINOR),
         },
     );
     let returned = if position_expired {
@@ -561,7 +588,7 @@ fn assert_expiry_returns(world: &World, height: u64, require_position_expiry: bo
                 positionId: position_id,
                 merchant,
                 sourceIntexId: source_series(world),
-                returnedCapacity: unissued_capacity(),
+                returnedCapacityMinor: unissued_capacity(),
             },
         );
         U256::from(GEM_LOAD_MINOR) + unissued_capacity()

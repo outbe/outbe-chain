@@ -13,6 +13,9 @@ mod rocks_codec;
 mod session;
 mod types;
 
+#[cfg(feature = "test-utils")]
+mod test_utils;
+
 pub use config::{RocksDbConfig, StorageBackend, StorageConfig};
 pub use day_databases::DayDatabases;
 pub use day_directory::DayDirectory;

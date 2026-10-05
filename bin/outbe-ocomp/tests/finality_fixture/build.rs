@@ -351,9 +351,16 @@ fn build_finalized_intent_proof_fixture(
                 accounts,
                 storage,
                 proofs,
+                storage_reads: (),
+                block_lookup: outbe_node::test_utils::NoBlockLookup,
             },
-            block_number: finalized.block.number(),
-            block_hash: finalized.header_hash,
+            block: outbe_node::test_utils::ExactBlockLookup {
+                identity: alloy_eips::BlockNumHash::new(
+                    finalized.block.number(),
+                    finalized.header_hash,
+                ),
+            },
+            exact_hash_message: "opening builder must request the exact finalized block hash",
         }
     });
     (finalized, opening_provider)

@@ -23,7 +23,7 @@ import {
 interface ITargetRouterShims {
     function relayBidsToOutbe(uint32 worldwideDay) external;
     function reportBidsRemaining(uint32 worldwideDay) external;
-    function issueOne(bytes14 seriesId, address to, uint256 quantity) external;
+    function issueOne(bytes14 seriesId, address to, uint256 units) external;
     function applyMarkOne(bytes14 seriesId, uint32 calledAt) external;
     function routeProceedsExt(uint32 worldwideDay, uint128 amount) external;
 }
@@ -309,14 +309,20 @@ library TargetInbound {
             _applySlottedMark($, payload.seriesId);
         }
 
+        // Past its deadline the series takes no units; parking each winner could never be applied.
+        if ($.intex.readData(payload.seriesId).state == IIntexNFT1155.IntexState.Expired) {
+            _ignore(srcChainId, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, payload.seriesId, InboundReason.LATE);
+            return;
+        }
+
         uint256 recipientsLen = payload.recipients.length;
         for (uint256 i = 0; i < recipientsLen; i++) {
-            uint256 quantity = payload.quantities[i];
-            if (quantity == 0) continue;
+            uint256 units = payload.units[i];
+            if (units == 0) continue;
             address recipient = payload.recipients[i];
-            // A quantity the NFT can never issue would park an unflushable entry; acknowledge it and leave
+            // Units the NFT can never issue would park an unflushable entry; acknowledge it and leave
             // the winner unissued, so the day's other chunks can still carry a corrected allocation.
-            if (quantity > type(uint16).max) {
+            if (units > type(uint16).max) {
                 _ignore(
                     srcChainId,
                     BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
@@ -337,11 +343,11 @@ library TargetInbound {
             // Marked before the issue: a parked issuance is still this winner's one allocation.
             $.issued[payload.seriesId][recipient] = true;
             // Per-recipient self-call: a reverting receiver hook parks only that issuance, not the whole batch.
-            try ITargetRouterShims(address(this)).issueOne(payload.seriesId, recipient, quantity) {}
+            try ITargetRouterShims(address(this)).issueOne(payload.seriesId, recipient, units) {}
             catch (bytes memory reason) {
                 uint256 idx = $.nextParkedIssuanceIdx++;
                 $.parkedIssuance[idx] = ParkedIssuance({
-                    seriesId: payload.seriesId, recipient: recipient, quantity: quantity, exists: true, done: false
+                    seriesId: payload.seriesId, recipient: recipient, units: units, exists: true, done: false
                 });
                 emit ITargetRouter.IssuanceParked(idx, payload.seriesId, recipient, reason);
             }

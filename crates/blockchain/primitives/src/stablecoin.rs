@@ -348,10 +348,7 @@ fn parse_canonical_address(value: &str) -> Result<Address, StablecoinCodecError>
 fn parse_canonical_decimal(value: &str, reject_zero: bool) -> Result<U256, StablecoinCodecError> {
     let bytes = value.as_bytes();
     let canonical = value == "0"
-        || (!bytes.is_empty()
-            && bytes[0].is_ascii_digit()
-            && bytes[0] != b'0'
-            && bytes.iter().all(u8::is_ascii_digit));
+        || (!bytes.is_empty() && bytes[0] != b'0' && bytes.iter().all(u8::is_ascii_digit));
     if !canonical {
         return Err(StablecoinCodecError::InvalidJson);
     }

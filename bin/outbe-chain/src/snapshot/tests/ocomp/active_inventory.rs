@@ -27,9 +27,9 @@ fn empty_native_aggregate_has_no_active_intents_without_local_job_files() {
 #[test]
 fn malformed_native_scheduler_propagates_through_inventory_without_source_writes() {
     // Current Metadosis schema places the one-slot scheduler StorageBytes
-    // immediately before the fixed OCOMP job-records mapping base slot 20.
+    // immediately before the fixed OCOMP job-records mapping base slot 19.
     // Raw corruption is test setup only; the inventory calls the owner view.
-    let scheduler_slot = U256::from(19);
+    let scheduler_slot = U256::from(18);
     for version in [1, 2] {
         for oversized in [false, true] {
             let mut owner = queued_owner(0);

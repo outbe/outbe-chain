@@ -44,7 +44,7 @@ fn finalized_delivery_wire_format_round_trips() {
         ConsensusBlock::from_sealed(SealedBlock::seal_slow(b))
     };
 
-    // Exactly what `resolver::resolve_one` builds for a Finalized delivery.
+    // Exactly what the follower resolver builds for a Finalized delivery.
     let mut wire = finalization.encode().to_vec();
     wire.extend_from_slice(block.encode().as_ref());
 

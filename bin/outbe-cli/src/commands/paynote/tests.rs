@@ -343,7 +343,7 @@ fn nod_target() -> SettlementTarget {
 fn quote_return(payable: U256) -> Vec<u8> {
     INodFactory::quoteSettlementCall::abi_encode_returns(&INodFactory::quoteSettlementReturn {
         settlementCurrency: 840,
-        payableUnits: payable,
+        paymentMinor: payable,
         snapshotId: U256::ZERO,
     })
 }
@@ -594,6 +594,50 @@ async fn deposited_note_partial_spend_and_saved_change_consume_real_proofs() {
 }
 
 #[tokio::test]
+async fn spend_artifact_has_no_bearer_secrets_note_amount_or_source_commitment() {
+    let n = note();
+    let temp = private_tempdir();
+    let mut tree = new_tree(CHAIN).unwrap();
+    tree.append(n.commitment.to_field().unwrap()).unwrap();
+    let output = spend_proof(
+        &tree_rpc_quoted(&tree, vec![event(&n, 0, tree.root(), n.amount)], U256::ONE),
+        temp.path(),
+        &n,
+        U256::ONE,
+        nod_target(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(output["source_commitment"], json!(n.commitment));
+
+    let text = fs::read_to_string(output["proof_file"].as_str().unwrap()).unwrap();
+    let artifact: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(artifact.as_object().unwrap().len(), 17);
+    for private in [
+        "source_commitment",
+        "spend_key",
+        "note_amount",
+        "proof_file",
+        "change_note",
+    ] {
+        assert!(
+            artifact.get(private).is_none(),
+            "private field {private} leaked into relay artifact"
+        );
+    }
+    for secret in [
+        format!("{:#x}", n.commitment),
+        format!("{:#x}", n.spend_key),
+        n.amount.to_string(),
+    ] {
+        assert!(
+            !text.contains(&secret),
+            "{secret} leaked into relay artifact"
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_quote_whose_units_differ_from_the_spend_never_proves() {
     let n = note();
     let temp = private_tempdir();
@@ -662,5 +706,91 @@ fn spend_proof_requires_exactly_one_settlement_target() {
         "--units",
         "2"
     ])
+    .is_err());
+    assert!(Probe::try_parse_from([
+        "outbe-cli",
+        "spend-proof",
+        "note",
+        "1",
+        "--intex",
+        "20260212-TRY-U",
+        "--units",
+        "2",
+        "--owner",
+        "0x1111111111111111111111111111111111111111"
+    ])
     .is_ok());
+    assert!(Probe::try_parse_from([
+        "outbe-cli",
+        "spend-proof",
+        "note",
+        "1",
+        "--nod",
+        "7",
+        "--owner",
+        "0x1111111111111111111111111111111111111111"
+    ])
+    .is_err());
+}
+
+/// A series has many owners, so an Intex proof binds the one whose units it pays.
+#[tokio::test]
+async fn an_intex_quote_binds_the_owner() {
+    let series = *b"20260212-TRY-U";
+    let owner = Address::repeat_byte(0x11);
+    let units = U256::from(2u64);
+    let payable = U256::from(5u64);
+    let rpc = MockRpc {
+        eth_call_map: Some(call_map(HashMap::from([(
+            (
+                INTEX_FACTORY_ADDRESS,
+                IIntexFactory::quoteSettlementCall::SELECTOR,
+            ),
+            IIntexFactory::quoteSettlementCall::abi_encode_returns(
+                &IIntexFactory::quoteSettlementReturn {
+                    settlementCurrency: 840,
+                    paymentMinor: payable,
+                    snapshotId: U256::ZERO,
+                },
+            ),
+        )]))),
+        ..Default::default()
+    };
+    let quoted = quote_settlement(
+        &rpc,
+        &note(),
+        payable,
+        SettlementTarget::Intex {
+            series,
+            owner,
+            units,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(quoted.owner, Some(owner));
+    assert_eq!(quoted.series.as_deref(), Some("20260212-TRY-U"));
+    assert_eq!(
+        quoted.context,
+        settlement_context(
+            SettlementDomain::Intex,
+            outbe_paynote::api::intex_holding_target(&series, owner),
+            units,
+            U256::ZERO,
+        )
+        .unwrap()
+    );
+}
+
+#[test]
+fn a_zero_owner_is_refused_before_proving() {
+    let target = SpendTarget {
+        nod: None,
+        gem: None,
+        intex: Some("20260212-TRY-U".into()),
+    };
+    let error = target
+        .into_settlement(Some(U256::ONE), Some(Address::ZERO))
+        .unwrap_err();
+    assert!(error.to_string().contains("zero address"), "{error}");
 }

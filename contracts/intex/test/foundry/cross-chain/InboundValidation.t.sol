@@ -306,7 +306,7 @@ contract InboundValidationTest is CrossChainTest {
         uint256[] memory amounts = new uint256[](over);
         bytes memory packet = IntexNFT1155BridgeCodec.encodeBatch(
             IntexNFT1155BridgeCodec.BatchPayload({
-                to: bytes32(uint256(uint160(address(0xCAFE)))), tokenIds: tokenIds, amounts: amounts
+                to: bytes32(uint256(uint160(address(0xCAFE)))), tokenIds: tokenIds, units: amounts
             })
         );
         vm.expectRevert(
@@ -326,7 +326,7 @@ contract InboundValidationTest is CrossChainTest {
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = 100;
         bytes memory packet = IntexNFT1155BridgeCodec.encodeMulti(
-            IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts})
+            IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, units: amounts})
         );
         vm.expectRevert(IIntexNFT1155Bridge.InvalidReceiver.selector);
         _deliverToBatch(packet);
@@ -339,7 +339,7 @@ contract InboundValidationTest is CrossChainTest {
             IntexNFT1155BridgeCodec.BODY_VERSION_V1,
             IntexNFT1155BridgeCodec.SEND,
             abi.encode(
-                IntexNFT1155BridgeCodec.BatchPayload({to: badTo, tokenIds: new uint256[](0), amounts: new uint256[](0)})
+                IntexNFT1155BridgeCodec.BatchPayload({to: badTo, tokenIds: new uint256[](0), units: new uint256[](0)})
             )
         );
         vm.expectRevert(abi.encodeWithSelector(IntexNFT1155BridgeCodec.MalformedAddress.selector, badTo));
@@ -356,7 +356,7 @@ contract InboundValidationTest is CrossChainTest {
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = 100;
         bytes memory packet = IntexNFT1155BridgeCodec.encodeMulti(
-            IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts})
+            IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, units: amounts})
         );
         vm.expectRevert(abi.encodeWithSelector(IntexNFT1155BridgeCodec.MalformedAddress.selector, badRecipient));
         _deliverToBatch(packet);
@@ -370,7 +370,7 @@ contract InboundValidationTest is CrossChainTest {
             IntexNFT1155BridgeCodec.SEND,
             abi.encode(
                 IntexNFT1155BridgeCodec.BatchPayload({
-                    to: bytes32(0), tokenIds: new uint256[](0), amounts: new uint256[](0)
+                    to: bytes32(0), tokenIds: new uint256[](0), units: new uint256[](0)
                 })
             )
         );
@@ -386,7 +386,7 @@ contract InboundValidationTest is CrossChainTest {
         uint256[] memory tokenIds = new uint256[](over);
         uint256[] memory amounts = new uint256[](over);
         bytes memory packet = IntexNFT1155BridgeCodec.encodeMulti(
-            IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts})
+            IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, units: amounts})
         );
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -411,7 +411,7 @@ contract InboundValidationTest is CrossChainTest {
             IntexNFT1155BridgeCodec.BODY_VERSION_V1,
             IntexNFT1155BridgeCodec.SEND_MULTI,
             abi.encode(
-                IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts})
+                IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, units: amounts})
             )
         );
         vm.expectRevert(IntexNFT1155BridgeCodec.ArrayLengthMismatch.selector);
@@ -433,7 +433,7 @@ contract InboundValidationTest is CrossChainTest {
         amounts[0] = amount_;
         return IntexNFT1155BridgeCodec.encodeBatch(
             IntexNFT1155BridgeCodec.BatchPayload({
-                to: bytes32(uint256(uint160(to))), tokenIds: tokenIds, amounts: amounts
+                to: bytes32(uint256(uint160(to))), tokenIds: tokenIds, units: amounts
             })
         );
     }

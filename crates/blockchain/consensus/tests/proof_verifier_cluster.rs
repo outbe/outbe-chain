@@ -41,7 +41,7 @@ use outbe_consensus::hybrid::{HybridScheme, VrfMaterialProvider};
 use outbe_consensus::proof::constants::{
     finalize_namespace, notarize_namespace, outbe_app_namespace,
 };
-use outbe_consensus::proof::{committee_set_hash_v2, CommitteeEntry, CommitteeSnapshot};
+use outbe_consensus::proof::{committee_set_hash_v2, CommitteeSnapshot};
 use outbe_consensus::proof::{
     hybrid_seed_namespace, verify_v2_proof, HybridCertificate, V2VerifyError, VrfProof,
 };
@@ -82,25 +82,11 @@ fn build_dkg(n: u32) -> Dkg {
 }
 
 fn build_snapshot(dkg: &Dkg) -> CommitteeSnapshot {
-    let committee: Vec<CommitteeEntry> = dkg
-        .pubkeys
-        .iter()
-        .enumerate()
-        .map(|(i, pk)| {
-            let mut consensus_pubkey = [0u8; 48];
-            consensus_pubkey.copy_from_slice(pk.encode().as_ref());
-            CommitteeEntry {
-                address: Address::with_last_byte((i + 1) as u8),
-                consensus_pubkey,
-            }
-        })
-        .collect();
-    CommitteeSnapshot {
-        committee,
-        vrf_material_version: VRF_MATERIAL_VERSION,
-        vrf_group_public_key_bytes: dkg.vrf_group_public_key.encode().to_vec(),
-        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
-    }
+    outbe_consensus::test_harness::committee_snapshot(
+        &dkg.pubkeys,
+        &dkg.vrf_group_public_key,
+        VRF_MATERIAL_VERSION,
+    )
 }
 
 /// Build a `(Round, Proposal, vote_message_bytes, seed_message_bytes)`
@@ -224,6 +210,31 @@ fn build_metadata(
     }
 }
 
+fn bare_certificate_rejection_error(
+    proof_kind: ParentParticipationProof,
+    expected_rejection: &str,
+) -> V2VerifyError {
+    let dkg = build_dkg(4);
+    let snapshot = build_snapshot(&dkg);
+    let parent_hash = B256::with_last_byte(0xAA);
+    let cert = build_cert(&dkg, &[0, 1, 2, 3], parent_hash, proof_kind);
+    let envelope_bytes = cert.encode().to_vec();
+    let metadata = build_metadata(&snapshot, &envelope_bytes, parent_hash, proof_kind);
+    verify_v2_proof(&metadata, &snapshot, &envelope_bytes, parent_hash)
+        .expect_err(expected_rejection)
+}
+
+fn is_non_envelope_wire_error(err: &V2VerifyError) -> bool {
+    matches!(
+        *err,
+        V2VerifyError::Decode(_)
+            | V2VerifyError::BitmapMismatch { .. }
+            | V2VerifyError::NonHybridEncoding { .. }
+            | V2VerifyError::SignerIndexOutOfRange { .. }
+            | V2VerifyError::BelowQuorum { .. }
+    )
+}
+
 // -- Happy-path baseline (sanity) -------------------------------------------
 
 #[test]
@@ -316,18 +327,7 @@ fn assembled_finalization_passes_hybrid_and_phase1_verification() {
     ));
 
     let snapshot = CommitteeSnapshot {
-        committee: participants
-            .iter()
-            .enumerate()
-            .map(|(index, public_key)| {
-                let mut consensus_pubkey = [0u8; 48];
-                consensus_pubkey.copy_from_slice(public_key.encode().as_ref());
-                CommitteeEntry {
-                    address: Address::with_last_byte((index + 1) as u8),
-                    consensus_pubkey,
-                }
-            })
-            .collect(),
+        committee: outbe_consensus::test_harness::committee_entries(participants.iter()),
         vrf_material_version: VRF_MATERIAL_VERSION,
         vrf_group_public_key_bytes: dkg.polynomial.public().encode().to_vec(),
         vrf_public_polynomial_hash: B256::ZERO,
@@ -463,35 +463,12 @@ fn proof_codec_wrong_committee_size_rejects() {
 fn non_hybrid_certificate_encoding_rejects() {
     // A bare HybridCertificate is not a valid OAV3 proof. The metadata-bound
     // verifier now expects a full Finalization/Notarization envelope.
-    let dkg = build_dkg(4);
-    let snapshot = build_snapshot(&dkg);
-    let parent_hash = B256::with_last_byte(0xAA);
-    let cert = build_cert(
-        &dkg,
-        &[0, 1, 2, 3],
-        parent_hash,
+    let err = bare_certificate_rejection_error(
         ParentParticipationProof::Finalization,
+        "bare certificate must not decode as a full proof envelope",
     );
-
-    let envelope_bytes = cert.encode().to_vec();
-
-    let metadata = build_metadata(
-        &snapshot,
-        &envelope_bytes,
-        parent_hash,
-        ParentParticipationProof::Finalization,
-    );
-    let err = verify_v2_proof(&metadata, &snapshot, &envelope_bytes, parent_hash)
-        .expect_err("bare certificate must not decode as a full proof envelope");
     assert!(
-        matches!(
-            err,
-            V2VerifyError::Decode(_)
-                | V2VerifyError::BitmapMismatch { .. }
-                | V2VerifyError::NonHybridEncoding { .. }
-                | V2VerifyError::SignerIndexOutOfRange { .. }
-                | V2VerifyError::BelowQuorum { .. }
-        ),
+        is_non_envelope_wire_error(&err),
         "bare certificate must reject as non-envelope wire shape; got {err:?}"
     );
 }
@@ -807,36 +784,11 @@ fn invalid_vrf_signature_rejects_before_state_change() {
 fn activity_envelope_notarization_rejected_as_system_tx_proof() {
     // A bare certificate is NOT a valid OAV3 system-tx proof body. Same root
     // cause as pinned for certified-notarization proof_kind.
-    let dkg = build_dkg(4);
-    let snapshot = build_snapshot(&dkg);
-    let parent_hash = B256::with_last_byte(0xAA);
-    let cert = build_cert(
-        &dkg,
-        &[0, 1, 2, 3],
-        parent_hash,
+    let err = bare_certificate_rejection_error(
         ParentParticipationProof::CertifiedNotarization,
+        "bare certificate must reject as V2 proof bytes",
     );
-    let envelope_bytes = cert.encode().to_vec();
-
-    let metadata = build_metadata(
-        &snapshot,
-        &envelope_bytes,
-        parent_hash,
-        ParentParticipationProof::CertifiedNotarization,
-    );
-    let err = verify_v2_proof(&metadata, &snapshot, &envelope_bytes, parent_hash)
-        .expect_err("bare certificate must reject as V2 proof bytes");
-    assert!(
-        matches!(
-            err,
-            V2VerifyError::Decode(_)
-                | V2VerifyError::BitmapMismatch { .. }
-                | V2VerifyError::NonHybridEncoding { .. }
-                | V2VerifyError::SignerIndexOutOfRange { .. }
-                | V2VerifyError::BelowQuorum { .. }
-        ),
-        "{err:?}"
-    );
+    assert!(is_non_envelope_wire_error(&err), "{err:?}");
 }
 
 // -- certified_notarization_proof_rejected_for_non_parent_ancestor --

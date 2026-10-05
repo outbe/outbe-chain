@@ -9,10 +9,11 @@ use outbe_primitives::{error::PrecompileError, storage::StorageHandle};
 use crate::{constants::MAX_ACTIVE_WWDS, schema::MetadosisContract};
 
 use super::{
-    codec::{LIVE_INDEX_HEADER_LEN, SCHEDULER_ENCODED_LEN},
+    live_index::{LIVE_INDEX_HEADER_LEN, LIVE_INDEX_KEY_LEN},
     vote::{
         authorize_historical_result_vote_carrier_signer, preflight_result_vote_calldata,
-        resolve_historical_result_vote_member, ResolvedHistoricalResultVoteMemberV1,
+        resolve_historical_result_vote_member, PinnedCommittee, PinnedVoteBinding,
+        ResolvedHistoricalResultVoteMemberV1,
     },
 };
 
@@ -49,6 +50,15 @@ pub enum ResultVoteCarrierAdmission {
 /// share the same job, committee, signature, and delegate decision. Consensus
 /// execution must still verify and record the vote when the transaction is
 /// actually included.
+type AdmissionResult<T> = Result<T, ResultVoteCarrierAdmission>;
+
+struct CarrierVote<'vote> {
+    vote: &'vote ResultVoteV1,
+    outer_signer: Address,
+    inclusion_height: u64,
+    limits: &'vote SchemaLimits,
+}
+
 pub fn verify_result_vote_carrier(
     storage: StorageHandle<'_>,
     calldata: &[u8],
@@ -56,41 +66,58 @@ pub fn verify_result_vote_carrier(
     inclusion_height: u64,
     limits: &SchemaLimits,
 ) -> ResultVoteCarrierAdmission {
-    let vote_bytes = match preflight_result_vote_calldata(calldata, limits) {
-        Ok(vote_bytes) => vote_bytes,
-        Err(error) => return invalid(error),
-    };
-    let vote = match ResultVoteV1::decode_canonical(vote_bytes, limits) {
-        Ok(vote) => vote,
-        Err(error) => return invalid_reason(format!("malformed canonical result vote: {error}")),
-    };
-    let contract = MetadosisContract::new(storage.clone());
-    let response = match contract.response_window_for_job(vote.job_id) {
-        Ok(response) => response,
-        Err(error) => return classify_state_error(error),
-    };
-
-    let Some(response) = response else {
-        return match live_job_for_finalized_job_id(&contract, vote.job_id, limits) {
-            Ok(Some(record)) => verify_unmaterialized_window(
-                storage,
-                &vote,
-                &record,
-                outer_signer,
-                inclusion_height,
-                limits,
-            ),
-            Ok(None) => verify_closed_window(storage, &contract, &vote, outer_signer, limits),
-            Err(error) => classify_state_error(error),
+    let decision = (|| {
+        let vote_bytes = preflight_result_vote_calldata(calldata, limits).map_err(invalid)?;
+        let vote = ResultVoteV1::decode_canonical(vote_bytes, limits)
+            .map_err(|error| invalid_reason(format!("malformed canonical result vote: {error}")))?;
+        let carrier = CarrierVote {
+            vote: &vote,
+            outer_signer,
+            inclusion_height,
+            limits,
         };
-    };
-    let record = match contract.ocomp_job_record(response.intent_id, limits) {
-        Ok(Some(record)) => record,
-        Ok(None) => return corrupt("OCOMP response index points to a missing job"),
-        Err(error) => return classify_state_error(error),
-    };
+        verify_carrier_window(storage, &carrier)
+    })();
+    decision.unwrap_or_else(|admission| admission)
+}
+
+fn verify_carrier_window(
+    storage: StorageHandle<'_>,
+    carrier: &CarrierVote<'_>,
+) -> AdmissionResult<ResultVoteCarrierAdmission> {
+    let contract = MetadosisContract::new(storage.clone());
+    let response = contract
+        .response_window_for_job(carrier.vote.job_id)
+        .map_err(classify_state_error)?;
+    if let Some(response) = response {
+        return verify_indexed_window(storage, &contract, carrier, response);
+    }
+    match live_job_for_finalized_job_id(&contract, carrier.vote.job_id, carrier.limits)
+        .map_err(classify_state_error)?
+    {
+        Some(record) => Ok(verify_unmaterialized_window(storage, carrier, &record)),
+        None => verify_closed_window(storage, &contract, carrier),
+    }
+}
+
+fn verify_indexed_window(
+    storage: StorageHandle<'_>,
+    contract: &MetadosisContract<'_>,
+    carrier: &CarrierVote<'_>,
+    response: super::index::ResponseDeadlineKey,
+) -> AdmissionResult<ResultVoteCarrierAdmission> {
+    let CarrierVote {
+        vote,
+        outer_signer,
+        inclusion_height,
+        limits,
+    } = *carrier;
+    let record = contract
+        .ocomp_job_record(response.intent_id, limits)
+        .map_err(classify_state_error)?
+        .ok_or_else(|| corrupt("OCOMP response index points to a missing job"))?;
     let Some(finalized) = record.finalized.as_ref() else {
-        return corrupt("OCOMP response-window job is not finalized");
+        return Err(corrupt("OCOMP response-window job is not finalized"));
     };
     if finalized.job_id != response.job_id
         || finalized.deadline_height != response.deadline_height
@@ -99,22 +126,19 @@ pub fn verify_result_vote_carrier(
             OcompJobStatus::VotingOpen | OcompJobStatus::Completed
         )
     {
-        return corrupt("OCOMP response index/job binding mismatch");
+        return Err(corrupt("OCOMP response index/job binding mismatch"));
     }
     let (represented_validator, member, member_count) =
-        match authorize_vote_for_record(storage, &vote, &record, outer_signer) {
-            Ok(authorized) => authorized,
-            Err(admission) => return admission,
-        };
+        authorize_vote_for_record(storage, vote, &record, outer_signer)?;
     if inclusion_height < finalized.open_height {
-        return ResultVoteCarrierAdmission::NotYetOpen {
+        return Ok(ResultVoteCarrierAdmission::NotYetOpen {
             open_height: finalized.open_height,
-        };
+        });
     }
     if inclusion_height >= finalized.deadline_height {
-        return ResultVoteCarrierAdmission::DeadlineDueUnclosed {
+        return Ok(ResultVoteCarrierAdmission::DeadlineDueUnclosed {
             deadline_height: finalized.deadline_height,
-        };
+        });
     }
     if let Err(error) = vote.verify_historical_member(
         &record.intent,
@@ -127,12 +151,12 @@ pub fn verify_result_vote_carrier(
         finalized.deadline_height,
         limits,
     ) {
-        return invalid_reason(format!("invalid result vote: {error}"));
+        return Err(invalid_reason(format!("invalid result vote: {error}")));
     }
 
-    ResultVoteCarrierAdmission::Valid {
+    Ok(ResultVoteCarrierAdmission::Valid {
         represented_validator,
-    }
+    })
 }
 
 fn live_job_for_finalized_job_id(
@@ -140,7 +164,7 @@ fn live_job_for_finalized_job_id(
     job_id: alloy_primitives::B256,
     limits: &SchemaLimits,
 ) -> Result<Option<OcompJobRecordV1>, PrecompileError> {
-    let max_scheduler_bytes = SCHEDULER_ENCODED_LEN
+    let max_scheduler_bytes = LIVE_INDEX_KEY_LEN
         .checked_mul(MAX_ACTIVE_WWDS)
         .and_then(|bytes| LIVE_INDEX_HEADER_LEN.checked_add(bytes))
         .ok_or_else(|| PrecompileError::Fatal("OCOMP live scheduler byte cap overflow".into()))?;
@@ -176,12 +200,15 @@ fn live_job_for_finalized_job_id(
 
 fn verify_unmaterialized_window(
     storage: StorageHandle<'_>,
-    vote: &ResultVoteV1,
+    carrier: &CarrierVote<'_>,
     record: &OcompJobRecordV1,
-    outer_signer: Address,
-    inclusion_height: u64,
-    limits: &SchemaLimits,
 ) -> ResultVoteCarrierAdmission {
+    let CarrierVote {
+        vote,
+        outer_signer,
+        inclusion_height,
+        limits,
+    } = *carrier;
     if record.status != OcompJobStatus::AwaitingFinality || record.terminal.is_some() {
         return corrupt("OCOMP live job without a response window is not awaiting finality");
     }
@@ -226,26 +253,19 @@ fn authorize_vote_for_record(
     record: &OcompJobRecordV1,
     outer_signer: Address,
 ) -> Result<(Address, ResolvedHistoricalResultVoteMemberV1, u16), ResultVoteCarrierAdmission> {
-    if vote.protocol_bundle_hash != record.intent.protocol_bundle_hash
-        || vote.attempt != record.intent.attempt
-        || vote.result_validator_set_epoch != record.intent.result_validator_set_epoch
-        || vote.result_committee_set_hash != record.intent.result_committee_set_hash
-        || vote.result_ocomp_binding_hash != record.intent.result_ocomp_binding_hash
-    {
+    if PinnedVoteBinding::from_prefix(&vote.prefix()) != PinnedVoteBinding::from_record(record) {
         return Err(invalid_reason(
             "result vote does not match the pinned job binding",
         ));
     }
-    let snapshot = match outbe_validatorset::read_ocomp_snapshot_extension_for_binding(
+    let snapshot = outbe_validatorset::read_ocomp_snapshot_extension_for_binding(
         storage.clone(),
         record.intent.result_validator_set_epoch,
         record.intent.result_committee_set_hash,
         record.intent.result_ocomp_binding_hash,
-    ) {
-        Ok(Some(snapshot)) => snapshot,
-        Ok(None) => return Err(corrupt("OCOMP historical snapshot is missing")),
-        Err(error) => return Err(classify_state_error(error)),
-    };
+    )
+    .map_err(classify_state_error)?
+    .ok_or_else(|| corrupt("OCOMP historical snapshot is missing"))?;
     if snapshot.member_count != record.intent.result_member_count {
         return Err(corrupt("OCOMP historical snapshot member count changed"));
     }
@@ -253,97 +273,84 @@ fn authorize_vote_for_record(
         vote.result_validator_set_epoch,
         vote.result_committee_set_hash,
     );
-    let member = match resolve_historical_result_vote_member(
+    let member = resolve_historical_result_vote_member(
         storage.clone(),
         snapshot_key,
         snapshot.member_count,
         vote.ocomp_key_hash,
         vote.key_epoch,
-    ) {
-        Ok(Some(member)) => member,
-        Ok(None) => {
-            return Err(invalid_reason(
-                "result vote member is not in the pinned snapshot",
-            ))
-        }
-        Err(error) => return Err(classify_state_error(error)),
-    };
-    let represented_validator = match authorize_historical_result_vote_carrier_signer(
+    )
+    .map_err(classify_state_error)?
+    .ok_or_else(|| invalid_reason("result vote member is not in the pinned snapshot"))?;
+    let represented_validator = authorize_historical_result_vote_carrier_signer(
         storage,
         member.validator_address,
         outer_signer,
-    ) {
-        Ok(Some(validator)) => validator,
-        Ok(None) => {
-            return Err(invalid_reason(
-                "result vote carrier signer is not authorized",
-            ))
-        }
-        Err(error) => return Err(classify_state_error(error)),
-    };
+    )
+    .map_err(classify_state_error)?
+    .ok_or_else(|| invalid_reason("result vote carrier signer is not authorized"))?;
     Ok((represented_validator, member, snapshot.member_count))
 }
 
 fn verify_closed_window(
     storage: StorageHandle<'_>,
     contract: &MetadosisContract<'_>,
-    vote: &ResultVoteV1,
-    outer_signer: Address,
-    limits: &SchemaLimits,
-) -> ResultVoteCarrierAdmission {
-    let accountability = match contract.result_vote_accountability(vote.job_id, limits) {
-        Ok(Some(accountability)) => accountability,
-        Ok(None) => return invalid_reason("result vote has no response window"),
-        Err(error) => return classify_state_error(error),
-    };
+    carrier: &CarrierVote<'_>,
+) -> AdmissionResult<ResultVoteCarrierAdmission> {
+    let CarrierVote {
+        vote,
+        outer_signer,
+        limits,
+        ..
+    } = *carrier;
+    let accountability = contract
+        .result_vote_accountability(vote.job_id, limits)
+        .map_err(classify_state_error)?
+        .ok_or_else(|| invalid_reason("result vote has no response window"))?;
     if accountability.closed_summary.is_none() {
-        return invalid_reason("result vote has no open response window");
+        return Err(invalid_reason("result vote has no open response window"));
     }
-    if vote.result_validator_set_epoch != accountability.result_validator_set_epoch
-        || vote.result_committee_set_hash != accountability.result_committee_set_hash
-        || vote.result_ocomp_binding_hash != accountability.result_ocomp_binding_hash
+    if PinnedCommittee::from_prefix(&vote.prefix())
+        != PinnedCommittee::from_accountability(&accountability)
     {
-        return invalid_reason("result vote does not match the closed response window");
+        return Err(invalid_reason(
+            "result vote does not match the closed response window",
+        ));
     }
-    let snapshot = match outbe_validatorset::read_ocomp_snapshot_extension_for_binding(
+    let snapshot = outbe_validatorset::read_ocomp_snapshot_extension_for_binding(
         storage.clone(),
         vote.result_validator_set_epoch,
         vote.result_committee_set_hash,
         vote.result_ocomp_binding_hash,
-    ) {
-        Ok(Some(snapshot)) => snapshot,
-        Ok(None) => return corrupt("OCOMP closed-window historical snapshot is missing"),
-        Err(error) => return classify_state_error(error),
-    };
+    )
+    .map_err(classify_state_error)?
+    .ok_or_else(|| corrupt("OCOMP closed-window historical snapshot is missing"))?;
     if snapshot.member_count != accountability.member_count {
-        return corrupt("OCOMP closed-window snapshot member count changed");
+        return Err(corrupt("OCOMP closed-window snapshot member count changed"));
     }
     let snapshot_key = outbe_validatorset::committee_snapshot_key(
         vote.result_validator_set_epoch,
         vote.result_committee_set_hash,
     );
-    let member = match resolve_historical_result_vote_member(
+    let member = resolve_historical_result_vote_member(
         storage.clone(),
         snapshot_key,
         snapshot.member_count,
         vote.ocomp_key_hash,
         vote.key_epoch,
-    ) {
-        Ok(Some(member)) => member,
-        Ok(None) => return invalid_reason("closed-window vote member is not in the snapshot"),
-        Err(error) => return classify_state_error(error),
-    };
-    match authorize_historical_result_vote_carrier_signer(
+    )
+    .map_err(classify_state_error)?
+    .ok_or_else(|| invalid_reason("closed-window vote member is not in the snapshot"))?;
+    let represented_validator = authorize_historical_result_vote_carrier_signer(
         storage,
         member.validator_address,
         outer_signer,
-    ) {
-        Ok(Some(represented_validator)) => ResultVoteCarrierAdmission::DeadlinePassed {
-            represented_validator,
-        },
-        Ok(None) => invalid_reason("closed-window carrier signer is not authorized"),
-        Err(error) => classify_state_error(error),
-    }
+    )
+    .map_err(classify_state_error)?
+    .ok_or_else(|| invalid_reason("closed-window carrier signer is not authorized"))?;
+    Ok(ResultVoteCarrierAdmission::DeadlinePassed {
+        represented_validator,
+    })
 }
 
 fn invalid(error: PrecompileError) -> ResultVoteCarrierAdmission {
@@ -392,6 +399,18 @@ mod tests {
         fixture_kernel::ActivationFixture,
         schema::MetadosisContract,
     };
+
+    fn signed_carrier_admission(
+        fixture: &mut ActivationFixture,
+        signer: Address,
+        height: u64,
+    ) -> ResultVoteCarrierAdmission {
+        let vote = fixture.signed_result_vote(1);
+        let calldata = encode_submit_lysis_result_calldata(&vote, &fixture.limits).unwrap();
+        StorageHandle::enter(&mut fixture.provider, |storage| {
+            verify_result_vote_carrier(storage, &calldata, signer, height, &fixture.limits)
+        })
+    }
 
     #[test]
     fn valid_full_vote_identifies_the_historical_validator() {
@@ -443,18 +462,7 @@ mod tests {
     #[test]
     fn unauthorized_outer_signer_is_permanent_carrier_invalidity() {
         let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
-        let vote = fixture.signed_result_vote(1);
-        let calldata = encode_submit_lysis_result_calldata(&vote, &fixture.limits).unwrap();
-
-        let admission = StorageHandle::enter(&mut fixture.provider, |storage| {
-            verify_result_vote_carrier(
-                storage,
-                &calldata,
-                Address::repeat_byte(0xEE),
-                14,
-                &fixture.limits,
-            )
-        });
+        let admission = signed_carrier_admission(&mut fixture, Address::repeat_byte(0xEE), 14);
 
         assert!(matches!(
             admission,
@@ -487,18 +495,7 @@ mod tests {
     #[test]
     fn pre_open_vote_still_requires_an_authorized_outer_signer() {
         let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
-        let vote = fixture.signed_result_vote(1);
-        let calldata = encode_submit_lysis_result_calldata(&vote, &fixture.limits).unwrap();
-
-        let admission = StorageHandle::enter(&mut fixture.provider, |storage| {
-            verify_result_vote_carrier(
-                storage,
-                &calldata,
-                Address::repeat_byte(0xEE),
-                11,
-                &fixture.limits,
-            )
-        });
+        let admission = signed_carrier_admission(&mut fixture, Address::repeat_byte(0xEE), 11);
 
         assert!(matches!(
             admission,

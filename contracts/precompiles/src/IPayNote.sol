@@ -10,7 +10,7 @@ pragma solidity ^0.8.0;
 /// are prohibited, so Merkle membership attests both the asset and the amount.
 ///
 /// Spending is deliberately **not** on this interface. It consumes a frozen
-/// `outbe.paynote`, version 1.1.0, UltraHonkKeccak proof and is exposed only as
+/// `outbe.paynote`, version 1.3.0, UltraHonkKeccak proof and is exposed only as
 /// the in-process Rust API `outbe_paynote::api::consume`, for integration by
 /// other precompile modules.
 interface IPayNote {
@@ -75,8 +75,8 @@ interface IPayNote {
     /// @param asset The spent note's bound ERC20 (indexed).
     /// @param context Settlement statement bound by the proof (indexed).
     /// @param nullifier The spent nullifier (indexed).
-    /// @param spendAmount Units released by the spend.
-    event NoteUsed(address indexed asset, bytes32 indexed context, bytes32 indexed nullifier, uint256 spendAmount);
+    /// @param amountMinor Units released by the spend.
+    event NoteUsed(address indexed asset, bytes32 indexed context, bytes32 indexed nullifier, uint256 amountMinor);
 
     /// @notice These canonical nullifiers were consumed to create one note.
     /// @dev Input commitments and all amounts remain private. NewNote supplies

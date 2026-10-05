@@ -538,14 +538,11 @@ mod copied_public_work {
                                 owner: tribute.owner,
                                 wwd: day.value(),
                                 league_id: 1,
-                                floor_price_minor: U256::ZERO,
                                 gratis_load_minor: U256::from(1),
                                 entry_price_minor: U256::ZERO,
                                 settlement_cost_minor: U256::from(2),
                                 issuance_currency: tribute.issuance_currency,
                                 reference_currency: tribute.reference_currency,
-                                issued_at: 1_784_765_900,
-                                bucket_key: hash(u8::try_from(local % 251).unwrap()),
                             }
                         })
                         .collect::<Vec<_>>();
@@ -1221,7 +1218,7 @@ mod copied_public_work {
             write_key(&result, 0x31);
             let uid = fs::metadata(&evm).unwrap().uid();
             (
-                OutbeEvmSigner::from_strict_file(evm, uid).unwrap(),
+                outbe_primitives::signer::load::from_strict_file(evm, uid).unwrap(),
                 OcompSigner::from_file(result, uid).unwrap(),
                 uid,
             )
@@ -1619,9 +1616,11 @@ mod copied_public_work {
                     advance_to_k(recipient.path(), &fixture)
                 };
                 assert_public_reopen(recipient.path(), &fixture, point, &built);
-                let own_evm =
-                    OutbeEvmSigner::from_strict_file(public.join("ocomp-evm-key.hex"), uid)
-                        .unwrap();
+                let own_evm = outbe_primitives::signer::load::from_strict_file(
+                    public.join("ocomp-evm-key.hex"),
+                    uid,
+                )
+                .unwrap();
                 assert_eq!(own_evm.address(), evm.address());
                 let own_signer =
                     OcompSigner::from_file(public.join("ocomp-key-v1.hex"), uid).unwrap();

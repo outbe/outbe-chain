@@ -78,7 +78,7 @@ use fixtures::{
     CandidateProvider, ProductionCandidateFixture,
 };
 use fixtures::{DeterministicProofSource, FinalizedFrameDriver};
-use fixtures::{FailOnceDurability, FailSync};
+use fixtures::{FailOnceDurability, FailSync, FsyncFailurePolicy};
 
 mod canonical_replay;
 mod eligibility;

@@ -41,11 +41,11 @@ impl AuctionStage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct IntexCallTrigger {
     /// Rolling VWAP window evaluated for the call condition (seconds).
-    pub call_window: u32,
+    pub call_window_seconds: u32,
     /// Breach time within the window required to trigger a call (seconds).
-    pub call_threshold: u32,
+    pub call_threshold_seconds: u32,
     /// Notice a holder gets to settle after the series is Called (seconds).
-    pub call_notice_period: u32,
+    pub call_notice_period_seconds: u32,
 }
 
 /// Entry price of one reference currency, chosen at auction start.
@@ -135,7 +135,7 @@ pub struct ClearingResult {
     /// `(issuance, reference)` ISO pair of each winning bid (parallel to `winners`);
     /// the day issues one series per distinct pair.
     pub winner_currencies: Vec<(u16, u16)>,
-    /// Index into `winners` of the one bid filled in part, where supply ran out.
+    /// Index into `winners` of the one bid filled in part, where the Desis Limit ran out.
     pub partial_winner: Option<usize>,
     pub all_bidders: Vec<Address>,
     pub refunded_amounts: Vec<u128>,
@@ -178,9 +178,9 @@ pub struct DesisContract {
     pub bid_packed: outbe_primitives::storage::dsl::Map<B256, U256>,
 
     // --- Pending clearing ---
-    /// worldwide_day -> supply (Intex units) pending at clearing stage.
+    /// worldwide_day -> Desis Limit in whole Intex units, pending at clearing stage.
     #[attribute(order = 7)]
-    pub pending_supply_intex: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
+    pub pending_desis_limit_units: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 
     // --- Global clearing state ---
     /// Most recently cleared worldwide_day (for minBidQty 4% derivation).
@@ -191,20 +191,20 @@ pub struct DesisContract {
     pub last_clearing_issued_count: outbe_primitives::storage::dsl::Value<u32>,
 
     /// worldwide_day -> 1 once `arm_clearing` has run; lets `force_clear` tell a
-    /// genuine zero supply from a clearing that was never initiated.
+    /// genuine zero Desis Limit from a clearing that was never initiated.
     #[attribute(order = 10)]
     pub clearing_initiated: outbe_primitives::storage::dsl::Map<WorldwideDay, u8>,
 
     // --- Extended auction config ---
-    /// worldwide_day -> call-trigger window (whole days).
+    /// worldwide_day -> call-trigger window (seconds).
     #[attribute(order = 13)]
-    pub config_call_window: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
-    /// worldwide_day -> call-trigger threshold (whole days).
+    pub config_call_window_seconds: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
+    /// worldwide_day -> call-trigger threshold (seconds).
     #[attribute(order = 14)]
-    pub config_call_threshold: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
+    pub config_call_threshold_seconds: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
     /// worldwide_day -> call cooldown (seconds).
     #[attribute(order = 15)]
-    pub config_call_notice_period: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
+    pub config_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 
     /// worldwide_day -> commit-entry bond (payment-token minor units).
     #[attribute(order = 16)]
@@ -282,7 +282,7 @@ pub struct DesisContract {
     /// keccak256(worldwide_day_be32 ++ index_be32) -> entry price in ISO stable-units (1e6).
     /// Floor and call derive from it, so only the anchor is stored.
     #[attribute(order = 37)]
-    pub reference_price_entry: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub reference_entry_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
 
     // --- PROMIS load ladder ---
     /// Exponent `k` of the current load, `promis_load_minor = 10^k`. Zero until the

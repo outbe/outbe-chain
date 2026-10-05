@@ -343,7 +343,7 @@ contract LocalLoopbackTest is Test {
             callThreshold: 21,
             callPriceMinor: 200,
             recipients: winners,
-            quantities: amounts
+            units: amounts
         });
         vm.prank(address(factory));
         origin.sendIssuanceInstructions(local, DAY, 0, 1, issuance);

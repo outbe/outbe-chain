@@ -53,7 +53,7 @@ fn canonical_inventory_failure_precedes_missing_projection_and_local_population(
             // Exact corruption already exercised by active_inventory.
             StorageHandle::enter(&mut owner, |storage| {
                 outbe_primitives::storage::types::StorageBytes::new(
-                    U256::from(19),
+                    U256::from(18),
                     outbe_primitives::addresses::METADOSIS_ADDRESS,
                     storage,
                 )

@@ -189,9 +189,11 @@ impl RecoveredRoles {
                 &mut self.player,
                 &mut self.player_retry_snapshot,
                 retry_store,
-                my_pk.clone(),
-                my_pub_msg.clone(),
-                my_priv_msg,
+                crate::dkg_actor::recovery::PlayerDealerBundle {
+                    dealer: my_pk.clone(),
+                    pub_msg: my_pub_msg.clone(),
+                    priv_msg: my_priv_msg,
+                },
             )? {
                 if let Some(ref mut d) = self.dealer {
                     let recovered_ack = self

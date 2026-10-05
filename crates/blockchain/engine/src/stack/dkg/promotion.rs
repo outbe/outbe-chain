@@ -76,11 +76,12 @@ pub(in crate::stack) async fn promote_committed_boundary(
     };
     if let Some(share) = active.share {
         save_dkg_state(
-            keys_dir,
-            share,
-            active.polynomial,
-            &boundary_output,
-            key_backend,
+            DkgStateStore::new(keys_dir, key_backend),
+            DkgStateMaterial {
+                share,
+                polynomial: active.polynomial,
+                output: &boundary_output,
+            },
         )
         .wrap_err("failed to promote finalized DKG state to disk")?;
         info!(

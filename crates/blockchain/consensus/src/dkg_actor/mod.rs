@@ -21,3 +21,5 @@ pub use actor::{
     DkgProgress,
 };
 pub use recovery::DkgRetryStore;
+
+pub use actor::{DkgDealerParameters, DkgParticipantParameters, DkgProgressChannels, DkgTransport};

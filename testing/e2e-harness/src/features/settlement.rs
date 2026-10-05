@@ -77,29 +77,29 @@ fn validator_receives_reward_gem(world: &mut World) {
     match gem.gemType {
         // Genesis: no floor, so it qualifies on its first closed day at any positive price.
         0 => assert!(
-            gem.floorPrice.is_zero(),
+            gem.floorPriceMinor.is_zero(),
             "a Genesis reward Gem carries no floor"
         ),
         // Validator: floor = rate x 1.08, so it qualifies once a day closes above it.
         1 => assert!(
-            !gem.floorPrice.is_zero(),
+            !gem.floorPriceMinor.is_zero(),
             "a Validator reward Gem carries a floor"
         ),
         other => panic!("validator-owned reward Gem {gem_id} has non-reward type {other}"),
     }
     assert!(
-        !gem.promisLoad.is_zero(),
+        !gem.promisLoadMinor.is_zero(),
         "reward Gem load must be non-zero"
     );
     assert!(
-        !gem.entryPrice.is_zero(),
+        !gem.entryPriceMinor.is_zero(),
         "reward Gem entry price must be non-zero"
     );
     let delivery_block_number = find_canonical_reward_gem_delivery_block_number(world, gem_id)
         .expect("reward Gem must be emitted by canonical CycleTick -> RewardsGemDelivery");
     eprintln!(
         "settlement_evidence kind=reward_gem owner={owner:#x} gem_id={gem_id} load={} entry={} delivery_block_number={delivery_block_number}",
-        gem.promisLoad, gem.entryPrice,
+        gem.promisLoadMinor, gem.entryPriceMinor,
     );
 }
 
@@ -395,10 +395,10 @@ fn validator_redeems_reward_gem(world: &mut World) {
             USD_ISO,
             1,
             // A Genesis floor is zero, and a zero VWAP is no price at all.
-            gem.floorPrice
+            gem.floorPriceMinor
                 .checked_mul(U256::from(2u64))
                 .expect("qualifying day VWAP")
-                .max(gem.entryPrice),
+                .max(gem.entryPriceMinor),
         )
         .expect("seed the closed day's VWAP above the reward Gem floor");
         // Qualification is derived on read once the seeded day is closed.
@@ -436,7 +436,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         },
     )
     .expect("quote settling the reward Gem");
-    let payable = quote.payableUnits;
+    let payable = quote.paymentMinor;
     // The vault is credited here, not at settle time. Before the drain: this is an
     // ordinary transaction and pays its own gas.
     let paynote_proof = paynote::deposit_and_prove(
@@ -531,7 +531,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &keys.modify,
         owner,
         PromisOp::Mint,
-        gem.promisLoad,
+        gem.promisLoadMinor,
         promis_nonce,
         chain_id,
     );
@@ -553,7 +553,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
     assert_eq!(eth::balance(&url, owner), Some(U256::ZERO));
     assert_eq!(
         promis_balance(&url, owner, &keys.view),
-        promis_before + gem.promisLoad,
+        promis_before + gem.promisLoadMinor,
         "Gem load was not minted exactly into validator Promis"
     );
 
@@ -567,7 +567,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &keys.modify,
         owner,
         PromisOp::Burn,
-        gem.promisLoad,
+        gem.promisLoadMinor,
         burn_nonce,
         chain_id,
     );
@@ -577,7 +577,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         addresses::PROMIS_FACTORY_ADDR,
         500_000,
         &eth::IPromisFactory::mineCoenCall {
-            amount: gem.promisLoad,
+            promisMinor: gem.promisLoadMinor,
             mac: B256::from(burn_mac),
             opNonce: burn_nonce,
         },
@@ -592,7 +592,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
     assert_eq!(promis_balance(&url, owner, &keys.view), promis_before);
     assert_eq!(
         native_after,
-        checked_protocol_to_native(gem.promisLoad).expect("Gem load fits native COEN"),
+        checked_protocol_to_native(gem.promisLoadMinor).expect("Gem load fits native COEN"),
         "three sponsored calls must charge no native fee to the validator"
     );
     let counter_after = eth::read_call(
@@ -607,7 +607,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
     );
     eprintln!(
         "settlement_evidence kind=zerofee_gem_to_coen owner={owner:#x} payer={payer:#x} gem_id={gem_id} asset={:#x} vault={:#x} amount={} settle_tx={} promis_tx={} coen_tx={} quota_used={} native_before=0 native_after={}",
-        fixture.asset, fixture.vault, gem.promisLoad, settle.transaction_hash, mine_promis.transaction_hash, mine_coen.transaction_hash, counter_after.count, native_after
+        fixture.asset, fixture.vault, gem.promisLoadMinor, settle.transaction_hash, mine_promis.transaction_hash, mine_coen.transaction_hash, counter_after.count, native_after
     );
 }
 
@@ -623,7 +623,10 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
         matches!(gem.gemType, 0 | 1),
         "expected a protocol reward Gem"
     );
-    assert!(!gem.promisLoad.is_zero(), "reward Gem must carry Promis");
+    assert!(
+        !gem.promisLoadMinor.is_zero(),
+        "reward Gem must carry Promis"
+    );
     let delivery = find_canonical_reward_gem_delivery_block_number(world, gem_id)
         .expect("reward Gem must originate from canonical RewardsGemDelivery");
     world
@@ -654,10 +657,10 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
             DEPLOYER_KEY,
             USD_ISO,
             1,
-            gem.floorPrice
+            gem.floorPriceMinor
                 .checked_mul(U256::from(2u64))
                 .expect("qualifying day VWAP")
-                .max(gem.entryPrice),
+                .max(gem.entryPriceMinor),
         )
         .expect("seed the closed day's VWAP above the reward Gem floor");
         let deadline = Instant::now() + Duration::from_secs(240);
@@ -693,7 +696,7 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
         },
     )
     .expect("quote reward Gem settlement");
-    let payable = quote.payableUnits;
+    let payable = quote.paymentMinor;
     assert!(!payable.is_zero());
     let reserve_before = eth::read_call(
         &url,
@@ -762,7 +765,7 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
         .expect("finalized settled reward Gem");
         assert_eq!(observed.state, 3, "reward Gem must be Settled");
         assert_eq!(observed.owner, owner);
-        assert_eq!(observed.promisLoad, gem.promisLoad);
+        assert_eq!(observed.promisLoadMinor, gem.promisLoadMinor);
     }
     let promis_before = promis_balance_at(&url, owner, &keys.view, settled.height);
     let nonce = eth::read_call(
@@ -776,7 +779,7 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
         &keys.modify,
         owner,
         PromisOp::Mint,
-        gem.promisLoad,
+        gem.promisLoadMinor,
         nonce,
         chain_id,
     );
@@ -802,14 +805,14 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
         &eth::IGemFactory::GemExercised {
             gemId: gem_id,
             owner,
-            promisLoad: gem.promisLoad,
+            promisLoadMinor: gem.promisLoadMinor,
         },
     );
     for &p in &ports {
         let peer_url = world.rpc.url(p);
         assert_eq!(
             promis_balance_at(&peer_url, owner, &keys.view, minted.height),
-            promis_before + gem.promisLoad,
+            promis_before + gem.promisLoadMinor,
             "exact finalized Promis mint"
         );
         let count = eth::read_call_at_result(
@@ -846,7 +849,7 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
         &keys.modify,
         owner,
         PromisOp::Burn,
-        gem.promisLoad,
+        gem.promisLoadMinor,
         nonce,
         chain_id,
     );
@@ -856,7 +859,7 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
             addresses::PROMIS_FACTORY_ADDR,
             &key,
             &eth::IPromisFactory::mineCoenCall {
-                amount: gem.promisLoad,
+                promisMinor: gem.promisLoadMinor,
                 mac: B256::from(mac),
                 opNonce: nonce,
             },
@@ -865,13 +868,13 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
         .expect("paid mine COEN from validator Promis"),
         "mint_coen",
     );
-    let native_mint = checked_protocol_to_native(gem.promisLoad).expect("native COEN amount");
+    let native_mint = checked_protocol_to_native(gem.promisLoadMinor).expect("native COEN amount");
     assert_receipt_event(
         &burn.receipt,
         addresses::PROMIS_FACTORY_ADDR,
         &eth::IPromisFactory::CoenMined {
             sender: owner,
-            amount: native_mint,
+            coenMinor: native_mint,
         },
     );
     let fee = crate::world::rpc::Rpc::receipt_gas_cost(&burn.receipt).expect("paid COEN mint fee");
@@ -891,7 +894,7 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
         );
     }
     eprintln!("settlement_evidence kind=paid_gem_to_promis_to_coen owner={owner:#x} gem_id={gem_id} promis={} coen={native_mint} settle_tx={} promis_tx={} coen_tx={} gas={fee}",
-        gem.promisLoad, settle.transaction_hash, mint.transaction_hash, burn.transaction_hash);
+        gem.promisLoadMinor, settle.transaction_hash, mint.transaction_hash, burn.transaction_hash);
 }
 
 fn promis_balance_at(url: &str, owner: Address, view_key: &[u8; 32], height: u64) -> U256 {
@@ -1071,14 +1074,14 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         },
     )
     .expect("quote settling the materialized Nod");
-    assert_eq!(quote.payableUnits, body.settlementCostMinor);
+    assert_eq!(quote.paymentMinor, body.settlementCostMinor);
     let paynote_proof = paynote::deposit_and_prove(
         world,
         port,
         &key,
         owner,
         fixture.asset,
-        quote.payableUnits,
+        quote.paymentMinor,
         paynote::nod_context(nod_word, quote.snapshotId),
     );
     assert_eq!(
@@ -1169,7 +1172,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         addresses::GRATIS_FACTORY_ADDR,
         &key,
         &eth::IGratisFactory::mineCoenCall {
-            amount: body.gratisLoadMinor,
+            gratisMinor: body.gratisLoadMinor,
             mac: B256::from(burn_mac),
             opNonce: burn_nonce,
         },
@@ -1685,7 +1688,7 @@ mod tests {
         let emitter = addresses::PROMIS_FACTORY_ADDR;
         let event = eth::IPromisFactory::CoenMined {
             sender: Address::repeat_byte(1),
-            amount: U256::from(123),
+            coenMinor: U256::from(123),
         };
         let encoded = event.encode_log_data();
         let log = serde_json::json!({

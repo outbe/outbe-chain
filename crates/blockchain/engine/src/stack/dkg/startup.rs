@@ -537,25 +537,19 @@ pub(in crate::stack) fn genesis_formation_gate_decision(
         return GenesisFormationGate::ExistingChainJoin;
     }
 
-    if evidence.peer_query_failed {
+    if evidence.peer_query_failed
+        || evidence.connected_peers < required_remote_peers
+        || evidence.peers.len() < required_remote_peers
+    {
         return GenesisFormationGate::WaitForExecutionSync;
     }
 
-    if evidence.connected_peers < required_remote_peers {
-        return GenesisFormationGate::WaitForExecutionSync;
-    }
-
-    if evidence.peers.len() < required_remote_peers {
-        return GenesisFormationGate::WaitForExecutionSync;
-    }
-
-    for peer in &evidence.peers {
-        if peer.genesis != genesis_hash {
-            return GenesisFormationGate::ExistingChainJoin;
-        }
-        if peer.blockhash != genesis_hash || peer.latest_block.unwrap_or(0) > 0 {
-            return GenesisFormationGate::ExistingChainJoin;
-        }
+    if evidence.peers.iter().any(|peer| {
+        peer.genesis != genesis_hash
+            || peer.blockhash != genesis_hash
+            || peer.latest_block.unwrap_or(0) > 0
+    }) {
+        return GenesisFormationGate::ExistingChainJoin;
     }
 
     GenesisFormationGate::Proven
@@ -675,7 +669,7 @@ pub(in crate::stack) fn tee_bootstrap_setup(
     let evm_key_path = args
         .effective_validator_evm_key()?
         .ok_or_else(|| eyre::eyre!("TEE bootstrap requires a validator EVM key"))?;
-    let evm_signer = outbe_primitives::signer::OutbeEvmSigner::from_file(&evm_key_path)
+    let evm_signer = outbe_primitives::signer::load::from_file(&evm_key_path)
         .map_err(|e| eyre::eyre!("failed to load validator EVM signer for TEE bootstrap: {e}"))?;
     let committee: std::collections::BTreeSet<alloy_primitives::Address> =
         ordered_validator_addresses(participants, validator_set)?

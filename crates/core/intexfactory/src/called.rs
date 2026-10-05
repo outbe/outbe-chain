@@ -15,7 +15,7 @@ use outbe_primitives::daily_sweep::{Scheduled, SweepDays};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result},
+    error::{PrecompileError, Result, SweepFailure},
     math::{constants::MAX_BIN_ID, tree_math},
     storage::StorageHandle,
     time::{first_full_day, previous_date_key, timestamp_to_date_key, SECONDS_PER_DAY},
@@ -232,7 +232,7 @@ fn call_currency(
             }
             budget.spend_decision();
             // Isolate per-group: a deterministic Err rolls back the group's checkpoint and is
-            // skipped (logged); structural reads above keep `?` so infra errors still propagate.
+            // skipped (logged); a node-local one, like the structural reads above, fails the block.
             let res = ctx.storage.with_checkpoint(|| {
                 try_call_group(
                     &ctx.storage,
@@ -249,6 +249,7 @@ fn call_currency(
                     budget.spend_actions(applied);
                     called = called.saturating_add(applied);
                 }
+                Err(e) if e.sweep_failure() == SweepFailure::Propagate => return Err(e),
                 Err(e) => {
                     tracing::warn!(target: "outbe::intexfactory", iso_code, worldwide_day = %worldwide_day, error = ?e, "call scan: skipping group");
                 }
@@ -429,12 +430,13 @@ pub(crate) fn try_call_group(
     for &series_id in &group.members {
         outbe_intex::api::mark_called(storage, series_id, called_at)?;
     }
+    let settlement_deadline = u64::from(called_at) + u64::from(series.call_notice_period_seconds);
     // Park it with its members: the expiry sweep has no other way back to them.
     factory.remove_call_bin_group(group.iso_code, group.worldwide_day)?;
     factory.push_called_group(
         group.iso_code,
         group.worldwide_day,
-        u64::from(called_at) + u64::from(series.call_notice_period_seconds),
+        settlement_deadline,
         &group.members,
     )?;
 
@@ -453,6 +455,7 @@ pub(crate) fn try_call_group(
             crate::precompile::IIntexFactory::SeriesCalled {
                 seriesId: series_id.into(),
                 calledAt: called_at,
+                settlementDeadline: settlement_deadline,
             },
         )?;
     }
@@ -460,15 +463,17 @@ pub(crate) fn try_call_group(
 }
 
 /// One message per group, split only where the wire's cap forces it. `called_at`
-/// travels so every target derives the same deadline the origin did.
+/// travels so every target derives the same deadline the origin did. Returns the
+/// series whose message the router refused; a node-local failure fails the block instead.
 pub(crate) fn notify_called(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,
     called_at: u32,
     members: &[SeriesId],
-) -> Result<()> {
+) -> Result<Vec<SeriesId>> {
+    let mut refused = Vec::new();
     for chunk in members.chunks(MAX_SERIES_PER_MARK) {
-        // Best-effort, and the batch is the unit: a failure loses the mark for every series in it.
+        // The batch is the unit: a refusal returns every series in it.
         let sent = storage.with_checkpoint(|| {
             // Relay-float-funded: value 0, so the router self-quotes and pays the fee from its float.
             storage.call(
@@ -484,18 +489,23 @@ pub(crate) fn notify_called(
             )?;
             Ok(())
         });
-        if let Err(error) = sent {
-            tracing::warn!(
-                target: "outbe::intexfactory",
-                worldwide_day = worldwide_day.value(),
-                called_at,
-                series = ?chunk.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
-                error = ?error,
-                "called notice: dropping"
-            );
+        match sent {
+            Ok(()) => {}
+            Err(error) if error.sweep_failure() == SweepFailure::Propagate => return Err(error),
+            Err(error) => {
+                tracing::warn!(
+                    target: "outbe::intexfactory",
+                    worldwide_day = worldwide_day.value(),
+                    called_at,
+                    series = ?chunk.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+                    error = ?error,
+                    "called notice: refused"
+                );
+                refused.extend_from_slice(chunk);
+            }
         }
     }
-    Ok(())
+    Ok(refused)
 }
 
 /// Index of the currency the cursor names, or the head when the registry dropped it.

@@ -46,7 +46,7 @@ contract TargetRouterIssuanceBatchTest is CrossChainTest {
         payload.callThreshold = 5;
         payload.callPriceMinor = 200e6;
         payload.recipients = recipients;
-        payload.quantities = quantities;
+        payload.units = quantities;
     }
 
     function _issueTo(address recipient, uint256 quantity)

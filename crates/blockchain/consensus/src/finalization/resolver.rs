@@ -200,41 +200,8 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
                 Err(()) => continue,
             };
 
-            // Strict hash check. A peer that returned a
-            // different parent for this round has nothing useful to offer on
-            // retry; fail immediately so the caller can fall back to
-            // proposer-forfeit.
-            if notarization.proposal.payload.0 != key.parent_hash {
-                return ProofFetchOutcome::NoProofForExactParent;
-            }
-            // The notarization must be for the requested round. Defence in
-            // depth - a transport implementation that did not enforce this is
-            // a bug, but we still fail fast rather than persist mismatched
-            // round bookkeeping.
-            if notarization.proposal.round != key.round {
-                return ProofFetchOutcome::NoProofForExactParent;
-            }
-
-            // Signature verification - same trust boundary the reporter uses
-            // for Activity::Certification (see `reporter.rs::handle_certification`).
-            let mut rng = bls_batch_verification_rng();
-            if !notarization.verify(&mut rng, &self.verifier_scheme, &Sequential) {
-                return ProofFetchOutcome::VerifyFailed;
-            }
-
-            // - local witness gate. A record produced from purely
-            // remote bytes is never written; the local node must have already
-            // observed `Activity::Certification` for the same key. The gate is
-            // the in-memory witness index, not the persistent CN record slot:
-            // CN rows may be pruned or withheld from proposer selection, while
-            // the witness fact remains a separate local observation.
-            let proof_key = CertifiedParentProofKey::new(
-                key.round.epoch().get(),
-                key.round.view().get(),
-                key.parent_hash,
-            );
-            if !self.proof_store.has_local_certification_witness(proof_key) {
-                return ProofFetchOutcome::NoLocalCertificationWitness;
+            if let Some(outcome) = self.fetched_notarization_rejection(key, &notarization) {
+                return outcome;
             }
 
             // Build the record and persist. Witness flag is true by the gate
@@ -294,10 +261,83 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
 
         ProofFetchOutcome::BudgetExhausted
     }
+
+    fn fetched_notarization_rejection(
+        &self,
+        key: ProofFetchKey,
+        notarization: &Notarization<HybridScheme<MinSig>, Digest>,
+    ) -> Option<ProofFetchOutcome> {
+        // Strict hash check. A peer that returned a
+        // different parent for this round has nothing useful to offer on
+        // retry; fail immediately so the caller can fall back to
+        // proposer-forfeit.
+        if notarization.proposal.payload.0 != key.parent_hash {
+            return Some(ProofFetchOutcome::NoProofForExactParent);
+        }
+        // The notarization must be for the requested round. Defence in
+        // depth - a transport implementation that did not enforce this is
+        // a bug, but we still fail fast rather than persist mismatched
+        // round bookkeeping.
+        if notarization.proposal.round != key.round {
+            return Some(ProofFetchOutcome::NoProofForExactParent);
+        }
+
+        // Signature verification - same trust boundary the reporter uses
+        // for Activity::Certification (see `reporter.rs::handle_certification`).
+        let mut rng = bls_batch_verification_rng();
+        if !notarization.verify(&mut rng, &self.verifier_scheme, &Sequential) {
+            return Some(ProofFetchOutcome::VerifyFailed);
+        }
+
+        // - local witness gate. A record produced from purely
+        // remote bytes is never written; the local node must have already
+        // observed `Activity::Certification` for the same key. The gate is
+        // the in-memory witness index, not the persistent CN record slot:
+        // CN rows may be pruned or withheld from proposer selection, while
+        // the witness fact remains a separate local observation.
+        let proof_key = CertifiedParentProofKey::new(
+            key.round.epoch().get(),
+            key.round.view().get(),
+            key.parent_hash,
+        );
+        if !self.proof_store.has_local_certification_witness(proof_key) {
+            return Some(ProofFetchOutcome::NoLocalCertificationWitness);
+        }
+
+        None
+    }
 }
 
 /// Build the canonical V2 **Finalization** parent-proof record from a
-/// marshal-recovered finalization.
+/// Certified proposal identity and its finalized execution height.
+pub struct RecoveredFinalizedBlock {
+    pub proposal: crate::finalization::late_sig_store::FinalizeVoteTarget,
+    pub number: u64,
+}
+
+impl RecoveredFinalizedBlock {
+    pub fn from_proposal(
+        number: u64,
+        proposal: &commonware_consensus::simplex::types::Proposal<Digest>,
+    ) -> Self {
+        Self {
+            number,
+            proposal: crate::finalization::late_sig_store::FinalizeVoteTarget::from_proposal(
+                proposal,
+            ),
+        }
+    }
+}
+
+/// Certificate bytes and the committee authority used to rebuild their canonical record.
+pub struct RecoveredFinalizationMaterial<'a> {
+    pub ordered_committee: &'a [Address],
+    pub certificate: &'a HybridCertificate<MinSig>,
+    pub encoded_certificate: Bytes,
+    pub scheme: &'a HybridScheme<MinSig>,
+}
+
+/// Rebuild the canonical V2 Finalization record from a recovered certificate.
 ///
 /// After a restart (or under brief finalization lag) the in-process
 /// `FinalizedParentCertStore` that the proposer selects from can be empty even
@@ -309,18 +349,26 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
 /// pins this equality). The inputs are all derived from the recovered
 /// finalization plus the finalized epoch's committee scheme + ordered addresses;
 /// `missed_proposers` and `finalize_votes` are empty under the V2 contract.
-#[allow(clippy::too_many_arguments)]
-pub fn build_finalization_record_from_recovered(
-    finalized_epoch: u64,
-    finalized_view: u64,
-    parent_view: u64,
-    finalized_block_number: u64,
-    finalized_block_hash: B256,
-    ordered_committee: &[Address],
-    certificate: &HybridCertificate<MinSig>,
-    encoded_certificate: Bytes,
-    scheme: &HybridScheme<MinSig>,
+pub fn build_recovered_finalization_record(
+    block: RecoveredFinalizedBlock,
+    material: RecoveredFinalizationMaterial<'_>,
 ) -> Result<CertifiedParentProofRecord, SnapshotBuildError> {
+    let RecoveredFinalizedBlock {
+        proposal,
+        number: finalized_block_number,
+    } = block;
+    let crate::finalization::late_sig_store::FinalizeVoteTarget {
+        epoch: finalized_epoch,
+        view: finalized_view,
+        parent_view,
+        fb_hash: finalized_block_hash,
+    } = proposal;
+    let RecoveredFinalizationMaterial {
+        ordered_committee,
+        certificate,
+        encoded_certificate,
+        scheme,
+    } = material;
     let prelude = build_committee_prelude(scheme, ordered_committee, finalized_epoch)?;
     Ok(CertifiedParentProofRecord {
         format_version: CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
@@ -344,34 +392,15 @@ pub fn build_finalization_record_from_recovered(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bls::bootstrap_dkg;
     use crate::digest::Digest as OutbeDigest;
     use crate::proof::{committee_set_hash_v2, CommitteeEntry, CommitteeSnapshot};
     use alloy_primitives::address;
     use commonware_consensus::{
-        simplex::types::{Finalization, Proposal, Subject},
+        simplex::types::Finalization,
         types::{Epoch, View},
     };
-    use commonware_cryptography::bls12381;
     use commonware_cryptography::certificate::Scheme as _;
-    use commonware_cryptography::{Hasher as _, Sha256, Signer as _};
-    use commonware_utils::{
-        ordered::{Quorum as _, Set as OrderedSet},
-        TryCollect as _,
-    };
     use outbe_primitives::consensus_metadata::ParentParticipationProof;
-
-    fn participants(n: u8) -> (Vec<bls12381::PrivateKey>, OrderedSet<bls12381::PublicKey>) {
-        let keys: Vec<bls12381::PrivateKey> = (0..n)
-            .map(|i| bls12381::PrivateKey::from_seed((i + 1) as u64))
-            .collect();
-        let set = keys
-            .iter()
-            .map(|sk| bls12381::PublicKey::from(sk.clone()))
-            .try_collect()
-            .unwrap();
-        (keys, set)
-    }
 
     /// A finalization signed by all 3 committee members for `payload`, plus the
     /// matching verifier scheme - all from ONE DKG so the certificate verifies.
@@ -383,40 +412,16 @@ mod tests {
         Finalization<HybridScheme<MinSig>, OutbeDigest>,
         HybridScheme<MinSig>,
     ) {
-        let (keys, set) = participants(3);
-        let dkg = bootstrap_dkg(3).unwrap();
-        let schemes: Vec<HybridScheme<MinSig>> = keys
-            .iter()
-            .map(|key| {
-                let pk = bls12381::PublicKey::from(key.clone());
-                let idx = set.index(&pk).unwrap();
-                HybridScheme::signer(
-                    b"resolver-test",
-                    set.clone(),
-                    key.clone(),
-                    dkg.polynomial.clone(),
-                    dkg.shares[idx.get() as usize].clone(),
-                )
-                .unwrap()
-            })
-            .collect();
-        let verifier =
-            HybridScheme::<MinSig>::verifier(b"resolver-test", set, dkg.polynomial).unwrap();
-        let digest = OutbeDigest::from(B256::from_slice(Sha256::hash(&[payload]).as_ref()));
-        let proposal = Proposal::new(round, parent_view, digest);
-        let subject = Subject::Finalize {
-            proposal: &proposal,
-        };
-        let attestations: Vec<_> = schemes
-            .iter()
-            .map(|s| s.sign::<OutbeDigest>(subject).unwrap())
-            .collect();
-        let certificate = verifier
-            .assemble(
-                commonware_utils::iter::NonEmpty::try_new(attestations.into_iter()).unwrap(),
-                &Sequential,
-            )
-            .unwrap();
+        let crate::test_harness::SignedResolverProposal {
+            proposal,
+            certificate,
+            verifier,
+        } = crate::test_harness::signed_resolver_proposal(
+            round,
+            parent_view,
+            payload,
+            crate::test_harness::ResolverVote::Finalize,
+        );
         (
             Finalization {
                 proposal,
@@ -446,16 +451,22 @@ mod tests {
         let block_number = 42u64;
         let encoded: Bytes = finalization.encode().into();
 
-        let record = build_finalization_record_from_recovered(
-            finalization.proposal.round.epoch().get(),
-            finalization.proposal.round.view().get(),
-            finalization.proposal.parent.get(),
-            block_number,
-            finalization.proposal.payload.0,
-            &addresses,
-            &finalization.certificate,
-            encoded.clone(),
-            &verifier,
+        let record = build_recovered_finalization_record(
+            RecoveredFinalizedBlock {
+                proposal: crate::finalization::late_sig_store::FinalizeVoteTarget {
+                    epoch: finalization.proposal.round.epoch().get(),
+                    view: finalization.proposal.round.view().get(),
+                    parent_view: finalization.proposal.parent.get(),
+                    fb_hash: finalization.proposal.payload.0,
+                },
+                number: block_number,
+            },
+            RecoveredFinalizationMaterial {
+                ordered_committee: &addresses,
+                certificate: &finalization.certificate,
+                encoded_certificate: encoded.clone(),
+                scheme: &verifier,
+            },
         )
         .expect("recovered record builds from valid 48-byte MinPk pubkeys");
 

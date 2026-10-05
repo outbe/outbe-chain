@@ -59,14 +59,14 @@ fn reterm(
 ) {
     let credis = CredisContract::new(storage.clone());
     let mut position = credis.get_position(position_id).unwrap();
-    position.call_window = window_days * SECS_PER_DAY;
-    position.call_threshold = threshold_days * SECS_PER_DAY;
-    position.call_notice_period = notice_days * SECS_PER_DAY;
+    position.call_window_seconds = window_days * SECS_PER_DAY;
+    position.call_threshold_seconds = threshold_days * SECS_PER_DAY;
+    position.call_notice_period_seconds = notice_days * SECS_PER_DAY;
     credis.positions.update(&position).unwrap();
-    if position.call_window > credis.max_call_window.read(&REFERENCE_ISO).unwrap() {
+    if position.call_window_seconds > credis.max_call_window_seconds.read(&REFERENCE_ISO).unwrap() {
         credis
-            .max_call_window
-            .write(&REFERENCE_ISO, position.call_window)
+            .max_call_window_seconds
+            .write(&REFERENCE_ISO, position.call_window_seconds)
             .unwrap();
     }
 }
@@ -140,7 +140,7 @@ fn a_position_with_zero_call_terms_is_never_called() {
 
 /// A position whose sealed window outruns the current constant still gets its
 /// whole span collected: the scan sizes the shared per-currency window off the
-/// `max_call_window` high-water mark, not off the constant.
+/// `max_call_window_seconds` high-water mark, not off the constant.
 #[test]
 fn a_window_wider_than_the_constant_is_collected_in_full() {
     let mut storage = env();
@@ -156,6 +156,33 @@ fn a_window_wider_than_the_constant_is_collected_in_full() {
         reterm(&storage, position_id, WIDE_DAYS, 35, 7);
         assert_eq!(scan(&storage, at), 1);
         assert_eq!(state_of(&storage, position_id), CredisState::Called);
+    });
+    teardown();
+}
+
+#[test]
+fn a_node_local_failure_while_calling_a_position_fails_the_scan() {
+    let mut storage = env();
+    let at = CREATED_AT + AFTER_WINDOW;
+    let position_id = StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        open_with_series(&storage, at, CALL_LOOKBACK_DAYS, above_call())
+    });
+    storage.fail_after_mutation_at(0);
+    let result = StorageHandle::enter(&mut storage, |storage| {
+        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(BLOCK_NUMBER, at, CHAIN_ID),
+            storage.clone(),
+        );
+        crate::called::scan_and_call(&ctx)
+    });
+    storage.clear_mutation_failure();
+    assert!(matches!(
+        result,
+        Err(outbe_primitives::error::PrecompileError::Storage(_))
+    ));
+    StorageHandle::enter(&mut storage, |storage| {
+        assert_eq!(state_of(&storage, position_id), CredisState::Open);
     });
     teardown();
 }
@@ -403,7 +430,10 @@ fn the_call_and_the_void_compose_across_runs() {
         finalize_through(&storage, lapsed);
         assert_eq!(scan(&storage, lapsed), 1);
         assert_eq!(state_of(&storage, position_id), CredisState::Void);
-        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        assert_eq!(
+            view_balance(&storage, outbe_primitives::addresses::CREDIS_ADDRESS),
+            U256::ZERO
+        );
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(storage.clone())
                 .get_total_unallocated()

@@ -211,7 +211,7 @@ impl OutbeEvmConfig {
                     error.into(),
                 ))
             })?;
-            if &payload.policy != expected_policy {
+            if &payload.authority.policy != expected_policy {
                 return Err(BlockExecutionError::Internal(
                     alloy_evm::block::InternalBlockExecutionError::Other(
                         "block-1 OST3 policy does not match the immutable ChainSpec schedule"
@@ -314,20 +314,13 @@ impl OutbeEvmConfig {
                     }
                 }
 
-                let unsigned = build_unsigned_system_tx_with_gas_limit(
-                    kind,
-                    ordinal.try_into().map_err(|_| {
+                let unsigned = build_unsigned_system_tx_with_gas_limit(outbe_primitives::system_tx::SystemTxEnvelopeInput {kind, ordinal: ordinal.try_into().map_err(|_| {
                         BlockExecutionError::Internal(
                             alloy_evm::block::InternalBlockExecutionError::Other(
                                 format!("system tx ordinal {ordinal} exceeds u8 range").into(),
                             ),
                         )
-                    })?,
-                    block_number,
-                    chain_id,
-                    calldata,
-                    gas_limit,
-                )
+                    })?, block_number, chain_id, calldata, gas_limit})
                 .map_err(|error| {
                     BlockExecutionError::Internal(
                         alloy_evm::block::InternalBlockExecutionError::Other(

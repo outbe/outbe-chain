@@ -34,14 +34,14 @@ pub struct GemPosition {
 
     /// Remaining Promis capacity; drains by `promis_load` on each issue.
     #[attribute(order = 2)]
-    pub remaining_capacity: U256,
+    pub remaining_capacity_minor: U256,
 
     /// Snapshot of the source Intex entry/floor, used as issuance lower bounds.
     #[attribute(order = 3)]
-    pub source_entry_price: U256,
+    pub source_entry_price_minor: U256,
 
     #[attribute(order = 4)]
-    pub source_floor_price: U256,
+    pub source_floor_price_minor: U256,
 
     #[attribute(order = 5)]
     pub issuance_currency: u16,
@@ -66,7 +66,7 @@ pub struct GemFactoryContract {
     pub total_gems_issued: outbe_primitives::storage::dsl::Value<U256>,
 
     #[attribute(order = 1)]
-    pub total_gem_factory_units: outbe_primitives::storage::dsl::Value<U256>,
+    pub total_capacity_minor: outbe_primitives::storage::dsl::Value<U256>,
 
     #[attribute(order = 2)]
     pub positions: outbe_primitives::storage::dsl::Map<U256, GemPosition>,

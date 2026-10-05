@@ -25,9 +25,11 @@ fn heartbeat_sends_fcu_to_last_forkchoice_without_payload_attributes() {
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
-            genesis,
-            0,
-            genesis,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: 0,
+                last_finalized_hash: genesis,
+            },
             projection_readiness,
             None,
         );
@@ -46,10 +48,8 @@ fn heartbeat_sends_fcu_to_last_forkchoice_without_payload_attributes() {
                     assert_eq!(state.head_block_hash, target);
                     assert_eq!(state.finalized_block_hash, target);
                     assert!(payload_attrs.is_none());
-                    tx.send(Ok(OnForkChoiceUpdated::valid(PayloadStatus::from_status(
-                        PayloadStatusEnum::Valid,
-                    ))))
-                    .expect("test engine response receiver must be alive");
+                    tx.send(Ok(valid_forkchoice_response()))
+                        .expect("test engine response receiver must be alive");
                 }
                 other => panic!("unexpected engine message: {other:?}"),
             }
@@ -89,6 +89,7 @@ fn run_live_loop_propagates_fatal_executor_error() {
             fcu_heartbeat_interval: std::time::Duration::from_secs(3600),
             next_fcu_heartbeat_deadline: context.current() + std::time::Duration::from_secs(3600),
             pending_finalized_subscriptions: std::collections::BTreeMap::new(),
+            verification: Default::default(),
         };
 
         // Engine rejects the finalized block -> handle_finalize_inner Err.
@@ -151,6 +152,7 @@ fn mailbox_updates_are_processed_before_ready_heartbeat() {
             fcu_heartbeat_interval: std::time::Duration::ZERO,
             next_fcu_heartbeat_deadline: context.current(),
             pending_finalized_subscriptions: std::collections::BTreeMap::new(),
+            verification: Default::default(),
         };
 
         for (height, digest) in [
@@ -221,9 +223,11 @@ fn finalized_subscriber_completes_immediately_when_height_already_finalized() {
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context,
             engine,
-            genesis,
-            7,
-            finalized,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: 7,
+                last_finalized_hash: finalized,
+            },
             projection_readiness,
             None,
         );
@@ -253,9 +257,11 @@ fn ancestry_readiness_advances_from_executor_finalized_notifications() {
         let (actor, _mailbox) = super::ExecutorActor::new(
             context,
             engine,
-            genesis,
-            0,
-            genesis,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: 0,
+                last_finalized_hash: genesis,
+            },
             projection_readiness,
             None,
         );
@@ -285,9 +291,11 @@ fn finalized_subscriber_completes_when_later_height_is_notified() {
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context,
             engine,
-            genesis,
-            0,
-            genesis,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: 0,
+                last_finalized_hash: genesis,
+            },
             projection_readiness,
             None,
         );

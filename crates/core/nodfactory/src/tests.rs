@@ -1,3 +1,4 @@
+use outbe_compressed_entities::test_support::seed_compressed_entities_genesis;
 use std::sync::Arc;
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
@@ -12,7 +13,7 @@ use outbe_nod::{
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
-    addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS, NOD_FACTORY_ADDRESS},
+    addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS},
     error::PrecompileError,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
@@ -67,21 +68,8 @@ fn mine_auth(owner: Address, amount: U256) -> ModifyAuth {
     }
 }
 
-fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
-    storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-        .unwrap();
-    storage
-        .sstore(
-            COMPRESSED_ENTITIES_ADDRESS,
-            U256::from(1),
-            U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(B256::ZERO)
-                    .unwrap()
-                    .as_slice(),
-            ),
-        )
-        .unwrap();
+fn seed_production_nod_genesis(storage: &StorageHandle<'_>) {
+    seed_compressed_entities_genesis(storage).expect("CE genesis fixture");
     // These tests exercise the production call terms.
     NodContract::new(storage.clone())
         .config_profile
@@ -181,7 +169,7 @@ impl World {
             Bytes::from(IVaultRouter::depositCall::abi_encode_returns(&U256::ONE)),
         );
         StorageHandle::enter(&mut provider, |storage| {
-            seed_compressed_entities_genesis(&storage);
+            seed_production_nod_genesis(&storage);
             begin_block(storage, &scope).unwrap();
         });
         Self {
@@ -205,6 +193,10 @@ impl World {
             .unwrap()
     }
 
+    fn mine_gratis(&mut self, request: api::MineGratisRequest) -> Result<U256, PrecompileError> {
+        self.enter(|storage, scope, parent| api::mine_gratis(&storage, scope, parent, request))
+    }
+
     fn pow_nonce(&mut self, nod_id: WwdEntityId) -> u64 {
         let owner = self.enter(|storage, scope, parent| {
             nod_api::get_item(&storage, scope, parent, nod_id)
@@ -224,18 +216,11 @@ impl World {
         paynote_proof: &[u8],
     ) -> Result<U256, PrecompileError> {
         self.settle(nod_id, caller, paynote_proof)?;
-        self.enter(|storage, scope, parent| {
-            api::mine_gratis(
-                &storage,
-                scope,
-                parent,
-                api::MineGratisRequest {
-                    caller,
-                    nod_id,
-                    nonce,
-                    auth,
-                },
-            )
+        self.mine_gratis(api::MineGratisRequest {
+            caller,
+            nod_id,
+            nonce,
+            auth,
         })
     }
 
@@ -343,28 +328,18 @@ impl World {
 
     /// Quotes `nod_id` and binds the proof to that snapshot. Panics if the nod
     /// cannot be quoted, so a missing rate cannot hide as a context mismatch.
-    fn fund_note(
+    fn fund_note<T>(
         &mut self,
         asset: Address,
         nod_id: WwdEntityId,
-        note_amount: u128,
-        spend_amount: u128,
-    ) -> (Vec<u8>, B256) {
-        self.fund_note_u256(
-            asset,
-            nod_id,
-            U256::from(note_amount),
-            U256::from(spend_amount),
-        )
-    }
-
-    fn fund_note_u256(
-        &mut self,
-        asset: Address,
-        nod_id: WwdEntityId,
-        note_amount: U256,
-        spend_amount: U256,
-    ) -> (Vec<u8>, B256) {
+        note_amount: T,
+        spend_amount: T,
+    ) -> (Vec<u8>, B256)
+    where
+        U256: alloy_primitives::ruint::UintTryFrom<T>,
+    {
+        let note_amount = U256::from(note_amount);
+        let spend_amount = U256::from(spend_amount);
         let snapshot = self.enter(|storage, scope, parent| {
             runtime::quote_settlement(&storage, scope, parent, nod_id, asset)
                 .expect("note is quoted against a settleable nod")
@@ -407,6 +382,16 @@ impl World {
             let item = nod_api::get_item(&storage, scope, parent, nod_id)
                 .unwrap()
                 .unwrap();
+            let floor = nod_api::get_bucket(
+                &storage,
+                scope,
+                parent,
+                WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0),
+            )
+            .unwrap()
+            .unwrap()
+            .floor_price_minor()
+            .unwrap();
             let issued_at = NodContract::new(storage.clone())
                 .callable_bucket_issued_at
                 .read(&item.bucket_key)
@@ -419,7 +404,7 @@ impl World {
             }
             let day = outbe_primitives::time::first_full_day(issued_at);
             oracle
-                .record_utc_day_vwap(day, index, item.floor_price_minor + U256::from(1))
+                .record_utc_day_vwap(day, index, floor + U256::from(1))
                 .unwrap();
             if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
                 oracle.utc_day_vwap_last_finalized.write(day).unwrap();
@@ -477,7 +462,7 @@ fn second_same_block_issue_reuses_the_pending_bucket_without_parent_projection()
 
     let bucket_key = NodContract::bucket_key(
         first.worldwide_day,
-        NodContract::floor_price_minor(first.entry_price_minor).unwrap(),
+        first.entry_price_minor,
         first.reference_currency,
     );
     let bucket_id = WwdEntityId::from_day_and_digest(first.worldwide_day, bucket_key.0);
@@ -537,6 +522,33 @@ fn invalid_and_duplicate_issuance_leave_one_canonical_item() {
         .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
         .unwrap()
         .is_some());
+}
+
+#[test]
+fn direct_issuance_beyond_the_issuable_entry_writes_nothing() {
+    let mut world = World::new();
+    let mut input = params(Address::repeat_byte(0x2E));
+    input.entry_price_minor = U256::MAX / U256::from(100 + u32::from(u16::MAX)) + U256::from(1);
+    assert!(!NodContract::is_issuable_entry(input.entry_price_minor));
+    let storage_before = world.provider.storage.clone();
+    let events_before = world.provider.get_ordered_events().len();
+
+    let error = world
+        .enter(|storage, scope, parent| api::issue_nod(&storage, scope, parent, &input))
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        PrecompileError::Revert(ref reason)
+            if reason == &NodFactoryError::EntryPriceOutOfBounds.to_string()
+    ));
+    assert_eq!(world.provider.storage, storage_before);
+    assert_eq!(world.provider.get_ordered_events().len(), events_before);
+    let nod_id = NodContract::generate_nod_id(input.owner, input.worldwide_day).unwrap();
+    assert!(world
+        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+        .unwrap()
+        .is_none());
 }
 
 #[test]
@@ -613,18 +625,11 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
     world.settle(nod_id, input.owner, &proof).unwrap();
     let nonce = world.pow_nonce(nod_id);
     let minted = world
-        .enter(|storage, scope, parent| {
-            api::mine_gratis(
-                &storage,
-                scope,
-                parent,
-                api::MineGratisRequest {
-                    caller: input.owner,
-                    nod_id,
-                    nonce,
-                    auth: mine_auth(input.owner, input.gratis_load_minor),
-                },
-            )
+        .mine_gratis(api::MineGratisRequest {
+            caller: input.owner,
+            nod_id,
+            nonce,
+            auth: mine_auth(input.owner, input.gratis_load_minor),
         })
         .unwrap();
     assert_eq!(minted, input.gratis_load_minor);
@@ -634,7 +639,7 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
         .is_none());
     let bucket_key = NodContract::bucket_key(
         input.worldwide_day,
-        NodContract::floor_price_minor(input.entry_price_minor).unwrap(),
+        input.entry_price_minor,
         input.reference_currency,
     );
     let bucket_id = WwdEntityId::from_day_and_digest(input.worldwide_day, bucket_key.0);
@@ -683,18 +688,11 @@ fn a_nod_qualifying_after_issuance_still_mines() {
     world.settle(nod_id, input.owner, &proof).unwrap();
     let nonce = world.pow_nonce(nod_id);
     let minted = world
-        .enter(|storage, scope, parent| {
-            api::mine_gratis(
-                &storage,
-                scope,
-                parent,
-                api::MineGratisRequest {
-                    caller: input.owner,
-                    nod_id,
-                    nonce,
-                    auth: mine_auth(input.owner, input.gratis_load_minor),
-                },
-            )
+        .mine_gratis(api::MineGratisRequest {
+            caller: input.owner,
+            nod_id,
+            nonce,
+            auth: mine_auth(input.owner, input.gratis_load_minor),
         })
         .unwrap();
     assert_eq!(minted, input.gratis_load_minor);
@@ -872,7 +870,7 @@ fn a_note_in_a_wider_asset_pays_the_cost_scaled_to_its_decimals() {
     world.register_reference_currency_asset(NOTE_ASSET);
     world.set_asset_decimals(NOTE_ASSET, 18);
     let cost = U256::from(cost_of(&input)) * U256::from(1_000_000_000_000u64);
-    let (proof, _nullifier) = world.fund_note_u256(NOTE_ASSET, nod_id, cost, cost);
+    let (proof, _nullifier) = world.fund_note(NOTE_ASSET, nod_id, cost, cost);
     let nonce = world.pow_nonce(nod_id);
 
     let minted = world
@@ -939,7 +937,7 @@ fn assert_covering_paynote_mines_nod(input: NodIssueParams) {
         paid[0].asset, NOTE_ASSET,
         "the log must name the asset the note carried"
     );
-    assert_eq!(paid[0].amountCovered, U256::from(cost_of(&input)));
+    assert_eq!(paid[0].paymentMinor, U256::from(cost_of(&input)));
 
     let spent = world
         .enter(|storage, _, _| outbe_paynote::api::is_spent(&storage, paid[0].nullifier).unwrap());
@@ -1273,7 +1271,7 @@ fn a_paynote_can_cover_a_nod_cost_above_u128() {
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     world.register_reference_currency_asset(NOTE_ASSET);
-    let (proof, nullifier) = world.fund_note_u256(NOTE_ASSET, nod_id, cost, cost);
+    let (proof, nullifier) = world.fund_note(NOTE_ASSET, nod_id, cost, cost);
     let nonce = world.pow_nonce(nod_id);
 
     let minted = world
@@ -1294,7 +1292,7 @@ fn a_paynote_can_cover_a_nod_cost_above_u128() {
         .filter_map(|event| INodFactory::NodPaid::decode_log_data(&event.data).ok())
         .last()
         .expect("NodPaid event");
-    assert_eq!(paid.amountCovered, cost);
+    assert_eq!(paid.paymentMinor, cost);
 }
 
 #[test]
@@ -1374,18 +1372,11 @@ fn a_called_nod_still_mines_at_the_settlement_deadline() {
     world.settle(nod_id, input.owner, &proof).unwrap();
     let nonce = world.pow_nonce(nod_id);
     let minted = world
-        .enter(|storage, scope, parent| {
-            api::mine_gratis(
-                &storage,
-                scope,
-                parent,
-                api::MineGratisRequest {
-                    caller: input.owner,
-                    nod_id,
-                    nonce,
-                    auth: mine_auth(input.owner, input.gratis_load_minor),
-                },
-            )
+        .mine_gratis(api::MineGratisRequest {
+            caller: input.owner,
+            nod_id,
+            nonce,
+            auth: mine_auth(input.owner, input.gratis_load_minor),
         })
         .unwrap();
     assert_eq!(minted, input.gratis_load_minor);
@@ -1532,18 +1523,11 @@ fn settlement_preserves_entitlement_and_failed_mining_can_retry_after_deadline()
         });
     }
     let minted = world
-        .enter(|storage, scope, parent| {
-            api::mine_gratis(
-                &storage,
-                scope,
-                parent,
-                api::MineGratisRequest {
-                    caller: input.owner,
-                    nod_id,
-                    nonce,
-                    auth: mine_auth(input.owner, input.gratis_load_minor),
-                },
-            )
+        .mine_gratis(api::MineGratisRequest {
+            caller: input.owner,
+            nod_id,
+            nonce,
+            auth: mine_auth(input.owner, input.gratis_load_minor),
         })
         .unwrap();
     assert_eq!(minted, input.gratis_load_minor);
@@ -1631,6 +1615,39 @@ fn unpaid_mining_is_rejected() {
 }
 
 #[test]
+fn settlement_leaves_fidelity_alone_and_mining_records_it() {
+    let fidelity = |world: &World| {
+        world
+            .provider
+            .storage
+            .iter()
+            .filter(|((address, _), _)| *address == outbe_primitives::addresses::FIDELITY_ADDRESS)
+            .map(|(slot, value)| (*slot, *value))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    let mut world = World::new();
+    let input = params(Address::repeat_byte(0x86));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    let proof = world.covering_proof(nod_id, &input);
+    let before = fidelity(&world);
+
+    world.settle(nod_id, input.owner, &proof).unwrap();
+    assert_eq!(fidelity(&world), before, "settlement acquires no Fidelity");
+
+    let nonce = world.pow_nonce(nod_id);
+    world
+        .mine_gratis(api::MineGratisRequest {
+            caller: input.owner,
+            nod_id,
+            nonce,
+            auth: mine_auth(input.owner, input.gratis_load_minor),
+        })
+        .unwrap();
+    assert_ne!(fidelity(&world), before, "the mint records the acquisition");
+}
+
+#[test]
 fn fidelity_persistence_failure_preserves_paid_entitlement_and_mint_nonce() {
     let mut world = World::new();
     let input = params(Address::repeat_byte(0x85));
@@ -1644,18 +1661,11 @@ fn fidelity_persistence_failure_preserves_paid_entitlement_and_mint_nonce() {
     world
         .provider
         .fail_mutation_at_address(outbe_primitives::addresses::FIDELITY_ADDRESS);
-    let result = world.enter(|storage, scope, parent| {
-        api::mine_gratis(
-            &storage,
-            scope,
-            parent,
-            api::MineGratisRequest {
-                caller: input.owner,
-                nod_id,
-                nonce,
-                auth: mine_auth(input.owner, input.gratis_load_minor),
-            },
-        )
+    let result = world.mine_gratis(api::MineGratisRequest {
+        caller: input.owner,
+        nod_id,
+        nonce,
+        auth: mine_auth(input.owner, input.gratis_load_minor),
     });
     assert!(result.is_err());
     world.provider.clear_mutation_failure();
@@ -1736,7 +1746,39 @@ fn erc20_settlement_enforces_eligibility_before_payment_and_accepts_zero_cost() 
         .unwrap();
     assert_eq!(paid.owner, input.owner);
     assert_eq!(paid.nullifier, B256::ZERO);
-    assert_eq!(paid.amountCovered, U256::ZERO);
+    assert_eq!(paid.paymentMinor, U256::ZERO);
+}
+
+#[test]
+fn settlement_over_a_broken_member_index_reverts() {
+    let mut world = World::new();
+    let mut input = params(Address::repeat_byte(0x93));
+    input.entry_price_minor = U256::ZERO;
+    let nod_id = world.issue(&input);
+    world.register_reference_currency_asset(NOTE_ASSET);
+    world.qualify(nod_id);
+    world.enter(|storage, _, _| {
+        NodContract::new(storage)
+            .bucket_nod_index
+            .write(&nod_id, 7)
+            .unwrap();
+    });
+    let error = world
+        .enter(|storage, scope, parent| {
+            api::settle_nod(
+                &storage,
+                scope,
+                parent,
+                input.owner,
+                nod_id,
+                NOTE_ASSET,
+                U256::ZERO,
+            )
+        })
+        .unwrap_err();
+    assert!(
+        matches!(error, PrecompileError::Revert(message) if message.contains("is not indexed"))
+    );
 }
 
 #[test]
@@ -1847,7 +1889,7 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
 
     let paid = paid_event(&world);
     assert_eq!(paid.asset, EUR_ASSET);
-    assert_eq!(paid.amountCovered, U256::from(issuance_cost));
+    assert_eq!(paid.paymentMinor, U256::from(issuance_cost));
     assert!(is_settled(&mut world, nod_id));
 }
 
@@ -1877,7 +1919,7 @@ fn quote_agrees_with_what_settling_charges_on_both_rails() {
     let spend = u128::try_from(iss_amount).unwrap();
     let (proof, _) = world.fund_note(EUR_ASSET, nod_id, spend, spend);
     world.settle(nod_id, input.owner, &proof).unwrap();
-    assert_eq!(paid_event(&world).amountCovered, iss_amount);
+    assert_eq!(paid_event(&world).paymentMinor, iss_amount);
 }
 
 #[test]
@@ -2312,5 +2354,5 @@ fn quote_settlement_dispatch() {
         .unwrap();
     let ret = INodFactory::quoteSettlementCall::abi_decode_returns(&out).unwrap();
     assert_eq!(ret.settlementCurrency, 978);
-    assert_eq!(ret.payableUnits, U256::from(cost_of(&input) / 2));
+    assert_eq!(ret.paymentMinor, U256::from(cost_of(&input) / 2));
 }

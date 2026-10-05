@@ -46,7 +46,7 @@ use commonware_utils::TryCollect as _;
 use rand_commonware::rngs::ChaCha20Rng;
 use rand_commonware::SeedableRng as _;
 
-use super::actor::run_initial_dkg;
+use super::actor::{run_initial_dkg, InitialDkgFixture};
 
 const DKG_TEST_CHANNEL: u64 = 0;
 const DKG_TEST_QUOTA: Quota = Quota::per_second(NonZeroU32::MAX);
@@ -328,7 +328,14 @@ fn sim_full_ceremony_completes_and_all_agree() {
         for (key, tx, rx) in chans {
             let participants_c = participants.clone();
             let handle = context.child("dkg").spawn(move |ctx| async move {
-                run_initial_dkg(&ctx, key, participants_c, None, None, 0, None, None, tx, rx).await
+                run_initial_dkg(
+                    &ctx,
+                    InitialDkgFixture::bootstrap(key, participants_c),
+                    None,
+                    None,
+                    (tx, rx),
+                )
+                .await
             });
             handles.push(handle);
         }
@@ -409,7 +416,14 @@ fn sim_single_missing_dealer_times_out_clean() {
         for (key, tx, rx) in chans {
             let participants_c = participants.clone();
             let handle = context.child("dkg").spawn(move |ctx| async move {
-                run_initial_dkg(&ctx, key, participants_c, None, None, 0, None, None, tx, rx).await
+                run_initial_dkg(
+                    &ctx,
+                    InitialDkgFixture::bootstrap(key, participants_c),
+                    None,
+                    None,
+                    (tx, rx),
+                )
+                .await
             });
             handles.push(handle);
         }

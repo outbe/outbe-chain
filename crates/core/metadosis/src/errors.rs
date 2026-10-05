@@ -26,6 +26,12 @@ pub enum MetadosisError {
     #[error("existing OCOMP request limit receipt does not match the immutable day split")]
     OcompLimitReceiptMismatch,
 
+    #[error("Desis Limit {desis_limit_minor} exceeds the {available} the Promis Limit holds")]
+    DesisLimitUnavailable {
+        desis_limit_minor: U256,
+        available: U256,
+    },
+
     #[error("Desis returned a different OCOMP request brief hash")]
     OcompDesisBriefHashMismatch,
 
@@ -71,6 +77,7 @@ impl From<MetadosisError> for PrecompileError {
             MetadosisError::UnknownWorldwideDayType
             | MetadosisError::VwapMustBeNonZero
             | MetadosisError::InvalidOcompLimitSplit { .. }
+            | MetadosisError::DesisLimitUnavailable { .. }
             | MetadosisError::OcompDesisBriefHashMismatch => business_failure(message),
             MetadosisError::OcompLimitReceiptMismatch
             | MetadosisError::OcompPreAdmissionNotInitialized { .. }

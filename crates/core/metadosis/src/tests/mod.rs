@@ -12,7 +12,7 @@ use outbe_primitives::storage::dsl::StorageRecord;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{MetadosisMutationPurposeTag, StorageHandle};
 use outbe_promislimit::PromisLimitContract;
-use outbe_tribute::{TributeContract, TributeData, TributeRepositoryReader};
+use outbe_tribute::{TributeContract, TributeRepositoryReader};
 use std::sync::Arc;
 
 use crate::constants::*;
@@ -117,20 +117,9 @@ fn with_active_scope<R>(
         .unwrap()
         .is_zero()
     {
-        storage
-            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-            .unwrap();
-        storage
-            .sstore(
-                COMPRESSED_ENTITIES_ADDRESS,
-                U256::from(1),
-                U256::from_be_slice(
-                    outbe_compressed_entities::sealed_root(B256::ZERO)
-                        .unwrap()
-                        .as_slice(),
-                ),
-            )
-            .unwrap();
+        outbe_compressed_entities::test_support::seed_compressed_entities_genesis_after_marker(
+            &storage,
+        );
     }
     begin_block(storage.clone(), &scope).unwrap();
     let result = f(&scope, &parent);
@@ -212,6 +201,12 @@ mod ocomp_semantic_migrations;
 mod ocomp_snapshot_views;
 mod ocomp_storage;
 mod pre_admission;
+mod precompile;
 mod reducer;
 mod state;
 mod wwd_vwap_overflow;
+
+mod tribute_fixture;
+
+#[cfg(feature = "test-utils")]
+mod api;

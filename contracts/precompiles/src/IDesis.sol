@@ -68,7 +68,12 @@ interface IDesis {
     event AuctionOverdue(uint32 indexed worldwideDay);
     event AuctionCleared(uint32 indexed worldwideDay, uint32 issuedUnits, uint32 clearingRate, uint64 totalDemand);
     event AuctionClearedEmpty(uint32 indexed worldwideDay, uint64 totalDemand);
-    event UnusedSupplyReported(uint32 indexed worldwideDay, uint256 unusedPromis);
+    /// @notice The day put `desisAllocationMinor` of its `desisLimitMinor` into issued Intex; zero when cancelled.
+    /// @dev Briefed days only; a day failing pre-brief returns its Desis Limit via the Metadosis failure receipt.
+    event DesisAllocationRecorded(uint32 indexed worldwideDay, uint256 desisLimitMinor, uint256 desisAllocationMinor);
+    /// @notice The part of the day's Desis Limit left unallocated returned to PromisLimit.
+    /// @dev Briefed days only; a day failing pre-brief returns its Desis Limit via the Metadosis failure receipt.
+    event UnusedDesisLimitReported(uint32 indexed worldwideDay, uint256 unusedDesisLimitMinor);
     /// @notice The day dropped a reference currency because `takenBy` already claimed
     /// the letter a series id spells it with; no bid may price in it for this day.
     /// @notice The day's PROMIS load moved to a new decade of the COEN/USD ladder.
@@ -81,8 +86,8 @@ interface IDesis {
     event ReferenceCurrencyLetterTaken(uint32 indexed worldwideDay, uint16 indexed isoCode, uint16 indexed takenBy);
     /// @notice The only committed auction-brief rejection. Technical and
     /// invariant failures revert instead of being converted to business state.
-    /// `reasonCode == 1` means the supply exceeds Desis' uint128 auction domain.
+    /// `reasonCode == 1` means the Desis Limit exceeds Desis' uint128 auction domain.
     event AuctionBriefRejectedToCarryOver(
-        uint32 indexed worldwideDay, uint256 supply, uint256 maxAccepted, uint8 reasonCode
+        uint32 indexed worldwideDay, uint256 desisLimitMinor, uint256 maxAcceptedMinor, uint8 reasonCode
     );
 }

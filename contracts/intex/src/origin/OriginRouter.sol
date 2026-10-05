@@ -337,7 +337,7 @@ contract OriginRouter is
         if (series.length == 0) revert EmptyArray();
         _requireSeriesTarget(worldwideDay, dstChainId);
         for (uint256 i = 0; i < series.length; i++) {
-            if (series[i].recipients.length != series[i].quantities.length) revert ArrayLengthMismatch();
+            if (series[i].recipients.length != series[i].units.length) revert ArrayLengthMismatch();
             recipients += series[i].recipients.length;
         }
     }
@@ -586,7 +586,7 @@ contract OriginRouter is
         payload.callThreshold = p.callThreshold;
         payload.callPriceMinor = p.callPriceMinor;
         payload.recipients = p.recipients;
-        payload.quantities = p.quantities;
+        payload.units = p.units;
     }
 
     /// @notice ERC-165 support check, resolving the AccessControl interface ids.

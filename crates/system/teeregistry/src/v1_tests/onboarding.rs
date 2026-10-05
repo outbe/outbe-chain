@@ -1,4 +1,5 @@
 use super::*;
+use crate::v1::VerifiedIntentV1;
 
 fn sealed_offer_artifact(intent: &RegistrationIntentV1, offer_public: B256, fill: u8) -> Vec<u8> {
     DcapOnboardingArtifactV1 {
@@ -68,10 +69,7 @@ fn public_v1_registration_emits_onboarding_only_for_created_binding() {
 
     let created = StorageHandle::enter(&mut provider, |storage| {
         dispatch_register_with_onboarding_after_verifier_for_test(
-            storage,
-            node_signer.address(),
-            &call,
-            &intent,
+            PostVerifierCall::new(storage, node_signer.address(), &call, &intent),
             PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
             |recipient| {
                 assert_eq!(recipient, intent.recipient_x25519);
@@ -94,10 +92,7 @@ fn public_v1_registration_emits_onboarding_only_for_created_binding() {
 
     let idempotent = StorageHandle::enter(&mut provider, |storage| {
         dispatch_register_with_onboarding_after_verifier_for_test(
-            storage,
-            node_signer.address(),
-            &call,
-            &intent,
+            PostVerifierCall::new(storage, node_signer.address(), &call, &intent),
             PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
             |_| panic!("idempotent registration must not ask the enclave to reseal the offer key"),
         )
@@ -164,12 +159,14 @@ fn verified_onboarding_artifact_must_match_the_committed_binding_exactly() {
             .write(offer_public)
             .unwrap();
         let registration = registry
-            .register_enclave_after_verifier_for_test(
-                &intent,
-                &node_signature,
-                &enclave_signature,
-                PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
-            )
+            .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                intent: &intent,
+                node_signature: &node_signature,
+                enclave_signature: &enclave_signature,
+                capability: PostVerifierDcapCapabilityV1::new(verdict(
+                    DcapPlatformTcbStatusV1::UpToDate,
+                )),
+            })
             .unwrap();
         registry
             .emit_verified_onboarding_artifact_v1(

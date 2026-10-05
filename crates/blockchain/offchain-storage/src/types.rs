@@ -577,9 +577,10 @@ fn validate_namespace(value: &str) -> Result<(), StorageError> {
         ));
     }
     if value.starts_with("system.") {
-        return Err(StorageError::invalid_argument("reserved MongoDB namespace"));
+        Err(StorageError::invalid_argument("reserved MongoDB namespace"))
+    } else {
+        Ok(())
     }
-    Ok(())
 }
 
 fn validate_metadata_key(value: &str) -> Result<(), StorageError> {

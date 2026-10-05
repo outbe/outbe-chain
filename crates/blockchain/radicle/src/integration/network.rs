@@ -1,10 +1,15 @@
+mod evidence;
+mod receive;
+
+pub use evidence::{EndpointEvidenceHandle, SignedEndpointEvidence};
+
 use crate::integration::{RadicleStatusHandle, RadicleVotingGate};
 use crate::{
     endpoint::{
-        sign_response, AnchorSnapshot, AuthorityRecord, ChainIdentity, EndpointActor,
-        EndpointAddress, EndpointFrame, EndpointHandle, EndpointProtocol, EndpointResponseBody,
-        OsRequestIds, PeerId, ReceiveOutcome, SignedEndpointResponse, VerifiedEndpoint,
-        HANDLE_DEADLINE, MAX_ADDRESSES, MAX_ENDPOINT_TTL_BLOCKS, UNKNOWN_ANCHOR_TIMEOUT_MS,
+        sign_response, AnchorSnapshot, ChainIdentity, EndpointActor, EndpointAddress,
+        EndpointFrame, EndpointHandle, EndpointProtocol, EndpointResponseBody, OsRequestIds,
+        PeerId, ReceiveOutcome, SignedEndpointResponse, VerifiedEndpoint, HANDLE_DEADLINE,
+        MAX_ADDRESSES, MAX_ENDPOINT_TTL_BLOCKS, UNKNOWN_ANCHOR_TIMEOUT_MS,
     },
     manager::{BoxFuture, EndpointResolver, FinalizedSnapshot, ManagerError, RadicleManagerHandle},
 };
@@ -15,7 +20,6 @@ use commonware_runtime::IoBuf;
 use std::{
     collections::BTreeMap,
     future::Future,
-    sync::{Arc, RwLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
@@ -94,33 +98,27 @@ impl LocalEndpointIdentityHandle {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SignedEndpointEvidence {
-    pub peer: PeerId,
-    pub response: SignedEndpointResponse,
-    pub encoded_frame: Vec<u8>,
-}
-
-#[derive(Clone, Default)]
-pub struct EndpointEvidenceHandle(Arc<RwLock<BTreeMap<PeerId, SignedEndpointEvidence>>>);
-
-impl EndpointEvidenceHandle {
-    #[must_use]
-    pub fn snapshot(&self) -> Vec<SignedEndpointEvidence> {
-        self.0
-            .read()
-            .expect("endpoint evidence lock poisoned")
-            .values()
-            .cloned()
-            .collect()
-    }
-}
-
 pub struct EndpointNetwork;
 
+/// Owned send and receive halves of the endpoint transport.
+pub struct EndpointTransport<S, R> {
+    pub sender: S,
+    pub receiver: R,
+}
+
+/// Signing key and current local identity used for endpoint responses.
+pub struct EndpointSigningIdentity {
+    pub signer: bls12381::PrivateKey,
+    pub local: LocalEndpointIdentityHandle,
+}
+
 pub struct EndpointNetworkService {
+    actor: EndpointActor<OsRequestIds>,
+    state: EndpointNetworkState,
+}
+
+struct EndpointNetworkState {
     chain: ChainIdentity,
-    actor: Option<EndpointActor<OsRequestIds>>,
     handle: EndpointHandle,
     commands: mpsc::Receiver<NetworkCommand>,
     evidence: EndpointEvidenceHandle,
@@ -130,6 +128,12 @@ pub struct EndpointNetworkService {
 #[derive(Clone)]
 pub struct EndpointNetworkResolver {
     commands: mpsc::Sender<NetworkCommand>,
+}
+
+struct EndpointRefresh<'a> {
+    local_validator: Address,
+    snapshot: &'a FinalizedSnapshot,
+    queued: &'a mut BTreeMap<PeerId, (SignedEndpointResponse, u64)>,
 }
 
 enum NetworkCommand {
@@ -158,12 +162,14 @@ impl EndpointNetwork {
         let evidence = EndpointEvidenceHandle::default();
         (
             EndpointNetworkService {
-                chain,
-                actor: Some(actor),
-                handle,
-                commands: receiver,
-                evidence: evidence.clone(),
-                status,
+                actor,
+                state: EndpointNetworkState {
+                    chain,
+                    handle,
+                    commands: receiver,
+                    evidence: evidence.clone(),
+                    status,
+                },
             },
             EndpointNetworkResolver { commands },
             evidence,
@@ -211,25 +217,39 @@ impl EndpointResolver for EndpointNetworkResolver {
 
 impl EndpointNetworkService {
     pub async fn run<S, R>(
-        mut self,
-        mut sender: S,
-        mut receiver: R,
-        signer: bls12381::PrivateKey,
-        local: LocalEndpointIdentityHandle,
+        self,
+        transport: EndpointTransport<S, R>,
+        identity: EndpointSigningIdentity,
     ) -> Result<(), ManagerError>
     where
         S: LimitedSender<PublicKey = bls12381::PublicKey> + Send + 'static,
         R: Receiver<PublicKey = bls12381::PublicKey> + Send + 'static,
         R::Error: std::fmt::Display,
     {
+        self.state.run(self.actor, transport, identity).await
+    }
+}
+
+impl EndpointNetworkState {
+    async fn run<S, R>(
+        mut self,
+        endpoint_actor: EndpointActor<OsRequestIds>,
+        transport: EndpointTransport<S, R>,
+        identity: EndpointSigningIdentity,
+    ) -> Result<(), ManagerError>
+    where
+        S: LimitedSender<PublicKey = bls12381::PublicKey> + Send + 'static,
+        R: Receiver<PublicKey = bls12381::PublicKey> + Send + 'static,
+        R::Error: std::fmt::Display,
+    {
+        let EndpointTransport {
+            mut sender,
+            mut receiver,
+        } = transport;
+        let EndpointSigningIdentity { signer, local } = identity;
         // Dropping or unwinding the network service also aborts its owned actor.
         let mut actor = JoinSet::new();
-        actor.spawn(
-            self.actor
-                .take()
-                .expect("endpoint service may only run once")
-                .run(),
-        );
+        actor.spawn(endpoint_actor.run());
         let mut current = None;
         let mut queued = BTreeMap::<PeerId, (SignedEndpointResponse, u64)>::new();
         let mut shutdown_ack = None;
@@ -246,9 +266,7 @@ impl EndpointNetworkService {
                         Some(NetworkCommand::Refresh { snapshot, result }) => {
                             let refreshed = self.refresh(
                                 &mut sender,
-                                local.validator,
-                                &snapshot,
-                                &mut queued,
+                                EndpointRefresh { local_validator: local.validator, snapshot: &snapshot, queued: &mut queued },
                             ).await;
                             current = Some(snapshot);
                             let _ = result.send(refreshed);
@@ -266,11 +284,13 @@ impl EndpointNetworkService {
                         Err(error) => break Err(ManagerError::Endpoint(error.to_string())),
                     };
                     if let Err(error) = self.receive(
-                        &mut sender,
-                        &signer,
-                        &local,
-                        current.as_ref(),
-                        &mut queued,
+                        receive::EndpointReceiveContext {
+                            sender: &mut sender,
+                            signer: &signer,
+                            local: &local,
+                            snapshot: current.as_ref(),
+                            queued: &mut queued,
+                        },
                         (peer, bytes),
                     ).await {
                         break Err(error);
@@ -278,11 +298,20 @@ impl EndpointNetworkService {
                 }
             }
         };
+        self.finish_run(&mut actor, outcome, shutdown_ack).await
+    }
+
+    async fn finish_run(
+        &mut self,
+        actor: &mut JoinSet<()>,
+        outcome: Result<(), ManagerError>,
+        shutdown_ack: Option<oneshot::Sender<Result<(), ManagerError>>>,
+    ) -> Result<(), ManagerError> {
         self.commands.close();
         let cleanup = if actor.is_empty() {
             Ok(())
         } else {
-            stop_actor(&self.handle, &mut actor).await
+            stop_actor(&self.handle, actor).await
         };
         // Preserve a transport failure even if cleanup also fails.
         let outcome = match (outcome, cleanup) {
@@ -301,13 +330,16 @@ impl EndpointNetworkService {
     async fn refresh<S>(
         &self,
         sender: &mut S,
-        local_validator: Address,
-        snapshot: &FinalizedSnapshot,
-        queued: &mut BTreeMap<PeerId, (SignedEndpointResponse, u64)>,
+        context: EndpointRefresh<'_>,
     ) -> Result<Vec<VerifiedEndpoint>, ManagerError>
     where
         S: LimitedSender<PublicKey = bls12381::PublicKey>,
     {
+        let EndpointRefresh {
+            local_validator,
+            snapshot,
+            queued,
+        } = context;
         let anchor = anchor(snapshot)?;
         let now = now_millis();
         queued.retain(|_, (_, deadline)| *deadline > now);
@@ -322,7 +354,7 @@ impl EndpointNetworkService {
                 self.publish(resolved.peer, response, verified);
             }
         }
-        self.prune(snapshot);
+        self.evidence.prune(snapshot);
 
         for validator in snapshot
             .validators
@@ -349,132 +381,13 @@ impl EndpointNetworkService {
             .collect())
     }
 
-    async fn receive<S>(
-        &self,
-        sender: &mut S,
-        signer: &bls12381::PrivateKey,
-        local: &LocalEndpointIdentityHandle,
-        snapshot: Option<&FinalizedSnapshot>,
-        queued: &mut BTreeMap<PeerId, (SignedEndpointResponse, u64)>,
-        received: (bls12381::PublicKey, IoBuf),
-    ) -> Result<(), ManagerError>
-    where
-        S: LimitedSender<PublicKey = bls12381::PublicKey>,
-    {
-        let (sender_key, bytes) = received;
-        let peer = PeerId::from_public_key(&sender_key);
-        match EndpointFrame::decode(bytes.as_ref()) {
-            Ok(EndpointFrame::Request(request)) => {
-                if self.status.snapshot().voting_gate != RadicleVotingGate::SignerAllowed {
-                    return Ok(());
-                }
-                let Some(local) = local.current() else {
-                    return Ok(());
-                };
-                let Some(snapshot) = snapshot else {
-                    return Ok(());
-                };
-                let Some(validator) = snapshot.validators.iter().find(|validator| {
-                    validator.address == local.validator
-                        && validator.peer == PeerId::from_public_key(&signer.public_key())
-                        && validator.node_id == Some(local.node_id)
-                }) else {
-                    return Ok(());
-                };
-                let Some(valid_until) = snapshot.block.number.checked_add(MAX_ENDPOINT_TTL_BLOCKS)
-                else {
-                    return Ok(());
-                };
-                let response = sign_response(
-                    EndpointResponseBody {
-                        request_id: request.request_id(),
-                        chain_id: self.chain.chain_id,
-                        genesis_hash: self.chain.genesis_hash,
-                        validator: validator.address,
-                        node_id: local.node_id,
-                        addresses: local.addresses.clone(),
-                        anchor_number: snapshot.block.number,
-                        anchor_hash: snapshot.block.hash,
-                        valid_until,
-                    },
-                    signer,
-                )
-                .map_err(|error| ManagerError::Endpoint(error.to_string()))?;
-                let _ = send(
-                    sender,
-                    peer,
-                    EndpointFrame::Response(Box::new(response)).encode(),
-                );
-            }
-            Ok(EndpointFrame::Response(response)) => {
-                let Some(snapshot) = snapshot else {
-                    return Ok(());
-                };
-                let response = *response;
-                let anchor = (response.body().anchor_number == snapshot.block.number)
-                    .then(|| anchor(snapshot))
-                    .transpose()?;
-                match self
-                    .handle
-                    .response(
-                        peer,
-                        response.clone(),
-                        snapshot.block.number,
-                        anchor,
-                        now_millis(),
-                    )
-                    .await
-                {
-                    Ok(ReceiveOutcome::Verified(verified)) => {
-                        self.publish(peer, response, verified);
-                    }
-                    Ok(ReceiveOutcome::Queued { .. }) => {
-                        queued.insert(
-                            peer,
-                            (
-                                response,
-                                now_millis().saturating_add(UNKNOWN_ANCHOR_TIMEOUT_MS),
-                            ),
-                        );
-                    }
-                    Err(_) => {}
-                }
-            }
-            Err(_) => {}
-        }
-        Ok(())
-    }
-
     fn publish(&self, peer: PeerId, response: SignedEndpointResponse, _verified: VerifiedEndpoint) {
         let encoded_frame = EndpointFrame::Response(Box::new(response.clone())).encode();
-        self.evidence
-            .0
-            .write()
-            .expect("endpoint evidence lock poisoned")
-            .insert(
-                peer,
-                SignedEndpointEvidence {
-                    peer,
-                    response,
-                    encoded_frame,
-                },
-            );
-    }
-
-    fn prune(&self, snapshot: &FinalizedSnapshot) {
-        self.evidence
-            .0
-            .write()
-            .expect("endpoint evidence lock poisoned")
-            .retain(|peer, proof| {
-                let body = proof.response.body();
-                body.valid_until > snapshot.block.number
-                    && snapshot.validators.iter().any(|validator| {
-                        validator.address == body.validator
-                            && validator.peer == *peer
-                            && validator.node_id == Some(body.node_id)
-                    })
-            });
+        self.evidence.publish(SignedEndpointEvidence {
+            peer,
+            response,
+            encoded_frame,
+        });
     }
 }
 
@@ -528,38 +441,30 @@ async fn stop_actor(handle: &EndpointHandle, actor: &mut JoinSet<()>) -> Result<
         // A panic carries more information than the closed ACK it caused.
         Ok(Some(Err(error))) => Err(ManagerError::Task(format!("endpoint actor: {error}"))),
         Ok(None) => Err(ManagerError::Endpoint("endpoint actor join missing".into())),
-        Err(_) => {
-            actor.abort_all();
-            match tokio::time::timeout_at(end, actor.join_next()).await {
-                Ok(Some(Err(error))) if !error.is_cancelled() => {
-                    Err(ManagerError::Task(format!("endpoint actor: {error}")))
-                }
-                Ok(_) => Err(ManagerError::ShutdownDeadline("endpoint actor")),
-                Err(_) => Err(ManagerError::ShutdownDeadline(
-                    "endpoint actor cancellation",
-                )),
-            }
+        Err(_) => cancel_and_join(actor, end).await,
+    }
+}
+
+async fn cancel_and_join(
+    actor: &mut JoinSet<()>,
+    end: tokio::time::Instant,
+) -> Result<(), ManagerError> {
+    actor.abort_all();
+    match tokio::time::timeout_at(end, actor.join_next()).await {
+        Ok(Some(Err(error))) if !error.is_cancelled() => {
+            Err(ManagerError::Task(format!("endpoint actor: {error}")))
         }
+        Ok(_) => Err(ManagerError::ShutdownDeadline("endpoint actor")),
+        Err(_) => Err(ManagerError::ShutdownDeadline(
+            "endpoint actor cancellation",
+        )),
     }
 }
 
 fn anchor(snapshot: &FinalizedSnapshot) -> Result<AnchorSnapshot, ManagerError> {
-    AnchorSnapshot::new(
-        snapshot.block.number,
-        snapshot.block.hash,
-        snapshot
-            .validators
-            .iter()
-            .filter_map(|validator| {
-                Some(AuthorityRecord {
-                    validator: validator.address,
-                    peer: validator.peer,
-                    node_id: validator.node_id?,
-                })
-            })
-            .collect(),
-    )
-    .map_err(|error| ManagerError::Snapshot(error.to_string()))
+    snapshot
+        .endpoint_anchor()
+        .map_err(|error| ManagerError::Snapshot(error.to_string()))
 }
 
 fn verified_from_response(peer: PeerId, response: &SignedEndpointResponse) -> VerifiedEndpoint {
@@ -662,7 +567,7 @@ mod shutdown_tests {
             },
             status,
         );
-        let handle = service.handle.clone();
+        let handle = service.state.handle.clone();
         let (_, local) = LocalEndpointIdentityChannel::create(LocalEndpointIdentity {
             validator: Address::ZERO,
             node_id: [1; 32],
@@ -670,10 +575,14 @@ mod shutdown_tests {
         });
         let (incoming, receiver) = mpsc::unbounded_channel();
         let task = tokio::spawn(service.run(
-            NoSend,
-            TestReceiver(receiver),
-            bls12381::PrivateKey::from_seed(1),
-            local,
+            EndpointTransport {
+                sender: NoSend,
+                receiver: TestReceiver(receiver),
+            },
+            EndpointSigningIdentity {
+                signer: bls12381::PrivateKey::from_seed(1),
+                local,
+            },
         ));
         Running {
             task,

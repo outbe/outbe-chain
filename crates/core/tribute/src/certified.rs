@@ -78,7 +78,7 @@ pub fn prepare_certified_partition_retirement(
         || current.source_generation != input.input_binding.source_generation
         || current.sealed_collection_root != input.input_binding.sealed_collection_root
         || current.tribute_count != input.input_binding.exact_count
-        || current.tribute_nominal_amount != input.input_binding.exact_nominal_total
+        || current.tribute_nominal_total_minor != input.input_binding.exact_nominal_total
     {
         return Err(revert(
             "certified Tribute input differs from the sealed generation",
@@ -184,7 +184,7 @@ pub fn retire_prepared_certified_partition(
                 sourceGeneration: input.input_binding.source_generation,
                 sealedCollectionRoot: input.input_binding.sealed_collection_root,
                 consumedCount: input.consumed_count,
-                consumedNominalTotal: input.consumed_nominal_total,
+                consumedNominalTotalMinor: input.consumed_nominal_total,
                 retiredGeneration: input.retired_generation,
                 stateEventDigest: state_event_digest,
             }
@@ -501,7 +501,7 @@ mod tests {
                 totals.initialized = true;
                 totals.is_sealed = true;
                 totals.tribute_count = expected.input_binding.exact_count;
-                totals.tribute_nominal_amount = expected.input_binding.exact_nominal_total;
+                totals.tribute_nominal_total_minor = expected.input_binding.exact_nominal_total;
                 tribute.store_day_totals(&totals).unwrap();
 
                 let mut admission = DayPreAdmission::with_key(day);
@@ -509,7 +509,7 @@ mod tests {
                 admission.is_sealed = true;
                 admission.sealed_collection_root = expected.input_binding.sealed_collection_root;
                 admission.sealed_tribute_count = expected.input_binding.exact_count;
-                admission.sealed_tribute_nominal_amount =
+                admission.sealed_tribute_nominal_total_minor =
                     expected.input_binding.exact_nominal_total;
                 admission.source_generation = expected.input_binding.source_generation;
                 tribute.store_day_pre_admission(&admission).unwrap();
@@ -550,7 +550,7 @@ mod tests {
                 (
                     tribute.total_supply.read().unwrap(),
                     totals.tribute_count,
-                    totals.tribute_nominal_amount,
+                    totals.tribute_nominal_total_minor,
                     totals.is_sealed,
                     generation,
                 )
@@ -627,7 +627,7 @@ mod tests {
         );
         assert_eq!(certified.data.consumedCount, input.consumed_count);
         assert_eq!(
-            certified.data.consumedNominalTotal,
+            certified.data.consumedNominalTotalMinor,
             input.consumed_nominal_total
         );
         assert_eq!(certified.data.retiredGeneration, 1);

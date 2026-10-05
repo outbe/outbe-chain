@@ -123,14 +123,13 @@ fn missing_transition_and_boundary_certificates_survive_restart_via_ancestry() {
         let chain = SharedCommitteeChain::new(CommitteeChain::new(e0, c0.participants.clone()));
         let epocher = FollowerEpocher::new(3, 0);
         futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
-            &chain,
-            &source,
-            &epocher,
-            e0,
-            Height::new(lower),
-            Height::new(upper),
-            certificates.clone(),
-            blocks.clone(),
+            replay_authority(&chain, &source, &epocher),
+            engine::ReplayWindow {
+                anchor_epoch: e0,
+                lower: Height::new(lower),
+                upper: Height::new(upper),
+            },
+            engine::ReplayArchives::new(certificates.clone(), blocks.clone()),
         ))
         .unwrap();
         assert_eq!(chain.lock().highest_registered(), Some(e1));

@@ -10,14 +10,16 @@ fn proposer_injects_tee_bootstrap_after_boundary_when_payload_pending() {
     // Block 1, empty extra_data: begin-zone is CycleTick + RewardsGemDelivery
     // + OracleSlashWindow + HookEvents. A pending bootstrap is injected
     // between delivery and OracleSlashWindow.
-    let with_bootstrap = begin_system_txs_for_test_with_bootstrap(
+    let with_bootstrap = begin_system_txs_for_test(
         &config,
-        1,
-        B256::ZERO,
-        &Bytes::new(),
-        None,
-        proposer,
-        Some(sample_tee_bootstrap_payload(1)),
+        BeginBlockFixture {
+            block_number: 1,
+            parent_hash: B256::ZERO,
+            extra_data: &Bytes::new(),
+            parent_consensus_metadata: None,
+            proposer,
+            bootstrap: BootstrapFixture::explicit(Some(sample_tee_bootstrap_payload(1))),
+        },
     );
     assert_eq!(
         begin_system_tx_kinds(&with_bootstrap),
@@ -112,21 +114,7 @@ fn boundary_activation_allows_registered_next_epoch_proposer() {
             (proposer, dummy_pubkey(0xB3)),
         ],
     );
-    let tee_bootstrap = sample_tee_bootstrap_payload_for(
-        1,
-        boundary.committee_set_hash,
-        TEST_BLOCK_TIMESTAMP_BASE + 1 + 3_600,
-        &[
-            outbe_primitives::tee_test_utils::DevValidatorV1 {
-                evm_secret: old_active_secret,
-                bls_minpk_public: dummy_pubkey(0xA2),
-            },
-            outbe_primitives::tee_test_utils::DevValidatorV1 {
-                evm_secret: [1; 32],
-                bls_minpk_public: dummy_pubkey(0xB3),
-            },
-        ],
-    );
+    let tee_bootstrap = activation_bootstrap(boundary.committee_set_hash, old_active_secret);
     let extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
         execution_summary: None,
         consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)),
@@ -145,14 +133,16 @@ fn boundary_activation_allows_registered_next_epoch_proposer() {
     executor
         .apply_pre_execution_changes()
         .expect("activation block pre-execution should apply");
-    let system_txs = begin_system_txs_for_test_with_bootstrap(
+    let system_txs = begin_system_txs_for_test(
         &config,
-        1,
-        B256::ZERO,
-        &extra_data,
-        None,
-        proposer,
-        Some(tee_bootstrap),
+        BeginBlockFixture {
+            block_number: 1,
+            parent_hash: B256::ZERO,
+            extra_data: &extra_data,
+            parent_consensus_metadata: None,
+            proposer,
+            bootstrap: BootstrapFixture::explicit(Some(tee_bootstrap)),
+        },
     );
     for tx in system_txs {
         executor
@@ -239,29 +229,23 @@ fn full_begin_phases_then_user_tx_observes_boundary_activation() {
     });
     let system_txs = begin_system_txs_for_test(
         &config,
-        2,
-        parent_hash,
-        &extra_data,
-        Some(metadata),
-        proposer,
+        BeginBlockFixture {
+            block_number: 2,
+            parent_hash,
+            extra_data: &extra_data,
+            parent_consensus_metadata: Some(metadata),
+            proposer,
+            bootstrap: BootstrapFixture::StandardForBlock,
+        },
     );
-    let mut visible_system_gas_used = 0u64;
-    for tx in system_txs {
-        let signed_gas_limit = tx.tx().gas_limit();
-        let gas_output = executor
-            .execute_transaction(tx)
-            .expect("Phase 1+2+3+OracleSlashWindow begin-zone system tx should execute");
-        assert!(gas_output.tx_gas_used() <= signed_gas_limit);
-        visible_system_gas_used += gas_output.tx_gas_used();
-        assert_eq!(
-            executor
-                .receipts()
-                .last()
-                .expect("system receipt should be present")
-                .cumulative_gas_used,
-            visible_system_gas_used
-        );
-    }
+    let visible_system_gas_used = fixtures::assert_begin_prefix_gas(
+        &mut executor,
+        system_txs,
+        fixtures::BeginPrefixCheck {
+            execution_message: "Phase 1+2+3+OracleSlashWindow begin-zone system tx should execute",
+            cumulative_receipts: true,
+        },
+    );
     // CPA + LateFinalizeCredits + CycleTick + RewardsGemDelivery +
     // BoundaryOutcome + OracleSlashWindow + HookEvents.
     assert_eq!(executor.receipts().len(), 7);
@@ -380,21 +364,7 @@ fn oracle_slash_window_runs_after_boundary_activation() {
             (proposer, dummy_pubkey(0xB3)),
         ],
     );
-    let tee_bootstrap = sample_tee_bootstrap_payload_for(
-        1,
-        boundary.committee_set_hash,
-        TEST_BLOCK_TIMESTAMP_BASE + 1 + 3_600,
-        &[
-            outbe_primitives::tee_test_utils::DevValidatorV1 {
-                evm_secret: old_active_secret,
-                bls_minpk_public: dummy_pubkey(0xA2),
-            },
-            outbe_primitives::tee_test_utils::DevValidatorV1 {
-                evm_secret: [1; 32],
-                bls_minpk_public: dummy_pubkey(0xB3),
-            },
-        ],
-    );
+    let tee_bootstrap = activation_bootstrap(boundary.committee_set_hash, old_active_secret);
     let extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
         execution_summary: None,
         consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)),
@@ -413,32 +383,26 @@ fn oracle_slash_window_runs_after_boundary_activation() {
     executor
         .apply_pre_execution_changes()
         .expect("pre-execution changes should apply before Oracle slash system tx");
-    let system_txs = begin_system_txs_for_test_with_bootstrap(
+    let system_txs = begin_system_txs_for_test(
         &config,
-        1,
-        B256::ZERO,
-        &extra_data,
-        None,
-        proposer,
-        Some(tee_bootstrap),
+        BeginBlockFixture {
+            block_number: 1,
+            parent_hash: B256::ZERO,
+            extra_data: &extra_data,
+            parent_consensus_metadata: None,
+            proposer,
+            bootstrap: BootstrapFixture::explicit(Some(tee_bootstrap)),
+        },
     );
-    let mut visible_system_gas_used = 0u64;
-    for tx in system_txs {
-        let signed_gas_limit = tx.tx().gas_limit();
-        let gas_output = executor
-            .execute_transaction(tx)
-            .expect("Oracle slash must not invalidate same-block BoundaryOutcome activation");
-        assert!(gas_output.tx_gas_used() <= signed_gas_limit);
-        visible_system_gas_used += gas_output.tx_gas_used();
-        assert_eq!(
-            executor
-                .receipts()
-                .last()
-                .expect("system receipt should be present")
-                .cumulative_gas_used,
-            visible_system_gas_used
-        );
-    }
+    let visible_system_gas_used = fixtures::assert_begin_prefix_gas(
+        &mut executor,
+        system_txs,
+        fixtures::BeginPrefixCheck {
+            execution_message:
+                "Oracle slash must not invalidate same-block BoundaryOutcome activation",
+            cumulative_receipts: true,
+        },
+    );
 
     assert_eq!(executor.receipts().len(), 6);
     assert!(executor.receipts().iter().all(|receipt| receipt.success));
@@ -494,4 +458,25 @@ fn oracle_slash_window_runs_after_boundary_activation() {
         Ok::<_, outbe_primitives::error::PrecompileError>(())
     })
     .expect("validator state should be readable");
+}
+
+fn activation_bootstrap(
+    committee_set_hash: B256,
+    old_active_secret: [u8; 32],
+) -> outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2 {
+    sample_tee_bootstrap_payload_for(
+        1,
+        committee_set_hash,
+        TEST_BLOCK_TIMESTAMP_BASE + 1 + 3_600,
+        &[
+            outbe_primitives::tee_test_utils::DevValidatorV1 {
+                evm_secret: old_active_secret,
+                bls_minpk_public: dummy_pubkey(0xA2),
+            },
+            outbe_primitives::tee_test_utils::DevValidatorV1 {
+                evm_secret: [1; 32],
+                bls_minpk_public: dummy_pubkey(0xB3),
+            },
+        ],
+    )
 }

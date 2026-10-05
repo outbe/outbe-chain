@@ -17,14 +17,19 @@
 //!   * one note is one payment. Replaying the first proof against the second Nod
 //!     reverts, so the change note is the only way to pay it.
 //!
-//! Only the two ERC20/ERC4626 counterparties are stubbed; VaultRouter, PayNote,
-//! NodFactory, Nod, GratisFactory and Gratis all run for real.
+//! The ERC20/ERC4626 counterparties are the stateful `FactorySettlement` fixture;
+//! VaultRouter, PayNote, NodFactory, Nod, GratisFactory and Gratis all run for real.
+
+#[path = "common/nod_qualification.rs"]
+mod qualify_fixture;
+use outbe_compressed_entities::test_support::seed_compressed_entities_genesis;
+use qualify_fixture::qualify;
 
 use outbe_protocol::codec::field_to_b256;
 use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, B256, U256};
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{sol, SolCall};
 use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_evm::sub_call;
 use outbe_gratis::enclave_client::test_enclave;
@@ -38,7 +43,7 @@ use outbe_paynote::client::new_tree;
 use outbe_paynote::precompile::IPayNote;
 use outbe_paynote::test_support::{change_note, note, spend_proof, Note};
 use outbe_primitives::addresses::{
-    COMPRESSED_ENTITIES_ADDRESS, GRATIS_ADDRESS, NOD_FACTORY_ADDRESS, PAYNOTE_ADDRESS,
+    GRATIS_ADDRESS, NOD_FACTORY_ADDRESS, PAYNOTE_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
 use outbe_primitives::chain::CHAIN_ID;
 use outbe_primitives::time::WorldwideDay;
@@ -77,27 +82,6 @@ const COST: u128 = 500;
 const GRATIS_LOAD: u128 = 1_000;
 const BLOCK_TIMESTAMP: u64 = 1_700_000_000;
 
-/// Closes the bucket's first full day above its floor, which qualifies it.
-fn qualify(storage: &StorageHandle<'_>, bucket_key: B256, floor: U256, iso: u16) {
-    let issued_at = NodContract::new(storage.clone())
-        .callable_bucket_issued_at
-        .read(&bucket_key)
-        .unwrap();
-    let pair = outbe_oracle::api::AddressPair::new_coen_to(iso);
-    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-    let mut index = oracle.pair_index_of(pair).unwrap();
-    if index == 0 {
-        index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
-    }
-    let day = outbe_primitives::time::first_full_day(issued_at);
-    oracle
-        .record_utc_day_vwap(day, index, floor + U256::ONE)
-        .unwrap();
-    if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
-        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
-    }
-}
-
 /// One Nod per owner per day, so two Nods for one owner means two days. They
 /// share `ALICE1` as their owner. Each spend proof binds the Nod it settles.
 /// The depositor can be a different account.
@@ -110,17 +94,20 @@ type EvmCtx = revm::Context<
     CacheDB<EmptyDB>,
 >;
 
-/// A counterparty stub that answers every call with one fixed word.
-///
-/// `PUSH32 <word>, PUSH1 0x00, MSTORE, PUSH1 0x20, PUSH1 0x00, RETURN`
-///
-/// The vault returns its own asset address, which `asset()` needs verbatim
-/// and `deposit()` reads as a share count nothing in this flow inspects.
-fn always_returns(word: B256) -> AccountInfo {
-    let mut code = vec![0x7f];
-    code.extend_from_slice(word.as_slice());
-    code.extend_from_slice(&[0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3]);
-    let bytecode = Bytecode::new_raw(Bytes::from(code));
+sol! {
+    interface IFixture {
+        function mint(address account, uint256 amount) external;
+        function approve(address spender, uint256 amount) external returns (bool);
+    }
+}
+
+/// The stateful token and vault: six decimals, ISO 840 (`REFERENCE_CURRENCY`),
+/// and balances and allowances that move for real.
+fn fixture_account() -> AccountInfo {
+    let bytecode = Bytecode::new_raw(Bytes::from(
+        alloy_primitives::hex::decode(include_str!("fixtures/FactorySettlement.hex").trim())
+            .unwrap(),
+    ));
     AccountInfo {
         code_hash: bytecode.hash_slow(),
         code: Some(bytecode),
@@ -128,29 +115,54 @@ fn always_returns(word: B256) -> AccountInfo {
     }
 }
 
-/// Returns six for `decimals()`, the reference currency for `isoCode()`,
-/// and true for `transferFrom` and `approve`.
-fn settlement_asset() -> AccountInfo {
-    let mut code = alloy_primitives::hex!(
-        // Dispatch decimals() to offset 40 and isoCode() to offset 51.
-        "60003560e01c63313ce56714602857"
-        "60003560e01c63dfa3b54114603357"
-        // Return true for ERC20 transfers and approvals.
-        "600160005260206000f3"
-        // JUMPDEST; return six decimals, matching COST's reference minor units.
-        "5b600660005260206000f3"
-        // JUMPDEST; PUSH2 <reference currency>.
-        "5b61"
-    )
-    .to_vec();
-    code.extend_from_slice(&REFERENCE_CURRENCY.to_be_bytes());
-    code.extend_from_slice(&alloy_primitives::hex!("60005260206000f3"));
-    let bytecode = Bytecode::new_raw(Bytes::from(code));
-    AccountInfo {
-        code_hash: bytecode.hash_slow(),
-        code: Some(bytecode),
-        ..Default::default()
+/// Funds both depositors and approves the pool, and lets the vault pull from the router.
+fn fund_depositors(ctx: &mut EvmCtx, scope: &Arc<ExecutionScope>) {
+    let mut setup = |caller: Address, calldata: Vec<u8>| {
+        let out = call(
+            ctx,
+            sub_call::SubCallEnvironment {
+                execution_scope: scope.clone(),
+                runtime_body_readers: None,
+                self_address: caller,
+                outer_is_static: false,
+                spec: SpecId::PRAGUE,
+            },
+            ASSET,
+            calldata.into(),
+            false,
+        );
+        assert!(
+            matches!(out.status, SubCallStatus::Success),
+            "fixture setup reverted: {:?}",
+            out.status
+        );
+    };
+    for depositor in [ALICE1, ALICE2] {
+        setup(
+            depositor,
+            IFixture::mintCall {
+                account: depositor,
+                amount: U256::MAX >> 1,
+            }
+            .abi_encode(),
+        );
+        setup(
+            depositor,
+            IFixture::approveCall {
+                spender: PAYNOTE_ADDRESS,
+                amount: U256::MAX,
+            }
+            .abi_encode(),
+        );
     }
+    setup(
+        VAULT_ROUTER_ADDRESS,
+        IFixture::approveCall {
+            spender: VAULT,
+            amount: U256::MAX,
+        }
+        .abi_encode(),
+    );
 }
 
 fn nod_params(day: u32) -> NodIssueParams {
@@ -188,23 +200,6 @@ fn seed_vault_router(storage: &StorageHandle<'_>) {
         .unwrap();
 }
 
-fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
-    storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4_u64))
-        .unwrap();
-    storage
-        .sstore(
-            COMPRESSED_ENTITIES_ADDRESS,
-            U256::from(1_u64),
-            U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(B256::ZERO)
-                    .unwrap()
-                    .as_slice(),
-            ),
-        )
-        .unwrap();
-}
-
 /// A chain with the vault registry seeded and two qualified, costed Nods
 /// already issued to `ALICE1` — everything the scenario needs before the first
 /// note exists.
@@ -228,8 +223,8 @@ fn fixture_with_cost(
     test_enclave::install();
 
     let mut database = CacheDB::new(EmptyDB::default());
-    database.insert_account_info(ASSET, settlement_asset());
-    database.insert_account_info(VAULT, always_returns(ASSET.into_word()));
+    database.insert_account_info(ASSET, fixture_account());
+    database.insert_account_info(VAULT, fixture_account());
 
     let adapter = Arc::new(MemoryStorage::new());
     let readers = RuntimeBodyReaders::new(adapter.clone());
@@ -239,7 +234,7 @@ fn fixture_with_cost(
     let block = BlockContext::new(1, BLOCK_TIMESTAMP, CHAIN_ID, ALICE1, vec![ALICE1]);
     let mut provider = DirectStorageProvider::new(&mut database, block);
     let nods = StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), scope.as_ref()).unwrap();
         seed_vault_router(&storage);
         DAYS.map(|day| {
@@ -251,7 +246,7 @@ fn fixture_with_cost(
                 NodContract::floor_price_minor(params.entry_price_minor).unwrap();
             let bucket_key = NodContract::bucket_key(
                 params.worldwide_day,
-                floor_price_minor,
+                params.entry_price_minor,
                 params.reference_currency,
             );
             qualify(
@@ -259,34 +254,30 @@ fn fixture_with_cost(
                 bucket_key,
                 floor_price_minor,
                 params.reference_currency,
-            );
+            )
+            .expect("bucket qualifies");
             nod_id
         })
     });
     provider.flush().unwrap();
 
-    let ctx = Context::mainnet()
+    let mut ctx = Context::mainnet()
         .with_db(database)
         .modify_cfg_chained(|cfg| cfg.chain_id = CHAIN_ID);
+    fund_depositors(&mut ctx, &scope);
     (ctx, scope, readers, nods)
 }
 
 fn call(
     ctx: &mut EvmCtx,
-    scope: Arc<ExecutionScope>,
-    readers: Option<RuntimeBodyReaders>,
-    caller: Address,
+    environment: sub_call::SubCallEnvironment,
     target: Address,
     calldata: Bytes,
     is_static: bool,
 ) -> outbe_primitives::storage::SubCallOutput {
     sub_call::run(
         ctx,
-        caller,
-        false,
-        SpecId::PRAGUE,
-        readers,
-        scope,
+        environment,
         SubCallInput {
             target,
             value: U256::ZERO,
@@ -308,9 +299,13 @@ fn view<C: SolCall>(
 ) -> C::Return {
     let out = call(
         ctx,
-        scope.clone(),
-        None,
-        ALICE1,
+        sub_call::SubCallEnvironment {
+            execution_scope: scope.clone(),
+            runtime_body_readers: None,
+            self_address: ALICE1,
+            outer_is_static: false,
+            spec: SpecId::PRAGUE,
+        },
         target,
         Bytes::from(c.abi_encode()),
         true,
@@ -373,9 +368,13 @@ fn settle_and_mine(
 ) -> outbe_primitives::storage::SubCallOutput {
     let settled = call(
         ctx,
-        scope.clone(),
-        Some(readers.clone()),
-        ALICE1,
+        sub_call::SubCallEnvironment {
+            execution_scope: scope.clone(),
+            runtime_body_readers: Some(readers.clone()),
+            self_address: ALICE1,
+            outer_is_static: false,
+            spec: SpecId::PRAGUE,
+        },
         NOD_FACTORY_ADDRESS,
         Bytes::from(
             INodFactory::settleNodWithPayNoteCall {
@@ -411,9 +410,13 @@ fn settle_and_mine(
         .expect("every nod id has a PoW nonce in the bounded search");
     call(
         ctx,
-        scope.clone(),
-        Some(readers.clone()),
-        ALICE1,
+        sub_call::SubCallEnvironment {
+            execution_scope: scope.clone(),
+            runtime_body_readers: Some(readers.clone()),
+            self_address: ALICE1,
+            outer_is_static: false,
+            spec: SpecId::PRAGUE,
+        },
         NOD_FACTORY_ADDRESS,
         Bytes::from(
             INodFactory::mineGratisCall {
@@ -443,9 +446,13 @@ fn assert_mined(out: &outbe_primitives::storage::SubCallOutput, what: &str) -> U
 fn deposit(ctx: &mut EvmCtx, scope: &Arc<ExecutionScope>, depositor: Address, note: &Note) {
     let out = call(
         ctx,
-        scope.clone(),
-        None,
-        depositor,
+        sub_call::SubCallEnvironment {
+            execution_scope: scope.clone(),
+            runtime_body_readers: None,
+            self_address: depositor,
+            outer_is_static: false,
+            spec: SpecId::PRAGUE,
+        },
         PAYNOTE_ADDRESS,
         Bytes::from(
             IPayNote::depositCall {
@@ -735,9 +742,13 @@ fn merged_12_8_5_pays_a_20_nod_and_preserves_five_as_ordinary_change() {
         .collect::<std::collections::BTreeMap<_, _>>();
     let out = call(
         &mut ctx,
-        scope.clone(),
-        None,
-        Address::repeat_byte(0x77),
+        sub_call::SubCallEnvironment {
+            execution_scope: scope.clone(),
+            runtime_body_readers: None,
+            self_address: Address::repeat_byte(0x77),
+            outer_is_static: false,
+            spec: SpecId::PRAGUE,
+        },
         PAYNOTE_ADDRESS,
         IPayNote::mergePayNotesCall {
             proof: proof.into(),

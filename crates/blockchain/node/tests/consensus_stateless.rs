@@ -277,54 +277,7 @@ fn gas_04_osaka_user_tx_cap_accepts_visible_outbe_system_tx_envelopes() {
 
     let signer = signer();
     let parent_hash = B256::with_last_byte(0xA4);
-    let transactions = vec![
-        signed_v2(
-            &signer,
-            SystemTxKind::CertifiedParentAccounting,
-            0,
-            2,
-            SystemTxInputV2::CertifiedParentAccounting {
-                metadata: phase1_metadata(1, parent_hash),
-            },
-        ),
-        signed_v2(
-            &signer,
-            SystemTxKind::LateFinalizeCredits,
-            1,
-            2,
-            SystemTxInputV2::LateFinalizeCredits {
-                artifact: Default::default(),
-            },
-        ),
-        signed_v2(
-            &signer,
-            SystemTxKind::CycleTick,
-            2,
-            2,
-            SystemTxInputV2::CycleTick,
-        ),
-        signed_v2(
-            &signer,
-            SystemTxKind::RewardsGemDelivery,
-            3,
-            2,
-            SystemTxInputV2::RewardsGemDelivery,
-        ),
-        signed_v2(
-            &signer,
-            SystemTxKind::OracleSlashWindow,
-            4,
-            2,
-            SystemTxInputV2::OracleSlashWindow,
-        ),
-        signed_v2(
-            &signer,
-            SystemTxKind::HookEvents,
-            5,
-            2,
-            SystemTxInputV2::HookEvents,
-        ),
-    ];
+    let transactions = begin_zone_txs_block2(&signer, parent_hash, Default::default());
     for tx in &transactions {
         assert_eq!(
             tx.gas_limit(),
@@ -647,54 +600,7 @@ fn malformed_block_rejected_via_v2_with_tx_root_entrypoint() {
 fn with_tx_root_forwards_transaction_root_on_wellformed_block() {
     let signer = signer();
     let parent_hash = B256::with_last_byte(0xA4);
-    let transactions = vec![
-        signed_v2(
-            &signer,
-            SystemTxKind::CertifiedParentAccounting,
-            0,
-            2,
-            SystemTxInputV2::CertifiedParentAccounting {
-                metadata: phase1_metadata(1, parent_hash),
-            },
-        ),
-        signed_v2(
-            &signer,
-            SystemTxKind::LateFinalizeCredits,
-            1,
-            2,
-            SystemTxInputV2::LateFinalizeCredits {
-                artifact: Default::default(),
-            },
-        ),
-        signed_v2(
-            &signer,
-            SystemTxKind::CycleTick,
-            2,
-            2,
-            SystemTxInputV2::CycleTick,
-        ),
-        signed_v2(
-            &signer,
-            SystemTxKind::RewardsGemDelivery,
-            3,
-            2,
-            SystemTxInputV2::RewardsGemDelivery,
-        ),
-        signed_v2(
-            &signer,
-            SystemTxKind::OracleSlashWindow,
-            4,
-            2,
-            SystemTxInputV2::OracleSlashWindow,
-        ),
-        signed_v2(
-            &signer,
-            SystemTxKind::HookEvents,
-            5,
-            2,
-            SystemTxInputV2::HookEvents,
-        ),
-    ];
+    let transactions = begin_zone_txs_block2(&signer, parent_hash, Default::default());
     // The block's true transaction root (also written into the header).
     let correct_tx_root = calculate_transaction_root(&transactions);
     let header = header_for_transactions(2, parent_hash, &transactions);

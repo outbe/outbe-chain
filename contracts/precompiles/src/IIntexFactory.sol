@@ -9,8 +9,8 @@ pragma solidity ^0.8.30;
 ///         precompile selector. Series identity + lifecycle live in Intex; this
 ///         precompile owns settlement bookkeeping and the call-price index.
 interface IIntexFactory {
-    /// @notice Settle `amount` Issued Intexes of `seriesId` held by
-    ///         `intexOwner`, paying the cost in `asset`. Any caller may pay; the
+    /// @notice Settle `units` Issued Intexes of `seriesId` held by
+    ///         `owner`, paying the cost in `asset`. Any caller may pay; the
     ///         settled units stay with the owner. Allowed once qualified (voluntary,
     ///         see `isSeriesQualified`) and once called (forced, until the deadline).
     /// @dev Approve IntexFactory for the `quoteSettlement` amount before calling.
@@ -20,32 +20,31 @@ interface IIntexFactory {
     ///        the trailing VWAP snapshot required at this block.
     /// @param snapshotId The snapshot `quoteSettlement` returned; an issuance-currency
     ///        payment naming any other snapshot reverts. Ignored on the reference rail.
-    function settleIntex(bytes14 seriesId, address intexOwner, uint256 amount, address asset, uint256 snapshotId)
-        external;
+    function settleIntex(bytes14 seriesId, address owner, uint256 units, address asset, uint256 snapshotId) external;
 
     /// @notice Settle like `settleIntex`, paying the cost by spending a PayNote.
     /// @dev Moves no tokens: the underlying assets reached the reserve vault when
     ///      the note was deposited.
-    /// @param payNoteProof `outbe.paynote` spend proof. Must name the caller as its
-    ///        owner, carry a token registered with the vault router under either of
-    ///        the series' currencies, and spend exactly the settlement cost. The
-    ///        proof names no VWAP snapshot: an issuance-currency note must spend what
-    ///        `quoteSettlement` returns at the executing block.
-    function settleIntexWithPayNote(bytes14 seriesId, address intexOwner, uint256 amount, bytes calldata payNoteProof)
+    /// @param payNoteProof `outbe.paynote` spend proof. Must be bound to this series,
+    ///        `owner`, `units` and the snapshot `quoteSettlement` names (zero on
+    ///        the reference rail), carry a token registered with the vault router under
+    ///        either of the series' currencies, and spend exactly the settlement cost.
+    ///        Anyone may submit it.
+    function settleIntexWithPayNote(bytes14 seriesId, address owner, uint256 units, bytes calldata payNoteProof)
         external;
 
-    /// @notice What settling `amount` units of `seriesId` with `paymentToken` costs,
-    ///         and which of the series' two currencies that token settles on. Priced
-    ///         exactly as `settleIntex` charges it. Reverts for a token the series does
+    /// @notice What settling `units` of `seriesId` with `asset` costs,
+    ///         and which of the series' two currencies that asset settles on. Priced
+    ///         exactly as `settleIntex` charges it. Reverts for an asset the series does
     ///         not accept.
     /// @return settlementCurrency ISO 4217 code the payment is denominated in.
-    /// @return payableUnits Amount to pay, in `paymentToken`'s own minor units.
+    /// @return paymentMinor Amount to pay, in `asset`'s own minor units.
     /// @return snapshotId Trailing VWAP snapshot the amount converts at; zero on the
     ///         reference rail. It goes stale at the next update cutoff.
-    function quoteSettlement(bytes14 seriesId, address paymentToken, uint256 amount)
+    function quoteSettlement(bytes14 seriesId, address asset, uint256 units)
         external
         view
-        returns (uint16 settlementCurrency, uint256 payableUnits, uint256 snapshotId);
+        returns (uint16 settlementCurrency, uint256 paymentMinor, uint256 snapshotId);
 
     /// @notice Derived from finalized daily VWAPs on every call, never stored.
     function isSeriesQualified(bytes14 seriesId) external view returns (bool);
@@ -59,11 +58,11 @@ interface IIntexFactory {
     ///         owner's Promis modify key: `mac = HMAC(modifyKey, op-preimage)`
     ///         where `opNonce` MUST equal the owner's current on-chain promis
     ///         op-nonce (fetch via `outbe_deriveKeys` + `IPromis.opNonceOf`) and the
-    ///         bound amount is `promis_load_minor * amount`. Returns the minted
-    ///         Promis amount.
-    function minePromis(bytes14 seriesId, address owner, uint256 amount, uint64 nonce, bytes32 mac, uint64 opNonce)
+    ///         bound amount is `promis_load_minor * units`. Returns the minted
+    ///         Promis.
+    function minePromis(bytes14 seriesId, address owner, uint256 units, uint64 nonce, bytes32 mac, uint64 opNonce)
         external
-        returns (uint256 promisAmount);
+        returns (uint256 promisMinor);
 
     /// @notice Credit auction proceeds (native COEN, sent as msg.value) from
     ///         `srcChainId` into the day's pot. Callable only by the OriginRouter.
@@ -132,17 +131,38 @@ interface IIntexFactory {
     /// @notice Read the disjoint unit counts of `seriesId`.
     function seriesUnitCounts(bytes14 seriesId) external view returns (UnitCounts memory);
 
+    /// @notice One owner's units of a series. `issuedUnits` and `settledUnits` are the
+    ///         owner's current balances on this, the origin chain, with Issued units counted
+    ///         only while the series has not expired; units held on a target chain are not
+    ///         counted. `exercisedUnits` and `gemFactoryUnits` are the owner's history across
+    ///         chains, since both happen only here, and do not move with a transfer.
+    ///         `ownerUnits` is `issuedUnits + settledUnits`, derived on every call, never stored.
+    struct OwnerBalances {
+        uint32 issuedUnits;
+        uint32 settledUnits;
+        uint32 exercisedUnits;
+        uint32 gemFactoryUnits;
+        uint32 ownerUnits;
+    }
+
+    /// @notice Read `owner`'s units of `seriesId`. Reverts if the series does not exist.
+    function ownerBalances(bytes14 seriesId, address owner) external view returns (OwnerBalances memory);
+
     /// @notice A new series was created from a cleared auction.
-    event SeriesIssued(bytes14 indexed seriesId, uint32 issuedUnits, uint256 entryPrice);
+    event SeriesIssued(bytes14 indexed seriesId, uint32 issuedUnits, uint256 entryPriceMinor);
 
-    /// @notice `amount` Issued Intexes of `seriesId` were settled.
-    event Settled(bytes14 indexed seriesId, address indexed intexOwner, uint256 amount);
+    /// @notice `units` Issued Intexes of `seriesId` were settled.
+    event Settled(bytes14 indexed seriesId, address indexed owner, uint256 units);
 
-    /// @notice Settled Intexes were burned and `promisAmount` Promis minted.
-    event PromisMined(bytes14 indexed seriesId, address indexed owner, uint256 amount, uint256 promisAmount);
+    /// @notice Settled Intexes were burned and `promisMinor` Promis minted.
+    event PromisMined(bytes14 indexed seriesId, address indexed owner, uint256 units, uint256 promisMinor);
 
-    /// @notice The series was force-called.
-    event SeriesCalled(bytes14 indexed seriesId, uint32 calledAt);
+    /// @notice The series was force-called; it settles until `settlementDeadline`, inclusive.
+    event SeriesCalled(bytes14 indexed seriesId, uint32 calledAt, uint64 settlementDeadline);
+
+    /// @notice The router kept refusing the series' Called notice, so it was dropped
+    ///         and the targets were not told of the call.
+    event CalledNoticeDropped(bytes14 indexed seriesId, uint32 calledAt);
 
     /// @notice A reference currency was left out of one day's Call scan because its
     ///         window price could not be indexed. The next day's pass tries it again.
@@ -154,7 +174,7 @@ interface IIntexFactory {
 
     /// @notice The series' settlement window closed. Both are zero when every unit
     ///         was realized in time.
-    event SeriesExpired(bytes14 indexed seriesId, uint32 forfeitedUnits, uint256 returnedPromis);
+    event SeriesExpired(bytes14 indexed seriesId, uint32 forfeitedUnits, uint256 returnedPromisMinor);
 
     /// @notice The expiry sweep left members of a called group unretired and
     ///         parked it for another pass at `retryAt`.

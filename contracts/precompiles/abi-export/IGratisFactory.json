@@ -4,7 +4,7 @@
     "name": "mineCoen",
     "inputs": [
       {
-        "name": "amount",
+        "name": "gratisMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -21,7 +21,7 @@
     ],
     "outputs": [
       {
-        "name": "",
+        "name": "coenMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -33,39 +33,81 @@
     "name": "pledgeGratis",
     "inputs": [
       {
-        "name": "amountStables",
+        "name": "gratisMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "maxGratis",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "mac",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "opNonce",
-        "type": "uint64",
-        "internalType": "uint64"
+        "name": "auth",
+        "type": "tuple",
+        "internalType": "struct IGratisFactory.ModifyAuth",
+        "components": [
+          {
+            "name": "mac",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "opNonce",
+            "type": "uint64",
+            "internalType": "uint64"
+          }
+        ]
       }
     ],
     "outputs": [
       {
-        "name": "pledgeNote",
+        "name": "commitment",
         "type": "bytes32",
         "internalType": "bytes32"
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "pledgeLeafCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pledgeRoot",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pledgeSpent",
+    "inputs": [
+      {
+        "name": "nullifier",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -91,24 +133,9 @@
     "name": "unpledgeGratis",
     "inputs": [
       {
-        "name": "amountStables",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "pledgeNote",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "mac",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "opNonce",
-        "type": "uint64",
-        "internalType": "uint64"
+        "name": "proof",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [],
@@ -125,7 +152,7 @@
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "coenMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -135,56 +162,44 @@
   },
   {
     "type": "event",
-    "name": "GratisPledged",
+    "name": "PledgeNote",
     "inputs": [
       {
-        "name": "account",
-        "type": "address",
+        "name": "commitment",
+        "type": "bytes32",
         "indexed": true,
-        "internalType": "address"
+        "internalType": "bytes32"
       },
       {
-        "name": "amountStables",
-        "type": "uint256",
+        "name": "leafIndex",
+        "type": "uint32",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "uint32"
       },
       {
-        "name": "asset",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "gratisAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "pledgeNote",
+        "name": "rootAfter",
         "type": "bytes32",
         "indexed": false,
         "internalType": "bytes32"
+      },
+      {
+        "name": "gratisMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "GratisUnpledged",
+    "name": "PledgeSpent",
     "inputs": [
       {
-        "name": "account",
-        "type": "address",
+        "name": "nullifier",
+        "type": "bytes32",
         "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "gratisAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
+        "internalType": "bytes32"
       }
     ],
     "anonymous": false

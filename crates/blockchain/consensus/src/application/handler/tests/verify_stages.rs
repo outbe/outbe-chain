@@ -1,31 +1,33 @@
 use super::*;
+use crate::application::handler::verification::VerifyTask;
 use futures::{FutureExt as _, StreamExt as _};
 use outbe_primitives::projection::ExecutionReadBudget;
 use outbe_primitives::signer::OutbeEvmSigner;
 use outbe_primitives::system_tx::SystemTxInputV2;
-use reth_ethereum::node::api::BeaconEngineMessage;
 
 fn proposed_block(parent: Option<&ConsensusBlock>, malformed_phase1: bool) -> ConsensusBlock {
     let parent_hash = parent.map_or(B256::ZERO, ConsensusBlock::block_hash);
     let mut raw = if parent.is_some() && !malformed_phase1 {
         crate::test_fixtures::block_with_system_inputs(
             &OutbeEvmSigner::from_secret_bytes([1; 32]).unwrap(),
-            2,
-            parent_hash,
-            Bytes::new(),
-            vec![
-                SystemTxInputV2::CertifiedParentAccounting {
-                    metadata: crate::test_fixtures::finalized_metadata(parent_hash),
-                },
-                SystemTxInputV2::LateFinalizeCredits {
-                    artifact: Default::default(),
-                },
-                SystemTxInputV2::CycleTick,
-                SystemTxInputV2::RewardsGemDelivery,
-                SystemTxInputV2::OracleSlashWindow,
-                SystemTxInputV2::HookEvents,
-            ],
-            outbe_primitives::chain::CHAIN_ID,
+            crate::test_fixtures::SystemBlockFixture {
+                block_number: 2,
+                parent_hash,
+                extra_data: Bytes::new(),
+                inputs: vec![
+                    SystemTxInputV2::CertifiedParentAccounting {
+                        metadata: crate::test_fixtures::finalized_metadata(parent_hash),
+                    },
+                    SystemTxInputV2::LateFinalizeCredits {
+                        artifact: Default::default(),
+                    },
+                    SystemTxInputV2::CycleTick,
+                    SystemTxInputV2::RewardsGemDelivery,
+                    SystemTxInputV2::OracleSlashWindow,
+                    SystemTxInputV2::HookEvents,
+                ],
+                chain_id: outbe_primitives::chain::CHAIN_ID,
+            },
         )
         .into_inner()
         .into_block()
@@ -37,6 +39,8 @@ fn proposed_block(parent: Option<&ConsensusBlock>, malformed_phase1: bool) -> Co
         .into_inner()
         .into_block()
     };
+    raw.header.inner.transactions_root =
+        alloy_consensus::proofs::calculate_transaction_root(&raw.body.transactions);
     raw.header.inner.timestamp = 3;
     ConsensusBlock::from_sealed(SealedBlock::seal_slow(raw))
 }
@@ -51,202 +55,131 @@ fn verify_context(parent: Digest) -> crate::application::ingress::SimplexContext
 }
 
 #[derive(Clone, Copy, Debug)]
-enum BlockCase {
+enum DecisionCase {
     Valid,
     Invalid,
-    SyncingThenValid,
     Cancelled,
     StaleEpoch,
-}
-
-#[derive(Clone, Copy, Debug)]
-enum ParentCase {
-    None,
-    Valid,
-    Invalid,
-    SyncingThenValid,
+    Unavailable,
 }
 
 #[test]
-fn verify_execution_preserves_verdict_and_side_effect_order() {
-    for (parent_case, block_case) in [
-        (ParentCase::None, BlockCase::Valid),
-        (ParentCase::None, BlockCase::Invalid),
-        (ParentCase::None, BlockCase::SyncingThenValid),
-        (ParentCase::None, BlockCase::Cancelled),
-        (ParentCase::None, BlockCase::StaleEpoch),
-        (ParentCase::Valid, BlockCase::Valid),
-        (ParentCase::Valid, BlockCase::Invalid),
-        (ParentCase::Invalid, BlockCase::Valid),
-        (ParentCase::SyncingThenValid, BlockCase::Valid),
+fn verification_delegates_execution_without_canonicalizing_the_candidate() {
+    for case in [
+        DecisionCase::Valid,
+        DecisionCase::Invalid,
+        DecisionCase::Cancelled,
+        DecisionCase::StaleEpoch,
+        DecisionCase::Unavailable,
     ] {
         commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
             |context| async move {
-                let clock = context.child("verify_matrix");
-                let (marshal, keepalive, actor) =
-                    start_marshal_without_available_block(context).await;
-                let mut shared = finalizer_test_shared(marshal, HybridSchemeProvider::new());
-                let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
-                shared.shared.engine = super::super::EngineHandle::new(engine_tx);
-                let (executor_tx, mut executor_rx) = futures::channel::mpsc::unbounded();
-                shared.shared.executor_mailbox = crate::executor::Mailbox::from_sender(executor_tx);
-
-                let parent = match parent_case {
-                    ParentCase::None => None,
-                    _ => Some(consensus_block_with_timestamp(0x71, 1, 2_000)),
-                };
-                let parent_digest = parent
-                    .as_ref()
-                    .map_or(Digest(B256::ZERO), ConsensusBlock::digest);
-                if let Some(parent) = &parent {
-                    shared
-                        .block_cache
-                        .insert_bounded(parent_digest, parent.clone());
-                    shared
-                        ._projection_publisher
-                        .publish(ProjectionStatus::Ready {
-                            checkpoint: ProjectionCheckpoint {
-                                block_number: 1,
-                                block_hash: parent_digest.0,
-                            },
-                        });
-                }
-                let block = proposed_block(parent.as_ref(), false);
-                shared
-                    .block_cache
-                    .insert_bounded(block.digest(), block.clone());
-                let request = verify_context(parent_digest);
-                let budget = ExecutionReadBudget::new();
-                let (response, receiver) = oneshot::channel();
-                let mut receiver = Some(receiver);
-                let mut delivered_before_canonicalize = false;
-                let verify =
-                    shared.handle_verify(&clock, request, block.digest(), response, budget.clone());
-                let execution = async {
-                    if let Some(parent) = &parent {
-                        let statuses: &[PayloadStatusEnum] = match parent_case {
-                            ParentCase::Invalid => &[PayloadStatusEnum::Invalid {
-                                validation_error: "parent invalid".into(),
-                            }],
-                            ParentCase::SyncingThenValid => {
-                                &[PayloadStatusEnum::Syncing, PayloadStatusEnum::Valid]
-                            }
-                            _ => &[PayloadStatusEnum::Valid],
-                        };
-                        for status in statuses {
-                            let BeaconEngineMessage::NewPayload { payload, tx } =
-                                engine_rx.recv().await.unwrap()
-                            else {
-                                panic!("verification must call new_payload");
-                            };
-                            assert_eq!(
-                                reth_node_builder::ExecutionPayload::block_hash(&payload),
-                                parent.block_hash()
-                            );
-                            tx.send(Ok(PayloadStatus::from_status(status.clone())))
-                                .unwrap();
-                        }
-                        if matches!(parent_case, ParentCase::Invalid) {
-                            return;
-                        }
-                        if matches!(parent_case, ParentCase::Valid) {
-                            let crate::executor::ingress::Message::CanonicalizeHead(head) =
-                                executor_rx.next().await.unwrap()
-                            else {
-                                panic!("parent must be canonicalized before proposed execution");
-                            };
-                            assert_eq!(head.digest, parent_digest);
-                            assert!(receiver.as_mut().unwrap().now_or_never().is_none());
-                            assert_eq!(shared.finalization_view.timestamp_floor(), 0);
-                            head.response.send(Ok(())).unwrap();
-                        }
-                    }
-                    let statuses: &[PayloadStatusEnum] = match block_case {
-                        BlockCase::SyncingThenValid => {
-                            &[PayloadStatusEnum::Syncing, PayloadStatusEnum::Valid]
-                        }
-                        BlockCase::Invalid => &[PayloadStatusEnum::Invalid {
-                            validation_error: "block invalid".into(),
-                        }],
-                        _ => &[PayloadStatusEnum::Valid],
-                    };
-                    for status in statuses {
-                        let BeaconEngineMessage::NewPayload { payload, tx } =
-                            engine_rx.recv().await.unwrap()
-                        else {
-                            panic!("verification must call new_payload");
-                        };
-                        assert_eq!(
-                            reth_node_builder::ExecutionPayload::block_hash(&payload),
-                            block.block_hash()
-                        );
-                        if matches!(parent_case, ParentCase::SyncingThenValid) {
-                            assert!(executor_rx.next().now_or_never().is_none());
-                            assert_eq!(shared.finalization_view.timestamp_floor(), 0);
-                        }
-                        if matches!(block_case, BlockCase::Cancelled) {
-                            drop(receiver.take());
-                            // Hold the engine sender until response cancellation wins the race.
-                            while !budget.is_cancelled() {
-                                clock.sleep(Duration::from_millis(1)).await;
-                            }
-                            return;
-                        }
-                        if matches!(block_case, BlockCase::StaleEpoch) {
-                            shared.epoch_fence.advance_epoch(Epoch::new(1));
-                        }
-                        tx.send(Ok(PayloadStatus::from_status(status.clone())))
-                            .unwrap();
-                    }
-                    if matches!(block_case, BlockCase::Valid) {
-                        let crate::executor::ingress::Message::CanonicalizeHead(head) =
-                            executor_rx.next().await.unwrap()
-                        else {
-                            panic!("VALID block must be canonicalized");
-                        };
-                        assert_eq!(head.digest, block.digest());
-                        assert_eq!(receiver.as_mut().unwrap().now_or_never(), Some(Ok(true)));
-                        delivered_before_canonicalize = true;
-                        head.response.send(Ok(())).unwrap();
-                    }
-                };
-                let (result, ()) = futures::join!(verify, execution);
-                result.unwrap();
-                if !delivered_before_canonicalize {
-                    match (parent_case, block_case) {
-                        (ParentCase::Invalid, _) | (_, BlockCase::Invalid) => {
-                            assert!(!receiver.take().unwrap().await.unwrap())
-                        }
-                        (_, BlockCase::SyncingThenValid) => {
-                            assert!(receiver.take().unwrap().await.unwrap())
-                        }
-                        (_, BlockCase::Cancelled) => assert!(budget.is_cancelled()),
-                        (_, BlockCase::StaleEpoch) => {
-                            assert!(receiver.take().unwrap().await.is_err())
-                        }
-                        _ => panic!("missing canonicalization for {parent_case:?}/{block_case:?}"),
-                    }
-                }
-                let expected_floor = if delivered_before_canonicalize {
-                    3_000
-                } else if matches!(parent_case, ParentCase::Valid) {
-                    2_000
-                } else {
-                    0
-                };
-                assert_eq!(
-                    shared.finalization_view.timestamp_floor(),
-                    expected_floor,
-                    "{parent_case:?}/{block_case:?}"
-                );
-                assert!(executor_rx.next().now_or_never().is_none());
-                assert!(engine_rx.try_recv().is_err());
-                drop(keepalive);
-                actor.abort();
-                let _ = actor.await;
+                verify_decision_case(context, case).await;
             },
         );
     }
+}
+
+async fn verify_decision_case(
+    context: commonware_runtime::deterministic::Context,
+    case: DecisionCase,
+) {
+    use crate::executor::ingress::{Message, VerificationOutcome};
+    let clock = context.child("decision");
+    let (marshal, keepalive, actor) = start_marshal_without_available_block(context).await;
+    let mut shared = finalizer_test_shared(&clock, marshal, HybridSchemeProvider::new());
+    let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
+    shared.shared.engine = super::super::EngineHandle::new(engine_tx);
+    let (executor_tx, mut executor_rx) = futures::channel::mpsc::unbounded();
+    shared.shared.executor_mailbox = crate::executor::Mailbox::from_sender(executor_tx);
+    let block = proposed_block(None, false);
+    shared
+        .block_cache
+        .insert_bounded(block.digest(), block.clone());
+    let request = verify_context(Digest::ZERO);
+    let round = request.round;
+    let budget = ExecutionReadBudget::new();
+    let (response, receiver) = oneshot::channel();
+    let mut receiver = Some(receiver);
+    let verify = shared.handle_verify(
+        &clock,
+        VerifyTask {
+            context: request,
+            payload_digest: block.digest(),
+            response,
+            execution_read_budget: budget.clone(),
+        },
+    );
+    let executor = async {
+        let Message::PendingParent(parent) = executor_rx.next().await.unwrap() else {
+            panic!("the consensus parent must be recorded separately");
+        };
+        assert_eq!(parent.digest, Digest::ZERO);
+        let Message::VerifyBlock(execution) = executor_rx.next().await.unwrap() else {
+            panic!("application must delegate validity to executor");
+        };
+        assert_eq!(execution.request.block.digest(), block.digest());
+        assert!(receiver.as_mut().unwrap().now_or_never().is_none());
+        if matches!(case, DecisionCase::Cancelled) {
+            drop(receiver.take());
+            while !budget.is_cancelled() {
+                clock.sleep(Duration::from_millis(1)).await;
+            }
+            assert!(execution.response.is_canceled());
+            return;
+        }
+        if matches!(case, DecisionCase::StaleEpoch) {
+            shared.epoch_fence.advance_epoch(Epoch::new(1));
+        }
+        let outcome = match case {
+            DecisionCase::Invalid => VerificationOutcome::Invalid,
+            DecisionCase::Unavailable => VerificationOutcome::Unavailable,
+            _ => VerificationOutcome::Valid,
+        };
+        execution.response.send(outcome).unwrap();
+        if matches!(case, DecisionCase::StaleEpoch | DecisionCase::Unavailable) {
+            clock.sleep(Duration::from_millis(10)).await;
+            assert!(
+                receiver.as_mut().unwrap().now_or_never().is_none(),
+                "local inability must abstain"
+            );
+            drop(receiver.take());
+        }
+    };
+    let (result, ()) = futures::join!(verify, executor);
+    result.unwrap();
+    if let Some(receiver) = receiver {
+        assert_eq!(receiver.await.unwrap(), matches!(case, DecisionCase::Valid));
+    }
+    let gate = shared
+        .publication
+        .certification_gate(&shared.marshal_mailbox, round, block.digest())
+        .unwrap();
+    assert!(
+        gate.await,
+        "storage must complete independently of verdict and cancellation"
+    );
+    assert_eq!(
+        shared
+            .marshal_mailbox
+            .get_verified(round)
+            .await
+            .unwrap()
+            .digest(),
+        block.digest()
+    );
+    assert_eq!(shared.finalization_view.timestamp_floor(), 0);
+    assert!(
+        executor_rx.next().now_or_never().is_none(),
+        "verification must never select HEAD"
+    );
+    assert!(
+        engine_rx.try_recv().is_err(),
+        "application must not execute verification itself"
+    );
+    drop(keepalive);
+    actor.abort();
+    let _ = actor.await;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -276,7 +209,8 @@ fn verify_prechecks_reject_or_withhold_before_engine_work() {
                 let clock = context.child("verify_prechecks");
                 let (marshal, keepalive, actor) =
                     start_marshal_without_available_block(context).await;
-                let mut shared = finalizer_test_shared(marshal, HybridSchemeProvider::new());
+                let mut shared =
+                    finalizer_test_shared(&clock, marshal, HybridSchemeProvider::new());
                 let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
                 shared.shared.engine = super::super::EngineHandle::new(engine_tx);
                 let parent = consensus_block_with_timestamp(0x72, 1, 2_000);
@@ -317,10 +251,12 @@ fn verify_prechecks_reject_or_withhold_before_engine_work() {
                         shared
                             .handle_verify(
                                 &clock,
-                                request,
-                                block.digest(),
-                                response,
-                                budget.clone(),
+                                VerifyTask {
+                                    context: request,
+                                    payload_digest: block.digest(),
+                                    response,
+                                    execution_read_budget: budget.clone(),
+                                },
                             )
                             .await
                             .unwrap();
@@ -338,17 +274,33 @@ fn verify_prechecks_reject_or_withhold_before_engine_work() {
                     }
                     EarlyCase::MalformedPhase1 => {}
                 }
-                let result = shared
-                    .handle_verify(&clock, request, block.digest(), response, budget)
-                    .await;
+                let verify = shared.handle_verify(
+                    &clock,
+                    VerifyTask {
+                        context: request,
+                        payload_digest: block.digest(),
+                        response,
+                        execution_read_budget: budget,
+                    },
+                );
                 if matches!(case, EarlyCase::MissingEpochAnchor) {
-                    assert!(result
-                        .unwrap_err()
-                        .to_string()
-                        .contains("could not resolve epoch boundary parent"));
-                    assert!(receiver.take().unwrap().await.is_err());
-                } else {
+                    let cancel = async {
+                        clock
+                            .sleep(
+                                super::super::GENESIS_ANCHOR_WAIT_TIMEOUT
+                                    + Duration::from_millis(10),
+                            )
+                            .await;
+                        assert!(
+                            receiver.as_mut().unwrap().now_or_never().is_none(),
+                            "missing local anchor must abstain"
+                        );
+                        drop(receiver.take());
+                    };
+                    let (result, ()) = futures::join!(verify, cancel);
                     result.unwrap();
+                } else {
+                    verify.await.unwrap();
                     assert!(!receiver.take().unwrap().await.unwrap(), "{case:?}");
                 }
                 assert!(engine_rx.try_recv().is_err(), "{case:?}");
@@ -359,4 +311,220 @@ fn verify_prechecks_reject_or_withhold_before_engine_work() {
             },
         );
     }
+}
+
+#[test]
+fn live_executor_retries_execution_while_candidate_storage_remains_independent() {
+    commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
+        |context| async move {
+            use reth_ethereum::node::api::BeaconEngineMessage;
+            let clock = context.child("live_verify");
+            let (marshal, keepalive, marshal_actor) =
+                start_marshal_without_available_block(context).await;
+            let mut shared =
+                finalizer_test_shared(&clock, marshal.clone(), HybridSchemeProvider::new());
+            let (tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
+            let engine = super::super::EngineHandle::new(tx);
+            let (executor, mailbox) = crate::executor::actor::ExecutorActor::new(
+                clock.child("executor"),
+                engine,
+                crate::executor::actor::RecoveredFinalizedState {
+                    genesis_hash: B256::ZERO,
+                    last_finalized_height: 0,
+                    last_finalized_hash: B256::ZERO,
+                },
+                shared.projection_readiness.clone(),
+                None,
+            );
+            let executor_actor =
+                executor.start(marshal.clone(), commonware_consensus::types::Height::zero());
+            shared.shared.executor_mailbox = mailbox;
+            let block = proposed_block(None, false);
+            shared
+                .block_cache
+                .insert_bounded(block.digest(), block.clone());
+            let request = verify_context(Digest::ZERO);
+            let round = request.round;
+            let (response, mut receiver) = oneshot::channel();
+            let verify = shared.handle_verify(
+                &clock,
+                VerifyTask {
+                    context: request,
+                    payload_digest: block.digest(),
+                    response,
+                    execution_read_budget: ExecutionReadBudget::new(),
+                },
+            );
+            let execution = async {
+                for status in [PayloadStatusEnum::Syncing, PayloadStatusEnum::Valid] {
+                    let BeaconEngineMessage::NewPayload { payload, tx } =
+                        engine_rx.recv().await.unwrap()
+                    else {
+                        panic!("candidate verification must not send forkchoice updates");
+                    };
+                    assert_eq!(
+                        reth_node_builder::ExecutionPayload::block_hash(&payload),
+                        block.block_hash()
+                    );
+                    if status == PayloadStatusEnum::Valid {
+                        assert!(receiver.try_recv().is_err(), "SYNCING is not a verdict");
+                        assert_eq!(
+                            marshal.get_verified(round).await.unwrap().digest(),
+                            block.digest(),
+                            "candidate storage must proceed while execution is pending"
+                        );
+                    }
+                    tx.send(Ok(PayloadStatus::from_status(status))).unwrap();
+                }
+            };
+            let (result, ()) = futures::join!(verify, execution);
+            result.unwrap();
+            assert!(receiver.await.unwrap());
+            assert!(
+                shared
+                    .publication
+                    .certification_gate(&marshal, round, block.digest())
+                    .unwrap()
+                    .await
+            );
+            assert!(engine_rx.try_recv().is_err());
+            assert_eq!(shared.finalization_view.timestamp_floor(), 0);
+            executor_actor.abort();
+            let _ = executor_actor.await;
+            drop(keepalive);
+            marshal_actor.abort();
+            let _ = marshal_actor.await;
+        },
+    );
+}
+
+#[test]
+fn cancellation_while_resolving_parent_preserves_available_candidate() {
+    let (digest, checkpoint) =
+        commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30))
+            .start_and_recover(|context| async move {
+                let clock = context.child("missing_parent");
+                let fixture = super::certification::CertificationFixture::open(
+                    &context,
+                    "cancelled-peer-candidate",
+                )
+                .await;
+                let shared = finalizer_test_shared(
+                    &clock,
+                    fixture.marshal.clone(),
+                    HybridSchemeProvider::new(),
+                );
+                let missing_parent = proposed_block(None, false);
+                let block = proposed_block(Some(&missing_parent), false);
+                shared
+                    .block_cache
+                    .insert_bounded(block.digest(), block.clone());
+                let request = verify_context(missing_parent.digest());
+                let round = request.round;
+                let budget = ExecutionReadBudget::new();
+                let (response, receiver) = oneshot::channel();
+                let verify = shared.handle_verify(
+                    &clock,
+                    VerifyTask {
+                        context: request,
+                        payload_digest: block.digest(),
+                        response,
+                        execution_read_budget: budget.clone(),
+                    },
+                );
+                let cancel = async {
+                    let gate = loop {
+                        if let Some(gate) = shared.publication.certification_gate(
+                            &shared.marshal_mailbox,
+                            round,
+                            block.digest(),
+                        ) {
+                            break gate;
+                        }
+                        clock.sleep(Duration::from_millis(1)).await;
+                    };
+                    assert!(
+                        gate.await,
+                        "candidate persistence must not wait for the unavailable parent"
+                    );
+                    assert!(
+                        receiver.now_or_never().is_none(),
+                        "parent resolution still prevents a verdict"
+                    );
+                };
+                let (result, ()) = futures::join!(verify, cancel);
+                result.unwrap();
+                assert!(budget.is_cancelled());
+                assert_eq!(
+                    shared
+                        .marshal_mailbox
+                        .get_verified(round)
+                        .await
+                        .unwrap()
+                        .digest(),
+                    block.digest()
+                );
+                block.digest()
+            });
+    commonware_runtime::deterministic::Runner::from(checkpoint).start(|context| async move {
+        use commonware_consensus::CertifiableAutomaton as _;
+        let mut fixture =
+            super::certification::CertificationFixture::open(&context, "cancelled-peer-candidate")
+                .await;
+        let round = Round::new(Epoch::new(0), View::new(2));
+        assert!(
+            fixture.app.certify(round, digest).await.await.unwrap(),
+            "restart must recover the exact durable candidate without a verification verdict"
+        );
+        assert_eq!(
+            fixture.marshal.get_verified(round).await.unwrap().digest(),
+            digest
+        );
+    });
+}
+
+#[test]
+fn epoch_parent_mismatch_rejects_without_waiting_for_an_unavailable_candidate() {
+    commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
+        |context| async move {
+            let clock = context.child("wrong_boundary_parent");
+            let (marshal, keepalive, actor) = start_marshal_without_available_block(context).await;
+            let shared = finalizer_test_shared(&clock, marshal, HybridSchemeProvider::new());
+            shared.epoch_fence.advance_epoch(Epoch::new(1));
+            {
+                let mut view = shared.finalization_view.write();
+                *view = crate::finalization::state::FinalizationView::from_recovered(
+                    B256::repeat_byte(0x64),
+                    1,
+                    Some(Round::new(Epoch::new(0), View::new(7))),
+                );
+            }
+            let mut request = verify_context(Digest(B256::repeat_byte(0x65)));
+            request.round = Round::new(Epoch::new(1), View::new(1));
+            request.parent.0 = View::new(0);
+            let (response, receiver) = oneshot::channel();
+            let verify = shared.handle_verify(
+                &clock,
+                VerifyTask {
+                    context: request,
+                    payload_digest: Digest(B256::repeat_byte(0x66)),
+                    response,
+                    execution_read_budget: ExecutionReadBudget::new(),
+                },
+            );
+            let futures::future::Either::Left(((result, verdict), _)) = futures::future::select(
+                Box::pin(async { futures::join!(verify, receiver) }),
+                Box::pin(clock.sleep(Duration::from_millis(1))),
+            )
+            .await
+            else {
+                panic!("a known invalid parent must reject before payload resolution timeout");
+            };
+            result.unwrap();
+            assert!(!verdict.unwrap());
+            drop(keepalive);
+            actor.abort();
+            let _ = actor.await;
+        },
+    );
 }

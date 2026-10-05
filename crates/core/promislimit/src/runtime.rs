@@ -7,7 +7,7 @@ impl PromisLimitContract<'_> {
         self.total_unallocated.read()
     }
 
-    pub fn set_total_unallocated(&mut self, total: U256) -> Result<()> {
+    pub(crate) fn set_total_unallocated(&mut self, total: U256) -> Result<()> {
         self.total_unallocated.write(total)
     }
 

@@ -45,16 +45,22 @@ where
 
     let dkg_result = dkg_actor::run_initial_dkg_durable(
         &clock,
-        signing_key,
-        startup_participants,
-        None, // initial: no previous output
-        None, // initial: no previous share
-        0,    // initial: round 0
-        None,
-        None,
+        dkg_actor::DkgParticipantParameters {
+            signing_key,
+            participants: startup_participants,
+            previous_output: None,
+            previous_share: None,
+            round: 0,
+        },
+        dkg_actor::DkgProgressChannels {
+            progress_tx: None,
+            finalized_log_rx: None,
+        },
         dkg_retry_store(args, key_backend)?,
-        dkg_sender,
-        dkg_receiver,
+        dkg_actor::DkgTransport {
+            sender: dkg_sender,
+            receiver: dkg_receiver,
+        },
     )
     .await
     .wrap_err("DKG ceremony failed")?;
@@ -69,11 +75,12 @@ where
     // Save DKG state to keys_dir for future restarts.
     if let Some(ref keys_dir) = args.keys_dir {
         let save_result = save_dkg_state(
-            keys_dir,
-            &signing_share,
-            &polynomial,
-            &dkg_result.output,
-            key_backend,
+            DkgStateStore::new(keys_dir, key_backend),
+            DkgStateMaterial {
+                share: &signing_share,
+                polynomial: &polynomial,
+                output: &dkg_result.output,
+            },
         );
         if let Err(e) = save_result {
             warn!(

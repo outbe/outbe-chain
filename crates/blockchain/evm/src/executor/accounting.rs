@@ -235,27 +235,7 @@ where
         // for this block (validator-mode: proposer-supplied; proposer-mode:
         // derived from `parent_consensus_metadata`). The metadata struct
         // carries the V2 wire fields the verifier needs.
-        let system_txs = self.begin_block_system_tx_inputs(block_number, block_artifacts)?;
-        let Some((kind, input, _summary)) = system_txs.into_iter().next() else {
-            return Err(BlockExecutionError::Internal(
-                InternalBlockExecutionError::Other(
-                    format!(
-                        "missing Phase 1 system tx for block {block_number} in pre-exec verifier"
-                    )
-                    .into(),
-                ),
-            ));
-        };
-        if !matches!(kind, SystemTxKind::CertifiedParentAccounting) {
-            return Err(BlockExecutionError::Internal(
-                InternalBlockExecutionError::Other(
-                    format!(
-                        "Phase 1 pre-exec verifier expected CertifiedParentAccounting, got {kind:?}"
-                    )
-                    .into(),
-                ),
-            ));
-        }
+        let input = self.phase1_verification_input(block_number, block_artifacts)?;
         let SystemTxInputV2::CertifiedParentAccounting { metadata } = &input else {
             return Err(BlockExecutionError::Internal(
                 InternalBlockExecutionError::Other(
@@ -280,14 +260,15 @@ where
 
         let snapshot = {
             let db = self.inner.evm.db_mut();
-            let ctx = BlockContext::new_with_genesis_hash(
-                block_number,
-                timestamp,
-                chain_id,
-                self.genesis_hash,
-                proposer,
-                Vec::new(),
-            );
+            let ctx =
+                BlockContext::new_with_genesis_hash(outbe_primitives::block::BlockContextInput {
+                    block_number,
+                    timestamp,
+                    chain_id,
+                    genesis_hash: self.genesis_hash,
+                    proposer,
+                    validators: Vec::new(),
+                });
             let mut provider = DirectStorageProvider::new(db, ctx);
             let storage = StorageHandle::new(&mut provider);
             read_committee_snapshot(storage, snapshot_key).map_err(|error| {
@@ -376,16 +357,14 @@ where
 
         // Resolve canonical Phase 1 input + finalized summary for this block.
         let system_txs = self.begin_block_system_tx_inputs(block_number, block_artifacts)?;
-        let Some((kind, input, finalized_summary)) = system_txs.into_iter().next() else {
-            return Err(BlockExecutionError::Internal(
-                InternalBlockExecutionError::Other(
-                    format!(
-                        "Phase 1 commit pre-exec: missing Phase 1 system tx for block {block_number}"
-                    )
-                    .into(),
-                ),
-            ));
-        };
+        let (kind, input, finalized_summary) = system_txs.into_iter().next().ok_or_else(|| {
+            BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                format!(
+                    "Phase 1 commit pre-exec: missing Phase 1 system tx for block {block_number}"
+                )
+                .into(),
+            ))
+        })?;
         if !matches!(kind, SystemTxKind::CertifiedParentAccounting) {
             return Err(BlockExecutionError::Internal(
                 InternalBlockExecutionError::Other(
@@ -421,71 +400,9 @@ where
         //   3. Legacy proposer fallback that re-signs the artifact through
         //      `evm_signer`. Determinism preserved because the signer is
         //      RFC 6979 (see `crates/blockchain/evm/src/signer.rs`).
-        let chain_id = self.inner.evm.chain_id();
-        let (cached_tx_hash, signed_gas_limit) = if let Some(prebuilt) = &self.prebuilt_phase1_tx {
-            let tx_hash = validate_phase1_witness_against(
-                prebuilt.tx(),
-                calldata.as_ref(),
-                proposer,
-                chain_id,
-                block_number,
-            )
-            .map_err(|error| {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                    format!("Phase 1 commit pre-exec: invalid prebuilt witness: {error}").into(),
-                ))
-            })?;
-            (tx_hash, prebuilt.tx().gas_limit())
-        } else if let Some(expected) = self.expected_begin_system_txs.first() {
-            let tx_hash = validate_phase1_witness_against(
-                expected.tx(),
-                calldata.as_ref(),
-                proposer,
-                chain_id,
-                block_number,
-            )
-            .map_err(|error| {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                    format!("Phase 1 commit pre-exec: invalid body[0] witness: {error}").into(),
-                ))
-            })?;
-            (tx_hash, expected.tx().gas_limit())
-        } else if let Some(signer) = &self.evm_signer {
-            let unsigned = build_unsigned_system_tx(
-                SystemTxKind::CertifiedParentAccounting,
-                0,
-                block_number,
-                chain_id,
-                calldata.clone(),
-            )
-            .map_err(|error| {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                    format!("Phase 1 commit pre-exec: build unsigned witness: {error}").into(),
-                ))
-            })?;
-            let signed = signer.sign_unsigned(unsigned).map_err(|error| {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                    format!("Phase 1 commit pre-exec: sign witness: {error}").into(),
-                ))
-            })?;
-            let signed_gas_limit = signed.gas_limit();
-            let tx_hash = validate_phase1_witness_against(
-                &signed,
-                calldata.as_ref(),
-                proposer,
-                chain_id,
-                block_number,
-            )
-            .map_err(|error| {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                    format!("Phase 1 commit pre-exec: invalid signed witness: {error}").into(),
-                ))
-            })?;
-            (tx_hash, signed_gas_limit)
-        } else {
-            // No witness source. Skip the commit move; the legacy main-loop
-            // path will run Phase 1 like before. The commit move only binds when a
-            // witness source is available.
+        let Some((cached_tx_hash, signed_gas_limit)) =
+            self.resolve_phase1_witness(&calldata, proposer, block_number)?
+        else {
             return Ok(());
         };
         let phase_context = PreloadedSystemTxContext {
@@ -517,17 +434,11 @@ where
                 calldata,
             )
         });
-        let result = match transact_outcome {
-            Ok(result) => result,
-            Err(error) => {
-                let reason =
-                    format!("Phase 1 commit pre-exec: transact_system_call failed: {error}");
-                tracing::error!(target: "outbe::executor", %reason);
-                return Err(BlockExecutionError::Internal(
-                    InternalBlockExecutionError::Other(reason.into()),
-                ));
-            }
-        };
+        let result = transact_outcome.map_err(|error| {
+            let reason = format!("Phase 1 commit pre-exec: transact_system_call failed: {error}");
+            tracing::error!(target: "outbe::executor", %reason);
+            BlockExecutionError::Internal(InternalBlockExecutionError::Other(reason.into()))
+        })?;
         let compressed_entities_gas = gas_window.gas_used().map_err(|error| {
             BlockExecutionError::Internal(InternalBlockExecutionError::Other(
                 format!("Phase 1 commit pre-exec: read CE gas window: {error}").into(),
@@ -575,5 +486,86 @@ where
             receipt_index: 0,
         };
         Ok(())
+    }
+
+    fn phase1_verification_input(
+        &self,
+        block_number: u64,
+        block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
+    ) -> Result<SystemTxInputV2, BlockExecutionError> {
+        let system_txs = self.begin_block_system_tx_inputs(block_number, block_artifacts)?;
+        let Some((kind, input, _summary)) = system_txs.into_iter().next() else {
+            return Err(BlockExecutionError::Internal(
+                InternalBlockExecutionError::Other(
+                    format!(
+                        "missing Phase 1 system tx for block {block_number} in pre-exec verifier"
+                    )
+                    .into(),
+                ),
+            ));
+        };
+        if !matches!(kind, SystemTxKind::CertifiedParentAccounting) {
+            return Err(BlockExecutionError::Internal(
+                InternalBlockExecutionError::Other(
+                    format!(
+                        "Phase 1 pre-exec verifier expected CertifiedParentAccounting, got {kind:?}"
+                    )
+                    .into(),
+                ),
+            ));
+        }
+        Ok(input)
+    }
+
+    fn resolve_phase1_witness(
+        &self,
+        calldata: &Bytes,
+        proposer: Address,
+        block_number: u64,
+    ) -> Result<Option<(B256, u64)>, BlockExecutionError> {
+        let chain_id = self.inner.evm.chain_id();
+        let validate_witness = |tx: &TransactionSigned, source: &str| {
+            validate_phase1_witness_against(tx, calldata.as_ref(), proposer, chain_id, block_number)
+                .map_err(|error| {
+                    BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                        format!("Phase 1 commit pre-exec: invalid {source} witness: {error}")
+                            .into(),
+                    ))
+                })
+        };
+        let witness = if let Some(prebuilt) = &self.prebuilt_phase1_tx {
+            let tx_hash = validate_witness(prebuilt.tx(), "prebuilt")?;
+            (tx_hash, prebuilt.tx().gas_limit())
+        } else if let Some(expected) = self.expected_begin_system_txs.first() {
+            let tx_hash = validate_witness(expected.tx(), "body[0]")?;
+            (tx_hash, expected.tx().gas_limit())
+        } else if let Some(signer) = &self.evm_signer {
+            let unsigned = build_unsigned_system_tx(
+                SystemTxKind::CertifiedParentAccounting,
+                0,
+                block_number,
+                chain_id,
+                calldata.clone(),
+            )
+            .map_err(|error| {
+                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                    format!("Phase 1 commit pre-exec: build unsigned witness: {error}").into(),
+                ))
+            })?;
+            let signed = signer.sign_unsigned(unsigned).map_err(|error| {
+                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                    format!("Phase 1 commit pre-exec: sign witness: {error}").into(),
+                ))
+            })?;
+            let signed_gas_limit = signed.gas_limit();
+            let tx_hash = validate_witness(&signed, "signed")?;
+            (tx_hash, signed_gas_limit)
+        } else {
+            // No witness source. Skip the commit move; the legacy main-loop
+            // path will run Phase 1 like before. The commit move only binds when a
+            // witness source is available.
+            return Ok(None);
+        };
+        Ok(Some(witness))
     }
 }

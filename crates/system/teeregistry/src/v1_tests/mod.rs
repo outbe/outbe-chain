@@ -39,7 +39,7 @@ use crate::{
         dispatch_register_after_verifier_for_test,
         dispatch_register_with_onboarding_after_verifier_for_test,
         dispatch_renew_after_verifier_for_test, dispatch_replace_after_verifier_for_test,
-        dispatch_transition_after_verifier_for_test,
+        dispatch_transition_after_verifier_for_test, PostVerifierCall,
     },
 };
 

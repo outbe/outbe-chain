@@ -97,7 +97,7 @@ use outbe_node::OutbeFullNode;
 use outbe_ocomp_protocol::profile::poc_schema_limits;
 use outbe_primitives::{
     consensus::{ConsensusExecutionBridge, DkgBoundaryArtifact},
-    projection::{ProjectionCheckpoint, ProjectionReadinessHandle, WaitOutcome},
+    projection::{ProjectionCheckpoint, ProjectionReadinessHandle},
     reshare_artifact::{
         decode_boundary_artifact, decode_outbe_block_artifacts, encode_boundary_artifact,
         ConsensusHeaderArtifact,
@@ -110,6 +110,7 @@ use reth_ethereum::storage::{BlockNumReader, BlockReader, TransactionVariant};
 mod dkg;
 mod epoch;
 mod follower;
+mod marshal_archive;
 mod recovery;
 mod services;
 mod shutdown;
@@ -121,7 +122,10 @@ pub use dkg::persistence::migrate_dkg_keys_if_needed;
 
 pub use epoch::run::run_consensus_stack;
 
-pub use services::ConsensusStackServices;
+pub use services::{
+    ConsensusExecutionServices, ConsensusRadicleServices, ConsensusShutdownServices,
+    ConsensusStackServices,
+};
 
 pub(crate) use startup::{build_peer_map, map_marshal_init_height};
 
@@ -146,7 +150,8 @@ use dkg::persistence::{
     persist_completed_dkg_before_activation, persist_observed_dkg_boundary_before_activation,
     recover_pending_dkg_boundary_snapshot, remove_pending_dkg_state,
     restore_pending_dkg_activation, retire_activated_dkg_retry_state, save_dkg_state,
-    PendingDkgBoundarySnapshot, DKG_OUTPUT_FILE, DKG_POLYNOMIAL_FILE, DKG_SHARE_FILE,
+    DkgBoundaryContext, DkgStateMaterial, DkgStateStore, PendingDkgBoundarySnapshot,
+    DKG_OUTPUT_FILE, DKG_POLYNOMIAL_FILE, DKG_SHARE_FILE,
 };
 
 use dkg::promotion::{
@@ -166,7 +171,8 @@ use dkg::startup::{
 
 use epoch::signer::{
     epoch_validation_inputs, radicle_signer_enabled, register_epoch_validation_providers,
-    validate_validator_evm_signer, wait_for_radicle_role_change,
+    validate_validator_evm_signer, wait_for_radicle_role_change, EpochValidationCommittee,
+    EpochValidationProviders, ValidatorEvmIdentity,
 };
 
 use epoch::watchdog::{

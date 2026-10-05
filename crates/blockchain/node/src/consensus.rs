@@ -34,17 +34,12 @@
 //! The integration-level pin for this stateless contract is
 //! `crates/blockchain/node/tests/consensus_stateless.rs`.
 
-use alloy_consensus::{BlockHeader as _, Transaction as _};
 use outbe_evm::system_tx::OcompLifecycleActivation;
 use outbe_primitives::{
-    addresses::REWARDS_ADDRESS, payload::validate_outbe_withdrawals, OutbeBlock, OutbeBlockBody,
-    OutbeHeader, OutbePrimitives, OutbeReceipt,
+    addresses::REWARDS_ADDRESS, OutbeBlock, OutbeBlockBody, OutbeHeader, OutbePrimitives,
+    OutbeReceipt,
 };
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
-use reth_consensus_common::validation::{
-    validate_against_parent_4844, validate_against_parent_eip1559_base_fee,
-    validate_against_parent_hash_number,
-};
 use reth_ethereum::consensus::{
     Consensus, ConsensusError, EthBeaconConsensus, FullConsensus, HeaderValidator,
     ReceiptRootBloom, TransactionRoot,
@@ -59,11 +54,11 @@ use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader};
 use std::{fmt::Debug, sync::Arc};
 
 pub use outbe_primitives::consensus::OUTBE_MAX_EXTRA_DATA_SIZE;
-use outbe_primitives::consensus::{
-    MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS, MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS, OUTBE_MAX_BLOCK_SIZE,
-};
 
-const MILLIS_PER_SECOND: u64 = 1000;
+mod policy;
+mod system_transactions;
+
+use policy::OutbeConsensusPolicy;
 
 /// Build a `ConsensusError::Other` from a message string.
 ///
@@ -84,9 +79,7 @@ fn consensus_other(message: impl Into<String>) -> ConsensusError {
 #[derive(Debug, Clone)]
 pub struct OutbeBeaconConsensus<ChainSpec> {
     inner: EthBeaconConsensus<ChainSpec>,
-    chain_spec: Arc<ChainSpec>,
-    skip_gas_limit_ramp_check: bool,
-    ocomp_lifecycle_activation: OcompLifecycleActivation,
+    policy: OutbeConsensusPolicy<ChainSpec>,
 }
 
 impl<ChainSpec> OutbeBeaconConsensus<ChainSpec>
@@ -97,9 +90,11 @@ where
     pub fn new(chain_spec: Arc<ChainSpec>) -> Self {
         Self {
             inner: EthBeaconConsensus::new(chain_spec.clone()),
-            chain_spec,
-            skip_gas_limit_ramp_check: false,
-            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
+            policy: OutbeConsensusPolicy {
+                chain_spec,
+                skip_gas_limit_ramp_check: false,
+                ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
+            },
         }
     }
 
@@ -117,7 +112,7 @@ where
     /// Disables the gas limit change validation between parent and child blocks.
     pub fn with_skip_gas_limit_ramp_check(mut self, skip: bool) -> Self {
         self.inner = self.inner.with_skip_gas_limit_ramp_check(skip);
-        self.skip_gas_limit_ramp_check = skip;
+        self.policy.skip_gas_limit_ramp_check = skip;
         self
     }
 
@@ -136,13 +131,13 @@ where
     /// Installs structural OCOMP lifecycle activation. Normal construction is
     /// inert until OCM-26 wires the canonical fresh-devnet schedule.
     pub fn with_ocomp_lifecycle_activation(mut self, activation: OcompLifecycleActivation) -> Self {
-        self.ocomp_lifecycle_activation = activation;
+        self.policy.ocomp_lifecycle_activation = activation;
         self
     }
 
     /// Returns the chain spec associated with this consensus engine.
     pub const fn chain_spec(&self) -> &Arc<ChainSpec> {
-        &self.chain_spec
+        &self.policy.chain_spec
     }
 }
 
@@ -151,10 +146,7 @@ where
     ChainSpec: EthChainSpec<Header = OutbeHeader> + EthereumHardforks + Debug + Send + Sync,
 {
     fn validate_header(&self, header: &SealedHeader<OutbeHeader>) -> Result<(), ConsensusError> {
-        validate_header_timestamp_millis_part(header.header())?;
-        if !self.skip_gas_limit_ramp_check {
-            validate_protocol_gas_limit(header.header())?;
-        }
+        self.policy.validate_header(header.header())?;
         self.inner.validate_header(header)
     }
 
@@ -163,47 +155,8 @@ where
         header: &SealedHeader<OutbeHeader>,
         parent: &SealedHeader<OutbeHeader>,
     ) -> Result<(), ConsensusError> {
-        validate_against_parent_hash_number(header.header(), parent)?;
-        validate_against_parent_timestamp_millis(header.header(), parent.header())?;
-
-        if !self.skip_gas_limit_ramp_check {
-            validate_protocol_gas_limit(header.header())?;
-        }
-
-        validate_against_parent_eip1559_base_fee(
-            header.header(),
-            parent.header(),
-            self.chain_spec.as_ref(),
-        )?;
-
-        if let Some(blob_params) = self
-            .chain_spec
-            .blob_params_at_timestamp(header.header().timestamp())
-        {
-            validate_against_parent_4844(header.header(), parent.header(), blob_params)?;
-        }
-
-        Ok(())
+        self.policy.validate_header_against_parent(header, parent)
     }
-}
-
-/// Enforce the genesis-fixed Outbe gas schedule by height.
-///
-/// Ethereum's parent-relative ramp cannot represent the intentional 30M -> 500M
-/// block-1 bootstrap expansion or the 500M -> 30M block-2 contraction. Exact
-/// height selection is stronger here: a proposer cannot choose any intermediate
-/// or oversized value, and every node derives the same limit without parent or
-/// host input.
-fn validate_protocol_gas_limit(header: &OutbeHeader) -> Result<(), ConsensusError> {
-    let expected = outbe_primitives::system_tx::protocol_block_gas_limit(header.number());
-    let actual = header.gas_limit();
-    if actual != expected {
-        return Err(consensus_other(format!(
-            "block {} protocol gas limit mismatch: expected {expected}, got {actual}",
-            header.number()
-        )));
-    }
-    Ok(())
 }
 
 impl<ChainSpec> Consensus<OutbeBlock> for OutbeBeaconConsensus<ChainSpec>
@@ -215,12 +168,8 @@ where
         body: &OutbeBlockBody,
         header: &SealedHeader<OutbeHeader>,
     ) -> Result<(), ConsensusError> {
-        validate_outbe_body_withdrawals(body)?;
-        validate_system_tx_consensus_boundary_for_activation(
-            body,
-            header.header(),
-            self.ocomp_lifecycle_activation,
-        )?;
+        self.policy
+            .validate_body_against_header(body, header.header())?;
         <EthBeaconConsensus<ChainSpec> as Consensus<OutbeBlock>>::validate_body_against_header(
             &self.inner,
             body,
@@ -232,13 +181,7 @@ where
         &self,
         block: &SealedBlock<OutbeBlock>,
     ) -> Result<(), ConsensusError> {
-        validate_outbe_body_withdrawals(block.body())?;
-        validate_block_transport_size(block)?;
-        validate_system_tx_consensus_boundary_for_activation(
-            block.body(),
-            block.header(),
-            self.ocomp_lifecycle_activation,
-        )?;
+        self.policy.validate_block_pre_execution(block)?;
         <EthBeaconConsensus<ChainSpec> as Consensus<OutbeBlock>>::validate_block_pre_execution(
             &self.inner,
             block,
@@ -250,44 +193,13 @@ where
         block: &SealedBlock<OutbeBlock>,
         transaction_root: Option<TransactionRoot>,
     ) -> Result<(), ConsensusError> {
-        validate_outbe_body_withdrawals(block.body())?;
-        validate_block_transport_size(block)?;
-        validate_system_tx_consensus_boundary_for_activation(
-            block.body(),
-            block.header(),
-            self.ocomp_lifecycle_activation,
-        )?;
+        self.policy.validate_block_pre_execution(block)?;
         <EthBeaconConsensus<ChainSpec> as Consensus<OutbeBlock>>::validate_block_pre_execution_with_tx_root(
             &self.inner,
             block,
             transaction_root,
         )
     }
-}
-
-fn validate_outbe_body_withdrawals(body: &OutbeBlockBody) -> Result<(), ConsensusError> {
-    validate_outbe_withdrawals(
-        body.withdrawals
-            .as_ref()
-            .map(|withdrawals| withdrawals.0.as_slice()),
-    )
-    .map_err(|error| consensus_other(error.to_string()))
-}
-
-/// Reject a block whose RLP-encoded size exceeds the consensus P2P transport
-/// cap (`OUTBE_MAX_BLOCK_SIZE`). Deterministic (RLP length of the same sealed
-/// block on every validator), so an over-sized byzantine block is rejected
-/// here rather than panicking commonware's bounded sender on dissemination.
-/// Honest proposers cap the block at build time, so this never rejects a valid
-/// block. See README "Consensus Artifact Transport".
-fn validate_block_transport_size(block: &SealedBlock<OutbeBlock>) -> Result<(), ConsensusError> {
-    let rlp_length = block.rlp_length();
-    if rlp_length > OUTBE_MAX_BLOCK_SIZE {
-        return Err(consensus_other(format!(
-            "block RLP size {rlp_length} exceeds the {OUTBE_MAX_BLOCK_SIZE}-byte P2P transport cap"
-        )));
-    }
-    Ok(())
 }
 
 impl<ChainSpec> FullConsensus<OutbePrimitives> for OutbeBeaconConsensus<ChainSpec>
@@ -333,179 +245,7 @@ pub fn validate_system_tx_consensus_boundary_for_activation(
     header: &OutbeHeader,
     ocomp_lifecycle_activation: OcompLifecycleActivation,
 ) -> Result<(), ConsensusError> {
-    if header.number() > 0 && header.beneficiary() != REWARDS_ADDRESS {
-        return Err(consensus_other(format!(
-            "non-genesis block beneficiary must be REWARDS_ADDRESS {}: got {}",
-            REWARDS_ADDRESS,
-            header.beneficiary()
-        )));
-    }
-
-    let artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(
-        header.extra_data().as_ref(),
-    )
-    .map_err(|error| consensus_other(format!("decode Outbe block artifacts: {error}")))?;
-    let has_boundary_outcome = matches!(
-        &artifacts.consensus_header_artifact,
-        Some(outbe_primitives::reshare_artifact::ConsensusHeaderArtifact::BoundaryOutcome(_))
-    );
-    let layout = outbe_evm::system_tx::split_system_layout(&body.transactions)
-        .map_err(|error| consensus_other(format!("invalid system tx layout: {error}")))?;
-    let has_tee_bootstrap = layout.has_begin_kind(outbe_evm::system_tx::SystemTxKind::TeeBootstrap);
-    outbe_evm::system_tx::validate_system_tx_set_for_activation(
-        &layout,
-        header.number(),
-        has_boundary_outcome,
-        has_tee_bootstrap,
-        ocomp_lifecycle_activation,
-    )
-    .map_err(|error| consensus_other(format!("invalid system tx set: {error}")))?;
-
-    if header.number() >= 2 {
-        let finalization_tx = *layout.begin.first().ok_or_else(|| {
-            consensus_other(format!(
-                "missing CertifiedParentAccounting system tx for block {}",
-                header.number()
-            ))
-        })?;
-        let input = outbe_evm::system_tx::SystemTxInputV2::decode(finalization_tx.input().as_ref())
-            .map_err(|error| {
-                consensus_other(format!("decode CertifiedParentAccounting input: {error}"))
-            })?;
-        let outbe_evm::system_tx::SystemTxInputV2::CertifiedParentAccounting { metadata } = input
-        else {
-            return Err(consensus_other(
-                "expected CertifiedParentAccounting system tx at begin ordinal 0",
-            ));
-        };
-        if metadata.finalized_block_hash != header.parent_hash() {
-            return Err(consensus_other(format!(
-                "CertifiedParentAccounting metadata hash must match block parent: expected {}, got {}",
-                header.parent_hash(),
-                metadata.finalized_block_hash
-            )));
-        }
-    }
-
-    if let Some(outbe_primitives::reshare_artifact::ConsensusHeaderArtifact::BoundaryOutcome(
-        header_artifact,
-    )) = artifacts.consensus_header_artifact
-    {
-        let mut matched = false;
-        for tx in layout.begin.iter().chain(layout.end.iter()) {
-            let tx = *tx;
-            let input = outbe_evm::system_tx::SystemTxInputV2::decode(tx.input().as_ref())
-                .map_err(|error| consensus_other(format!("decode system tx input: {error}")))?;
-            if let outbe_evm::system_tx::SystemTxInputV2::BoundaryOutcome { artifact } = input {
-                if artifact != header_artifact {
-                    return Err(consensus_other(
-                        "BoundaryOutcome system tx artifact mismatch",
-                    ));
-                }
-                matched = true;
-            }
-        }
-        if !matched {
-            return Err(consensus_other(
-                "missing BoundaryOutcome system tx for header artifact",
-            ));
-        }
-    }
-
-    // bind the header's `late_finalize_credits` artifact (tag
-    // 0x06 - hash-committed and BLS-verified pre-exec) to the body's
-    // `LateFinalizeCredits` system-tx calldata, so the artifact that is verified
-    // is exactly the one that settles fees. Mirrors the BoundaryOutcome parity
-    // above. The header `Option` maps to the calldata artifact via the proposer
-    // build path's `unwrap_or_default()`: `None => empty`, `Some(a) => a`.
-    {
-        let header_credits = artifacts.late_finalize_credits.clone().unwrap_or_default();
-        let mut found = false;
-        for tx in layout.begin.iter().chain(layout.end.iter()) {
-            let tx = *tx;
-            let input = outbe_evm::system_tx::SystemTxInputV2::decode(tx.input().as_ref())
-                .map_err(|error| consensus_other(format!("decode system tx input: {error}")))?;
-            if let outbe_evm::system_tx::SystemTxInputV2::LateFinalizeCredits { artifact } = input {
-                if artifact != header_credits {
-                    return Err(consensus_other(
-                        "LateFinalizeCredits system tx artifact does not match header late_finalize_credits",
-                    ));
-                }
-                found = true;
-                break;
-            }
-        }
-        // No body tx (block < 2): the header must then carry no credits.
-        if !found && !header_credits.batches.is_empty() {
-            return Err(consensus_other(
-                "header carries late_finalize_credits but block has no LateFinalizeCredits system tx",
-            ));
-        }
-    }
-
-    Ok(())
-}
-
-fn validate_against_parent_timestamp_millis(
-    header: &OutbeHeader,
-    parent: &OutbeHeader,
-) -> Result<(), ConsensusError> {
-    let timestamp = header.timestamp_millis();
-    let parent_timestamp = parent.timestamp_millis();
-
-    if timestamp <= parent_timestamp {
-        return Err(ConsensusError::TimestampIsInPast {
-            parent_timestamp,
-            timestamp,
-        });
-    }
-
-    // Upper bound on forward drift. Stock Ethereum only checks monotonicity,
-    // which lets a single byzantine proposer ratchet chain time arbitrarily far
-    // forward in one block - maturing every unbonding entry and the slashed
-    // withdrawal delay (unbonding-lock + slashing-window bypass) and skipping
-    // the day-indexed emission schedule. The bound is deterministic and
-    // chain-state-only (header + parent, no wall clock), so proposer and every
-    // validator agree. Honest proposers cap their assigned timestamp at
-    // `parent + MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS` (see the consensus handler
-    // build path), so this never rejects an honest block; a long outage
-    // self-heals as chain time ratchets forward in bounded steps.
-    let drift = timestamp - parent_timestamp;
-    if drift > MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS {
-        return Err(consensus_other(format!(
-            "block timestamp_millis {timestamp} exceeds parent {parent_timestamp} by {drift} ms, \
-             above the {MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS} ms maximum drift"
-        )));
-    }
-
-    // Lower bound on forward advance. Monotonicity alone lets a colluding
-    // leader majority hold `timestamp = parent + 1 ms` while real time advances,
-    // freezing day-indexed emission and unbonding maturity. Each non-genesis
-    // block must advance chain time by at least `MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS`.
-    // Deterministic and chain-state-only; the proposer clamps its assigned
-    // timestamp up to `parent + this` (see the consensus handler build path) so an
-    // honest block is never rejected. The genesis child (parent number 0) is
-    // exempt - its `finalization_view` is unseeded, so block 1 is monotonic-only,
-    // matching the proposer's genesis exception.
-    if parent.number() > 0 && drift < MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS {
-        return Err(consensus_other(format!(
-            "block timestamp_millis {timestamp} advances parent {parent_timestamp} by only \
-             {drift} ms, below the {MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS} ms minimum advance"
-        )));
-    }
-
-    Ok(())
-}
-
-fn validate_header_timestamp_millis_part(header: &OutbeHeader) -> Result<(), ConsensusError> {
-    let part = header.timestamp_millis_part();
-    if part >= MILLIS_PER_SECOND {
-        return Err(consensus_other(format!(
-            "timestamp_millis_part {part} must be less than {MILLIS_PER_SECOND}"
-        )));
-    }
-
-    Ok(())
+    policy::validate_system_transactions(body, header, ocomp_lifecycle_activation)
 }
 
 /// Consensus builder that produces `OutbeBeaconConsensus` with increased extra_data limit.
@@ -548,10 +288,15 @@ where
 
 #[cfg(test)]
 mod tests {
+    mod adapter;
+
     use super::*;
-    use alloy_consensus::Header;
+    use alloy_consensus::{BlockHeader as _, Header};
     use alloy_eips::eip4895::{Withdrawal, Withdrawals};
     use alloy_primitives::{Address, Bloom, B256, B64, U256};
+    use outbe_primitives::consensus::{
+        MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS, MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS, OUTBE_MAX_BLOCK_SIZE,
+    };
     use reth_chainspec::{ChainSpec, MAINNET};
     use reth_primitives_traits::Block as _;
 
@@ -567,8 +312,7 @@ mod tests {
     ) -> SealedHeader<OutbeHeader> {
         header_with_beneficiary(
             number,
-            timestamp_seconds,
-            timestamp_millis_part,
+            (timestamp_seconds, timestamp_millis_part),
             parent_hash,
             if number == 0 {
                 Address::ZERO
@@ -580,29 +324,37 @@ mod tests {
 
     fn header_with_beneficiary(
         number: u64,
-        timestamp_seconds: u64,
-        timestamp_millis_part: u64,
+        timestamp: (u64, u64),
         parent_hash: B256,
         beneficiary: Address,
     ) -> SealedHeader<OutbeHeader> {
         header_with_beneficiary_and_gas_limit(
             number,
-            timestamp_seconds,
-            timestamp_millis_part,
+            timestamp,
             parent_hash,
-            beneficiary,
-            outbe_primitives::system_tx::protocol_block_gas_limit(number),
+            HeaderOptions {
+                beneficiary,
+                gas_limit: outbe_primitives::system_tx::protocol_block_gas_limit(number),
+            },
         )
+    }
+
+    struct HeaderOptions {
+        beneficiary: Address,
+        gas_limit: u64,
     }
 
     fn header_with_beneficiary_and_gas_limit(
         number: u64,
-        timestamp_seconds: u64,
-        timestamp_millis_part: u64,
+        timestamp: (u64, u64),
         parent_hash: B256,
-        beneficiary: Address,
-        gas_limit: u64,
+        options: HeaderOptions,
     ) -> SealedHeader<OutbeHeader> {
+        let (timestamp_seconds, timestamp_millis_part) = timestamp;
+        let HeaderOptions {
+            beneficiary,
+            gas_limit,
+        } = options;
         let extra_data = outbe_primitives::reshare_artifact::encode_outbe_block_artifacts(
             &outbe_primitives::reshare_artifact::OutbeBlockArtifacts {
                 timestamp_millis_part,
@@ -651,13 +403,12 @@ mod tests {
 
     fn signed_system_tx(
         signer: &outbe_evm::OutbeEvmSigner,
-        kind: outbe_evm::system_tx::SystemTxKind,
         ordinal: u8,
         block_number: u64,
         input: outbe_evm::system_tx::SystemTxInputV2,
     ) -> reth_ethereum::TransactionSigned {
         let unsigned = outbe_evm::system_tx::build_unsigned_system_tx(
-            kind,
+            input.kind(),
             ordinal,
             block_number,
             MAINNET.chain().id(),
@@ -667,12 +418,24 @@ mod tests {
         signer.sign_unsigned(unsigned).expect("system tx signs")
     }
 
+    fn body_with_withdrawal(amount: u64) -> OutbeBlockBody {
+        OutbeBlockBody {
+            transactions: Vec::new(),
+            ommers: Vec::new(),
+            withdrawals: Some(Withdrawals::new(vec![Withdrawal {
+                index: 0,
+                validator_index: 0,
+                address: Address::ZERO,
+                amount,
+            }])),
+        }
+    }
+
     #[test]
     fn pre_execution_rejects_non_rewards_beneficiary() {
         let body = OutbeBlockBody {
             transactions: vec![signed_system_tx(
                 &outbe_evm::OutbeEvmSigner::from_secret_bytes([4u8; 32]).unwrap(),
-                outbe_evm::system_tx::SystemTxKind::CycleTick,
                 0,
                 1,
                 outbe_evm::system_tx::SystemTxInputV2::CycleTick,
@@ -680,7 +443,7 @@ mod tests {
             ommers: Vec::new(),
             withdrawals: None,
         };
-        let header = header_with_beneficiary(1, 100, 0, B256::ZERO, Address::ZERO)
+        let header = header_with_beneficiary(1, (100, 0), B256::ZERO, Address::ZERO)
             .header()
             .clone();
 
@@ -695,16 +458,7 @@ mod tests {
     #[test]
     fn body_validation_rejects_non_empty_withdrawals() {
         let consensus = OutbeBeaconConsensus::new(test_chain_spec());
-        let body = OutbeBlockBody {
-            transactions: Vec::new(),
-            ommers: Vec::new(),
-            withdrawals: Some(Withdrawals::new(vec![Withdrawal {
-                index: 0,
-                validator_index: 0,
-                address: Address::ZERO,
-                amount: 1_000,
-            }])),
-        };
+        let body = body_with_withdrawal(1_000);
         let header = header(0, 100, 0, B256::ZERO);
 
         let error = consensus
@@ -724,16 +478,7 @@ mod tests {
         let sealed_header = header(0, 100, 0, B256::ZERO);
         let block = OutbeBlock {
             header: sealed_header.header().clone(),
-            body: OutbeBlockBody {
-                transactions: Vec::new(),
-                ommers: Vec::new(),
-                withdrawals: Some(Withdrawals::new(vec![Withdrawal {
-                    index: 0,
-                    validator_index: 0,
-                    address: Address::ZERO,
-                    amount: u64::MAX,
-                }])),
-            },
+            body: body_with_withdrawal(u64::MAX),
         }
         .seal_slow();
 
@@ -754,16 +499,7 @@ mod tests {
         let sealed_header = header(0, 100, 0, B256::ZERO);
         let block = OutbeBlock {
             header: sealed_header.header().clone(),
-            body: OutbeBlockBody {
-                transactions: Vec::new(),
-                ommers: Vec::new(),
-                withdrawals: Some(Withdrawals::new(vec![Withdrawal {
-                    index: 0,
-                    validator_index: 0,
-                    address: Address::ZERO,
-                    amount: 0,
-                }])),
-            },
+            body: body_with_withdrawal(0),
         }
         .seal_slow();
 
@@ -785,7 +521,6 @@ mod tests {
         let wrong_parent_hash = B256::with_last_byte(0xBB);
         let phase1 = signed_system_tx(
             &signer,
-            outbe_evm::system_tx::SystemTxKind::CertifiedParentAccounting,
             0,
             2,
             outbe_evm::system_tx::SystemTxInputV2::CertifiedParentAccounting {
@@ -794,7 +529,6 @@ mod tests {
         );
         let late = signed_system_tx(
             &signer,
-            outbe_evm::system_tx::SystemTxKind::LateFinalizeCredits,
             1,
             2,
             outbe_evm::system_tx::SystemTxInputV2::LateFinalizeCredits {
@@ -803,28 +537,24 @@ mod tests {
         );
         let cycle = signed_system_tx(
             &signer,
-            outbe_evm::system_tx::SystemTxKind::CycleTick,
             2,
             2,
             outbe_evm::system_tx::SystemTxInputV2::CycleTick,
         );
         let rewards = signed_system_tx(
             &signer,
-            outbe_evm::system_tx::SystemTxKind::RewardsGemDelivery,
             3,
             2,
             outbe_evm::system_tx::SystemTxInputV2::RewardsGemDelivery,
         );
         let oracle = signed_system_tx(
             &signer,
-            outbe_evm::system_tx::SystemTxKind::OracleSlashWindow,
             4,
             2,
             outbe_evm::system_tx::SystemTxInputV2::OracleSlashWindow,
         );
         let hook_events = signed_system_tx(
             &signer,
-            outbe_evm::system_tx::SystemTxKind::HookEvents,
             5,
             2,
             outbe_evm::system_tx::SystemTxInputV2::HookEvents,
@@ -868,27 +598,30 @@ mod tests {
         let consensus = OutbeBeaconConsensus::new(test_chain_spec());
         let genesis = header_with_beneficiary_and_gas_limit(
             0,
-            100,
-            0,
+            (100, 0),
             B256::ZERO,
-            Address::ZERO,
-            STEADY_BLOCK_GAS_LIMIT,
+            HeaderOptions {
+                beneficiary: Address::ZERO,
+                gas_limit: STEADY_BLOCK_GAS_LIMIT,
+            },
         );
         let bootstrap = header_with_beneficiary_and_gas_limit(
             1,
-            101,
-            0,
+            (101, 0),
             genesis.hash(),
-            REWARDS_ADDRESS,
-            BOOTSTRAP_BLOCK_GAS_LIMIT,
+            HeaderOptions {
+                beneficiary: REWARDS_ADDRESS,
+                gas_limit: BOOTSTRAP_BLOCK_GAS_LIMIT,
+            },
         );
         let steady = header_with_beneficiary_and_gas_limit(
             2,
-            102,
-            0,
+            (102, 0),
             bootstrap.hash(),
-            REWARDS_ADDRESS,
-            STEADY_BLOCK_GAS_LIMIT,
+            HeaderOptions {
+                beneficiary: REWARDS_ADDRESS,
+                gas_limit: STEADY_BLOCK_GAS_LIMIT,
+            },
         );
 
         consensus
@@ -906,19 +639,21 @@ mod tests {
         let consensus = OutbeBeaconConsensus::new(test_chain_spec());
         let genesis = header_with_beneficiary_and_gas_limit(
             0,
-            100,
-            0,
+            (100, 0),
             B256::ZERO,
-            Address::ZERO,
-            STEADY_BLOCK_GAS_LIMIT,
+            HeaderOptions {
+                beneficiary: Address::ZERO,
+                gas_limit: STEADY_BLOCK_GAS_LIMIT,
+            },
         );
         let wrong_bootstrap = header_with_beneficiary_and_gas_limit(
             1,
-            101,
-            0,
+            (101, 0),
             genesis.hash(),
-            REWARDS_ADDRESS,
-            STEADY_BLOCK_GAS_LIMIT,
+            HeaderOptions {
+                beneficiary: REWARDS_ADDRESS,
+                gas_limit: STEADY_BLOCK_GAS_LIMIT,
+            },
         );
 
         let error = consensus
@@ -1029,7 +764,9 @@ mod tests {
             child.header().timestamp_millis() - parent.header().timestamp_millis(),
             MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS
         );
-        validate_against_parent_timestamp_millis(child.header(), parent.header()).unwrap();
+        OutbeBeaconConsensus::new(test_chain_spec())
+            .validate_header_against_parent(&child, &parent)
+            .unwrap();
     }
 
     #[test]
@@ -1041,8 +778,9 @@ mod tests {
             child.header().timestamp_millis() - parent.header().timestamp_millis(),
             MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS + 1
         );
-        let err =
-            validate_against_parent_timestamp_millis(child.header(), parent.header()).unwrap_err();
+        let err = OutbeBeaconConsensus::new(test_chain_spec())
+            .validate_header_against_parent(&child, &parent)
+            .unwrap_err();
         assert!(matches!(
             err,
             ConsensusError::Other(message) if message.to_string().contains("maximum drift")
@@ -1058,8 +796,9 @@ mod tests {
         let parent = header(10, 1_000_000, 0, B256::ZERO);
         let twenty_one_days_s = 21 * 24 * 3600;
         let child = header(11, 1_000_000 + twenty_one_days_s, 0, parent.hash());
-        let err =
-            validate_against_parent_timestamp_millis(child.header(), parent.header()).unwrap_err();
+        let err = OutbeBeaconConsensus::new(test_chain_spec())
+            .validate_header_against_parent(&child, &parent)
+            .unwrap_err();
         assert!(matches!(
             err,
             ConsensusError::Other(message) if message.to_string().contains("maximum drift")
@@ -1076,7 +815,9 @@ mod tests {
             child.header().timestamp_millis() - parent.header().timestamp_millis(),
             MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS
         );
-        validate_against_parent_timestamp_millis(child.header(), parent.header()).unwrap();
+        OutbeBeaconConsensus::new(test_chain_spec())
+            .validate_header_against_parent(&child, &parent)
+            .unwrap();
     }
 
     #[test]
@@ -1092,8 +833,9 @@ mod tests {
             child.header().timestamp_millis() - parent.header().timestamp_millis(),
             MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS - 1
         );
-        let err =
-            validate_against_parent_timestamp_millis(child.header(), parent.header()).unwrap_err();
+        let err = OutbeBeaconConsensus::new(test_chain_spec())
+            .validate_header_against_parent(&child, &parent)
+            .unwrap_err();
         assert!(matches!(
             err,
             ConsensusError::Other(message) if message.to_string().contains("minimum advance")
@@ -1112,6 +854,8 @@ mod tests {
             block_one.header().timestamp_millis() - genesis.header().timestamp_millis()
                 < MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS
         );
-        validate_against_parent_timestamp_millis(block_one.header(), genesis.header()).unwrap();
+        OutbeBeaconConsensus::new(test_chain_spec())
+            .validate_header_against_parent(&block_one, &genesis)
+            .unwrap();
     }
 }

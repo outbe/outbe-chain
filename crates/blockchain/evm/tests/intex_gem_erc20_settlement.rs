@@ -5,7 +5,7 @@ use alloy_primitives::{Address, Bytes, FixedBytes, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use outbe_compressed_entities::ExecutionScope;
 use outbe_evm::sub_call;
-use outbe_gem::GemAddParams;
+use outbe_gem::{precompile::IGem, GemAddParams};
 use outbe_gemfactory::precompile::IGemFactory;
 use outbe_intex::{CreateSeriesParams, IntexCallTrigger, SeriesId};
 use outbe_intexfactory::precompile::IIntexFactory;
@@ -13,7 +13,8 @@ use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
     addresses::{
-        GEM_FACTORY_ADDRESS, INTEX_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
+        GEM_ADDRESS, GEM_FACTORY_ADDRESS, INTEX_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS,
+        VAULT_ROUTER_ADDRESS,
     },
     block::BlockContext,
     chain::CHAIN_ID,
@@ -82,8 +83,8 @@ impl Factory {
         match self {
             Factory::Intex => IIntexFactory::settleIntexCall {
                 seriesId: FixedBytes(SERIES),
-                intexOwner: OWNER,
-                amount: U256::from(UNITS),
+                owner: OWNER,
+                units: U256::from(UNITS),
                 asset: ASSET,
                 snapshotId: U256::ZERO,
             }
@@ -275,11 +276,13 @@ impl World {
     ) -> SubCallOutput {
         sub_call::run(
             &mut self.ctx,
-            caller,
-            false,
-            SpecId::PRAGUE,
-            Some(self.readers.clone()),
-            self.scope.clone(),
+            sub_call::SubCallEnvironment {
+                self_address: caller,
+                outer_is_static: false,
+                spec: SpecId::PRAGUE,
+                runtime_body_readers: Some(self.readers.clone()),
+                execution_scope: self.scope.clone(),
+            },
             SubCallInput {
                 target,
                 value: U256::ZERO,
@@ -318,11 +321,11 @@ impl World {
                     INTEX_FACTORY_ADDRESS,
                     IIntexFactory::quoteSettlementCall {
                         seriesId: FixedBytes(SERIES),
-                        paymentToken: ASSET,
-                        amount: U256::from(UNITS),
+                        asset: ASSET,
+                        units: U256::from(UNITS),
                     },
                 )
-                .payableUnits
+                .paymentMinor
             }
             Factory::Gem => {
                 self.view(
@@ -332,7 +335,7 @@ impl World {
                         asset: ASSET,
                     },
                 )
-                .payableUnits
+                .paymentMinor
             }
         }
     }
@@ -401,8 +404,8 @@ impl World {
                     .filter_map(|log| IIntexFactory::Settled::decode_log_data(&log.data).ok())
                     .collect();
                 assert_eq!(settled.len(), 1);
-                assert_eq!(settled[0].intexOwner, OWNER);
-                assert_eq!(settled[0].amount, U256::from(UNITS));
+                assert_eq!(settled[0].owner, OWNER);
+                assert_eq!(settled[0].units, U256::from(UNITS));
             }
             Factory::Gem => {
                 let settled: Vec<_> = logs
@@ -411,7 +414,8 @@ impl World {
                     .collect();
                 assert_eq!(settled.len(), 1);
                 assert_eq!(settled[0].owner, OWNER);
-                assert_eq!(settled[0].amountPaid, self.cost);
+                assert_eq!(settled[0].asset, ASSET);
+                assert_eq!(settled[0].paymentMinor, self.cost);
             }
         }
     }
@@ -450,10 +454,28 @@ fn erc20_settlement_moves_exactly_the_quoted_cost_into_the_reserve() {
 #[test]
 fn a_third_party_pays_and_the_units_stay_with_the_owner() {
     let payer = Address::new([0x77; 20]);
-    let mut world = World::new(Factory::Intex, payer, true);
-    assert!(matches!(world.settle().status, SubCallStatus::Success));
-    assert_eq!(world.balances(), world.paid_balances());
-    assert_eq!(world.settled_intex_units(), U256::from(UNITS));
+    for factory in FACTORIES {
+        let mut world = World::new(factory, payer, true);
+        assert!(
+            matches!(world.settle().status, SubCallStatus::Success),
+            "{factory:?}"
+        );
+        assert_eq!(world.balances(), world.paid_balances(), "{factory:?}");
+        world.assert_settled();
+        match factory {
+            Factory::Intex => assert_eq!(world.settled_intex_units(), U256::from(UNITS)),
+            Factory::Gem => {
+                let gem = world.view(
+                    GEM_ADDRESS,
+                    IGem::getGemStatusCall {
+                        gemId: world.gem_id,
+                    },
+                );
+                assert_eq!(gem.owner, OWNER);
+                assert_eq!(gem.state, outbe_gem::GemState::Settled as u8);
+            }
+        }
+    }
 }
 
 #[test]

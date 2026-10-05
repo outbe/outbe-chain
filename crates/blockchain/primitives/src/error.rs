@@ -78,3 +78,127 @@ impl From<SubCallError> for PrecompileError {
         PrecompileError::SubCall(value)
     }
 }
+
+/// What a system sweep does with one item's error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SweepFailure {
+    /// The same on every node: roll the item back and move on.
+    Skip,
+    /// The sweep's gas budget is spent: end the pass and resume next block.
+    Stop,
+    /// Node-local, or already recorded against the transaction: fail the block.
+    Propagate,
+}
+
+impl PrecompileError {
+    /// A failure of this node's own storage or readers, which another node would not hit.
+    pub fn is_node_local(&self) -> bool {
+        match self {
+            Self::Storage(_)
+            | Self::BodyReadUnavailable(_)
+            | Self::BodyReadRequestDeadline
+            | Self::TreeUnavailable(_)
+            | Self::SubCall(SubCallError::DatabaseError(_)) => true,
+            Self::OutOfGas
+            | Self::BodyReadCorruption(_)
+            | Self::TransactionCeWorkLimitExceeded
+            | Self::BlockCeWorkCapacityExhausted
+            | Self::WriteProtection
+            | Self::Revert(_)
+            | Self::RevertBytes(_)
+            | Self::SubCall(_)
+            | Self::Unsupported
+            | Self::Fatal(_) => false,
+        }
+    }
+
+    pub fn sweep_failure(&self) -> SweepFailure {
+        match self {
+            error if error.is_node_local() => SweepFailure::Propagate,
+            Self::TransactionCeWorkLimitExceeded | Self::BlockCeWorkCapacityExhausted => {
+                SweepFailure::Propagate
+            }
+            Self::OutOfGas => SweepFailure::Stop,
+            _ => SweepFailure::Skip,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PrecompileError, SweepFailure};
+    use crate::storage::SubCallError;
+
+    #[test]
+    fn sweep_failures_follow_where_the_error_comes_from() {
+        let table = [
+            (PrecompileError::OutOfGas, false, SweepFailure::Stop),
+            (
+                PrecompileError::Storage("x".into()),
+                true,
+                SweepFailure::Propagate,
+            ),
+            (
+                PrecompileError::BodyReadUnavailable("x".into()),
+                true,
+                SweepFailure::Propagate,
+            ),
+            (
+                PrecompileError::BodyReadRequestDeadline,
+                true,
+                SweepFailure::Propagate,
+            ),
+            (
+                PrecompileError::BodyReadCorruption("x".into()),
+                false,
+                SweepFailure::Skip,
+            ),
+            (
+                PrecompileError::TreeUnavailable("x".into()),
+                true,
+                SweepFailure::Propagate,
+            ),
+            (
+                PrecompileError::TransactionCeWorkLimitExceeded,
+                false,
+                SweepFailure::Propagate,
+            ),
+            (
+                PrecompileError::BlockCeWorkCapacityExhausted,
+                false,
+                SweepFailure::Propagate,
+            ),
+            (PrecompileError::WriteProtection, false, SweepFailure::Skip),
+            (
+                PrecompileError::Revert("x".into()),
+                false,
+                SweepFailure::Skip,
+            ),
+            (
+                PrecompileError::RevertBytes(Default::default()),
+                false,
+                SweepFailure::Skip,
+            ),
+            (
+                PrecompileError::SubCall(SubCallError::OutOfGas),
+                false,
+                SweepFailure::Skip,
+            ),
+            (
+                PrecompileError::SubCall(SubCallError::DatabaseError("x".into())),
+                true,
+                SweepFailure::Propagate,
+            ),
+            (PrecompileError::Unsupported, false, SweepFailure::Skip),
+            (
+                PrecompileError::Fatal("x".into()),
+                false,
+                SweepFailure::Skip,
+            ),
+        ];
+        for (error, node_local, failure) in table {
+            assert_eq!(error.is_node_local(), node_local, "{error}");
+            assert_eq!(error.sweep_failure(), failure, "{error}");
+        }
+    }
+}

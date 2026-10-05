@@ -58,135 +58,156 @@ pub(crate) fn evaluate_pre_admission(
     context: &PreAdmissionContext,
     inputs: &PreAdmissionInputs,
 ) -> Result<PreAdmissionDecision> {
-    let candidate = OCOMP_POC_CANDIDATE_LIMITS_V1;
+    Ok(match admission_envelope(context, inputs) {
+        Ok(envelope) => PreAdmissionDecision::Eligible(Box::new(envelope)),
+        Err(reason) => PreAdmissionDecision::Deferred(reason),
+    })
+}
+
+fn admission_envelope(
+    context: &PreAdmissionContext,
+    inputs: &PreAdmissionInputs,
+) -> std::result::Result<PreAdmissionEnvelopeV1, PreAdmissionDeferredReason> {
     let tribute = inputs.tribute;
     let oracle = &inputs.oracle;
+    validate_tribute_admission(context, &tribute)?;
+    validate_oracle_admission(context, inputs)?;
+    let AdmissionBounds {
+        input_encoded_bytes_upper_bound,
+        output_record_upper_bound,
+        retained_bytes_upper_bound,
+    } = AdmissionBounds::calculate(&tribute)?;
+    let candidate = OCOMP_POC_CANDIDATE_LIMITS_V1;
+    Ok(PreAdmissionEnvelopeV1 {
+        chain_id: context.chain_id,
+        genesis_hash: context.genesis_hash,
+        fork_id: context.fork_id,
+        wwd: tribute.worldwide_day.value(),
+        sealed_tribute_collection_root: tribute.sealed_collection_root,
+        sealed_tribute_count: tribute.tribute_count,
+        sealed_tribute_canonical_body_bytes: tribute.canonical_body_bytes,
+        distinct_owner_count: tribute.distinct_owner_count,
+        distinct_reference_currency_count: tribute.distinct_reference_currency_count,
+        fidelity_league_snapshot_root: inputs.fidelity_league_snapshot_root,
+        oracle_wwd_pair_entries_observed: oracle.wwd_pair_entries,
+        active_scurve_entries_observed: oracle.active_scurve_entries,
+        oracle_state_version: oracle.oracle_state_version,
+        fidelity_opening_upper_bound: tribute.distinct_owner_count,
+        oracle_opening_upper_bound: u32::from(tribute.distinct_reference_currency_count),
+        input_encoded_bytes_upper_bound,
+        output_record_upper_bound,
+        result_chunk_bytes_upper_bound: candidate.max_result_chunk_bytes,
+        activation_bytes_upper_bound: candidate.max_activation_ocb1_bytes,
+        retained_bytes_upper_bound,
+        correctness_profile_id: context.correctness_profile_id,
+        capacity_profile_id: context.capacity_profile.profile_id,
+    })
+}
 
+fn validate_tribute_admission(
+    context: &PreAdmissionContext,
+    tribute: &TributePreAdmissionProjection,
+) -> std::result::Result<(), PreAdmissionDeferredReason> {
+    let candidate = OCOMP_POC_CANDIDATE_LIMITS_V1;
     if !tribute.profile_ready {
-        return Ok(PreAdmissionDecision::Deferred(
-            PreAdmissionDeferredReason::TributeProfileNotReady,
-        ));
+        return Err(PreAdmissionDeferredReason::TributeProfileNotReady);
     }
     if !tribute.is_sealed || tribute.sealed_collection_root.is_zero() {
-        return Ok(PreAdmissionDecision::Deferred(
-            PreAdmissionDeferredReason::TributeNotSealed,
-        ));
+        return Err(PreAdmissionDeferredReason::TributeNotSealed);
     }
     if tribute.tribute_count == 0 {
-        return Ok(PreAdmissionDecision::Deferred(
-            PreAdmissionDeferredReason::EmptyTributeDay,
-        ));
+        return Err(PreAdmissionDeferredReason::EmptyTributeDay);
     }
     let reference_currency_limit = context
         .capacity_profile
         .max_reference_currencies
         .min(u16::try_from(candidate.max_oracle_openings).unwrap_or(u16::MAX));
     if tribute.distinct_reference_currency_count > reference_currency_limit {
-        return Ok(PreAdmissionDecision::Deferred(
-            PreAdmissionDeferredReason::ReferenceCurrencyCountExceeded {
-                actual: tribute.distinct_reference_currency_count,
-                limit: reference_currency_limit,
-            },
-        ));
+        return Err(PreAdmissionDeferredReason::ReferenceCurrencyCountExceeded {
+            actual: tribute.distinct_reference_currency_count,
+            limit: reference_currency_limit,
+        });
     }
+    Ok(())
+}
+
+fn validate_oracle_admission(
+    context: &PreAdmissionContext,
+    inputs: &PreAdmissionInputs,
+) -> std::result::Result<(), PreAdmissionDeferredReason> {
+    let candidate = OCOMP_POC_CANDIDATE_LIMITS_V1;
+    let tribute = inputs.tribute;
+    let oracle = &inputs.oracle;
     if !oracle.profile_ready {
-        return Ok(PreAdmissionDecision::Deferred(
-            PreAdmissionDeferredReason::OracleProfileNotReady,
-        ));
+        return Err(PreAdmissionDeferredReason::OracleProfileNotReady);
     }
-    let Some(oracle_opening_limit) = u16::try_from(candidate.max_oracle_openings).ok() else {
-        return Ok(arithmetic_overflow());
-    };
+    let oracle_opening_limit = u16::try_from(candidate.max_oracle_openings)
+        .map_err(|_| PreAdmissionDeferredReason::ArithmeticOverflow)?;
     if tribute.distinct_reference_currency_count > oracle_opening_limit {
-        return Ok(PreAdmissionDecision::Deferred(
-            PreAdmissionDeferredReason::OracleOpeningCountExceeded {
-                actual: tribute.distinct_reference_currency_count,
-                limit: oracle_opening_limit,
-            },
-        ));
+        return Err(PreAdmissionDeferredReason::OracleOpeningCountExceeded {
+            actual: tribute.distinct_reference_currency_count,
+            limit: oracle_opening_limit,
+        });
     }
-    let Some(candidate_oracle_pair_limit) =
-        u32::try_from(candidate.max_oracle_wwd_pair_entries).ok()
-    else {
-        return Ok(arithmetic_overflow());
-    };
+    let candidate_oracle_pair_limit = u32::try_from(candidate.max_oracle_wwd_pair_entries)
+        .map_err(|_| PreAdmissionDeferredReason::ArithmeticOverflow)?;
     let oracle_pair_limit = context
         .capacity_profile
         .max_oracle_wwd_pair_entries
         .min(candidate_oracle_pair_limit);
     if oracle.wwd_pair_entries > oracle_pair_limit {
-        return Ok(PreAdmissionDecision::Deferred(
-            PreAdmissionDeferredReason::OracleWwdPairEntriesExceeded {
-                actual: oracle.wwd_pair_entries,
-                limit: oracle_pair_limit,
-            },
-        ));
+        return Err(PreAdmissionDeferredReason::OracleWwdPairEntriesExceeded {
+            actual: oracle.wwd_pair_entries,
+            limit: oracle_pair_limit,
+        });
     }
-    let Some(candidate_scurve_limit) = u32::try_from(candidate.max_active_scurve_entries).ok()
-    else {
-        return Ok(arithmetic_overflow());
-    };
+    let candidate_scurve_limit = u32::try_from(candidate.max_active_scurve_entries)
+        .map_err(|_| PreAdmissionDeferredReason::ArithmeticOverflow)?;
     let scurve_limit = context
         .capacity_profile
         .max_active_scurve_entries
         .min(candidate_scurve_limit);
     if oracle.active_scurve_entries > scurve_limit {
-        return Ok(PreAdmissionDecision::Deferred(
-            PreAdmissionDeferredReason::ActiveScurveEntriesExceeded {
-                actual: oracle.active_scurve_entries,
-                limit: scurve_limit,
-            },
-        ));
+        return Err(PreAdmissionDeferredReason::ActiveScurveEntriesExceeded {
+            actual: oracle.active_scurve_entries,
+            limit: scurve_limit,
+        });
     }
 
-    let Some(input_encoded_bytes_upper_bound) = tribute
-        .canonical_body_bytes
-        .checked_add(candidate.max_input_manifest_bytes)
-    else {
-        return Ok(arithmetic_overflow());
-    };
-    let Some(output_record_upper_bound) = tribute.tribute_count.checked_mul(3) else {
-        return Ok(arithmetic_overflow());
-    };
-    let Some(retained_bytes_upper_bound) = input_encoded_bytes_upper_bound
-        .checked_add(candidate.max_result_summary_bytes)
-        .and_then(|value| value.checked_add(candidate.max_activation_ocb1_bytes))
-        .and_then(|value| value.checked_add(candidate.max_finalized_intent_proof_bytes))
-        .and_then(|value| value.checked_add(candidate.max_result_vote_bytes))
-    else {
-        return Ok(arithmetic_overflow());
-    };
-
-    Ok(PreAdmissionDecision::Eligible(Box::new(
-        PreAdmissionEnvelopeV1 {
-            chain_id: context.chain_id,
-            genesis_hash: context.genesis_hash,
-            fork_id: context.fork_id,
-            wwd: tribute.worldwide_day.value(),
-            sealed_tribute_collection_root: tribute.sealed_collection_root,
-            sealed_tribute_count: tribute.tribute_count,
-            sealed_tribute_canonical_body_bytes: tribute.canonical_body_bytes,
-            distinct_owner_count: tribute.distinct_owner_count,
-            distinct_reference_currency_count: tribute.distinct_reference_currency_count,
-            fidelity_league_snapshot_root: inputs.fidelity_league_snapshot_root,
-            oracle_wwd_pair_entries_observed: oracle.wwd_pair_entries,
-            active_scurve_entries_observed: oracle.active_scurve_entries,
-            oracle_state_version: oracle.oracle_state_version,
-            fidelity_opening_upper_bound: tribute.distinct_owner_count,
-            oracle_opening_upper_bound: u32::from(tribute.distinct_reference_currency_count),
-            input_encoded_bytes_upper_bound,
-            output_record_upper_bound,
-            result_chunk_bytes_upper_bound: candidate.max_result_chunk_bytes,
-            activation_bytes_upper_bound: candidate.max_activation_ocb1_bytes,
-            retained_bytes_upper_bound,
-            correctness_profile_id: context.correctness_profile_id,
-            capacity_profile_id: context.capacity_profile.profile_id,
-        },
-    )))
+    Ok(())
 }
 
-const fn arithmetic_overflow() -> PreAdmissionDecision {
-    PreAdmissionDecision::Deferred(PreAdmissionDeferredReason::ArithmeticOverflow)
+struct AdmissionBounds {
+    input_encoded_bytes_upper_bound: u64,
+    output_record_upper_bound: u32,
+    retained_bytes_upper_bound: u64,
+}
+
+impl AdmissionBounds {
+    fn calculate(
+        tribute: &TributePreAdmissionProjection,
+    ) -> std::result::Result<Self, PreAdmissionDeferredReason> {
+        let candidate = OCOMP_POC_CANDIDATE_LIMITS_V1;
+        let input_encoded_bytes_upper_bound = tribute
+            .canonical_body_bytes
+            .checked_add(candidate.max_input_manifest_bytes)
+            .ok_or(PreAdmissionDeferredReason::ArithmeticOverflow)?;
+        let output_record_upper_bound = tribute
+            .tribute_count
+            .checked_mul(3)
+            .ok_or(PreAdmissionDeferredReason::ArithmeticOverflow)?;
+        let retained_bytes_upper_bound = input_encoded_bytes_upper_bound
+            .checked_add(candidate.max_result_summary_bytes)
+            .and_then(|value| value.checked_add(candidate.max_activation_ocb1_bytes))
+            .and_then(|value| value.checked_add(candidate.max_finalized_intent_proof_bytes))
+            .and_then(|value| value.checked_add(candidate.max_result_vote_bytes))
+            .ok_or(PreAdmissionDeferredReason::ArithmeticOverflow)?;
+        Ok(Self {
+            input_encoded_bytes_upper_bound,
+            output_record_upper_bound,
+            retained_bytes_upper_bound,
+        })
+    }
 }
 
 /// Immutable public projection of the Metadosis-owned OCOMP seal state.

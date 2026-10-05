@@ -7,7 +7,7 @@
 
 use super::*;
 use crate::fixture_kernel::ActivationFixture;
-use crate::schema::{terminal_outcome, terminal_retirement, WorldwideDayTerminalReceiptState};
+use crate::schema::terminal_outcome;
 use crate::terminal::{CapacityForfeitureReceipt, MissedOfferingReceipt};
 use crate::{
     errors::vote_rejection_code::LIFECYCLE_INACTIVE, ocomp::vote::dispatch_public_result_vote,
@@ -100,17 +100,15 @@ fn terminal_receipt_view_stays_fatal_on_unknown_stored_outcome() {
     // (same policy as `getWorldwideDay`'s status/day-type tag checks).
     with_contract(|metadosis| {
         let wwd = WwdKey::new(20270301);
+        let mut malformed = vec![0; crate::terminal::codec::COMMON_LEN];
+        malformed[..6].copy_from_slice(b"OMTR\x00\x01");
+        malformed[6] = 7;
+        malformed[7..11].copy_from_slice(&wwd.value().to_be_bytes());
+        malformed[107] = 1;
         metadosis
             .worldwide_day_terminal_receipts
-            .create(&WorldwideDayTerminalReceiptState {
-                wwd,
-                outcome: 7,
-                value_routed: U256::ZERO,
-                carry_over_before: U256::ZERO,
-                carry_over_after: U256::ZERO,
-                retirement: terminal_retirement::NONE,
-                block_number: 1,
-            })
+            .get_bytes(&wwd)
+            .write(&malformed)
             .unwrap();
 
         let call = IMetadosis::getWorldwideDayTerminalReceiptCall { wwd: wwd.value() };
@@ -164,15 +162,11 @@ fn terminal_receipt_writers_only_emit_known_outcomes() {
             (missed, terminal_outcome::MISSED_OFFERING),
             (forfeited, terminal_outcome::CAPACITY_FORFEITURE),
         ] {
-            let stored = metadosis
-                .worldwide_day_terminal_receipts
-                .get(wwd)
-                .unwrap()
-                .unwrap();
-            assert_eq!(stored.outcome, expected);
+            let stored = metadosis.read_terminal_receipt(wwd).unwrap().unwrap();
+            assert_eq!(stored.outcome(), expected);
             assert!(
                 matches!(
-                    stored.outcome,
+                    stored.outcome(),
                     terminal_outcome::MISSED_OFFERING | terminal_outcome::CAPACITY_FORFEITURE
                 ),
                 "writers must never persist a tag the reader treats as corruption"

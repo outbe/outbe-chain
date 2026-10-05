@@ -172,23 +172,44 @@ impl ReporterContinuity {
     }
 }
 
+/// Immutable authority for one reporter epoch. Address order matches participant indices.
+pub struct ReporterCommittee {
+    pub validator_addresses: Vec<Address>,
+    pub verifier_scheme: HybridScheme<MinSig>,
+    pub elector: HybridRandomElector<MinSig>,
+    pub epoch: Epoch,
+}
+
+/// Capabilities required to deliver finalized facts and record certification witnesses.
+pub struct ReporterDependencies {
+    pub finalization_mailbox: FinalizationMailbox,
+    pub bridge: Option<ConsensusExecutionBridge>,
+    pub witness_sink: Arc<dyn CertificationWitnessSink>,
+    pub finalize_verify_mailbox: FinalizeVerifyMailbox,
+}
+
 /// Type alias for our Simplex activity type - uses HybridScheme<MinSig>.
 type OutbeActivity = Activity<HybridScheme<MinSig>, Digest>;
 
 impl OutbeReporter {
-    /// Create a new reporter.
-    #[allow(clippy::too_many_arguments)]
+    /// Construct from epoch authority and required downstream capabilities.
     pub fn new(
         continuity: ReporterContinuity,
-        validator_addresses: Vec<Address>,
-        finalization_mailbox: FinalizationMailbox,
-        bridge: Option<ConsensusExecutionBridge>,
-        verifier_scheme: HybridScheme<MinSig>,
-        elector: HybridRandomElector<MinSig>,
-        epoch: Epoch,
-        witness_sink: Arc<dyn CertificationWitnessSink>,
-        finalize_verify_mailbox: FinalizeVerifyMailbox,
+        committee: ReporterCommittee,
+        dependencies: ReporterDependencies,
     ) -> Self {
+        let ReporterCommittee {
+            validator_addresses,
+            verifier_scheme,
+            elector,
+            epoch,
+        } = committee;
+        let ReporterDependencies {
+            finalization_mailbox,
+            bridge,
+            witness_sink,
+            finalize_verify_mailbox,
+        } = dependencies;
         let persisted = continuity.snapshot();
         Self {
             continuity,
@@ -722,35 +743,15 @@ impl OutbeReporter {
             self.epoch,
             &self.elector,
             self.view_state.last_certificate(),
-            last_finalized_view,
-            current_view,
-            MAX_MISSED_PROPOSERS,
+            crate::missed_proposers::SkippedViewRange {
+                last_view: last_finalized_view,
+                current_view,
+                cap: MAX_MISSED_PROPOSERS,
+            },
         );
         let dropped = gap.saturating_sub(leaders.len() as u64);
 
-        let mut missed = Vec::with_capacity(leaders.len());
-        for (offset, leader) in leaders.iter().enumerate() {
-            let v = last_finalized_view + 1 + offset as u64;
-            let leader_idx = leader.get() as usize;
-
-            if leader_idx < self.validator_addresses.len() {
-                let addr = self.validator_addresses[leader_idx];
-                debug!(
-                    view = v,
-                    leader_idx,
-                    %addr,
-                    "missed proposer detected"
-                );
-                missed.push(addr);
-            } else {
-                warn!(
-                    view = v,
-                    leader_idx,
-                    total = self.validator_addresses.len(),
-                    "leader index out of bounds"
-                );
-            }
-        }
+        let missed = self.missed_proposer_addresses(last_finalized_view, &leaders);
 
         if !missed.is_empty() {
             info!(
@@ -773,6 +774,38 @@ impl OutbeReporter {
 
             // Record skipped views metric.
             crate::metrics::record_views_skipped(gap);
+        }
+
+        missed
+    }
+
+    fn missed_proposer_addresses(
+        &self,
+        last_finalized_view: u64,
+        leaders: &[commonware_utils::Participant],
+    ) -> Vec<Address> {
+        let mut missed = Vec::with_capacity(leaders.len());
+        for (offset, leader) in leaders.iter().enumerate() {
+            let v = last_finalized_view + 1 + offset as u64;
+            let leader_idx = leader.get() as usize;
+
+            if leader_idx < self.validator_addresses.len() {
+                let addr = self.validator_addresses[leader_idx];
+                debug!(
+                    view = v,
+                    leader_idx,
+                    %addr,
+                    "missed proposer detected"
+                );
+                missed.push(addr);
+            } else {
+                warn!(
+                    view = v,
+                    leader_idx,
+                    total = self.validator_addresses.len(),
+                    "leader index out of bounds"
+                );
+            }
         }
 
         missed
@@ -802,7 +835,10 @@ mod tests {
     };
     use futures::channel::mpsc;
 
-    use super::{FinalizeVerifyMailbox, OutbeReporter, ReporterContinuity};
+    use super::{
+        FinalizeVerifyMailbox, OutbeReporter, ReporterCommittee, ReporterContinuity,
+        ReporterDependencies,
+    };
     use crate::{
         bls::bootstrap_dkg,
         finalization::{
@@ -827,21 +863,15 @@ mod tests {
     fn sample_certificate() -> crate::hybrid::HybridCertificate<MinSig> {
         let (keys, participants) = test_participants(3);
         let dkg = bootstrap_dkg(3).unwrap();
-        let schemes: Vec<HybridScheme<MinSig>> = keys
-            .iter()
-            .map(|key| {
-                let pk = bls12381::PublicKey::from(key.clone());
-                let idx = participants.index(&pk).unwrap();
-                HybridScheme::signer(
-                    b"reporter-test",
-                    participants.clone(),
-                    key.clone(),
-                    dkg.polynomial.clone(),
-                    dkg.shares[idx.get() as usize].clone(),
-                )
-                .unwrap()
-            })
-            .collect();
+        let schemes: Vec<HybridScheme<MinSig>> = crate::test_harness::fixture_signer_schemes(
+            b"reporter-test",
+            &keys,
+            &participants,
+            crate::test_harness::FixtureSignerSharing {
+                polynomial: &dkg.polynomial,
+                shares: &dkg.shares,
+            },
+        );
         let verifier =
             HybridScheme::<MinSig>::verifier(b"reporter-test", participants, dkg.polynomial)
                 .unwrap();
@@ -869,6 +899,23 @@ mod tests {
         let (_, participants) = test_participants(3);
         let dkg = bootstrap_dkg(3).unwrap();
         HybridScheme::<MinSig>::verifier(b"reporter-test", participants, dkg.polynomial).unwrap()
+    }
+
+    fn gap_detection_reporter(
+        continuity: ReporterContinuity,
+        committee: ReporterCommittee,
+        finalization_mailbox: FinalizationMailbox,
+    ) -> OutbeReporter {
+        OutbeReporter::new(
+            continuity,
+            committee,
+            ReporterDependencies {
+                finalization_mailbox,
+                bridge: None,
+                witness_sink: std::sync::Arc::new(FinalizedParentCertStore::new()),
+                finalize_verify_mailbox: FinalizeVerifyMailbox::disconnected(),
+            },
+        )
     }
 
     /// Build signer schemes AND a matching verifier from ONE DKG, so individual
@@ -925,18 +972,22 @@ mod tests {
         let participants = test_participants(3).1;
         let mut reporter = OutbeReporter::new(
             ReporterContinuity::default(),
-            vec![
-                address!("0x1111111111111111111111111111111111111111"),
-                address!("0x2222222222222222222222222222222222222222"),
-                address!("0x3333333333333333333333333333333333333333"),
-            ],
-            FinalizationMailbox::from_sender(tx),
-            None,
-            verifier,
-            HybridRandom::default().build(&participants),
-            Epoch::new(0),
-            std::sync::Arc::new(FinalizedParentCertStore::new()),
-            verify_mailbox,
+            ReporterCommittee {
+                validator_addresses: vec![
+                    address!("0x1111111111111111111111111111111111111111"),
+                    address!("0x2222222222222222222222222222222222222222"),
+                    address!("0x3333333333333333333333333333333333333333"),
+                ],
+                verifier_scheme: verifier,
+                elector: HybridRandom::default().build(&participants),
+                epoch: Epoch::new(0),
+            },
+            ReporterDependencies {
+                finalization_mailbox: FinalizationMailbox::from_sender(tx),
+                bridge: None,
+                witness_sink: std::sync::Arc::new(FinalizedParentCertStore::new()),
+                finalize_verify_mailbox: verify_mailbox,
+            },
         );
 
         let view = 7u64;
@@ -982,18 +1033,22 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded::<FinalizationMessage>();
         let reporter = OutbeReporter::new(
             continuity,
-            vec![
-                address!("0x1111111111111111111111111111111111111111"),
-                address!("0x2222222222222222222222222222222222222222"),
-                address!("0x3333333333333333333333333333333333333333"),
-            ],
-            FinalizationMailbox::from_sender(tx),
-            None,
-            sample_verifier_scheme(),
-            HybridRandom::default().build(&test_participants(3).1),
-            Epoch::new(1),
-            std::sync::Arc::new(FinalizedParentCertStore::new()),
-            FinalizeVerifyMailbox::disconnected(),
+            ReporterCommittee {
+                validator_addresses: vec![
+                    address!("0x1111111111111111111111111111111111111111"),
+                    address!("0x2222222222222222222222222222222222222222"),
+                    address!("0x3333333333333333333333333333333333333333"),
+                ],
+                verifier_scheme: sample_verifier_scheme(),
+                elector: HybridRandom::default().build(&test_participants(3).1),
+                epoch: Epoch::new(1),
+            },
+            ReporterDependencies {
+                finalization_mailbox: FinalizationMailbox::from_sender(tx),
+                bridge: None,
+                witness_sink: std::sync::Arc::new(FinalizedParentCertStore::new()),
+                finalize_verify_mailbox: FinalizeVerifyMailbox::disconnected(),
+            },
         );
 
         assert_eq!(reporter.view_state.last_finalized_view, 17);
@@ -1057,16 +1112,15 @@ mod tests {
             .collect();
 
         let (tx, _rx) = mpsc::unbounded::<FinalizationMessage>();
-        let reporter = OutbeReporter::new(
+        let reporter = gap_detection_reporter(
             continuity,
-            ordered_addresses,
+            ReporterCommittee {
+                validator_addresses: ordered_addresses,
+                verifier_scheme: sample_verifier_scheme(),
+                elector,
+                epoch: Epoch::new(1),
+            },
             FinalizationMailbox::from_sender(tx),
-            None,
-            sample_verifier_scheme(),
-            elector,
-            Epoch::new(1),
-            std::sync::Arc::new(FinalizedParentCertStore::new()),
-            FinalizeVerifyMailbox::disconnected(),
         );
 
         assert_eq!(reporter.detect_missed_proposers(8), expected);
@@ -1100,16 +1154,15 @@ mod tests {
             .collect();
 
         let (tx, _rx) = mpsc::unbounded::<FinalizationMessage>();
-        let reporter = OutbeReporter::new(
+        let reporter = gap_detection_reporter(
             continuity,
-            ordered_addresses,
+            ReporterCommittee {
+                validator_addresses: ordered_addresses,
+                verifier_scheme: sample_verifier_scheme(),
+                elector,
+                epoch: Epoch::new(1),
+            },
             FinalizationMailbox::from_sender(tx),
-            None,
-            sample_verifier_scheme(),
-            elector,
-            Epoch::new(1),
-            std::sync::Arc::new(FinalizedParentCertStore::new()),
-            FinalizeVerifyMailbox::disconnected(),
         );
 
         assert_eq!(reporter.detect_missed_proposers(400), expected);

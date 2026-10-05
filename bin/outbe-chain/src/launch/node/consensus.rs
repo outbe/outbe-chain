@@ -142,25 +142,29 @@ pub(super) fn run(
                         args,
                         node,
                         bridge_for_consensus,
-                        {
-                            let mut services = outbe_engine::ConsensusStackServices::new(
+                        outbe_engine::ConsensusStackServices::new(
+                            outbe_engine::ConsensusExecutionServices {
                                 projection_readiness,
+                                ocomp_readiness,
                                 retained_tribute_writer,
                                 projection_retention_fence,
                                 retention_selector,
                                 finalized_ce_committer,
                                 ce_startup_recovery,
-                            )
-                            .with_follower_shutdown(follower_shutdown)
-                            .with_application_drain(stack_application_drain);
-                            if let Some(readiness) = ocomp_readiness {
-                                services = services.with_ocomp_readiness(readiness);
-                            }
-                            if let Some((endpoint, local, status, owner)) = radicle {
-                                services = services.with_radicle(status, endpoint, local, owner);
-                            }
-                            services
-                        },
+                            },
+                            outbe_engine::ConsensusShutdownServices {
+                                application_drain: stack_application_drain,
+                                follower_shutdown: Some(follower_shutdown),
+                            },
+                            radicle.map(|(endpoint, local_identity, status, task_owner)| {
+                                outbe_engine::ConsensusRadicleServices {
+                                    status,
+                                    endpoint,
+                                    local_identity,
+                                    task_owner,
+                                }
+                            }),
+                        ),
                     )
                 });
                 commonware_macros::select! {

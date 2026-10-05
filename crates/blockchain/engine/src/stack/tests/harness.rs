@@ -1,4 +1,5 @@
 use super::*;
+use outbe_consensus::test_harness::NoopMarshalResolver;
 
 static STACK_MARSHAL_TEST_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -72,60 +73,6 @@ impl Reporter for AckingMarshalReporter {
         if let Update::Block(_, ack) = activity {
             ack.acknowledge();
         }
-        Feedback::Ok
-    }
-}
-
-#[derive(Clone, Default)]
-struct NoopMarshalResolver;
-
-// commonware 2026.5.0 split the resolver surface: the base `Resolver` keeps
-// `fetch`/`fetch_all`/`retain` (now SYNC, returning `Feedback`, generic over
-// `Into<Fetch<Key, Subscriber>>`) and gained `type Subscriber`; `cancel`/`clear`
-// were removed; the targeted methods moved to `TargetedResolver`. The marshal
-// actor requires `Key = handler::Key<Commitment>` and `Subscriber =
-// handler::Annotation`.
-impl Resolver for NoopMarshalResolver {
-    type Key = handler::Key<outbe_consensus::digest::Digest>;
-    type Subscriber = handler::Annotation;
-
-    fn fetch<F>(&mut self, _key: F) -> Feedback
-    where
-        F: Into<commonware_resolver::Fetch<Self::Key, Self::Subscriber>> + Send,
-    {
-        Feedback::Ok
-    }
-
-    fn fetch_all<F>(&mut self, _keys: Vec<F>) -> Feedback
-    where
-        F: Into<commonware_resolver::Fetch<Self::Key, Self::Subscriber>> + Send,
-    {
-        Feedback::Ok
-    }
-
-    fn retain(
-        &mut self,
-        _predicate: impl Fn(&Self::Key, &Self::Subscriber) -> bool + Send + 'static,
-    ) -> Feedback {
-        Feedback::Ok
-    }
-}
-
-impl TargetedResolver for NoopMarshalResolver {
-    type PublicKey = bls12381::PublicKey;
-
-    fn fetch_targeted(
-        &mut self,
-        _fetch: impl Into<commonware_resolver::Fetch<Self::Key, Self::Subscriber>> + Send,
-        _targets: NonEmptyVec<Self::PublicKey>,
-    ) -> Feedback {
-        Feedback::Ok
-    }
-
-    fn fetch_all_targeted<F>(&mut self, _keys: Vec<(F, NonEmptyVec<Self::PublicKey>)>) -> Feedback
-    where
-        F: Into<commonware_resolver::Fetch<Self::Key, Self::Subscriber>> + Send,
-    {
         Feedback::Ok
     }
 }
@@ -283,4 +230,42 @@ where
         (resolver_rx, NoopMarshalResolver),
     );
     (mailbox, resolver_handler, handle)
+}
+
+/// Independent unbound-validator configuration for signer and restart scenarios.
+pub(super) fn validator_signer_args(
+    signing_key: std::path::PathBuf,
+    evm_key: std::path::PathBuf,
+) -> crate::args::ConsensusArgs {
+    crate::args::ConsensusArgs {
+        is_validator: true,
+        signing_key: Some(signing_key),
+        validator_evm_key: Some(evm_key),
+        signing_share: None,
+        public_polynomial: None,
+        dkg_output: None,
+        listen_address: std::net::SocketAddr::from(([127, 0, 0, 1], 30400)),
+        storage_dir: None,
+        keys_dir: None,
+        trust_el_head: false,
+        testnet_unix_time_offset_secs: None,
+        consensus_peers: Vec::new(),
+        use_local_defaults: true,
+        payload_resolve_time_ms: 200,
+        payload_return_time_ms: 450,
+        worker_threads: 1,
+        bls_key_backend: "plaintext".to_string(),
+        bls_passphrase: None,
+        tee_enclave_socket: None,
+        tee_session_mode: crate::args::TeeSessionMode::PolicyDefault,
+        tee_bootstrap_timeout_secs: 60,
+        tee_canary_interval_secs: 30,
+        tee_canary_failure_threshold: 3,
+        txpool_pending_staleness_secs: 600,
+        radicle_control_socket: None,
+        radicle_status_address: None,
+        upstream: None,
+        upstream_nocertify: false,
+        projection_storage_config: Some("/tmp/offchain-storage.toml".into()),
+    }
 }

@@ -20,14 +20,14 @@ impl StorageReader for EmptyReader {
 #[test]
 fn block_context_carries_explicit_genesis_hash_beside_chain_id() {
     let genesis_hash = B256::repeat_byte(0x42);
-    let context = BlockContext::new_with_genesis_hash(
-        7,
-        1_700_000_000,
-        54_322_345,
+    let context = BlockContext::new_with_genesis_hash(outbe_primitives::block::BlockContextInput {
+        block_number: 7,
+        timestamp: 1_700_000_000,
+        chain_id: 54_322_345,
         genesis_hash,
-        Address::repeat_byte(0x11),
-        vec![Address::repeat_byte(0x22)],
-    );
+        proposer: Address::repeat_byte(0x11),
+        validators: vec![Address::repeat_byte(0x22)],
+    });
 
     assert_eq!(context.chain_id, 54_322_345);
     assert_eq!(context.genesis_hash, genesis_hash);

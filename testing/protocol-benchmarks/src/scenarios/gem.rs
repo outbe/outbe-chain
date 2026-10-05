@@ -308,7 +308,7 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
                     .positions
                     .get(position_id)
                     .map_err(|error| error.to_string())?
-                    .map(|position| position.remaining_capacity);
+                    .map(|position| position.remaining_capacity_minor);
                 Ok::<_, String>((gem, remaining))
             })?;
             let gem = gem.ok_or_else(|| "created Merchant Gem is not readable".to_owned())?;

@@ -1,3 +1,7 @@
+use crate::executor::{
+    BlockExecutionDependencies, BlockExecutionIdentity, BlockExecutionRuntime, BlockExecutorInputs,
+    BlockSystemPlan, ParentAccountingInputs,
+};
 use crate::{executor::OutbeBlockExecutor, factory::OutbeEvmFactory};
 use alloy_evm::{
     block::{BlockExecutorFactory, StateDB},
@@ -62,55 +66,73 @@ impl BlockExecutorFactory for OutbeEvmConfig {
         let parent_hash = ctx.inner.parent_hash;
         let expected_begin_system_txs = ctx.expected_begin_system_txs.clone();
         let expected_end_system_txs = ctx.expected_end_system_txs.clone();
-        let mut system_layout_error = ctx.system_layout_error.clone();
+        let system_layout_error = ctx.system_layout_error.clone();
         let parent_consensus_metadata = ctx.parent_consensus_metadata.clone();
         let proposer_evm_address = ctx.proposer_evm_address;
         let execute_outbe_block_hooks = ctx.execute_outbe_block_hooks;
         let prebuilt_phase1_tx = ctx.prebuilt_phase1_tx.clone();
         let parent_artifact_hint = ctx.parent_artifact_hint;
-        let pending_tee_bootstrap = ctx.pending_tee_bootstrap.clone();
-        let runtime_body_readers = evm.runtime_body_readers().cloned();
         let block_number = evm.block().number.saturating_to::<u64>();
+        let mut system_plan = BlockSystemPlan {
+            expected_begin_system_txs,
+            expected_end_system_txs,
+            system_layout_error,
+            proposer_evm_address,
+            execute_outbe_block_hooks,
+            prebuilt_phase1_tx,
+            pending_tee_bootstrap: ctx.pending_tee_bootstrap.clone(),
+            ocomp_lifecycle_active: self.ocomp_lifecycle_active_at(block_number),
+        };
+        let runtime_body_readers = evm.runtime_body_readers().cloned();
         let compressed_entities_scope = evm.execution_scope().clone();
         if let Err(error) = self.configure_compressed_entities_scope(
             &compressed_entities_scope,
             block_number,
             parent_hash,
         ) {
-            system_layout_error.get_or_insert_with(|| {
+            system_plan.system_layout_error.get_or_insert_with(|| {
                 format!("compressed-entity exact-parent scope configuration failed: {error}")
             });
         }
         let execution_read_budget = ctx.execution_read_budget.clone();
 
-        OutbeBlockExecutor::new(
-            EthBlockExecutor::new(
+        {
+            let inner = EthBlockExecutor::new(
                 evm,
                 ctx.inner,
                 self.inner.chain_spec(),
                 self.inner.executor_factory.receipt_builder(),
-            ),
-            self.bridge.clone(),
-            block_extra_data,
-            self.accounted_parent_artifact_provider.clone(),
-            true,
-            block_hash,
-            parent_hash,
-            self.evm_signer.clone(),
-            expected_begin_system_txs,
-            expected_end_system_txs,
-            system_layout_error,
-            parent_consensus_metadata,
-            proposer_evm_address,
-            execute_outbe_block_hooks,
-            prebuilt_phase1_tx,
-            parent_artifact_hint,
-        )
-        .with_block_state_root(ctx.block_state_root)
-        .with_compressed_entities_scope(compressed_entities_scope)
-        .with_compressed_tree_service(self.compressed_tree_service.clone())
-        .with_runtime_body_readers(runtime_body_readers, execution_read_budget)
-        .with_pending_tee_bootstrap(pending_tee_bootstrap)
-        .with_ocomp_lifecycle_active(self.ocomp_lifecycle_active_at(block_number))
+            );
+            let bridge = self.bridge.clone();
+            let accounted_parent_artifact_provider =
+                self.accounted_parent_artifact_provider.clone();
+            let validate_execution_summary = true;
+            let evm_signer = self.evm_signer.clone();
+            OutbeBlockExecutor::new(
+                inner,
+                BlockExecutorInputs {
+                    identity: BlockExecutionIdentity {
+                        block_extra_data,
+                        validate_execution_summary,
+                        block_hash,
+                        block_state_root: ctx.block_state_root,
+                        parent_hash,
+                    },
+                    system_plan,
+                    parent_accounting: ParentAccountingInputs {
+                        accounted_parent_artifact_provider,
+                        parent_consensus_metadata,
+                        parent_artifact_hint,
+                    },
+                    dependencies: BlockExecutionDependencies { bridge, evm_signer },
+                    runtime: BlockExecutionRuntime {
+                        compressed_entities_scope,
+                        compressed_tree_service: self.compressed_tree_service.clone(),
+                        runtime_body_readers,
+                        execution_read_budget,
+                    },
+                },
+            )
+        }
     }
 }

@@ -225,11 +225,7 @@ impl CeStartupRecoveryCoordinator {
             }
             let applied = self.tree.apply_replayed(&block).map_err(tree_error)?;
             if applied.commitment_scheme_version != ACTIVE_COMMITMENT_SCHEME
-                || applied.height != height
-                || applied.block_hash != block.hash
-                || applied.parent_block_hash != block.parent_hash
-                || applied.parent_root != block.parent_root
-                || applied.new_root != block.new_root
+                || !replayed_marker_matches_block(&applied, &block)
             {
                 return Err(CeStartupRecoveryError::AppliedMarkerMismatch { height, applied });
             }
@@ -304,6 +300,22 @@ pub enum CeStartupRecoveryError {
     CanonicalHistory(String),
     #[error("compressed-tree recovery failed: {0}")]
     Tree(String),
+}
+
+fn replayed_marker_matches_block(marker: &FinalizedMarker, block: &CanonicalCeReplayBlock) -> bool {
+    (
+        marker.height,
+        marker.block_hash,
+        marker.parent_block_hash,
+        marker.parent_root,
+        marker.new_root,
+    ) == (
+        block.number,
+        block.hash,
+        block.parent_hash,
+        block.parent_root,
+        block.new_root,
+    )
 }
 
 #[cfg(test)]

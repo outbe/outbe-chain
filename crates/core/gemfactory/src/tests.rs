@@ -718,8 +718,9 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
     });
 
     let event = settled_event(&provider);
+    assert_eq!(event.asset, STABLE_EUR);
     assert_eq!(event.settlementCurrency, 978);
-    assert_eq!(event.amountPaid, U256::from(10u64) * six_decimal_unit());
+    assert_eq!(event.paymentMinor, U256::from(10u64) * six_decimal_unit());
 }
 
 #[test]
@@ -742,7 +743,7 @@ fn the_issuance_rail_floors_the_whole_obligation_in_the_payers_favour() {
         runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
     });
 
-    assert_eq!(settled_event(&provider).amountPaid, U256::from(2u64));
+    assert_eq!(settled_event(&provider).paymentMinor, U256::from(2u64));
 }
 
 #[test]
@@ -765,7 +766,7 @@ fn a_wider_asset_keeps_what_the_six_decimal_cost_dropped() {
     });
 
     assert_eq!(
-        settled_event(&provider).amountPaid,
+        settled_event(&provider).paymentMinor,
         U256::from(1_500_001_000_000u64)
     );
 }
@@ -812,7 +813,7 @@ fn a_dust_gem_settles_for_one_minor_unit() {
         runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
     });
 
-    assert_eq!(settled_event(&provider).amountPaid, U256::ONE);
+    assert_eq!(settled_event(&provider).paymentMinor, U256::ONE);
 }
 
 #[test]
@@ -879,7 +880,7 @@ fn the_reference_currency_settles_without_reading_any_issuance_rate() {
 
     let event = settled_event(&provider);
     assert_eq!(event.settlementCurrency, 840);
-    assert_eq!(event.amountPaid, U256::from(20u64) * six_decimal_unit());
+    assert_eq!(event.paymentMinor, U256::from(20u64) * six_decimal_unit());
 }
 
 #[test]
@@ -938,7 +939,7 @@ fn settlement_scales_the_cost_to_the_asset_decimals() {
 
     let event = settled_event(&provider);
     assert_eq!(
-        event.amountPaid,
+        event.paymentMinor,
         U256::from(20u64) * six_decimal_unit() * U256::from(1_000_000_000_000u64)
     );
 }
@@ -969,7 +970,7 @@ fn an_unassigned_issuance_code_mints_and_settles_on_the_reference_rail() {
 
     let event = settled_event(&provider);
     assert_eq!(event.settlementCurrency, 840);
-    assert_eq!(event.amountPaid, U256::from(20u64) * six_decimal_unit());
+    assert_eq!(event.paymentMinor, U256::from(20u64) * six_decimal_unit());
 }
 
 #[test]
@@ -1050,7 +1051,7 @@ fn the_quote_agrees_with_what_settling_charges_on_both_rails() {
         iss_amount
     });
 
-    assert_eq!(settled_event(&provider).amountPaid, quoted);
+    assert_eq!(settled_event(&provider).paymentMinor, quoted);
 }
 
 #[test]
@@ -1129,6 +1130,80 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
             GemState::Issued as u8
         );
     });
+}
+
+#[test]
+fn a_paynote_bound_to_an_earlier_snapshot_cannot_settle_after_rollover() {
+    let usd_rate = U256::from(2u64) * six_decimal_unit();
+    let mut provider = test_storage(Some(usd_rate));
+    let quote = |provider: &mut HashMapStorageProvider, gem_id| {
+        StorageHandle::enter(provider, |storage| {
+            runtime::quote_settlement(&storage, gem_id, STABLE_EUR).unwrap()
+        })
+    };
+    let gem_id = StorageHandle::enter(&mut provider, |storage| {
+        register_currency(&storage, 978, six_decimal_unit());
+        seed_day_vwap(&storage, 840, usd_rate);
+        let gem_id = issue_at_live_rate(
+            &storage,
+            ALICE,
+            GemTypes::Wallet,
+            U256::from(10u64) * six_decimal_unit(),
+            978,
+            840,
+        )
+        .unwrap();
+        seed_qualifying_day(&storage, gem_id);
+        gem_id
+    });
+    let (_, amount, quoted) = quote(&mut provider, gem_id);
+    let stale = outbe_paynote::test_support::note_and_spend_proof(
+        1,
+        STABLE_EUR,
+        gem_context(gem_id, quoted),
+        amount,
+        amount,
+    );
+    outbe_paynote::test_support::seed_pool(&mut provider, 1, &[stale.commitment]);
+
+    let cutoff = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
+        .unwrap()
+        .cutoff();
+    provider.set_timestamp(U256::from(cutoff + 3_600));
+    let (_, next_amount, required) = quote(&mut provider, gem_id);
+    assert_eq!(next_amount, amount, "the next window holds the same price");
+    let before = provider.storage.clone();
+    let rejected = StorageHandle::enter(&mut provider, |storage| {
+        runtime::settle_gem_with_paynote(&storage, BOB, gem_id, &stale.proof)
+    });
+    assert_eq!(
+        err_msg(rejected),
+        format!(
+            "{:?}",
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GemFactoryError::PayNoteContextMismatch {
+                    expected: gem_context(gem_id, required),
+                    actual: gem_context(gem_id, quoted),
+                }
+            )
+        )
+    );
+    assert_eq!(
+        provider.storage, before,
+        "the note and the gem are untouched"
+    );
+
+    let current = outbe_paynote::test_support::note_and_spend_proof(
+        1,
+        STABLE_EUR,
+        gem_context(gem_id, required),
+        amount,
+        amount,
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        runtime::settle_gem_with_paynote(&storage, BOB, gem_id, &current.proof).unwrap();
+    });
+    assert_eq!(settled_event(&provider).paymentMinor, amount);
 }
 
 #[test]
@@ -1238,13 +1313,16 @@ fn a_position_reports_its_full_terms() {
         );
         let data = runtime::position_data(storage, id).unwrap();
         assert_eq!(data.merchant, ALICE);
-        assert_eq!(data.sourceEntryPrice, six_decimal_unit());
-        assert_eq!(data.sourceFloorPrice, six_decimal_unit());
+        assert_eq!(data.sourceEntryPriceMinor, six_decimal_unit());
+        assert_eq!(data.sourceFloorPriceMinor, six_decimal_unit());
         assert_eq!(data.issuanceCurrency, 840);
         assert_eq!(data.referenceCurrency, 840);
         assert_eq!(data.issuedAt, T_NOW);
         assert_eq!(data.expiresAt, T_NOW + POSITION_VALIDITY_SECONDS);
-        assert_eq!(data.remainingCapacity, sent_capacity(six_decimal_u128()));
+        assert_eq!(
+            data.remainingCapacityMinor,
+            sent_capacity(six_decimal_u128())
+        );
     });
 }
 
@@ -1396,6 +1474,72 @@ fn a_paynote_bound_to_another_gem_cannot_settle_this_one() {
         let item = gem_api::get_gem(&storage, gem_id).unwrap().unwrap();
         assert_eq!(item.state, GemState::Settled as u8);
         assert_eq!(item.owner, ALICE);
+    });
+}
+
+#[test]
+fn a_nod_bound_paynote_cannot_settle_the_gem_sharing_its_id() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    let mut provider = test_storage(Some(rate));
+    let (gem_id, cost, snapshot) = StorageHandle::enter(&mut provider, |storage| {
+        let gem_id = issue_at_live_rate(
+            &storage,
+            ALICE,
+            GemTypes::Wallet,
+            U256::from(10u64) * six_decimal_unit(),
+            840,
+            840,
+        )
+        .unwrap();
+        seed_qualifying_day(&storage, gem_id);
+        let (_, cost, snapshot) = runtime::quote_settlement(&storage, gem_id, STABLE).unwrap();
+        (gem_id, cost, snapshot)
+    });
+    let nod_context = outbe_paynote::api::settlement_context(
+        outbe_paynote::api::SettlementDomain::Nod,
+        B256::from(gem_id),
+        U256::ONE,
+        snapshot,
+    )
+    .unwrap();
+    let nod_bound =
+        outbe_paynote::test_support::note_and_spend_proof(1, STABLE, nod_context, cost, cost);
+    outbe_paynote::test_support::seed_pool(&mut provider, 1, &[nod_bound.commitment]);
+    let before = provider.storage.clone();
+
+    let rejected = StorageHandle::enter(&mut provider, |storage| {
+        runtime::settle_gem_with_paynote(&storage, BOB, gem_id, &nod_bound.proof)
+    });
+    assert_eq!(
+        err_msg(rejected),
+        format!(
+            "{:?}",
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GemFactoryError::PayNoteContextMismatch {
+                    expected: gem_context(gem_id, snapshot),
+                    actual: nod_context,
+                }
+            )
+        )
+    );
+    assert_eq!(
+        provider.storage, before,
+        "the note and the gem are untouched"
+    );
+
+    let gem_bound = outbe_paynote::test_support::note_and_spend_proof(
+        1,
+        STABLE,
+        gem_context(gem_id, snapshot),
+        cost,
+        cost,
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        runtime::settle_gem_with_paynote(&storage, BOB, gem_id, &gem_bound.proof).unwrap();
+        assert_eq!(
+            gem_api::get_gem(&storage, gem_id).unwrap().unwrap().state,
+            GemState::Settled as u8
+        );
     });
 }
 
@@ -1570,9 +1714,13 @@ fn sent_capacity(promis_load: u128) -> U256 {
     U256::from(promis_load) * U256::from(SENT_UNITS)
 }
 
-/// Seed an Intex series and send the merchant's whole holding into a GemPosition
-/// NFT (burn stubbed via `with_storage`). Returns the `position_id`.
-fn seed_and_send(storage: &StorageHandle, entry: U256, floor: U256, promis_load: u128) -> U256 {
+fn seed_source_series(
+    storage: &StorageHandle,
+    entry: U256,
+    floor: U256,
+    promis_load: u128,
+    call_trigger: outbe_intex::IntexCallTrigger,
+) {
     outbe_intex::api::create_series(
         storage,
         outbe_intex::CreateSeriesParams {
@@ -1583,14 +1731,127 @@ fn seed_and_send(storage: &StorageHandle, entry: U256, floor: U256, promis_load:
             entry_price_minor: entry,
             floor_price_minor: floor,
             call_price_minor: U256::ZERO,
-            call_trigger: outbe_intex::IntexCallTrigger::default(),
+            call_trigger,
             issued_at: T_NOW as u32,
             issuance_currency: 840,
             reference_currency: 840,
         },
     )
     .unwrap();
+}
+
+/// Seed an Intex series and send the merchant's whole holding into a GemPosition
+/// NFT (burn stubbed via `with_storage`). Returns the `position_id`.
+fn seed_and_send(storage: &StorageHandle, entry: U256, floor: U256, promis_load: u128) -> U256 {
+    seed_source_series(
+        storage,
+        entry,
+        floor,
+        promis_load,
+        outbe_intex::IntexCallTrigger::default(),
+    );
     runtime::issue_gem_position(storage, ALICE, source_intex_id(), U256::from(SENT_UNITS)).unwrap()
+}
+
+const SOURCE_NOTICE_SECONDS: u32 = 3_600;
+
+/// Seeds a source series with a notice period and calls it at `called_at`.
+fn seed_called_source(storage: &StorageHandle, called_at: u64) {
+    seed_source_series(
+        storage,
+        six_decimal_unit(),
+        six_decimal_unit(),
+        six_decimal_u128(),
+        outbe_intex::IntexCallTrigger {
+            call_notice_period_seconds: SOURCE_NOTICE_SECONDS,
+            ..Default::default()
+        },
+    );
+    outbe_intex::api::mark_called(storage, source_intex_id(), called_at as u32).unwrap();
+}
+
+fn send_whole_holding(storage: &StorageHandle) -> outbe_primitives::error::Result<U256> {
+    runtime::issue_gem_position(storage, ALICE, source_intex_id(), U256::from(SENT_UNITS))
+}
+
+/// The refusal leaves storage and events as they were, before any burn.
+fn assert_called_source_cannot_be_sent(called_at: u64) {
+    let mut provider = test_storage(None);
+    // An empty burn answer fails to decode, so a burn before the state check would show.
+    provider.stub_sub_call_at(
+        outbe_primitives::addresses::INTEX_NFT1155_ADDRESS,
+        alloy_primitives::Bytes::new(),
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_called_source(&storage, called_at)
+    });
+    let before = provider.storage.clone();
+    let events = provider.get_ordered_events().to_vec();
+    StorageHandle::enter(&mut provider, |storage| {
+        assert!(err_msg(send_whole_holding(&storage)).contains("source intex is not issued"));
+    });
+    assert_eq!(provider.storage, before);
+    assert_eq!(provider.get_ordered_events(), events.as_slice());
+}
+
+#[test]
+fn a_series_called_in_the_same_block_cannot_be_sent() {
+    assert_called_source_cannot_be_sent(T_NOW);
+}
+
+#[test]
+fn a_called_series_at_its_deadline_cannot_be_sent() {
+    assert_called_source_cannot_be_sent(T_NOW - u64::from(SOURCE_NOTICE_SECONDS));
+}
+
+#[test]
+fn a_series_past_its_deadline_cannot_be_sent() {
+    assert_called_source_cannot_be_sent(T_NOW - u64::from(SOURCE_NOTICE_SECONDS) - 1);
+}
+
+#[test]
+fn a_qualified_series_is_sent_once_without_a_promis_limit_credit() {
+    with_storage(Some(six_decimal_unit()), |storage| {
+        let floor = six_decimal_unit();
+        seed_source_series(
+            storage,
+            six_decimal_unit(),
+            floor,
+            six_decimal_u128(),
+            outbe_intex::IntexCallTrigger::default(),
+        );
+        let day = outbe_primitives::time::first_full_day(T_NOW);
+        let oracle = OracleContract::new(storage.clone());
+        let pair = oracle
+            .pair_index_of(outbe_oracle::api::AddressPair::new_coen_to(840))
+            .unwrap();
+        oracle
+            .record_utc_day_vwap(day, pair, floor + U256::ONE)
+            .unwrap();
+        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
+        assert!(outbe_oracle::api::closed_above_floor(storage.clone(), 840, floor, day).unwrap());
+        let promis_limit = unallocated(storage);
+
+        let id = send_whole_holding(storage).unwrap();
+
+        let capacity = sent_capacity(six_decimal_u128());
+        let factory = GemFactoryContract::new(storage.clone());
+        assert_eq!(
+            factory
+                .positions
+                .get(id)
+                .unwrap()
+                .unwrap()
+                .remaining_capacity_minor,
+            capacity
+        );
+        assert_eq!(factory.total_capacity_minor.read().unwrap(), capacity);
+        assert_eq!(
+            outbe_intex::api::gem_factory_units(storage, source_intex_id()).unwrap(),
+            SENT_UNITS as u32
+        );
+        assert_eq!(unallocated(storage), promis_limit);
+    });
 }
 
 #[test]
@@ -1608,9 +1869,9 @@ fn issue_gem_position_burns_sends_and_issues_nft() {
         let rec = factory.positions.get(id).unwrap().unwrap();
         assert_eq!(rec.merchant, ALICE);
         assert_eq!(rec.source_intex_id, source_intex_id());
-        assert_eq!(rec.remaining_capacity, capacity);
-        assert_eq!(rec.source_entry_price, six_decimal_unit());
-        assert_eq!(factory.total_gem_factory_units.read().unwrap(), capacity);
+        assert_eq!(rec.remaining_capacity_minor, capacity);
+        assert_eq!(rec.source_entry_price_minor, six_decimal_unit());
+        assert_eq!(factory.total_capacity_minor.read().unwrap(), capacity);
 
         // Position NFT issued to the merchant.
         assert_eq!(factory.owner_of(id).unwrap(), ALICE);
@@ -1660,7 +1921,7 @@ fn an_expired_position_returns_its_remainder() {
 
         let factory = GemFactoryContract::new(storage.clone());
         let record = factory.positions.get(id).unwrap().unwrap();
-        assert_eq!(record.remaining_capacity, U256::ZERO);
+        assert_eq!(record.remaining_capacity_minor, U256::ZERO);
         assert_eq!(factory.owner_of(id).unwrap(), ALICE);
     });
 }
@@ -1743,7 +2004,7 @@ fn issue_merchant_gem_mints_issued_and_drains_capacity() {
 
         let factory = GemFactoryContract::new(storage.clone());
         let rec = factory.positions.get(id).unwrap().unwrap();
-        assert_eq!(rec.remaining_capacity, capacity - load);
+        assert_eq!(rec.remaining_capacity_minor, capacity - load);
         assert_eq!(factory.total_gems_issued.read().unwrap(), U256::from(1u64));
     });
 }
@@ -1822,9 +2083,9 @@ fn issue_merchant_gem_after_expiry_rejects() {
                 position_id,
                 merchant: ALICE,
                 source_intex_id: source_intex_id(),
-                remaining_capacity: U256::from(100u64) * six_decimal_unit(),
-                source_entry_price: six_decimal_unit(),
-                source_floor_price: six_decimal_unit(),
+                remaining_capacity_minor: U256::from(100u64) * six_decimal_unit(),
+                source_entry_price_minor: six_decimal_unit(),
+                source_floor_price_minor: six_decimal_unit(),
                 issuance_currency: 840,
                 reference_currency: 840,
                 issued_at: T_NOW - POSITION_VALIDITY_SECONDS - 1,
@@ -1835,6 +2096,55 @@ fn issue_merchant_gem_after_expiry_rejects() {
         let r = runtime::issue_merchant_gem(storage, ALICE, position_id, BOB, six_decimal_unit());
         assert!(err_msg(r).contains("expired"));
     });
+}
+
+#[test]
+fn a_merchant_gem_issues_until_the_second_its_position_expires() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    let mut provider = test_storage(Some(rate));
+    let (id, expires_at) = StorageHandle::enter(&mut provider, |storage| {
+        let id = seed_and_send(
+            &storage,
+            six_decimal_unit(),
+            six_decimal_unit(),
+            six_decimal_u128(),
+        );
+        let expires_at = runtime::position_data(&storage, id).unwrap().expiresAt;
+        let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 840)
+            .unwrap()
+            .unwrap();
+        OracleContract::new(storage.clone())
+            .record_utc_day_vwap(
+                previous_date_key(timestamp_to_date_key(expires_at - 1)),
+                index,
+                rate,
+            )
+            .unwrap();
+        (id, expires_at)
+    });
+    let mut issue = |now: u64, load: U256| {
+        provider.set_timestamp(U256::from(now));
+        StorageHandle::enter(&mut provider, |storage| {
+            let issued = runtime::issue_merchant_gem(&storage, ALICE, id, BOB, load);
+            let remaining = runtime::position_data(&storage, id)
+                .unwrap()
+                .remainingCapacityMinor;
+            (issued, remaining)
+        })
+    };
+    let capacity = sent_capacity(six_decimal_u128());
+
+    let (zero, remaining) = issue(expires_at - 1, U256::ZERO);
+    assert!(err_msg(zero).contains("promis load must be positive"));
+    assert_eq!(remaining, capacity);
+
+    let (issued, remaining) = issue(expires_at - 1, six_decimal_unit());
+    issued.unwrap();
+    assert_eq!(remaining, capacity - six_decimal_unit());
+
+    let (expired, after) = issue(expires_at, six_decimal_unit());
+    assert!(err_msg(expired).contains("position expired"));
+    assert_eq!(after, remaining);
 }
 
 /// Publishes `vwap` as the finalized COEN/`iso` VWAP of the UTC day before `T_NOW`
@@ -2083,7 +2393,7 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_bucket() {
     assert_eq!(issued.len(), 2);
     for (event, (item, position_id, bucket)) in issued.iter().zip(&expected) {
         assert_eq!(event.gemId, item.gem_id);
-        assert_eq!(event.callPrice, item.call_price_minor);
+        assert_eq!(event.callPriceMinor, item.call_price_minor);
         assert_eq!(event.callWindow, item.call_window_seconds);
         assert_eq!(event.callThreshold, item.call_threshold_seconds);
         assert_eq!(event.callNoticePeriod, item.call_notice_period_seconds);
@@ -2100,6 +2410,6 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_bucket() {
     assert_eq!(opened.len(), 1);
     assert_eq!(opened[0].positionId, position);
     assert_eq!(opened[0].merchant, ALICE);
-    assert_eq!(opened[0].capacity, sent_capacity(six_decimal_u128()));
+    assert_eq!(opened[0].capacityMinor, sent_capacity(six_decimal_u128()));
     assert_eq!(opened[0].expiresAt, T_NOW + POSITION_VALIDITY_SECONDS);
 }

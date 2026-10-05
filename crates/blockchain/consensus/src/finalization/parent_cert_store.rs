@@ -693,13 +693,16 @@ impl FinalizedParentCertStore {
         _parent_block_number: u64,
     ) -> Option<ParentProofSelection> {
         let state = self.lock_read();
-        if let Some(record) = state.finalization.get(&key) {
-            return Some(ParentProofSelection::Finalization(record.clone()));
-        }
         state
-            .certified_notarization
+            .finalization
             .get(&key)
-            .map(|record| ParentProofSelection::CertifiedNotarization(record.clone()))
+            .map(|record| ParentProofSelection::Finalization(record.clone()))
+            .or_else(|| {
+                state
+                    .certified_notarization
+                    .get(&key)
+                    .map(|record| ParentProofSelection::CertifiedNotarization(record.clone()))
+            })
     }
 
     /// Subscribe to proof-store writes. The payload is a monotonic revision
@@ -982,10 +985,14 @@ fn is_missing_table_error(error: &DatabaseError) -> bool {
         DatabaseError::Open(info) => {
             let message = info.message.to_ascii_lowercase();
             info.code == -30798
-                || message.contains("notfound")
-                || message.contains("not found")
-                || message.contains("mdbx_notfound")
-                || message.contains("no matching key/data")
+                || [
+                    "notfound",
+                    "not found",
+                    "mdbx_notfound",
+                    "no matching key/data",
+                ]
+                .iter()
+                .any(|fragment| message.contains(fragment))
         }
         _ => false,
     }
@@ -1115,6 +1122,8 @@ impl MdbxParentProofBackend {
 
 #[cfg(test)]
 mod tests {
+    mod rejections;
+
     use super::*;
     use alloy_primitives::address;
 
@@ -1292,38 +1301,6 @@ mod tests {
     }
 
     #[test]
-    fn proof_store_record_format_version_is_two_and_rejects_unknown() {
-        // format_version != 2 must be rejected on read.
-        let temp = tempfile::tempdir().unwrap();
-        let dir = temp.path().join("records");
-        let mut bad = finalization_record(0xCA, 100);
-        bad.format_version = 42;
-        {
-            // Bypass the put-side guard to simulate a corrupt on-disk row.
-            let backend = MdbxParentProofBackend::open(&dir).unwrap();
-            let bytes = backend.encode_record(&bad).unwrap();
-            let tx = backend.db.tx_mut().unwrap();
-            tx.put::<tables::OutbeCertifiedParentFinalizationRecords>(
-                B256::with_last_byte(0xCA),
-                bytes,
-            )
-            .unwrap();
-            tx.commit().unwrap();
-        }
-        let err = match FinalizedParentCertStore::open(&dir) {
-            Ok(_) => panic!("unknown format_version must be rejected on read"),
-            Err(e) => e,
-        };
-        assert!(
-            matches!(
-                err,
-                ParentProofStoreError::UnknownFormatVersion { version: 42, .. }
-            ),
-            "expected UnknownFormatVersion(42), got {err}"
-        );
-    }
-
-    #[test]
     fn put_with_wrong_format_version_returns_unknown_format_version() {
         // Write-side guard rejects records with the wrong version even
         // before they reach disk.
@@ -1401,56 +1378,6 @@ mod tests {
         assert_eq!(reopened.get_finalization(key(0xCA)), Some(f));
         assert_eq!(reopened.get_certified_notarization(key(0xCB)), Some(n));
         assert!(reopened.get_finalization(key(0xCC)).is_none());
-    }
-
-    #[test]
-    fn durable_store_rejects_corrupt_key_payload_mismatch_on_reopen() {
-        let temp = tempfile::tempdir().unwrap();
-        let dir = temp.path().join("records");
-        let payload = finalization_record(0xAA, 77);
-        {
-            let backend = MdbxParentProofBackend::open(&dir).unwrap();
-            let bytes = backend.encode_record(&payload).unwrap();
-            let tx = backend.db.tx_mut().unwrap();
-            tx.put::<tables::OutbeCertifiedParentFinalizationRecords>(
-                B256::with_last_byte(0xBB),
-                bytes,
-            )
-            .unwrap();
-            tx.commit().unwrap();
-        }
-        let err = match FinalizedParentCertStore::open(&dir) {
-            Ok(_) => panic!("mismatched key/payload must fail closed"),
-            Err(e) => e,
-        };
-        assert!(matches!(err, ParentProofStoreError::Corrupt { .. }));
-    }
-
-    #[test]
-    fn durable_store_rejects_legacy_v1_tables_on_open() {
-        let temp = tempfile::tempdir().unwrap();
-        let dir = temp.path().join("records");
-        let legacy_db = reth_db::mdbx::init_db_for::<
-            _,
-            tables::OutbeCertifiedParentProofLegacyTables,
-        >(&dir, DatabaseArguments::new(ClientVersion::default()))
-        .unwrap();
-        drop(legacy_db);
-
-        let err = match FinalizedParentCertStore::open(&dir) {
-            Ok(_) => panic!("legacy V1 tables must fail startup"),
-            Err(e) => e,
-        };
-        assert!(
-            matches!(
-                err,
-                ParentProofStoreError::LegacyTableFound {
-                    table: "OutbeCertifiedParentFinalizationRecords",
-                    ..
-                }
-            ),
-            "expected legacy V1 table error, got {err}"
-        );
     }
 
     #[test]

@@ -158,9 +158,11 @@ pub fn verify_lysis_openings(
     openings
         .validate_profile(limits)
         .map_err(|error| RetentionError::Source(error.to_string()))?;
-    if openings.protocol_bundle_hash != finalized.intent.protocol_bundle_hash
+    let finalized_job_mismatch = openings.protocol_bundle_hash
+        != finalized.intent.protocol_bundle_hash
         || openings.job_id != finalized.job_id
-        || openings.finalized_block_hash != finalized.request.block_hash
+        || openings.finalized_block_hash != finalized.request.block_hash;
+    if finalized_job_mismatch
         || openings.finalized_state_root != finalized.request.state_root
         || openings.wwd != finalized.intent.wwd
         || openings.subjects != *expected_subjects

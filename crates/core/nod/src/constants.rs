@@ -40,13 +40,13 @@ pub const CALL_LOOKBACK_DAYS: u32 = 28;
 /// `CALL_LOOKBACK_DAYS - CALL_THRESHOLD_DAYS` of either.
 pub const CALL_THRESHOLD_DAYS: u32 = 21;
 
-/// [`CALL_LOOKBACK_DAYS`] in seconds - the encoding `callable_bucket_call_window`
-/// seals at issuance, matching `GemData::call_window`.
+/// [`CALL_LOOKBACK_DAYS`] in seconds - the encoding `callable_bucket_call_window_seconds`
+/// seals at issuance, matching `GemData::call_window_seconds`.
 pub const CALL_WINDOW: u32 = CALL_LOOKBACK_DAYS * SECS_PER_DAY;
 
 /// [`CALL_THRESHOLD_DAYS`] in seconds - the encoding
-/// `callable_bucket_call_threshold` seals at issuance, matching
-/// `GemData::call_threshold`.
+/// `callable_bucket_call_threshold_seconds` seals at issuance, matching
+/// `GemData::call_threshold_seconds`.
 pub const CALL_THRESHOLD: u32 = CALL_THRESHOLD_DAYS * SECS_PER_DAY;
 
 /// Seconds after `called_at` within which the owner must settle. Once

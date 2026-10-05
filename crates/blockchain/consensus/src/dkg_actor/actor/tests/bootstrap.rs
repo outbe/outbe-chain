@@ -40,7 +40,11 @@ fn test_initial_dkg_3_nodes() {
                         .child("dkg_ceremony")
                         .spawn(move |clock| async move {
                             let result = run_initial_dkg(
-                                &clock, key, p, None, None, 0, None, None, sender, receiver,
+                                &clock,
+                                InitialDkgFixture::bootstrap(key, p),
+                                None,
+                                None,
+                                (sender, receiver),
                             )
                             .await;
                             (i, result)
@@ -126,7 +130,11 @@ fn test_initial_dkg_4_nodes() {
                         .child("dkg_ceremony")
                         .spawn(move |clock| async move {
                             run_initial_dkg(
-                                &clock, key, p, None, None, 0, None, None, sender, receiver,
+                                &clock,
+                                InitialDkgFixture::bootstrap(key, p),
+                                None,
+                                None,
+                                (sender, receiver),
                             )
                             .await
                         }),
@@ -189,7 +197,11 @@ fn test_bootstrap_dkg_recovers_dropped_finalized_log_with_retry() {
                         .child("dkg_ceremony")
                         .spawn(move |clock| async move {
                             let result = run_initial_dkg(
-                                &clock, key, p, None, None, 0, None, None, sender, receiver,
+                                &clock,
+                                InitialDkgFixture::bootstrap(key, p),
+                                None,
+                                None,
+                                (sender, receiver),
                             )
                             .await;
                             (i, result)

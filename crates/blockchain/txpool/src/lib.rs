@@ -49,40 +49,7 @@ fn zero_fee_transaction<'a, T>(tx: &'a T, signer: Address) -> ZeroFeeTransaction
 where
     T: alloy_consensus::Transaction + ?Sized,
 {
-    ZeroFeeTransaction {
-        signer,
-        to: tx.to(),
-        value: tx.value(),
-        input: tx.input().as_ref(),
-        gas_limit: tx.gas_limit(),
-        max_fee_per_gas: tx.max_fee_per_gas(),
-        max_priority_fee_per_gas: tx.max_priority_fee_per_gas(),
-    }
-}
-
-fn bootstrap_transaction<'a, T>(
-    tx: &'a T,
-    signer: Address,
-    network_chain_id: u64,
-) -> Option<BootstrapTransactionView<'a>>
-where
-    T: alloy_consensus::Transaction + ?Sized,
-{
-    let authorization_list = tx.authorization_list()?;
-    Some(BootstrapTransactionView {
-        signer,
-        tx_chain_id: tx.chain_id(),
-        network_chain_id,
-        nonce: tx.nonce(),
-        to: tx.to(),
-        value: tx.value(),
-        input: tx.input().as_ref(),
-        gas_limit: tx.gas_limit(),
-        max_fee_per_gas: tx.max_fee_per_gas(),
-        max_priority_fee_per_gas: tx.max_priority_fee_per_gas(),
-        access_list_empty: tx.access_list().is_some_and(|list| list.is_empty()),
-        authorization_list,
-    })
+    ZeroFeeTransaction::from_transaction(tx, signer)
 }
 
 fn classify_ocomp_carrier<T>(
@@ -438,9 +405,8 @@ where
         ocomp_admission::validate(
             &self.inner,
             self.ocomp_lifecycle_activation,
-            origin,
             transaction,
-            candidate,
+            ocomp_admission::CarrierAdmissionContext { origin, candidate },
         )
     }
 
@@ -486,7 +452,7 @@ where
                 ),
             },
             Ok(None) => {
-                let bootstrap_candidate = bootstrap_transaction(
+                let bootstrap_candidate = BootstrapTransactionView::from_transaction(
                     parts.transaction.transaction(),
                     signer,
                     self.inner.chain_id(),

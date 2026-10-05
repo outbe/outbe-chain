@@ -80,8 +80,8 @@ fn unpublished_selectors_refuse_native_value() {
 
     let calls = [IIntexFactory::settleIntexWithPayNoteCall {
         seriesId: Default::default(),
-        intexOwner: Address::ZERO,
-        amount: U256::ZERO,
+        owner: Address::ZERO,
+        units: U256::ZERO,
         payNoteProof: Default::default(),
     }
     .abi_encode()];
@@ -624,5 +624,27 @@ fn a_day_no_chain_ever_paid_into_leaves_the_awaiting_set() {
         // Past it there is nothing left to wait for, so the day stops being swept.
         runtime::sweep_proceeds_deadlines(&s, DEADLINE_FUTURE + 1).unwrap();
         assert_eq!(outbe_intex::api::awaiting_proceeds_count(&s).unwrap(), 0);
+    });
+}
+
+#[test]
+fn a_node_local_failure_while_settling_proceeds_fails_the_sweep() {
+    let mut provider = factory_provider();
+    let wwd = WorldwideDay::new(2026_0301);
+    StorageHandle::enter(&mut provider, |s| {
+        outbe_intex::api::arm_proceeds(&s, wwd, &[10, 20], DEADLINE_FUTURE).unwrap();
+    });
+    provider.fail_after_mutation_at(0);
+    let result = StorageHandle::enter(&mut provider, |s| {
+        runtime::sweep_proceeds_deadlines(&s, DEADLINE_FUTURE + 1)
+    });
+    provider.clear_mutation_failure();
+    assert!(matches!(
+        result,
+        Err(outbe_primitives::error::PrecompileError::Storage(_))
+    ));
+    StorageHandle::enter(&mut provider, |s| {
+        assert_eq!(outbe_intex::api::awaiting_proceeds_count(&s).unwrap(), 1);
+        assert_eq!(outbe_intex::api::awaiting_proceeds_at(&s, 0).unwrap(), wwd);
     });
 }

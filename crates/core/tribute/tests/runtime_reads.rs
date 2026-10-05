@@ -3,9 +3,8 @@ use std::sync::Arc;
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_compressed_entities::{
     begin_block, derive_poseidon_entity_id, end_block, mint, BodyInput, CandidateCacheLimits,
-    CeMdbx, CeWorkConfig, CompressedTreeService, EnvironmentIdentity, ExactParentIdentity,
-    ExecutionScope, FinalizedMarker, PartitionRef, SealOutput, StoredBody, WwdEntityId,
-    ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
+    CeWorkConfig, CompressedTreeService, ExactParentIdentity, ExecutionScope, PartitionRef,
+    SealOutput, StoredBody, WwdEntityId,
 };
 use outbe_offchain_storage::{
     Key, MemoryStorage, Namespace, ScanPage, ScanRequest, StorageError, StorageReader,
@@ -67,25 +66,9 @@ impl TreeHarness {
     fn new() -> Self {
         let directory = tempfile::tempdir().unwrap();
         let genesis_hash = B256::repeat_byte(0xa0);
-        let db = CeMdbx::open(
+        let db = outbe_compressed_entities::test_support::open_empty_ce_database(
             directory.path(),
-            EnvironmentIdentity {
-                local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
-                chain_id: 1,
-                genesis_hash,
-                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                topology: outbe_compressed_entities::CeTopologyV1.encode(),
-                tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
-                vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
-            },
-            FinalizedMarker {
-                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                height: 0,
-                block_hash: genesis_hash,
-                parent_block_hash: B256::ZERO,
-                parent_root: B256::ZERO,
-                new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
-            },
+            genesis_hash,
         )
         .unwrap();
         let service = Arc::new(
@@ -318,8 +301,8 @@ fn issue_is_visible_and_rejects_duplicates_before_projection() {
         assert_eq!(totals_after.initialized, totals_before.initialized);
         assert_eq!(totals_after.tribute_count, totals_before.tribute_count);
         assert_eq!(
-            totals_after.tribute_nominal_amount,
-            totals_before.tribute_nominal_amount
+            totals_after.tribute_nominal_total_minor,
+            totals_before.tribute_nominal_total_minor
         );
         assert_eq!(totals_after.is_sealed, totals_before.is_sealed);
         assert_eq!(
@@ -374,7 +357,7 @@ fn burn_observes_same_block_mint_and_leaves_projection_to_the_projector() {
             .is_none());
         let totals = contract.get_day_totals(body.worldwide_day).unwrap();
         assert_eq!(totals.tribute_count, 0);
-        assert_eq!(totals.tribute_nominal_amount, U256::ZERO);
+        assert_eq!(totals.tribute_nominal_total_minor, U256::ZERO);
     });
     assert!(reader.get(body.tribute_id).unwrap().is_none());
     finish(&mut provider, &scope, &tree);
