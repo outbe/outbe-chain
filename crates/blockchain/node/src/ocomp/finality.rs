@@ -23,8 +23,8 @@ use outbe_ocomp_protocol::{
     intent::{
         CertifiedParentAccountingMetadataV2, ExpectedFinalizedIntentBindingV1,
         FinalizedIntentAuthorityError, FinalizedIntentProofAuthority, FinalizedIntentProofV1,
-        FinalizedIntentVerificationError, FinalizedRequestBindingV1, JobIntentV1, ParentProofKind,
-        VerifiedFinalizedIntentV1,
+        FinalizedIntentVerificationError, FinalizedRequestBindingV1, IntentStorageBinding,
+        JobIntentV1, ParentProofKind, VerifiedFinalizedIntentV1,
     },
     opening::{RawContractOpeningProofV1, RawStorageSlotV1},
     state::{OcompJobRecordV1, OcompJobStatus},
@@ -772,26 +772,14 @@ impl<A: HistoricalCommitteeAuthority> FinalizedIntentVerifier<A> {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn verify_storage(
         &self,
         proof: &FinalizedIntentProofV1,
         intent: &JobIntentV1,
-        intent_id: B256,
-        intent_storage_key: B256,
-        request_state_root: B256,
+        binding: IntentStorageBinding,
         limits: &SchemaLimits,
     ) -> Result<(), FinalizedIntentVerifierError> {
-        storage_verification::verify(
-            proof,
-            intent,
-            storage_verification::IntentStorageBinding {
-                intent_id,
-                storage_key: intent_storage_key,
-                state_root: request_state_root,
-            },
-            limits,
-        )
+        storage_verification::verify(proof, intent, binding, limits)
     }
 }
 
@@ -809,20 +797,11 @@ impl<A: HistoricalCommitteeAuthority> FinalizedIntentProofAuthority for Finalize
         &self,
         proof: &FinalizedIntentProofV1,
         intent: &JobIntentV1,
-        intent_id: B256,
-        intent_storage_key: B256,
-        request_state_root: B256,
+        binding: IntentStorageBinding,
         limits: &SchemaLimits,
     ) -> Result<(), FinalizedIntentAuthorityError> {
-        self.verify_storage(
-            proof,
-            intent,
-            intent_id,
-            intent_storage_key,
-            request_state_root,
-            limits,
-        )
-        .map_err(classify_storage_error)
+        self.verify_storage(proof, intent, binding, limits)
+            .map_err(classify_storage_error)
     }
 }
 

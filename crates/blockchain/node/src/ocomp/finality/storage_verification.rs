@@ -1,10 +1,5 @@
 use super::*;
 
-pub(super) struct IntentStorageBinding {
-    pub(super) intent_id: B256,
-    pub(super) storage_key: B256,
-    pub(super) state_root: B256,
-}
 struct StorageOpening {
     storage: StorageWitness,
     expected_slots: Vec<(U256, U256)>,
