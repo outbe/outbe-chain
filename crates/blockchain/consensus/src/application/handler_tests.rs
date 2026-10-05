@@ -1,4 +1,5 @@
 use crate::test_fixtures::marshal::MarshalArchiveFixture;
+use crate::test_harness::NoopMarshalResolver as NoopResolver;
 use alloy_primitives::{Address, Bytes, B256};
 use alloy_rpc_types_engine::{PayloadStatus, PayloadStatusEnum};
 use commonware_actor::Feedback;
@@ -16,12 +17,9 @@ use commonware_cryptography::{
 };
 use commonware_p2p::Recipients;
 use commonware_parallel::Sequential;
-use commonware_resolver::Resolver;
-use commonware_resolver::TargetedResolver;
 use commonware_runtime::{buffer::paged::CacheRef, Clock as _, Runner as _, Supervisor as _};
 use commonware_utils::{
-    acknowledgement::Acknowledgement, channel::oneshot, ordered::Set, vec::NonEmptyVec,
-    TryCollect as _,
+    acknowledgement::Acknowledgement, channel::oneshot, ordered::Set, TryCollect as _,
 };
 use outbe_primitives::projection::{
     projection_readiness, ProjectionCheckpoint, ProjectionFailure, ProjectionFailureClass,
@@ -289,60 +287,6 @@ impl Reporter for AckingMarshalReporter {
         if let Update::Block(_, ack) = activity {
             ack.acknowledge();
         }
-        Feedback::Ok
-    }
-}
-
-#[derive(Clone, Default)]
-struct NoopResolver;
-
-// commonware 2026.5.0 split the resolver surface: the base `Resolver` keeps
-// `fetch`/`fetch_all`/`retain` (now SYNC, returning `Feedback`, generic over
-// `Into<Fetch<Key, Subscriber>>`) and gained `type Subscriber`; `cancel`/`clear`
-// were removed; the targeted methods moved to `TargetedResolver`. The marshal
-// actor requires `Key = handler::Key<Commitment>` and `Subscriber =
-// handler::Annotation`.
-impl Resolver for NoopResolver {
-    type Key = handler::Key<Digest>;
-    type Subscriber = handler::Annotation;
-
-    fn fetch<F>(&mut self, _key: F) -> Feedback
-    where
-        F: Into<commonware_resolver::Fetch<Self::Key, Self::Subscriber>> + Send,
-    {
-        Feedback::Ok
-    }
-
-    fn fetch_all<F>(&mut self, _keys: Vec<F>) -> Feedback
-    where
-        F: Into<commonware_resolver::Fetch<Self::Key, Self::Subscriber>> + Send,
-    {
-        Feedback::Ok
-    }
-
-    fn retain(
-        &mut self,
-        _predicate: impl Fn(&Self::Key, &Self::Subscriber) -> bool + Send + 'static,
-    ) -> Feedback {
-        Feedback::Ok
-    }
-}
-
-impl TargetedResolver for NoopResolver {
-    type PublicKey = bls12381::PublicKey;
-
-    fn fetch_targeted(
-        &mut self,
-        _fetch: impl Into<commonware_resolver::Fetch<Self::Key, Self::Subscriber>> + Send,
-        _targets: NonEmptyVec<Self::PublicKey>,
-    ) -> Feedback {
-        Feedback::Ok
-    }
-
-    fn fetch_all_targeted<F>(&mut self, _keys: Vec<(F, NonEmptyVec<Self::PublicKey>)>) -> Feedback
-    where
-        F: Into<commonware_resolver::Fetch<Self::Key, Self::Subscriber>> + Send,
-    {
         Feedback::Ok
     }
 }

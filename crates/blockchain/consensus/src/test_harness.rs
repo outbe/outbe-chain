@@ -74,6 +74,10 @@ use crate::hybrid::HybridScheme;
 mod dealings;
 pub use dealings::{acknowledge_fixture_dealings, FixtureDealings};
 
+#[path = "test_harness/marshal_resolver.rs"]
+mod marshal_resolver;
+pub use marshal_resolver::NoopMarshalResolver;
+
 fn namespace() -> Vec<u8> {
     crate::config::outbe_app_namespace()
 }
