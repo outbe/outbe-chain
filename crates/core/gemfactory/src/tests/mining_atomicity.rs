@@ -1,26 +1,6 @@
 //! Mining is one transition: a Gem that fails to mint its Promis is not burned.
-//!
-//! Self-contained fixture (no dependency on the main test module) so the
-//! module-level `mine_promis` contract is pinned on its own.
 
-use alloy_primitives::{address, Address, B256, U256};
-use outbe_gem::{api as gem_api, GemContract, GemState};
-use outbe_oracle::schema::OracleContract;
-use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_primitives::storage::StorageHandle;
-use outbe_promisfactory::api::ModifyAuth;
-use outbe_tee::protocol::PromisOp;
-use outbe_tee_enclave::promis::{decrypt_balance, derive_modify_key, derive_view_key, modify_mac};
-
-use crate::runtime;
-use crate::schema::GemTypes;
-
-const T_NOW: u64 = 1_700_000_000;
-const ALICE: Address = address!("0x1111111111111111111111111111111111111111");
-
-fn six_decimal_unit() -> U256 {
-    U256::from(1_000_000u64)
-}
+use super::*;
 
 /// One settled Genesis Gem of `load` Promis owned by Alice, priced at 2 COEN/USD.
 fn with_settled_gem<R>(load: U256, f: impl FnOnce(&StorageHandle<'_>, U256) -> R) -> R {
@@ -51,28 +31,6 @@ fn with_settled_gem<R>(load: U256, f: impl FnOnce(&StorageHandle<'_>, U256) -> R
         gem_api::set_state(&handle, gem_id, GemState::Settled).unwrap();
         f(&handle, gem_id)
     })
-}
-
-fn find_valid_nonce(gem_id: U256, owner: Address) -> u64 {
-    (0u64..u64::MAX)
-        .find(|nonce| runtime::validate_pow(gem_id, owner, *nonce).is_ok())
-        .expect("a nonce clears the test difficulty")
-}
-
-fn promis_auth(account: Address, amount: U256, nonce: u64) -> ModifyAuth {
-    let sk = outbe_promis::enclave_client::test_enclave::state_key();
-    let mk = derive_modify_key(&sk, account).unwrap();
-    ModifyAuth {
-        mac: modify_mac(
-            &mk,
-            account,
-            PromisOp::Mint,
-            amount,
-            nonce,
-            B256::from(U256::from(1u64)),
-        ),
-        op_nonce: nonce,
-    }
 }
 
 fn promis_balance(storage: &StorageHandle<'_>, account: Address) -> U256 {

@@ -1,52 +1,11 @@
 //! A paid Gem has no deadline: a settled Gem whose bucket was called mines its
 //! Promis after the settlement deadline, while its unpaid twin is refused.
-//!
-//! Self-contained fixture, as in `mining_atomicity_tests.rs`.
 
-use alloy_primitives::{address, Address, B256, U256};
-use alloy_sol_types::SolEvent;
-use outbe_gem::{api as gem_api, GemContract, GemParams, GemState};
-use outbe_oracle::schema::OracleContract;
+use super::*;
+use outbe_gem::GemParams;
 use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
-use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_primitives::storage::StorageHandle;
-use outbe_promisfactory::api::ModifyAuth;
-use outbe_tee::protocol::PromisOp;
-use outbe_tee_enclave::promis::{decrypt_balance, derive_modify_key, derive_view_key, modify_mac};
 
 use crate::precompile::IGemFactory;
-use crate::runtime;
-use crate::schema::GemTypes;
-
-const T_NOW: u64 = 1_700_000_000;
-const ALICE: Address = address!("0x1111111111111111111111111111111111111111");
-const BOB: Address = address!("0x2222222222222222222222222222222222222222");
-
-fn six_decimal_unit() -> U256 {
-    U256::from(1_000_000u64)
-}
-
-fn promis_auth(account: Address, amount: U256, nonce: u64) -> ModifyAuth {
-    let sk = outbe_promis::enclave_client::test_enclave::state_key();
-    let mk = derive_modify_key(&sk, account).unwrap();
-    ModifyAuth {
-        mac: modify_mac(
-            &mk,
-            account,
-            PromisOp::Mint,
-            amount,
-            nonce,
-            B256::from(U256::from(1u64)),
-        ),
-        op_nonce: nonce,
-    }
-}
-
-fn find_valid_nonce(gem_id: U256, owner: Address) -> u64 {
-    (0u64..u64::MAX)
-        .find(|nonce| runtime::validate_pow(gem_id, owner, *nonce).is_ok())
-        .expect("a nonce clears the test difficulty")
-}
 
 /// Two Genesis Gems of `load` in one bucket, priced at 2 COEN/USD: Alice's is
 /// settled, Bob's is not. The bucket is marked called at `T_NOW` the way the
