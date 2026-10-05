@@ -7,7 +7,7 @@ use alloy_primitives::U256;
 use cucumber::{then, when};
 
 use super::chain::poll_until;
-use super::entity::{Currency, Entity, Phase, Rail};
+use super::entity::{Currency, Entity, Payer, Phase};
 use super::markets::{coen_rate, MYR_ISO};
 use super::{guards, payment, redeem};
 use crate::world::forge::DEPLOYER_KEY;
@@ -67,18 +67,14 @@ fn every_entity_qualifies(world: &mut World, entity: Entity) {
     );
 }
 
-#[then(
-    expr = "a/an {entity} payment is refused for a stale snapshot, a foreign currency or a note bound to another holding"
-)]
+#[then(expr = "a/an {entity} payment is refused for a stale snapshot or a foreign currency")]
 fn payment_guards(world: &mut World, entity: Entity) {
-    // The holding the scenario next pays in MYR by PayNote, so that payment differs from
-    // the refused note only in the holding it is bound to.
-    let [other, target] = entity.lifecycle().targets(world, Phase::Qualified);
+    let [_, target] = entity.lifecycle().targets(world, Phase::Qualified);
     assert_eq!(
         target.issuance_currency, MYR_ISO,
         "the guarded holding is issued in MYR"
     );
-    guards::assert_payment_guards(world, &target, &other);
+    guards::assert_payment_guards(world, &target);
 }
 
 #[then(expr = "an unpaid {entity} cannot be mined")]
@@ -88,25 +84,25 @@ fn unpaid_unminable(world: &mut World, entity: Entity) {
 }
 
 #[when(
-    expr = "a {phase} {entity} is paid in {currency} by {rail} and another in {currency} by {rail}"
+    expr = "a {phase} {entity} is paid in {currency} by {payer} and another in {currency} by {payer}"
 )]
 fn pay_two(
     world: &mut World,
     phase: Phase,
     entity: Entity,
     first: Currency,
-    first_rail: Rail,
+    first_payer: Payer,
     second: Currency,
-    second_rail: Rail,
+    second_payer: Payer,
 ) {
     let lifecycle = entity.lifecycle();
     let [first_target, second_target] = lifecycle.targets(world, phase);
-    for (target, currency, rail) in [
-        (first_target, first, first_rail),
-        (second_target, second, second_rail),
+    for (target, currency, payer) in [
+        (first_target, first, first_payer),
+        (second_target, second, second_payer),
     ] {
         let terms = lifecycle.terms(world, &target.item);
-        let paid = payment::pay(world, &target, rail, currency.0, terms);
+        let paid = payment::pay(world, &target, payer, currency.0, terms);
         world.state.entity_lifecycle.payments.push(paid);
     }
 }

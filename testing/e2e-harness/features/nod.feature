@@ -5,17 +5,17 @@ Feature: Nod from issuance to Gratis and COEN
   # bucket, so the phases every entity shares run on one chain and without OCOMP.
   #
   # Every Nod is issued in MYR against a USD reference. Two are paid while qualified
-  # and two inside the call notice, one on each rail and in each currency; the MYR
-  # payments price off a closed pricing window, so the committee steps past the next
-  # whole hour once the Nods are issued and the quotes finalized. The fifth Nod is
-  # left to forfeit.
+  # and two inside the call notice, one by its owner and one by a third party, in
+  # each currency; the MYR payments price off a closed pricing window, so the
+  # committee steps past the next whole hour once the Nods are issued and the
+  # quotes finalized. The fifth Nod is left to forfeit.
   #
   # Time is seeded rather than lived through wherever the protocol allows it.
   # Qualification and the call count only closed days after the bucket's stamp, so
   # the bucket is stamped behind the seeded days. The call notice is the DEV
   # profile's, so it is waited out for real.
   @nod-lifecycle @myr-issuance
-  Scenario: Five Nods in one bucket are paid on both rails in both currencies, one forfeits, and the paid ones end in COEN
+  Scenario: Five Nods in one bucket are paid by owners and third parties in both currencies, one forfeits, and the paid ones end in COEN
     Given a fresh localnet with a 20-block voting window
     And the deploy account is funded on the committee chain
     When the settlement currencies are registered on the committee chain
@@ -28,13 +28,13 @@ Feature: Nod from issuance to Gratis and COEN
     And the pricing window closes over those quotes
     When the reference rate stands above the Nod floor
     Then every Nod qualifies
-    And a Nod payment is refused for a stale snapshot, a foreign currency or a note bound to another holding
+    And a Nod payment is refused for a stale snapshot or a foreign currency
     And an unpaid Nod cannot be mined
-    When a qualified Nod is paid in USD by ERC20 and another in MYR by PayNote
+    When a qualified Nod is paid in USD by a third party and another in MYR by its owner
     Then each payment settles exactly its quote into its currency's vault
     When the reference rate holds above the Nod call price across the call window
     Then every unpaid Nod becomes Called while what was paid stays Settled
-    When a called Nod is paid in MYR by ERC20 and another in USD by PayNote
+    When a called Nod is paid in MYR by a third party and another in USD by its owner
     Then each payment settles exactly its quote into its currency's vault
     When the call notice lapses on the unpaid Nod
     Then the unpaid Nod is forfeited and its unpaid load returns to the unallocated pool

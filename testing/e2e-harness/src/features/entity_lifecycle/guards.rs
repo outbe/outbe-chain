@@ -8,9 +8,7 @@ use outbe_nodfactory::errors::NodFactoryError;
 
 use super::entity::{Item, Target};
 use super::markets::{currency, EUR_ISO, MYR_ISO};
-use super::payment::{
-    assert_mined_refusal, assert_refused, factory, note_context, quote, third_party_key,
-};
+use super::payment::{assert_refused, factory, quote, third_party_key};
 use crate::internal::{addresses, eth};
 use crate::world::settlement_currency::USD_ISO;
 use crate::world::World;
@@ -47,9 +45,8 @@ pub(crate) fn assert_unqualified_refused(world: &World, target: &Target) {
     }
 }
 
-/// A qualified holding refuses a stale pricing snapshot, an asset in a third currency,
-/// and a PayNote for its exact cost bound to `other`.
-pub(crate) fn assert_payment_guards(world: &World, target: &Target, other: &Target) {
+/// A qualified holding refuses a stale pricing snapshot and an asset in a third currency.
+pub(crate) fn assert_payment_guards(world: &World, target: &Target) {
     let payer = third_party(world);
     let myr = currency(world, MYR_ISO).asset;
     let eur = currency(world, EUR_ISO).asset;
@@ -58,9 +55,6 @@ pub(crate) fn assert_payment_guards(world: &World, target: &Target, other: &Targ
         !required.is_zero(),
         "an issuance-currency quote names its pricing snapshot"
     );
-    let expected = note_context(target, required);
-    let actual = note_context(other, required);
-    let note = foreign_note(world, target, actual);
     match &target.item {
         Item::Gem(id) => {
             assert_refused(
@@ -79,16 +73,6 @@ pub(crate) fn assert_payment_guards(world: &World, target: &Target, other: &Targ
                 factory(target),
                 &erc20_gem(*id, eur, U256::ZERO),
                 GemFactoryError::SettlementCurrencyMismatch { iso_code: EUR_ISO },
-            );
-            assert_refused(
-                world,
-                target.owner,
-                factory(target),
-                &eth::IGemFactory::settleGemWithPayNoteCall {
-                    gemId: *id,
-                    payNoteProof: note.into(),
-                },
-                GemFactoryError::PayNoteContextMismatch { expected, actual },
             );
         }
         Item::Series { id, units } => {
@@ -109,18 +93,6 @@ pub(crate) fn assert_payment_guards(world: &World, target: &Target, other: &Targ
                 &erc20_series(target, *id, *units, eur, U256::ZERO),
                 IntexFactoryError::SettlementCurrencyMismatch(EUR_ISO),
             );
-            assert_refused(
-                world,
-                target.owner,
-                factory(target),
-                &eth::IIntexFactory::settleIntexWithPayNoteCall {
-                    seriesId: *id,
-                    owner: target.owner,
-                    units: U256::from(*units),
-                    payNoteProof: note.into(),
-                },
-                IntexFactoryError::PayNoteContextMismatch { expected, actual },
-            );
         }
         Item::Nod(id) => {
             assert_refused(
@@ -139,17 +111,6 @@ pub(crate) fn assert_payment_guards(world: &World, target: &Target, other: &Targ
                 factory(target),
                 &erc20_nod(*id, eur, U256::ZERO),
                 NodFactoryError::SettlementCurrencyMismatch { iso_code: EUR_ISO },
-            );
-            // Nod settlement writes its compressed body first, which only a block executes,
-            // so the refusal is a mined revert; a note bound to this Nod then pays it.
-            assert_mined_refusal(
-                world,
-                &target.owner_key,
-                factory(target),
-                &eth::INodFactory::settleNodWithPayNoteCall {
-                    nodId: *id,
-                    payNoteProof: note.into(),
-                },
             );
         }
     }
@@ -241,21 +202,6 @@ pub(crate) fn assert_soulbound(world: &World, target: &Target) {
 
 fn third_party(world: &World) -> Address {
     eth::address_of(&third_party_key(world)).expect("third-party payer address")
-}
-
-/// A real, unspent note for the holding's exact MYR cost, bound to `context`.
-fn foreign_note(world: &World, target: &Target, context: B256) -> Vec<u8> {
-    let myr = currency(world, MYR_ISO).asset;
-    let key = third_party_key(world);
-    crate::features::paynote::deposit_and_prove(
-        world,
-        world.validators.primary_port(),
-        &key,
-        third_party(world),
-        myr,
-        quote(world, target, myr).payable,
-        context,
-    )
 }
 
 fn erc20_gem(id: U256, asset: Address, snapshot: U256) -> eth::IGemFactory::settleGemCall {

@@ -1,4 +1,4 @@
-//! The successor public Nod pays through ERC20; the original retains PayNote coverage.
+//! A third party pays the successor public Nod by ERC20; its owner paid the original.
 use super::*;
 use alloy_sol_types::{SolCall as _, SolError as _, SolValue as _};
 use outbe_compressed_entities::{
@@ -81,7 +81,7 @@ fn third_party_settles_and_mines(world: &mut World) {
             index: U256::ZERO,
         },
     )
-    .expect("PayNote scenario registered USD reserve");
+    .expect("the owner's Nod settlement registered the USD reserve");
     assert_ne!(vault, Address::ZERO);
     let asset =
         eth::read_call(&url, vault, &ISettlementVault::assetCall {}).expect("reserve asset");

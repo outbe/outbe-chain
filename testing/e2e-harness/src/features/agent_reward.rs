@@ -510,7 +510,7 @@ fn claim_gem_and_assert_gas_only_cost(
             "Gem body parity"
         );
         // Window, threshold and bucket are not on the gem view.
-        let issued = super::paynote::capacity::single_event::<eth::IGemFactory::GemIssued>(
+        let issued = eth::receipt_event::<eth::IGemFactory::GemIssued>(
             &receipt,
             addresses::GEM_FACTORY_ADDR,
         );

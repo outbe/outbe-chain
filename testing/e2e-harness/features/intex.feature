@@ -52,9 +52,9 @@ Feature: Intex from auction to Promis
   #
   # Two series are paid for, one issued in MYR and one in EUR, each in two parts:
   # what is home once they qualify, and the rest once they are called and brought
-  # home. The four payments take both rails and both currencies; the MYR ones
-  # price off a closed pricing window, so the committee steps past the next whole
-  # hour once the series are issued. On this localnet that hour is midnight: the
+  # home. The four payments come from the owner and a third party in both
+  # currencies; the MYR ones price off a closed pricing window, so the committee
+  # steps past the next whole hour once the series are issued. On this localnet that hour is midnight: the
   # committee closes the day on its own feed, and every seeded day repeats that
   # close, because a target chain records a day's price once. The other two are
   # left to run out: one is settled in part and one never touched, so the sweep
@@ -75,7 +75,7 @@ Feature: Intex from auction to Promis
   # first, then both together, which is how an owner of several actually moves
   # them and which carries its own message encoding.
   @intex-lifecycle @myr-issuance
-  Scenario: Four Intex series qualify as one group, two are paid on both rails in both currencies, two run out, and the paid ones end in COEN
+  Scenario: Four Intex series qualify as one group, two are paid by the owner and a third party in both currencies, two run out, and the paid ones end in COEN
     Given a fresh four-validator OCOMP public capacity localnet
     When a local target chain is started
     And the intex venue is deployed on the target chain
@@ -95,14 +95,14 @@ Feature: Intex from auction to Promis
     Then every Intex series qualifies
     And every series card reads Qualified on both chains
     When the owner brings part of the target-chain units home
-    Then an Intex series payment is refused for a stale snapshot, a foreign currency or a note bound to another holding
+    Then an Intex series payment is refused for a stale snapshot or a foreign currency
     And an unpaid Intex series cannot be mined
-    When a qualified Intex series is paid in USD by ERC20 and another in MYR by PayNote
+    When a qualified Intex series is paid in USD by a third party and another in MYR by its owner
     Then each payment settles exactly its quote into its currency's vault
     When the reference rate holds above the Intex series call price across the call window
     Then every unpaid Intex series becomes Called while what was paid stays Settled
     When the owner brings the remaining units home to their own address in one batch
-    And a called Intex series is paid in MYR by ERC20 and another in USD by PayNote
+    And a called Intex series is paid in MYR by a third party and another in USD by its owner
     Then each payment settles exactly its quote into its currency's vault
     When the owner settles part of one series they let run out
     And the call notice lapses on the unpaid Intex series

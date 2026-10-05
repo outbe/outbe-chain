@@ -14,7 +14,7 @@ use cucumber::{then, when};
 use crate::features::entity_lifecycle::chain::{
     assert_single_event, finalized_checkpoint, head_time, poll_until,
 };
-use crate::features::entity_lifecycle::entity::{Item, Lifecycle, Phase, Rail, Target, Terms};
+use crate::features::entity_lifecycle::entity::{Item, Lifecycle, Payer, Phase, Target, Terms};
 use crate::features::entity_lifecycle::markets::{EUR_ISO, MYR_ISO};
 use crate::features::entity_lifecycle::payment;
 use crate::features::entity_lifecycle::redeem::{self, mint_authorization, Ledger, Mined};
@@ -717,7 +717,7 @@ fn settle_part_of_expiring(world: &mut World) {
             owner_key: DEPLOYER_KEY.to_owned(),
             issuance_currency: GBP_ISO,
         },
-        Rail::PayNote,
+        Payer::Owner,
         USD_ISO,
         terms,
     );

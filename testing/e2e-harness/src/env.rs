@@ -190,8 +190,7 @@ pub struct EnvCli {
 
     /// Hard wall-clock deadline for one scenario, including setup, teardown,
     /// evidence capture, and log audit. A timeout tears down owned processes
-    /// and exits non-zero with a durable timeout record. Defaults to one hour,
-    /// or six hours for the 1,000-proof PayNote capacity scenario.
+    /// and exits non-zero with a durable timeout record. Defaults to one hour.
     #[arg(long)]
     pub scenario_timeout_secs: Option<u64>,
 
@@ -542,18 +541,8 @@ pub fn requires_tee(feature: &Feature, scenario: &Scenario) -> bool {
     has_tag(feature, scenario, "tee")
 }
 
-pub(crate) fn scenario_timeout_secs(
-    feature: &Feature,
-    scenario: &Scenario,
-    env: &Environment,
-) -> u64 {
-    env.scenario_timeout_secs.unwrap_or_else(|| {
-        if has_tag(feature, scenario, "paynote-capacity") {
-            6 * 3_600
-        } else {
-            3_600
-        }
-    })
+pub(crate) fn scenario_timeout_secs(env: &Environment) -> u64 {
+    env.scenario_timeout_secs.unwrap_or(3_600)
 }
 
 /// Parse `N` out of a `min-validators-<N>` tag (tags are `@`-less here).

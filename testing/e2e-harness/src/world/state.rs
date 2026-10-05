@@ -670,9 +670,6 @@ pub struct FixtureState {
     pub untouched_series: Option<alloy_primitives::FixedBytes<14>>,
     /// The worldwide day the lifecycle series were issued into; the called group's key.
     pub lifecycle_day: Option<u32>,
-    /// The stablecoin owners settle Intex in, and its reserve vault.
-    #[cfg(feature = "ocomp-integration")]
-    pub settlement_currency: Option<crate::world::settlement_currency::SettlementCurrency>,
     /// Every settlement currency a lifecycle scenario registered, by ISO code.
     #[cfg(feature = "ocomp-integration")]
     pub currencies:
@@ -720,8 +717,6 @@ impl Default for FixtureState {
             pending_dkg_restart: None,
             committee_restart: Vec::new(),
             downtime: None,
-            #[cfg(feature = "ocomp-integration")]
-            settlement_currency: None,
             #[cfg(feature = "ocomp-integration")]
             currencies: std::collections::BTreeMap::new(),
             issuance_market: None,

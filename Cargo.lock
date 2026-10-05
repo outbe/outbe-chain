@@ -8584,7 +8584,6 @@ dependencies = [
  "outbe-offchain-data",
  "outbe-offchain-storage",
  "outbe-oracle",
- "outbe-paynote",
  "outbe-primitives",
  "outbe-protocol",
  "outbe-protocol-derive",
