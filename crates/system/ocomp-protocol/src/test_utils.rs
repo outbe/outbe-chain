@@ -1,4 +1,8 @@
-//! Real trie proof construction shared by test fixtures.
+//! Independent storage encoding and real trie proof construction for test fixtures.
+
+mod storage;
+
+pub use storage::solidity_bytes_storage_slots;
 
 use std::collections::BTreeMap;
 

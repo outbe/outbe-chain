@@ -269,21 +269,7 @@ fn signer_bitmap(signer_indices: &[u32]) -> Vec<u8> {
 
 fn independent_storage_slots(logical_key: B256, encoded_record: &[u8]) -> Vec<(U256, U256)> {
     let base = logical_key.mapping_slot(U256::from(OCOMP_JOB_RECORDS_BASE_SLOT));
-    if encoded_record.len() <= 31 {
-        let mut inline = [0_u8; 32];
-        inline[..encoded_record.len()].copy_from_slice(encoded_record);
-        inline[31] = (encoded_record.len() * 2) as u8;
-        return vec![(base, U256::from_be_bytes(inline))];
-    }
-
-    let data_base = U256::from_be_bytes(keccak256(base.to_be_bytes::<32>()).0);
-    std::iter::once((base, U256::from(encoded_record.len() * 2 + 1)))
-        .chain(encoded_record.chunks(32).enumerate().map(|(index, chunk)| {
-            let mut word = [0_u8; 32];
-            word[..chunk.len()].copy_from_slice(chunk);
-            (data_base + U256::from(index), U256::from_be_bytes(word))
-        }))
-        .collect()
+    outbe_ocomp_protocol::test_utils::solidity_bytes_storage_slots(base, encoded_record)
 }
 
 #[test]
