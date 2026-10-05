@@ -24,7 +24,7 @@ commonware-cryptography.workspace = true
 commonware-utils.workspace = true
 outbe-consensus.workspace = true
 outbe-metadosis.workspace = true
-outbe-node.workspace = true
+outbe-node = { workspace = true, features = ["test-utils"] }
 outbe-primitives.workspace = true
 rand.workspace = true
 rand-commonware.workspace = true

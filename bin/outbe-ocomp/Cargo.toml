@@ -53,6 +53,7 @@ zeroize.workspace = true
 zeromq.workspace = true
 
 [dev-dependencies]
+outbe-node = { workspace = true, features = ["test-utils"] }
 alloy-rlp.workspace = true
 alloy-sol-types.workspace = true
 alloy-trie.workspace = true

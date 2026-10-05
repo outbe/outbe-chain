@@ -76,18 +76,12 @@ use outbe_primitives::{
 };
 use rand_commonware::{rngs::StdRng, SeedableRng as _};
 use reth_chainspec::ChainInfo;
-use reth_primitives_traits::{Account, Bytecode, SealedBlock};
+use reth_primitives_traits::{Account, SealedBlock};
 use reth_storage_api::{
-    errors::provider::ProviderResult, AccountReader, BlockHashReader, BlockIdReader,
-    BlockNumReader, BytecodeReader, HashedPostStateProvider, HeaderProvider, ReceiptProvider,
-    StateProofProvider, StateProvider, StateProviderBox, StateProviderFactory, StateRootProvider,
-    StorageRootProvider,
+    errors::provider::ProviderResult, BlockHashReader, BlockIdReader, BlockNumReader,
+    HeaderProvider, ReceiptProvider, StateProofProvider, StateProviderBox, StateProviderFactory,
 };
-use reth_trie::updates::TrieUpdates;
-use reth_trie::{
-    AccountProof, HashedPostState, HashedStorage, KeccakKeyHasher, MultiProof, MultiProofTargets,
-    StorageMultiProof, StorageProof, TrieInput,
-};
+use reth_trie::{AccountProof, StorageProof, TrieInput};
 use std::ops::{RangeBounds, RangeInclusive};
 
 const LIMITS: SchemaLimits = SchemaLimits {
@@ -501,169 +495,8 @@ fn historical_committee_witness(
     encoded
 }
 
-#[derive(Clone)]
-struct FixtureStateProvider {
-    state_root: B256,
-    block_number: u64,
-    block_hash: B256,
-    accounts: BTreeMap<Address, Account>,
-    storage: BTreeMap<(Address, B256), U256>,
-    proofs: BTreeMap<Address, AccountProof>,
-}
-
-impl AccountReader for FixtureStateProvider {
-    fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>> {
-        Ok(self.accounts.get(address).copied())
-    }
-}
-
-impl BlockHashReader for FixtureStateProvider {
-    fn block_hash(&self, number: u64) -> ProviderResult<Option<B256>> {
-        Ok((number == self.block_number).then_some(self.block_hash))
-    }
-
-    fn canonical_hashes_range(&self, start: u64, end: u64) -> ProviderResult<Vec<B256>> {
-        Ok((start..end)
-            .filter_map(|number| (number == self.block_number).then_some(self.block_hash))
-            .collect())
-    }
-}
-
-impl BytecodeReader for FixtureStateProvider {
-    fn bytecode_by_hash(&self, _code_hash: &B256) -> ProviderResult<Option<Bytecode>> {
-        Ok(None)
-    }
-}
-
-impl StateRootProvider for FixtureStateProvider {
-    fn state_root(&self, _hashed_state: HashedPostState) -> ProviderResult<B256> {
-        Ok(self.state_root)
-    }
-
-    fn state_root_from_nodes(&self, _input: TrieInput) -> ProviderResult<B256> {
-        Ok(self.state_root)
-    }
-
-    fn state_root_with_updates(
-        &self,
-        _hashed_state: HashedPostState,
-    ) -> ProviderResult<(B256, TrieUpdates)> {
-        Ok((self.state_root, TrieUpdates::default()))
-    }
-
-    fn state_root_from_nodes_with_updates(
-        &self,
-        _input: TrieInput,
-    ) -> ProviderResult<(B256, TrieUpdates)> {
-        Ok((self.state_root, TrieUpdates::default()))
-    }
-}
-
-impl StorageRootProvider for FixtureStateProvider {
-    fn storage_root(
-        &self,
-        address: Address,
-        _hashed_storage: HashedStorage,
-    ) -> ProviderResult<B256> {
-        Ok(self
-            .proofs
-            .get(&address)
-            .map_or(B256::ZERO, |proof| proof.storage_root))
-    }
-
-    fn storage_proof(
-        &self,
-        address: Address,
-        slot: B256,
-        _hashed_storage: HashedStorage,
-    ) -> ProviderResult<StorageProof> {
-        let proof = self
-            .proofs
-            .get(&address)
-            .and_then(|proof| proof.storage_proofs.iter().find(|proof| proof.key == slot))
-            .cloned()
-            .unwrap_or_else(|| StorageProof::new(slot));
-        Ok(proof)
-    }
-
-    fn storage_multiproof(
-        &self,
-        _address: Address,
-        _slots: &[B256],
-        _hashed_storage: HashedStorage,
-    ) -> ProviderResult<StorageMultiProof> {
-        Ok(StorageMultiProof::empty())
-    }
-}
-
-impl StateProofProvider for FixtureStateProvider {
-    fn proof(
-        &self,
-        _input: TrieInput,
-        address: Address,
-        slots: &[B256],
-    ) -> ProviderResult<AccountProof> {
-        let mut proof = self
-            .proofs
-            .get(&address)
-            .cloned()
-            .unwrap_or_else(|| AccountProof::new(address));
-        proof.storage_proofs = slots
-            .iter()
-            .map(|slot| {
-                proof
-                    .storage_proofs
-                    .iter()
-                    .find(|storage| storage.key == *slot)
-                    .cloned()
-                    .unwrap_or_else(|| StorageProof::new(*slot))
-            })
-            .collect();
-        Ok(proof)
-    }
-
-    fn multiproof(
-        &self,
-        _input: TrieInput,
-        _targets: MultiProofTargets,
-    ) -> ProviderResult<MultiProof> {
-        Ok(MultiProof::default())
-    }
-
-    fn multiproof_v2(
-        &self,
-        _input: TrieInput,
-        _targets: reth_trie::MultiProofTargetsV2,
-    ) -> ProviderResult<reth_trie::DecodedMultiProofV2> {
-        Ok(reth_trie::DecodedMultiProofV2::default())
-    }
-
-    fn witness(
-        &self,
-        _input: TrieInput,
-        _target: HashedPostState,
-        _mode: reth_trie::ExecutionWitnessMode,
-    ) -> ProviderResult<Vec<Bytes>> {
-        Ok(Vec::new())
-    }
-}
-
-impl HashedPostStateProvider for FixtureStateProvider {
-    fn hashed_post_state(
-        &self,
-        bundle_state: &revm::database::BundleState,
-    ) -> ProviderResult<HashedPostState> {
-        Ok(HashedPostState::from_bundle_state::<KeccakKeyHasher>(
-            bundle_state.state(),
-        ))
-    }
-}
-
-impl StateProvider for FixtureStateProvider {
-    fn storage(&self, account: Address, storage_key: B256) -> ProviderResult<Option<U256>> {
-        Ok(self.storage.get(&(account, storage_key)).copied())
-    }
-}
+type FixtureStateProvider =
+    outbe_node::test_utils::OpeningStateFixture<(), outbe_node::test_utils::ExactBlockLookup>;
 
 #[derive(Clone)]
 struct FixtureProvider {
@@ -684,21 +517,22 @@ impl BlockHashReader for FixtureProvider {
 impl BlockNumReader for FixtureProvider {
     fn chain_info(&self) -> ProviderResult<ChainInfo> {
         Ok(ChainInfo {
-            best_hash: self.state.block_hash,
-            best_number: self.state.block_number,
+            best_hash: self.state.block_lookup.identity.hash,
+            best_number: self.state.block_lookup.identity.number,
         })
     }
 
     fn best_block_number(&self) -> ProviderResult<u64> {
-        Ok(self.state.block_number)
+        Ok(self.state.block_lookup.identity.number)
     }
 
     fn last_block_number(&self) -> ProviderResult<u64> {
-        Ok(self.state.block_number)
+        Ok(self.state.block_lookup.identity.number)
     }
 
     fn block_number(&self, hash: B256) -> ProviderResult<Option<u64>> {
-        Ok((hash == self.state.block_hash).then_some(self.state.block_number))
+        Ok((hash == self.state.block_lookup.identity.hash)
+            .then_some(self.state.block_lookup.identity.number))
     }
 }
 
@@ -720,38 +554,42 @@ impl HeaderProvider for FixtureProvider {
     type Header = OutbeHeader;
 
     fn header(&self, block_hash: B256) -> ProviderResult<Option<Self::Header>> {
-        Ok((block_hash == self.state.block_hash).then(|| self.header.clone()))
+        Ok((block_hash == self.state.block_lookup.identity.hash).then(|| self.header.clone()))
     }
 
     fn header_by_number(&self, number: u64) -> ProviderResult<Option<Self::Header>> {
-        Ok((number == self.state.block_number).then(|| self.header.clone()))
+        Ok((number == self.state.block_lookup.identity.number).then(|| self.header.clone()))
     }
 
     fn headers_range(&self, range: impl RangeBounds<u64>) -> ProviderResult<Vec<Self::Header>> {
         let contains = match (range.start_bound(), range.end_bound()) {
             (std::ops::Bound::Included(start), std::ops::Bound::Included(end)) => {
-                *start <= self.state.block_number && self.state.block_number <= *end
+                *start <= self.state.block_lookup.identity.number
+                    && self.state.block_lookup.identity.number <= *end
             }
             (std::ops::Bound::Included(start), std::ops::Bound::Excluded(end)) => {
-                *start <= self.state.block_number && self.state.block_number < *end
+                *start <= self.state.block_lookup.identity.number
+                    && self.state.block_lookup.identity.number < *end
             }
             (std::ops::Bound::Excluded(start), std::ops::Bound::Included(end)) => {
-                *start < self.state.block_number && self.state.block_number <= *end
+                *start < self.state.block_lookup.identity.number
+                    && self.state.block_lookup.identity.number <= *end
             }
             (std::ops::Bound::Excluded(start), std::ops::Bound::Excluded(end)) => {
-                *start < self.state.block_number && self.state.block_number < *end
+                *start < self.state.block_lookup.identity.number
+                    && self.state.block_lookup.identity.number < *end
             }
             (std::ops::Bound::Unbounded, std::ops::Bound::Included(end)) => {
-                self.state.block_number <= *end
+                self.state.block_lookup.identity.number <= *end
             }
             (std::ops::Bound::Unbounded, std::ops::Bound::Excluded(end)) => {
-                self.state.block_number < *end
+                self.state.block_lookup.identity.number < *end
             }
             (std::ops::Bound::Included(start), std::ops::Bound::Unbounded) => {
-                *start <= self.state.block_number
+                *start <= self.state.block_lookup.identity.number
             }
             (std::ops::Bound::Excluded(start), std::ops::Bound::Unbounded) => {
-                *start < self.state.block_number
+                *start < self.state.block_lookup.identity.number
             }
             (std::ops::Bound::Unbounded, std::ops::Bound::Unbounded) => true,
         };
@@ -762,9 +600,14 @@ impl HeaderProvider for FixtureProvider {
         &self,
         number: u64,
     ) -> ProviderResult<Option<reth_primitives_traits::SealedHeader<Self::Header>>> {
-        Ok((number == self.state.block_number).then(|| {
-            reth_primitives_traits::SealedHeader::new(self.header.clone(), self.state.block_hash)
-        }))
+        Ok(
+            (number == self.state.block_lookup.identity.number).then(|| {
+                reth_primitives_traits::SealedHeader::new(
+                    self.header.clone(),
+                    self.state.block_lookup.identity.hash,
+                )
+            }),
+        )
     }
 
     fn sealed_headers_while(
@@ -775,7 +618,10 @@ impl HeaderProvider for FixtureProvider {
         let headers = self.headers_range(range)?;
         let mut sealed = Vec::new();
         for header in headers {
-            let header = reth_primitives_traits::SealedHeader::new(header, self.state.block_hash);
+            let header = reth_primitives_traits::SealedHeader::new(
+                header,
+                self.state.block_lookup.identity.hash,
+            );
             if !predicate(&header) {
                 break;
             }
@@ -801,8 +647,8 @@ impl ReceiptProvider for FixtureProvider {
         block: BlockHashOrNumber,
     ) -> ProviderResult<Option<Vec<Self::Receipt>>> {
         let known = match block {
-            BlockHashOrNumber::Hash(hash) => hash == self.state.block_hash,
-            BlockHashOrNumber::Number(number) => number == self.state.block_number,
+            BlockHashOrNumber::Hash(hash) => hash == self.state.block_lookup.identity.hash,
+            BlockHashOrNumber::Number(number) => number == self.state.block_lookup.identity.number,
         };
         Ok(known.then(Vec::new))
     }
@@ -1072,11 +918,13 @@ fn fixture_with_intent(signer_indices: &[u32], intent: JobIntentV1) -> Fixture {
     let provider = FixtureProvider {
         state: FixtureStateProvider {
             state_root,
-            block_number: FINALIZED_BLOCK_NUMBER,
-            block_hash: header_hash,
+            block_lookup: outbe_node::test_utils::ExactBlockLookup {
+                identity: BlockNumHash::new(FINALIZED_BLOCK_NUMBER, header_hash),
+            },
             accounts,
             storage,
             proofs,
+            storage_reads: (),
         },
         header,
     };
