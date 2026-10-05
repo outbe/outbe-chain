@@ -148,7 +148,7 @@ where
         );
         (*unhealthy_since) = next_unhealthy_since;
         match decision {
-            ExecutionWatchdogDecision::Healthy => {}
+            ExecutionWatchdogDecision::Healthy => Ok(()),
             ExecutionWatchdogDecision::StartupGrace => {
                 let startup_elapsed = elapsed_since(now, watchdog_started_at);
                 warn!(
@@ -162,6 +162,7 @@ where
                     startup_grace_sec = config::EXECUTION_WATCHDOG_STARTUP_GRACE_SEC,
                     "execution watchdog detected Reth provider behind consensus tip during startup/backfill grace"
                 );
+                Ok(())
             }
             ExecutionWatchdogDecision::Unhealthy { unhealthy_for } => {
                 warn!(
@@ -174,19 +175,18 @@ where
                     unhealthy_for_ms = unhealthy_for.as_millis(),
                     "execution watchdog detected Reth provider behind consensus tip"
                 );
+                Ok(())
             }
             ExecutionWatchdogDecision::Fatal { unhealthy_for } => {
-                return Err(eyre::eyre!(
+                Err(eyre::eyre!(
                                 "execution watchdog fatal: Reth provider head/hash not ready for consensus tip height {} digest {} (reth_head={}, provider_tip_hash={:?}, unhealthy_for={:?})",
                                 consensus_tip_height,
                                 tip.digest,
                                 reth_head_height,
                                 provider_tip_hash,
                                 unhealthy_for,
-                            ));
+                            ))
             }
         }
-
-        Ok(())
     }
 }

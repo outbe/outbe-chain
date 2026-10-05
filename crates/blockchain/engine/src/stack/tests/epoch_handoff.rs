@@ -86,27 +86,15 @@ fn signed_dkg_logs(
         .iter()
         .map(|key| Player::new(info.clone(), key.clone()).unwrap())
         .collect();
-    for (dealer_index, (public, private)) in public_messages
-        .iter()
-        .zip(private_messages.iter())
-        .enumerate()
-    {
-        let dealer = keys[dealer_index].public_key();
-        for (player, share) in private {
-            let player_index = keys
-                .iter()
-                .position(|key| key.public_key() == *player)
-                .unwrap();
-            if let Some(ack) = players[player_index]
-                .dealer_message::<N3f1>(dealer.clone(), public.clone(), share.clone())
-                .expect("fixture dealing must be valid")
-            {
-                dealers[dealer_index]
-                    .receive_player_ack(player.clone(), ack)
-                    .unwrap();
-            }
-        }
-    }
+    outbe_consensus::test_harness::acknowledge_fixture_dealings(
+        &keys,
+        outbe_consensus::test_harness::FixtureDealings {
+            public_messages: &public_messages,
+            private_messages: &private_messages,
+        },
+        &mut dealers,
+        &mut players,
+    );
 
     let mut encoded = BTreeMap::new();
     for dealer in dealers {
@@ -127,21 +115,8 @@ fn sample_certificate() -> outbe_consensus::hybrid::HybridCertificate<MinSig> {
         keys.iter().map(|k| k.public_key()).try_collect().unwrap();
     let dkg = bootstrap_dkg(3).unwrap();
 
-    let schemes: Vec<HybridScheme<MinSig>> = keys
-        .iter()
-        .map(|key| {
-            let pk = key.public_key();
-            let idx = participants.index(&pk).unwrap();
-            HybridScheme::signer(
-                &config::outbe_app_namespace(),
-                participants.clone(),
-                key.clone(),
-                dkg.polynomial.clone(),
-                dkg.shares[idx.get() as usize].clone(),
-            )
-            .unwrap()
-        })
-        .collect();
+    let schemes: Vec<HybridScheme<MinSig>> =
+        super::fixtures::bootstrap_fixture_signers(&keys, &participants, &dkg);
 
     let proposal = commonware_consensus::simplex::types::Proposal::new(
         Round::new(Epoch::new(0), View::new(2)),
@@ -226,8 +201,17 @@ fn startup_pending_dkg_epoch_plan_keeps_future_epoch_separate_before_activation(
     let pending_epoch = Epoch::new(1);
 
     assert_eq!(
-        startup_pending_dkg_epoch_plan(current_epoch, pending_epoch, 299, 300, 30, Some(275))
-            .unwrap(),
+        startup_pending_dkg_epoch_plan(
+            current_epoch,
+            pending_epoch,
+            crate::stack::dkg::handoff::StartupPendingDkgHandoff {
+                finalized_height: 299,
+                planned_activation_height: 300,
+                activation_grace_blocks: 30,
+                exact_carrier_height: Some(275)
+            }
+        )
+        .unwrap(),
         StartupPendingDkgEpochPlan::Defer {
             active_epoch: current_epoch,
             preregister_after_current: pending_epoch,
@@ -241,8 +225,17 @@ fn startup_pending_dkg_epoch_plan_restores_activated_epoch_before_boundary_commi
     let pending_epoch = Epoch::new(1);
 
     assert_eq!(
-        startup_pending_dkg_epoch_plan(previous_epoch, pending_epoch, 300, 300, 30, Some(275))
-            .unwrap(),
+        startup_pending_dkg_epoch_plan(
+            previous_epoch,
+            pending_epoch,
+            crate::stack::dkg::handoff::StartupPendingDkgHandoff {
+                finalized_height: 300,
+                planned_activation_height: 300,
+                activation_grace_blocks: 30,
+                exact_carrier_height: Some(275)
+            }
+        )
+        .unwrap(),
         StartupPendingDkgEpochPlan::Activate {
             previous_epoch,
             active_epoch: pending_epoch,
@@ -255,15 +248,32 @@ fn startup_pending_dkg_epoch_plan_restores_activated_epoch_before_boundary_commi
 fn startup_pending_dkg_epoch_plan_fails_closed_on_invalid_or_expired_handoff() {
     let current_epoch = Epoch::new(4);
 
-    let wrong_epoch =
-        startup_pending_dkg_epoch_plan(current_epoch, Epoch::new(6), 500, 500, 30, Some(480))
-            .unwrap_err()
-            .to_string();
+    let wrong_epoch = startup_pending_dkg_epoch_plan(
+        current_epoch,
+        Epoch::new(6),
+        crate::stack::dkg::handoff::StartupPendingDkgHandoff {
+            finalized_height: 500,
+            planned_activation_height: 500,
+            activation_grace_blocks: 30,
+            exact_carrier_height: Some(480),
+        },
+    )
+    .unwrap_err()
+    .to_string();
     assert!(wrong_epoch.contains("does not follow active epoch"));
 
-    let expired = startup_pending_dkg_epoch_plan(current_epoch, Epoch::new(5), 530, 500, 30, None)
-        .unwrap_err()
-        .to_string();
+    let expired = startup_pending_dkg_epoch_plan(
+        current_epoch,
+        Epoch::new(5),
+        crate::stack::dkg::handoff::StartupPendingDkgHandoff {
+            finalized_height: 530,
+            planned_activation_height: 500,
+            activation_grace_blocks: 30,
+            exact_carrier_height: None,
+        },
+    )
+    .unwrap_err()
+    .to_string();
     assert!(expired.contains("missed activation deadline 530"));
 }
 

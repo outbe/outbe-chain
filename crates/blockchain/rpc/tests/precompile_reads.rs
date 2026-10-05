@@ -55,14 +55,22 @@ fn eth_call_vote(storage: StorageHandle<'_>, data: &[u8]) -> Vec<u8> {
     .into()
 }
 
-fn schedule_update(
-    update: &mut Update<'_>,
+struct ScheduleUpdateFixture<'a> {
     proposal_id: U256,
     version: ProtocolVersion,
     activation_height: u64,
-    info: &str,
+    info: &'a str,
     current_height: u64,
-) {
+}
+
+fn schedule_update(update: &mut Update<'_>, fixture: ScheduleUpdateFixture<'_>) {
+    let ScheduleUpdateFixture {
+        proposal_id,
+        version,
+        activation_height,
+        info,
+        current_height,
+    } = fixture;
     let payload: Value = serde_json::from_str(&encode_schedule_update_json(
         version,
         activation_height,
@@ -152,11 +160,13 @@ fn eth_call_get_update_scheduled_update() {
         let proposal_id = U256::from(1);
         schedule_update(
             &mut update,
-            proposal_id,
-            V1_2,
-            min_activation(current),
-            "release-notes",
-            current,
+            ScheduleUpdateFixture {
+                proposal_id,
+                version: V1_2,
+                activation_height: min_activation(current),
+                info: "release-notes",
+                current_height: current,
+            },
         );
 
         let data = IUpdate::getScheduledUpdateCall {
@@ -181,19 +191,23 @@ fn eth_call_list_update_waiting_for_activation() {
         let current = 100u64;
         schedule_update(
             &mut update,
-            U256::from(1),
-            V1_2,
-            min_activation(current),
-            "",
-            current,
+            ScheduleUpdateFixture {
+                proposal_id: U256::from(1),
+                version: V1_2,
+                activation_height: min_activation(current),
+                info: "",
+                current_height: current,
+            },
         );
         schedule_update(
             &mut update,
-            U256::from(2),
-            V1_3,
-            min_activation(current) + 10,
-            "",
-            current,
+            ScheduleUpdateFixture {
+                proposal_id: U256::from(2),
+                version: V1_3,
+                activation_height: min_activation(current) + 10,
+                info: "",
+                current_height: current,
+            },
         );
 
         let data = IUpdate::listWaitingForActivationCall {}.abi_encode();

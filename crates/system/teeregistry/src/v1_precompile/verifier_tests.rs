@@ -1,4 +1,5 @@
 use super::*;
+use crate::v1::{NodeHostAssociationV1, VerifiedIntentV1};
 
 /// Hardware-free I3 boundary: canonical ABI and full gas precharge stay real;
 /// only the already-authenticated enclave outcome is supplied as a typed,
@@ -203,40 +204,50 @@ impl PreparedVerifierCall<'_, '_> {
                 } = validator_authorization(&preflight)?;
                 registry.register_enclave_and_bind_after_verifier_for_test_as(
                     caller,
-                    intent,
-                    &node_signature,
-                    &enclave_signature,
-                    &binding,
-                    &validator_signature,
-                    &node_binding_signature,
-                    capability,
+                    VerifiedIntentV1 {
+                        intent,
+                        node_signature: &node_signature,
+                        enclave_signature: &enclave_signature,
+                        capability,
+                    },
+                    NodeHostAssociationV1 {
+                        binding: &binding,
+                        validator_signature: &validator_signature,
+                        node_binding_signature: &node_binding_signature,
+                    },
                 )
             }
             RegistryMutatorV1::RenewEnclave => registry
                 .renew_enclave_after_verifier_with_active_policy_for_test(
                     caller,
-                    intent,
-                    &node_signature,
-                    &enclave_signature,
+                    VerifiedIntentV1 {
+                        intent,
+                        node_signature: &node_signature,
+                        enclave_signature: &enclave_signature,
+                        capability,
+                    },
                     &policy,
-                    capability,
                 ),
             RegistryMutatorV1::ReplaceEnclaveBinding => registry
                 .replace_enclave_binding_after_verifier_with_active_policy_for_test(
                     caller,
-                    intent,
-                    &node_signature,
-                    &enclave_signature,
+                    VerifiedIntentV1 {
+                        intent,
+                        node_signature: &node_signature,
+                        enclave_signature: &enclave_signature,
+                        capability,
+                    },
                     &policy,
-                    capability,
                 ),
             RegistryMutatorV1::TransitionEnclaveMeasurement => registry
                 .transition_enclave_measurement_after_verifier_for_test(
                     caller,
-                    intent,
-                    &node_signature,
-                    &enclave_signature,
-                    capability,
+                    VerifiedIntentV1 {
+                        intent,
+                        node_signature: &node_signature,
+                        enclave_signature: &enclave_signature,
+                        capability,
+                    },
                 ),
         }
     }

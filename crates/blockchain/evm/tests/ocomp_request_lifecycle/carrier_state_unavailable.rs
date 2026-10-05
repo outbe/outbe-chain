@@ -6,20 +6,18 @@
 use super::*;
 
 pub(crate) fn run() {
-    let VotingOpenScenario {
-        chain_spec,
-        prepared,
-        signer,
-        runtime_body_readers,
-        fork_install,
-        dkg,
-        snapshot,
-        proposer,
-        open_height,
-        intent_id,
-        finalized_record,
-        voting_open,
-    } = super::request::open_voting();
+    let (
+        environment,
+        VotingOpenState {
+            prepared,
+            proposer,
+            open_height,
+            intent_id,
+            finalized_record,
+            voting_open,
+        },
+    ) = super::request::open_voting().into_successor_parts();
+    let fixture = environment.fixture(&prepared.tree_service);
     let voting = ResultVotingScenario::for_intent(
         &voting_open.record.intent,
         finalized_record.finalized.as_ref().unwrap().job_id,
@@ -51,20 +49,16 @@ pub(crate) fn run() {
 
     let height = open_height + 1;
     let outcome = try_build_canonical_ocomp_successor(
-        &chain_spec,
-        &prepared.tree_service,
-        &signer,
-        &runtime_body_readers,
-        &fork_install,
-        &dkg,
-        &snapshot,
-        proposer,
-        voting_open.header,
-        &voting_open.storage,
-        height,
-        prepared.request_time + (height - REQUEST_HEIGHT),
-        intent_id,
-        vec![carrier, transfer],
+        fixture,
+        OcompSuccessorBlock {
+            proposer,
+            parent: voting_open.header,
+            parent_storage: &voting_open.storage,
+            height,
+            timestamp: prepared.request_time + (height - REQUEST_HEIGHT),
+            intent_id,
+            user_transactions: vec![carrier, transfer],
+        },
         Some((
             VALIDATOR_SET_ADDRESS,
             B256::from(delegate_slot.to_be_bytes::<32>()),

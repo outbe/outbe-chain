@@ -56,10 +56,12 @@ where
             let startup_plan = startup_pending_dkg_epoch_plan(
                 self.state.current_epoch,
                 pending_epoch,
-                recovery_anchor_height,
-                pending_artifact.planned_activation_height,
-                self.dkg_rotation_params.activation_grace_blocks,
-                exact_carrier_height,
+                crate::stack::dkg::handoff::StartupPendingDkgHandoff {
+                    finalized_height: recovery_anchor_height,
+                    planned_activation_height: pending_artifact.planned_activation_height,
+                    activation_grace_blocks: self.dkg_rotation_params.activation_grace_blocks,
+                    exact_carrier_height,
+                },
             )?;
 
             match startup_plan {

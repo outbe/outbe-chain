@@ -118,6 +118,7 @@ rand-commonware.workspace = true
 rand-core-commonware.workspace = true
 
 [dev-dependencies]
+outbe-ocomp-protocol = { workspace = true, features = ["test-utils"] }
 tempfile.workspace = true
 alloy-primitives.workspace = true
 tokio = { workspace = true }

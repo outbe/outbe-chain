@@ -38,9 +38,11 @@ impl CeremonyState {
             &mut self.roles.player,
             &mut self.roles.player_retry_snapshot,
             self.retry_store.as_ref(),
-            from.clone(),
-            pub_msg,
-            priv_msg,
+            crate::dkg_actor::recovery::PlayerDealerBundle {
+                dealer: from.clone(),
+                pub_msg,
+                priv_msg,
+            },
         )? {
             PlayerBundleAction::SendAck(ack) => {
                 send_ack(sender, self.ceremony_id, &from, ack, "sent ack to dealer").await;

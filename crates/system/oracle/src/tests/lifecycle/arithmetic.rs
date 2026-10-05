@@ -334,70 +334,74 @@ fn limited_existing_headroom_omits_snapshot_without_penalizing_any_validator() {
 
 #[test]
 fn cross_target_volume_is_the_median_of_the_cross_winners() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
-        let reference =
-            AddressPair::from_addresses(Address::new([0x71; 20]), Address::new([0x72; 20]));
-        let target =
-            AddressPair::from_addresses(Address::new([0x81; 20]), Address::new([0x82; 20]));
-        oracle.register_pair(reference).unwrap();
-        oracle.register_pair(target).unwrap();
+    let high_rate = fixed18(100);
+    // Cover both admitted market volumes and historical overflow ballots.
+    for large_volume in [
+        fixed18(crate::constants::MAX_VOTE_VOLUME_WHOLE),
+        U256::MAX / high_rate + U256::ONE,
+    ] {
+        with_storage(|storage| {
+            let mut oracle = OracleContract::new(storage.clone());
+            init_oracle(&mut oracle);
+            let reference =
+                AddressPair::from_addresses(Address::new([0x71; 20]), Address::new([0x72; 20]));
+            let target =
+                AddressPair::from_addresses(Address::new([0x81; 20]), Address::new([0x82; 20]));
+            oracle.register_pair(reference).unwrap();
+            oracle.register_pair(target).unwrap();
 
-        let voters = [
-            Address::new([0x11; 20]),
-            Address::new([0x22; 20]),
-            Address::new([0x33; 20]),
-            Address::new([0x44; 20]),
-        ];
-        for voter in voters {
-            register_validator(storage.clone(), voter, native_coen(100));
-        }
-
-        let high_rate = fixed18(100);
-        // Use an admitted volume at the market ceiling. This test exercises
-        // winner-only median volume, not historical overflow recovery.
-        let large_volume = fixed18(crate::constants::MAX_VOTE_VOLUME_WHOLE);
-        let reference_rates = [fixed18(1), high_rate, fixed18(1), fixed18(1)];
-        let target_rates = [fixed18(1), high_rate, high_rate];
-        let target_volumes = [U256::ZERO, large_volume, U256::ZERO];
-
-        for (index, voter) in voters.into_iter().enumerate() {
-            let mut votes = vec![(
-                reference.address1(),
-                reference.address2(),
-                reference_rates[index],
-                U256::ZERO,
-            )];
-            if index < 3 {
-                votes.push((
-                    target.address1(),
-                    target.address2(),
-                    target_rates[index],
-                    target_volumes[index],
-                ));
+            let voters = [
+                Address::new([0x11; 20]),
+                Address::new([0x22; 20]),
+                Address::new([0x33; 20]),
+                Address::new([0x44; 20]),
+            ];
+            for voter in voters {
+                register_validator(storage.clone(), voter, native_coen(100));
             }
-            oracle.submit_vote(voter, &votes).unwrap();
-        }
 
-        crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
+            let reference_rates = [fixed18(1), high_rate, fixed18(1), fixed18(1)];
+            let target_rates = [fixed18(1), high_rate, high_rate];
+            let target_volumes = [U256::ZERO, large_volume, U256::ZERO];
 
-        assert_eq!(
-            oracle
-                .get_exchange_rate(target.address1(), target.address2())
-                .unwrap(),
-            fixed18(1)
-        );
-        let (_, _, bases, quotes, _, volumes) = oracle.get_all_price_snapshot_history(1).unwrap();
-        let target_row = bases
-            .iter()
-            .zip(&quotes)
-            .position(|(base, quote)| (*base, *quote) == (target.address1(), target.address2()))
-            .unwrap();
-        assert_eq!(volumes[target_row], large_volume / U256::from(2u64));
-        assert_eq!(oracle.penalty_success_count.read(&voters[0]).unwrap(), 1);
-        assert_eq!(oracle.penalty_miss_count.read(&voters[1]).unwrap(), 1);
-        assert_eq!(oracle.penalty_miss_count.read(&voters[2]).unwrap(), 1);
-        assert_eq!(oracle.penalty_miss_count.read(&voters[3]).unwrap(), 1);
-    });
+            for (index, voter) in voters.into_iter().enumerate() {
+                let mut votes = vec![(
+                    reference.address1(),
+                    reference.address2(),
+                    reference_rates[index],
+                    U256::ZERO,
+                )];
+                if index < 3 {
+                    votes.push((
+                        target.address1(),
+                        target.address2(),
+                        target_rates[index],
+                        target_volumes[index],
+                    ));
+                }
+                seed_legacy_vote(&mut oracle, voter, &votes);
+            }
+
+            crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
+
+            assert_eq!(
+                oracle
+                    .get_exchange_rate(target.address1(), target.address2())
+                    .unwrap(),
+                fixed18(1)
+            );
+            let (_, _, bases, quotes, _, volumes) =
+                oracle.get_all_price_snapshot_history(1).unwrap();
+            let target_row = bases
+                .iter()
+                .zip(&quotes)
+                .position(|(base, quote)| (*base, *quote) == (target.address1(), target.address2()))
+                .unwrap();
+            assert_eq!(volumes[target_row], large_volume / U256::from(2u64));
+            assert_eq!(oracle.penalty_success_count.read(&voters[0]).unwrap(), 1);
+            assert_eq!(oracle.penalty_miss_count.read(&voters[1]).unwrap(), 1);
+            assert_eq!(oracle.penalty_miss_count.read(&voters[2]).unwrap(), 1);
+            assert_eq!(oracle.penalty_miss_count.read(&voters[3]).unwrap(), 1);
+        });
+    }
 }

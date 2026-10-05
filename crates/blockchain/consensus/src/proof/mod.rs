@@ -44,6 +44,7 @@ pub use late_finalize::verify_late_finalize_proof;
 pub use seed_partial::{
     seed_partial_attest_message, verify_seed_partial_against_commitment,
     verify_seed_partial_attest, verify_seed_partial_attest_bytes, verify_seed_signature_plain,
+    SeedPartialAttestation,
 };
 pub use verifier::{
     simplex_n3f1_quorum, verify_v2_proof, verify_v2_proof_low_level, CommitteeSnapshotView,

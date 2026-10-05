@@ -36,8 +36,9 @@ where
     ) -> BoxFuture<'static, RecoveredForkchoiceAttempt> {
         let expected_height = Height::new(expected.block_number);
         let forkchoice = self.state.forkchoice;
-        if self.state.head_height != expected_height
-            || self.state.finalized_height != expected_height
+        let recovered_height_mismatch = self.state.head_height != expected_height
+            || self.state.finalized_height != expected_height;
+        if recovered_height_mismatch
             || forkchoice.head_block_hash != expected.block_hash
             || forkchoice.safe_block_hash != expected.block_hash
             || forkchoice.finalized_block_hash != expected.block_hash

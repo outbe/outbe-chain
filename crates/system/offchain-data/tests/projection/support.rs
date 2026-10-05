@@ -18,8 +18,7 @@ use outbe_offchain_data::{
     TributeRetentionSelector,
 };
 use outbe_offchain_storage::{
-    AtomicWriteBatch, AtomicWriteOperation, Key, MemoryStorage, Namespace, ScanPage, ScanRequest,
-    StorageError, StorageReader, StorageWriter, StoredValue,
+    AtomicWriteBatch, AtomicWriteOperation, MemoryStorage, StorageError, StorageWriter,
 };
 use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::{canonical_body, precompile::ITribute, RetainedTributePin, TributeData};
@@ -36,31 +35,7 @@ impl RecordingStorage {
     }
 }
 
-impl StorageReader for RecordingStorage {
-    fn get_record(
-        &self,
-        namespace: Namespace,
-        key: &Key,
-    ) -> Result<Option<StoredValue>, StorageError> {
-        self.inner.get_record(namespace, key)
-    }
-
-    fn get_records(
-        &self,
-        namespace: Namespace,
-        keys: &[Key],
-    ) -> Result<Vec<Option<StoredValue>>, StorageError> {
-        self.inner.get_records(namespace, keys)
-    }
-
-    fn scan_prefix(
-        &self,
-        namespace: Namespace,
-        request: ScanRequest<'_>,
-    ) -> Result<ScanPage, StorageError> {
-        self.inner.scan_prefix(namespace, request)
-    }
-}
+outbe_offchain_storage::impl_test_storage_reader!(RecordingStorage, inner);
 
 impl StorageWriter for RecordingStorage {
     fn apply_atomic(&self, batch: &AtomicWriteBatch) -> Result<(), StorageError> {
@@ -278,31 +253,7 @@ impl FailOnceStorage {
     }
 }
 
-impl StorageReader for FailOnceStorage {
-    fn get_record(
-        &self,
-        namespace: Namespace,
-        key: &Key,
-    ) -> Result<Option<StoredValue>, StorageError> {
-        self.inner.get_record(namespace, key)
-    }
-
-    fn get_records(
-        &self,
-        namespace: Namespace,
-        keys: &[Key],
-    ) -> Result<Vec<Option<StoredValue>>, StorageError> {
-        self.inner.get_records(namespace, keys)
-    }
-
-    fn scan_prefix(
-        &self,
-        namespace: Namespace,
-        request: ScanRequest<'_>,
-    ) -> Result<ScanPage, StorageError> {
-        self.inner.scan_prefix(namespace, request)
-    }
-}
+outbe_offchain_storage::impl_test_storage_reader!(FailOnceStorage, inner);
 
 impl StorageWriter for FailOnceStorage {
     fn apply_atomic(&self, batch: &AtomicWriteBatch) -> Result<(), StorageError> {

@@ -414,6 +414,7 @@ mod tests {
     #[test]
     fn streaming_verifier_crosses_256_committee_transitions() {
         use outbe_consensus::finalized_admission_test_utils::FinalityCommitteeFixture;
+
         use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
 
         const LAST_EPOCH: u64 = 300;
@@ -465,6 +466,7 @@ mod tests {
     #[test]
     fn committee_transition_rejects_wrong_epoch_or_missing_successor() {
         use outbe_consensus::finalized_admission_test_utils::FinalityCommitteeFixture;
+
         use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
 
         let context = DcapOnboardingContextV1 {
@@ -530,43 +532,11 @@ mod tests {
     }
 
     fn verify_real_proof(upgrade: bool, indirect: bool) {
-        use std::collections::BTreeMap;
-
         use alloy_primitives::{keccak256, Bytes};
         use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles, TrieAccount};
         use outbe_consensus::finalized_admission_test_utils::FinalityCommitteeFixture;
+        use outbe_ocomp_protocol::test_utils::{proof_nodes_for_target, storage_trie};
         use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
-
-        fn storage_trie(slots: &[(U256, U256)]) -> (B256, Vec<Vec<Bytes>>) {
-            let targets = slots
-                .iter()
-                .map(|(slot, _)| Nibbles::unpack(keccak256(slot.to_be_bytes::<32>())))
-                .collect::<Vec<_>>();
-            let mut leaves = BTreeMap::new();
-            for ((_, value), target) in slots.iter().zip(&targets) {
-                if !value.is_zero() {
-                    leaves.insert(*target, alloy_rlp::encode_fixed_size(value).to_vec());
-                }
-            }
-            let mut builder = HashBuilder::default()
-                .with_proof_retainer(ProofRetainer::from_iter(targets.clone()));
-            for (path, value) in leaves {
-                builder.add_leaf(path, &value);
-            }
-            let root = builder.root();
-            let retained = builder.take_proof_nodes();
-            let proofs = targets
-                .iter()
-                .map(|target| {
-                    retained
-                        .matching_nodes_sorted(target)
-                        .into_iter()
-                        .map(|(_, node)| node)
-                        .collect()
-                })
-                .collect();
-            (root, proofs)
-        }
 
         fn account_trie(account: TrieAccount) -> (B256, Vec<Bytes>) {
             let target = Nibbles::unpack(keccak256(TEE_REGISTRY_ADDRESS));
@@ -574,12 +544,7 @@ mod tests {
                 HashBuilder::default().with_proof_retainer(ProofRetainer::from_iter([target]));
             builder.add_leaf(target, &alloy_rlp::encode(account));
             let root = builder.root();
-            let proof = builder
-                .take_proof_nodes()
-                .matching_nodes_sorted(&target)
-                .into_iter()
-                .map(|(_, node)| node)
-                .collect();
+            let proof = proof_nodes_for_target(&builder.take_proof_nodes(), &target);
             (root, proof)
         }
 
@@ -662,12 +627,14 @@ mod tests {
             compact_certified_header(&transition.finalization, &transition.block);
         if indirect {
             let descendant = epoch0.certify_child_block(
-                Epoch::new(0),
-                2,
-                950,
-                B256::repeat_byte(0x82),
-                Vec::new(),
-                transition.block_hash,
+                outbe_consensus::finalized_admission_test_utils::CertifiedChildBlockInput {
+                    epoch: Epoch::new(0),
+                    height: 2,
+                    timestamp: 950,
+                    state_root: B256::repeat_byte(0x82),
+                    extra_data: Vec::new(),
+                    parent_hash: transition.block_hash,
+                },
             );
             let compact = compact_certified_header(&descendant.finalization, &descendant.block);
             transition_header.finalization = compact.finalization;
@@ -699,12 +666,14 @@ mod tests {
         };
         if indirect {
             let descendant = epoch1.certify_child_block(
-                Epoch::new(1),
-                admission_height + 1,
-                1_001,
-                B256::repeat_byte(0x83),
-                Vec::new(),
-                admission.block_hash,
+                outbe_consensus::finalized_admission_test_utils::CertifiedChildBlockInput {
+                    epoch: Epoch::new(1),
+                    height: admission_height + 1,
+                    timestamp: 1_001,
+                    state_root: B256::repeat_byte(0x83),
+                    extra_data: Vec::new(),
+                    parent_hash: admission.block_hash,
+                },
             );
             let compact = compact_certified_header(&descendant.finalization, &descendant.block);
             proof.admission.finalization = compact.finalization;
@@ -725,12 +694,14 @@ mod tests {
             .contains("skips an unauthenticated committee"));
         if indirect {
             let forged = epoch1.certify_child_block(
-                Epoch::new(1),
-                2,
-                950,
-                B256::repeat_byte(0x82),
-                Vec::new(),
-                transition.block_hash,
+                outbe_consensus::finalized_admission_test_utils::CertifiedChildBlockInput {
+                    epoch: Epoch::new(1),
+                    height: 2,
+                    timestamp: 950,
+                    state_root: B256::repeat_byte(0x82),
+                    extra_data: Vec::new(),
+                    parent_hash: transition.block_hash,
+                },
             );
             let signed = compact_certified_header(&forged.finalization, &forged.block);
             let mut circular = transition_header.clone();

@@ -73,11 +73,14 @@ where
             let db = self.inner.evm.db_mut();
             let ctx = build_block_context(
                 db,
-                block_number,
-                timestamp,
-                chain_id,
-                self.genesis_hash,
-                proposer,
+                BlockContext {
+                    block_number,
+                    timestamp,
+                    chain_id,
+                    genesis_hash: self.genesis_hash,
+                    proposer,
+                    validators: Vec::new(),
+                },
             )?;
             run_atomic_storage_hook_with_output(db, ctx, |hook_ctx| {
                 let lifecycle = outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(
@@ -136,11 +139,14 @@ where
             let db = self.inner.evm.db_mut();
             let ctx = build_block_context(
                 db,
-                block_number,
-                timestamp,
-                chain_id,
-                self.genesis_hash,
-                proposer,
+                BlockContext {
+                    block_number,
+                    timestamp,
+                    chain_id,
+                    genesis_hash: self.genesis_hash,
+                    proposer,
+                    validators: Vec::new(),
+                },
             )?;
             run_atomic_storage_hook_with_output(db, ctx, |hook_ctx| {
                 let lifecycle = outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(

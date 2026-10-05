@@ -4,6 +4,7 @@ use super::compressed_public_key;
 use super::development_identity_v1;
 use super::load_secp256k1_key_file;
 use super::parse_nonzero_b256;
+use outbe_operator::tx::UnsignedRelayTransactionV1;
 
 use super::sign_node_hash;
 use super::CliFinalityRpc;
@@ -628,14 +629,14 @@ pub(super) async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> R
                     evm_signer.address()
                 );
             }
-            let raw = relay_signer.sign_renewal(
-                rpc_chain_id,
+            let raw = relay_signer.sign_renewal(UnsignedRelayTransactionV1 {
+                chain_id: rpc_chain_id,
                 account_nonce,
                 gas_price,
                 gas_limit,
-                abi::TEE_REGISTRY_ADDR,
-                &call,
-            )?;
+                to: abi::TEE_REGISTRY_ADDR,
+                calldata: &call,
+            })?;
             persist_replacement_candidate_relay(node_data_dir, calldata_hash, &raw.raw_transaction)
                 .map_err(|error| eyre::eyre!("persist exact candidate transaction: {error}"))?
         };
@@ -711,14 +712,14 @@ pub(super) async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> R
                 );
             }
             let from_block = client.eth_block_number().await?;
-            let raw = relay_signer.sign_renewal(
-                rpc_chain_id,
+            let raw = relay_signer.sign_renewal(UnsignedRelayTransactionV1 {
+                chain_id: rpc_chain_id,
                 account_nonce,
                 gas_price,
                 gas_limit,
-                abi::TEE_REGISTRY_ADDR,
-                &call,
-            )?;
+                to: abi::TEE_REGISTRY_ADDR,
+                calldata: &call,
+            })?;
             persist_committed_join_relay(
                 node_data_dir,
                 calldata_hash,

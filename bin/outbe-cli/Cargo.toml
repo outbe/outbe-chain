@@ -17,7 +17,6 @@ path = "src/main.rs"
 outbe-gratis.workspace = true
 outbe-gratisfactory.workspace = true
 outbe-credisfactory.workspace = true
-outbe-credis.workspace = true
 outbe-vaultrouter.workspace = true
 # Alloy (ABI encoding + primitives)
 alloy-consensus.workspace = true

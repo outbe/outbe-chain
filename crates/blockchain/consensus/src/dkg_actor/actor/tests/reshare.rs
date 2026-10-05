@@ -345,31 +345,8 @@ fn removed_old_validator_can_deal_without_being_target_player() {
                 .await
                 .expect("collect signed dealer logs");
 
-            assert!(
-                chain_logs.contains_key(&removed_pk),
-                "removed old validator must publish a valid dealer log"
-            );
-            let mut selected_logs = Vec::with_capacity(log_threshold as usize);
-            selected_logs.push(chain_logs.get(&removed_pk).unwrap().clone());
-            for (dealer, bytes) in &chain_logs {
-                if dealer == &removed_pk {
-                    continue;
-                }
-                selected_logs.push(bytes.clone());
-                if selected_logs.len() == log_threshold as usize {
-                    break;
-                }
-            }
-            assert_eq!(
-                selected_logs.len(),
-                log_threshold as usize,
-                "test must feed a threshold set including the removed dealer"
-            );
-            for bytes in selected_logs {
-                for tx in &finalized_log_txs {
-                    tx.send(bytes.clone()).unwrap();
-                }
-            }
+            let selected_logs = threshold_logs_with_dealer(&chain_logs, &removed_pk, log_threshold);
+            broadcast_selected_logs(selected_logs, &finalized_log_txs);
 
             let dealer_only_result = dealer_only_handle
                 .expect("dealer-only task must be spawned for removed validator")
@@ -390,4 +367,43 @@ fn removed_old_validator_can_deal_without_being_target_player() {
             }
         },
     );
+}
+
+fn threshold_logs_with_dealer(
+    chain_logs: &BTreeMap<bls12381::PublicKey, Bytes>,
+    removed_pk: &bls12381::PublicKey,
+    log_threshold: u32,
+) -> Vec<Bytes> {
+    assert!(
+        chain_logs.contains_key(removed_pk),
+        "removed old validator must publish a valid dealer log"
+    );
+    let mut selected_logs = Vec::with_capacity(log_threshold as usize);
+    selected_logs.push(chain_logs.get(removed_pk).unwrap().clone());
+    for (dealer, bytes) in chain_logs {
+        if dealer == removed_pk {
+            continue;
+        }
+        selected_logs.push(bytes.clone());
+        if selected_logs.len() == log_threshold as usize {
+            break;
+        }
+    }
+    assert_eq!(
+        selected_logs.len(),
+        log_threshold as usize,
+        "test must feed a threshold set including the removed dealer"
+    );
+    selected_logs
+}
+
+fn broadcast_selected_logs(
+    selected_logs: Vec<Bytes>,
+    finalized_log_txs: &[mpsc::UnboundedSender<Bytes>],
+) {
+    for bytes in selected_logs {
+        for tx in finalized_log_txs {
+            tx.send(bytes.clone()).unwrap();
+        }
+    }
 }

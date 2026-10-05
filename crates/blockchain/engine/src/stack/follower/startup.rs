@@ -461,10 +461,14 @@ impl RecoveryAuthority<'_> {
                 )
             })?;
             validate_ancestor_follower_recovery_record(
-                recovery_height,
-                recovery_hash,
+                crate::stack::recovery::anchor::FollowerRecoveryBlock {
+                    checkpoint: ProjectionCheckpoint {
+                        block_number: recovery_height,
+                        block_hash: recovery_hash,
+                    },
+                    block: local_block,
+                },
                 archived_finalization.as_ref(),
-                local_block,
                 &upstream,
                 certificate_scheme_provider,
                 epocher,
@@ -611,9 +615,11 @@ impl<E: FollowerRuntime> ExecutionBootstrap<E> {
         let (executor_actor, executor_mailbox) = ExecutorActor::new(
             ctx.child("executor"),
             engine_handle,
-            genesis_hash,
-            recovery_anchor.checkpoint.block_number,
-            recovery_anchor.checkpoint.block_hash,
+            outbe_consensus::executor::actor::RecoveredFinalizedState {
+                genesis_hash,
+                last_finalized_height: recovery_anchor.checkpoint.block_number,
+                last_finalized_hash: recovery_anchor.checkpoint.block_hash,
+            },
             projection_readiness.clone(),
             Some(execution_finalized_height_tx),
         );

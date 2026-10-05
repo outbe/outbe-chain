@@ -35,9 +35,13 @@ fn admit(
 pub(crate) fn run() {
     let (
         VotingOpenScenario {
-            open_height,
-            finalized_record,
-            voting_open,
+            state:
+                VotingOpenState {
+                    open_height,
+                    finalized_record,
+                    voting_open,
+                    ..
+                },
             ..
         },
         pre_open,

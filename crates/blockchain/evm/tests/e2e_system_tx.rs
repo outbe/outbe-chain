@@ -6,7 +6,7 @@ use outbe_evm::system_tx::{
     SYSTEM_TX_ARTIFACT_GAS_LIMIT, SYSTEM_TX_VISIBLE_GAS_FLOOR,
 };
 use outbe_primitives::{
-    consensus::{DkgBoundaryArtifact, ReshareResult, OUTBE_MAX_EXTRA_DATA_SIZE},
+    consensus::{DkgBoundaryArtifact, OUTBE_MAX_EXTRA_DATA_SIZE},
     consensus_metadata::{CertifiedParentAccountingMetadata, ParentParticipationProof},
 };
 use reth_ethereum::TransactionSigned;
@@ -54,27 +54,7 @@ fn large_metadata() -> CertifiedParentAccountingMetadata {
 }
 
 fn sample_boundary() -> DkgBoundaryArtifact {
-    DkgBoundaryArtifact {
-        epoch: 8,
-        dkg_cycle: 2,
-        freeze_height: BLOCK_NUMBER - 2,
-        planned_activation_height: BLOCK_NUMBER,
-        target_set_hash: B256::repeat_byte(0x33),
-        vrf_material_version: 3,
-        vrf_group_public_key: B256::repeat_byte(0x44),
-        vrf_group_public_key_bytes: Bytes::from_static(&[0x44u8; 96]),
-        committee_set_hash: B256::repeat_byte(0x66),
-        is_validator_set_change: true,
-        outcome: Bytes::from_static(b"boundary"),
-        is_full_dkg: false,
-        tee_recipient_pubkeys: Vec::new(),
-        tee_expired_target_exclusions: Vec::new(),
-        tee_expired_target_exclusions_hash: B256::ZERO,
-        reshare: ReshareResult {
-            new_active_set: vec![address!("0x3333333333333333333333333333333333333333")],
-            active_set_hash: B256::repeat_byte(0x55),
-        },
-    }
+    outbe_primitives::test_utils::sample_system_tx_boundary(BLOCK_NUMBER)
 }
 
 fn large_boundary() -> DkgBoundaryArtifact {

@@ -1,5 +1,5 @@
 use super::*;
-use crate::consensus::{DkgBoundaryArtifact, ReshareResult};
+use crate::consensus::DkgBoundaryArtifact;
 use crate::consensus_metadata::CertifiedParentAccountingMetadata;
 use crate::reshare_artifact::LateFinalizeCreditsArtifact;
 use crate::signer::OutbeEvmSigner;

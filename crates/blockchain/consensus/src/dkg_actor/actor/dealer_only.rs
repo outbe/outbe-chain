@@ -16,6 +16,7 @@ use super::DkgProgress;
 use super::ACK_COLLECTION_GRACE;
 use super::DKG_TIMEOUT;
 use super::RETRY_INTERVAL;
+use super::{DkgDealerParameters, DkgTransport};
 use alloy_primitives::Bytes;
 use commonware_codec::Encode;
 use commonware_cryptography::bls12381;
@@ -78,19 +79,25 @@ struct DealerOnlyState {
     next_retry_tick: SystemTime,
     ack_collection_deadline: Option<SystemTime>,
 }
-#[allow(clippy::too_many_arguments)]
 pub async fn run_reshare_dealer_only_durable(
     clock: &impl Clock,
-    signing_key: bls12381::PrivateKey,
-    participants: Set<bls12381::PublicKey>,
-    previous_output: Output<MinSig, bls12381::PublicKey>,
-    previous_share: Share,
-    round: u64,
+    parameters: DkgDealerParameters,
     progress_tx: mpsc::UnboundedSender<DkgProgress>,
     retry_store: DkgRetryStore,
-    sender: impl P2pSender<PublicKey = bls12381::PublicKey>,
-    receiver: impl P2pReceiver<PublicKey = bls12381::PublicKey>,
+    transport: DkgTransport<
+        impl P2pSender<PublicKey = bls12381::PublicKey>,
+        impl P2pReceiver<PublicKey = bls12381::PublicKey>,
+    >,
 ) -> Result<DkgDealerOnlyComplete> {
+    let DkgDealerParameters {
+        signing_key,
+        participants,
+        previous_output,
+        previous_share,
+        round,
+    } = parameters;
+    let DkgTransport { sender, receiver } = transport;
+
     run(
         clock,
         DealerOnlyConfig {

@@ -18,9 +18,11 @@ impl ApplicationShared {
             &self.finalization_view,
             &self.marshal_mailbox,
             clock,
-            round,
-            parent_view,
-            parent_digest,
+            epoch_boundary::EpochBoundaryParentRequest {
+                round,
+                parent_view,
+                parent_digest,
+            },
         )
         .await
         {

@@ -39,7 +39,7 @@ use crate::finalization::util::{
     classify_finalization, extract_header_artifact_from_block, retry_with_backoff,
     ReplayClassification,
 };
-use commonware_consensus::marshal::core::DigestFallback;
+use commonware_consensus::{marshal::core::DigestFallback, types::Round};
 
 /// Bound on consensus-owned exact-parent certificate handoff retention.
 ///
@@ -163,17 +163,7 @@ impl FinalizationActor {
         Ok(())
     }
 
-    /// Handle a production finalization notification by resolving the finalized
-    /// block through marshal and then applying all finalization side effects in
-    /// actor order.
-    async fn handle_finalized(&self, clock: &impl Clock, finalized: Finalized) -> eyre::Result<()> {
-        let digest = finalized.digest;
-        let round = finalized.round;
-        let view = round.view().get();
-        debug!(?round, view, %digest, "finalization received");
-
-        // Stale-round short-circuit (no marshal lookup needed for
-        // historical rounds).
+    fn should_drop_finalization(&self, round: Round, digest: Digest) -> eyre::Result<bool> {
         {
             let view_snapshot = self.deps.view.read();
             if let Some(last_round) = view_snapshot.last_finalized_round {
@@ -187,56 +177,87 @@ impl FinalizationActor {
                         %digest,
                         "dropping stale finalized round before marshal resolution"
                     );
-                    return Ok(());
+                    return Ok(true);
                 }
                 if round == last_round {
-                    if digest.0 != view_snapshot.forkchoice.finalized_block_hash {
-                        crate::metrics::record_finalization_dropped(
-                            crate::metrics::FinalizationDropReason::SameRoundInconsistency,
-                        );
-                        tracing::error!(
-                            ?round,
-                            %digest,
-                            finalized_hash = %view_snapshot.forkchoice.finalized_block_hash,
-                            "fatal same-round finalization inconsistency; stopping FinalizationActor"
-                        );
-                        return Err(eyre::eyre!(
-                            "same-round finalization inconsistency at {:?}: \
-                             new digest {digest} conflicts with finalized hash {}",
-                            round,
-                            view_snapshot.forkchoice.finalized_block_hash
-                        ));
-                    }
-
-                    let proof_key =
-                        crate::finalization::parent_cert_store::CertifiedParentProofKey::new(
-                            round.epoch().get(),
-                            round.view().get(),
-                            digest.0,
-                        );
-                    if self
-                        .deps
-                        .parent_cert_store
-                        .get_finalization(proof_key)
-                        .is_some()
-                    {
-                        crate::metrics::record_finalization_dropped(
-                            crate::metrics::FinalizationDropReason::DuplicateRound,
-                        );
-                        debug!(
-                            ?round,
-                            %digest,
-                            "dropping duplicate finalized round before marshal resolution"
-                        );
-                        return Ok(());
-                    }
-                    debug!(
-                        ?round,
-                        %digest,
-                        "replaying duplicate finalized round to repair missing parent certificate record"
+                    return self.should_drop_duplicate_finalization(
+                        round,
+                        digest,
+                        view_snapshot.forkchoice.finalized_block_hash,
                     );
                 }
             }
+        }
+
+        Ok(false)
+    }
+
+    fn should_drop_duplicate_finalization(
+        &self,
+        round: Round,
+        digest: Digest,
+        finalized_hash: alloy_primitives::B256,
+    ) -> eyre::Result<bool> {
+        if digest.0 != finalized_hash {
+            crate::metrics::record_finalization_dropped(
+                crate::metrics::FinalizationDropReason::SameRoundInconsistency,
+            );
+            tracing::error!(
+                ?round,
+                %digest,
+                finalized_hash = %finalized_hash,
+                "fatal same-round finalization inconsistency; stopping FinalizationActor"
+            );
+            return Err(eyre::eyre!(
+                "same-round finalization inconsistency at {:?}: \
+                 new digest {digest} conflicts with finalized hash {}",
+                round,
+                finalized_hash
+            ));
+        }
+
+        let proof_key = crate::finalization::parent_cert_store::CertifiedParentProofKey::new(
+            round.epoch().get(),
+            round.view().get(),
+            digest.0,
+        );
+        if self
+            .deps
+            .parent_cert_store
+            .get_finalization(proof_key)
+            .is_some()
+        {
+            crate::metrics::record_finalization_dropped(
+                crate::metrics::FinalizationDropReason::DuplicateRound,
+            );
+            debug!(
+                ?round,
+                %digest,
+                "dropping duplicate finalized round before marshal resolution"
+            );
+            return Ok(true);
+        }
+        debug!(
+            ?round,
+            %digest,
+            "replaying duplicate finalized round to repair missing parent certificate record"
+        );
+        Ok(false)
+    }
+
+    /// Handle a production finalization notification by resolving the finalized
+    /// block through marshal and then applying all finalization side effects in
+    /// actor order.
+    async fn handle_finalized(&self, clock: &impl Clock, finalized: Finalized) -> eyre::Result<()> {
+        let digest = finalized.digest;
+        let round = finalized.round;
+        let view = round.view().get();
+        debug!(?round, view, %digest, "finalization received");
+
+        // Stale-round short-circuit (no marshal lookup needed for
+        // historical rounds).
+        if self.should_drop_finalization(round, digest)? {
+            return Ok(());
         }
 
         // Fast path: proposer's own block in the shared cache.

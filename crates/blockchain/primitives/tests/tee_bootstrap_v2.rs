@@ -491,12 +491,14 @@ fn thirty_two_validator_near_cap_bootstrap_fits_five_transaction_block() {
         .enumerate()
         .map(|(ordinal, (kind, calldata))| {
             build_unsigned_system_tx_with_gas_limit(
-                kind,
-                u8::try_from(ordinal).unwrap(),
-                1,
-                1,
-                calldata,
-                gas_plan.gas_limit(ordinal).unwrap(),
+                outbe_primitives::system_tx::SystemTxEnvelopeInput {
+                    kind,
+                    ordinal: u8::try_from(ordinal).unwrap(),
+                    block_number: 1,
+                    chain_id: 1,
+                    calldata,
+                    gas_limit: gas_plan.gas_limit(ordinal).unwrap(),
+                },
             )
             .unwrap()
             .into_signed(Signature::test_signature())

@@ -97,7 +97,7 @@ use outbe_node::OutbeFullNode;
 use outbe_ocomp_protocol::profile::poc_schema_limits;
 use outbe_primitives::{
     consensus::{ConsensusExecutionBridge, DkgBoundaryArtifact},
-    projection::{ProjectionCheckpoint, ProjectionReadinessHandle, WaitOutcome},
+    projection::{ProjectionCheckpoint, ProjectionReadinessHandle},
     reshare_artifact::{
         decode_boundary_artifact, decode_outbe_block_artifacts, encode_boundary_artifact,
         ConsensusHeaderArtifact,

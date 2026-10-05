@@ -313,14 +313,14 @@ where
         let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
         let chain_id = self.inner.evm.chain_id();
         let db = self.inner.evm.db_mut();
-        let ctx = BlockContext::new_with_genesis_hash(
+        let ctx = BlockContext::new_with_genesis_hash(outbe_primitives::block::BlockContextInput {
             block_number,
             timestamp,
             chain_id,
-            self.genesis_hash,
+            genesis_hash: self.genesis_hash,
             proposer,
-            Vec::new(),
-        );
+            validators: Vec::new(),
+        });
         let mut provider = DirectStorageProvider::new(db, ctx);
         let storage = StorageHandle::new(&mut provider);
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage);

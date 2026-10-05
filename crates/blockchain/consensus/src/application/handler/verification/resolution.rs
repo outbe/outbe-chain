@@ -51,9 +51,11 @@ impl ApplicationShared {
             &self.block_cache,
             &self.marshal_mailbox,
             clock,
-            round,
-            request.payload_digest,
-            VerifyResolveTarget::Block,
+            crate::application::verify_resolution::VerifyResolveRequest {
+                round,
+                digest: request.payload_digest,
+                target: VerifyResolveTarget::Block,
+            },
         )
         .await
         .map_err(|error| {
@@ -82,9 +84,11 @@ impl ApplicationShared {
             &self.finalization_view,
             &self.marshal_mailbox,
             clock,
-            round,
-            parent_view,
-            parent_digest,
+            epoch_boundary::EpochBoundaryParentRequest {
+                round,
+                parent_view,
+                parent_digest,
+            },
         )
         .await
         {
@@ -107,9 +111,11 @@ impl ApplicationShared {
             &self.block_cache,
             &self.marshal_mailbox,
             clock,
-            parent_round(round, parent_view),
-            parent_digest,
-            VerifyResolveTarget::Parent,
+            crate::application::verify_resolution::VerifyResolveRequest {
+                round: parent_round(round, parent_view),
+                digest: parent_digest,
+                target: VerifyResolveTarget::Parent,
+            },
         )
         .await
         .map(Some)

@@ -6,10 +6,10 @@ pub use evidence::{EndpointEvidenceHandle, SignedEndpointEvidence};
 use crate::integration::{RadicleStatusHandle, RadicleVotingGate};
 use crate::{
     endpoint::{
-        sign_response, AnchorSnapshot, AuthorityRecord, ChainIdentity, EndpointActor,
-        EndpointAddress, EndpointFrame, EndpointHandle, EndpointProtocol, EndpointResponseBody,
-        OsRequestIds, PeerId, ReceiveOutcome, SignedEndpointResponse, VerifiedEndpoint,
-        HANDLE_DEADLINE, MAX_ADDRESSES, MAX_ENDPOINT_TTL_BLOCKS, UNKNOWN_ANCHOR_TIMEOUT_MS,
+        sign_response, AnchorSnapshot, ChainIdentity, EndpointActor, EndpointAddress,
+        EndpointFrame, EndpointHandle, EndpointProtocol, EndpointResponseBody, OsRequestIds,
+        PeerId, ReceiveOutcome, SignedEndpointResponse, VerifiedEndpoint, HANDLE_DEADLINE,
+        MAX_ADDRESSES, MAX_ENDPOINT_TTL_BLOCKS, UNKNOWN_ANCHOR_TIMEOUT_MS,
     },
     manager::{BoxFuture, EndpointResolver, FinalizedSnapshot, ManagerError, RadicleManagerHandle},
 };
@@ -462,22 +462,9 @@ async fn cancel_and_join(
 }
 
 fn anchor(snapshot: &FinalizedSnapshot) -> Result<AnchorSnapshot, ManagerError> {
-    AnchorSnapshot::new(
-        snapshot.block.number,
-        snapshot.block.hash,
-        snapshot
-            .validators
-            .iter()
-            .filter_map(|validator| {
-                Some(AuthorityRecord {
-                    validator: validator.address,
-                    peer: validator.peer,
-                    node_id: validator.node_id?,
-                })
-            })
-            .collect(),
-    )
-    .map_err(|error| ManagerError::Snapshot(error.to_string()))
+    snapshot
+        .endpoint_anchor()
+        .map_err(|error| ManagerError::Snapshot(error.to_string()))
 }
 
 fn verified_from_response(peer: PeerId, response: &SignedEndpointResponse) -> VerifiedEndpoint {

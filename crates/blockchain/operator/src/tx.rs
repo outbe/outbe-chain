@@ -32,6 +32,17 @@ pub struct RawRelayTransactionV1 {
     pub transaction_hash: B256,
 }
 
+/// Unsigned zero-value relay call, before nonce/gas signing and serialization.
+#[derive(Clone, Copy)]
+pub struct UnsignedRelayTransactionV1<'a> {
+    pub chain_id: u64,
+    pub account_nonce: u64,
+    pub gas_price: U256,
+    pub gas_limit: u64,
+    pub to: Address,
+    pub calldata: &'a [u8],
+}
+
 pub struct RelaySignerV1 {
     key: SigningKey,
     address: Address,
@@ -50,10 +61,7 @@ impl RelaySignerV1 {
     pub fn from_file(path: &Path) -> Result<Self> {
         let path_metadata = fs::symlink_metadata(path)
             .wrap_err_with(|| format!("stat relay private key {}", path.display()))?;
-        if !path_metadata.file_type().is_file()
-            || path_metadata.uid() != rustix::process::geteuid().as_raw()
-            || path_metadata.permissions().mode() & 0o777 != 0o600
-            || path_metadata.nlink() != 1
+        if !owner_bound_key_file(&path_metadata)
             || path_metadata.len() == 0
             || path_metadata.len() > 130
         {
@@ -103,25 +111,19 @@ impl RelaySignerV1 {
         self.address
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn sign_renewal(
         &self,
-        chain_id: u64,
-        account_nonce: u64,
-        gas_price: U256,
-        gas_limit: u64,
-        to: Address,
-        calldata: &[u8],
+        transaction: UnsignedRelayTransactionV1<'_>,
     ) -> Result<RawRelayTransactionV1> {
-        let raw_transaction = self.sign_legacy_transaction(
+        let UnsignedRelayTransactionV1 {
             chain_id,
             account_nonce,
             gas_price,
             gas_limit,
-            to,
-            U256::ZERO,
+            to: _,
             calldata,
-        )?;
+        } = transaction;
+        let raw_transaction = self.sign_legacy_transaction(transaction, U256::ZERO)?;
         Ok(RawRelayTransactionV1 {
             relay: self.address,
             chain_id,
@@ -134,17 +136,19 @@ impl RelaySignerV1 {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn sign_legacy_transaction(
         &self,
-        chain_id: u64,
-        nonce: u64,
-        gas_price: U256,
-        gas_limit: u64,
-        to: Address,
+        transaction: UnsignedRelayTransactionV1<'_>,
         value: U256,
-        data: &[u8],
     ) -> Result<Vec<u8>> {
+        let UnsignedRelayTransactionV1 {
+            chain_id,
+            account_nonce: nonce,
+            gas_price,
+            gas_limit,
+            to,
+            calldata: data,
+        } = transaction;
         let unsigned_fields = [
             rlp_u64(nonce),
             rlp_u256(gas_price),
@@ -179,6 +183,13 @@ impl RelaySignerV1 {
             rlp_u256(U256::from_be_slice(&bytes[32..])),
         ]))
     }
+}
+
+fn owner_bound_key_file(metadata: &fs::Metadata) -> bool {
+    metadata.file_type().is_file()
+        && metadata.uid() == rustix::process::geteuid().as_raw()
+        && metadata.permissions().mode() & 0o777 == 0o600
+        && metadata.nlink() == 1
 }
 
 fn rlp_u64(value: u64) -> Vec<u8> {
@@ -246,24 +257,24 @@ mod tests {
     fn exact_inputs_produce_exact_raw_transaction_and_hash() {
         let signer = RelaySignerV1::new(&format!("{:064x}", 1)).unwrap();
         let first = signer
-            .sign_renewal(
-                54_322_345,
-                7,
-                U256::from(1_000_000_000_u64),
-                1_000_000,
-                Address::repeat_byte(0xee),
-                &[1, 2, 3],
-            )
+            .sign_renewal(UnsignedRelayTransactionV1 {
+                chain_id: 54_322_345,
+                account_nonce: 7,
+                gas_price: U256::from(1_000_000_000_u64),
+                gas_limit: 1_000_000,
+                to: Address::repeat_byte(0xee),
+                calldata: &[1, 2, 3],
+            })
             .unwrap();
         let second = signer
-            .sign_renewal(
-                54_322_345,
-                7,
-                U256::from(1_000_000_000_u64),
-                1_000_000,
-                Address::repeat_byte(0xee),
-                &[1, 2, 3],
-            )
+            .sign_renewal(UnsignedRelayTransactionV1 {
+                chain_id: 54_322_345,
+                account_nonce: 7,
+                gas_price: U256::from(1_000_000_000_u64),
+                gas_limit: 1_000_000,
+                to: Address::repeat_byte(0xee),
+                calldata: &[1, 2, 3],
+            })
             .unwrap();
         assert_eq!(first, second);
         assert_eq!(first.transaction_hash, keccak256(&first.raw_transaction));
@@ -273,10 +284,24 @@ mod tests {
     fn replacement_keeps_nonce_and_calldata_but_changes_only_fee_and_hash() {
         let signer = RelaySignerV1::new(&format!("{:064x}", 2)).unwrap();
         let low = signer
-            .sign_renewal(1, 9, U256::from(10), 100, Address::ZERO, &[4, 5])
+            .sign_renewal(UnsignedRelayTransactionV1 {
+                chain_id: 1,
+                account_nonce: 9,
+                gas_price: U256::from(10),
+                gas_limit: 100,
+                to: Address::ZERO,
+                calldata: &[4, 5],
+            })
             .unwrap();
         let high = signer
-            .sign_renewal(1, 9, U256::from(20), 100, Address::ZERO, &[4, 5])
+            .sign_renewal(UnsignedRelayTransactionV1 {
+                chain_id: 1,
+                account_nonce: 9,
+                gas_price: U256::from(20),
+                gas_limit: 100,
+                to: Address::ZERO,
+                calldata: &[4, 5],
+            })
             .unwrap();
         assert_eq!(low.account_nonce, high.account_nonce);
         assert_eq!(low.calldata_hash, high.calldata_hash);
