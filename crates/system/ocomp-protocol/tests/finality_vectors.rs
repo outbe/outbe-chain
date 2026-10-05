@@ -276,15 +276,69 @@ fn independent_storage_slots(logical_key: B256, encoded_record: &[u8]) -> Vec<(U
         return vec![(base, U256::from_be_bytes(inline))];
     }
 
-    let mut slots = Vec::with_capacity(1 + encoded_record.len().div_ceil(32));
-    slots.push((base, U256::from(encoded_record.len() * 2 + 1)));
     let data_base = U256::from_be_bytes(keccak256(base.to_be_bytes::<32>()).0);
-    for (index, chunk) in encoded_record.chunks(32).enumerate() {
-        let mut word = [0_u8; 32];
-        word[..chunk.len()].copy_from_slice(chunk);
-        slots.push((data_base + U256::from(index), U256::from_be_bytes(word)));
+    std::iter::once((base, U256::from(encoded_record.len() * 2 + 1)))
+        .chain(encoded_record.chunks(32).enumerate().map(|(index, chunk)| {
+            let mut word = [0_u8; 32];
+            word[..chunk.len()].copy_from_slice(chunk);
+            (data_base + U256::from(index), U256::from_be_bytes(word))
+        }))
+        .collect()
+}
+
+#[test]
+fn independent_bytes_oracle_matches_literal_boundary_words() {
+    let first = U256::from_be_bytes(
+        alloy_primitives::b256!("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20")
+            .0,
+    );
+    let second = U256::from_be_bytes(
+        alloy_primitives::b256!("2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40")
+            .0,
+    );
+    let tail_33 = U256::from_be_bytes(
+        alloy_primitives::b256!("2100000000000000000000000000000000000000000000000000000000000000")
+            .0,
+    );
+    let tail_65 = U256::from_be_bytes(
+        alloy_primitives::b256!("4100000000000000000000000000000000000000000000000000000000000000")
+            .0,
+    );
+    let inline_1 = U256::from_be_bytes(
+        alloy_primitives::b256!("0100000000000000000000000000000000000000000000000000000000000002")
+            .0,
+    );
+    let inline_31 = U256::from_be_bytes(
+        alloy_primitives::b256!("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f3e")
+            .0,
+    );
+    let logical_key = B256::repeat_byte(0x42);
+    let base = logical_key.mapping_slot(U256::from(OCOMP_JOB_RECORDS_BASE_SLOT));
+    let data_base = U256::from_be_bytes(keccak256(base.to_be_bytes::<32>()).0);
+    for (length, expected_words) in [
+        (0_u8, vec![U256::ZERO]),
+        (1, vec![inline_1]),
+        (31, vec![inline_31]),
+        (32, vec![U256::from(65), first]),
+        (33, vec![U256::from(67), first, tail_33]),
+        (64, vec![U256::from(129), first, second]),
+        (65, vec![U256::from(131), first, second, tail_65]),
+    ] {
+        let input = (1..=length).collect::<Vec<_>>();
+        let actual = independent_storage_slots(logical_key, &input);
+        assert_eq!(actual.len(), expected_words.len(), "length {length}");
+        for (index, ((slot, word), expected_word)) in
+            actual.into_iter().zip(expected_words).enumerate()
+        {
+            let expected_slot = if index == 0 {
+                base
+            } else {
+                data_base + U256::from(index - 1)
+            };
+            assert_eq!(slot, expected_slot, "length {length}, slot {index}");
+            assert_eq!(word, expected_word, "length {length}, word {index}");
+        }
     }
-    slots
 }
 
 fn account_trie(accounts: &[(Address, TrieAccount)]) -> (B256, BTreeMap<Address, Vec<Bytes>>) {
