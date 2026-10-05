@@ -399,9 +399,11 @@ fn canonical_missed_proposers(
         epoch,
         &elector,
         Some(&previous.certificate),
-        parent_view,
-        current_view,
-        MAX_MISSED_PROPOSERS_IN_METADATA,
+        crate::missed_proposers::SkippedViewRange {
+            last_view: parent_view,
+            current_view,
+            cap: MAX_MISSED_PROPOSERS_IN_METADATA,
+        },
     );
     let mut missed = Vec::with_capacity(leaders.len());
     for leader in &leaders {

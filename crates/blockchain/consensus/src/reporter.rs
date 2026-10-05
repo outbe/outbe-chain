@@ -743,35 +743,15 @@ impl OutbeReporter {
             self.epoch,
             &self.elector,
             self.view_state.last_certificate(),
-            last_finalized_view,
-            current_view,
-            MAX_MISSED_PROPOSERS,
+            crate::missed_proposers::SkippedViewRange {
+                last_view: last_finalized_view,
+                current_view,
+                cap: MAX_MISSED_PROPOSERS,
+            },
         );
         let dropped = gap.saturating_sub(leaders.len() as u64);
 
-        let mut missed = Vec::with_capacity(leaders.len());
-        for (offset, leader) in leaders.iter().enumerate() {
-            let v = last_finalized_view + 1 + offset as u64;
-            let leader_idx = leader.get() as usize;
-
-            if leader_idx < self.validator_addresses.len() {
-                let addr = self.validator_addresses[leader_idx];
-                debug!(
-                    view = v,
-                    leader_idx,
-                    %addr,
-                    "missed proposer detected"
-                );
-                missed.push(addr);
-            } else {
-                warn!(
-                    view = v,
-                    leader_idx,
-                    total = self.validator_addresses.len(),
-                    "leader index out of bounds"
-                );
-            }
-        }
+        let missed = self.missed_proposer_addresses(last_finalized_view, &leaders);
 
         if !missed.is_empty() {
             info!(
@@ -794,6 +774,38 @@ impl OutbeReporter {
 
             // Record skipped views metric.
             crate::metrics::record_views_skipped(gap);
+        }
+
+        missed
+    }
+
+    fn missed_proposer_addresses(
+        &self,
+        last_finalized_view: u64,
+        leaders: &[commonware_utils::Participant],
+    ) -> Vec<Address> {
+        let mut missed = Vec::with_capacity(leaders.len());
+        for (offset, leader) in leaders.iter().enumerate() {
+            let v = last_finalized_view + 1 + offset as u64;
+            let leader_idx = leader.get() as usize;
+
+            if leader_idx < self.validator_addresses.len() {
+                let addr = self.validator_addresses[leader_idx];
+                debug!(
+                    view = v,
+                    leader_idx,
+                    %addr,
+                    "missed proposer detected"
+                );
+                missed.push(addr);
+            } else {
+                warn!(
+                    view = v,
+                    leader_idx,
+                    total = self.validator_addresses.len(),
+                    "leader index out of bounds"
+                );
+            }
         }
 
         missed

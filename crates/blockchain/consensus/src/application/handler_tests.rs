@@ -1732,9 +1732,11 @@ fn resolve_for_verify_timeout_logs_full_context() {
                 &shared.block_cache,
                 &shared.marshal_mailbox,
                 &clock,
-                round,
-                digest,
-                crate::application::verify_resolution::VerifyResolveTarget::Block,
+                crate::application::verify_resolution::VerifyResolveRequest {
+                    round,
+                    digest,
+                    target: crate::application::verify_resolution::VerifyResolveTarget::Block,
+                },
             )
             .await;
 

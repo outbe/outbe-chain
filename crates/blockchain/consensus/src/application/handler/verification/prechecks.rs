@@ -31,8 +31,10 @@ impl ApplicationShared {
             self.marshal_mailbox.clone(),
             self.block_cache.clone(),
             self.ancestry_readiness.clone(),
-            Some(round),
-            VERIFY_RESOLUTION_TIMEOUT,
+            crate::application::ancestry::AncestryLookupPolicy {
+                round: Some(round),
+                timeout: VERIFY_RESOLUTION_TIMEOUT,
+            },
             clock.child("ancestry"),
         );
         if let Err(error) = validate_header_consensus_artifacts_for_activation(

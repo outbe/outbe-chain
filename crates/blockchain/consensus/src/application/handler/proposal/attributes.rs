@@ -128,8 +128,10 @@ impl ApplicationShared {
             self.marshal_mailbox.clone(),
             self.block_cache.clone(),
             self.ancestry_readiness.clone(),
-            Some(round),
-            PROPOSE_RESOLUTION_TIMEOUT,
+            crate::application::ancestry::AncestryLookupPolicy {
+                round: Some(round),
+                timeout: PROPOSE_RESOLUTION_TIMEOUT,
+            },
             clock.child("ancestry"),
         );
         let plan = match self
