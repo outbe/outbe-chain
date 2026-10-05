@@ -7,24 +7,21 @@ use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
 
 use crate::precompile::IGemFactory;
 
-/// Two Genesis Gems of `load` in one bucket, priced at 2 COEN/USD: Alice's is
-/// settled, Bob's is not. The bucket is marked called at `T_NOW` the way the
-/// call sweep records it, so the unpaid member reads Called with that stamp and
-/// both share the bucket's settlement deadline.
+/// Alice's and Bob's Genesis Gems of `load` share a bucket called at `T_NOW`;
+/// Alice's is settled after the call, so it keeps that `called_at`.
 fn called_bucket(load: U256) -> (HashMapStorageProvider, U256, U256) {
     let mut provider = test_storage(Some(U256::from(2u64) * six_decimal_unit()));
     let ids = StorageHandle::enter(&mut provider, |handle| {
         let paid = issue_at_live_rate(&handle, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
         let unpaid = issue_at_live_rate(&handle, BOB, GemTypes::Genesis, load, 840, 840).unwrap();
-        // Settling leaves the bucket, so take the key while both are members.
         let bucket = gem_api::bucket_of(&handle, paid).unwrap();
         assert_eq!(gem_api::bucket_of(&handle, unpaid).unwrap(), bucket);
         assert!(!bucket.is_zero());
-        gem_api::set_state(&handle, paid, GemState::Settled).unwrap();
         GemContract::new(handle.clone())
             .bucket_called_at
             .write(&bucket, T_NOW)
             .unwrap();
+        gem_api::set_state(&handle, paid, GemState::Settled).unwrap();
         (paid, unpaid)
     });
     (provider, ids.0, ids.1)
@@ -40,15 +37,18 @@ fn a_settled_gem_mines_after_the_settlement_deadline_while_its_unpaid_twin_is_re
 
     StorageHandle::enter(&mut provider, |handle| {
         let handle = &handle;
+        let now = handle.timestamp().unwrap().to::<u64>();
         let twin = gem_api::get_gem(handle, unpaid).unwrap().unwrap();
         assert_eq!(twin.state, GemState::Called as u8, "the bucket is called");
         assert_eq!(twin.called_at, T_NOW);
+        assert_eq!(
+            twin.effective_state(now),
+            GemState::Forfeited as u8,
+            "the settlement deadline has passed"
+        );
         let gem = gem_api::get_gem(handle, paid).unwrap().unwrap();
         assert_eq!(gem.state, GemState::Settled as u8);
-        assert!(
-            handle.timestamp().unwrap().to::<u64>() > deadline,
-            "the fixture sits past the settlement deadline"
-        );
+        assert_eq!(gem.called_at, T_NOW, "the paid Gem shares the deadline");
 
         // The unpaid twin is refused at the mining gate.
         let refused = runtime::mine_promis(
