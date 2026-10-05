@@ -9,7 +9,7 @@
 #[path = "finality_vectors/public_builder.rs"]
 mod public_builder;
 
-use outbe_ocomp_protocol::test_utils::storage_trie;
+use outbe_ocomp_protocol::test_utils::{proof_nodes_for_target, storage_trie};
 use std::collections::BTreeMap;
 
 use alloy_consensus::Header;
@@ -307,11 +307,7 @@ fn account_trie(accounts: &[(Address, TrieAccount)]) -> (B256, BTreeMap<Address,
     let proofs = targets
         .into_iter()
         .map(|(address, target)| {
-            let proof = retained
-                .matching_nodes_sorted(&target)
-                .into_iter()
-                .map(|(_, node)| node)
-                .collect();
+            let proof = proof_nodes_for_target(&retained, &target);
             (address, proof)
         })
         .collect();

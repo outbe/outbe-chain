@@ -1,4 +1,4 @@
-use outbe_ocomp_protocol::test_utils::storage_trie;
+use outbe_ocomp_protocol::test_utils::{proof_nodes_for_target, storage_trie};
 #[path = "../../../../testing/support/block_num_reader.rs"]
 mod block_num_reader;
 
@@ -1022,16 +1022,7 @@ fn account_trie(
     let retained = builder.take_proof_nodes();
     let proofs = targets
         .into_iter()
-        .map(|(address, target)| {
-            (
-                address,
-                retained
-                    .matching_nodes_sorted(&target)
-                    .into_iter()
-                    .map(|(_, node)| node)
-                    .collect(),
-            )
-        })
+        .map(|(address, target)| (address, proof_nodes_for_target(&retained, &target)))
         .collect();
     (root, proofs)
 }

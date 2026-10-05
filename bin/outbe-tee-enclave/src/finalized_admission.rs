@@ -535,7 +535,7 @@ mod tests {
         use alloy_primitives::{keccak256, Bytes};
         use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles, TrieAccount};
         use outbe_consensus::finalized_admission_test_utils::FinalityCommitteeFixture;
-        use outbe_ocomp_protocol::test_utils::storage_trie;
+        use outbe_ocomp_protocol::test_utils::{proof_nodes_for_target, storage_trie};
         use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
 
         fn account_trie(account: TrieAccount) -> (B256, Vec<Bytes>) {
@@ -544,12 +544,7 @@ mod tests {
                 HashBuilder::default().with_proof_retainer(ProofRetainer::from_iter([target]));
             builder.add_leaf(target, &alloy_rlp::encode(account));
             let root = builder.root();
-            let proof = builder
-                .take_proof_nodes()
-                .matching_nodes_sorted(&target)
-                .into_iter()
-                .map(|(_, node)| node)
-                .collect();
+            let proof = proof_nodes_for_target(&builder.take_proof_nodes(), &target);
             (root, proof)
         }
 
