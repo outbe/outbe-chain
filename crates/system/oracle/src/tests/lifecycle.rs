@@ -751,10 +751,21 @@ fn begin_block_skips_only_the_overflowing_cross_row() {
             .submit_vote(
                 voters[0],
                 &[
-                    (higher.address1(), higher.address2(), U256::MAX, SCALE_1E18),
+                    (
+                        higher.address1(),
+                        higher.address2(),
+                        fixed18(100),
+                        SCALE_1E18,
+                    ),
                     (lower.address1(), lower.address2(), U256::ONE, SCALE_1E18),
                 ],
             )
+            .unwrap();
+        // Exercise malformed persisted state; admission rejects this extreme rate.
+        oracle
+            .vote_rate
+            .get_nested(&voters[0])
+            .write(&0, U256::MAX)
             .unwrap();
         for voter in &voters[1..] {
             oracle
@@ -830,13 +841,19 @@ fn run_tally_skips_only_a_target_with_unrepresentable_final_cross_rate() {
             let mut votes = vec![(
                 reference.address1(),
                 reference.address2(),
-                reference_rate,
+                U256::ONE,
                 U256::ZERO,
             )];
             if index < 3 {
                 votes.push((target.address1(), target.address2(), SCALE_1E18, U256::ZERO));
             }
             oracle.submit_vote(voter, &votes).unwrap();
+            // Preserve the overflow scenario independently of admission limits.
+            oracle
+                .vote_rate
+                .get_nested(&voter)
+                .write(&0, reference_rate)
+                .unwrap();
         }
 
         crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
@@ -878,7 +895,13 @@ fn unrepresentable_volume_keeps_the_vote_and_stays_out_of_the_median() {
             register_validator(storage.clone(), voter, native_coen(100));
         }
         oracle
-            .submit_vote(voters[0], &[(COEN, usd(), coen_iso(2), U256::MAX)])
+            .submit_vote(voters[0], &[(COEN, usd(), coen_iso(2), coen_iso(1))])
+            .unwrap();
+        // Tally must tolerate persisted volumes outside current admission bounds.
+        oracle
+            .vote_volume
+            .get_nested(&voters[0])
+            .write(&0, U256::MAX)
             .unwrap();
         for voter in &voters[1..] {
             oracle
@@ -916,7 +939,13 @@ fn unrepresentable_median_volume_omits_snapshot_without_penalizing_any_validator
         }
         for voter in &voters[..3] {
             oracle
-                .submit_vote(*voter, &[(COEN, usd(), coen_iso(2), U256::MAX)])
+                .submit_vote(*voter, &[(COEN, usd(), coen_iso(2), coen_iso(1))])
+                .unwrap();
+            // Seed the malformed persisted volume after bounded admission.
+            oracle
+                .vote_volume
+                .get_nested(voter)
+                .write(&0, U256::MAX)
                 .unwrap();
         }
         oracle
@@ -1043,7 +1072,6 @@ fn cross_target_volume_is_the_median_of_the_cross_winners() {
         let large_volume = U256::MAX / high_rate + U256::ONE;
         let reference_rates = [fixed18(1), high_rate, fixed18(1), fixed18(1)];
         let target_rates = [fixed18(1), high_rate, high_rate];
-        let target_volumes = [U256::ZERO, large_volume, U256::ZERO];
 
         for (index, voter) in voters.into_iter().enumerate() {
             let mut votes = vec![(
@@ -1057,10 +1085,18 @@ fn cross_target_volume_is_the_median_of_the_cross_winners() {
                     target.address1(),
                     target.address2(),
                     target_rates[index],
-                    target_volumes[index],
+                    U256::ZERO,
                 ));
             }
             oracle.submit_vote(voter, &votes).unwrap();
+            if index == 1 {
+                // Inject only the overflowing target volume into the persisted vote.
+                oracle
+                    .vote_volume
+                    .get_nested(&voter)
+                    .write(&1, large_volume)
+                    .unwrap();
+            }
         }
 
         crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
