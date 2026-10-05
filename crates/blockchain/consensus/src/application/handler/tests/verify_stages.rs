@@ -10,22 +10,24 @@ fn proposed_block(parent: Option<&ConsensusBlock>, malformed_phase1: bool) -> Co
     let mut raw = if parent.is_some() && !malformed_phase1 {
         crate::test_fixtures::block_with_system_inputs(
             &OutbeEvmSigner::from_secret_bytes([1; 32]).unwrap(),
-            2,
-            parent_hash,
-            Bytes::new(),
-            vec![
-                SystemTxInputV2::CertifiedParentAccounting {
-                    metadata: crate::test_fixtures::finalized_metadata(parent_hash),
-                },
-                SystemTxInputV2::LateFinalizeCredits {
-                    artifact: Default::default(),
-                },
-                SystemTxInputV2::CycleTick,
-                SystemTxInputV2::RewardsGemDelivery,
-                SystemTxInputV2::OracleSlashWindow,
-                SystemTxInputV2::HookEvents,
-            ],
-            outbe_primitives::chain::CHAIN_ID,
+            crate::test_fixtures::SystemBlockFixture {
+                block_number: 2,
+                parent_hash,
+                extra_data: Bytes::new(),
+                inputs: vec![
+                    SystemTxInputV2::CertifiedParentAccounting {
+                        metadata: crate::test_fixtures::finalized_metadata(parent_hash),
+                    },
+                    SystemTxInputV2::LateFinalizeCredits {
+                        artifact: Default::default(),
+                    },
+                    SystemTxInputV2::CycleTick,
+                    SystemTxInputV2::RewardsGemDelivery,
+                    SystemTxInputV2::OracleSlashWindow,
+                    SystemTxInputV2::HookEvents,
+                ],
+                chain_id: outbe_primitives::chain::CHAIN_ID,
+            },
         )
         .into_inner()
         .into_block()

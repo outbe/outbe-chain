@@ -266,11 +266,13 @@ mod tests {
         let parent_hash = B256::ZERO;
         let block = block_with_gas_planned_system_inputs(
             &signer,
-            2,
-            parent_hash,
-            Bytes::new(),
-            steady_system_inputs(parent_hash),
-            outbe_primitives::chain::CHAIN_ID,
+            SystemBlockFixture {
+                block_number: 2,
+                parent_hash,
+                extra_data: Bytes::new(),
+                inputs: steady_system_inputs(parent_hash),
+                chain_id: outbe_primitives::chain::CHAIN_ID,
+            },
             30_000_000,
         );
 
@@ -296,11 +298,13 @@ mod tests {
         let parent_hash = B256::ZERO;
         let block = block_with_gas_planned_system_inputs(
             &signer,
-            2,
-            parent_hash,
-            Bytes::new(),
-            steady_system_inputs(parent_hash),
-            outbe_primitives::chain::CHAIN_ID,
+            SystemBlockFixture {
+                block_number: 2,
+                parent_hash,
+                extra_data: Bytes::new(),
+                inputs: steady_system_inputs(parent_hash),
+                chain_id: outbe_primitives::chain::CHAIN_ID,
+            },
             outbe_primitives::system_tx::BOOTSTRAP_BLOCK_GAS_LIMIT,
         );
 
@@ -329,24 +333,26 @@ mod tests {
         let parent_hash = B256::ZERO;
         let block = block_with_gas_planned_system_inputs(
             &signer,
-            ACTIVATION_HEIGHT,
-            parent_hash,
-            Bytes::new(),
-            vec![
-                SystemTxInputV2::CertifiedParentAccounting {
-                    metadata: finalized_metadata(parent_hash),
-                },
-                SystemTxInputV2::LateFinalizeCredits {
-                    artifact: Default::default(),
-                },
-                SystemTxInputV2::OcompLifecycleBegin,
-                SystemTxInputV2::CycleTick,
-                SystemTxInputV2::RewardsGemDelivery,
-                SystemTxInputV2::OracleSlashWindow,
-                SystemTxInputV2::HookEvents,
-                SystemTxInputV2::OcompTerminalRequest,
-            ],
-            outbe_primitives::chain::CHAIN_ID,
+            SystemBlockFixture {
+                block_number: ACTIVATION_HEIGHT,
+                parent_hash,
+                extra_data: Bytes::new(),
+                inputs: vec![
+                    SystemTxInputV2::CertifiedParentAccounting {
+                        metadata: finalized_metadata(parent_hash),
+                    },
+                    SystemTxInputV2::LateFinalizeCredits {
+                        artifact: Default::default(),
+                    },
+                    SystemTxInputV2::OcompLifecycleBegin,
+                    SystemTxInputV2::CycleTick,
+                    SystemTxInputV2::RewardsGemDelivery,
+                    SystemTxInputV2::OracleSlashWindow,
+                    SystemTxInputV2::HookEvents,
+                    SystemTxInputV2::OcompTerminalRequest,
+                ],
+                chain_id: outbe_primitives::chain::CHAIN_ID,
+            },
             30_000_000,
         );
         let round = Round::new(Epoch::new(0), View::new(1));
@@ -458,11 +464,13 @@ mod tests {
         let wrong_hash = B256::from([0x22; 32]);
         let block = block_with_system_inputs(
             &signer,
-            2,
-            parent_hash,
-            Bytes::new(),
-            steady_system_inputs(wrong_hash),
-            outbe_primitives::chain::CHAIN_ID,
+            SystemBlockFixture {
+                block_number: 2,
+                parent_hash,
+                extra_data: Bytes::new(),
+                inputs: steady_system_inputs(wrong_hash),
+                chain_id: outbe_primitives::chain::CHAIN_ID,
+            },
         );
 
         let error = validate_system_tx_leader_binding_for_activation(&block, leader_context(Round::new(Epoch::new(0), View::new(1)), &keys[0].public_key(), (&scheme_provider, &committee_provider)))
@@ -501,28 +509,30 @@ mod tests {
         let parent_hash = B256::from([0x33; 32]);
         let block = block_with_system_inputs(
             &signer,
-            2,
-            parent_hash,
-            encode_consensus_header_artifact(&ConsensusHeaderArtifact::BoundaryOutcome(
-                header_artifact,
-            ))
-            .expect("header artifact encodes"),
-            vec![
-                SystemTxInputV2::CertifiedParentAccounting {
-                    metadata: finalized_metadata(parent_hash),
-                },
-                SystemTxInputV2::LateFinalizeCredits {
-                    artifact: Default::default(),
-                },
-                SystemTxInputV2::CycleTick,
-                SystemTxInputV2::RewardsGemDelivery,
-                SystemTxInputV2::BoundaryOutcome {
-                    artifact: tx_artifact,
-                },
-                SystemTxInputV2::OracleSlashWindow,
-                SystemTxInputV2::HookEvents,
-            ],
-            outbe_primitives::chain::CHAIN_ID,
+            SystemBlockFixture {
+                block_number: 2,
+                parent_hash,
+                extra_data: encode_consensus_header_artifact(
+                    &ConsensusHeaderArtifact::BoundaryOutcome(header_artifact),
+                )
+                .expect("header artifact encodes"),
+                inputs: vec![
+                    SystemTxInputV2::CertifiedParentAccounting {
+                        metadata: finalized_metadata(parent_hash),
+                    },
+                    SystemTxInputV2::LateFinalizeCredits {
+                        artifact: Default::default(),
+                    },
+                    SystemTxInputV2::CycleTick,
+                    SystemTxInputV2::RewardsGemDelivery,
+                    SystemTxInputV2::BoundaryOutcome {
+                        artifact: tx_artifact,
+                    },
+                    SystemTxInputV2::OracleSlashWindow,
+                    SystemTxInputV2::HookEvents,
+                ],
+                chain_id: outbe_primitives::chain::CHAIN_ID,
+            },
         );
 
         let error = validate_system_tx_leader_binding_for_activation(

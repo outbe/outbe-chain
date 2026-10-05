@@ -358,34 +358,38 @@ pub(crate) fn finalized_metadata(finalized_block_hash: B256) -> CertifiedParentA
     }
 }
 
+pub(crate) struct SystemBlockFixture {
+    pub(crate) block_number: u64,
+    pub(crate) parent_hash: B256,
+    pub(crate) extra_data: Bytes,
+    pub(crate) inputs: Vec<SystemTxInputV2>,
+    pub(crate) chain_id: u64,
+}
+
 pub(crate) fn block_with_system_inputs(
     signer: &OutbeEvmSigner,
-    block_number: u64,
-    parent_hash: B256,
-    extra_data: Bytes,
-    inputs: Vec<SystemTxInputV2>,
-    chain_id: u64,
+    fixture: SystemBlockFixture,
 ) -> ConsensusBlock {
+    let block_number = fixture.block_number;
     block_with_gas_planned_system_inputs(
         signer,
-        block_number,
-        parent_hash,
-        extra_data,
-        inputs,
-        chain_id,
+        fixture,
         outbe_primitives::system_tx::protocol_block_gas_limit(block_number),
     )
 }
 
 pub(crate) fn block_with_gas_planned_system_inputs(
     signer: &OutbeEvmSigner,
-    block_number: u64,
-    parent_hash: B256,
-    extra_data: Bytes,
-    inputs: Vec<SystemTxInputV2>,
-    chain_id: u64,
+    fixture: SystemBlockFixture,
     block_gas_limit: u64,
 ) -> ConsensusBlock {
+    let SystemBlockFixture {
+        block_number,
+        parent_hash,
+        extra_data,
+        inputs,
+        chain_id,
+    } = fixture;
     let encoded_inputs = inputs
         .into_iter()
         .map(|input| {
@@ -432,21 +436,23 @@ pub(crate) fn block_with_system_tx(signer: &OutbeEvmSigner) -> ConsensusBlock {
     let parent_hash = B256::ZERO;
     block_with_system_inputs(
         signer,
-        2,
-        parent_hash,
-        Bytes::new(),
-        vec![
-            SystemTxInputV2::CertifiedParentAccounting {
-                metadata: finalized_metadata(parent_hash),
-            },
-            SystemTxInputV2::LateFinalizeCredits {
-                artifact: Default::default(),
-            },
-            SystemTxInputV2::CycleTick,
-            SystemTxInputV2::RewardsGemDelivery,
-            SystemTxInputV2::OracleSlashWindow,
-            SystemTxInputV2::HookEvents,
-        ],
-        outbe_primitives::chain::CHAIN_ID,
+        SystemBlockFixture {
+            block_number: 2,
+            parent_hash,
+            extra_data: Bytes::new(),
+            inputs: vec![
+                SystemTxInputV2::CertifiedParentAccounting {
+                    metadata: finalized_metadata(parent_hash),
+                },
+                SystemTxInputV2::LateFinalizeCredits {
+                    artifact: Default::default(),
+                },
+                SystemTxInputV2::CycleTick,
+                SystemTxInputV2::RewardsGemDelivery,
+                SystemTxInputV2::OracleSlashWindow,
+                SystemTxInputV2::HookEvents,
+            ],
+            chain_id: outbe_primitives::chain::CHAIN_ID,
+        },
     )
 }

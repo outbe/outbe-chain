@@ -1,4 +1,23 @@
 use super::*;
+use crate::application::handler::verification::{
+    HeaderArtifactRequest, HeaderArtifactValidationDeps,
+};
+
+fn header_fixture_deps<'a, A: crate::dkg_manager::AncestryReader>(
+    certificate_scheme_provider: &'a HybridSchemeProvider<MinSig>,
+    committee_provider: &'a CommitteeProvider,
+    dkg_manager: &'a DkgManagerMailbox,
+    ancestry: &'a A,
+) -> HeaderArtifactValidationDeps<'a, A> {
+    HeaderArtifactValidationDeps {
+        chain_id: outbe_primitives::chain::CHAIN_ID,
+        ocomp_lifecycle_activation: outbe_primitives::system_tx::OcompLifecycleActivation::Disabled,
+        certificate_scheme_provider,
+        committee_provider,
+        dkg_manager,
+        ancestry,
+    }
+}
 
 const OUTSIDER: Address = address!("0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead");
 
@@ -191,16 +210,14 @@ async fn boundary_header_artifact_must_match_dkg_manager() {
     let ancestry = TestAncestryReader::ready();
 
     assert!(validate_header_consensus_artifacts(
-        &block,
-        None,
-        Round::new(Epoch::new(0), View::new(1)),
-        &keys[0].public_key(),
-        outbe_primitives::chain::CHAIN_ID,
-        ValidatorRole::Signer,
-        &scheme_provider,
-        &committee_provider,
-        &manager,
-        &ancestry,
+        HeaderArtifactRequest {
+            block: &block,
+            parent_block: None,
+            round: Round::new(Epoch::new(0), View::new(1)),
+            proposer: &keys[0].public_key(),
+            role: ValidatorRole::Signer
+        },
+        header_fixture_deps(&scheme_provider, &committee_provider, &manager, &ancestry)
     )
     .await
     .is_ok());
@@ -230,16 +247,14 @@ async fn pending_boundary_must_be_included_exactly() {
     let ancestry = TestAncestryReader::ready();
 
     let missing = validate_header_consensus_artifacts(
-        &block_with_number(0),
-        None,
-        Round::new(Epoch::new(0), View::new(1)),
-        &keys[0].public_key(),
-        outbe_primitives::chain::CHAIN_ID,
-        ValidatorRole::Signer,
-        &scheme_provider,
-        &committee_provider,
-        &manager,
-        &ancestry,
+        HeaderArtifactRequest {
+            block: &block_with_number(0),
+            parent_block: None,
+            round: Round::new(Epoch::new(0), View::new(1)),
+            proposer: &keys[0].public_key(),
+            role: ValidatorRole::Signer,
+        },
+        header_fixture_deps(&scheme_provider, &committee_provider, &manager, &ancestry),
     )
     .await
     .unwrap_err();
@@ -248,16 +263,14 @@ async fn pending_boundary_must_be_included_exactly() {
     let dealer_log_block =
         block_with_header_artifact(&ConsensusHeaderArtifact::DealerLog(dealer_log));
     let wrong_kind = validate_header_consensus_artifacts(
-        &dealer_log_block,
-        None,
-        Round::new(Epoch::new(0), View::new(1)),
-        &keys[0].public_key(),
-        outbe_primitives::chain::CHAIN_ID,
-        ValidatorRole::Signer,
-        &scheme_provider,
-        &committee_provider,
-        &manager,
-        &ancestry,
+        HeaderArtifactRequest {
+            block: &dealer_log_block,
+            parent_block: None,
+            round: Round::new(Epoch::new(0), View::new(1)),
+            proposer: &keys[0].public_key(),
+            role: ValidatorRole::Signer,
+        },
+        header_fixture_deps(&scheme_provider, &committee_provider, &manager, &ancestry),
     )
     .await
     .unwrap_err();
@@ -278,30 +291,26 @@ async fn dealer_log_header_artifact_allows_foreign_valid_dealer() {
     let ancestry = TestAncestryReader::ready();
 
     assert!(validate_header_consensus_artifacts(
-        &block,
-        None,
-        Round::new(Epoch::new(0), View::new(2)),
-        &keys[0].public_key(),
-        outbe_primitives::chain::CHAIN_ID,
-        ValidatorRole::Signer,
-        &scheme_provider,
-        &committee_provider,
-        &manager,
-        &ancestry,
+        HeaderArtifactRequest {
+            block: &block,
+            parent_block: None,
+            round: Round::new(Epoch::new(0), View::new(2)),
+            proposer: &keys[0].public_key(),
+            role: ValidatorRole::Signer
+        },
+        header_fixture_deps(&scheme_provider, &committee_provider, &manager, &ancestry)
     )
     .await
     .is_ok());
     assert!(validate_header_consensus_artifacts(
-        &block,
-        None,
-        Round::new(Epoch::new(0), View::new(2)),
-        &keys[1].public_key(),
-        outbe_primitives::chain::CHAIN_ID,
-        ValidatorRole::Signer,
-        &scheme_provider,
-        &committee_provider,
-        &manager,
-        &ancestry,
+        HeaderArtifactRequest {
+            block: &block,
+            parent_block: None,
+            round: Round::new(Epoch::new(0), View::new(2)),
+            proposer: &keys[1].public_key(),
+            role: ValidatorRole::Signer
+        },
+        header_fixture_deps(&scheme_provider, &committee_provider, &manager, &ancestry)
     )
     .await
     .is_ok());
@@ -321,16 +330,14 @@ async fn dealer_log_header_artifact_rejects_wrong_ceremony() {
     let ancestry = TestAncestryReader::ready();
 
     assert!(validate_header_consensus_artifacts(
-        &block,
-        None,
-        Round::new(Epoch::new(0), View::new(2)),
-        &keys[1].public_key(),
-        outbe_primitives::chain::CHAIN_ID,
-        ValidatorRole::Signer,
-        &scheme_provider,
-        &committee_provider,
-        &manager,
-        &ancestry,
+        HeaderArtifactRequest {
+            block: &block,
+            parent_block: None,
+            round: Round::new(Epoch::new(0), View::new(2)),
+            proposer: &keys[1].public_key(),
+            role: ValidatorRole::Signer
+        },
+        header_fixture_deps(&scheme_provider, &committee_provider, &manager, &ancestry)
     )
     .await
     .is_err());
@@ -366,27 +373,39 @@ fn boundary_for_epoch(
     .unwrap()
 }
 
-async fn verify_carried(
-    block: &crate::block::ConsensusBlock,
-    parent: Option<&crate::block::ConsensusBlock>,
+struct CarriedHeaderFixture<'a> {
+    block: &'a crate::block::ConsensusBlock,
+    parent: Option<&'a crate::block::ConsensusBlock>,
     round_epoch: u64,
+}
+
+async fn verify_carried(
+    fixture: CarriedHeaderFixture<'_>,
     proposer: &bls12381::PublicKey,
     validator_set: &crate::validators::ValidatorSet,
     manager: &DkgManagerMailbox,
 ) -> Result<(), String> {
+    let CarriedHeaderFixture {
+        block,
+        parent,
+        round_epoch,
+    } = fixture;
     let (scheme_provider, committee_provider) =
         leader_binding_providers(Epoch::new(round_epoch), validator_set);
     validate_header_consensus_artifacts(
-        block,
-        parent,
-        Round::new(Epoch::new(round_epoch), View::new(3)),
-        proposer,
-        outbe_primitives::chain::CHAIN_ID,
-        ValidatorRole::Signer,
-        &scheme_provider,
-        &committee_provider,
-        manager,
-        &TestAncestryReader::ready(),
+        HeaderArtifactRequest {
+            block,
+            parent_block: parent,
+            round: Round::new(Epoch::new(round_epoch), View::new(3)),
+            proposer,
+            role: ValidatorRole::Signer,
+        },
+        header_fixture_deps(
+            &scheme_provider,
+            &committee_provider,
+            manager,
+            &TestAncestryReader::ready(),
+        ),
     )
     .await
 }
@@ -405,9 +424,11 @@ async fn already_committed_rejects_forged_preannounce() {
     };
 
     let verdict = verify_carried(
-        &block_with_header_artifact(&forged),
-        Some(&parent),
-        0,
+        CarriedHeaderFixture {
+            block: &block_with_header_artifact(&forged),
+            parent: Some(&parent),
+            round_epoch: 0,
+        },
         &keys[0].public_key(),
         &validator_set,
         &manager,
@@ -435,9 +456,11 @@ async fn already_committed_verifies_dealer_log() {
         .note_ceremony_started(Epoch::new(0), 7, None, participants.clone())
         .unwrap();
     assert!(verify_carried(
-        &block,
-        Some(&parent),
-        0,
+        CarriedHeaderFixture {
+            block: &block,
+            parent: Some(&parent),
+            round_epoch: 0
+        },
         &keys[0].public_key(),
         &validator_set,
         &matching
@@ -452,9 +475,11 @@ async fn already_committed_verifies_dealer_log() {
         .unwrap();
     assert!(
         verify_carried(
-            &block,
-            Some(&parent),
-            0,
+            CarriedHeaderFixture {
+                block: &block,
+                parent: Some(&parent),
+                round_epoch: 0
+            },
             &keys[0].public_key(),
             &validator_set,
             &other_ceremony
@@ -477,9 +502,11 @@ async fn already_committed_rejects_duplicate_boundary_and_accepts_empty() {
     let proposer = keys[0].public_key();
 
     let duplicate = verify_carried(
-        &block_with_header_artifact(&artifact),
-        Some(&parent),
-        0,
+        CarriedHeaderFixture {
+            block: &block_with_header_artifact(&artifact),
+            parent: Some(&parent),
+            round_epoch: 0,
+        },
         &proposer,
         &validator_set,
         &manager,
@@ -489,9 +516,11 @@ async fn already_committed_rejects_duplicate_boundary_and_accepts_empty() {
     assert!(duplicate.contains("duplicate DKG BoundaryOutcome"));
 
     assert!(verify_carried(
-        &block_with_number(0),
-        Some(&parent),
-        0,
+        CarriedHeaderFixture {
+            block: &block_with_number(0),
+            parent: Some(&parent),
+            round_epoch: 0
+        },
         &proposer,
         &validator_set,
         &manager
@@ -515,9 +544,11 @@ async fn no_pending_rejects_non_successor_preannounce() {
     };
 
     let verdict = verify_carried(
-        &block_with_header_artifact(&preannounce),
-        None,
-        0,
+        CarriedHeaderFixture {
+            block: &block_with_header_artifact(&preannounce),
+            parent: None,
+            round_epoch: 0,
+        },
         &keys[0].public_key(),
         &validator_set,
         &manager,
@@ -543,9 +574,11 @@ async fn no_pending_accepts_successor_preannounce() {
     };
 
     assert!(verify_carried(
-        &block_with_header_artifact(&preannounce),
-        None,
-        0,
+        CarriedHeaderFixture {
+            block: &block_with_header_artifact(&preannounce),
+            parent: None,
+            round_epoch: 0
+        },
         &keys[0].public_key(),
         &validator_set,
         &manager
@@ -564,9 +597,11 @@ async fn height_one_without_boundary_is_rejected_by_system_tx_set() {
     let manager = DkgManagerMailbox::new();
 
     let verdict = verify_carried(
-        &rewarded_block_with_number(1),
-        None,
-        0,
+        CarriedHeaderFixture {
+            block: &rewarded_block_with_number(1),
+            parent: None,
+            round_epoch: 0,
+        },
         &keys[0].public_key(),
         &validator_set,
         &manager,
