@@ -33,21 +33,18 @@ fn valid_metadata() -> (
 ) {
     let (keys, participants) = participants();
     let dkg = crate::bls::bootstrap_dkg(3).expect("bootstrap dkg should succeed");
-    let schemes: Vec<HybridScheme<MinSig>> = keys
-        .iter()
-        .map(|key| {
-            let pk = bls12381::PublicKey::from(key.clone());
-            let idx = participants.index(&pk).expect("participant index");
-            HybridScheme::signer(
-                &crate::config::outbe_app_namespace(),
-                participants.clone(),
-                key.clone(),
-                dkg.polynomial.clone(),
-                dkg.shares[idx.get() as usize].clone(),
-            )
-            .expect("signer scheme should build")
-        })
-        .collect();
+    let schemes = crate::test_fixtures::signer_schemes(
+        &keys,
+        &participants,
+        crate::test_fixtures::SignerSharing {
+            polynomial: &dkg.polynomial,
+            shares: &dkg.shares,
+        },
+        crate::test_fixtures::SignerFixtureExpectations {
+            participant_index: "participant index",
+            signer: "signer scheme should build",
+        },
+    );
     let verifier = HybridScheme::<MinSig>::verifier(
         &crate::config::outbe_app_namespace(),
         participants.clone(),

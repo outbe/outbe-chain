@@ -20,10 +20,7 @@ use commonware_resolver::Resolver;
 use commonware_resolver::TargetedResolver;
 use commonware_runtime::{buffer::paged::CacheRef, Clock as _, Runner as _, Supervisor as _};
 use commonware_utils::{
-    acknowledgement::Acknowledgement,
-    channel::oneshot,
-    ordered::{Quorum, Set},
-    vec::NonEmptyVec,
+    acknowledgement::Acknowledgement, channel::oneshot, ordered::Set, vec::NonEmptyVec,
     TryCollect as _,
 };
 use outbe_primitives::projection::{
@@ -1178,21 +1175,18 @@ fn finalization_metadata_context(epoch: Epoch) -> FinalizationMetadataContext {
         .try_collect()
         .expect("participants should build");
     let dkg = crate::bls::bootstrap_dkg(3).expect("bootstrap dkg should succeed");
-    let signers: Vec<HybridScheme<MinSig>> = keys
-        .iter()
-        .map(|key| {
-            let pk = bls12381::PublicKey::from(key.clone());
-            let idx = participants.index(&pk).expect("participant should exist");
-            HybridScheme::signer(
-                &crate::config::outbe_app_namespace(),
-                participants.clone(),
-                key.clone(),
-                dkg.polynomial.clone(),
-                dkg.shares[idx.get() as usize].clone(),
-            )
-            .expect("signer should build")
-        })
-        .collect();
+    let signers = crate::test_fixtures::signer_schemes(
+        &keys,
+        &participants,
+        crate::test_fixtures::SignerSharing {
+            polynomial: &dkg.polynomial,
+            shares: &dkg.shares,
+        },
+        crate::test_fixtures::SignerFixtureExpectations {
+            participant_index: "participant should exist",
+            signer: "signer should build",
+        },
+    );
 
     let verifier = HybridScheme::<MinSig>::verifier(
         &crate::config::outbe_app_namespace(),
@@ -1545,23 +1539,9 @@ fn parent_proof_selector_recovers_from_marshal_after_empty_store_restart() {
 #[test]
 fn consensus_metadata_verify_accepts_canonical_missed_proposers() {
     // Deterministic runtime (TC-6): avoids marshal teardown leaky false-positives.
-    let accepted = commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
-        |context| async move {
-            let missed_proposers = vec![
-                outbe_primitives::consensus_metadata::MissedProposerEvent {
-                    view: 1,
-                    validator: Address::with_last_byte(1),
-                },
-                outbe_primitives::consensus_metadata::MissedProposerEvent {
-                    view: 2,
-                    validator: Address::with_last_byte(2),
-                },
-            ];
-            missed_proposers::verify(context, (0x61, 0x62), missed_proposers)
-                .await
-                .is_some_and(|verdict| verdict == AttestationVerdict::AcceptValid)
-        },
-    );
+    let accepted = missed_proposers::check_verdict((0x61, 0x62), [1, 2], |verdict| {
+        verdict == AttestationVerdict::AcceptValid
+    });
     assert!(
         accepted,
         "canonical missed proposer list must pass verify-time metadata validation"
@@ -1571,23 +1551,9 @@ fn consensus_metadata_verify_accepts_canonical_missed_proposers() {
 #[test]
 fn consensus_metadata_verify_rejects_forged_missed_proposers() {
     // Deterministic runtime (TC-6): avoids marshal teardown leaky false-positives.
-    let rejected = commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
-        |context| async move {
-            let missed_proposers = vec![
-                outbe_primitives::consensus_metadata::MissedProposerEvent {
-                    view: 1,
-                    validator: Address::with_last_byte(2),
-                },
-                outbe_primitives::consensus_metadata::MissedProposerEvent {
-                    view: 2,
-                    validator: Address::with_last_byte(1),
-                },
-            ];
-            missed_proposers::verify(context, (0x63, 0x64), missed_proposers)
-                .await
-                .is_some_and(|verdict| verdict != AttestationVerdict::AcceptValid)
-        },
-    );
+    let rejected = missed_proposers::check_verdict((0x63, 0x64), [2, 1], |verdict| {
+        verdict != AttestationVerdict::AcceptValid
+    });
     assert!(
         rejected,
         "non-canonical missed proposer order/content must be rejected"

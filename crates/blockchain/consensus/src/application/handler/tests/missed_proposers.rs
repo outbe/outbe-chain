@@ -113,3 +113,28 @@ pub(super) async fn verify(
     let _ = actor.await;
     verdict
 }
+
+pub(super) fn check_verdict(
+    tags: (u8, u8),
+    validators: [u8; 2],
+    is_expected: impl FnOnce(AttestationVerdict) -> bool + Send + 'static,
+) -> bool {
+    // Deterministic runtime keeps marshal teardown within the scenario.
+    commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
+        |context| async move {
+            let missed_proposers = vec![
+                outbe_primitives::consensus_metadata::MissedProposerEvent {
+                    view: 1,
+                    validator: Address::with_last_byte(validators[0]),
+                },
+                outbe_primitives::consensus_metadata::MissedProposerEvent {
+                    view: 2,
+                    validator: Address::with_last_byte(validators[1]),
+                },
+            ];
+            verify(context, tags, missed_proposers)
+                .await
+                .is_some_and(is_expected)
+        },
+    )
+}

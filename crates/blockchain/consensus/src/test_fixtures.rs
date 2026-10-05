@@ -35,7 +35,10 @@ use commonware_cryptography::{
 };
 use commonware_math::algebra::Random;
 use commonware_parallel::Sequential;
-use commonware_utils::{ordered::Set, N3f1, TryCollect as _};
+use commonware_utils::{
+    ordered::{Quorum, Set},
+    N3f1, TryCollect as _,
+};
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use outbe_primitives::reshare_artifact::{
     encode_consensus_header_artifact, ConsensusHeaderArtifact,
@@ -455,4 +458,40 @@ pub(crate) fn block_with_system_tx(signer: &OutbeEvmSigner) -> ConsensusBlock {
             chain_id: outbe_primitives::chain::CHAIN_ID,
         },
     )
+}
+
+pub(crate) struct SignerSharing<'a> {
+    pub polynomial: &'a Sharing<MinSig>,
+    pub shares: &'a [commonware_cryptography::bls12381::primitives::group::Share],
+}
+
+pub(crate) struct SignerFixtureExpectations {
+    pub participant_index: &'static str,
+    pub signer: &'static str,
+}
+
+/// Build signer material while keeping each scenario's failure diagnostics.
+pub(crate) fn signer_schemes(
+    keys: &[bls12381::PrivateKey],
+    participants: &Set<bls12381::PublicKey>,
+    sharing: SignerSharing<'_>,
+    expectations: SignerFixtureExpectations,
+) -> Vec<HybridScheme<MinSig>> {
+    let SignerSharing { polynomial, shares } = sharing;
+    keys.iter()
+        .map(|key| {
+            let pk = bls12381::PublicKey::from(key.clone());
+            let idx = participants
+                .index(&pk)
+                .expect(expectations.participant_index);
+            HybridScheme::signer(
+                &crate::config::outbe_app_namespace(),
+                participants.clone(),
+                key.clone(),
+                polynomial.clone(),
+                shares[idx.get() as usize].clone(),
+            )
+            .expect(expectations.signer)
+        })
+        .collect()
 }
