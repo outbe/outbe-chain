@@ -19,7 +19,7 @@ const ISSUED: u64 = 1_704_067_200;
 const DAY: u64 = 86_400;
 const CALLED: u64 = ISSUED + 29 * DAY;
 const DEADLINE: u64 = CALLED + 7 * DAY;
-// Genesis, Validator, SRA, Wallet, Merchant. CCA is excluded from this plan.
+// Genesis, Validator, SRA, Wallet, Merchant.
 const TYPES: [u8; 5] = [0, 1, 2, 3, 5];
 
 fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
@@ -208,7 +208,11 @@ fn failures_before_and_after_every_expiry_mutation_conserve_load_and_retry_once(
             sweep(&mut p, due + DAY).unwrap();
             conserved(&mut p, &rights);
             StorageHandle::enter(&mut p, |s| {
-                assert_eq!(GemContract::new(s).total_supply().unwrap(), 0);
+                assert_eq!(GemContract::new(s.clone()).total_supply().unwrap(), 0);
+                assert_eq!(
+                    GemContract::new(s).expiry_tree_root.read().unwrap(),
+                    U256::ZERO
+                );
             });
         }
     }

@@ -93,14 +93,14 @@ fn ledger(p: &mut HashMapStorageProvider, id: SeriesId, terminal: bool) {
             10
         );
         let key = IntexFactoryContract::scoped(840, WWD);
-        let pending = IntexFactoryContract::new(s.clone())
-            .called_group_count
-            .read(&key)
-            .unwrap();
+        let factory = IntexFactoryContract::new(s.clone());
+        let pending = factory.called_group_count.read(&key).unwrap();
         let returned = PromisLimitContract::new(s).get_total_unallocated().unwrap();
         if terminal {
             assert_eq!((units.active, units.forfeited, pending), (0, 5, 0));
             assert_eq!(returned, U256::from(5 * LOAD));
+            assert_eq!(factory.expiry_tree_root.read().unwrap(), U256::ZERO);
+            assert_eq!(factory.called_group_slot.read(&key).unwrap(), 0);
         } else {
             assert!(pending <= 1);
             assert_eq!(
