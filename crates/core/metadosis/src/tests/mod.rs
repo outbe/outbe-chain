@@ -195,6 +195,7 @@ mod capacity;
 mod league_snapshot;
 mod lifecycle;
 mod lysis_ingress;
+mod nod_issuance_instant;
 mod ocomp_limits;
 mod ocomp_request;
 mod ocomp_semantic_migrations;

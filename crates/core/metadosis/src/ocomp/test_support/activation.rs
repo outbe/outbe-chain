@@ -44,7 +44,25 @@ pub struct ActivationFixture {
 impl ActivationFixture {
     #[must_use]
     pub fn new(current_height: u64, current_time: u64, seed_targets: bool) -> Self {
-        Self::new_with_initial_votes(current_height, current_time, seed_targets, 4, 2)
+        Self::new_with_initial_votes(
+            current_height,
+            current_time,
+            seed_targets,
+            4,
+            2,
+            TEST_LOGICAL_TIME,
+        )
+    }
+
+    /// Default fixture whose OCOMP request clock is `logical_time`.
+    #[cfg(test)]
+    #[must_use]
+    pub fn new_with_request_clock(
+        current_height: u64,
+        current_time: u64,
+        logical_time: u64,
+    ) -> Self {
+        Self::new_with_initial_votes(current_height, current_time, true, 4, 2, logical_time)
     }
 
     /// Builds the default production-valid fixture before any validator vote
@@ -65,7 +83,14 @@ impl ActivationFixture {
         seed_targets: bool,
         member_count: u8,
     ) -> Self {
-        Self::new_with_initial_votes(current_height, current_time, seed_targets, member_count, 0)
+        Self::new_with_initial_votes(
+            current_height,
+            current_time,
+            seed_targets,
+            member_count,
+            0,
+            TEST_LOGICAL_TIME,
+        )
     }
 
     /// Seeds the Staking-owned bonded balances used by recovery-policy tests.
@@ -156,6 +181,7 @@ impl ActivationFixture {
         seed_targets: bool,
         member_count: u8,
         initial_vote_count: u8,
+        logical_time: u64,
     ) -> Self {
         let config = ActivationFixtureConfig {
             current_height,
@@ -163,6 +189,7 @@ impl ActivationFixture {
             seed_targets,
             member_count,
             initial_vote_count,
+            logical_time,
         };
         let mut provider = HashMapStorageProvider::new_with_chain_identity(1, hash(17));
         let seed = prepare_activation_seed(&mut provider, &config);
@@ -381,6 +408,7 @@ struct ActivationFixtureConfig {
     seed_targets: bool,
     member_count: u8,
     initial_vote_count: u8,
+    logical_time: u64,
 }
 struct ActivationSeed {
     limits: SchemaLimits,
@@ -405,9 +433,14 @@ fn prepare_activation_seed(
     let snapshot = StorageHandle::enter(provider, |storage| {
         seed_validator_snapshot(storage, &limits, config.member_count)
     });
-    let request_receipt = request_receipt(bundle_hash);
+    let request_receipt = request_receipt(bundle_hash, config.logical_time);
     let request_receipt_hash = request_receipt.receipt_hash(&limits).unwrap();
-    let intent = intent(bundle_hash, &snapshot, request_receipt_hash);
+    let intent = intent(
+        bundle_hash,
+        &snapshot,
+        request_receipt_hash,
+        config.logical_time,
+    );
     let intent_id = intent.intent_id(&limits).unwrap();
     let proof = finality_proof(&intent, &limits);
     let request_state_root = hash(98);
@@ -418,7 +451,7 @@ fn prepare_activation_seed(
             &limits,
         )
         .unwrap();
-    let result = result(bundle_hash, job_id, &limits);
+    let result = result(bundle_hash, job_id, &limits, config.logical_time);
     let expected = ExpectedFinalizedIntentBindingV1 {
         chain_id: intent.chain_id,
         genesis_hash: intent.genesis_hash,
@@ -504,7 +537,8 @@ fn seed_requested_job(
             forming_end: 2,
             lookback_end: 3,
             offering_end: 4,
-            scheduled_process_time: 5,
+            // Certified Nod issued_at; equal to the request clock in this fixture.
+            scheduled_process_time: TEST_LOGICAL_TIME,
             metadosis_limit_minor: U256::from(100),
             previous_vwap: U256::from(8),
             current_vwap: U256::from(10),
