@@ -4,6 +4,7 @@
 //! dispatch adapter and base-gas function. Activation, persistence, warming,
 //! sponsorship and future address classes intentionally remain outside this table.
 
+use crate::begin_block_precompile::BeginBlockReaders;
 use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_compressed_entities::ExecutionScope;
 use outbe_offchain_data::RuntimeBodyReaders;
@@ -16,6 +17,8 @@ use outbe_primitives::{
 pub(crate) type DispatchFn = fn(StorageHandle, &[u8], Address, U256) -> Result<Bytes>;
 type ReaderDispatchFn =
     fn(StorageHandle, &ExecutionScope, &RuntimeBodyReaders, &[u8], Address, U256) -> Result<Bytes>;
+type OptionalReaderDispatchFn =
+    fn(StorageHandle, BeginBlockReaders<'_, '_>, &[u8], Address, U256) -> Result<Bytes>;
 pub(crate) type BaseGasFn = fn(&[u8]) -> u64;
 
 #[cfg(test)]
@@ -32,7 +35,7 @@ enum DispatchAdapter {
     ReadersRequired(ReaderDispatchFn),
     ReadersOptional {
         without_readers: DispatchFn,
-        with_readers: ReaderDispatchFn,
+        with_readers: OptionalReaderDispatchFn,
     },
 }
 
@@ -172,9 +175,16 @@ impl ExactRoute {
             (DispatchAdapter::ReadersRequired(_), None) => Err(PrecompileError::Fatal(
                 "execution body read authority was not supplied".into(),
             )),
-            (DispatchAdapter::ReadersOptional { with_readers, .. }, Some(readers)) => {
-                with_readers(storage, execution_scope, readers, data, caller, value)
-            }
+            (DispatchAdapter::ReadersOptional { with_readers, .. }, Some(readers)) => with_readers(
+                storage,
+                BeginBlockReaders {
+                    scope: execution_scope,
+                    parent: readers,
+                },
+                data,
+                caller,
+                value,
+            ),
             (
                 DispatchAdapter::ReadersOptional {
                     without_readers, ..
