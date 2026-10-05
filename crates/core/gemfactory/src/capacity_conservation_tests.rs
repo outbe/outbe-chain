@@ -5,6 +5,7 @@ use outbe_intex::SeriesId;
 use outbe_primitives::{
     addresses::GEM_FACTORY_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
+    error::Result,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     time::WorldwideDay,
 };
@@ -40,15 +41,13 @@ fn world() -> HashMapStorageProvider {
     p
 }
 
-fn sweep(p: &mut HashMapStorageProvider, at: u64) {
+fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<u32> {
     StorageHandle::enter(p, |s| {
-        // The sweep may report a storage error in queue compaction or retain a
-        // failed position; in either case its economic checkpoint must hold.
-        let _ = expired::sweep_expired_positions(&BlockRuntimeContext::new(
+        expired::sweep_expired_positions(&BlockRuntimeContext::new(
             BlockContext::empty_for_tests(2, at, 1),
             s,
-        ));
-    });
+        ))
+    })
 }
 
 fn conserved(p: &mut HashMapStorageProvider, terminal: bool) {
@@ -87,7 +86,7 @@ fn conserved(p: &mut HashMapStorageProvider, terminal: bool) {
 #[test]
 fn position_expiry_and_queue_prune_never_credit_the_remainder_twice() {
     let mut p = world();
-    sweep(&mut p, EXPIRES - 1);
+    assert_eq!(sweep(&mut p, EXPIRES - 1).unwrap(), 0);
     conserved(&mut p, false);
     StorageHandle::enter(&mut p, |s| {
         assert_eq!(
@@ -95,16 +94,16 @@ fn position_expiry_and_queue_prune_never_credit_the_remainder_twice() {
             U256::ZERO
         );
     });
-    sweep(&mut p, EXPIRES);
+    assert_eq!(sweep(&mut p, EXPIRES).unwrap(), 1);
     conserved(&mut p, true);
-    sweep(&mut p, EXPIRES + 86_400);
+    assert_eq!(sweep(&mut p, EXPIRES + 86_400).unwrap(), 0);
     conserved(&mut p, true);
 }
 
 #[test]
 fn every_position_expiry_write_failure_preserves_remaining_load_then_retries_once() {
     let mut baseline = world();
-    sweep(&mut baseline, EXPIRES);
+    assert_eq!(sweep(&mut baseline, EXPIRES).unwrap(), 1);
     let count = baseline.clear_mutation_failure();
     assert!(count > 0);
     for after in [false, true] {
@@ -115,12 +114,19 @@ fn every_position_expiry_write_failure_preserves_remaining_load_then_retries_onc
             } else {
                 p.fail_mutation_at(point);
             }
-            sweep(&mut p, EXPIRES);
+            // A failed queue compaction errors and a failed position is retained;
+            // either way the economic checkpoint must hold.
+            let _ = sweep(&mut p, EXPIRES);
             let observed = p.clear_mutation_failure();
-            assert!(observed >= point, "unreached fault {point}, after={after}");
+            let reached = if after {
+                observed > point
+            } else {
+                observed == point
+            };
+            assert!(reached, "unreached fault {point}, after={after}");
             conserved(&mut p, false);
-            sweep(&mut p, EXPIRES + 1);
-            sweep(&mut p, EXPIRES + 86_400);
+            sweep(&mut p, EXPIRES + 1).unwrap();
+            sweep(&mut p, EXPIRES + 86_400).unwrap();
             conserved(&mut p, true);
         }
     }

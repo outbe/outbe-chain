@@ -167,7 +167,12 @@ fn every_clearing_write_failure_rolls_back_allocation_and_return_then_retries_on
                 }
                 clear(&mut p);
                 let observed = p.clear_mutation_failure();
-                assert!(observed >= point, "unreached fault {point}, after={after}");
+                let reached = if after {
+                    observed > point
+                } else {
+                    observed == point
+                };
+                assert!(reached, "unreached fault {point}, after={after}");
                 ledger(&mut p, sale, false);
                 clear(&mut p);
                 clear(&mut p);
