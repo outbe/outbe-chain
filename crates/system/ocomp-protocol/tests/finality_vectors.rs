@@ -9,6 +9,7 @@
 #[path = "finality_vectors/public_builder.rs"]
 mod public_builder;
 
+use outbe_ocomp_protocol::test_utils::storage_trie;
 use std::collections::BTreeMap;
 
 use alloy_consensus::Header;
@@ -284,38 +285,6 @@ fn independent_storage_slots(logical_key: B256, encoded_record: &[u8]) -> Vec<(U
         slots.push((data_base + U256::from(index), U256::from_be_bytes(word)));
     }
     slots
-}
-
-fn storage_trie(slots: &[(U256, U256)]) -> (B256, Vec<Vec<Bytes>>) {
-    let targets = slots
-        .iter()
-        .map(|(slot, _)| Nibbles::unpack(keccak256(slot.to_be_bytes::<32>())))
-        .collect::<Vec<_>>();
-    let mut leaves = BTreeMap::new();
-    for ((_, word), target) in slots.iter().zip(&targets) {
-        if !word.is_zero() {
-            leaves.insert(*target, alloy_rlp::encode_fixed_size(word).to_vec());
-        }
-    }
-
-    let mut builder =
-        HashBuilder::default().with_proof_retainer(ProofRetainer::from_iter(targets.clone()));
-    for (path, value) in leaves {
-        builder.add_leaf(path, &value);
-    }
-    let root = builder.root();
-    let retained = builder.take_proof_nodes();
-    let proofs = targets
-        .iter()
-        .map(|target| {
-            retained
-                .matching_nodes_sorted(target)
-                .into_iter()
-                .map(|(_, node)| node)
-                .collect()
-        })
-        .collect();
-    (root, proofs)
 }
 
 fn account_trie(accounts: &[(Address, TrieAccount)]) -> (B256, BTreeMap<Address, Vec<Bytes>>) {

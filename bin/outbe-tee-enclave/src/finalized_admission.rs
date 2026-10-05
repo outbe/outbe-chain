@@ -414,6 +414,7 @@ mod tests {
     #[test]
     fn streaming_verifier_crosses_256_committee_transitions() {
         use outbe_consensus::finalized_admission_test_utils::FinalityCommitteeFixture;
+
         use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
 
         const LAST_EPOCH: u64 = 300;
@@ -465,6 +466,7 @@ mod tests {
     #[test]
     fn committee_transition_rejects_wrong_epoch_or_missing_successor() {
         use outbe_consensus::finalized_admission_test_utils::FinalityCommitteeFixture;
+
         use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
 
         let context = DcapOnboardingContextV1 {
@@ -530,43 +532,11 @@ mod tests {
     }
 
     fn verify_real_proof(upgrade: bool, indirect: bool) {
-        use std::collections::BTreeMap;
-
         use alloy_primitives::{keccak256, Bytes};
         use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles, TrieAccount};
         use outbe_consensus::finalized_admission_test_utils::FinalityCommitteeFixture;
+        use outbe_ocomp_protocol::test_utils::storage_trie;
         use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
-
-        fn storage_trie(slots: &[(U256, U256)]) -> (B256, Vec<Vec<Bytes>>) {
-            let targets = slots
-                .iter()
-                .map(|(slot, _)| Nibbles::unpack(keccak256(slot.to_be_bytes::<32>())))
-                .collect::<Vec<_>>();
-            let mut leaves = BTreeMap::new();
-            for ((_, value), target) in slots.iter().zip(&targets) {
-                if !value.is_zero() {
-                    leaves.insert(*target, alloy_rlp::encode_fixed_size(value).to_vec());
-                }
-            }
-            let mut builder = HashBuilder::default()
-                .with_proof_retainer(ProofRetainer::from_iter(targets.clone()));
-            for (path, value) in leaves {
-                builder.add_leaf(path, &value);
-            }
-            let root = builder.root();
-            let retained = builder.take_proof_nodes();
-            let proofs = targets
-                .iter()
-                .map(|target| {
-                    retained
-                        .matching_nodes_sorted(target)
-                        .into_iter()
-                        .map(|(_, node)| node)
-                        .collect()
-                })
-                .collect();
-            (root, proofs)
-        }
 
         fn account_trie(account: TrieAccount) -> (B256, Vec<Bytes>) {
             let target = Nibbles::unpack(keccak256(TEE_REGISTRY_ADDRESS));

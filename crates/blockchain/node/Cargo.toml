@@ -7,7 +7,7 @@ publish.workspace = true
 
 [features]
 default = []
-test-utils = []
+test-utils = ["outbe-ocomp-protocol/test-utils"]
 
 [dependencies]
 # Internal
@@ -71,6 +71,7 @@ thiserror.workspace = true
 k256.workspace = true
 
 [dev-dependencies]
+outbe-ocomp-protocol = { workspace = true, features = ["test-utils"] }
 reth-engine-tree = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.6.0" }
 reth-stages-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.6.0" }
 reth-static-file = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.6.0" }

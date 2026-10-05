@@ -29,6 +29,8 @@ mod schema;
 pub mod shuffle;
 pub mod state;
 pub mod system_carrier;
+#[cfg(feature = "test-utils")]
+pub mod test_utils;
 pub mod unit;
 pub mod vote;
 
