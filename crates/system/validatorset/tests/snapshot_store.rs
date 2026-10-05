@@ -109,41 +109,7 @@ fn committee_snapshot_storage_slots_31_to_40_are_stable() {
     StorageHandle::enter(&mut storage, |storage| {
         let vs = ValidatorSet::new(storage);
 
-        assert_eq!(vs.committee_snapshot_exists.base_slot(), U256::from(31u64));
-        assert_eq!(vs.committee_snapshot_len.base_slot(), U256::from(32u64));
-        assert_eq!(
-            vs.committee_snapshot_address_at.base_slot(),
-            U256::from(33u64)
-        );
-        assert_eq!(
-            vs.committee_snapshot_pubkey_lo_at.base_slot(),
-            U256::from(34u64)
-        );
-        assert_eq!(
-            vs.committee_snapshot_pubkey_hi_at.base_slot(),
-            U256::from(35u64)
-        );
-        assert_eq!(
-            vs.committee_snapshot_vrf_material_version.base_slot(),
-            U256::from(36u64)
-        );
-        assert_eq!(
-            vs.committee_snapshot_vrf_group_public_key_hash.base_slot(),
-            U256::from(37u64)
-        );
-        assert_eq!(
-            vs.committee_snapshot_vrf_group_public_key_len.base_slot(),
-            U256::from(38u64)
-        );
-        assert_eq!(
-            vs.committee_snapshot_vrf_group_public_key_chunk_at
-                .base_slot(),
-            U256::from(39u64)
-        );
-        assert_eq!(
-            vs._reserved_committee_snapshot_slot_40.slot(),
-            U256::from(40u64),
-        );
+        outbe_validatorset::test_support::assert_committee_snapshot_schema_slots(&vs);
     });
 }
 

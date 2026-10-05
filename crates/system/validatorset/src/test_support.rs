@@ -1,5 +1,5 @@
-//! Shared test setup that reaches ACTIVE state only through the production
-//! certified-boundary hook.
+//! Shared schema assertions and test setup that reaches ACTIVE state only
+//! through the production certified-boundary hook.
 //!
 //! This module is deliberately feature-gated. Production callers must use the
 //! named lifecycle commands in [`crate::runtime`], while cross-crate tests use
@@ -349,4 +349,43 @@ impl ValidatorSet<'_> {
             .get_bytes(&address)
             .write(payload)
     }
+}
+
+/// Pin the committee snapshot schema independently to its storage ABI slots.
+pub fn assert_committee_snapshot_schema_slots(vs: &ValidatorSet<'_>) {
+    assert_eq!(vs.committee_snapshot_exists.base_slot(), U256::from(31u64));
+    assert_eq!(vs.committee_snapshot_len.base_slot(), U256::from(32u64));
+    assert_eq!(
+        vs.committee_snapshot_address_at.base_slot(),
+        U256::from(33u64)
+    );
+    assert_eq!(
+        vs.committee_snapshot_pubkey_lo_at.base_slot(),
+        U256::from(34u64)
+    );
+    assert_eq!(
+        vs.committee_snapshot_pubkey_hi_at.base_slot(),
+        U256::from(35u64)
+    );
+    assert_eq!(
+        vs.committee_snapshot_vrf_material_version.base_slot(),
+        U256::from(36u64)
+    );
+    assert_eq!(
+        vs.committee_snapshot_vrf_group_public_key_hash.base_slot(),
+        U256::from(37u64)
+    );
+    assert_eq!(
+        vs.committee_snapshot_vrf_group_public_key_len.base_slot(),
+        U256::from(38u64)
+    );
+    assert_eq!(
+        vs.committee_snapshot_vrf_group_public_key_chunk_at
+            .base_slot(),
+        U256::from(39u64)
+    );
+    assert_eq!(
+        vs._reserved_committee_snapshot_slot_40.slot(),
+        U256::from(40u64),
+    );
 }
