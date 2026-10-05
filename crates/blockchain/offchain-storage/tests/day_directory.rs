@@ -2,6 +2,7 @@ use outbe_offchain_storage::{
     DayDirectory, Key, Namespace, RocksDbConfig, RocksDbStorage, StorageBackend, StorageConfig,
     StorageErrorKind, StorageProvider, StorageReader, StorageWriter, Value,
 };
+use std::time::Duration;
 
 fn records() -> (Namespace, Key, Value) {
     (
@@ -81,6 +82,9 @@ fn legacy_current_moves_into_shared() {
     .unwrap();
     assert_eq!(opened.reader.get(namespace, &key).unwrap(), Some(value));
     assert!(!path.join("CURRENT").is_file());
+    let completion = opened.ownership.completion();
+    drop(opened);
+    completion.wait_timeout(Duration::from_secs(5)).unwrap();
 }
 
 #[test]
