@@ -315,6 +315,23 @@ impl CycleOutcome {
     }
 }
 
+fn validate_cycle_delays(options: &CycleOptions) {
+    // Sanity check delays: activation must be >= dkg_completion.
+    for (i, &activation) in &options.activation_delay_per_node {
+        let dkg = options
+            .dkg_completion_delay_per_node
+            .get(i)
+            .copied()
+            .unwrap_or_default();
+        assert!(
+            activation >= dkg,
+            "node {i} activation_delay ({:?}) must be >= dkg_completion_delay ({:?})",
+            activation,
+            dkg
+        );
+    }
+}
+
 pub struct Harness {
     ctx: deterministic::Context,
     nodes: Vec<Node>,
@@ -480,20 +497,7 @@ impl Harness {
     }
 
     pub async fn run_cycle(&mut self, epoch: Epoch, options: CycleOptions) -> CycleOutcome {
-        // Sanity check delays: activation must be >= dkg_completion.
-        for (i, &activation) in &options.activation_delay_per_node {
-            let dkg = options
-                .dkg_completion_delay_per_node
-                .get(i)
-                .copied()
-                .unwrap_or_default();
-            assert!(
-                activation >= dkg,
-                "node {i} activation_delay ({:?}) must be >= dkg_completion_delay ({:?})",
-                activation,
-                dkg
-            );
-        }
+        validate_cycle_delays(&options);
 
         let leader_index = self.leader_for_view_one(epoch);
         let n = self.nodes.len();
@@ -663,26 +667,35 @@ impl Harness {
             }
         }
 
-        // Backfill any missing snapshots with the live reporter (per-task
-        // didn't deliver in time - pull the reporter directly).
-        let mut finalized_view_per_node = Vec::with_capacity(n);
-        let mut view_finalized_per_node = Vec::with_capacity(n);
-        let mut view_one_signers_per_node = Vec::with_capacity(n);
-        #[allow(clippy::needless_range_loop)]
-        for i in 0..n {
-            let reporter = snapshots[i]
-                .clone()
-                .unwrap_or_else(|| self.nodes[i].reporter.clone());
-            finalized_view_per_node.push(reporter.latest_finalized_view());
-            view_finalized_per_node.push(reporter.view_finalized(View::new(1)));
-            view_one_signers_per_node.push(reporter.finalized_signers(View::new(1)));
-        }
-        CycleOutcome {
-            finalized_view_per_node,
-            view_finalized_per_node,
-            view_one_signers_per_node,
-            leader_index,
-        }
+        cycle_outcome(&self.nodes, n, leader_index, &snapshots)
+    }
+}
+
+fn cycle_outcome(
+    nodes: &[Node],
+    n: usize,
+    leader_index: usize,
+    snapshots: &[Option<MockReporter>],
+) -> CycleOutcome {
+    // Backfill any missing snapshots with the live reporter (per-task
+    // didn't deliver in time - pull the reporter directly).
+    let mut finalized_view_per_node = Vec::with_capacity(n);
+    let mut view_finalized_per_node = Vec::with_capacity(n);
+    let mut view_one_signers_per_node = Vec::with_capacity(n);
+    #[allow(clippy::needless_range_loop)]
+    for i in 0..n {
+        let reporter = snapshots[i]
+            .clone()
+            .unwrap_or_else(|| nodes[i].reporter.clone());
+        finalized_view_per_node.push(reporter.latest_finalized_view());
+        view_finalized_per_node.push(reporter.view_finalized(View::new(1)));
+        view_one_signers_per_node.push(reporter.finalized_signers(View::new(1)));
+    }
+    CycleOutcome {
+        finalized_view_per_node,
+        view_finalized_per_node,
+        view_one_signers_per_node,
+        leader_index,
     }
 }
 
