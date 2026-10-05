@@ -821,7 +821,7 @@ contract AuctionTest is Test {
         _commit(worldwideDay, iba1, 10, 20, iba1PrivateKey);
         _enterRevealStage(worldwideDay, startTs);
 
-        // Zero quantity
+        // Zero units
         bytes memory sig = _createSignature(worldwideDay, iba1, 0, 20, iba1PrivateKey);
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "units/bidRate"));
         vm.prank(iba1);

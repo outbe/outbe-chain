@@ -5,7 +5,7 @@ import { type Address, type Hex, keccak256 } from "viem";
  *
  * There is no separate salt. The commit hash is `keccak256(signature)` where
  * `signature` is the EIP-712 RevealBid signature. ECDSA signatures are
- * deterministic (RFC 6979), so re-signing the same (key, day, qty, rate, pair) at
+ * deterministic (RFC 6979), so re-signing the same (key, day, units, rate, pair) at
  * reveal reproduces the identical signature - nothing is stored between commit
  * and reveal, and it works across sessions and machines.
  *

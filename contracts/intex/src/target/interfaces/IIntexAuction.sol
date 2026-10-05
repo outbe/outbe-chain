@@ -34,7 +34,7 @@ interface IIntexAuction {
         address bidderAddress;
         /// @notice Bid rate the bidder accepts (`1e6` fixed-point, % of the escrow basis).
         uint32 intexBidRate;
-        /// @notice Requested units (Intex units).
+        /// @notice Requested Intex units.
         uint16 intexQuantity;
         /// @notice Timestamp assigned at reveal (ordering only).
         uint32 timestamp;
@@ -81,7 +81,7 @@ interface IIntexAuction {
         IntexCallTrigger callTrigger;
         /// @notice Minimum allowed bid rate (`1e6` fixed-point, % of the escrow basis); rejects bids below it on reveal.
         uint32 minIntexBidRate;
-        /// @notice Minimum units per bid (Intex units).
+        /// @notice Minimum Intex units per bid.
         uint16 minIntexBidQuantity;
         /// @notice One row per currency the day can clear in; the bid's reference
         ///         currency must appear here.
@@ -188,7 +188,7 @@ interface IIntexAuction {
     error BidBelowMinIntexBidRate();
     /// @notice Bid rate exceeds 100% of the escrow basis (scale `1e6`).
     error BidRateAboveMax(uint32 bidRate);
-    /// @notice Bid units is below `minIntexBidQuantity`.
+    /// @notice Bid units are below `minIntexBidQuantity`.
     error BidBelowMinIntexBidQuantity();
     /// @notice The 18-decimal WCOEN lock derived from protocol-scale inputs exceeds uint128.
     error BidAmountOverflow(uint16 units, uint32 bidRate);
@@ -293,7 +293,7 @@ interface IIntexAuction {
     /// @dev Returns the commit bond (if any) before locking the bid escrow, so the bond can fund
     ///      the bid in the same transaction.
     /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param units Requested units (Intex units).
+    /// @param units Requested Intex units.
     /// @param bidRate Bid rate (`1e6` fixed-point, % of the escrow basis).
     /// @param issuanceCurrency Declared issuance currency (ISO numeric); only its three-digit range
     ///                         is checked, since the network keeps no list of issuance currencies.
