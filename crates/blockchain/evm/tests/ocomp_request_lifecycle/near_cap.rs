@@ -12,29 +12,18 @@ const TRANSACTION_COUNT: u64 = 18;
 const TRANSACTION_GAS: u64 = 1_200_000;
 
 pub(crate) fn run() {
-    let VotingOpenScenario {
-        chain_spec,
-        prepared,
-        signer,
-        runtime_body_readers,
-        fork_install,
-        dkg,
-        snapshot,
-        proposer,
-        open_height,
-        intent_id,
-        voting_open,
-        ..
-    } = super::request::open_voting();
-    let fixture = OcompSuccessorFixture {
-        chain_spec: &chain_spec,
-        tree_service: &prepared.tree_service,
-        signer: &signer,
-        runtime_body_readers: &runtime_body_readers,
-        fork_install: &fork_install,
-        dkg: &dkg,
-        snapshot: &snapshot,
-    };
+    let (
+        environment,
+        VotingOpenState {
+            prepared,
+            proposer,
+            open_height,
+            intent_id,
+            voting_open,
+            ..
+        },
+    ) = super::request::open_voting().into_successor_parts();
+    let fixture = environment.fixture(&prepared.tree_service);
     // Together the transactions exceed the transport cap.
     let transactions = (0..TRANSACTION_COUNT)
         .map(|nonce| {
@@ -85,7 +74,7 @@ pub(crate) fn run() {
         "sealed block {sealed_length} bytes leaves more room than the reserve explains"
     );
 
-    let validator = outbe_node::OutbeBeaconConsensus::new(chain_spec.clone())
+    let validator = outbe_node::OutbeBeaconConsensus::new(environment.chain_spec.clone())
         .with_max_extra_data_size(OUTBE_MAX_EXTRA_DATA_SIZE)
         .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(PARENT_HEIGHT));
     validator

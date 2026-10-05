@@ -512,18 +512,22 @@ pub(super) fn open_voting_with_pre_open_state() -> (VotingOpenScenario, PreOpenS
 
     (
         VotingOpenScenario {
-            chain_spec,
-            prepared,
-            signer,
-            runtime_body_readers,
-            fork_install,
-            dkg,
-            snapshot,
-            proposer,
-            open_height,
-            intent_id: requested.data.intentId,
-            finalized_record,
-            voting_open,
+            environment: OcompSuccessorEnvironment {
+                chain_spec,
+                signer,
+                runtime_body_readers,
+                fork_install,
+                dkg,
+                snapshot,
+            },
+            state: VotingOpenState {
+                prepared,
+                proposer,
+                open_height,
+                intent_id: requested.data.intentId,
+                finalized_record,
+                voting_open,
+            },
         },
         pre_open_states,
     )

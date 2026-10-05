@@ -6,29 +6,18 @@
 use super::*;
 
 pub(crate) fn run() {
-    let VotingOpenScenario {
-        chain_spec,
-        prepared,
-        signer,
-        runtime_body_readers,
-        fork_install,
-        dkg,
-        snapshot,
-        proposer,
-        open_height,
-        intent_id,
-        finalized_record,
-        voting_open,
-    } = super::request::open_voting();
-    let fixture = OcompSuccessorFixture {
-        chain_spec: &chain_spec,
-        tree_service: &prepared.tree_service,
-        signer: &signer,
-        runtime_body_readers: &runtime_body_readers,
-        fork_install: &fork_install,
-        dkg: &dkg,
-        snapshot: &snapshot,
-    };
+    let (
+        environment,
+        VotingOpenState {
+            prepared,
+            proposer,
+            open_height,
+            intent_id,
+            finalized_record,
+            voting_open,
+        },
+    ) = super::request::open_voting().into_successor_parts();
+    let fixture = environment.fixture(&prepared.tree_service);
     let voting = ResultVotingScenario::for_intent(
         &voting_open.record.intent,
         finalized_record.finalized.as_ref().unwrap().job_id,
