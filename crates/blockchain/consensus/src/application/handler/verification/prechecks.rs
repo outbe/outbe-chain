@@ -19,49 +19,13 @@ impl ApplicationShared {
         request: &VerifyRequest,
         resolved: &ResolvedVerifyBlocks,
     ) -> eyre::Result<bool> {
+        if !self.validate_verify_parent_and_height(request, resolved) {
+            return Ok(false);
+        }
         let round = request.context.round;
         let payload_digest = request.payload_digest;
-        let parent_digest = request.parent_digest();
         let block = &resolved.block;
         let parent_block = &resolved.parent_block;
-        if let Err(error) = validate_context_parent_binding(
-            block,
-            parent_block.as_ref(),
-            parent_digest,
-            self.genesis_hash,
-        ) {
-            warn!(
-                digest = %payload_digest.0,
-                round = %round,
-                block_number = block.number(),
-                parent = %parent_digest.0,
-                %error,
-                "proposed block does not extend Simplex context parent"
-            );
-            return Ok(false);
-        }
-
-        if let Err(rejection) = self.epoch_fence.check(round, block.number()) {
-            debug!(
-                %round,
-                digest = %payload_digest.0,
-                block_number = block.number(),
-                ?rejection,
-                "dropping stale verify before Engine API work"
-            );
-            return Ok(false);
-        }
-
-        if let Err(error) = self.vrf_safety.ensure_block_allowed(block.number()) {
-            warn!(
-                digest = %payload_digest.0,
-                round = %round,
-                block_number = block.number(),
-                %error,
-                "proposed block is above VRF expiry"
-            );
-            return Ok(false);
-        }
 
         let ancestry = crate::application::ancestry::marshal_ancestry_reader(
             self.marshal_mailbox.clone(),
@@ -125,5 +89,56 @@ impl ApplicationShared {
         }
 
         Ok(true)
+    }
+    fn validate_verify_parent_and_height(
+        &self,
+        request: &VerifyRequest,
+        resolved: &ResolvedVerifyBlocks,
+    ) -> bool {
+        let round = request.context.round;
+        let payload_digest = request.payload_digest;
+        let parent_digest = request.parent_digest();
+        let block = &resolved.block;
+        let parent_block = &resolved.parent_block;
+        if let Err(error) = validate_context_parent_binding(
+            block,
+            parent_block.as_ref(),
+            parent_digest,
+            self.genesis_hash,
+        ) {
+            warn!(
+                digest = %payload_digest.0,
+                round = %round,
+                block_number = block.number(),
+                parent = %parent_digest.0,
+                %error,
+                "proposed block does not extend Simplex context parent"
+            );
+            return false;
+        }
+
+        if let Err(rejection) = self.epoch_fence.check(round, block.number()) {
+            debug!(
+                %round,
+                digest = %payload_digest.0,
+                block_number = block.number(),
+                ?rejection,
+                "dropping stale verify before Engine API work"
+            );
+            return false;
+        }
+
+        if let Err(error) = self.vrf_safety.ensure_block_allowed(block.number()) {
+            warn!(
+                digest = %payload_digest.0,
+                round = %round,
+                block_number = block.number(),
+                %error,
+                "proposed block is above VRF expiry"
+            );
+            return false;
+        }
+
+        true
     }
 }
