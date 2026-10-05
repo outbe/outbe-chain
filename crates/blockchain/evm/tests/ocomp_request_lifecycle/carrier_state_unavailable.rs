@@ -20,6 +20,15 @@ pub(crate) fn run() {
         finalized_record,
         voting_open,
     } = super::request::open_voting();
+    let fixture = OcompSuccessorFixture {
+        chain_spec: &chain_spec,
+        tree_service: &prepared.tree_service,
+        signer: &signer,
+        runtime_body_readers: &runtime_body_readers,
+        fork_install: &fork_install,
+        dkg: &dkg,
+        snapshot: &snapshot,
+    };
     let voting = ResultVotingScenario::for_intent(
         &voting_open.record.intent,
         finalized_record.finalized.as_ref().unwrap().job_id,
@@ -51,20 +60,16 @@ pub(crate) fn run() {
 
     let height = open_height + 1;
     let outcome = try_build_canonical_ocomp_successor(
-        &chain_spec,
-        &prepared.tree_service,
-        &signer,
-        &runtime_body_readers,
-        &fork_install,
-        &dkg,
-        &snapshot,
-        proposer,
-        voting_open.header,
-        &voting_open.storage,
-        height,
-        prepared.request_time + (height - REQUEST_HEIGHT),
-        intent_id,
-        vec![carrier, transfer],
+        fixture,
+        OcompSuccessorBlock {
+            proposer,
+            parent: voting_open.header,
+            parent_storage: &voting_open.storage,
+            height,
+            timestamp: prepared.request_time + (height - REQUEST_HEIGHT),
+            intent_id,
+            user_transactions: vec![carrier, transfer],
+        },
         Some((
             VALIDATOR_SET_ADDRESS,
             B256::from(delegate_slot.to_be_bytes::<32>()),

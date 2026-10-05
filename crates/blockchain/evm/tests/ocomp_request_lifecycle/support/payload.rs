@@ -13,14 +13,24 @@ pub(in crate::lifecycle) struct CanonicalOcompSuccessor {
     pub(in crate::lifecycle) sealed_block: SealedBlock<OutbeBlock>,
 }
 
-pub(in crate::lifecycle) fn canonical_evm_config(
-    chain_spec: Arc<ChainSpec<OutbeHeader>>,
-    accounted_parent: InnerTestProvider,
-    runtime_body_readers: RuntimeBodyReaders,
-    signer: Arc<OutbeEvmSigner>,
-    tree_service: Arc<CompressedTreeService>,
-    fork_install: Arc<outbe_metadosis::config::OcompForkInstallV1>,
-) -> OutbeEvmConfig {
+pub(in crate::lifecycle) struct CanonicalEvmConfigInput {
+    pub(in crate::lifecycle) chain_spec: Arc<ChainSpec<OutbeHeader>>,
+    pub(in crate::lifecycle) accounted_parent: InnerTestProvider,
+    pub(in crate::lifecycle) runtime_body_readers: RuntimeBodyReaders,
+    pub(in crate::lifecycle) signer: Arc<OutbeEvmSigner>,
+    pub(in crate::lifecycle) tree_service: Arc<CompressedTreeService>,
+    pub(in crate::lifecycle) fork_install: Arc<outbe_metadosis::config::OcompForkInstallV1>,
+}
+
+pub(in crate::lifecycle) fn canonical_evm_config(input: CanonicalEvmConfigInput) -> OutbeEvmConfig {
+    let CanonicalEvmConfigInput {
+        chain_spec,
+        accounted_parent,
+        runtime_body_readers,
+        signer,
+        tree_service,
+        fork_install,
+    } = input;
     OutbeEvmConfig::new_with_provider_and_runtime_body_readers(
         chain_spec,
         Arc::new(RethAccountedParentArtifactProvider::new(
@@ -35,31 +45,45 @@ pub(in crate::lifecycle) fn canonical_evm_config(
     .with_ocomp_fork_install(fork_install)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[derive(Clone, Copy)]
+pub(in crate::lifecycle) struct OcompSuccessorFixture<'a> {
+    pub(in crate::lifecycle) chain_spec: &'a Arc<ChainSpec<OutbeHeader>>,
+    pub(in crate::lifecycle) tree_service: &'a Arc<CompressedTreeService>,
+    pub(in crate::lifecycle) signer: &'a Arc<OutbeEvmSigner>,
+    pub(in crate::lifecycle) runtime_body_readers: &'a RuntimeBodyReaders,
+    pub(in crate::lifecycle) fork_install: &'a Arc<outbe_metadosis::config::OcompForkInstallV1>,
+    pub(in crate::lifecycle) dkg: &'a Dkg,
+    pub(in crate::lifecycle) snapshot: &'a CommitteeSnapshot,
+}
+
+pub(in crate::lifecycle) struct OcompSuccessorBlock<'a> {
+    pub(in crate::lifecycle) proposer: Address,
+    pub(in crate::lifecycle) parent: Arc<SealedHeader<OutbeHeader>>,
+    pub(in crate::lifecycle) parent_storage: &'a HashMap<(Address, U256), U256>,
+    pub(in crate::lifecycle) height: u64,
+    pub(in crate::lifecycle) timestamp: u64,
+    pub(in crate::lifecycle) intent_id: B256,
+    pub(in crate::lifecycle) user_transactions: Vec<EthPooledTransaction>,
+}
+
 pub(in crate::lifecycle) fn build_canonical_ocomp_successor(
-    chain_spec: &Arc<ChainSpec<OutbeHeader>>,
-    tree_service: &Arc<CompressedTreeService>,
-    signer: &Arc<OutbeEvmSigner>,
-    runtime_body_readers: &RuntimeBodyReaders,
-    fork_install: &Arc<outbe_metadosis::config::OcompForkInstallV1>,
-    dkg: &Dkg,
-    snapshot: &CommitteeSnapshot,
-    proposer: Address,
-    parent: Arc<SealedHeader<OutbeHeader>>,
-    parent_storage: &HashMap<(Address, U256), U256>,
-    height: u64,
-    timestamp: u64,
-    intent_id: B256,
-    user_transactions: Vec<EthPooledTransaction>,
+    fixture: OcompSuccessorFixture<'_>,
+    block: OcompSuccessorBlock<'_>,
 ) -> CanonicalOcompSuccessor {
-    try_build_canonical_ocomp_successor(
-        chain_spec,
-        tree_service,
-        signer,
-        runtime_body_readers,
-        fork_install,
-        dkg,
-        snapshot,
+    try_build_canonical_ocomp_successor(fixture, block, None)
+        .expect("canonical OCOMP model successor builds")
+}
+
+/// Same as [`build_canonical_ocomp_successor`], but returns the payload
+/// builder error instead of panicking, so a test can assert that a failed
+/// build publishes nothing. `unreadable_slot` makes the parent state backend
+/// fail reads of that one slot.
+pub(in crate::lifecycle) fn try_build_canonical_ocomp_successor(
+    fixture: OcompSuccessorFixture<'_>,
+    block: OcompSuccessorBlock<'_>,
+    unreadable_slot: Option<(Address, B256)>,
+) -> Result<CanonicalOcompSuccessor, PayloadBuilderError> {
+    let OcompSuccessorBlock {
         proposer,
         parent,
         parent_storage,
@@ -67,49 +91,24 @@ pub(in crate::lifecycle) fn build_canonical_ocomp_successor(
         timestamp,
         intent_id,
         user_transactions,
-        None,
-    )
-    .expect("canonical OCOMP model successor builds")
-}
-
-/// Same as [`build_canonical_ocomp_successor`], but returns the payload
-/// builder error instead of panicking, so a test can assert that a failed
-/// build publishes nothing. `unreadable_slot` makes the parent state backend
-/// fail reads of that one slot.
-#[allow(clippy::too_many_arguments)]
-pub(in crate::lifecycle) fn try_build_canonical_ocomp_successor(
-    chain_spec: &Arc<ChainSpec<OutbeHeader>>,
-    tree_service: &Arc<CompressedTreeService>,
-    signer: &Arc<OutbeEvmSigner>,
-    runtime_body_readers: &RuntimeBodyReaders,
-    fork_install: &Arc<outbe_metadosis::config::OcompForkInstallV1>,
-    dkg: &Dkg,
-    snapshot: &CommitteeSnapshot,
-    proposer: Address,
-    parent: Arc<SealedHeader<OutbeHeader>>,
-    parent_storage: &HashMap<(Address, U256), U256>,
-    height: u64,
-    timestamp: u64,
-    intent_id: B256,
-    user_transactions: Vec<EthPooledTransaction>,
-    unreadable_slot: Option<(Address, B256)>,
-) -> Result<CanonicalOcompSuccessor, PayloadBuilderError> {
+    } = block;
     assert_eq!(height, parent.number() + 1);
-    let mut provider = mock_provider(chain_spec, parent_storage);
+    let mut provider = mock_provider(fixture.chain_spec, parent_storage);
     provider.unreadable_slot = unreadable_slot;
     provider.inner.add_block(
         parent.hash(),
         Block::new(parent.header().clone(), Default::default()),
     );
-    let evm_config = canonical_evm_config(
-        chain_spec.clone(),
-        provider.inner.clone(),
-        runtime_body_readers.clone(),
-        signer.clone(),
-        tree_service.clone(),
-        fork_install.clone(),
-    );
-    let metadata = finalized_parent_metadata(dkg, snapshot, height - 1, parent.hash());
+    let evm_config = canonical_evm_config(CanonicalEvmConfigInput {
+        chain_spec: fixture.chain_spec.clone(),
+        accounted_parent: provider.inner.clone(),
+        runtime_body_readers: fixture.runtime_body_readers.clone(),
+        signer: fixture.signer.clone(),
+        tree_service: fixture.tree_service.clone(),
+        fork_install: fixture.fork_install.clone(),
+    });
+    let metadata =
+        finalized_parent_metadata(fixture.dkg, fixture.snapshot, height - 1, parent.hash());
     let user_transaction_count = user_transactions.len();
     let transaction_pool = test_pool(user_transactions);
     let pool_size = transaction_pool.pool_size();
@@ -261,7 +260,8 @@ pub(in crate::lifecycle) fn try_build_canonical_ocomp_successor(
     let ce = artifacts
         .compressed_entities_root
         .expect("canonical OCOMP model block carries its completed CE seal");
-    tree_service
+    fixture
+        .tree_service
         .apply_finalized(height, payload.block().hash(), ce.r_sealed)
         .expect("canonical OCOMP model CE candidate finalizes before its child");
     let sealed_block = payload.block().clone();

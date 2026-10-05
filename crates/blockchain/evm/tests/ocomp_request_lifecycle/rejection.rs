@@ -19,6 +19,15 @@ pub(crate) fn run() {
         voting_open,
         ..
     } = super::request::open_voting();
+    let fixture = OcompSuccessorFixture {
+        chain_spec: &chain_spec,
+        tree_service: &prepared.tree_service,
+        signer: &signer,
+        runtime_body_readers: &runtime_body_readers,
+        fork_install: &fork_install,
+        dkg: &dkg,
+        snapshot: &snapshot,
+    };
     let rejected_input = SystemTxInputV2::CycleTick
         .encode()
         .expect("cycle tick input encodes");
@@ -51,20 +60,16 @@ pub(crate) fn run() {
     // import replay, and the historical replay agree on the execution output,
     // including receipts, and the header state root matches that output.
     let built = build_canonical_ocomp_successor(
-        &chain_spec,
-        &prepared.tree_service,
-        &signer,
-        &runtime_body_readers,
-        &fork_install,
-        &dkg,
-        &snapshot,
-        proposer,
-        voting_open.header,
-        &voting_open.storage,
-        height,
-        prepared.request_time + (height - REQUEST_HEIGHT),
-        intent_id,
-        vec![rejected, valid],
+        fixture,
+        OcompSuccessorBlock {
+            proposer,
+            parent: voting_open.header,
+            parent_storage: &voting_open.storage,
+            height,
+            timestamp: prepared.request_time + (height - REQUEST_HEIGHT),
+            intent_id,
+            user_transactions: vec![rejected, valid],
+        },
     );
     assert_eq!(
         built.user_transaction_hashes,

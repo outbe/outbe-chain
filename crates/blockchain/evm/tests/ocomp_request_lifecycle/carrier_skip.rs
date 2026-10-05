@@ -20,6 +20,15 @@ pub(crate) fn run() {
         finalized_record,
         voting_open,
     } = super::request::open_voting();
+    let fixture = OcompSuccessorFixture {
+        chain_spec: &chain_spec,
+        tree_service: &prepared.tree_service,
+        signer: &signer,
+        runtime_body_readers: &runtime_body_readers,
+        fork_install: &fork_install,
+        dkg: &dkg,
+        snapshot: &snapshot,
+    };
     let voting = ResultVotingScenario::for_intent(
         &voting_open.record.intent,
         finalized_record.finalized.as_ref().unwrap().job_id,
@@ -43,20 +52,16 @@ pub(crate) fn run() {
     // The canonical successor returns only after the production builder, the
     // import replay, and the historical replay agree on the execution output.
     let built = build_canonical_ocomp_successor(
-        &chain_spec,
-        &prepared.tree_service,
-        &signer,
-        &runtime_body_readers,
-        &fork_install,
-        &dkg,
-        &snapshot,
-        proposer,
-        voting_open.header,
-        &voting_open.storage,
-        height,
-        prepared.request_time + (height - REQUEST_HEIGHT),
-        intent_id,
-        vec![invalid_carrier, valid],
+        fixture,
+        OcompSuccessorBlock {
+            proposer,
+            parent: voting_open.header,
+            parent_storage: &voting_open.storage,
+            height,
+            timestamp: prepared.request_time + (height - REQUEST_HEIGHT),
+            intent_id,
+            user_transactions: vec![invalid_carrier, valid],
+        },
     );
     assert_eq!(
         built.user_transaction_hashes,

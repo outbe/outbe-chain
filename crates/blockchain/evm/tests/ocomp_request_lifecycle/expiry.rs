@@ -15,6 +15,15 @@ pub(crate) fn run() {
         finalized_record,
         voting_open,
     } = super::request::open_voting();
+    let fixture = OcompSuccessorFixture {
+        chain_spec: &chain_spec,
+        tree_service: &prepared.tree_service,
+        signer: &signer,
+        runtime_body_readers: &runtime_body_readers,
+        fork_install: &fork_install,
+        dkg: &dkg,
+        snapshot: &snapshot,
+    };
     let initial_deadline = voting_open
         .record
         .finalized
@@ -34,20 +43,16 @@ pub(crate) fn run() {
         })
         .collect::<Vec<_>>();
     let no_quorum = build_canonical_ocomp_successor(
-        &chain_spec,
-        &prepared.tree_service,
-        &signer,
-        &runtime_body_readers,
-        &fork_install,
-        &dkg,
-        &snapshot,
-        proposer,
-        voting_open.header,
-        &voting_open.storage,
-        open_height + 1,
-        prepared.request_time + (open_height + 1 - REQUEST_HEIGHT),
-        intent_id,
-        initial_votes,
+        fixture,
+        OcompSuccessorBlock {
+            proposer,
+            parent: voting_open.header,
+            parent_storage: &voting_open.storage,
+            height: open_height + 1,
+            timestamp: prepared.request_time + (open_height + 1 - REQUEST_HEIGHT),
+            intent_id,
+            user_transactions: initial_votes,
+        },
     );
     assert_eq!(no_quorum.record.status, OcompJobStatus::VotingOpen);
     assert!(no_quorum
@@ -77,20 +82,16 @@ pub(crate) fn run() {
             Vec::new()
         };
         let built = build_canonical_ocomp_successor(
-            &chain_spec,
-            &prepared.tree_service,
-            &signer,
-            &runtime_body_readers,
-            &fork_install,
-            &dkg,
-            &snapshot,
-            proposer,
-            expiry_parent,
-            &expiry_storage,
-            height,
-            prepared.request_time + (height - REQUEST_HEIGHT),
-            intent_id,
-            pool,
+            fixture,
+            OcompSuccessorBlock {
+                proposer,
+                parent: expiry_parent,
+                parent_storage: &expiry_storage,
+                height,
+                timestamp: prepared.request_time + (height - REQUEST_HEIGHT),
+                intent_id,
+                user_transactions: pool,
+            },
         );
         if deadline_block {
             assert_eq!(
@@ -124,20 +125,16 @@ pub(crate) fn run() {
     // public projection, including the absence of a successor or Lysis output.
     for height in (initial_deadline + 1)..=(initial_deadline + 3) {
         let built = build_canonical_ocomp_successor(
-            &chain_spec,
-            &prepared.tree_service,
-            &signer,
-            &runtime_body_readers,
-            &fork_install,
-            &dkg,
-            &snapshot,
-            proposer,
-            expiry_parent,
-            &expiry_storage,
-            height,
-            prepared.request_time + (height - REQUEST_HEIGHT),
-            intent_id,
-            Vec::new(),
+            fixture,
+            OcompSuccessorBlock {
+                proposer,
+                parent: expiry_parent,
+                parent_storage: &expiry_storage,
+                height,
+                timestamp: prepared.request_time + (height - REQUEST_HEIGHT),
+                intent_id,
+                user_transactions: Vec::new(),
+            },
         );
         assert!(
             built.requested_intents.is_empty(),

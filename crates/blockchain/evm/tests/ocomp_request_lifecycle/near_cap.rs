@@ -26,6 +26,15 @@ pub(crate) fn run() {
         voting_open,
         ..
     } = super::request::open_voting();
+    let fixture = OcompSuccessorFixture {
+        chain_spec: &chain_spec,
+        tree_service: &prepared.tree_service,
+        signer: &signer,
+        runtime_body_readers: &runtime_body_readers,
+        fork_install: &fork_install,
+        dkg: &dkg,
+        snapshot: &snapshot,
+    };
     // Together the transactions exceed the transport cap.
     let transactions = (0..TRANSACTION_COUNT)
         .map(|nonce| {
@@ -46,20 +55,16 @@ pub(crate) fn run() {
 
     let height = open_height + 1;
     let built = build_canonical_ocomp_successor(
-        &chain_spec,
-        &prepared.tree_service,
-        &signer,
-        &runtime_body_readers,
-        &fork_install,
-        &dkg,
-        &snapshot,
-        proposer,
-        voting_open.header,
-        &voting_open.storage,
-        height,
-        prepared.request_time + (height - REQUEST_HEIGHT),
-        intent_id,
-        transactions,
+        fixture,
+        OcompSuccessorBlock {
+            proposer,
+            parent: voting_open.header,
+            parent_storage: &voting_open.storage,
+            height,
+            timestamp: prepared.request_time + (height - REQUEST_HEIGHT),
+            intent_id,
+            user_transactions: transactions,
+        },
     );
 
     let sealed_length = built.sealed_block.rlp_length();

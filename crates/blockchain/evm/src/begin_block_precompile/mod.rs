@@ -64,9 +64,12 @@ pub fn dispatch(
         data,
         caller,
         value,
-        None,
-        None,
-        &crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::Unbound,
+        DispatchAuthorities {
+            body_readers: None,
+            ocomp_fork_install: None,
+            tee_attestation_v1:
+                &crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::Unbound,
+        },
     )
 }
 
@@ -84,9 +87,12 @@ pub fn dispatch_with_readers(
         data,
         caller,
         value,
-        Some((scope, parent)),
-        None,
-        &crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::Unbound,
+        DispatchAuthorities {
+            body_readers: Some((scope, parent)),
+            ocomp_fork_install: None,
+            tee_attestation_v1:
+                &crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::Unbound,
+        },
     )
 }
 
@@ -101,7 +107,17 @@ pub fn dispatch_with_tee_attestation(
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
-    dispatch_inner(storage, data, caller, value, None, None, tee_attestation_v1)
+    dispatch_inner(
+        storage,
+        data,
+        caller,
+        value,
+        DispatchAuthorities {
+            body_readers: None,
+            ocomp_fork_install: None,
+            tee_attestation_v1,
+        },
+    )
 }
 
 /// Production dispatch with both finalized body readers and the immutable
@@ -132,10 +148,21 @@ pub(crate) fn dispatch_with_readers_and_ocomp_install(
         data,
         caller,
         value,
-        Some((scope, parent)),
-        ocomp_fork_install,
-        tee_attestation_v1,
+        DispatchAuthorities {
+            body_readers: Some((scope, parent)),
+            ocomp_fork_install,
+            tee_attestation_v1,
+        },
     )
+}
+
+struct DispatchAuthorities<'a> {
+    body_readers: Option<(
+        &'a outbe_compressed_entities::ExecutionScope,
+        &'a outbe_offchain_data::RuntimeBodyReaders,
+    )>,
+    ocomp_fork_install: Option<&'a outbe_metadosis::config::OcompForkInstallV1>,
+    tee_attestation_v1: &'a crate::tee_attestation_activation::TeeAttestationChainSpecStateV1,
 }
 
 fn dispatch_inner(
@@ -143,13 +170,13 @@ fn dispatch_inner(
     data: &[u8],
     caller: Address,
     value: U256,
-    body_readers: Option<(
-        &outbe_compressed_entities::ExecutionScope,
-        &outbe_offchain_data::RuntimeBodyReaders,
-    )>,
-    ocomp_fork_install: Option<&outbe_metadosis::config::OcompForkInstallV1>,
-    tee_attestation_v1: &crate::tee_attestation_activation::TeeAttestationChainSpecStateV1,
+    authorities: DispatchAuthorities<'_>,
 ) -> Result<Bytes> {
+    let DispatchAuthorities {
+        body_readers,
+        ocomp_fork_install,
+        tee_attestation_v1,
+    } = authorities;
     if caller != SYSTEM_ADDRESS {
         return Err(PrecompileError::Revert(
             "system precompile can only be called by SYSTEM_ADDRESS".into(),
