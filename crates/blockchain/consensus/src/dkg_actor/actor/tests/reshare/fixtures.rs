@@ -1,5 +1,5 @@
-use super::*;
 use super::super::network::{MockReceiver, MockSender};
+use super::*;
 use commonware_runtime::{Spawner as _, Supervisor as _};
 
 type PlayerHandle = commonware_runtime::Handle<eyre::Result<DkgComplete>>;
@@ -61,15 +61,16 @@ fn spawn_player(
         .spawn(move |clock| async move {
             run_initial_dkg(
                 &clock,
-                input.key,
-                input.participants,
-                Some(input.output),
-                input.share,
-                1,
+                InitialDkgFixture {
+                    signing_key: input.key,
+                    participants: input.participants,
+                    previous_output: Some(input.output),
+                    previous_share: input.share,
+                    round: 1,
+                },
                 Some(input.progress_tx),
                 Some(finalized_log_rx),
-                sender,
-                receiver,
+                (sender, receiver),
             )
             .await
         });
@@ -204,14 +205,15 @@ fn spawn_dealer_only(
                 .ok_or_else(|| eyre::eyre!("removed dealer belongs to previous committee"))?;
             run_reshare_dealer_only(
                 &clock,
-                input.key,
-                input.participants,
-                input.output,
-                share,
-                1,
+                DealerOnlyDkgFixture {
+                    signing_key: input.key,
+                    participants: input.participants,
+                    previous_output: input.output,
+                    previous_share: share,
+                    round: 1,
+                },
                 input.progress_tx,
-                sender,
-                receiver,
+                (sender, receiver),
             )
             .await
         })

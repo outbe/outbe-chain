@@ -103,7 +103,9 @@ mod tests;
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]
-pub use test_support::{run_initial_dkg, run_reshare_dealer_only};
+pub use test_support::{
+    run_initial_dkg, run_reshare_dealer_only, DealerOnlyDkgFixture, InitialDkgFixture,
+};
 
 mod messaging;
 use messaging::{

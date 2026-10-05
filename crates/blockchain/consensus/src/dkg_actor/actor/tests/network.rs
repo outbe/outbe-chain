@@ -310,7 +310,14 @@ pub(super) async fn run_partial_dkg(
     {
         let p = participants.clone();
         handles.push(clock.child("dkg_ceremony").spawn(move |clock| async move {
-            run_initial_dkg(&clock, key, p, None, None, 0, None, None, sender, receiver).await
+            run_initial_dkg(
+                &clock,
+                InitialDkgFixture::bootstrap(key, p),
+                None,
+                None,
+                (sender, receiver),
+            )
+            .await
         }));
     }
     // Drop remaining receivers explicitly (offline nodes).
