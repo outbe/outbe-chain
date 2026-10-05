@@ -22,9 +22,8 @@ fn promis_auth(account: Address, amount: U256, nonce: u64) -> outbe_promisfactor
     }
 }
 
-/// One settled unit survives the deadline: settlement of the unpaid remainder
-/// is refused, the paid unit still mints its Promis and leaves the ledgers
-/// exactly one unit further along.
+/// Past the deadline the unpaid unit is refused settlement; the paid one mints
+/// its Promis and moves the ledgers by exactly one unit.
 #[test]
 fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_closed() {
     use crate::sol_ext::IERC1155;

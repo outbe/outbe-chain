@@ -3,9 +3,8 @@
 
 use super::*;
 
-/// The sequence at its maximum: the next mining is refused before any write.
-/// The provider counts every persistent write and event it is asked to apply,
-/// so a zero count around the call is the proof, not the shape of the error.
+/// The provider counts every write and event it is asked to apply, so a zero
+/// count around the refused call proves it wrote nothing.
 #[test]
 fn a_mining_sequence_at_its_maximum_refuses_the_next_mining_without_writes() {
     use crate::sol_ext::IERC1155;
