@@ -39,6 +39,8 @@ pub mod tee_registry_abi_v1;
 pub mod tee_signatures;
 #[cfg(feature = "test-utils")]
 pub mod tee_test_utils;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
 pub mod time;
 pub mod units;
 pub mod validators;
