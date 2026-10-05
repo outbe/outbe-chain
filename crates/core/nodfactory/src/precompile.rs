@@ -4,7 +4,6 @@ use alloy_sol_types::SolCall;
 use alloy_sol_types::SolInterface;
 use outbe_primitives::dispatch::{dispatch_call, mutate, view};
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 
 use crate::runtime;
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
@@ -74,10 +73,6 @@ fn issue_for_test(
             .write(&bucket_key, call.issuedAt)?;
     }
     Ok(())
-}
-
-pub fn base_gas(_input: &[u8]) -> u64 {
-    PRECOMPILE_BASE_GAS
 }
 
 /// Dispatches NodFactory calls through the block-scoped compressed-body lifecycle.

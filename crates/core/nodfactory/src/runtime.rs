@@ -124,7 +124,7 @@ pub struct MineGratisRequest {
     pub auth: outbe_gratisfactory::api::ModifyAuth,
 }
 
-/// Pays a qualified or called Nod's known cost directly in ERC20 base units. An
+/// Pays a qualified or called Nod's known cost in ERC20 base units of `asset`. An
 /// issuance-currency payment must name the VWAP snapshot required at this block.
 pub fn settle_nod(
     storage: &StorageHandle<'_>,
@@ -135,18 +135,45 @@ pub fn settle_nod(
     asset: Address,
     snapshot_id: U256,
 ) -> Result<()> {
-    let quote = |terms: &SettlementTerms, entry_price: U256| {
-        let currency = accept_payment_asset(
-            storage,
-            asset,
-            terms.issuance_currency,
-            terms.reference_currency,
-        )?;
-        let (cost, snapshot) = cost_in_asset(storage, terms, entry_price, asset, currency)?;
-        require_snapshot(snapshot, snapshot_id)?;
-        Ok(cost)
+    let (item, bucket) = load_nod(storage, scope, parent, nod_id)?;
+    if item.body().is_settled {
+        return Err(NodFactoryError::NodAlreadySettled.into());
+    }
+    // The call check is one read; the qualification walk goes last.
+    match nod_api::settlement_deadline(storage, item.body().bucket_key)? {
+        0 if !nod_api::is_qualified(storage, bucket.body())? => {
+            return Err(NodFactoryError::NodNotQualified.into());
+        }
+        0 => {}
+        deadline if storage.timestamp()?.to::<u64>() > deadline => {
+            return Err(NodFactoryError::CallDeadlineExpired.into());
+        }
+        _ => {}
+    }
+    let owner = item.body().owner;
+    let terms = SettlementTerms {
+        issuance_currency: item.body().issuance_currency,
+        reference_currency: item.body().reference_currency,
+        gratis_load_minor: item.body().gratis_load_minor,
     };
-    settle(storage, scope, parent, nod_id, quote, |_, _, cost| {
+    let currency = accept_payment_asset(
+        storage,
+        asset,
+        terms.issuance_currency,
+        terms.reference_currency,
+    )?;
+    let (cost, snapshot) = cost_in_asset(
+        storage,
+        &terms,
+        bucket.body().entry_price_minor,
+        asset,
+        currency,
+    )?;
+    require_snapshot(snapshot, snapshot_id)?;
+    storage.clone().with_checkpoint(|| {
+        // Publish the transition before external payment calls so callbacks cannot
+        // settle the same Nod twice. A failed payment rolls the transition back.
+        nod_api::settle_nod(storage, scope, item, bucket)?;
         if !cost.is_zero() {
             let before = token_balance(storage, asset)?;
             checked_token_call(
@@ -174,69 +201,24 @@ pub fn settle_nod(
                 return Err(NodFactoryError::SettlementAmountMismatch.into());
             }
         }
-        Ok(PaidCost {
-            asset,
-            spend_amount: cost,
-        })
-    })
-}
-
-/// Currency pair and load a settlement charges against. Copied off the item
-/// before `settle_nod` consumes the loaded body.
-struct SettlementTerms {
-    issuance_currency: u16,
-    reference_currency: u16,
-    gratis_load_minor: U256,
-}
-
-/// `quote` prices and authorizes the payment before any state changes; `pay`
-/// then moves it after the transition, inside the same checkpoint.
-fn settle<Q>(
-    storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-    nod_id: WwdEntityId,
-    quote: impl FnOnce(&SettlementTerms, U256) -> Result<Q>,
-    pay: impl FnOnce(&SettlementTerms, U256, Q) -> Result<PaidCost>,
-) -> Result<()> {
-    let (item, bucket) = load_nod(storage, scope, parent, nod_id)?;
-    if item.body().is_settled {
-        return Err(NodFactoryError::NodAlreadySettled.into());
-    }
-    // The call check is one read; the qualification walk goes last.
-    match nod_api::settlement_deadline(storage, item.body().bucket_key)? {
-        0 if !nod_api::is_qualified(storage, bucket.body())? => {
-            return Err(NodFactoryError::NodNotQualified.into());
-        }
-        0 => {}
-        deadline if storage.timestamp()?.to::<u64>() > deadline => {
-            return Err(NodFactoryError::CallDeadlineExpired.into());
-        }
-        _ => {}
-    }
-    let owner = item.body().owner;
-    let terms = SettlementTerms {
-        issuance_currency: item.body().issuance_currency,
-        reference_currency: item.body().reference_currency,
-        gratis_load_minor: item.body().gratis_load_minor,
-    };
-    let entry_price = bucket.body().entry_price_minor;
-    let quoted = quote(&terms, entry_price)?;
-    storage.clone().with_checkpoint(|| {
-        // Publish the transition before external payment calls so callbacks cannot
-        // settle the same Nod twice. A failed payment rolls the transition back.
-        nod_api::settle_nod(storage, scope, item, bucket)?;
-        let paid = pay(&terms, entry_price, quoted)?;
         emit_event(
             storage,
             INodFactory::NodPaid {
                 owner,
                 nodId: nod_id.to_u256(),
-                asset: paid.asset,
-                paymentMinor: paid.spend_amount,
+                asset,
+                paymentMinor: cost,
             },
         )
     })
+}
+
+/// Currency pair and load a settlement charges against. Copied off the item
+/// before `nod_api::settle_nod` consumes the loaded body.
+struct SettlementTerms {
+    issuance_currency: u16,
+    reference_currency: u16,
+    gratis_load_minor: U256,
 }
 
 fn checked_token_call(
@@ -328,12 +310,6 @@ fn load_nod(
     let bucket = nod_api::load_bucket(storage, scope, parent, bucket_id)?
         .ok_or(NodFactoryError::NodNotQualified)?;
     Ok((item, bucket))
-}
-
-/// One paid Nod cost, as it is reported by `NodPaid`.
-struct PaidCost {
-    asset: Address,
-    spend_amount: U256,
 }
 
 /// Which of a Nod's two currencies a payment asset is denominated in.

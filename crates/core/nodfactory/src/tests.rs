@@ -1166,10 +1166,6 @@ fn unpaid_mining_is_rejected() {
     assert!(
         matches!(error, PrecompileError::Revert(reason) if reason == NodFactoryError::NodNotSettled.to_string())
     );
-    assert_eq!(
-        crate::precompile::base_gas(&INodFactory::mineGratisCall::SELECTOR),
-        outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS
-    );
 }
 
 #[test]

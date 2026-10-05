@@ -13,7 +13,6 @@ use outbe_primitives::dispatch::{
     view,
 };
 use outbe_primitives::error::Result;
-use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::runtime;
@@ -27,11 +26,6 @@ sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
     "../../../contracts/precompiles/src/IIntexFactory.sol"
 );
-
-/// Base gas charged by the registry before invoking [`dispatch`].
-pub fn base_gas(_input: &[u8]) -> u64 {
-    PRECOMPILE_BASE_GAS
-}
 
 // Arming the proceeds fan-in is production work of the issuance leg, which a
 // payout e2e never reaches: it runs no auction, so it issues nothing. This

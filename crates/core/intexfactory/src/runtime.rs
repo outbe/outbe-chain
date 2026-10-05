@@ -674,8 +674,9 @@ fn burn_ownerless_proceeds(
     )
 }
 
-/// Settle paying the cost from `settler` in `asset` by direct ERC20 transfer. An
-/// issuance-currency payment must name the VWAP snapshot required at this block.
+/// Settle paying the cost from `settler` in `asset` by ERC20 transfer; the settled
+/// units stay with `owner`. An issuance-currency payment must name the VWAP
+/// snapshot required at this block.
 pub fn settle_intex(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
@@ -684,47 +685,6 @@ pub fn settle_intex(
     units: U256,
     asset: Address,
     snapshot_id: U256,
-) -> Result<()> {
-    let quote = |series: &outbe_intex::SeriesRecord| {
-        let currency = accept_payment_asset(storage, asset, series)?;
-        let (cost, snapshot) = cost_in_asset(storage, series, asset, currency, units)?;
-        require_snapshot(snapshot, snapshot_id)?;
-        Ok(cost)
-    };
-    settle(
-        storage,
-        series_id,
-        owner,
-        settler,
-        units,
-        quote,
-        |_, cost| deposit_payment(storage, settler, asset, cost),
-    )
-}
-
-/// Rejects an issuance-rail payment authorized for any snapshot but the required one.
-fn require_snapshot(required: Option<VwapSnapshotId>, authorized: U256) -> Result<()> {
-    match required.map(VwapSnapshotId::to_u256) {
-        Some(required) if required != authorized => Err(IntexFactoryError::VwapSnapshotMismatch {
-            authorized,
-            required,
-        }
-        .into()),
-        _ => Ok(()),
-    }
-}
-
-/// `settler` is the caller; the settled units stay with `owner`. `quote`
-/// prices and authorizes the payment before any state changes; `pay` then moves
-/// it after the units, inside the same checkpoint.
-fn settle<Q>(
-    storage: &StorageHandle<'_>,
-    series_id: SeriesId,
-    owner: Address,
-    settler: Address,
-    units: U256,
-    quote: impl FnOnce(&outbe_intex::SeriesRecord) -> Result<Q>,
-    pay: impl FnOnce(&outbe_intex::SeriesRecord, Q) -> Result<()>,
 ) -> Result<()> {
     if owner.is_zero() || settler.is_zero() {
         return Err(IntexFactoryError::ZeroAddress.into());
@@ -756,7 +716,9 @@ fn settle<Q>(
         return Err(IntexFactoryError::UnitsExceedBalance.into());
     }
 
-    let quoted = quote(&series)?;
+    let currency = accept_payment_asset(storage, asset, &series)?;
+    let (cost, snapshot) = cost_in_asset(storage, &series, asset, currency, units)?;
+    require_snapshot(snapshot, snapshot_id)?;
     storage.clone().with_checkpoint(|| {
         // The units move before payment so a token callback cannot settle them
         // twice; a failed payment rolls the move back.
@@ -776,7 +738,7 @@ fn settle<Q>(
             .map_err(|_| PrecompileError::Revert("settled units exceed u32".into()))?;
         outbe_intex::api::record_settled_units(storage, series_id, settled_units)?;
 
-        pay(&series, quoted)?;
+        deposit_payment(storage, settler, asset, cost)?;
 
         emit_event(
             storage,
@@ -787,6 +749,18 @@ fn settle<Q>(
             },
         )
     })
+}
+
+/// Rejects an issuance-rail payment authorized for any snapshot but the required one.
+fn require_snapshot(required: Option<VwapSnapshotId>, authorized: U256) -> Result<()> {
+    match required.map(VwapSnapshotId::to_u256) {
+        Some(required) if required != authorized => Err(IntexFactoryError::VwapSnapshotMismatch {
+            authorized,
+            required,
+        }
+        .into()),
+        _ => Ok(()),
+    }
 }
 
 /// Pulls exactly `cost` of `asset` from `payer` and deposits it into the reserve
