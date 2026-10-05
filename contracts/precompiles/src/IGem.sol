@@ -6,9 +6,9 @@ interface IGem {
         uint256 gemId;
         address owner;
         uint8 gemType;
-        /// Read-time state: 0 Issued, 2 Called, 3 Settled, 4 Forfeited (a Called gem
-        /// past its notice period, still stored until the sweep burns it).
-        // 0 Issued, 1 Qualified (derived view), 2 Called, 3 Settled, 4 Forfeited.
+        /// Read-time state: 0 Issued, 1 Qualified (derived, never stored), 2 Called,
+        /// 3 Settled, 4 Forfeited (a Called gem past its notice period, still stored
+        /// until the sweep burns it).
         uint8 state;
         uint256 promisLoadMinor;
         uint256 entryPriceMinor;

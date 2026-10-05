@@ -418,8 +418,8 @@ fn validator_redeems_reward_gem(world: &mut World) {
         .expect("read the same reward Gem after qualification");
     }
     assert_eq!(
-        gem.state, 0,
-        "reward Gem must still be Issued for settlement"
+        gem.state, 1,
+        "reward Gem must read Qualified for settlement"
     );
     assert!(
         crate::features::gem_lifecycle::gem_is_qualified(&url, gem_id),
