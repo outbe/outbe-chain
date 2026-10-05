@@ -470,7 +470,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
             return {
               ...base,
               series: fromSeriesId(seriesHex),
-              state: intexState(d.state),
+              state: intexState(d.state === 0 && qualified ? 1 : d.state),
               ...(qualified === undefined ? {} : { qualified }),
               settlementDeadline: epochIso(settlementDeadline),
               expired: settlementDeadline > 0 && Math.floor(Date.now() / 1000) > settlementDeadline,
