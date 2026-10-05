@@ -12,32 +12,10 @@ use crate::precompile::IGemFactory;
 /// call sweep records it, so the unpaid member reads Called with that stamp and
 /// both share the bucket's settlement deadline.
 fn called_bucket(load: U256) -> (HashMapStorageProvider, U256, U256) {
-    let rate = U256::from(2u64) * six_decimal_unit();
-    let mut provider = HashMapStorageProvider::new(1);
-    provider.set_timestamp(U256::from(T_NOW));
+    let mut provider = test_storage(Some(U256::from(2u64) * six_decimal_unit()));
     let ids = StorageHandle::enter(&mut provider, |handle| {
-        GemContract::new(handle.clone())
-            .config_profile
-            .write(outbe_gem::config::PROFILE_PROD)
-            .unwrap();
-        let oracle = OracleContract::new(handle.clone());
-        oracle.reference_currencies.push(840u16).unwrap();
-        oracle.config_lookback_duration.write(86_400).unwrap();
-        outbe_oracle::api::register_pair(handle.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
-        outbe_oracle::api::set_exchange_rate(
-            handle.clone(),
-            Address::ZERO,
-            outbe_oracle::api::DAY_TYPE_PAIR,
-            rate,
-            1,
-            T_NOW,
-        )
-        .unwrap();
-        let price = outbe_oracle::api::fresh_coen_rate_for(handle.clone(), 840).unwrap();
-        let paid =
-            runtime::issue_gem(&handle, ALICE, GemTypes::Genesis, load, 840, 840, price).unwrap();
-        let unpaid =
-            runtime::issue_gem(&handle, BOB, GemTypes::Genesis, load, 840, 840, price).unwrap();
+        let paid = issue_at_live_rate(&handle, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
+        let unpaid = issue_at_live_rate(&handle, BOB, GemTypes::Genesis, load, 840, 840).unwrap();
         // Settling leaves the bucket, so take the key while both are members.
         let bucket = gem_api::bucket_of(&handle, paid).unwrap();
         assert_eq!(gem_api::bucket_of(&handle, unpaid).unwrap(), bucket);

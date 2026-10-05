@@ -3,34 +3,15 @@
 use super::*;
 
 /// One settled Genesis Gem of `load` Promis owned by Alice, priced at 2 COEN/USD.
-fn with_settled_gem<R>(load: U256, f: impl FnOnce(&StorageHandle<'_>, U256) -> R) -> R {
-    let rate = U256::from(2u64) * six_decimal_unit();
-    let mut provider = HashMapStorageProvider::new(1);
-    provider.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut provider, |handle| {
-        GemContract::new(handle.clone())
-            .config_profile
-            .write(outbe_gem::config::PROFILE_PROD)
-            .unwrap();
-        let oracle = OracleContract::new(handle.clone());
-        oracle.reference_currencies.push(840u16).unwrap();
-        oracle.config_lookback_duration.write(86_400).unwrap();
-        outbe_oracle::api::register_pair(handle.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
-        outbe_oracle::api::set_exchange_rate(
-            handle.clone(),
-            Address::ZERO,
-            outbe_oracle::api::DAY_TYPE_PAIR,
-            rate,
-            1,
-            T_NOW,
-        )
-        .unwrap();
-        let price = outbe_oracle::api::fresh_coen_rate_for(handle.clone(), 840).unwrap();
+fn settled_gem(load: U256) -> (HashMapStorageProvider, U256) {
+    let mut provider = test_storage(Some(U256::from(2u64) * six_decimal_unit()));
+    let gem_id = StorageHandle::enter(&mut provider, |storage| {
         let gem_id =
-            runtime::issue_gem(&handle, ALICE, GemTypes::Genesis, load, 840, 840, price).unwrap();
-        gem_api::set_state(&handle, gem_id, GemState::Settled).unwrap();
-        f(&handle, gem_id)
-    })
+            issue_at_live_rate(&storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
+        gem_api::set_state(&storage, gem_id, GemState::Settled).unwrap();
+        gem_id
+    });
+    (provider, gem_id)
 }
 
 fn promis_balance(storage: &StorageHandle<'_>, account: Address) -> U256 {
@@ -48,7 +29,9 @@ fn promis_balance(storage: &StorageHandle<'_>, account: Address) -> U256 {
 fn a_rejected_promis_mint_leaves_the_settled_gem_and_its_nonce_untouched() {
     outbe_promis::enclave_client::test_enclave::install();
     let load = U256::from(10u64) * six_decimal_unit();
-    with_settled_gem(load, |storage, gem_id| {
+    let (mut provider, gem_id) = settled_gem(load);
+    StorageHandle::enter(&mut provider, |storage| {
+        let storage = &storage;
         let nonce = find_valid_nonce(gem_id, ALICE);
         // A modify authorization for the wrong amount: the enclave rejects the
         // mint as a business failure (not an infrastructure fault).
