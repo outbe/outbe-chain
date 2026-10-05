@@ -79,31 +79,7 @@ impl BlockingWriteStorage {
     }
 }
 
-impl StorageReader for BlockingWriteStorage {
-    fn get_record(
-        &self,
-        namespace: Namespace,
-        key: &Key,
-    ) -> Result<Option<StoredValue>, StorageError> {
-        self.inner.get_record(namespace, key)
-    }
-
-    fn get_records(
-        &self,
-        namespace: Namespace,
-        keys: &[Key],
-    ) -> Result<Vec<Option<StoredValue>>, StorageError> {
-        self.inner.get_records(namespace, keys)
-    }
-
-    fn scan_prefix(
-        &self,
-        namespace: Namespace,
-        request: ScanRequest<'_>,
-    ) -> Result<ScanPage, StorageError> {
-        self.inner.scan_prefix(namespace, request)
-    }
-}
+outbe_offchain_storage::impl_test_storage_reader!(BlockingWriteStorage, inner);
 
 impl StorageWriter for BlockingWriteStorage {
     fn apply_atomic(&self, batch: &AtomicWriteBatch) -> Result<(), StorageError> {
