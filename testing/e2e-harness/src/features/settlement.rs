@@ -410,13 +410,13 @@ fn validator_redeems_reward_gem(world: &mut World) {
             );
             sleep(Duration::from_millis(250));
         }
-        gem = eth::read_call(
-            &url,
-            addresses::GEM_ADDR,
-            &eth::IGem::getGemStatusCall { gemId: gem_id },
-        )
-        .expect("read the same reward Gem after qualification");
     }
+    gem = eth::read_call(
+        &url,
+        addresses::GEM_ADDR,
+        &eth::IGem::getGemStatusCall { gemId: gem_id },
+    )
+    .expect("read the same reward Gem after qualification");
     assert_eq!(
         gem.state, 1,
         "reward Gem must read Qualified for settlement"
