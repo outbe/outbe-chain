@@ -10,8 +10,8 @@ use std::{
 };
 
 use alloy_consensus::{SignableTransaction as _, TxEip1559, TxLegacy};
-use alloy_primitives::{Address, Signature, keccak256};
-use k256::ecdsa::{SigningKey, signature::hazmat::PrehashSigner};
+use alloy_primitives::{keccak256, Address, Signature};
+use k256::ecdsa::{signature::hazmat::PrehashSigner, SigningKey};
 use reth_ethereum::TransactionSigned;
 use zeroize::Zeroizing;
 
@@ -182,9 +182,9 @@ fn address_from_signing_key(signing_key: &SigningKey) -> Address {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system_tx::{SystemTxInputV2, SystemTxKind, build_unsigned_system_tx};
+    use crate::system_tx::{build_unsigned_system_tx, SystemTxInputV2, SystemTxKind};
     use alloy_consensus::Transaction as _;
-    use alloy_primitives::{Bytes, TxKind, U256, address};
+    use alloy_primitives::{address, Bytes, TxKind, U256};
     use reth_primitives_traits::SignedTransaction as _;
 
     const CHAIN_ID: u64 = 2026;
