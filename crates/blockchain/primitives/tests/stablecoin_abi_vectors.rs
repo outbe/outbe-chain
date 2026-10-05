@@ -56,6 +56,8 @@ fn complete_exported_abis_match_golden_hashes() {
     );
     assert_eq!(
         canonical_abi_hash(vote),
+        // The exported ABI includes createProposalWithVotingWindow, added in
+        // e1b954dd. Its selector is independently pinned below.
         b256!("b8055a8710bcd34616ad1f9436adf90951117435f55e7264d831e25fd311407f")
     );
 }
@@ -93,6 +95,10 @@ fn alloy_call_selectors_match_solidity_vectors() {
     assert_eq!(
         IVote::getProposalBondCall::SELECTOR,
         [0xb6, 0xe1, 0x93, 0x28]
+    );
+    assert_eq!(
+        IVote::createProposalWithVotingWindowCall::SELECTOR,
+        [0x1f, 0x02, 0xa1, 0xe5]
     );
 }
 

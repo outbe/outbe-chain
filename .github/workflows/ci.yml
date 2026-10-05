@@ -167,7 +167,9 @@ jobs:
       - name: Run tests with coverage
         run: |
           cargo llvm-cov clean --workspace
-          cargo llvm-cov --workspace --no-report
+          # Consensus chain identity is process-wide. Isolate each case so a
+          # fixture for another chain cannot poison subsequent snapshot tests.
+          cargo llvm-cov nextest --workspace --features outbe-chain/snapshot-integration --no-report
       - name: Render coverage summary
         run: |
           cargo llvm-cov report --json --summary-only --output-path coverage-summary.json
