@@ -2951,3 +2951,5 @@ fn a_clearing_round_is_sized_from_the_chains_recent_days() {
         );
     });
 }
+
+mod capacity_conservation;

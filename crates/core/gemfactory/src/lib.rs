@@ -13,6 +13,3 @@ pub use schema::{GemFactoryContract, GemTypes};
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod capacity_conservation_tests;
