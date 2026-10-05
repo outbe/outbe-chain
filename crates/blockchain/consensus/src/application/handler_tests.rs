@@ -57,6 +57,7 @@ use crate::vrf_safety::VrfSafetyGate;
 use super::{ApplicationShared, CommitteeProvider, ConsensusBlock, Digest};
 use crate::application::epoch_boundary::{
     resolve_epoch_boundary_parent, ApplicationEpochFence, EpochBoundaryParentError,
+    EpochBoundaryParentRequest,
 };
 
 #[path = "handler/tests/verify_stages.rs"]
@@ -936,9 +937,11 @@ fn epoch_boundary_parent_uses_finalized_round_for_exact_proof_key() {
                 &shared.finalization_view,
                 &shared.marshal_mailbox,
                 &clock,
-                child_round,
-                View::new(0),
-                parent_digest,
+                EpochBoundaryParentRequest {
+                    round: child_round,
+                    parent_view: View::new(0),
+                    parent_digest,
+                },
             )
             .await
             .unwrap()
@@ -1007,9 +1010,11 @@ fn epoch_boundary_anchor_wait_miss_forfeits_slot_not_stall() {
                 &shared.finalization_view,
                 &shared.marshal_mailbox,
                 &clock,
-                child_round,
-                View::new(0),
-                parent_digest,
+                EpochBoundaryParentRequest {
+                    round: child_round,
+                    parent_view: View::new(0),
+                    parent_digest,
+                },
             )
             .await;
 
