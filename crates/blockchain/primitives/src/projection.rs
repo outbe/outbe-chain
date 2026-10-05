@@ -1,5 +1,9 @@
 //! Backend-neutral local projection readiness shared by node and consensus wiring.
 
+mod unbudgeted;
+
+pub use unbudgeted::ProjectionWaitFailure;
+
 use std::{
     future::Future,
     sync::{
