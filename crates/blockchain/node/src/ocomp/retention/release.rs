@@ -67,20 +67,9 @@ impl OcompRetentionCoordinator {
             .transpose()
             .map_err(RetainedGcAttemptFailure::global)?;
         let mut inner = self.lock().map_err(RetainedGcAttemptFailure::global)?;
-        if let Some(error) = retention_status_error(&inner.status) {
-            return Err(RetainedGcAttemptFailure::global(error));
-        }
-        let Some(record) = inner
-            .registry
-            .as_ref()
-            .and_then(|registry| registry.records.get(&key))
-            .copied()
-        else {
+        let Some(record) = current_retained_gc_record(&inner, work)? else {
             return Ok(RetainedGcAttemptOutcome::NoLongerPending);
         };
-        if record.generation != work.generation {
-            return Ok(RetainedGcAttemptOutcome::NoLongerPending);
-        }
         let gc_record = match record.state {
             PinStateV1::Terminal {
                 candidate,
@@ -176,6 +165,15 @@ impl OcompRetentionCoordinator {
             return Ok(RetainedGcAttemptOutcome::PageProgress);
         }
 
+        self.complete_retained_gc(key, gc_record, completed_state)
+    }
+
+    fn complete_retained_gc(
+        &self,
+        key: B256,
+        gc_record: PinRecordV1,
+        completed_state: PinStateV1,
+    ) -> Result<RetainedGcAttemptOutcome, RetainedGcAttemptFailure> {
         let mut inner = self.lock().map_err(RetainedGcAttemptFailure::global)?;
         let current = inner
             .registry
@@ -201,4 +199,19 @@ impl OcompRetentionCoordinator {
             .map(RetainedGcAttemptOutcome::Completed)
             .map_err(RetainedGcAttemptFailure::global)
     }
+}
+
+fn current_retained_gc_record(
+    inner: &CoordinatorInner,
+    work: RetainedGcWorkId,
+) -> Result<Option<PinRecordV1>, RetainedGcAttemptFailure> {
+    if let Some(error) = retention_status_error(&inner.status) {
+        return Err(RetainedGcAttemptFailure::global(error));
+    }
+    Ok(inner
+        .registry
+        .as_ref()
+        .and_then(|registry| registry.records.get(&work.key))
+        .copied()
+        .filter(|record| record.generation == work.generation))
 }

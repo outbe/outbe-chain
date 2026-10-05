@@ -230,48 +230,49 @@ where
     };
     let mut readonly = ReadOnlyStorageProvider::new(reader);
     let storage = StorageHandle::new(&mut readonly);
-    let extension = match outbe_validatorset::read_ocomp_snapshot_extension_for_binding(
+    match read_pinned_ocomp_membership(storage, intent, ocomp_key_hash) {
+        Ok(true) => OcompSnapshotEligibilityV1::Eligible,
+        Ok(false) => OcompSnapshotEligibilityV1::NotMember,
+        Err(error) => error,
+    }
+}
+
+fn read_pinned_ocomp_membership(
+    storage: StorageHandle<'_>,
+    intent: &JobIntentV1,
+    ocomp_key_hash: B256,
+) -> Result<bool, OcompSnapshotEligibilityV1> {
+    let extension = outbe_validatorset::read_ocomp_snapshot_extension_for_binding(
         storage.clone(),
         intent.result_validator_set_epoch,
         intent.result_committee_set_hash,
         intent.result_ocomp_binding_hash,
-    ) {
-        Ok(Some(extension)) => extension,
-        Ok(None) => {
-            return OcompSnapshotEligibilityV1::Corrupt {
-                detail: "pinned OCOMP snapshot is missing".to_owned(),
-            };
-        }
-        Err(error) => return classify_snapshot_read_error("read pinned OCOMP snapshot", error),
-    };
+    )
+    .map_err(|error| classify_snapshot_read_error("read pinned OCOMP snapshot", error))?
+    .ok_or_else(|| OcompSnapshotEligibilityV1::Corrupt {
+        detail: "pinned OCOMP snapshot is missing".to_owned(),
+    })?;
     if extension.member_count != intent.result_member_count {
-        return OcompSnapshotEligibilityV1::Corrupt {
+        return Err(OcompSnapshotEligibilityV1::Corrupt {
             detail: "pinned OCOMP snapshot member count disagrees with JobIntent".to_owned(),
-        };
+        });
     }
     let snapshot_key = outbe_validatorset::committee_snapshot_key(
         intent.result_validator_set_epoch,
         intent.result_committee_set_hash,
     );
     for index in 0..extension.member_count {
-        let member = match outbe_validatorset::read_ocomp_snapshot_member_at(
-            storage.clone(),
-            snapshot_key,
-            index,
-        ) {
-            Ok(Some(member)) => member,
-            Ok(None) => {
-                return OcompSnapshotEligibilityV1::Corrupt {
+        let member =
+            outbe_validatorset::read_ocomp_snapshot_member_at(storage.clone(), snapshot_key, index)
+                .map_err(|error| classify_snapshot_read_error("read pinned OCOMP member", error))?
+                .ok_or_else(|| OcompSnapshotEligibilityV1::Corrupt {
                     detail: "pinned OCOMP member is missing".to_owned(),
-                };
-            }
-            Err(error) => return classify_snapshot_read_error("read pinned OCOMP member", error),
-        };
+                })?;
         if keccak256(member.ocomp_public_key_sec1) == ocomp_key_hash {
-            return OcompSnapshotEligibilityV1::Eligible;
+            return Ok(true);
         }
     }
-    OcompSnapshotEligibilityV1::NotMember
+    Ok(false)
 }
 
 fn classify_snapshot_read_error(

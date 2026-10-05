@@ -444,8 +444,17 @@ impl OcompRetentionCoordinator {
                 "late export ACK requires exact terminal authority",
             ));
         }
+        self.confirm_terminal_export_ack(canonical, finalized.job_id, export)
+    }
+
+    fn confirm_terminal_export_ack(
+        &self,
+        canonical: &OcompJobRecordV1,
+        job_id: B256,
+        export: ExportAuthorityV1,
+    ) -> Result<DurablePinAck, RetentionError> {
         let mut inner = self.lock()?;
-        let (key, record) = record_for_job(&inner, finalized.job_id)?;
+        let (key, record) = record_for_job(&inner, job_id)?;
         canonical_finalized_pin(record_candidate(record), canonical)?;
         let mut state = record.state;
         let slot = match &mut state {
