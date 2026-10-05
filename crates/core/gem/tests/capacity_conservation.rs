@@ -1,4 +1,4 @@
-//! K06: included Gem subtypes conserve live load through real call/expiry hooks.
+//! Included Gem subtypes conserve live load through real call/expiry hooks.
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use outbe_gem::{
@@ -162,8 +162,8 @@ fn every_included_gem_subtype_returns_its_full_load_once_after_forfeiture() {
 fn a_paid_then_mined_gem_returns_no_capacity_while_unpaid_siblings_forfeit() {
     let (mut p, rights) = world();
     let (paid, paid_load) = rights[0];
-    // This internal state hand-off is the completed settlement footprint;
-    // payment authorization and arithmetic are exercised by K01/K08.
+    // The completed settlement footprint; payment itself is covered by the
+    // settlement tests.
     StorageHandle::enter(&mut p, |s| {
         api::set_state(&s, paid, GemState::Settled).unwrap();
         api::burn(&s, paid).unwrap();
