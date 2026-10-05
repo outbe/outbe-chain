@@ -1,5 +1,5 @@
 //! Local owner-bound pledge notes. Secrets stay in owner-only files.
-use super::{parse_amount, paynote::save_json};
+use super::{parse_amount, save_json};
 use crate::rpc::Rpc;
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
