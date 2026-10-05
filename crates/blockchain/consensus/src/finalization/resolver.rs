@@ -200,41 +200,8 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
                 Err(()) => continue,
             };
 
-            // Strict hash check. A peer that returned a
-            // different parent for this round has nothing useful to offer on
-            // retry; fail immediately so the caller can fall back to
-            // proposer-forfeit.
-            if notarization.proposal.payload.0 != key.parent_hash {
-                return ProofFetchOutcome::NoProofForExactParent;
-            }
-            // The notarization must be for the requested round. Defence in
-            // depth - a transport implementation that did not enforce this is
-            // a bug, but we still fail fast rather than persist mismatched
-            // round bookkeeping.
-            if notarization.proposal.round != key.round {
-                return ProofFetchOutcome::NoProofForExactParent;
-            }
-
-            // Signature verification - same trust boundary the reporter uses
-            // for Activity::Certification (see `reporter.rs::handle_certification`).
-            let mut rng = bls_batch_verification_rng();
-            if !notarization.verify(&mut rng, &self.verifier_scheme, &Sequential) {
-                return ProofFetchOutcome::VerifyFailed;
-            }
-
-            // - local witness gate. A record produced from purely
-            // remote bytes is never written; the local node must have already
-            // observed `Activity::Certification` for the same key. The gate is
-            // the in-memory witness index, not the persistent CN record slot:
-            // CN rows may be pruned or withheld from proposer selection, while
-            // the witness fact remains a separate local observation.
-            let proof_key = CertifiedParentProofKey::new(
-                key.round.epoch().get(),
-                key.round.view().get(),
-                key.parent_hash,
-            );
-            if !self.proof_store.has_local_certification_witness(proof_key) {
-                return ProofFetchOutcome::NoLocalCertificationWitness;
+            if let Some(outcome) = self.fetched_notarization_rejection(key, &notarization) {
+                return outcome;
             }
 
             // Build the record and persist. Witness flag is true by the gate
@@ -293,6 +260,51 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
         }
 
         ProofFetchOutcome::BudgetExhausted
+    }
+
+    fn fetched_notarization_rejection(
+        &self,
+        key: ProofFetchKey,
+        notarization: &Notarization<HybridScheme<MinSig>, Digest>,
+    ) -> Option<ProofFetchOutcome> {
+        // Strict hash check. A peer that returned a
+        // different parent for this round has nothing useful to offer on
+        // retry; fail immediately so the caller can fall back to
+        // proposer-forfeit.
+        if notarization.proposal.payload.0 != key.parent_hash {
+            return Some(ProofFetchOutcome::NoProofForExactParent);
+        }
+        // The notarization must be for the requested round. Defence in
+        // depth - a transport implementation that did not enforce this is
+        // a bug, but we still fail fast rather than persist mismatched
+        // round bookkeeping.
+        if notarization.proposal.round != key.round {
+            return Some(ProofFetchOutcome::NoProofForExactParent);
+        }
+
+        // Signature verification - same trust boundary the reporter uses
+        // for Activity::Certification (see `reporter.rs::handle_certification`).
+        let mut rng = bls_batch_verification_rng();
+        if !notarization.verify(&mut rng, &self.verifier_scheme, &Sequential) {
+            return Some(ProofFetchOutcome::VerifyFailed);
+        }
+
+        // - local witness gate. A record produced from purely
+        // remote bytes is never written; the local node must have already
+        // observed `Activity::Certification` for the same key. The gate is
+        // the in-memory witness index, not the persistent CN record slot:
+        // CN rows may be pruned or withheld from proposer selection, while
+        // the witness fact remains a separate local observation.
+        let proof_key = CertifiedParentProofKey::new(
+            key.round.epoch().get(),
+            key.round.view().get(),
+            key.parent_hash,
+        );
+        if !self.proof_store.has_local_certification_witness(proof_key) {
+            return Some(ProofFetchOutcome::NoLocalCertificationWitness);
+        }
+
+        None
     }
 }
 
