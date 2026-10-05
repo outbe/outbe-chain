@@ -524,11 +524,11 @@ fn validate_opened_record_metadata(
     metadata: &fs::Metadata,
     owner_uid: u32,
 ) -> Result<(), LocalLysisResultError> {
-    if !metadata.file_type().is_file()
-        || metadata.uid() != owner_uid
-        || metadata.permissions().mode() & 0o777 != RECORD_MODE
-        || metadata.nlink() != 1
-    {
+    if !outbe_primitives::local_record::is_private_single_link_file(
+        metadata,
+        owner_uid,
+        RECORD_MODE,
+    ) {
         return Err(LocalLysisResultError::UnsafeStore {
             path: path.to_path_buf(),
             reason: "opened local result metadata is unsafe",
