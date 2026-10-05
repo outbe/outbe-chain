@@ -295,7 +295,7 @@ fn verify_quorum_structure(
     Ok((plan, result_evidence_hash))
 }
 
-/// The Worldwide Day's `scheduled_process_time`, at which Lysis froze its entry prices.
+/// The Worldwide Day's `scheduled_process_time`; Lysis freezes the UTC day before it as the entry price.
 fn lysis_freeze_instant(storage: &StorageHandle<'_>, wwd: u32) -> PrecompileResult<u64> {
     let instant = MetadosisContract::new(storage.clone())
         .worldwide_days
