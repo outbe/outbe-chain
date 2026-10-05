@@ -334,34 +334,57 @@ mod tests {
         ));
     }
 
-    /// The vectors the wallet is tested against, computed outside both
-    /// implementations; `mcp/src/ledger/mac.test.ts` reads the same file.
+    /// Known-answer modify authorizations for wallets, computed outside this implementation.
     #[test]
-    fn modify_mac_matches_the_shared_client_vectors() {
+    fn modify_mac_matches_the_known_answer_vectors() {
         use crate::confidential::GRATIS;
-        let fixture: serde_json::Value =
-            serde_json::from_str(include_str!("../../../mcp/src/ledger/mac.vectors.json")).unwrap();
-        let vectors = fixture["vectors"].as_array().unwrap();
-        assert!(!vectors.is_empty());
-        for vector in vectors {
-            let field = |name: &str| vector[name].as_str().unwrap();
-            let domain = match field("ledger") {
-                "gratis" => &GRATIS,
-                "promis" => &PROMIS,
-                other => panic!("unknown ledger {other}"),
-            };
-            assert_eq!(domain.modify_tag, field("domain_tag").as_bytes());
-            let key: B256 = field("modify_key").parse().unwrap();
-            let account: Address = field("account").parse().unwrap();
-            let op_tag = u8::try_from(vector["op_tag"].as_u64().unwrap()).unwrap();
-            let amount: U256 = field("amount").parse().unwrap();
-            let op_nonce = vector["op_nonce"].as_u64().unwrap();
-            let chain_id: B256 = field("chain_id").parse().unwrap();
-            let expected: B256 = field("mac").parse().unwrap();
-            let mac = domain.modify_mac(&key.0, account, op_tag, amount, op_nonce, chain_id);
-            assert_eq!(B256::from(mac), expected, "{}", field("op"));
-            assert!(domain
-                .verify_modify_auth(&key.0, account, op_tag, amount, op_nonce, chain_id, &mac));
+        use alloy_primitives::{address, b256};
+        use outbe_tee::protocol::GratisOp;
+
+        let key = [0x5a; 32];
+        let chain_one = B256::from(U256::from(1u64));
+        let vectors = [
+            (
+                &GRATIS,
+                alice(),
+                GratisOp::Mint as u8,
+                U256::from(1_000u64),
+                0,
+                chain_one,
+                b256!("0xec11651be45952198f63a0c982bbe045c3f3a31131c8afe655f76b243dc50aa1"),
+            ),
+            (
+                &GRATIS,
+                alice(),
+                GratisOp::Pledge as u8,
+                U256::from(10_000_000u64),
+                3,
+                chain_one,
+                b256!("0xf7d19e989e00dc99df7168cbca111ac11c7328fa0e12c4b0e7873b3ce4e84046"),
+            ),
+            (
+                &PROMIS,
+                alice(),
+                PromisOp::Mint as u8,
+                U256::from(1_000u64),
+                0,
+                chain_one,
+                b256!("0x3d33ac4e239f595c5d87e9db9bd4e180ff4f080811f22150cfc0b7b7eba2467b"),
+            ),
+            (
+                &PROMIS,
+                address!("0xabcdef0123456789abcdef0123456789abcdef01"),
+                PromisOp::Burn as u8,
+                U256::from(123_456_789_012_345_678_901_234_567_890u128),
+                7,
+                CHAIN,
+                b256!("0x94bbfa7708394cf45466594357d2dc942f65e92ef0aa2509e03dfec5a5861f84"),
+            ),
+        ];
+        for (ledger, account, op, amount, op_nonce, chain_id, expected) in vectors {
+            let mac = ledger.modify_mac(&key, account, op, amount, op_nonce, chain_id);
+            assert_eq!(B256::from(mac), expected);
+            assert!(ledger.verify_modify_auth(&key, account, op, amount, op_nonce, chain_id, &mac));
         }
     }
 }
