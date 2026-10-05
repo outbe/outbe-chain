@@ -4,26 +4,17 @@ use super::run_reshare_dealer_only_durable;
 use super::DkgComplete;
 use super::DkgDealerOnlyComplete;
 use super::DkgProgress;
+pub use super::{
+    DkgDealerParameters as DealerOnlyDkgFixture, DkgParticipantParameters as InitialDkgFixture,
+};
 use alloy_primitives::Bytes;
 use commonware_cryptography::bls12381;
-use commonware_cryptography::bls12381::dkg::feldman_desmedt::Output;
-use commonware_cryptography::bls12381::primitives::group::Share;
-use commonware_cryptography::bls12381::primitives::variant::MinSig;
 use commonware_p2p::Receiver as P2pReceiver;
 use commonware_p2p::Sender as P2pSender;
 use commonware_runtime::Clock;
 use commonware_utils::ordered::Set;
 use eyre::Result;
 use tokio::sync::mpsc;
-
-/// Unit-test ceremony material for a bootstrap or a player reshare.
-pub struct InitialDkgFixture {
-    pub signing_key: bls12381::PrivateKey,
-    pub participants: Set<bls12381::PublicKey>,
-    pub previous_output: Option<Output<MinSig, bls12381::PublicKey>>,
-    pub previous_share: Option<Share>,
-    pub round: u64,
-}
 
 impl InitialDkgFixture {
     pub fn bootstrap(
@@ -38,15 +29,6 @@ impl InitialDkgFixture {
             round: 0,
         }
     }
-}
-
-/// Unit-test reshare material for a previous dealer outside the target set.
-pub struct DealerOnlyDkgFixture {
-    pub signing_key: bls12381::PrivateKey,
-    pub participants: Set<bls12381::PublicKey>,
-    pub previous_output: Output<MinSig, bls12381::PublicKey>,
-    pub previous_share: Share,
-    pub round: u64,
 }
 
 /// Run a DKG ceremony over P2P (initial or reshare).
@@ -91,16 +73,19 @@ pub async fn run_initial_dkg(
     let recovery_dir = tempfile::tempdir()?;
     run_initial_dkg_durable(
         clock,
-        signing_key,
-        participants,
-        previous_output,
-        previous_share,
-        round,
-        progress_tx,
-        finalized_log_rx,
+        super::DkgParticipantParameters {
+            signing_key,
+            participants,
+            previous_output,
+            previous_share,
+            round,
+        },
+        super::DkgProgressChannels {
+            progress_tx,
+            finalized_log_rx,
+        },
         DkgRetryStore::in_keys_dir(recovery_dir.path(), crate::bls::KeyBackend::Plaintext),
-        sender,
-        receiver,
+        super::DkgTransport { sender, receiver },
     )
     .await
 }
@@ -132,15 +117,16 @@ pub async fn run_reshare_dealer_only(
     let recovery_dir = tempfile::tempdir()?;
     run_reshare_dealer_only_durable(
         clock,
-        signing_key,
-        participants,
-        previous_output,
-        previous_share,
-        round,
+        super::DkgDealerParameters {
+            signing_key,
+            participants,
+            previous_output,
+            previous_share,
+            round,
+        },
         progress_tx,
         DkgRetryStore::in_keys_dir(recovery_dir.path(), crate::bls::KeyBackend::Plaintext),
-        sender,
-        receiver,
+        super::DkgTransport { sender, receiver },
     )
     .await
 }

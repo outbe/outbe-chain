@@ -123,3 +123,8 @@ pub use dealer_only::run_reshare_dealer_only_durable;
 
 mod round;
 pub use round::run_initial_dkg_durable;
+
+mod inputs;
+pub use inputs::{
+    DkgDealerParameters, DkgParticipantParameters, DkgProgressChannels, DkgTransport,
+};

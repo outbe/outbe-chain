@@ -120,16 +120,22 @@ where
 
                         dkg_actor::run_initial_dkg_durable(
                             &dkg_ctx,
-                            key,
-                            parts,
-                            prev_output,
-                            prev_share,
-                            round,
-                            Some(progress_tx),
-                            Some(finalized_log_rx),
+                            dkg_actor::DkgParticipantParameters {
+                                signing_key: key,
+                                participants: parts,
+                                previous_output: prev_output,
+                                previous_share: prev_share,
+                                round,
+                            },
+                            dkg_actor::DkgProgressChannels {
+                                progress_tx: Some(progress_tx),
+                                finalized_log_rx: Some(finalized_log_rx),
+                            },
                             retry_store.clone(),
-                            dkg_tx,
-                            dkg_rx,
+                            dkg_actor::DkgTransport {
+                                sender: dkg_tx,
+                                receiver: dkg_rx,
+                            },
                         )
                         .await
                         .map(DkgTaskOutcome::Complete)
@@ -138,15 +144,19 @@ where
                     LocalDkgRole::DealerOnly => match (prev_output, prev_share) {
                         (Some(output), Some(share)) => dkg_actor::run_reshare_dealer_only_durable(
                             &dkg_ctx,
-                            key,
-                            parts,
-                            output,
-                            share,
-                            round,
+                            dkg_actor::DkgDealerParameters {
+                                signing_key: key,
+                                participants: parts,
+                                previous_output: output,
+                                previous_share: share,
+                                round,
+                            },
                             progress_tx,
                             retry_store.clone(),
-                            dkg_tx,
-                            dkg_rx,
+                            dkg_actor::DkgTransport {
+                                sender: dkg_tx,
+                                receiver: dkg_rx,
+                            },
                         )
                         .await
                         .map(DkgTaskOutcome::DealerOnly),
