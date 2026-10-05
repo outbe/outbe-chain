@@ -379,9 +379,11 @@ where
     let (mut executor_actor, executor_mailbox) = ExecutorActor::new(
         ctx.child("executor"),
         engine_handle.clone(),
-        genesis_hash,
-        recovery_anchor_height,
-        recovery_anchor_hash,
+        outbe_consensus::executor::actor::RecoveredFinalizedState {
+            genesis_hash,
+            last_finalized_height: recovery_anchor_height,
+            last_finalized_hash: recovery_anchor_hash,
+        },
         projection_readiness.clone(),
         Some(executor_finalized_height_tx),
     );

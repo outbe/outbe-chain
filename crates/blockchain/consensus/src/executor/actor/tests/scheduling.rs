@@ -25,9 +25,11 @@ fn heartbeat_sends_fcu_to_last_forkchoice_without_payload_attributes() {
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
-            genesis,
-            0,
-            genesis,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: 0,
+                last_finalized_hash: genesis,
+            },
             projection_readiness,
             None,
         );
@@ -221,9 +223,11 @@ fn finalized_subscriber_completes_immediately_when_height_already_finalized() {
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context,
             engine,
-            genesis,
-            7,
-            finalized,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: 7,
+                last_finalized_hash: finalized,
+            },
             projection_readiness,
             None,
         );
@@ -253,9 +257,11 @@ fn ancestry_readiness_advances_from_executor_finalized_notifications() {
         let (actor, _mailbox) = super::ExecutorActor::new(
             context,
             engine,
-            genesis,
-            0,
-            genesis,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: 0,
+                last_finalized_hash: genesis,
+            },
             projection_readiness,
             None,
         );
@@ -285,9 +291,11 @@ fn finalized_subscriber_completes_when_later_height_is_notified() {
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context,
             engine,
-            genesis,
-            0,
-            genesis,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: 0,
+                last_finalized_hash: genesis,
+            },
             projection_readiness,
             None,
         );

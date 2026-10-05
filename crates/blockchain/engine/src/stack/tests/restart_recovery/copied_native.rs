@@ -583,9 +583,11 @@ impl DiskFixture {
             let (executor, executor_mailbox) = ExecutorActor::new(
                 context.child("copied_executor"),
                 ConsensusEngineHandle::new(engine_tx),
-                genesis,
-                target,
-                hash,
+                outbe_consensus::executor::actor::RecoveredFinalizedState {
+                    genesis_hash: genesis,
+                    last_finalized_height: target,
+                    last_finalized_hash: hash,
+                },
                 readiness,
                 None,
             );

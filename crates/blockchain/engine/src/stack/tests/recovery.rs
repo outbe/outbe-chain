@@ -443,9 +443,11 @@ fn recovered_fcu_releases_projection_wait_without_running_executor_heartbeat() {
         let (actor, _mailbox) = ExecutorActor::new(
             context.child("executor"),
             ConsensusEngineHandle::new(engine_tx),
-            genesis,
-            anchor.block_number,
-            anchor.block_hash,
+            outbe_consensus::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: anchor.block_number,
+                last_finalized_hash: anchor.block_hash,
+            },
             readiness,
             None,
         );

@@ -45,9 +45,11 @@ fn finalized_syncing_delivery_acks_and_heartbeat_repeats_fcu() {
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
-            genesis,
-            0,
-            genesis,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: 0,
+                last_finalized_hash: genesis,
+            },
             projection_readiness,
             None,
         );
@@ -133,9 +135,11 @@ fn canonical_genesis_anchor_is_acknowledged_without_execution() {
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
-            genesis,
-            0,
-            genesis,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: 0,
+                last_finalized_hash: genesis,
+            },
             projection_readiness,
             None,
         );
@@ -179,9 +183,11 @@ fn recovered_canonical_block_is_acknowledged_without_reexecution() {
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
-            genesis,
-            28,
-            recovered_hash,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: 28,
+                last_finalized_hash: recovered_hash,
+            },
             projection_readiness,
             None,
         );
@@ -222,9 +228,11 @@ fn recovered_height_with_conflicting_hash_still_fails_closed() {
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
-            genesis,
-            28,
-            canonical.block_hash(),
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: 28,
+                last_finalized_hash: canonical.block_hash(),
+            },
             projection_readiness,
             None,
         );
@@ -264,9 +272,11 @@ fn conflicting_genesis_anchor_fails_without_acknowledging_marshal() {
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
-            canonical_genesis,
-            0,
-            canonical_genesis,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: canonical_genesis,
+                last_finalized_height: 0,
+                last_finalized_hash: canonical_genesis,
+            },
             projection_readiness,
             None,
         );
@@ -318,9 +328,11 @@ fn marshal_ack_waits_for_compressed_storage_commit_barrier() {
         let (actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
-            genesis,
-            0,
-            genesis,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: 0,
+                last_finalized_hash: genesis,
+            },
             projection_readiness,
             None,
         );
@@ -385,9 +397,11 @@ fn rejected_finalized_block_fails_fast_without_acknowledging_marshal() {
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
-            genesis,
-            0,
-            genesis,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: 0,
+                last_finalized_hash: genesis,
+            },
             projection_readiness,
             None,
         );

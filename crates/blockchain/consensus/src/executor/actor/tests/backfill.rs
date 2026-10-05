@@ -255,9 +255,11 @@ fn run_backfill_fails_fast_when_marshal_missing_finalized_block() {
             let (actor, _mailbox) = super::ExecutorActor::new(
                 context.child("exec"),
                 engine,
-                genesis,
-                0,
-                genesis,
+                crate::executor::actor::RecoveredFinalizedState {
+                    genesis_hash: genesis,
+                    last_finalized_height: 0,
+                    last_finalized_hash: genesis,
+                },
                 projection_readiness,
                 None,
             );

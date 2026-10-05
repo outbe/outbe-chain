@@ -615,9 +615,11 @@ impl<E: FollowerRuntime> ExecutionBootstrap<E> {
         let (executor_actor, executor_mailbox) = ExecutorActor::new(
             ctx.child("executor"),
             engine_handle,
-            genesis_hash,
-            recovery_anchor.checkpoint.block_number,
-            recovery_anchor.checkpoint.block_hash,
+            outbe_consensus::executor::actor::RecoveredFinalizedState {
+                genesis_hash,
+                last_finalized_height: recovery_anchor.checkpoint.block_number,
+                last_finalized_hash: recovery_anchor.checkpoint.block_hash,
+            },
             projection_readiness.clone(),
             Some(execution_finalized_height_tx),
         );

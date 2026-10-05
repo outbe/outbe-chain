@@ -328,9 +328,11 @@ fn live_executor_retries_execution_while_candidate_storage_remains_independent()
             let (executor, mailbox) = crate::executor::actor::ExecutorActor::new(
                 clock.child("executor"),
                 engine,
-                B256::ZERO,
-                0,
-                B256::ZERO,
+                crate::executor::actor::RecoveredFinalizedState {
+                    genesis_hash: B256::ZERO,
+                    last_finalized_height: 0,
+                    last_finalized_hash: B256::ZERO,
+                },
                 shared.projection_readiness.clone(),
                 None,
             );
