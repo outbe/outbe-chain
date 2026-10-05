@@ -8,7 +8,6 @@ interface IVaultRouter {
         IntexCostAmount,
         CredisCostAmount,
         GemCostAmount,
-        PayNoteDeposit,
         NodCostAmount
     }
 

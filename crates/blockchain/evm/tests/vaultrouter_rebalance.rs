@@ -9,8 +9,7 @@
 //! (`sub_call::run`, which installs the outbe precompile set in the child
 //! frame), with two vaults sharing one stubbed asset - `rebalance`'s
 //! same-asset path needs no oracle or decimals lookup, so the counterparties
-//! can stay minimal raw bytecode, exactly as `paynote_deposit.rs` does for
-//! its own counterparties.
+//! can stay minimal raw bytecode.
 //!
 //! What this pins that the unit tests cannot:
 //!   * a real EOA-style caller reaches `rebalance` through the routed
