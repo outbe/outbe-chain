@@ -115,21 +115,8 @@ fn sample_certificate() -> outbe_consensus::hybrid::HybridCertificate<MinSig> {
         keys.iter().map(|k| k.public_key()).try_collect().unwrap();
     let dkg = bootstrap_dkg(3).unwrap();
 
-    let schemes: Vec<HybridScheme<MinSig>> = keys
-        .iter()
-        .map(|key| {
-            let pk = key.public_key();
-            let idx = participants.index(&pk).unwrap();
-            HybridScheme::signer(
-                &config::outbe_app_namespace(),
-                participants.clone(),
-                key.clone(),
-                dkg.polynomial.clone(),
-                dkg.shares[idx.get() as usize].clone(),
-            )
-            .unwrap()
-        })
-        .collect();
+    let schemes: Vec<HybridScheme<MinSig>> =
+        super::fixtures::bootstrap_fixture_signers(&keys, &participants, &dkg);
 
     let proposal = commonware_consensus::simplex::types::Proposal::new(
         Round::new(Epoch::new(0), View::new(2)),
