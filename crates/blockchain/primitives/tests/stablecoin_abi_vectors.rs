@@ -56,7 +56,7 @@ fn complete_exported_abis_match_golden_hashes() {
     );
     assert_eq!(
         canonical_abi_hash(vote),
-        b256!("a6507e6860b3747b4a31c7e7f615c2a0fb79fce105f02f9e7e82db5767bda11d")
+        b256!("b8055a8710bcd34616ad1f9436adf90951117435f55e7264d831e25fd311407f")
     );
 }
 
