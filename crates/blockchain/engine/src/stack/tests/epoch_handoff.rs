@@ -86,27 +86,15 @@ fn signed_dkg_logs(
         .iter()
         .map(|key| Player::new(info.clone(), key.clone()).unwrap())
         .collect();
-    for (dealer_index, (public, private)) in public_messages
-        .iter()
-        .zip(private_messages.iter())
-        .enumerate()
-    {
-        let dealer = keys[dealer_index].public_key();
-        for (player, share) in private {
-            let player_index = keys
-                .iter()
-                .position(|key| key.public_key() == *player)
-                .unwrap();
-            if let Some(ack) = players[player_index]
-                .dealer_message::<N3f1>(dealer.clone(), public.clone(), share.clone())
-                .expect("fixture dealing must be valid")
-            {
-                dealers[dealer_index]
-                    .receive_player_ack(player.clone(), ack)
-                    .unwrap();
-            }
-        }
-    }
+    outbe_consensus::test_harness::acknowledge_fixture_dealings(
+        &keys,
+        outbe_consensus::test_harness::FixtureDealings {
+            public_messages: &public_messages,
+            private_messages: &private_messages,
+        },
+        &mut dealers,
+        &mut players,
+    );
 
     let mut encoded = BTreeMap::new();
     for dealer in dealers {

@@ -181,24 +181,15 @@ fn run_test_dkg_complete() -> (
         .map(|k| Player::new(info.clone(), k.clone()).unwrap())
         .collect();
 
-    for (dealer_idx, (pub_msg, priv_msgs)) in pub_msgs.iter().zip(all_priv_msgs.iter()).enumerate()
-    {
-        let dealer_pk = keys[dealer_idx].public_key();
-        for (player_pk, priv_msg) in priv_msgs {
-            let player_idx = keys
-                .iter()
-                .position(|k| &k.public_key() == player_pk)
-                .unwrap();
-            if let Some(ack) = players[player_idx]
-                .dealer_message::<N3f1>(dealer_pk.clone(), pub_msg.clone(), priv_msg.clone())
-                .expect("fixture dealing must be valid")
-            {
-                dealers[dealer_idx]
-                    .receive_player_ack(player_pk.clone(), ack)
-                    .unwrap();
-            }
-        }
-    }
+    crate::test_harness::acknowledge_fixture_dealings(
+        &keys,
+        crate::test_harness::FixtureDealings {
+            public_messages: &pub_msgs,
+            private_messages: &all_priv_msgs,
+        },
+        &mut dealers,
+        &mut players,
+    );
 
     let mut logs = std::collections::BTreeMap::new();
     let mut first_log = None;
@@ -277,24 +268,15 @@ fn run_round(
         .map(|k| Player::new(info.clone(), k.clone()).unwrap())
         .collect();
 
-    for (dealer_idx, (pub_msg, priv_msgs)) in pub_msgs.iter().zip(all_priv_msgs.iter()).enumerate()
-    {
-        let dealer_pk = keys[dealer_idx].public_key();
-        for (player_pk, priv_msg) in priv_msgs {
-            let player_idx = keys
-                .iter()
-                .position(|k| &k.public_key() == player_pk)
-                .unwrap();
-            if let Some(ack) = players[player_idx]
-                .dealer_message::<N3f1>(dealer_pk.clone(), pub_msg.clone(), priv_msg.clone())
-                .expect("fixture dealing must be valid")
-            {
-                dealers[dealer_idx]
-                    .receive_player_ack(player_pk.clone(), ack)
-                    .unwrap();
-            }
-        }
-    }
+    crate::test_harness::acknowledge_fixture_dealings(
+        keys,
+        crate::test_harness::FixtureDealings {
+            public_messages: &pub_msgs,
+            private_messages: &all_priv_msgs,
+        },
+        &mut dealers,
+        &mut players,
+    );
 
     let mut logs = BTreeMap::new();
     let mut signed_logs = BTreeMap::new();

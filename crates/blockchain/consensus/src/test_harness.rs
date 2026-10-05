@@ -70,6 +70,10 @@ use crate::epoch_subchannels::{
 };
 use crate::hybrid::HybridScheme;
 
+#[path = "test_harness/dealings.rs"]
+mod dealings;
+pub use dealings::{acknowledge_fixture_dealings, FixtureDealings};
+
 fn namespace() -> Vec<u8> {
     crate::config::outbe_app_namespace()
 }
