@@ -103,14 +103,14 @@ pub(super) fn block_runtime_context_from_storage(
     };
 
     Ok(BlockRuntimeContext::new(
-        BlockContext::new_with_genesis_hash(
+        BlockContext::new_with_genesis_hash(outbe_primitives::block::BlockContextInput {
             block_number,
             timestamp,
             chain_id,
             genesis_hash,
             proposer,
             validators,
-        ),
+        }),
         storage,
     ))
 }

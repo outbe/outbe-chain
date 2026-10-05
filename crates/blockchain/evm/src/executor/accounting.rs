@@ -260,14 +260,15 @@ where
 
         let snapshot = {
             let db = self.inner.evm.db_mut();
-            let ctx = BlockContext::new_with_genesis_hash(
-                block_number,
-                timestamp,
-                chain_id,
-                self.genesis_hash,
-                proposer,
-                Vec::new(),
-            );
+            let ctx =
+                BlockContext::new_with_genesis_hash(outbe_primitives::block::BlockContextInput {
+                    block_number,
+                    timestamp,
+                    chain_id,
+                    genesis_hash: self.genesis_hash,
+                    proposer,
+                    validators: Vec::new(),
+                });
             let mut provider = DirectStorageProvider::new(db, ctx);
             let storage = StorageHandle::new(&mut provider);
             read_committee_snapshot(storage, snapshot_key).map_err(|error| {

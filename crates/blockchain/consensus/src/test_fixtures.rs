@@ -402,14 +402,16 @@ pub(crate) fn block_with_gas_planned_system_inputs(
     block.header.gas_limit = block_gas_limit;
     for (ordinal, (kind, calldata)) in encoded_inputs.into_iter().enumerate() {
         let unsigned = build_unsigned_system_tx_with_gas_limit(
-            kind,
-            ordinal.try_into().expect("test ordinal fits"),
-            block_number,
-            chain_id,
-            calldata,
-            gas_plan
-                .gas_limit(ordinal)
-                .expect("gas plan covers every system tx"),
+            outbe_primitives::system_tx::SystemTxEnvelopeInput {
+                kind,
+                ordinal: ordinal.try_into().expect("test ordinal fits"),
+                block_number,
+                chain_id,
+                calldata,
+                gas_limit: gas_plan
+                    .gas_limit(ordinal)
+                    .expect("gas plan covers every system tx"),
+            },
         )
         .expect("system tx builds");
         block

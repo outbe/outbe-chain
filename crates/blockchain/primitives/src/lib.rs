@@ -50,5 +50,6 @@ pub use header::{
     OutbeTxType,
 };
 pub use payload::{
-    OutbeBuiltPayload, OutbeExecutionData, OutbePayloadAttributes, OutbePayloadTypes,
+    OutbeBuiltPayload, OutbeExecutionData, OutbePayloadAttributes, OutbePayloadAttributesInput,
+    OutbePayloadTypes,
 };

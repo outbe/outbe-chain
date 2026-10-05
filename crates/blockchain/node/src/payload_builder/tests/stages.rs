@@ -31,15 +31,15 @@ fn run_user_stage(
         base_fee_per_gas: Some(1_000_000_000),
         ..Default::default()
     }));
-    let attributes = OutbePayloadAttributes::new(
-        REWARDS_ADDRESS,
-        ACTIVE_PAYLOAD_BLOCK_TIMESTAMP * 1000,
-        B256::repeat_byte(0x44),
-        None,
-        Bytes::new(),
-        None,
-        None,
-    );
+    let attributes = OutbePayloadAttributes::new(outbe_primitives::OutbePayloadAttributesInput {
+        suggested_fee_recipient: REWARDS_ADDRESS,
+        timestamp_millis: ACTIVE_PAYLOAD_BLOCK_TIMESTAMP * 1000,
+        prev_randao: B256::repeat_byte(0x44),
+        parent_beacon_block_root: None,
+        extra_data: Bytes::new(),
+        parent_consensus_metadata: None,
+        proposer_evm_address: None,
+    });
     let context = PayloadContext {
         parent: &parent,
         attributes: &attributes,

@@ -204,15 +204,15 @@ fn payload_attributes(timestamp: u64, proposer: Address) -> OutbePayloadAttribut
         compressed_entities_root: None,
     })
     .expect("Outbe boundary artifacts should encode");
-    OutbePayloadAttributes::new(
-        REWARDS_ADDRESS,
-        timestamp.saturating_mul(1000),
-        B256::ZERO,
-        Some(B256::ZERO),
+    OutbePayloadAttributes::new(outbe_primitives::OutbePayloadAttributesInput {
+        suggested_fee_recipient: REWARDS_ADDRESS,
+        timestamp_millis: timestamp.saturating_mul(1000),
+        prev_randao: B256::ZERO,
+        parent_beacon_block_root: Some(B256::ZERO),
         extra_data,
-        None,
-        Some(proposer),
-    )
+        parent_consensus_metadata: None,
+        proposer_evm_address: Some(proposer),
+    })
 }
 
 #[tokio::test]

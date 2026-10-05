@@ -126,17 +126,17 @@ pub(in crate::lifecycle) fn try_build_canonical_ocomp_successor(
         evm_config.clone(),
         EthereumBuilderConfig::new().with_gas_limit(BLOCK_GAS_LIMIT),
     );
-    let attributes = OutbePayloadAttributes::new(
-        REWARDS_ADDRESS,
-        timestamp * 1_000,
-        B256::from(U256::from(height).to_be_bytes::<32>()),
-        Some(B256::from(
+    let attributes = OutbePayloadAttributes::new(outbe_primitives::OutbePayloadAttributesInput {
+        suggested_fee_recipient: REWARDS_ADDRESS,
+        timestamp_millis: timestamp * 1_000,
+        prev_randao: B256::from(U256::from(height).to_be_bytes::<32>()),
+        parent_beacon_block_root: Some(B256::from(
             U256::from(height.saturating_add(1)).to_be_bytes::<32>(),
         )),
-        Bytes::new(),
-        Some(metadata),
-        Some(proposer),
-    )
+        extra_data: Bytes::new(),
+        parent_consensus_metadata: Some(metadata),
+        proposer_evm_address: Some(proposer),
+    })
     .with_execution_read_budget(ExecutionReadBudget::new());
     let payload_config = PayloadConfig::new(
         parent,

@@ -360,12 +360,14 @@ where
             ))
         })?;
         let unsigned = build_unsigned_system_tx_with_gas_limit(
-            expected_phase,
-            ordinal,
-            block_number,
-            self.inner.evm.chain_id(),
-            tx.input().clone(),
-            planned_gas_limit,
+            outbe_primitives::system_tx::SystemTxEnvelopeInput {
+                kind: expected_phase,
+                ordinal,
+                block_number,
+                chain_id: self.inner.evm.chain_id(),
+                calldata: tx.input().clone(),
+                gas_limit: planned_gas_limit,
+            },
         )
         .map_err(|error| {
             BlockExecutionError::Internal(InternalBlockExecutionError::Other(
@@ -425,14 +427,15 @@ where
         let proposer = self.inner.evm.block().beneficiary();
         let authorized = {
             let db = self.inner.evm.db_mut();
-            let ctx = BlockContext::new_with_genesis_hash(
-                block_number,
-                timestamp,
-                chain_id,
-                self.genesis_hash,
-                proposer,
-                Vec::new(),
-            );
+            let ctx =
+                BlockContext::new_with_genesis_hash(outbe_primitives::block::BlockContextInput {
+                    block_number,
+                    timestamp,
+                    chain_id,
+                    genesis_hash: self.genesis_hash,
+                    proposer,
+                    validators: Vec::new(),
+                });
             let mut provider = DirectStorageProvider::new(db, ctx);
             let storage = StorageHandle::new(&mut provider);
             match candidate {

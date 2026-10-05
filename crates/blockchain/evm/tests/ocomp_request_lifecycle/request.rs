@@ -109,15 +109,15 @@ pub(super) fn open_voting_with_pre_open_state() -> (VotingOpenScenario, PreOpenS
         evm_config.clone(),
         EthereumBuilderConfig::new().with_gas_limit(BLOCK_GAS_LIMIT),
     );
-    let attributes = OutbePayloadAttributes::new(
-        REWARDS_ADDRESS,
-        prepared.request_time * 1_000,
-        B256::repeat_byte(0x44),
-        Some(B256::repeat_byte(0x45)),
-        Bytes::new(),
-        Some(metadata),
-        Some(proposer),
-    )
+    let attributes = OutbePayloadAttributes::new(outbe_primitives::OutbePayloadAttributesInput {
+        suggested_fee_recipient: REWARDS_ADDRESS,
+        timestamp_millis: prepared.request_time * 1_000,
+        prev_randao: B256::repeat_byte(0x44),
+        parent_beacon_block_root: Some(B256::repeat_byte(0x45)),
+        extra_data: Bytes::new(),
+        parent_consensus_metadata: Some(metadata),
+        proposer_evm_address: Some(proposer),
+    })
     .with_execution_read_budget(ExecutionReadBudget::new());
     let payload = payload_builder
         .build_empty_payload(PayloadConfig::new(
@@ -372,16 +372,17 @@ pub(super) fn open_voting_with_pre_open_state() -> (VotingOpenScenario, PreOpenS
         evm_config.clone(),
         EthereumBuilderConfig::new().with_gas_limit(BLOCK_GAS_LIMIT),
     );
-    let successor_attributes = OutbePayloadAttributes::new(
-        REWARDS_ADDRESS,
-        (prepared.request_time + 1) * 1_000,
-        B256::repeat_byte(0x54),
-        Some(B256::repeat_byte(0x55)),
-        Bytes::new(),
-        Some(successor_metadata),
-        Some(proposer),
-    )
-    .with_execution_read_budget(ExecutionReadBudget::new());
+    let successor_attributes =
+        OutbePayloadAttributes::new(outbe_primitives::OutbePayloadAttributesInput {
+            suggested_fee_recipient: REWARDS_ADDRESS,
+            timestamp_millis: (prepared.request_time + 1) * 1_000,
+            prev_randao: B256::repeat_byte(0x54),
+            parent_beacon_block_root: Some(B256::repeat_byte(0x55)),
+            extra_data: Bytes::new(),
+            parent_consensus_metadata: Some(successor_metadata),
+            proposer_evm_address: Some(proposer),
+        })
+        .with_execution_read_budget(ExecutionReadBudget::new());
     let successor = successor_builder
         .build_empty_payload(PayloadConfig::new(
             request_parent,

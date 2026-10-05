@@ -426,15 +426,15 @@ fn build_active_payload_case(
         evm_config.clone(),
         EthereumBuilderConfig::new().with_gas_limit(ACTIVE_PAYLOAD_BLOCK_GAS_LIMIT),
     );
-    let attributes = OutbePayloadAttributes::new(
-        REWARDS_ADDRESS,
-        ACTIVE_PAYLOAD_BLOCK_TIMESTAMP * 1000,
-        B256::repeat_byte(0x44),
-        None,
-        prefinal_extra_data,
-        None,
-        Some(proposer),
-    )
+    let attributes = OutbePayloadAttributes::new(outbe_primitives::OutbePayloadAttributesInput {
+        suggested_fee_recipient: REWARDS_ADDRESS,
+        timestamp_millis: ACTIVE_PAYLOAD_BLOCK_TIMESTAMP * 1000,
+        prev_randao: B256::repeat_byte(0x44),
+        parent_beacon_block_root: None,
+        extra_data: prefinal_extra_data,
+        parent_consensus_metadata: None,
+        proposer_evm_address: Some(proposer),
+    })
     .with_execution_read_budget(ExecutionReadBudget::new());
     let payload_config = PayloadConfig::new(parent, attributes, PayloadId::new([0x07; 8]));
     let rejected = Arc::new(AtomicUsize::new(0));

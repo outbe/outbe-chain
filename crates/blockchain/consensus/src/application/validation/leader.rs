@@ -116,14 +116,16 @@ pub(super) fn validate_envelopes(
             .try_into()
             .map_err(|_| format!("system tx ordinal {ordinal} exceeds u8 range"))?;
         let unsigned = outbe_primitives::system_tx::build_unsigned_system_tx_with_gas_limit(
-            kind,
-            ordinal,
-            header.number(),
-            chain_id,
-            calldata,
-            gas_plan
-                .gas_limit(usize::from(ordinal))
-                .ok_or_else(|| format!("visible gas plan missing system tx ordinal {ordinal}"))?,
+            outbe_primitives::system_tx::SystemTxEnvelopeInput {
+                kind,
+                ordinal,
+                block_number: header.number(),
+                chain_id,
+                calldata,
+                gas_limit: gas_plan.gas_limit(usize::from(ordinal)).ok_or_else(|| {
+                    format!("visible gas plan missing system tx ordinal {ordinal}")
+                })?,
+            },
         )
         .map_err(|error| format!("build unsigned system transaction: {error}"))?;
         if tx.signature_hash() != unsigned.signature_hash() {
