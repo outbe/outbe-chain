@@ -389,34 +389,6 @@
     "stateMutability": "nonpayable"
   },
   {
-    "type": "function",
-    "name": "settleIntexWithPayNote",
-    "inputs": [
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "internalType": "bytes14"
-      },
-      {
-        "name": "owner",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "units",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "payNoteProof",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
     "type": "event",
     "name": "CallScanSkipped",
     "inputs": [

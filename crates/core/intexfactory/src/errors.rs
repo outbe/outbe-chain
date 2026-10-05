@@ -75,18 +75,6 @@ pub enum IntexFactoryError {
 
     #[error("settlement token moved an unexpected amount")]
     SettlementAmountMismatch,
-
-    #[error("PayNote context {actual} does not match settlement {expected}")]
-    PayNoteContextMismatch {
-        expected: alloy_primitives::B256,
-        actual: alloy_primitives::B256,
-    },
-
-    #[error("PayNote spends {covered}, settlement costs {required}")]
-    PayNoteCostMismatch {
-        covered: alloy_primitives::U256,
-        required: alloy_primitives::U256,
-    },
 }
 
 impl From<outbe_common::pow::PowError> for IntexFactoryError {
