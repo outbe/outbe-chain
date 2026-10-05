@@ -144,7 +144,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
     "gem_settle_quote",
     "What settling a gem with a given asset costs, and which of the gem's two currencies " +
       "that asset settles on. `paymentMinor` is in the asset's own minor units; `snapshotId` " +
-      "is the trailing VWAP snapshot a direct issuance-currency settlement must name (zero on " +
+      "is the trailing VWAP snapshot an issuance-currency settlement must name (zero on " +
       "the reference rail). An issuance-currency quote expires at the next whole UTC hour.",
     {
       id: z.string().describe("Gem token id (decimal or 0x hex)"),

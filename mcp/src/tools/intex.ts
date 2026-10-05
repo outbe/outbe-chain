@@ -1128,11 +1128,9 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "auction_bid_settle",
     "Settlement step 1: pay the strike and turn Issued Intexes into Settled (Promis is mined later via " +
-      "intex_promis_mine). The cost is paid by spending a PayNote, so pass pay_note_proof: this call moves " +
-      "no tokens of its own and needs no approval. Get the price with intex_settlement_tokens, deposit a " +
-      "note of at least that size into IPayNote (from whichever wallet holds the money - a different one " +
-      "keeps the two unlinked), then build the spend proof off-chain for this series, owner and units; the " +
-      "MCP cannot produce it. " +
+      "intex_promis_mine). Pays in `token`, one of the tokens intex_settlement_tokens lists: the tool " +
+      "quotes the units, approves IntexFactory for that cost if the allowance is short, and settles at " +
+      "the quoted snapshot. " +
       "Defaults to your own wallet; pass owner to pay for someone else's position. " +
       "Allowed once the series has qualified (voluntary; see `qualified` in intex_series_info) or is Called " +
       "(forced, within the call period). The " +
@@ -1143,29 +1141,38 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     {
       series: seriesArg,
       units: unitsArg,
-      owner: z
-        .string()
-        .optional()
-        .describe("owner of the units, the one the proof was built for (default: the configured signer)"),
-      pay_note_proof: z
-        .string()
-        .describe("0x-hex `outbe.paynote` spend proof bound to this series, owner and units"),
+      token: z.string().describe("settlement token address, one listed by intex_settlement_tokens"),
+      owner: z.string().optional().describe("owner of the units (default: the configured signer)"),
       network: networkArg.optional(),
       wait: waitArg,
     },
-    handler(async ({ series, units, owner, pay_note_proof, network, wait }) => {
+    handler(async ({ series, units, token, owner, network, wait }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");
       const account = requireAccount();
       const holder = owner ? getAddress(owner) : account.address;
-      if (!/^0x[0-9a-fA-F]*$/.test(pay_note_proof) || pay_note_proof.length < 4) {
-        throw new Error("pay_note_proof must be a 0x-prefixed hex PayNote spend proof");
-      }
+      const asset = getAddress(token);
+      const quantity = BigInt(units);
+      const { settlementCurrency, paymentMinor, snapshotId } = await quoteSettlement(n, series, asset, quantity);
 
       const factory = addr(n, "factory");
+      let autoApprove: { txHash: Hex; amount: string } | null = null;
+      if (paymentMinor > 0n) {
+        const allowance = (await n.client.readContract({
+          address: asset,
+          abi: ERC20_ABI,
+          functionName: "allowance",
+          args: [account.address, factory],
+        })) as bigint;
+        if (allowance < paymentMinor) {
+          const approveData = encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [factory, paymentMinor] });
+          const ar = await submit(n, asset, approveData, 0n, true); // must be mined before settle
+          autoApprove = { txHash: ar.txHash, amount: paymentMinor.toString() };
+        }
+      }
       const data = encodeFunctionData({
         abi: FACTORY_ABI,
-        functionName: "settleIntexWithPayNote",
-        args: [series, holder, BigInt(units), pay_note_proof as Hex],
+        functionName: "settleIntex",
+        args: [series, holder, quantity, asset, snapshotId],
       });
       const receipt = await submit(n, factory, data, 0n, wait);
       return ok({
@@ -1174,6 +1181,11 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         owner: holder,
         units,
         self: holder === account.address,
+        token: asset,
+        settlementCurrency,
+        paymentMinor: paymentMinor.toString(),
+        snapshotId: snapshotId.toString(),
+        autoApprove,
         ...receipt,
       });
     }),
@@ -1181,8 +1193,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "intex_settlement_tokens",
-    "Tokens you can settle a series with and what settling `units` of it costs in each. Use the cost " +
-      "to size the PayNote you deposit before calling auction_bid_settle: the chain floors the whole " +
+    "Tokens you can settle a series with and what settling `units` of it costs in each; " +
+      "auction_bid_settle pays that cost in the token you pick. The chain floors the whole " +
       "operation once, so quote the units you will actually settle. An issuance-currency cost holds " +
       "only until the next whole UTC hour (its `snapshotId` changes then), so settle within that hour " +
       "or quote again.",
