@@ -234,6 +234,15 @@ pub const RADICLE_REGISTRY_ADDRESS: Address =
 /// than storing a private copy of the protocol policy.
 pub const OCOMP_REGISTRY_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE12");
 
+/// Emit private-note tree precompile address (stateful).
+///
+/// Hosts the single chain-ID-bound Emit instance: a Tornado-style depth-32
+/// incremental commitment tree seeded lazily by the first `burn`, permanent
+/// commitment/nullifier sets, and a 32-root acceptance window. `burn` is the
+/// only payable selector; `mint` consumes the frozen
+/// `outbe.emit.mint@1.5.0` UltraHonkKeccak proof. See `outbe-emit`.
+pub const EMIT_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE13");
+
 /// HyperlaneController precompile address (stateful).
 ///
 /// Governance-owned controller of the Hyperlane bridge: owner of the Outbe
