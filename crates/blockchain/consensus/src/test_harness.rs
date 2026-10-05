@@ -81,8 +81,9 @@ pub use marshal_resolver::NoopMarshalResolver;
 #[path = "test_harness/fixtures.rs"]
 mod fixtures;
 pub use fixtures::{
-    boundary_artifact, committee_entries, committee_snapshot, linked_headers,
-    signed_resolver_proposal, BoundaryFixtureSettings, ResolverVote, SignedResolverProposal,
+    boundary_artifact, committee_entries, committee_snapshot, fixture_signer_schemes,
+    linked_headers, signed_resolver_proposal, BoundaryFixtureSettings, FixtureSignerSharing,
+    ResolverVote, SignedResolverProposal,
 };
 
 #[path = "test_harness/send_observer.rs"]

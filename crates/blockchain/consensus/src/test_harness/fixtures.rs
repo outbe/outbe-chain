@@ -11,7 +11,11 @@ use commonware_cryptography::{
     bls12381::{
         self,
         dkg::feldman_desmedt::Output,
-        primitives::variant::{MinSig, Variant},
+        primitives::{
+            group::Share,
+            sharing::Sharing,
+            variant::{MinSig, Variant},
+        },
     },
     certificate::Scheme,
     Hasher as _, Sha256, Signer as _,
@@ -94,21 +98,15 @@ pub fn signed_resolver_proposal(
         .try_collect()
         .unwrap();
     let dkg = bootstrap_dkg(3).unwrap();
-    let schemes: Vec<HybridScheme<MinSig>> = keys
-        .iter()
-        .map(|key| {
-            let pk = bls12381::PublicKey::from(key.clone());
-            let idx = set.index(&pk).unwrap();
-            HybridScheme::signer(
-                b"resolver-test",
-                set.clone(),
-                key.clone(),
-                dkg.polynomial.clone(),
-                dkg.shares[idx.get() as usize].clone(),
-            )
-            .unwrap()
-        })
-        .collect();
+    let schemes: Vec<HybridScheme<MinSig>> = fixture_signer_schemes(
+        b"resolver-test",
+        &keys,
+        &set,
+        FixtureSignerSharing {
+            polynomial: &dkg.polynomial,
+            shares: &dkg.shares,
+        },
+    );
     let verifier = HybridScheme::<MinSig>::verifier(b"resolver-test", set, dkg.polynomial).unwrap();
     let digest = Digest::from(B256::from_slice(Sha256::hash(&[payload]).as_ref()));
     let proposal = Proposal::new(round, parent_view, digest);
@@ -135,6 +133,34 @@ pub fn signed_resolver_proposal(
         certificate,
         verifier,
     }
+}
+
+pub struct FixtureSignerSharing<'a> {
+    pub polynomial: &'a Sharing<MinSig>,
+    pub shares: &'a [Share],
+}
+
+pub fn fixture_signer_schemes(
+    namespace: &[u8],
+    keys: &[bls12381::PrivateKey],
+    participants: &Set<bls12381::PublicKey>,
+    sharing: FixtureSignerSharing<'_>,
+) -> Vec<HybridScheme<MinSig>> {
+    let FixtureSignerSharing { polynomial, shares } = sharing;
+    keys.iter()
+        .map(|key| {
+            let pk = bls12381::PublicKey::from(key.clone());
+            let idx = participants.index(&pk).unwrap();
+            HybridScheme::signer(
+                namespace,
+                participants.clone(),
+                key.clone(),
+                polynomial.clone(),
+                shares[idx.get() as usize].clone(),
+            )
+            .unwrap()
+        })
+        .collect()
 }
 
 pub struct BoundaryFixtureSettings {
