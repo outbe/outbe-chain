@@ -1,4 +1,5 @@
-//! State-level tests: finalized trailing-window VWAP, policy identity, closed-day history and coverage.
+//! State-level tests: finalized trailing-window VWAP, policy identity and
+//! closed-day history. Round coverage of the window lives in `coverage`.
 
 use alloy_primitives::{Address, U256};
 
