@@ -431,12 +431,19 @@ impl HeaderProvider for FallibleHeaderProvider {
     }
 }
 
+fn header_lookup_provider(
+    by_hash_result: HeaderLookupResult,
+    by_number_result: HeaderLookupResult,
+) -> FallibleHeaderProvider {
+    FallibleHeaderProvider {
+        by_hash_result,
+        by_number_result,
+    }
+}
+
 #[test]
 fn exact_hash_header_not_found_maps_to_ok_none() {
-    let hp = FallibleHeaderProvider {
-        by_hash_result: HeaderLookupResult::HeaderNotFound,
-        by_number_result: HeaderLookupResult::None,
-    };
+    let hp = header_lookup_provider(HeaderLookupResult::HeaderNotFound, HeaderLookupResult::None);
     let provider = RethAccountedParentArtifactProvider::new(hp, None);
 
     let resolved = provider
@@ -451,10 +458,7 @@ fn exact_hash_header_not_found_maps_to_ok_none() {
 
 #[test]
 fn canonical_by_number_header_not_found_maps_to_ok_none() {
-    let hp = FallibleHeaderProvider {
-        by_hash_result: HeaderLookupResult::None,
-        by_number_result: HeaderLookupResult::HeaderNotFound,
-    };
+    let hp = header_lookup_provider(HeaderLookupResult::None, HeaderLookupResult::HeaderNotFound);
     let provider = RethAccountedParentArtifactProvider::new(hp, None);
 
     let resolved = provider
@@ -469,10 +473,10 @@ fn canonical_by_number_header_not_found_maps_to_ok_none() {
 
 #[test]
 fn non_header_not_found_provider_errors_still_propagate() {
-    let hp = FallibleHeaderProvider {
-        by_hash_result: HeaderLookupResult::Other("simulated MDBX corruption".into()),
-        by_number_result: HeaderLookupResult::None,
-    };
+    let hp = header_lookup_provider(
+        HeaderLookupResult::Other("simulated MDBX corruption".into()),
+        HeaderLookupResult::None,
+    );
     let provider = RethAccountedParentArtifactProvider::new(hp, None);
 
     let err = provider

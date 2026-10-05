@@ -1,5 +1,57 @@
 use super::*;
 
+type ShutdownVoterConfig = SimplexConfig<
+    HybridScheme<MinSig>,
+    RoundRobin<Sha256>,
+    ShutdownNullBlocker<commonware_cryptography::bls12381::PublicKey>,
+    Sha256Digest,
+    MockAutomaton,
+    MockRelay,
+    MockReporter,
+    Sequential,
+>;
+
+struct ShutdownVoterSettings {
+    epoch: Epoch,
+    partition: &'static str,
+    leader_timeout: Duration,
+    certification_timeout: Duration,
+    timeout_retry: Duration,
+}
+
+fn shutdown_voter_config(
+    context: &impl commonware_runtime::BufferPooler,
+    scheme: HybridScheme<MinSig>,
+    public_key: commonware_cryptography::bls12381::PublicKey,
+    settings: ShutdownVoterSettings,
+) -> ShutdownVoterConfig {
+    SimplexConfig {
+        scheme,
+        elector: RoundRobin::<Sha256>::default(),
+        blocker: ShutdownNullBlocker(PhantomData),
+        automaton: MockAutomaton::new(public_key),
+        relay: MockRelay::new(),
+        reporter: MockReporter::new(),
+        strategy: Sequential,
+        forward: ForwardPolicy::Disabled,
+        partition: settings.partition.to_owned(),
+        epoch: settings.epoch,
+        floor: Floor::Genesis(mock_genesis(settings.epoch)),
+        mailbox_size: NZUsize!(64),
+        leader_timeout: settings.leader_timeout,
+        certification_timeout: settings.certification_timeout,
+        timeout_retry: settings.timeout_retry,
+        view_retention: ViewDelta::new(16),
+        skip: commonware_consensus::simplex::SkipPolicy::Disabled,
+        track_historical_votes: true,
+        fetch_timeout: Duration::from_millis(20),
+
+        replay_buffer: NZUsize!(64 * 1024),
+        write_buffer: NZUsize!(4 * 1024),
+        page_cache: CacheRef::from_pooler(context, NonZeroU16::new(1024).unwrap(), NZUsize!(10)),
+    }
+}
+
 /// Real lookup transport, endpoint service and manager, under the same retained
 /// supervision task as production. Only the external finalized feed is gated.
 #[test]
@@ -235,58 +287,14 @@ fn application_drain_retains_transport_on_terminal_startup_and_panic_paths() {
     }
 }
 
+type ShutdownNullSender<P> = outbe_consensus::test_harness::ObservedSender<P, SendSignal>;
+
 #[derive(Clone)]
-struct ShutdownNullSender<P> {
-    participants: Vec<P>,
-    votes: Option<mpsc::Sender<()>>,
-}
+struct SendSignal(mpsc::Sender<()>);
 
-struct ShutdownNullCheckedSender<P> {
-    recipients: Vec<P>,
-    votes: Option<mpsc::Sender<()>>,
-}
-
-impl<P> CheckedSender for ShutdownNullCheckedSender<P>
-where
-    P: commonware_cryptography::PublicKey,
-{
-    type PublicKey = P;
-
-    fn recipients(&self) -> Vec<Self::PublicKey> {
-        self.recipients.clone()
-    }
-
-    fn send(self, _message: impl Into<IoBufs> + Send, _priority: bool) -> Unreliable<Feedback> {
-        if let Some(votes) = self.votes {
-            let _ = votes.send(());
-        }
-        Unreliable::Outcome(Feedback::Ok)
-    }
-}
-
-impl<P> LimitedSender for ShutdownNullSender<P>
-where
-    P: commonware_cryptography::PublicKey,
-{
-    type PublicKey = P;
-    type Checked<'a>
-        = ShutdownNullCheckedSender<P>
-    where
-        Self: 'a;
-
-    fn check(
-        &mut self,
-        recipients: Recipients<Self::PublicKey>,
-    ) -> Result<Self::Checked<'_>, SystemTime> {
-        let recipients = match recipients {
-            Recipients::All => self.participants.clone(),
-            Recipients::Some(recipients) => recipients,
-            Recipients::One(recipient) => vec![recipient],
-        };
-        Ok(ShutdownNullCheckedSender {
-            recipients,
-            votes: self.votes.clone(),
-        })
+impl outbe_consensus::test_harness::SendObserver for SendSignal {
+    fn on_send(self, _message: impl Into<IoBufs> + Send) {
+        let _ = self.0.send(());
     }
 }
 
@@ -351,10 +359,10 @@ fn global_stop_completes_with_a_stopping_sibling_and_real_voter() {
         let (votes_tx, votes_rx) = mpsc::channel();
         let sender = ShutdownNullSender {
             participants: vec![public_key.clone()],
-            votes: None,
+            observer: None,
         };
         let vote_network = (
-            ShutdownNullSender { votes: Some(votes_tx), ..sender.clone() },
+            ShutdownNullSender { observer: Some(SendSignal(votes_tx)), ..sender.clone() },
             ShutdownNullReceiver::<commonware_cryptography::bls12381::PublicKey>(PhantomData),
         );
         let certificate_network = (
@@ -366,35 +374,9 @@ fn global_stop_completes_with_a_stopping_sibling_and_real_voter() {
             ShutdownNullReceiver::<commonware_cryptography::bls12381::PublicKey>(PhantomData),
         );
 
-        let engine_config = SimplexConfig {
-            scheme,
-            elector: RoundRobin::<Sha256>::default(),
-            blocker: ShutdownNullBlocker(PhantomData),
-            automaton: MockAutomaton::new(public_key),
-            relay: MockRelay::new(),
-            reporter: MockReporter::new(),
-            strategy: Sequential,
-            forward: ForwardPolicy::Disabled,
-            partition: "stack_shutdown_voter_journal".to_owned(),
-            epoch,
-            floor: Floor::Genesis(mock_genesis(epoch)),
-            mailbox_size: NZUsize!(64),
-            leader_timeout: Duration::from_millis(10),
-            certification_timeout: Duration::from_millis(20),
-            timeout_retry: Duration::from_millis(40),
-            view_retention: ViewDelta::new(16),
-            skip: commonware_consensus::simplex::SkipPolicy::Disabled,
-            track_historical_votes: true,
-            fetch_timeout: Duration::from_millis(20),
-
-            replay_buffer: NZUsize!(64 * 1024),
-            write_buffer: NZUsize!(4 * 1024),
-            page_cache: CacheRef::from_pooler(
-                &context,
-                NonZeroU16::new(1024).unwrap(),
-                NZUsize!(10),
-            ),
-        };
+        let engine_config = shutdown_voter_config(&context, scheme, public_key, ShutdownVoterSettings {epoch, partition: "stack_shutdown_voter_journal", leader_timeout: Duration::from_millis(10),
+                certification_timeout: Duration::from_millis(20),
+                timeout_retry: Duration::from_millis(40)});
         let engine = SimplexEngine::new(context.child("engine"), engine_config);
         let engine_handle = engine.start(vote_network, certificate_network, resolver_network);
 
@@ -483,15 +465,15 @@ fn fatal_stack_exit_preserves_error_and_voter_journal_can_resume() {
         let (votes_tx, votes_rx) = mpsc::channel();
         let vote_sender = ShutdownNullSender {
             participants: vec![first_public_key.clone()],
-            votes: Some(votes_tx),
+            observer: Some(SendSignal(votes_tx)),
         };
         let certificate_sender = ShutdownNullSender {
             participants: vec![first_public_key.clone()],
-            votes: None,
+            observer: None,
         };
         let resolver_sender = ShutdownNullSender {
             participants: vec![first_public_key.clone()],
-            votes: None,
+            observer: None,
         };
         let vote_network = (
             vote_sender,
@@ -506,35 +488,18 @@ fn fatal_stack_exit_preserves_error_and_voter_journal_can_resume() {
             ShutdownNullReceiver::<commonware_cryptography::bls12381::PublicKey>(PhantomData),
         );
 
-        let engine_config = SimplexConfig {
-            scheme: first_scheme,
-            elector: RoundRobin::<Sha256>::default(),
-            blocker: ShutdownNullBlocker(PhantomData),
-            automaton: MockAutomaton::new(first_public_key),
-            relay: MockRelay::new(),
-            reporter: MockReporter::new(),
-            strategy: Sequential,
-            forward: ForwardPolicy::Disabled,
-            partition: "fatal_stack_exit_voter_journal".to_owned(),
-            epoch,
-            floor: Floor::Genesis(mock_genesis(epoch)),
-            mailbox_size: NZUsize!(64),
-            leader_timeout: Duration::from_millis(200),
-            certification_timeout: Duration::from_millis(400),
-            timeout_retry: Duration::from_millis(800),
-            view_retention: ViewDelta::new(16),
-            skip: commonware_consensus::simplex::SkipPolicy::Disabled,
-            track_historical_votes: true,
-            fetch_timeout: Duration::from_millis(20),
-
-            replay_buffer: NZUsize!(64 * 1024),
-            write_buffer: NZUsize!(4 * 1024),
-            page_cache: CacheRef::from_pooler(
-                &context,
-                NonZeroU16::new(1024).unwrap(),
-                NZUsize!(10),
-            ),
-        };
+        let engine_config = shutdown_voter_config(
+            &context,
+            first_scheme,
+            first_public_key,
+            ShutdownVoterSettings {
+                epoch,
+                partition: "fatal_stack_exit_voter_journal",
+                leader_timeout: Duration::from_millis(200),
+                certification_timeout: Duration::from_millis(400),
+                timeout_retry: Duration::from_millis(800),
+            },
+        );
 
         let (engine_ready_tx, engine_ready_rx) = mpsc::sync_channel(1);
         let (fatal_tx, fatal_rx) = tokio::sync::oneshot::channel::<()>();
@@ -605,11 +570,11 @@ fn fatal_stack_exit_preserves_error_and_voter_journal_can_resume() {
         let (votes_tx, votes_rx) = mpsc::channel();
         let sender = ShutdownNullSender {
             participants: vec![public_key.clone()],
-            votes: None,
+            observer: None,
         };
         let vote_network = (
             ShutdownNullSender {
-                votes: Some(votes_tx),
+                observer: Some(SendSignal(votes_tx)),
                 ..sender.clone()
             },
             ShutdownNullReceiver::<commonware_cryptography::bls12381::PublicKey>(PhantomData),
@@ -622,35 +587,18 @@ fn fatal_stack_exit_preserves_error_and_voter_journal_can_resume() {
             sender,
             ShutdownNullReceiver::<commonware_cryptography::bls12381::PublicKey>(PhantomData),
         );
-        let engine_config = SimplexConfig {
+        let engine_config = shutdown_voter_config(
+            &context,
             scheme,
-            elector: RoundRobin::<Sha256>::default(),
-            blocker: ShutdownNullBlocker(PhantomData),
-            automaton: MockAutomaton::new(public_key),
-            relay: MockRelay::new(),
-            reporter: MockReporter::new(),
-            strategy: Sequential,
-            forward: ForwardPolicy::Disabled,
-            partition: "fatal_stack_exit_voter_journal".to_owned(),
-            epoch,
-            floor: Floor::Genesis(mock_genesis(epoch)),
-            mailbox_size: NZUsize!(64),
-            leader_timeout: Duration::from_millis(200),
-            certification_timeout: Duration::from_millis(400),
-            timeout_retry: Duration::from_millis(800),
-            view_retention: ViewDelta::new(16),
-            skip: commonware_consensus::simplex::SkipPolicy::Disabled,
-            track_historical_votes: true,
-            fetch_timeout: Duration::from_millis(20),
-
-            replay_buffer: NZUsize!(64 * 1024),
-            write_buffer: NZUsize!(4 * 1024),
-            page_cache: CacheRef::from_pooler(
-                &context,
-                NonZeroU16::new(1024).unwrap(),
-                NZUsize!(10),
-            ),
-        };
+            public_key,
+            ShutdownVoterSettings {
+                epoch,
+                partition: "fatal_stack_exit_voter_journal",
+                leader_timeout: Duration::from_millis(200),
+                certification_timeout: Duration::from_millis(400),
+                timeout_retry: Duration::from_millis(800),
+            },
+        );
         let engine = SimplexEngine::new(context.child("reopened_engine"), engine_config);
         let engine_handle = engine.start(vote_network, certificate_network, resolver_network);
 

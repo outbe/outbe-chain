@@ -14,27 +14,7 @@ pub(crate) fn run_finalization_and_slashing(
     ctx: &BlockRuntimeContext,
     metadata: &CertifiedParentAccountingMetadata,
 ) -> Result<()> {
-    if ctx.block.block_number < 2 {
-        return Err(PrecompileError::Fatal(
-            "CertifiedParentAccounting system tx requires block_number >= 2".into(),
-        ));
-    }
-    let expected_parent_number = ctx
-        .block
-        .block_number
-        .checked_sub(1)
-        .ok_or_else(|| PrecompileError::Fatal("block number underflow".into()))?;
-    if metadata.finalized_block_number != expected_parent_number {
-        return Err(PrecompileError::Fatal(format!(
-            "CertifiedParentAccounting metadata must target immediate parent: expected {}, got {}",
-            expected_parent_number, metadata.finalized_block_number
-        )));
-    }
-    if metadata.finalized_block_hash.is_zero() {
-        return Err(PrecompileError::Fatal(
-            "CertifiedParentAccounting metadata has zero finalized block hash".into(),
-        ));
-    }
+    let expected_parent_number = validate_accounting_parent(ctx, metadata)?;
 
     validate_finalized_metadata(ctx.storage.clone(), metadata)?;
 
@@ -160,4 +140,33 @@ pub(crate) fn run_finalization_and_slashing(
     outbe_accounting::record_phase1_progress(ctx, expected_parent_number)?;
 
     Ok(())
+}
+
+fn validate_accounting_parent(
+    ctx: &BlockRuntimeContext,
+    metadata: &CertifiedParentAccountingMetadata,
+) -> Result<u64> {
+    if ctx.block.block_number < 2 {
+        return Err(PrecompileError::Fatal(
+            "CertifiedParentAccounting system tx requires block_number >= 2".into(),
+        ));
+    }
+    let expected_parent_number = ctx
+        .block
+        .block_number
+        .checked_sub(1)
+        .ok_or_else(|| PrecompileError::Fatal("block number underflow".into()))?;
+    if metadata.finalized_block_number != expected_parent_number {
+        return Err(PrecompileError::Fatal(format!(
+            "CertifiedParentAccounting metadata must target immediate parent: expected {}, got {}",
+            expected_parent_number, metadata.finalized_block_number
+        )));
+    }
+    if metadata.finalized_block_hash.is_zero() {
+        return Err(PrecompileError::Fatal(
+            "CertifiedParentAccounting metadata has zero finalized block hash".into(),
+        ));
+    }
+
+    Ok(expected_parent_number)
 }

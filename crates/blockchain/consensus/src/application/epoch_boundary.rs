@@ -181,38 +181,29 @@ impl ApplicationEpochFence {
     }
 }
 
+pub(crate) struct EpochBoundaryParentRequest {
+    pub(crate) round: Round,
+    pub(crate) parent_view: View,
+    pub(crate) parent_digest: Digest,
+}
+
 pub(crate) async fn resolve_epoch_boundary_parent(
     finalization_view: &FinalizationViewHandle,
     marshal_mailbox: &MarshalMailbox,
     clock: &impl commonware_runtime::Clock,
-    round: Round,
-    parent_view: View,
-    parent_digest: Digest,
+    request: EpochBoundaryParentRequest,
 ) -> Result<Option<EpochBoundaryParent>, EpochBoundaryParentError> {
+    let EpochBoundaryParentRequest {
+        round,
+        parent_view,
+        parent_digest,
+    } = request;
     if round.epoch().get() == 0 || parent_view != View::new(0) {
         return Ok(None);
     }
 
-    let anchor = finalization_view.finalized_anchor();
     let (expected_height, expected_hash, finalized_round) =
-        (anchor.number, anchor.finalized_head_hash, anchor.round);
-    let Some(finalized_round) = finalized_round else {
-        return Err(EpochBoundaryParentError::MissingAnchor {
-            epoch: round.epoch().get(),
-        });
-    };
-    if expected_height == 0 || expected_hash == B256::ZERO {
-        return Err(EpochBoundaryParentError::MissingAnchor {
-            epoch: round.epoch().get(),
-        });
-    }
-    if parent_digest.0 != expected_hash {
-        return Err(EpochBoundaryParentError::ParentMismatch {
-            expected: expected_hash,
-            got: parent_digest.0,
-            epoch: round.epoch().get(),
-        });
-    }
+        validate_epoch_boundary_anchor(finalization_view, round, parent_digest)?;
 
     // Marshal exposes only digest-based lookup. Since we just confirmed
     // `parent_digest == expected_hash`, looking up by digest yields the
@@ -251,6 +242,35 @@ pub(crate) async fn resolve_epoch_boundary_parent(
             expected_hash,
         ),
     }))
+}
+
+fn validate_epoch_boundary_anchor(
+    finalization_view: &FinalizationViewHandle,
+    round: Round,
+    parent_digest: Digest,
+) -> Result<(u64, B256, Round), EpochBoundaryParentError> {
+    let anchor = finalization_view.finalized_anchor();
+    let (expected_height, expected_hash, finalized_round) =
+        (anchor.number, anchor.finalized_head_hash, anchor.round);
+    let Some(finalized_round) = finalized_round else {
+        return Err(EpochBoundaryParentError::MissingAnchor {
+            epoch: round.epoch().get(),
+        });
+    };
+    if expected_height == 0 || expected_hash == B256::ZERO {
+        return Err(EpochBoundaryParentError::MissingAnchor {
+            epoch: round.epoch().get(),
+        });
+    }
+    if parent_digest.0 != expected_hash {
+        return Err(EpochBoundaryParentError::ParentMismatch {
+            expected: expected_hash,
+            got: parent_digest.0,
+            epoch: round.epoch().get(),
+        });
+    }
+
+    Ok((expected_height, expected_hash, finalized_round))
 }
 
 #[cfg(test)]

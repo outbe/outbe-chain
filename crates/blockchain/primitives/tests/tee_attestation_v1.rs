@@ -129,7 +129,7 @@ fn network_binding_is_canonical_and_every_field_changes_its_hash() {
 }
 
 #[test]
-fn trusted_network_descriptor_is_canonical_and_dcap_only() {
+fn trusted_network_descriptor_is_canonical_and_enforces_network_attestation_mode() {
     let descriptor = TrustedNetworkDescriptorV1 {
         network_binding: NetworkBindingV1 {
             chain_id: alloy_primitives::U256::from(54322345_u64).to_be_bytes(),
@@ -157,9 +157,16 @@ fn trusted_network_descriptor_is_canonical_and_dcap_only() {
 
     let mut direct = descriptor.clone();
     direct.network_binding.attestation_mode = AttestationMode::GramineDirectDev;
+    let direct_encoded = direct.encode_canonical().unwrap();
+    assert_eq!(
+        TrustedNetworkDescriptorV1::decode_canonical(&direct_encoded).unwrap(),
+        direct
+    );
+    direct.network_binding.chain_id =
+        alloy_primitives::U256::from(outbe_primitives::chain::MAINNET_CHAIN_ID).to_be_bytes();
     assert_eq!(
         direct.encode_canonical().unwrap_err(),
-        CodecError::NonCanonical("trusted production network descriptor is not DCAP-required")
+        CodecError::NonCanonical("descriptor attestation mode is forbidden for this network")
     );
 
     let mut unsorted = descriptor;

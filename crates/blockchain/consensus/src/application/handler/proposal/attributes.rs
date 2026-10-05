@@ -103,15 +103,15 @@ impl ApplicationShared {
 
         let header_extra_data =
             self.encode_proposal_header(proposed_height, consensus_header_artifact)?;
-        let attrs = OutbePayloadAttributes::new(
-            REWARDS_ADDRESS,
+        let attrs = OutbePayloadAttributes::new(outbe_primitives::OutbePayloadAttributesInput {
+            suggested_fee_recipient: REWARDS_ADDRESS,
             timestamp_millis,
             prev_randao,
-            Some(B256::ZERO),
-            header_extra_data,
+            parent_beacon_block_root: Some(B256::ZERO),
+            extra_data: header_extra_data,
             parent_consensus_metadata,
-            self.proposer_evm_address,
-        )
+            proposer_evm_address: self.proposer_evm_address,
+        })
         .with_execution_read_budget(request.execution_read_budget.clone());
 
         Ok(ControlFlow::Continue(attrs))
@@ -128,8 +128,10 @@ impl ApplicationShared {
             self.marshal_mailbox.clone(),
             self.block_cache.clone(),
             self.ancestry_readiness.clone(),
-            Some(round),
-            PROPOSE_RESOLUTION_TIMEOUT,
+            crate::application::ancestry::AncestryLookupPolicy {
+                round: Some(round),
+                timeout: PROPOSE_RESOLUTION_TIMEOUT,
+            },
             clock.child("ancestry"),
         );
         let plan = match self

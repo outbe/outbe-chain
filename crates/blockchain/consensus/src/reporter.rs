@@ -743,35 +743,15 @@ impl OutbeReporter {
             self.epoch,
             &self.elector,
             self.view_state.last_certificate(),
-            last_finalized_view,
-            current_view,
-            MAX_MISSED_PROPOSERS,
+            crate::missed_proposers::SkippedViewRange {
+                last_view: last_finalized_view,
+                current_view,
+                cap: MAX_MISSED_PROPOSERS,
+            },
         );
         let dropped = gap.saturating_sub(leaders.len() as u64);
 
-        let mut missed = Vec::with_capacity(leaders.len());
-        for (offset, leader) in leaders.iter().enumerate() {
-            let v = last_finalized_view + 1 + offset as u64;
-            let leader_idx = leader.get() as usize;
-
-            if leader_idx < self.validator_addresses.len() {
-                let addr = self.validator_addresses[leader_idx];
-                debug!(
-                    view = v,
-                    leader_idx,
-                    %addr,
-                    "missed proposer detected"
-                );
-                missed.push(addr);
-            } else {
-                warn!(
-                    view = v,
-                    leader_idx,
-                    total = self.validator_addresses.len(),
-                    "leader index out of bounds"
-                );
-            }
-        }
+        let missed = self.missed_proposer_addresses(last_finalized_view, &leaders);
 
         if !missed.is_empty() {
             info!(
@@ -794,6 +774,38 @@ impl OutbeReporter {
 
             // Record skipped views metric.
             crate::metrics::record_views_skipped(gap);
+        }
+
+        missed
+    }
+
+    fn missed_proposer_addresses(
+        &self,
+        last_finalized_view: u64,
+        leaders: &[commonware_utils::Participant],
+    ) -> Vec<Address> {
+        let mut missed = Vec::with_capacity(leaders.len());
+        for (offset, leader) in leaders.iter().enumerate() {
+            let v = last_finalized_view + 1 + offset as u64;
+            let leader_idx = leader.get() as usize;
+
+            if leader_idx < self.validator_addresses.len() {
+                let addr = self.validator_addresses[leader_idx];
+                debug!(
+                    view = v,
+                    leader_idx,
+                    %addr,
+                    "missed proposer detected"
+                );
+                missed.push(addr);
+            } else {
+                warn!(
+                    view = v,
+                    leader_idx,
+                    total = self.validator_addresses.len(),
+                    "leader index out of bounds"
+                );
+            }
         }
 
         missed
@@ -851,21 +863,15 @@ mod tests {
     fn sample_certificate() -> crate::hybrid::HybridCertificate<MinSig> {
         let (keys, participants) = test_participants(3);
         let dkg = bootstrap_dkg(3).unwrap();
-        let schemes: Vec<HybridScheme<MinSig>> = keys
-            .iter()
-            .map(|key| {
-                let pk = bls12381::PublicKey::from(key.clone());
-                let idx = participants.index(&pk).unwrap();
-                HybridScheme::signer(
-                    b"reporter-test",
-                    participants.clone(),
-                    key.clone(),
-                    dkg.polynomial.clone(),
-                    dkg.shares[idx.get() as usize].clone(),
-                )
-                .unwrap()
-            })
-            .collect();
+        let schemes: Vec<HybridScheme<MinSig>> = crate::test_harness::fixture_signer_schemes(
+            b"reporter-test",
+            &keys,
+            &participants,
+            crate::test_harness::FixtureSignerSharing {
+                polynomial: &dkg.polynomial,
+                shares: &dkg.shares,
+            },
+        );
         let verifier =
             HybridScheme::<MinSig>::verifier(b"reporter-test", participants, dkg.polynomial)
                 .unwrap();

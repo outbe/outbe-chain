@@ -10,7 +10,7 @@ mod validation;
 
 use std::{cmp::Ordering, collections::BTreeMap};
 
-use alloy_primitives::{Address, B256, Bytes, keccak256};
+use alloy_primitives::{keccak256, Address, Bytes, B256};
 
 use crate::system_tx::{
     BOOTSTRAP_BLOCK_GAS_LIMIT, SYSTEM_TX_NON_ZERO_BYTE_GAS, SYSTEM_TX_VISIBLE_GAS_FLOOR,
@@ -18,10 +18,10 @@ use crate::system_tx::{
 use crate::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, CodecError,
     DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1, GramineDirectEvidenceV1,
-    MAX_ATTESTATION_EVIDENCE_BYTES, MAX_COLLATERAL_COMPONENT_BYTES,
-    MAX_EVIDENCE_CALL_FRAMING_BYTES, MAX_QUOTE_BYTES, MAX_TEE_BOOTSTRAP_BYTES,
     RegistrationIntentV1, SystemGasScheduleV1, TeeBootstrapGasInputV1, TeePolicyV1,
-    TeeRegistryGasScheduleV1, ValidatorNodeBindingV1,
+    TeeRegistryGasScheduleV1, ValidatorNodeBindingV1, MAX_ATTESTATION_EVIDENCE_BYTES,
+    MAX_COLLATERAL_COMPONENT_BYTES, MAX_EVIDENCE_CALL_FRAMING_BYTES, MAX_QUOTE_BYTES,
+    MAX_TEE_BOOTSTRAP_BYTES,
 };
 
 const MAGIC: &[u8; 4] = b"TTB2";

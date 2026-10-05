@@ -23,19 +23,17 @@ fn boundary(
     validator_set: &validators::ValidatorSet,
     output: &Output<MinSig, bls12381::PublicKey>,
 ) -> DkgBoundaryArtifact {
-    dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-        epoch: Epoch::new(epoch),
+    outbe_consensus::test_harness::boundary_artifact(
+        epoch,
         validator_set,
         output,
-        is_full_dkg: false,
-        dkg_cycle: epoch,
-        freeze_height: 90,
-        planned_activation_height: 120,
-        vrf_material_version: epoch,
-        is_validator_set_change: false,
-        tee_expired_target_exclusions: Vec::new(),
-    })
-    .unwrap()
+        outbe_consensus::test_harness::BoundaryFixtureSettings {
+            is_full_dkg: false,
+            freeze_height: 90,
+            planned_activation_height: 120,
+            is_validator_set_change: false,
+        },
+    )
 }
 
 #[tokio::test]

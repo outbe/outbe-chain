@@ -170,20 +170,30 @@ mod tests {
         bitmap[idx / 8] |= 1u8 << (idx % 8);
     }
 
-    /// Build a valid credit over `signer_idxs` (which may be sub-quorum) for the
-    /// given binding. With `corrupt_message`, the signers sign a *different*
-    /// proposal so the aggregate must fail to verify.
-    #[allow(clippy::too_many_arguments)]
-    fn build_credit(
-        keys: &[bls12381::PrivateKey],
-        snapshot: &CommitteeSnapshot,
-        signer_idxs: &[usize],
+    struct CreditProposalFixture {
         fb_hash: B256,
         epoch: u64,
         view: u64,
         parent_view: u64,
         corrupt_message: bool,
+    }
+
+    /// Build a valid credit over `signer_idxs` (which may be sub-quorum) for the
+    /// given binding. With `corrupt_message`, the signers sign a *different*
+    /// proposal so the aggregate must fail to verify.
+    fn build_credit(
+        keys: &[bls12381::PrivateKey],
+        snapshot: &CommitteeSnapshot,
+        signer_idxs: &[usize],
+        proposal: CreditProposalFixture,
     ) -> PerBlockCredit {
+        let CreditProposalFixture {
+            fb_hash,
+            epoch,
+            view,
+            parent_view,
+            corrupt_message,
+        } = proposal;
         let signed_hash = if corrupt_message {
             B256::repeat_byte(0xEE)
         } else {
@@ -237,7 +247,18 @@ mod tests {
         let keys = keys(4);
         let snapshot = snapshot_for(&keys);
         let fb = B256::repeat_byte(0x5a);
-        let credit = build_credit(&keys, &snapshot, &[0, 2], fb, 3, 9, 8, false);
+        let credit = build_credit(
+            &keys,
+            &snapshot,
+            &[0, 2],
+            CreditProposalFixture {
+                fb_hash: fb,
+                epoch: 3,
+                view: 9,
+                parent_view: 8,
+                corrupt_message: false,
+            },
+        );
         let verified = verify_late_finalize_proof(&snapshot, &credit).expect("sub-quorum verifies");
         assert_eq!(verified, vec![0, 2]);
     }
@@ -247,7 +268,18 @@ mod tests {
         let keys = keys(4);
         let snapshot = snapshot_for(&keys);
         let fb = B256::repeat_byte(0x01);
-        let credit = build_credit(&keys, &snapshot, &[0, 1, 2, 3], fb, 1, 2, 1, false);
+        let credit = build_credit(
+            &keys,
+            &snapshot,
+            &[0, 1, 2, 3],
+            CreditProposalFixture {
+                fb_hash: fb,
+                epoch: 1,
+                view: 2,
+                parent_view: 1,
+                corrupt_message: false,
+            },
+        );
         assert_eq!(
             verify_late_finalize_proof(&snapshot, &credit).unwrap(),
             vec![0, 1, 2, 3]
@@ -266,7 +298,18 @@ mod tests {
         let fb = B256::repeat_byte(0x11);
         // Sparse sub-quorum subset: the verifier must return all three indices,
         // unfiltered, in ascending order.
-        let credit = build_credit(&keys, &snapshot, &[1, 3, 5], fb, 2, 5, 4, false);
+        let credit = build_credit(
+            &keys,
+            &snapshot,
+            &[1, 3, 5],
+            CreditProposalFixture {
+                fb_hash: fb,
+                epoch: 2,
+                view: 5,
+                parent_view: 4,
+                corrupt_message: false,
+            },
+        );
         let verified =
             verify_late_finalize_proof(&snapshot, &credit).expect("sparse subset verifies");
         assert_eq!(
@@ -282,7 +325,18 @@ mod tests {
         let snapshot = snapshot_for(&keys);
         let fb = B256::repeat_byte(0x5a);
         // Signers signed a different proposal payload -> aggregate must not verify.
-        let credit = build_credit(&keys, &snapshot, &[0, 1, 2], fb, 3, 9, 8, true);
+        let credit = build_credit(
+            &keys,
+            &snapshot,
+            &[0, 1, 2],
+            CreditProposalFixture {
+                fb_hash: fb,
+                epoch: 3,
+                view: 9,
+                parent_view: 8,
+                corrupt_message: true,
+            },
+        );
         assert!(matches!(
             verify_late_finalize_proof(&snapshot, &credit),
             Err(V2VerifyError::BlsAggregateInvalid)
@@ -294,7 +348,18 @@ mod tests {
         let keys = keys(4);
         let snapshot = snapshot_for(&keys);
         let fb = B256::repeat_byte(0x5a);
-        let mut credit = build_credit(&keys, &snapshot, &[0, 1], fb, 3, 9, 8, false);
+        let mut credit = build_credit(
+            &keys,
+            &snapshot,
+            &[0, 1],
+            CreditProposalFixture {
+                fb_hash: fb,
+                epoch: 3,
+                view: 9,
+                parent_view: 8,
+                corrupt_message: false,
+            },
+        );
         credit.committee_set_hash = B256::repeat_byte(0xAB);
         assert!(matches!(
             verify_late_finalize_proof(&snapshot, &credit),
@@ -307,7 +372,18 @@ mod tests {
         let keys = keys(4);
         let snapshot = snapshot_for(&keys);
         let fb = B256::repeat_byte(0x5a);
-        let mut credit = build_credit(&keys, &snapshot, &[0, 1], fb, 3, 9, 8, false);
+        let mut credit = build_credit(
+            &keys,
+            &snapshot,
+            &[0, 1],
+            CreditProposalFixture {
+                fb_hash: fb,
+                epoch: 3,
+                view: 9,
+                parent_view: 8,
+                corrupt_message: false,
+            },
+        );
         credit.signer_bitmap = vec![0u8; 4usize.div_ceil(8)]; // all zero
         assert!(matches!(
             verify_late_finalize_proof(&snapshot, &credit),
@@ -320,7 +396,18 @@ mod tests {
         let keys = keys(4);
         let snapshot = snapshot_for(&keys);
         let fb = B256::repeat_byte(0x5a);
-        let mut credit = build_credit(&keys, &snapshot, &[0, 1], fb, 3, 9, 8, false);
+        let mut credit = build_credit(
+            &keys,
+            &snapshot,
+            &[0, 1],
+            CreditProposalFixture {
+                fb_hash: fb,
+                epoch: 3,
+                view: 9,
+                parent_view: 8,
+                corrupt_message: false,
+            },
+        );
         credit.signer_bitmap = vec![0x03, 0x00]; // 2 bytes for a 4-member committee
         assert!(matches!(
             verify_late_finalize_proof(&snapshot, &credit),
@@ -333,7 +420,18 @@ mod tests {
         let keys = keys(4);
         let snapshot = snapshot_for(&keys);
         let fb = B256::repeat_byte(0x5a);
-        let mut credit = build_credit(&keys, &snapshot, &[0], fb, 3, 9, 8, false);
+        let mut credit = build_credit(
+            &keys,
+            &snapshot,
+            &[0],
+            CreditProposalFixture {
+                fb_hash: fb,
+                epoch: 3,
+                view: 9,
+                parent_view: 8,
+                corrupt_message: false,
+            },
+        );
         // Set a bit in the padding region of the single bitmap byte (idx 5 >= N=4).
         credit.signer_bitmap = vec![0b0010_0001]; // bits 0 and 5 set
         assert!(matches!(

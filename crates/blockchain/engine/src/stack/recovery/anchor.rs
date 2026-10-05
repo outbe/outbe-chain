@@ -91,16 +91,26 @@ pub(in crate::stack) struct CertifiedFollowerRecoveryAnchor {
     pub(in crate::stack) block: outbe_consensus::block::ConsensusBlock,
 }
 
-#[allow(clippy::too_many_arguments)]
+pub(in crate::stack) struct FollowerRecoveryBlock<'a> {
+    pub(in crate::stack) checkpoint: ProjectionCheckpoint,
+    pub(in crate::stack) block: &'a outbe_consensus::block::ConsensusBlock,
+}
+
 pub(in crate::stack) fn validate_ancestor_follower_recovery_record(
-    height: u64,
-    canonical_hash: B256,
+    local: FollowerRecoveryBlock<'_>,
     local_finalization: Option<&outbe_consensus::marshal_types::Finalization>,
-    local_block: &outbe_consensus::block::ConsensusBlock,
     upstream: &outbe_consensus::follow::upstream::AncestorFinalityProof,
     schemes: &HybridSchemeProvider<MinSig>,
     epocher: &outbe_consensus::follow::FollowerEpocher,
 ) -> Result<CertifiedFollowerRecoveryAnchor> {
+    let FollowerRecoveryBlock {
+        checkpoint:
+            ProjectionCheckpoint {
+                block_number: height,
+                block_hash: canonical_hash,
+            },
+        block: local_block,
+    } = local;
     use commonware_consensus::types::Epocher as _;
     upstream.validate_envelope(Height::new(height))?;
     ensure!(
@@ -121,11 +131,15 @@ pub(in crate::stack) fn validate_ancestor_follower_recovery_record(
     );
     if upstream.ancestors.is_empty() {
         return validate_certified_follower_recovery_record(
-            height,
-            canonical_hash,
+            crate::stack::recovery::anchor::FollowerRecoveryBlock {
+                checkpoint: ProjectionCheckpoint {
+                    block_number: height,
+                    block_hash: canonical_hash,
+                },
+                block: local_block,
+            },
             local_finalization
                 .ok_or_else(|| eyre::eyre!("missing normalized direct recovery certificate"))?,
-            local_block,
             &certified.finalization,
             &certified.block,
             schemes,
@@ -162,16 +176,22 @@ pub(in crate::stack) fn validate_ancestor_follower_recovery_record(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(in crate::stack) fn validate_certified_follower_recovery_record(
-    height: u64,
-    canonical_hash: B256,
+    local: FollowerRecoveryBlock<'_>,
     local_finalization: &outbe_consensus::marshal_types::Finalization,
-    local_block: &outbe_consensus::block::ConsensusBlock,
     upstream_finalization: &outbe_consensus::marshal_types::Finalization,
     upstream_block: &outbe_consensus::block::ConsensusBlock,
     schemes: &HybridSchemeProvider<MinSig>,
 ) -> Result<CertifiedFollowerRecoveryAnchor> {
+    let FollowerRecoveryBlock {
+        checkpoint:
+            ProjectionCheckpoint {
+                block_number: height,
+                block_hash: canonical_hash,
+            },
+        block: local_block,
+    } = local;
+
     ensure!(
         local_block.number() == height,
         "local archived block reports height {}, expected {height}",

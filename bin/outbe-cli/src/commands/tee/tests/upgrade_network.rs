@@ -1,6 +1,7 @@
 use super::finality::wait_for_finalized_prepare;
 use super::*;
 use crate::rpc::mock::MockRpc;
+use outbe_operator::tx::UnsignedRelayTransactionV1;
 use outbe_rpc::test_support::RecordingRpc;
 
 fn saved_prepare() -> Result<(
@@ -23,14 +24,14 @@ fn saved_prepare() -> Result<(
         tribute_offer_epoch: 10,
     };
     let calldata = vec![0x41, 0x42];
-    let transaction = relay.sign_renewal(
-        676,
-        7,
-        U256::from(3),
-        100_000,
-        TEE_REGISTRY_ADDRESS,
-        &calldata,
-    )?;
+    let transaction = relay.sign_renewal(UnsignedRelayTransactionV1 {
+        chain_id: 676,
+        account_nonce: 7,
+        gas_price: U256::from(3),
+        gas_limit: 100_000,
+        to: TEE_REGISTRY_ADDRESS,
+        calldata: &calldata,
+    })?;
     let durable = NetworkUpgradeSubmissionV1 {
         candidate_manifest_hash: B256::repeat_byte(11),
         evidence: vec![0x51],

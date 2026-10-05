@@ -363,6 +363,13 @@ pub enum FinalizedIntentAuthorityError {
     IntentStorageProof,
 }
 
+/// Intent identity and its fixed storage path under the finalized request root.
+pub struct IntentStorageBinding {
+    pub intent_id: B256,
+    pub storage_key: B256,
+    pub state_root: B256,
+}
+
 /// Authenticated operations the protocol codec cannot perform by itself.
 ///
 /// Implementations must derive the request state root from the canonical
@@ -379,9 +386,7 @@ pub trait FinalizedIntentProofAuthority {
         &self,
         proof: &FinalizedIntentProofV1,
         intent: &JobIntentV1,
-        intent_id: B256,
-        intent_storage_key: B256,
-        request_state_root: B256,
+        binding: IntentStorageBinding,
         limits: &SchemaLimits,
     ) -> Result<(), FinalizedIntentAuthorityError>;
 }
@@ -502,9 +507,11 @@ impl FinalizedIntentProofV1 {
         authority.verify_intent_inclusion(
             self,
             &intent,
-            intent_id,
-            intent_storage_key,
-            request.state_root,
+            IntentStorageBinding {
+                intent_id,
+                storage_key: intent_storage_key,
+                state_root: request.state_root,
+            },
             limits,
         )?;
         let job_id = intent.job_id(request.block_hash, request.state_root, limits)?;

@@ -1,4 +1,5 @@
 use crate::test_fixtures::marshal::MarshalArchiveFixture;
+use crate::test_harness::NoopMarshalResolver as NoopResolver;
 use alloy_primitives::{Address, Bytes, B256};
 use alloy_rpc_types_engine::{PayloadStatus, PayloadStatusEnum};
 use commonware_actor::Feedback;
@@ -16,15 +17,9 @@ use commonware_cryptography::{
 };
 use commonware_p2p::Recipients;
 use commonware_parallel::Sequential;
-use commonware_resolver::Resolver;
-use commonware_resolver::TargetedResolver;
 use commonware_runtime::{buffer::paged::CacheRef, Clock as _, Runner as _, Supervisor as _};
 use commonware_utils::{
-    acknowledgement::Acknowledgement,
-    channel::oneshot,
-    ordered::{Quorum, Set},
-    vec::NonEmptyVec,
-    TryCollect as _,
+    acknowledgement::Acknowledgement, channel::oneshot, ordered::Set, TryCollect as _,
 };
 use outbe_primitives::projection::{
     projection_readiness, ProjectionCheckpoint, ProjectionFailure, ProjectionFailureClass,
@@ -57,6 +52,7 @@ use crate::vrf_safety::VrfSafetyGate;
 use super::{ApplicationShared, CommitteeProvider, ConsensusBlock, Digest};
 use crate::application::epoch_boundary::{
     resolve_epoch_boundary_parent, ApplicationEpochFence, EpochBoundaryParentError,
+    EpochBoundaryParentRequest,
 };
 
 #[path = "handler/tests/verify_stages.rs"]
@@ -291,60 +287,6 @@ impl Reporter for AckingMarshalReporter {
         if let Update::Block(_, ack) = activity {
             ack.acknowledge();
         }
-        Feedback::Ok
-    }
-}
-
-#[derive(Clone, Default)]
-struct NoopResolver;
-
-// commonware 2026.5.0 split the resolver surface: the base `Resolver` keeps
-// `fetch`/`fetch_all`/`retain` (now SYNC, returning `Feedback`, generic over
-// `Into<Fetch<Key, Subscriber>>`) and gained `type Subscriber`; `cancel`/`clear`
-// were removed; the targeted methods moved to `TargetedResolver`. The marshal
-// actor requires `Key = handler::Key<Commitment>` and `Subscriber =
-// handler::Annotation`.
-impl Resolver for NoopResolver {
-    type Key = handler::Key<Digest>;
-    type Subscriber = handler::Annotation;
-
-    fn fetch<F>(&mut self, _key: F) -> Feedback
-    where
-        F: Into<commonware_resolver::Fetch<Self::Key, Self::Subscriber>> + Send,
-    {
-        Feedback::Ok
-    }
-
-    fn fetch_all<F>(&mut self, _keys: Vec<F>) -> Feedback
-    where
-        F: Into<commonware_resolver::Fetch<Self::Key, Self::Subscriber>> + Send,
-    {
-        Feedback::Ok
-    }
-
-    fn retain(
-        &mut self,
-        _predicate: impl Fn(&Self::Key, &Self::Subscriber) -> bool + Send + 'static,
-    ) -> Feedback {
-        Feedback::Ok
-    }
-}
-
-impl TargetedResolver for NoopResolver {
-    type PublicKey = bls12381::PublicKey;
-
-    fn fetch_targeted(
-        &mut self,
-        _fetch: impl Into<commonware_resolver::Fetch<Self::Key, Self::Subscriber>> + Send,
-        _targets: NonEmptyVec<Self::PublicKey>,
-    ) -> Feedback {
-        Feedback::Ok
-    }
-
-    fn fetch_all_targeted<F>(&mut self, _keys: Vec<(F, NonEmptyVec<Self::PublicKey>)>) -> Feedback
-    where
-        F: Into<commonware_resolver::Fetch<Self::Key, Self::Subscriber>> + Send,
-    {
         Feedback::Ok
     }
 }
@@ -936,9 +878,11 @@ fn epoch_boundary_parent_uses_finalized_round_for_exact_proof_key() {
                 &shared.finalization_view,
                 &shared.marshal_mailbox,
                 &clock,
-                child_round,
-                View::new(0),
-                parent_digest,
+                EpochBoundaryParentRequest {
+                    round: child_round,
+                    parent_view: View::new(0),
+                    parent_digest,
+                },
             )
             .await
             .unwrap()
@@ -1007,9 +951,11 @@ fn epoch_boundary_anchor_wait_miss_forfeits_slot_not_stall() {
                 &shared.finalization_view,
                 &shared.marshal_mailbox,
                 &clock,
-                child_round,
-                View::new(0),
-                parent_digest,
+                EpochBoundaryParentRequest {
+                    round: child_round,
+                    parent_view: View::new(0),
+                    parent_digest,
+                },
             )
             .await;
 
@@ -1173,21 +1119,18 @@ fn finalization_metadata_context(epoch: Epoch) -> FinalizationMetadataContext {
         .try_collect()
         .expect("participants should build");
     let dkg = crate::bls::bootstrap_dkg(3).expect("bootstrap dkg should succeed");
-    let signers: Vec<HybridScheme<MinSig>> = keys
-        .iter()
-        .map(|key| {
-            let pk = bls12381::PublicKey::from(key.clone());
-            let idx = participants.index(&pk).expect("participant should exist");
-            HybridScheme::signer(
-                &crate::config::outbe_app_namespace(),
-                participants.clone(),
-                key.clone(),
-                dkg.polynomial.clone(),
-                dkg.shares[idx.get() as usize].clone(),
-            )
-            .expect("signer should build")
-        })
-        .collect();
+    let signers = crate::test_fixtures::signer_schemes(
+        &keys,
+        &participants,
+        crate::test_fixtures::SignerSharing {
+            polynomial: &dkg.polynomial,
+            shares: &dkg.shares,
+        },
+        crate::test_fixtures::SignerFixtureExpectations {
+            participant_index: "participant should exist",
+            signer: "signer should build",
+        },
+    );
 
     let verifier = HybridScheme::<MinSig>::verifier(
         &crate::config::outbe_app_namespace(),
@@ -1540,23 +1483,9 @@ fn parent_proof_selector_recovers_from_marshal_after_empty_store_restart() {
 #[test]
 fn consensus_metadata_verify_accepts_canonical_missed_proposers() {
     // Deterministic runtime (TC-6): avoids marshal teardown leaky false-positives.
-    let accepted = commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
-        |context| async move {
-            let missed_proposers = vec![
-                outbe_primitives::consensus_metadata::MissedProposerEvent {
-                    view: 1,
-                    validator: Address::with_last_byte(1),
-                },
-                outbe_primitives::consensus_metadata::MissedProposerEvent {
-                    view: 2,
-                    validator: Address::with_last_byte(2),
-                },
-            ];
-            missed_proposers::verify(context, (0x61, 0x62), missed_proposers)
-                .await
-                .is_some_and(|verdict| verdict == AttestationVerdict::AcceptValid)
-        },
-    );
+    let accepted = missed_proposers::check_verdict((0x61, 0x62), [1, 2], |verdict| {
+        verdict == AttestationVerdict::AcceptValid
+    });
     assert!(
         accepted,
         "canonical missed proposer list must pass verify-time metadata validation"
@@ -1566,23 +1495,9 @@ fn consensus_metadata_verify_accepts_canonical_missed_proposers() {
 #[test]
 fn consensus_metadata_verify_rejects_forged_missed_proposers() {
     // Deterministic runtime (TC-6): avoids marshal teardown leaky false-positives.
-    let rejected = commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
-        |context| async move {
-            let missed_proposers = vec![
-                outbe_primitives::consensus_metadata::MissedProposerEvent {
-                    view: 1,
-                    validator: Address::with_last_byte(2),
-                },
-                outbe_primitives::consensus_metadata::MissedProposerEvent {
-                    view: 2,
-                    validator: Address::with_last_byte(1),
-                },
-            ];
-            missed_proposers::verify(context, (0x63, 0x64), missed_proposers)
-                .await
-                .is_some_and(|verdict| verdict != AttestationVerdict::AcceptValid)
-        },
-    );
+    let rejected = missed_proposers::check_verdict((0x63, 0x64), [2, 1], |verdict| {
+        verdict != AttestationVerdict::AcceptValid
+    });
     assert!(
         rejected,
         "non-canonical missed proposer order/content must be rejected"
@@ -1727,9 +1642,11 @@ fn resolve_for_verify_timeout_logs_full_context() {
                 &shared.block_cache,
                 &shared.marshal_mailbox,
                 &clock,
-                round,
-                digest,
-                crate::application::verify_resolution::VerifyResolveTarget::Block,
+                crate::application::verify_resolution::VerifyResolveRequest {
+                    round,
+                    digest,
+                    target: crate::application::verify_resolution::VerifyResolveTarget::Block,
+                },
             )
             .await;
 

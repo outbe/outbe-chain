@@ -1,4 +1,5 @@
 use super::*;
+use crate::v1::VerifiedIntentV1;
 
 #[test]
 fn full_node_renewal_and_replacement_follow_the_shared_lease_lifecycle() {
@@ -33,31 +34,31 @@ fn full_node_renewal_and_replacement_follow_the_shared_lease_lifecycle() {
         let mut registry = TeeRegistry::new(storage.clone());
         registry.install_initial_policy_v1(&active_policy).unwrap();
         registry
-            .register_enclave_after_verifier_for_test(
-                &initial,
-                &initial_node,
-                &initial_enclave,
-                PostVerifierDcapCapabilityV1::new(accepted.clone()),
-            )
+            .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                intent: &initial,
+                node_signature: &initial_node,
+                enclave_signature: &initial_enclave,
+                capability: PostVerifierDcapCapabilityV1::new(accepted.clone()),
+            })
             .unwrap();
         storage
             .set_block_timestamp(U256::from(NOW + 2_400))
             .unwrap();
         registry
-            .renew_enclave_after_verifier_for_test(
-                &renewal,
-                &renewal_node,
-                &renewal_enclave,
-                PostVerifierDcapCapabilityV1::new(accepted.clone()),
-            )
+            .renew_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                intent: &renewal,
+                node_signature: &renewal_node,
+                enclave_signature: &renewal_enclave,
+                capability: PostVerifierDcapCapabilityV1::new(accepted.clone()),
+            })
             .unwrap();
         registry
-            .replace_enclave_binding_after_verifier_for_test(
-                &replacement,
-                &replacement_node,
-                &replacement_enclave,
-                PostVerifierDcapCapabilityV1::new(accepted),
-            )
+            .replace_enclave_binding_after_verifier_for_test(VerifiedIntentV1 {
+                intent: &replacement,
+                node_signature: &replacement_node,
+                enclave_signature: &replacement_enclave,
+                capability: PostVerifierDcapCapabilityV1::new(accepted),
+            })
             .unwrap();
 
         let binding = registry
@@ -171,12 +172,12 @@ fn renewal_window_is_half_open_extends_from_deadline_and_does_not_drift() {
             .unwrap();
         assert!(revert_message(
             registry
-                .renew_enclave_after_verifier_for_test(
-                    &renewal,
-                    &renewal_node,
-                    &renewal_enclave,
-                    PostVerifierDcapCapabilityV1::new(fresh_verdict.clone()),
-                )
+                .renew_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &renewal,
+                    node_signature: &renewal_node,
+                    enclave_signature: &renewal_enclave,
+                    capability: PostVerifierDcapCapabilityV1::new(fresh_verdict.clone())
+                })
                 .unwrap_err()
         )
         .contains("renewal window"));
@@ -186,37 +187,37 @@ fn renewal_window_is_half_open_extends_from_deadline_and_does_not_drift() {
             .unwrap();
         assert_eq!(
             registry
-                .renew_enclave_after_verifier_for_test(
-                    &renewal,
-                    &renewal_node,
-                    &renewal_enclave,
-                    PostVerifierDcapCapabilityV1::new(fresh_verdict.clone()),
-                )
+                .renew_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &renewal,
+                    node_signature: &renewal_node,
+                    enclave_signature: &renewal_enclave,
+                    capability: PostVerifierDcapCapabilityV1::new(fresh_verdict.clone())
+                })
                 .unwrap(),
             V1RegistrationOutcome::Created
         );
         assert_eq!(
             registry
-                .renew_enclave_after_verifier_for_test(
-                    &renewal,
-                    &renewal_node,
-                    &renewal_enclave,
-                    PostVerifierDcapCapabilityV1::new(fresh_verdict.clone()),
-                )
+                .renew_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &renewal,
+                    node_signature: &renewal_node,
+                    enclave_signature: &renewal_enclave,
+                    capability: PostVerifierDcapCapabilityV1::new(fresh_verdict.clone())
+                })
                 .unwrap(),
             V1RegistrationOutcome::Idempotent
         );
         assert!(revert_message(
             registry
-                .renew_enclave_after_verifier_for_test(
-                    &renewal,
-                    &renewal_node,
-                    &renewal_enclave,
-                    PostVerifierDcapCapabilityV1::with_evidence_hash(
+                .renew_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &renewal,
+                    node_signature: &renewal_node,
+                    enclave_signature: &renewal_enclave,
+                    capability: PostVerifierDcapCapabilityV1::with_evidence_hash(
                         fresh_verdict.clone(),
                         B256::repeat_byte(0xED),
-                    ),
-                )
+                    )
+                })
                 .unwrap_err()
         )
         .contains("exact evidence replay"));
@@ -238,12 +239,12 @@ fn renewal_window_is_half_open_extends_from_deadline_and_does_not_drift() {
         let (stale_node, stale_enclave) = signatures(&stale, &node_signer, &enclave_signer);
         assert!(revert_message(
             registry
-                .renew_enclave_after_verifier_for_test(
-                    &stale,
-                    &stale_node,
-                    &stale_enclave,
-                    PostVerifierDcapCapabilityV1::new(fresh_verdict.clone()),
-                )
+                .renew_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &stale,
+                    node_signature: &stale_node,
+                    enclave_signature: &stale_enclave,
+                    capability: PostVerifierDcapCapabilityV1::new(fresh_verdict.clone())
+                })
                 .unwrap_err()
         )
         .contains("next renewal"));
@@ -274,12 +275,12 @@ fn renewal_window_is_half_open_extends_from_deadline_and_does_not_drift() {
             signatures(&expired_renewal, &node_signer, &enclave_signer);
         assert!(revert_message(
             registry
-                .renew_enclave_after_verifier_for_test(
-                    &expired_renewal,
-                    &node_signature,
-                    &enclave_signature,
-                    PostVerifierDcapCapabilityV1::new(fresh_verdict.clone()),
-                )
+                .renew_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &expired_renewal,
+                    node_signature: &node_signature,
+                    enclave_signature: &enclave_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(fresh_verdict.clone())
+                })
                 .unwrap_err()
         )
         .contains("expired"));
@@ -303,12 +304,12 @@ fn renewal_window_is_half_open_extends_from_deadline_and_does_not_drift() {
             .set_block_timestamp(U256::from(initial.requested_valid_until - 1))
             .unwrap();
         registry
-            .renew_enclave_after_verifier_for_test(
-                &renewal,
-                &renewal_node,
-                &renewal_enclave,
-                PostVerifierDcapCapabilityV1::new(fresh_verdict.clone()),
-            )
+            .renew_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                intent: &renewal,
+                node_signature: &renewal_node,
+                enclave_signature: &renewal_enclave,
+                capability: PostVerifierDcapCapabilityV1::new(fresh_verdict.clone()),
+            })
             .unwrap();
 
         let second = renewal_intent(
@@ -321,12 +322,12 @@ fn renewal_window_is_half_open_extends_from_deadline_and_does_not_drift() {
             .set_block_timestamp(U256::from(second_opens_at))
             .unwrap();
         registry
-            .renew_enclave_after_verifier_for_test(
-                &second,
-                &second_node,
-                &second_enclave,
-                PostVerifierDcapCapabilityV1::new(fresh_verdict),
-            )
+            .renew_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                intent: &second,
+                node_signature: &second_node,
+                enclave_signature: &second_enclave,
+                capability: PostVerifierDcapCapabilityV1::new(fresh_verdict),
+            })
             .unwrap();
         assert_eq!(
             registry
@@ -382,10 +383,12 @@ fn renewal_rejects_the_wrong_evm_caller_before_replay_or_state_change() {
         let error = registry
             .renew_enclave_after_verifier_for_test_as(
                 wrong.address(),
-                &renewal,
-                &renewal_node,
-                &renewal_enclave,
-                PostVerifierDcapCapabilityV1::new(accepted.clone()),
+                VerifiedIntentV1 {
+                    intent: &renewal,
+                    node_signature: &renewal_node,
+                    enclave_signature: &renewal_enclave,
+                    capability: PostVerifierDcapCapabilityV1::new(accepted.clone()),
+                },
             )
             .unwrap_err();
         assert!(revert_message(error).contains("caller"));
@@ -401,10 +404,12 @@ fn renewal_rejects_the_wrong_evm_caller_before_replay_or_state_change() {
             registry
                 .renew_enclave_after_verifier_for_test_as(
                     owner.address(),
-                    &renewal,
-                    &renewal_node,
-                    &renewal_enclave,
-                    PostVerifierDcapCapabilityV1::new(accepted.clone()),
+                    VerifiedIntentV1 {
+                        intent: &renewal,
+                        node_signature: &renewal_node,
+                        enclave_signature: &renewal_enclave,
+                        capability: PostVerifierDcapCapabilityV1::new(accepted.clone())
+                    }
                 )
                 .unwrap(),
             V1RegistrationOutcome::Created
@@ -413,10 +418,12 @@ fn renewal_rejects_the_wrong_evm_caller_before_replay_or_state_change() {
             registry
                 .renew_enclave_after_verifier_for_test_as(
                     wrong.address(),
-                    &renewal,
-                    &renewal_node,
-                    &renewal_enclave,
-                    PostVerifierDcapCapabilityV1::new(accepted),
+                    VerifiedIntentV1 {
+                        intent: &renewal,
+                        node_signature: &renewal_node,
+                        enclave_signature: &renewal_enclave,
+                        capability: PostVerifierDcapCapabilityV1::new(accepted)
+                    }
                 )
                 .unwrap_err()
         )
@@ -476,12 +483,12 @@ fn renewal_rejects_collateral_margin_underflow_without_extending_state() {
         underflow.collateral_valid_until = active_policy.collateral_margin - 1;
         assert!(revert_message(
             registry
-                .renew_enclave_after_verifier_for_test(
-                    &renewal,
-                    &renewal_node,
-                    &renewal_enclave,
-                    PostVerifierDcapCapabilityV1::new(underflow),
-                )
+                .renew_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &renewal,
+                    node_signature: &renewal_node,
+                    enclave_signature: &renewal_enclave,
+                    capability: PostVerifierDcapCapabilityV1::new(underflow)
+                })
                 .unwrap_err()
         )
         .contains("safety margin"));

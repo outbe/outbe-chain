@@ -382,6 +382,13 @@ mod tests {
         }
     }
 
+    struct FinalizeProposalFixture {
+        epoch: u64,
+        view: u64,
+        parent_view: u64,
+        fb_hash: B256,
+    }
+
     /// Sign the canonical finalize message for `(epoch, view, parent_view, fb_hash)`
     /// with `key` and return the raw MinPk signature the store stores. the
     /// finalize namespace binds the full `committee`, so the signature only
@@ -389,11 +396,14 @@ mod tests {
     fn finalize_sig(
         committee: &[bls12381::PrivateKey],
         key: &bls12381::PrivateKey,
-        epoch: u64,
-        view: u64,
-        parent_view: u64,
-        fb_hash: B256,
+        proposal: FinalizeProposalFixture,
     ) -> MinPkSig {
+        let FinalizeProposalFixture {
+            epoch,
+            view,
+            parent_view,
+            fb_hash,
+        } = proposal;
         let committee_set: commonware_utils::ordered::Set<bls12381::PublicKey> =
             commonware_utils::ordered::Set::from_iter_dedup(
                 committee
@@ -431,7 +441,16 @@ mod tests {
                     fb_hash: fb,
                 },
                 i,
-                finalize_sig(&keys, &keys[i as usize], epoch, view, parent_view, fb),
+                finalize_sig(
+                    &keys,
+                    &keys[i as usize],
+                    FinalizeProposalFixture {
+                        epoch,
+                        view,
+                        parent_view,
+                        fb_hash: fb,
+                    },
+                ),
             );
         }
         store.resolve_finalized_target(
@@ -474,7 +493,16 @@ mod tests {
                 fb_hash: fb,
             },
             0,
-            finalize_sig(&keys, &keys[0], 1, 9, 8, fb),
+            finalize_sig(
+                &keys,
+                &keys[0],
+                FinalizeProposalFixture {
+                    epoch: 1,
+                    view: 9,
+                    parent_view: 8,
+                    fb_hash: fb,
+                },
+            ),
         );
         store.resolve_finalized_target(
             FinalizeVoteTarget {
@@ -512,7 +540,16 @@ mod tests {
                 fb_hash: fb,
             },
             0,
-            finalize_sig(&keys, &keys[0], 1, 9, 8, fb),
+            finalize_sig(
+                &keys,
+                &keys[0],
+                FinalizeProposalFixture {
+                    epoch: 1,
+                    view: 9,
+                    parent_view: 8,
+                    fb_hash: fb,
+                },
+            ),
         );
         store.resolve_finalized_target(
             FinalizeVoteTarget {
@@ -537,7 +574,16 @@ mod tests {
                 fb_hash: fb2,
             },
             0,
-            finalize_sig(&keys, &keys[0], 1, 99, 98, fb2),
+            finalize_sig(
+                &keys,
+                &keys[0],
+                FinalizeProposalFixture {
+                    epoch: 1,
+                    view: 99,
+                    parent_view: 98,
+                    fb_hash: fb2,
+                },
+            ),
         );
         store.resolve_finalized_target(
             FinalizeVoteTarget {
@@ -568,7 +614,16 @@ mod tests {
                 fb_hash: fb,
             },
             0,
-            finalize_sig(&keys, &keys[0], 1, 9, 8, fb),
+            finalize_sig(
+                &keys,
+                &keys[0],
+                FinalizeProposalFixture {
+                    epoch: 1,
+                    view: 9,
+                    parent_view: 8,
+                    fb_hash: fb,
+                },
+            ),
         );
         // Second vote from the same signer/fb_hash must not overwrite or duplicate.
         store.record_bound_vote(
@@ -579,7 +634,16 @@ mod tests {
                 fb_hash: fb,
             },
             0,
-            finalize_sig(&keys, &keys[0], 1, 9, 8, fb),
+            finalize_sig(
+                &keys,
+                &keys[0],
+                FinalizeProposalFixture {
+                    epoch: 1,
+                    view: 9,
+                    parent_view: 8,
+                    fb_hash: fb,
+                },
+            ),
         );
         store.resolve_finalized_target(
             FinalizeVoteTarget {
@@ -629,7 +693,16 @@ mod tests {
                 fb_hash: fb,
             },
             0,
-            finalize_sig(&keys, &keys[0], epoch, view, parent_view, fb),
+            finalize_sig(
+                &keys,
+                &keys[0],
+                FinalizeProposalFixture {
+                    epoch,
+                    view,
+                    parent_view,
+                    fb_hash: fb,
+                },
+            ),
         );
         store.resolve_finalized_target(
             FinalizeVoteTarget {
@@ -654,7 +727,16 @@ mod tests {
                 fb_hash: fb,
             },
             1,
-            finalize_sig(&keys, &keys[1], epoch, view, parent_view, fb),
+            finalize_sig(
+                &keys,
+                &keys[1],
+                FinalizeProposalFixture {
+                    epoch,
+                    view,
+                    parent_view,
+                    fb_hash: fb,
+                },
+            ),
         );
         // Nothing left pending; both votes are in the resolved target.
         assert_eq!(store.pending_vote_count(fb), 0);
@@ -688,7 +770,16 @@ mod tests {
                 fb_hash: fb1,
             },
             0,
-            finalize_sig(&keys, &keys[0], epoch, view, parent_view, fb1),
+            finalize_sig(
+                &keys,
+                &keys[0],
+                FinalizeProposalFixture {
+                    epoch,
+                    view,
+                    parent_view,
+                    fb_hash: fb1,
+                },
+            ),
         );
         store.record_bound_vote(
             FinalizeVoteTarget {
@@ -698,7 +789,16 @@ mod tests {
                 fb_hash: fb2,
             },
             0,
-            finalize_sig(&keys, &keys[0], epoch, view, parent_view, fb2),
+            finalize_sig(
+                &keys,
+                &keys[0],
+                FinalizeProposalFixture {
+                    epoch,
+                    view,
+                    parent_view,
+                    fb_hash: fb2,
+                },
+            ),
         );
         // Separate buffers - neither aggregate is poisoned by the other proposal.
         assert_eq!(store.pending_vote_count(fb1), 1);
@@ -746,7 +846,16 @@ mod tests {
                 fb_hash: fb,
             },
             2,
-            finalize_sig(&keys, &keys[2], epoch, view, parent_view, fb),
+            finalize_sig(
+                &keys,
+                &keys[2],
+                FinalizeProposalFixture {
+                    epoch,
+                    view,
+                    parent_view,
+                    fb_hash: fb,
+                },
+            ),
         );
 
         let artifact = store.build_artifact(11);
@@ -791,7 +900,16 @@ mod tests {
                 fb_hash: fb,
             },
             0,
-            finalize_sig(&keys, &keys[0], epoch, view, parent_view, fb),
+            finalize_sig(
+                &keys,
+                &keys[0],
+                FinalizeProposalFixture {
+                    epoch,
+                    view,
+                    parent_view,
+                    fb_hash: fb,
+                },
+            ),
         );
         store.record_bound_vote(
             FinalizeVoteTarget {
@@ -801,7 +919,16 @@ mod tests {
                 fb_hash: fb,
             },
             1,
-            finalize_sig(&keys, &keys[1], epoch, bad_view, parent_view, fb),
+            finalize_sig(
+                &keys,
+                &keys[1],
+                FinalizeProposalFixture {
+                    epoch,
+                    view: bad_view,
+                    parent_view,
+                    fb_hash: fb,
+                },
+            ),
         );
         store.resolve_finalized_target(
             FinalizeVoteTarget {
@@ -826,7 +953,16 @@ mod tests {
                 fb_hash: fb,
             },
             2,
-            finalize_sig(&keys, &keys[2], epoch, bad_view, parent_view, fb),
+            finalize_sig(
+                &keys,
+                &keys[2],
+                FinalizeProposalFixture {
+                    epoch,
+                    view: bad_view,
+                    parent_view,
+                    fb_hash: fb,
+                },
+            ),
         );
 
         let artifact = store.build_artifact(11);

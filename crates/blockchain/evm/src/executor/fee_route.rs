@@ -81,13 +81,13 @@ where
     }
 
     fn fee_route_context(&self) -> BlockContext {
-        BlockContext::new_with_genesis_hash(
-            self.inner.evm.block().number().saturating_to::<u64>(),
-            self.inner.evm.block().timestamp().saturating_to::<u64>(),
-            self.inner.evm.chain_id(),
-            self.genesis_hash,
-            self.inner.evm.block().beneficiary(),
-            Vec::new(),
-        )
+        BlockContext::new_with_genesis_hash(outbe_primitives::block::BlockContextInput {
+            block_number: self.inner.evm.block().number().saturating_to::<u64>(),
+            timestamp: self.inner.evm.block().timestamp().saturating_to::<u64>(),
+            chain_id: self.inner.evm.chain_id(),
+            genesis_hash: self.genesis_hash,
+            proposer: self.inner.evm.block().beneficiary(),
+            validators: Vec::new(),
+        })
     }
 }

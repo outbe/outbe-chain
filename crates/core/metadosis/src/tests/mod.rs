@@ -117,20 +117,9 @@ fn with_active_scope<R>(
         .unwrap()
         .is_zero()
     {
-        storage
-            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-            .unwrap();
-        storage
-            .sstore(
-                COMPRESSED_ENTITIES_ADDRESS,
-                U256::from(1),
-                U256::from_be_slice(
-                    outbe_compressed_entities::sealed_root(B256::ZERO)
-                        .unwrap()
-                        .as_slice(),
-                ),
-            )
-            .unwrap();
+        outbe_compressed_entities::test_support::seed_compressed_entities_genesis_after_marker(
+            &storage,
+        );
     }
     begin_block(storage.clone(), &scope).unwrap();
     let result = f(&scope, &parent);

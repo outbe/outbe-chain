@@ -491,9 +491,11 @@ fn consensus_parent_head_commits_only_after_valid_forkchoice() {
             let (mut actor, _mailbox) = ExecutorActor::new(
                 clock.child("head"),
                 engine.handle,
-                genesis,
-                0,
-                genesis,
+                crate::executor::actor::RecoveredFinalizedState {
+                    genesis_hash: genesis,
+                    last_finalized_height: 0,
+                    last_finalized_hash: genesis,
+                },
                 readiness,
                 None,
             );
@@ -549,9 +551,11 @@ fn verification_projection_failure_reaches_executor_supervision() {
         let (mut actor, mailbox) = ExecutorActor::new(
             clock.child("failure"),
             engine.handle,
-            B256::ZERO,
-            0,
-            B256::ZERO,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: B256::ZERO,
+                last_finalized_height: 0,
+                last_finalized_hash: B256::ZERO,
+            },
             readiness,
             None,
         );

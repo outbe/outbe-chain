@@ -267,9 +267,11 @@ fn run_bootstrap_v1(provider: &mut HashMapStorageProvider, payload: TeeBootstrap
             &input,
             SYSTEM_ADDRESS,
             U256::ZERO,
-            None,
-            None,
-            &activation,
+            DispatchAuthorities {
+                body_readers: None,
+                ocomp_fork_install: None,
+                tee_attestation_v1: &activation,
+            },
         )
         .map(|_| ())
     })

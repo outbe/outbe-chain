@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use alloy_primitives::{address, Bytes, B256};
 use outbe_primitives::{
-    consensus::{DkgBoundaryArtifact, ReshareResult},
+    consensus::DkgBoundaryArtifact,
     consensus_metadata::{CertifiedParentAccountingMetadata, ParentParticipationProof},
     reshare_artifact::LateFinalizeCreditsArtifact,
     system_tx::{
@@ -260,27 +260,7 @@ fn sample_metadata() -> CertifiedParentAccountingMetadata {
 }
 
 fn sample_boundary() -> DkgBoundaryArtifact {
-    DkgBoundaryArtifact {
-        epoch: 8,
-        dkg_cycle: 2,
-        freeze_height: STEADY_BLOCK_NUMBER - 2,
-        planned_activation_height: STEADY_BLOCK_NUMBER,
-        target_set_hash: B256::repeat_byte(0x33),
-        vrf_material_version: 3,
-        vrf_group_public_key: B256::repeat_byte(0x44),
-        vrf_group_public_key_bytes: Bytes::from_static(&[0x44; 96]),
-        committee_set_hash: B256::repeat_byte(0x66),
-        is_validator_set_change: true,
-        outcome: Bytes::from_static(b"boundary"),
-        is_full_dkg: false,
-        tee_recipient_pubkeys: Vec::new(),
-        tee_expired_target_exclusions: Vec::new(),
-        tee_expired_target_exclusions_hash: B256::ZERO,
-        reshare: ReshareResult {
-            new_active_set: vec![address!("0x3333333333333333333333333333333333333333")],
-            active_set_hash: B256::repeat_byte(0x55),
-        },
-    }
+    outbe_primitives::test_utils::sample_system_tx_boundary(STEADY_BLOCK_NUMBER)
 }
 
 fn sample_tee_bootstrap() -> Result<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2, String> {

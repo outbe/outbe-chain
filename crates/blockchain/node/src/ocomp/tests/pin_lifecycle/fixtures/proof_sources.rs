@@ -113,10 +113,11 @@ impl FinalizedInputProofSource for DeterministicProofSource {
             .map(|(candidate, _)| *candidate)
             .ok_or_else(|| RetentionError::Source("unknown finalized fixture".to_owned()))?;
         let intent = &self.intents[&candidate.block_hash];
-        if frame.identity().number != candidate.block_number
+        let finalized_request_mismatch = frame.identity().number != candidate.block_number
             || frame.state_root() != candidate.state_root
             || observation.intent_id != candidate.intent_id
-            || observation.wwd != candidate.wwd
+            || observation.wwd != candidate.wwd;
+        if finalized_request_mismatch
             || observation.pending_nonce != intent.pending_nonce
             || observation.attempt != intent.attempt
             || observation.activation_preconditions_hash

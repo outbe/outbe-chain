@@ -39,16 +39,27 @@ impl VerifyResolveTarget {
     }
 }
 
+/// Block identity and diagnostic target for one verification lookup.
+#[derive(Clone, Copy)]
+pub(crate) struct VerifyResolveRequest {
+    pub(crate) round: Round,
+    pub(crate) digest: Digest,
+    pub(crate) target: VerifyResolveTarget,
+}
+
 /// Resolve a block needed during verify: local cache first, then marshal by
 /// digest (fallback fetch-by-round) under [`VERIFY_RESOLUTION_TIMEOUT`].
 pub(crate) async fn resolve_for_verify(
     block_cache: &BlockCache,
     marshal_mailbox: &MarshalMailbox,
     clock: &impl commonware_runtime::Clock,
-    round: Round,
-    digest: Digest,
-    target: VerifyResolveTarget,
+    request: VerifyResolveRequest,
 ) -> Result<ConsensusBlock, VerifyResolveError> {
+    let VerifyResolveRequest {
+        round,
+        digest,
+        target,
+    } = request;
     let started_at = Instant::now();
     debug!(
         %round,

@@ -31,9 +31,11 @@ fn projects_each_intermediate_block_and_reports_each_durable_checkpoint() {
         provider,
         &runtime,
         FinalizedTarget::new(2, second),
-        &logical_tx,
-        &write_tx,
-        &recovery_tx,
+        ProjectionProgressSenders {
+            logical_checkpoint: &logical_tx,
+            durable_write: &write_tx,
+            recovery_ack: &recovery_tx,
+        },
     )
     .unwrap();
 
@@ -303,9 +305,11 @@ fn later_provider_failure_keeps_and_reports_earlier_durable_checkpoint() {
         provider,
         &runtime,
         FinalizedTarget::new(2, B256::repeat_byte(2)),
-        &logical_tx,
-        &write_tx,
-        &recovery_tx,
+        ProjectionProgressSenders {
+            logical_checkpoint: &logical_tx,
+            durable_write: &write_tx,
+            recovery_ack: &recovery_tx,
+        },
     )
     .unwrap_err();
 

@@ -1,4 +1,5 @@
 use super::*;
+use crate::v1::{NodeHostAssociationV1, VerifiedIntentV1};
 
 #[test]
 fn initial_role_neutral_registration_atomically_records_the_address_association_without_a_role() {
@@ -25,13 +26,19 @@ fn initial_role_neutral_registration_atomically_records_the_address_association_
         assert_eq!(
             registry
                 .register_enclave_and_bind_after_verifier_for_test(
-                    &intent,
-                    &node_registration_signature,
-                    &enclave_signature,
-                    &binding,
-                    &validator_signature,
-                    &node_binding_signature,
-                    PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate,)),
+                    VerifiedIntentV1 {
+                        intent: &intent,
+                        node_signature: &node_registration_signature,
+                        enclave_signature: &enclave_signature,
+                        capability: PostVerifierDcapCapabilityV1::new(verdict(
+                            DcapPlatformTcbStatusV1::UpToDate,
+                        ))
+                    },
+                    NodeHostAssociationV1 {
+                        binding: &binding,
+                        validator_signature: &validator_signature,
+                        node_binding_signature: &node_binding_signature
+                    }
                 )
                 .unwrap(),
             V1RegistrationOutcome::Created
@@ -47,13 +54,19 @@ fn initial_role_neutral_registration_atomically_records_the_address_association_
         assert_eq!(
             registry
                 .register_enclave_and_bind_after_verifier_for_test(
-                    &intent,
-                    &node_registration_signature,
-                    &enclave_signature,
-                    &binding,
-                    &validator_signature,
-                    &node_binding_signature,
-                    PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate,)),
+                    VerifiedIntentV1 {
+                        intent: &intent,
+                        node_signature: &node_registration_signature,
+                        enclave_signature: &enclave_signature,
+                        capability: PostVerifierDcapCapabilityV1::new(verdict(
+                            DcapPlatformTcbStatusV1::UpToDate,
+                        ))
+                    },
+                    NodeHostAssociationV1 {
+                        binding: &binding,
+                        validator_signature: &validator_signature,
+                        node_binding_signature: &node_binding_signature
+                    }
                 )
                 .unwrap(),
             V1RegistrationOutcome::Idempotent
@@ -106,13 +119,17 @@ fn atomic_initial_registration_is_active_idempotent_and_expires_without_relay_au
         assert_eq!(
             registry
                 .register_enclave_and_bind_after_verifier_for_test(
-                    &intent,
-                    &node_signature,
-                    &enclave_signature,
-                    &binding,
-                    &validator_signature,
-                    &node_binding_signature,
-                    PostVerifierDcapCapabilityV1::new(accepted_verdict.clone()),
+                    VerifiedIntentV1 {
+                        intent: &intent,
+                        node_signature: &node_signature,
+                        enclave_signature: &enclave_signature,
+                        capability: PostVerifierDcapCapabilityV1::new(accepted_verdict.clone())
+                    },
+                    NodeHostAssociationV1 {
+                        binding: &binding,
+                        validator_signature: &validator_signature,
+                        node_binding_signature: &node_binding_signature
+                    }
                 )
                 .unwrap(),
             V1RegistrationOutcome::Created
@@ -134,13 +151,17 @@ fn atomic_initial_registration_is_active_idempotent_and_expires_without_relay_au
         assert_eq!(
             registry
                 .register_enclave_and_bind_after_verifier_for_test(
-                    &intent,
-                    &node_signature,
-                    &enclave_signature,
-                    &binding,
-                    &validator_signature,
-                    &node_binding_signature,
-                    PostVerifierDcapCapabilityV1::new(accepted_verdict.clone()),
+                    VerifiedIntentV1 {
+                        intent: &intent,
+                        node_signature: &node_signature,
+                        enclave_signature: &enclave_signature,
+                        capability: PostVerifierDcapCapabilityV1::new(accepted_verdict.clone())
+                    },
+                    NodeHostAssociationV1 {
+                        binding: &binding,
+                        validator_signature: &validator_signature,
+                        node_binding_signature: &node_binding_signature
+                    }
                 )
                 .unwrap(),
             V1RegistrationOutcome::Idempotent
@@ -148,16 +169,20 @@ fn atomic_initial_registration_is_active_idempotent_and_expires_without_relay_au
 
         let conflict = registry
             .register_enclave_and_bind_after_verifier_for_test(
-                &intent,
-                &node_signature,
-                &enclave_signature,
-                &binding,
-                &validator_signature,
-                &node_binding_signature,
-                PostVerifierDcapCapabilityV1::with_evidence_hash(
-                    accepted_verdict,
-                    B256::repeat_byte(0xED),
-                ),
+                VerifiedIntentV1 {
+                    intent: &intent,
+                    node_signature: &node_signature,
+                    enclave_signature: &enclave_signature,
+                    capability: PostVerifierDcapCapabilityV1::with_evidence_hash(
+                        accepted_verdict,
+                        B256::repeat_byte(0xED),
+                    ),
+                },
+                NodeHostAssociationV1 {
+                    binding: &binding,
+                    validator_signature: &validator_signature,
+                    node_binding_signature: &node_binding_signature,
+                },
             )
             .unwrap_err();
         assert!(revert_message(conflict).contains("not an exact evidence replay"));
@@ -305,13 +330,19 @@ fn invalid_or_conflicting_initial_association_rolls_back_the_node_registration()
         invalid_validator_signature[0] ^= 1;
         let invalid = registry
             .register_enclave_and_bind_after_verifier_for_test(
-                &first_intent,
-                &first_node_signature,
-                &first_enclave_signature,
-                &first_binding,
-                &invalid_validator_signature,
-                &first_binding_node_signature,
-                PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+                VerifiedIntentV1 {
+                    intent: &first_intent,
+                    node_signature: &first_node_signature,
+                    enclave_signature: &first_enclave_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(verdict(
+                        DcapPlatformTcbStatusV1::UpToDate,
+                    )),
+                },
+                NodeHostAssociationV1 {
+                    binding: &first_binding,
+                    validator_signature: &invalid_validator_signature,
+                    node_binding_signature: &first_binding_node_signature,
+                },
             )
             .unwrap_err();
         assert!(revert_message(invalid).contains("proof of possession"));
@@ -329,24 +360,36 @@ fn invalid_or_conflicting_initial_association_rolls_back_the_node_registration()
 
         registry
             .register_enclave_and_bind_after_verifier_for_test(
-                &second_intent,
-                &second_node_signature,
-                &second_enclave_signature,
-                &second_node_own_binding,
-                &second_node_own_validator_signature,
-                &second_node_own_binding_signature,
-                PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+                VerifiedIntentV1 {
+                    intent: &second_intent,
+                    node_signature: &second_node_signature,
+                    enclave_signature: &second_enclave_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(verdict(
+                        DcapPlatformTcbStatusV1::UpToDate,
+                    )),
+                },
+                NodeHostAssociationV1 {
+                    binding: &second_node_own_binding,
+                    validator_signature: &second_node_own_validator_signature,
+                    node_binding_signature: &second_node_own_binding_signature,
+                },
             )
             .unwrap();
         let mismatched_target = registry
             .register_enclave_and_bind_after_verifier_for_test(
-                &first_intent,
-                &first_node_signature,
-                &first_enclave_signature,
-                &second_binding,
-                &second_validator_signature,
-                &second_binding_node_signature,
-                PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+                VerifiedIntentV1 {
+                    intent: &first_intent,
+                    node_signature: &first_node_signature,
+                    enclave_signature: &first_enclave_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(verdict(
+                        DcapPlatformTcbStatusV1::UpToDate,
+                    )),
+                },
+                NodeHostAssociationV1 {
+                    binding: &second_binding,
+                    validator_signature: &second_validator_signature,
+                    node_binding_signature: &second_binding_node_signature,
+                },
             )
             .unwrap_err();
         assert!(revert_message(mismatched_target).contains("same NodeHost"));
@@ -364,24 +407,36 @@ fn invalid_or_conflicting_initial_association_rolls_back_the_node_registration()
 
         registry
             .register_enclave_and_bind_after_verifier_for_test(
-                &first_intent,
-                &first_node_signature,
-                &first_enclave_signature,
-                &first_binding,
-                &first_validator_signature,
-                &first_binding_node_signature,
-                PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+                VerifiedIntentV1 {
+                    intent: &first_intent,
+                    node_signature: &first_node_signature,
+                    enclave_signature: &first_enclave_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(verdict(
+                        DcapPlatformTcbStatusV1::UpToDate,
+                    )),
+                },
+                NodeHostAssociationV1 {
+                    binding: &first_binding,
+                    validator_signature: &first_validator_signature,
+                    node_binding_signature: &first_binding_node_signature,
+                },
             )
             .unwrap();
         let conflict = registry
             .register_enclave_and_bind_after_verifier_for_test(
-                &second_intent,
-                &second_node_signature,
-                &second_enclave_signature,
-                &second_binding,
-                &second_validator_signature,
-                &second_binding_node_signature,
-                PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+                VerifiedIntentV1 {
+                    intent: &second_intent,
+                    node_signature: &second_node_signature,
+                    enclave_signature: &second_enclave_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(verdict(
+                        DcapPlatformTcbStatusV1::UpToDate,
+                    )),
+                },
+                NodeHostAssociationV1 {
+                    binding: &second_binding,
+                    validator_signature: &second_validator_signature,
+                    node_binding_signature: &second_binding_node_signature,
+                },
             )
             .unwrap_err();
         assert!(revert_message(conflict).contains("not associated with the existing NodeHost"));
@@ -434,14 +489,14 @@ fn full_node_binding_is_idempotent_expires_and_rejects_validator_credentials() {
             .unwrap());
         assert_eq!(
             registry
-                .register_enclave_after_verifier_for_test(
-                    &intent,
-                    &node_signature,
-                    &enclave_signature,
-                    PostVerifierDcapCapabilityV1::new(verdict(
+                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &intent,
+                    node_signature: &node_signature,
+                    enclave_signature: &enclave_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(verdict(
                         DcapPlatformTcbStatusV1::SWHardeningNeeded,
-                    )),
-                )
+                    ))
+                })
                 .unwrap(),
             V1RegistrationOutcome::Created
         );
@@ -457,14 +512,14 @@ fn full_node_binding_is_idempotent_expires_and_rejects_validator_credentials() {
 
         assert_eq!(
             registry
-                .register_enclave_after_verifier_for_test(
-                    &intent,
-                    &node_signature,
-                    &enclave_signature,
-                    PostVerifierDcapCapabilityV1::new(verdict(
+                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &intent,
+                    node_signature: &node_signature,
+                    enclave_signature: &enclave_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(verdict(
                         DcapPlatformTcbStatusV1::SWHardeningNeeded,
-                    )),
-                )
+                    ))
+                })
                 .unwrap(),
             V1RegistrationOutcome::Idempotent
         );
@@ -472,12 +527,14 @@ fn full_node_binding_is_idempotent_expires_and_rejects_validator_credentials() {
         let (wrong_p2p_signature, _) = full_node_signatures(&intent, &other_node, &enclave_signer);
         assert!(revert_message(
             registry
-                .register_enclave_after_verifier_for_test(
-                    &intent,
-                    &wrong_p2p_signature,
-                    &enclave_signature,
-                    PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
-                )
+                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &intent,
+                    node_signature: &wrong_p2p_signature,
+                    enclave_signature: &enclave_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(verdict(
+                        DcapPlatformTcbStatusV1::UpToDate
+                    ))
+                })
                 .unwrap_err()
         )
         .contains("node proof"));
@@ -487,12 +544,14 @@ fn full_node_binding_is_idempotent_expires_and_rejects_validator_credentials() {
             .unwrap();
         assert!(revert_message(
             registry
-                .register_enclave_after_verifier_for_test(
-                    &intent,
-                    &validator_signature,
-                    &enclave_signature,
-                    PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
-                )
+                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &intent,
+                    node_signature: &validator_signature,
+                    enclave_signature: &enclave_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(verdict(
+                        DcapPlatformTcbStatusV1::UpToDate
+                    ))
+                })
                 .unwrap_err()
         )
         .contains("node proof"));
@@ -502,12 +561,14 @@ fn full_node_binding_is_idempotent_expires_and_rejects_validator_credentials() {
             .to_bytes();
         assert!(revert_message(
             registry
-                .register_enclave_after_verifier_for_test(
-                    &intent,
-                    &node_signature,
-                    &wrong_enclave_signature,
-                    PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
-                )
+                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &intent,
+                    node_signature: &node_signature,
+                    enclave_signature: &wrong_enclave_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(verdict(
+                        DcapPlatformTcbStatusV1::UpToDate
+                    ))
+                })
                 .unwrap_err()
         )
         .contains("enclave proof"));
@@ -518,12 +579,14 @@ fn full_node_binding_is_idempotent_expires_and_rejects_validator_credentials() {
             full_node_signatures(&stale, &node_signer, &enclave_signer);
         assert!(revert_message(
             registry
-                .register_enclave_after_verifier_for_test(
-                    &stale,
-                    &stale_node_signature,
-                    &stale_enclave_signature,
-                    PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
-                )
+                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &stale,
+                    node_signature: &stale_node_signature,
+                    enclave_signature: &stale_enclave_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(verdict(
+                        DcapPlatformTcbStatusV1::UpToDate
+                    ))
+                })
                 .unwrap_err()
         )
         .contains("must renew"));
@@ -532,12 +595,12 @@ fn full_node_binding_is_idempotent_expires_and_rejects_validator_credentials() {
         wrong_measurement.mrenclave = B256::repeat_byte(0x99);
         assert!(revert_message(
             registry
-                .register_enclave_after_verifier_for_test(
-                    &intent,
-                    &node_signature,
-                    &enclave_signature,
-                    PostVerifierDcapCapabilityV1::new(wrong_measurement),
-                )
+                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &intent,
+                    node_signature: &node_signature,
+                    enclave_signature: &enclave_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(wrong_measurement)
+                })
                 .unwrap_err()
         )
         .contains("measurement rule"));
@@ -548,12 +611,14 @@ fn full_node_binding_is_idempotent_expires_and_rejects_validator_credentials() {
             full_node_signatures(&excessive_lease, &node_signer, &enclave_signer);
         assert!(revert_message(
             registry
-                .register_enclave_after_verifier_for_test(
-                    &excessive_lease,
-                    &lease_node_signature,
-                    &lease_enclave_signature,
-                    PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
-                )
+                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &excessive_lease,
+                    node_signature: &lease_node_signature,
+                    enclave_signature: &lease_enclave_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(verdict(
+                        DcapPlatformTcbStatusV1::UpToDate
+                    ))
+                })
                 .unwrap_err()
         )
         .contains("must renew"));
@@ -565,26 +630,28 @@ fn full_node_binding_is_idempotent_expires_and_rejects_validator_credentials() {
             full_node_signatures(&same_enclave_other_node, &other_node, &enclave_signer);
         assert!(revert_message(
             registry
-                .register_enclave_after_verifier_for_test(
-                    &same_enclave_other_node,
-                    &other_node_signature,
-                    &same_enclave_signature,
-                    PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
-                )
+                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &same_enclave_other_node,
+                    node_signature: &other_node_signature,
+                    enclave_signature: &same_enclave_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(verdict(
+                        DcapPlatformTcbStatusV1::UpToDate
+                    ))
+                })
                 .unwrap_err()
         )
         .contains("already bound to another node"));
 
         let conflict = registry
-            .register_enclave_after_verifier_for_test(
-                &intent,
-                &node_signature,
-                &enclave_signature,
-                PostVerifierDcapCapabilityV1::with_evidence_hash(
+            .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                intent: &intent,
+                node_signature: &node_signature,
+                enclave_signature: &enclave_signature,
+                capability: PostVerifierDcapCapabilityV1::with_evidence_hash(
                     verdict(DcapPlatformTcbStatusV1::UpToDate),
                     B256::repeat_byte(0xED),
                 ),
-            )
+            })
             .unwrap_err();
         assert!(revert_message(conflict).contains("not an exact evidence replay"));
 
@@ -636,12 +703,14 @@ fn role_neutral_registration_rejects_node_enclave_nonce_and_measurement_errors()
             .unwrap();
         assert!(revert_message(
             registry
-                .register_enclave_after_verifier_for_test(
-                    &intent,
-                    &wrong_node_signature,
-                    &enclave_signature,
-                    PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate,)),
-                )
+                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &intent,
+                    node_signature: &wrong_node_signature,
+                    enclave_signature: &enclave_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(verdict(
+                        DcapPlatformTcbStatusV1::UpToDate,
+                    ))
+                })
                 .unwrap_err()
         )
         .contains("node proof"));
@@ -651,12 +720,14 @@ fn role_neutral_registration_rejects_node_enclave_nonce_and_measurement_errors()
             full_node_signatures(&intent, &full_node_signer, &enclave_signer);
         assert!(revert_message(
             registry
-                .register_enclave_after_verifier_for_test(
-                    &intent,
-                    &full_node_signature,
-                    &enclave_signature,
-                    PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
-                )
+                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &intent,
+                    node_signature: &full_node_signature,
+                    enclave_signature: &enclave_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(verdict(
+                        DcapPlatformTcbStatusV1::UpToDate
+                    ))
+                })
                 .unwrap_err()
         )
         .contains("node proof"));
@@ -666,12 +737,14 @@ fn role_neutral_registration_rejects_node_enclave_nonce_and_measurement_errors()
             .to_bytes();
         assert!(revert_message(
             registry
-                .register_enclave_after_verifier_for_test(
-                    &intent,
-                    &node_signature,
-                    &wrong_enclave_signature,
-                    PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate,)),
-                )
+                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &intent,
+                    node_signature: &node_signature,
+                    enclave_signature: &wrong_enclave_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(verdict(
+                        DcapPlatformTcbStatusV1::UpToDate,
+                    ))
+                })
                 .unwrap_err()
         )
         .contains("enclave proof"));
@@ -682,12 +755,14 @@ fn role_neutral_registration_rejects_node_enclave_nonce_and_measurement_errors()
             signatures(&stale, &node_signer, &enclave_signer);
         assert!(revert_message(
             registry
-                .register_enclave_after_verifier_for_test(
-                    &stale,
-                    &stale_node_signature,
-                    &stale_enclave_signature,
-                    PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate,)),
-                )
+                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &stale,
+                    node_signature: &stale_node_signature,
+                    enclave_signature: &stale_enclave_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(verdict(
+                        DcapPlatformTcbStatusV1::UpToDate,
+                    ))
+                })
                 .unwrap_err()
         )
         .contains("versions and nonces"));
@@ -696,12 +771,12 @@ fn role_neutral_registration_rejects_node_enclave_nonce_and_measurement_errors()
         wrong_measurement.mrenclave = B256::repeat_byte(0x99);
         assert!(revert_message(
             registry
-                .register_enclave_after_verifier_for_test(
-                    &intent,
-                    &node_signature,
-                    &enclave_signature,
-                    PostVerifierDcapCapabilityV1::new(wrong_measurement),
-                )
+                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &intent,
+                    node_signature: &node_signature,
+                    enclave_signature: &enclave_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(wrong_measurement)
+                })
                 .unwrap_err()
         )
         .contains("measurement rule"));
@@ -742,12 +817,14 @@ fn one_to_one_binding_and_strict_platform_policy_reject_conflicts() {
         let mut registry = TeeRegistry::new(storage);
         registry.install_initial_policy_v1(&broad_policy).unwrap();
         registry
-            .register_enclave_after_verifier_for_test(
-                &first,
-                &first_node_signature,
-                &first_enclave_signature,
-                PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
-            )
+            .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                intent: &first,
+                node_signature: &first_node_signature,
+                enclave_signature: &first_enclave_signature,
+                capability: PostVerifierDcapCapabilityV1::new(verdict(
+                    DcapPlatformTcbStatusV1::UpToDate,
+                )),
+            })
             .unwrap();
 
         let second_enclave = registration_intent(
@@ -762,12 +839,14 @@ fn one_to_one_binding_and_strict_platform_policy_reject_conflicts() {
             signatures(&second_enclave, &first_node, &replacement_enclave);
         assert!(revert_message(
             registry
-                .register_enclave_after_verifier_for_test(
-                    &second_enclave,
-                    &second_enclave_node_sig,
-                    &second_enclave_sig,
-                    PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate,)),
-                )
+                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &second_enclave,
+                    node_signature: &second_enclave_node_sig,
+                    enclave_signature: &second_enclave_sig,
+                    capability: PostVerifierDcapCapabilityV1::new(verdict(
+                        DcapPlatformTcbStatusV1::UpToDate,
+                    ))
+                })
                 .unwrap_err()
         )
         .contains("must renew"));
@@ -789,12 +868,14 @@ fn one_to_one_binding_and_strict_platform_policy_reject_conflicts() {
             signatures(&same_enclave_other_node, &second_node, &enclave_signer);
         assert!(revert_message(
             registry
-                .register_enclave_after_verifier_for_test(
-                    &same_enclave_other_node,
-                    &second_node_signature,
-                    &same_enclave_signature,
-                    PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate,)),
-                )
+                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &same_enclave_other_node,
+                    node_signature: &second_node_signature,
+                    enclave_signature: &same_enclave_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(verdict(
+                        DcapPlatformTcbStatusV1::UpToDate,
+                    ))
+                })
                 .unwrap_err()
         )
         .contains("already bound to another node"));
@@ -824,12 +905,12 @@ fn one_to_one_binding_and_strict_platform_policy_reject_conflicts() {
         ] {
             assert!(revert_message(
                 registry
-                    .register_enclave_after_verifier_for_test(
-                        &strict_intent,
-                        &strict_node_signature,
-                        &strict_enclave_signature,
-                        PostVerifierDcapCapabilityV1::new(verdict(status)),
-                    )
+                    .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                        intent: &strict_intent,
+                        node_signature: &strict_node_signature,
+                        enclave_signature: &strict_enclave_signature,
+                        capability: PostVerifierDcapCapabilityV1::new(verdict(status))
+                    })
                     .unwrap_err()
             )
             .contains("stricter than active policy"));

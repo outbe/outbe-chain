@@ -5,9 +5,9 @@ use commonware_p2p::{CheckedSender, LimitedSender, Receiver, Recipients};
 use commonware_runtime::{IoBuf, IoBufs};
 use outbe_radicle::{
     endpoint::{
-        sign_response, AnchorSnapshot, AuthorityRecord, ChainIdentity, EndpointAddress,
-        EndpointFrame, EndpointRequest, EndpointResponseBody, PeerId, VerificationContext,
-        MAX_ENDPOINT_TTL_BLOCKS,
+        sign_response, AnchorError, AnchorSnapshot, AuthorityRecord, ChainIdentity,
+        EndpointAddress, EndpointFrame, EndpointRequest, EndpointResponseBody, PeerId,
+        VerificationContext, MAX_ENDPOINT_TTL_BLOCKS,
     },
     integration::{
         EndpointNetwork, EndpointSigningIdentity, EndpointTransport, LocalEndpointIdentity,
@@ -127,32 +127,36 @@ fn snapshot(
 }
 
 fn anchor(snapshot: &FinalizedSnapshot) -> AnchorSnapshot {
-    AnchorSnapshot::new(
-        snapshot.block.number,
-        snapshot.block.hash,
-        snapshot
-            .validators
-            .iter()
-            .filter_map(|validator| {
-                Some(AuthorityRecord {
-                    validator: validator.address,
-                    peer: validator.peer,
-                    node_id: validator.node_id?,
-                })
-            })
-            .collect(),
-    )
-    .unwrap()
+    snapshot.endpoint_anchor().unwrap()
+}
+
+struct EndpointFixture {
+    address: Address,
+    node_id: [u8; 32],
+    port: u16,
+}
+
+impl EndpointFixture {
+    fn new(address: Address, node_id: [u8; 32], port: u16) -> Self {
+        Self {
+            address,
+            node_id,
+            port,
+        }
+    }
 }
 
 fn response(
     request_id: [u8; 32],
     snapshot: &FinalizedSnapshot,
     signer: &bls12381::PrivateKey,
-    address: Address,
-    node_id: [u8; 32],
-    port: u16,
+    endpoint: EndpointFixture,
 ) -> outbe_radicle::endpoint::SignedEndpointResponse {
+    let EndpointFixture {
+        address,
+        node_id,
+        port,
+    } = endpoint;
     sign_response(
         EndpointResponseBody {
             request_id,
@@ -232,9 +236,7 @@ async fn request_response_and_signed_evidence() {
         request.request_id(),
         &current,
         &signer_b,
-        Address::repeat_byte(0x22),
-        [2_u8; 32],
-        8776,
+        EndpointFixture::new(Address::repeat_byte(0x22), [2_u8; 32], 8776),
     );
     incoming
         .send((
@@ -561,9 +563,7 @@ async fn future_anchor_evidence_is_published_only_after_exact_resolution() {
         request_id,
         &at_31,
         &signer_b,
-        Address::repeat_byte(0x22),
-        [2_u8; 32],
-        9776,
+        EndpointFixture::new(Address::repeat_byte(0x22), [2_u8; 32], 9776),
     );
     incoming
         .send((
@@ -585,4 +585,53 @@ async fn future_anchor_evidence_is_published_only_after_exact_resolution() {
 
     resolver.shutdown().await.unwrap();
     task.await.unwrap().unwrap();
+}
+
+#[test]
+fn endpoint_anchor_preserves_exact_authority_and_block() -> Result<(), AnchorError> {
+    let signer_a = bls12381::PrivateKey::from_seed(51);
+    let signer_b = bls12381::PrivateKey::from_seed(52);
+    let current = snapshot(42, &signer_a, &signer_b, false);
+    let expected = AnchorSnapshot::new(
+        42,
+        B256::with_last_byte(42),
+        vec![AuthorityRecord {
+            validator: Address::repeat_byte(0x22),
+            peer: PeerId::from_public_key(&signer_b.public_key()),
+            node_id: [2_u8; 32],
+        }],
+    )?;
+    assert_eq!(current.endpoint_anchor()?, expected);
+    Ok(())
+}
+
+#[test]
+fn endpoint_anchor_omits_unbound_validators() -> Result<(), AnchorError> {
+    let signer_a = bls12381::PrivateKey::from_seed(61);
+    let signer_b = bls12381::PrivateKey::from_seed(62);
+    let mut current = snapshot(43, &signer_a, &signer_b, true);
+    current.validators[0].node_id = None;
+    let expected = AnchorSnapshot::new(
+        43,
+        B256::with_last_byte(43),
+        vec![AuthorityRecord {
+            validator: Address::repeat_byte(0x11),
+            peer: PeerId::from_public_key(&signer_a.public_key()),
+            node_id: [1_u8; 32],
+        }],
+    )?;
+    assert_eq!(current.endpoint_anchor()?, expected);
+    Ok(())
+}
+
+#[test]
+fn endpoint_anchor_rejects_duplicate_bound_authorities() {
+    let signer_a = bls12381::PrivateKey::from_seed(71);
+    let signer_b = bls12381::PrivateKey::from_seed(72);
+    let mut current = snapshot(44, &signer_a, &signer_b, false);
+    current.validators.push(current.validators[0].clone());
+    assert_eq!(
+        current.endpoint_anchor(),
+        Err(AnchorError::DuplicateValidator)
+    );
 }

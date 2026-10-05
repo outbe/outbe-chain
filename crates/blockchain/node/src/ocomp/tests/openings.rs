@@ -1,12 +1,10 @@
+use outbe_ocomp_protocol::test_utils::{proof_nodes_for_target, storage_trie};
 use std::{
     collections::BTreeMap,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::{atomic::AtomicUsize, Arc},
 };
 
-use alloy_eips::{BlockNumHash, BlockNumberOrTag};
+use alloy_eips::BlockNumHash;
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles, TrieAccount, KECCAK_EMPTY};
 use outbe_metadosis::config::poc_schema_limits;
@@ -17,17 +15,8 @@ use outbe_ocomp_protocol::{
 };
 use outbe_primitives::addresses::{FIDELITY_ADDRESS, METADOSIS_ADDRESS, NOD_ADDRESS};
 use outbe_primitives::time::WorldwideDay;
-use reth_chainspec::ChainInfo;
-use reth_primitives_traits::{Account, Bytecode};
-use reth_storage_api::{
-    errors::provider::ProviderResult, AccountReader, BlockHashReader, BlockIdReader,
-    BlockNumReader, BytecodeReader, HashedPostStateProvider, StateProofProvider, StateProvider,
-    StateProviderBox, StateProviderFactory, StateRootProvider, StorageRootProvider,
-};
-use reth_trie::{
-    updates::TrieUpdates, AccountProof, ExecutionWitnessMode, HashedPostState, HashedStorage,
-    KeccakKeyHasher, MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
-};
+use reth_primitives_traits::Account;
+use reth_trie::{AccountProof, StorageProof};
 
 use crate::ocomp::{
     finality::{build_verified_raw_contract_opening, verify_raw_contract_opening},
@@ -35,293 +24,9 @@ use crate::ocomp::{
     retention::CandidatePinV1,
 };
 
-#[derive(Clone)]
-struct OpeningStateProvider {
-    state_root: B256,
-    accounts: BTreeMap<Address, Account>,
-    storage: BTreeMap<(Address, B256), U256>,
-    proofs: BTreeMap<Address, AccountProof>,
-    storage_reads: Arc<AtomicUsize>,
-}
+type OpeningStateProvider = crate::test_utils::OpeningStateFixture<Arc<AtomicUsize>>;
 
-impl AccountReader for OpeningStateProvider {
-    fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>> {
-        Ok(self.accounts.get(address).copied())
-    }
-}
-
-impl BlockHashReader for OpeningStateProvider {
-    fn block_hash(&self, _number: u64) -> ProviderResult<Option<B256>> {
-        Ok(None)
-    }
-
-    fn canonical_hashes_range(&self, _start: u64, _end: u64) -> ProviderResult<Vec<B256>> {
-        Ok(Vec::new())
-    }
-}
-
-impl BytecodeReader for OpeningStateProvider {
-    fn bytecode_by_hash(&self, _code_hash: &B256) -> ProviderResult<Option<Bytecode>> {
-        Ok(None)
-    }
-}
-
-impl StateRootProvider for OpeningStateProvider {
-    fn state_root(&self, _hashed_state: HashedPostState) -> ProviderResult<B256> {
-        Ok(self.state_root)
-    }
-
-    fn state_root_from_nodes(&self, _input: TrieInput) -> ProviderResult<B256> {
-        Ok(self.state_root)
-    }
-
-    fn state_root_with_updates(
-        &self,
-        _hashed_state: HashedPostState,
-    ) -> ProviderResult<(B256, TrieUpdates)> {
-        Ok((self.state_root, TrieUpdates::default()))
-    }
-
-    fn state_root_from_nodes_with_updates(
-        &self,
-        _input: TrieInput,
-    ) -> ProviderResult<(B256, TrieUpdates)> {
-        Ok((self.state_root, TrieUpdates::default()))
-    }
-}
-
-impl StorageRootProvider for OpeningStateProvider {
-    fn storage_root(
-        &self,
-        address: Address,
-        _hashed_storage: HashedStorage,
-    ) -> ProviderResult<B256> {
-        Ok(self
-            .proofs
-            .get(&address)
-            .map_or(B256::ZERO, |proof| proof.storage_root))
-    }
-
-    fn storage_proof(
-        &self,
-        address: Address,
-        slot: B256,
-        _hashed_storage: HashedStorage,
-    ) -> ProviderResult<StorageProof> {
-        Ok(self
-            .proofs
-            .get(&address)
-            .and_then(|proof| proof.storage_proofs.iter().find(|proof| proof.key == slot))
-            .cloned()
-            .unwrap_or_else(|| StorageProof::new(slot)))
-    }
-
-    fn storage_multiproof(
-        &self,
-        _address: Address,
-        _slots: &[B256],
-        _hashed_storage: HashedStorage,
-    ) -> ProviderResult<StorageMultiProof> {
-        Ok(StorageMultiProof::empty())
-    }
-}
-
-impl StateProofProvider for OpeningStateProvider {
-    fn proof(
-        &self,
-        _input: TrieInput,
-        address: Address,
-        slots: &[B256],
-    ) -> ProviderResult<AccountProof> {
-        let mut proof = self
-            .proofs
-            .get(&address)
-            .cloned()
-            .unwrap_or_else(|| AccountProof::new(address));
-        proof.storage_proofs = slots
-            .iter()
-            .map(|slot| {
-                proof
-                    .storage_proofs
-                    .iter()
-                    .find(|storage| storage.key == *slot)
-                    .cloned()
-                    .unwrap_or_else(|| StorageProof::new(*slot))
-            })
-            .collect();
-        Ok(proof)
-    }
-
-    fn multiproof(
-        &self,
-        _input: TrieInput,
-        _targets: MultiProofTargets,
-    ) -> ProviderResult<MultiProof> {
-        Ok(MultiProof::default())
-    }
-
-    fn multiproof_v2(
-        &self,
-        _input: TrieInput,
-        _targets: reth_trie::MultiProofTargetsV2,
-    ) -> ProviderResult<reth_trie::DecodedMultiProofV2> {
-        Ok(reth_trie::DecodedMultiProofV2::default())
-    }
-
-    fn witness(
-        &self,
-        _input: TrieInput,
-        _target: HashedPostState,
-        _mode: ExecutionWitnessMode,
-    ) -> ProviderResult<Vec<Bytes>> {
-        Ok(Vec::new())
-    }
-}
-
-impl HashedPostStateProvider for OpeningStateProvider {
-    fn hashed_post_state(
-        &self,
-        bundle_state: &revm::database::BundleState,
-    ) -> ProviderResult<HashedPostState> {
-        Ok(HashedPostState::from_bundle_state::<KeccakKeyHasher>(
-            bundle_state.state(),
-        ))
-    }
-}
-
-impl StateProvider for OpeningStateProvider {
-    fn storage(&self, account: Address, storage_key: B256) -> ProviderResult<Option<U256>> {
-        self.storage_reads.fetch_add(1, Ordering::Relaxed);
-        Ok(self.storage.get(&(account, storage_key)).copied())
-    }
-}
-
-#[derive(Clone)]
-struct OpeningProvider {
-    state: OpeningStateProvider,
-    block_number: u64,
-    block_hash: B256,
-}
-
-impl BlockHashReader for OpeningProvider {
-    fn block_hash(&self, number: u64) -> ProviderResult<Option<B256>> {
-        Ok((number == self.block_number).then_some(self.block_hash))
-    }
-
-    fn canonical_hashes_range(&self, start: u64, end: u64) -> ProviderResult<Vec<B256>> {
-        Ok((start..end)
-            .filter_map(|number| (number == self.block_number).then_some(self.block_hash))
-            .collect())
-    }
-}
-
-impl BlockNumReader for OpeningProvider {
-    fn chain_info(&self) -> ProviderResult<ChainInfo> {
-        Ok(ChainInfo {
-            best_hash: self.block_hash,
-            best_number: self.block_number,
-        })
-    }
-
-    fn best_block_number(&self) -> ProviderResult<u64> {
-        Ok(self.block_number)
-    }
-
-    fn last_block_number(&self) -> ProviderResult<u64> {
-        Ok(self.block_number)
-    }
-
-    fn block_number(&self, hash: B256) -> ProviderResult<Option<u64>> {
-        Ok((hash == self.block_hash).then_some(self.block_number))
-    }
-}
-
-impl BlockIdReader for OpeningProvider {
-    fn pending_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
-        Ok(Some(BlockNumHash::new(self.block_number, self.block_hash)))
-    }
-
-    fn safe_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
-        Ok(Some(BlockNumHash::new(self.block_number, self.block_hash)))
-    }
-
-    fn finalized_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
-        Ok(Some(BlockNumHash::new(self.block_number, self.block_hash)))
-    }
-}
-
-impl StateProviderFactory for OpeningProvider {
-    fn latest(&self) -> ProviderResult<StateProviderBox> {
-        Ok(Box::new(self.state.clone()))
-    }
-
-    fn state_by_block_number_or_tag(
-        &self,
-        _number_or_tag: BlockNumberOrTag,
-    ) -> ProviderResult<StateProviderBox> {
-        self.latest()
-    }
-
-    fn history_by_block_number(&self, _block: u64) -> ProviderResult<StateProviderBox> {
-        self.latest()
-    }
-
-    fn history_by_block_hash(&self, _block: B256) -> ProviderResult<StateProviderBox> {
-        self.latest()
-    }
-
-    fn state_by_block_hash(&self, block: B256) -> ProviderResult<StateProviderBox> {
-        assert_eq!(
-            block, self.block_hash,
-            "opening builder must request the candidate's exact finalized block hash"
-        );
-        self.latest()
-    }
-
-    fn pending(&self) -> ProviderResult<StateProviderBox> {
-        self.latest()
-    }
-
-    fn pending_state_by_hash(&self, _block_hash: B256) -> ProviderResult<Option<StateProviderBox>> {
-        self.latest().map(Some)
-    }
-
-    fn maybe_pending(&self) -> ProviderResult<Option<StateProviderBox>> {
-        self.latest().map(Some)
-    }
-}
-
-fn storage_trie(slots: &[(U256, U256)]) -> (B256, Vec<Vec<Bytes>>) {
-    let targets = slots
-        .iter()
-        .map(|(slot, _)| Nibbles::unpack(keccak256(slot.to_be_bytes::<32>())))
-        .collect::<Vec<_>>();
-    let mut leaves = BTreeMap::new();
-    for ((_, word), target) in slots.iter().zip(&targets) {
-        if !word.is_zero() {
-            leaves.insert(*target, alloy_rlp::encode_fixed_size(word).to_vec());
-        }
-    }
-
-    let mut builder =
-        HashBuilder::default().with_proof_retainer(ProofRetainer::from_iter(targets.clone()));
-    for (path, value) in leaves {
-        builder.add_leaf(path, &value);
-    }
-    let root = builder.root();
-    let retained = builder.take_proof_nodes();
-    let proofs = targets
-        .iter()
-        .map(|target| {
-            retained
-                .matching_nodes_sorted(target)
-                .into_iter()
-                .map(|(_, node)| node)
-                .collect()
-        })
-        .collect();
-    (root, proofs)
-}
+type OpeningProvider = crate::test_utils::OpeningProviderFixture<Arc<AtomicUsize>>;
 
 fn account_trie(accounts: &[(Address, TrieAccount)]) -> (B256, BTreeMap<Address, Vec<Bytes>>) {
     let targets = accounts
@@ -342,16 +47,7 @@ fn account_trie(accounts: &[(Address, TrieAccount)]) -> (B256, BTreeMap<Address,
     let retained = builder.take_proof_nodes();
     let proofs = targets
         .into_iter()
-        .map(|(address, target)| {
-            (
-                address,
-                retained
-                    .matching_nodes_sorted(&target)
-                    .into_iter()
-                    .map(|(_, node)| node)
-                    .collect(),
-            )
-        })
+        .map(|(address, target)| (address, proof_nodes_for_target(&retained, &target)))
         .collect();
     (root, proofs)
 }
@@ -424,6 +120,7 @@ fn opening_state(contracts: &[(Address, Vec<(B256, U256)>)]) -> (OpeningStatePro
             storage,
             proofs,
             storage_reads: Arc::new(AtomicUsize::new(0)),
+            block_lookup: crate::test_utils::NoBlockLookup,
         },
         state_root,
     )
@@ -556,8 +253,11 @@ fn lysis_opening_builder_returns_league_snapshot_and_oracle_proofs() {
     let openings = build_lysis_openings(
         &OpeningProvider {
             state,
-            block_number: candidate.block_number,
-            block_hash: candidate.block_hash,
+            block: crate::test_utils::ExactBlockLookup {
+                identity: BlockNumHash::new(candidate.block_number, candidate.block_hash),
+            },
+            exact_hash_message:
+                "opening builder must request the candidate's exact finalized block hash",
         },
         &limits,
         candidate,

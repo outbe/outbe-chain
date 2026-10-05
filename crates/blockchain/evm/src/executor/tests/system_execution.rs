@@ -935,12 +935,14 @@ fn verifier_rejects_begin_system_tx_signer_mismatch() {
     );
     let cycle_input = SystemTxInputV2::CycleTick.encode().unwrap();
     let unsigned = build_unsigned_system_tx_with_gas_limit(
-        SystemTxKind::CycleTick,
-        0,
-        1,
-        CHAIN_ID,
-        cycle_input,
-        canonical[0].tx().gas_limit(),
+        outbe_primitives::system_tx::SystemTxEnvelopeInput {
+            kind: SystemTxKind::CycleTick,
+            ordinal: 0,
+            block_number: 1,
+            chain_id: CHAIN_ID,
+            calldata: cycle_input,
+            gas_limit: canonical[0].tx().gas_limit(),
+        },
     )
     .unwrap();
     let wrong_signed = wrong_signer.sign_unsigned(unsigned).unwrap();

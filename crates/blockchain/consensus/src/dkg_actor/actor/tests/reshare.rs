@@ -4,7 +4,7 @@ use fixtures::*;
 
 #[test]
 fn reshare_allows_new_player_without_previous_share() {
-    use commonware_runtime::{Runner as _};
+    use commonware_runtime::Runner as _;
     commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(600)).start(
         |context| async move {
             let PreviousCommittee {
@@ -96,7 +96,7 @@ fn reshare_allows_new_player_without_previous_share() {
 
 #[test]
 fn reshare_retry_gives_online_player_time_to_ack_before_dealer_finalizes() {
-    use commonware_runtime::{Runner as _};
+    use commonware_runtime::Runner as _;
     commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(600)).start(
         |context| async move {
             let PreviousCommittee {
@@ -182,7 +182,7 @@ fn reshare_retry_gives_online_player_time_to_ack_before_dealer_finalizes() {
 /// recovers a share (signer quorum preserved).
 #[test]
 fn reshare_survives_signed_but_garbage_dealer_log() {
-    use commonware_runtime::{Runner as _};
+    use commonware_runtime::Runner as _;
     commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(600)).start(
         |context| async move {
             // Old committee of 4 (f=1, log_threshold = 2f+1 = 3), resharing to the
@@ -281,7 +281,7 @@ fn reshare_survives_signed_but_garbage_dealer_log() {
 
 #[test]
 fn removed_old_validator_can_deal_without_being_target_player() {
-    use commonware_runtime::{Runner as _};
+    use commonware_runtime::Runner as _;
     commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(600)).start(
         |context| async move {
             let PreviousCommittee {
@@ -345,31 +345,8 @@ fn removed_old_validator_can_deal_without_being_target_player() {
                 .await
                 .expect("collect signed dealer logs");
 
-            assert!(
-                chain_logs.contains_key(&removed_pk),
-                "removed old validator must publish a valid dealer log"
-            );
-            let mut selected_logs = Vec::with_capacity(log_threshold as usize);
-            selected_logs.push(chain_logs.get(&removed_pk).unwrap().clone());
-            for (dealer, bytes) in &chain_logs {
-                if dealer == &removed_pk {
-                    continue;
-                }
-                selected_logs.push(bytes.clone());
-                if selected_logs.len() == log_threshold as usize {
-                    break;
-                }
-            }
-            assert_eq!(
-                selected_logs.len(),
-                log_threshold as usize,
-                "test must feed a threshold set including the removed dealer"
-            );
-            for bytes in selected_logs {
-                for tx in &finalized_log_txs {
-                    tx.send(bytes.clone()).unwrap();
-                }
-            }
+            let selected_logs = threshold_logs_with_dealer(&chain_logs, &removed_pk, log_threshold);
+            broadcast_selected_logs(selected_logs, &finalized_log_txs);
 
             let dealer_only_result = dealer_only_handle
                 .expect("dealer-only task must be spawned for removed validator")
@@ -390,4 +367,43 @@ fn removed_old_validator_can_deal_without_being_target_player() {
             }
         },
     );
+}
+
+fn threshold_logs_with_dealer(
+    chain_logs: &BTreeMap<bls12381::PublicKey, Bytes>,
+    removed_pk: &bls12381::PublicKey,
+    log_threshold: u32,
+) -> Vec<Bytes> {
+    assert!(
+        chain_logs.contains_key(removed_pk),
+        "removed old validator must publish a valid dealer log"
+    );
+    let mut selected_logs = Vec::with_capacity(log_threshold as usize);
+    selected_logs.push(chain_logs.get(removed_pk).unwrap().clone());
+    for (dealer, bytes) in chain_logs {
+        if dealer == removed_pk {
+            continue;
+        }
+        selected_logs.push(bytes.clone());
+        if selected_logs.len() == log_threshold as usize {
+            break;
+        }
+    }
+    assert_eq!(
+        selected_logs.len(),
+        log_threshold as usize,
+        "test must feed a threshold set including the removed dealer"
+    );
+    selected_logs
+}
+
+fn broadcast_selected_logs(
+    selected_logs: Vec<Bytes>,
+    finalized_log_txs: &[mpsc::UnboundedSender<Bytes>],
+) {
+    for bytes in selected_logs {
+        for tx in finalized_log_txs {
+            tx.send(bytes.clone()).unwrap();
+        }
+    }
 }

@@ -159,22 +159,28 @@ pub(in crate::stack) async fn wait_for_recovered_projection(
     readiness: ProjectionReadinessHandle,
     anchor: ProjectionCheckpoint,
 ) -> Result<()> {
-    match readiness.wait_for(anchor, std::future::pending()).await {
-        WaitOutcome::Ready => Ok(()),
-        WaitOutcome::BudgetExpired => Err(eyre::eyre!(
-            "{name} recovery readiness expired without a request budget"
-        )),
-        WaitOutcome::ProjectionAhead => Err(eyre::eyre!(
-            "{name} projection is ahead of certified follower recovery anchor {}:{}",
-            anchor.block_number,
-            anchor.block_hash,
-        )),
-        WaitOutcome::Fatal(failure) => Err(eyre::eyre!(
-            "{name} recovery readiness failed ({:?}): {}",
-            failure.class,
-            failure.message,
-        )),
-    }
+    readiness
+        .wait_without_budget(anchor)
+        .await
+        .map_err(|failure| {
+            failure.into_error(
+                || eyre::eyre!("{name} recovery readiness expired without a request budget"),
+                || {
+                    eyre::eyre!(
+                        "{name} projection is ahead of certified follower recovery anchor {}:{}",
+                        anchor.block_number,
+                        anchor.block_hash,
+                    )
+                },
+                |failure| {
+                    eyre::eyre!(
+                        "{name} recovery readiness failed ({:?}): {}",
+                        failure.class,
+                        failure.message,
+                    )
+                },
+            )
+        })
 }
 
 // ===========================================================================

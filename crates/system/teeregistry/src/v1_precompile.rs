@@ -4,6 +4,7 @@
 //! bootstrap views retain their established selectors, while every V1 mutator
 //! authenticates the EVM caller against the canonical NodeHost association.
 
+use crate::v1::{EnclaveEvidenceV1, NodeHostAssociationV1};
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolInterface};
 use outbe_primitives::{
@@ -227,13 +228,17 @@ pub fn dispatch(
                     let (node_id_hash, _recipient_x25519) =
                         registration_onboarding_target(preflight.evidence)?;
                     let onboarding = registry.register_enclave_with_onboarding_v1(
-                        caller,
-                        preflight.evidence,
-                        &node_signature,
-                        &enclave_signature,
-                        &binding,
-                        &validator_signature,
-                        &node_binding_signature,
+                        EnclaveEvidenceV1 {
+                            caller,
+                            evidence: preflight.evidence,
+                            node_signature: &node_signature,
+                            enclave_signature: &enclave_signature,
+                        },
+                        NodeHostAssociationV1 {
+                            binding: &binding,
+                            validator_signature: &validator_signature,
+                            node_binding_signature: &node_binding_signature,
+                        },
                         policy,
                     )?;
                     registry.emit_verified_onboarding_artifact_v1(&onboarding, node_id_hash)?;
@@ -374,17 +379,21 @@ impl ActivePolicyMutator {
         let (node_signature, enclave_signature) = preflight.signatures()?;
         let outcome = match self {
             Self::Renew => registry.renew_enclave_with_active_policy_v1(
-                caller,
-                preflight.evidence,
-                &node_signature,
-                &enclave_signature,
+                EnclaveEvidenceV1 {
+                    caller,
+                    evidence: preflight.evidence,
+                    node_signature: &node_signature,
+                    enclave_signature: &enclave_signature,
+                },
                 policy,
             ),
             Self::Replace => registry.replace_enclave_binding_with_active_policy_v1(
-                caller,
-                preflight.evidence,
-                &node_signature,
-                &enclave_signature,
+                EnclaveEvidenceV1 {
+                    caller,
+                    evidence: preflight.evidence,
+                    node_signature: &node_signature,
+                    enclave_signature: &enclave_signature,
+                },
                 policy,
             ),
         }?;

@@ -54,10 +54,6 @@ Projection schema 3 requires fresh storage. Scoped adapters reject the former ro
 The primitive flat adapters remain available for low-level storage tests and isolated consumers;
 production entity consumers explicitly inject the domain routing registry.
 
-Changed Rust files, including tests, must stay within 1000 lines and 40000 Unicode characters.
-`scripts/check-rust-file-size.py` checks the working diff and new files; CI checks against the
-change base. Split responsibilities and test behavior through the public ports.
-
 The native storage E2E scenario accepts `--projection-backend rocksdb` (default) or `mongodb`.
 The MongoDB lane requires a local `mongod` executable and starts a scenario-owned replica set
 on loopback, with separate generated databases for validators. Node and exporter share each

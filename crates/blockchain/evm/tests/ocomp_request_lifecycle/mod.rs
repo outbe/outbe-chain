@@ -72,8 +72,7 @@ use outbe_oracle::schema::OracleContract;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::{
-        COMPRESSED_ENTITIES_ADDRESS, METADOSIS_ADDRESS, REWARDS_ADDRESS, TRIBUTE_FACTORY_ADDRESS,
-        VALIDATOR_SET_ADDRESS,
+        METADOSIS_ADDRESS, REWARDS_ADDRESS, TRIBUTE_FACTORY_ADDRESS, VALIDATOR_SET_ADDRESS,
     },
     block::{BlockContext, BlockRuntimeContext},
     consensus_metadata::{CertifiedParentAccountingMetadata, ParentParticipationProof},

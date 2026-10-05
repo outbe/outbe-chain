@@ -4,7 +4,8 @@
 //! dispatch adapter and base-gas function. Activation, persistence, warming,
 //! sponsorship and future address classes intentionally remain outside this table.
 
-use alloy_primitives::{Address, Bytes, U256};
+use crate::begin_block_precompile::BeginBlockReaders;
+use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_compressed_entities::ExecutionScope;
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::{
@@ -16,6 +17,8 @@ use outbe_primitives::{
 pub(crate) type DispatchFn = fn(StorageHandle, &[u8], Address, U256) -> Result<Bytes>;
 type ReaderDispatchFn =
     fn(StorageHandle, &ExecutionScope, &RuntimeBodyReaders, &[u8], Address, U256) -> Result<Bytes>;
+type OptionalReaderDispatchFn =
+    fn(StorageHandle, BeginBlockReaders<'_, '_>, &[u8], Address, U256) -> Result<Bytes>;
 pub(crate) type BaseGasFn = fn(&[u8]) -> u64;
 
 #[cfg(test)]
@@ -32,7 +35,7 @@ enum DispatchAdapter {
     ReadersRequired(ReaderDispatchFn),
     ReadersOptional {
         without_readers: DispatchFn,
-        with_readers: ReaderDispatchFn,
+        with_readers: OptionalReaderDispatchFn,
     },
 }
 
@@ -121,17 +124,8 @@ impl Route {
         call: RouteCall<'_>,
     ) -> Result<Bytes> {
         match self {
-            Self::Exact(route) => route.dispatch(
-                storage,
-                execution_scope,
-                readers,
-                call.data,
-                call.caller,
-                call.value,
-            ),
-            Self::StablecoinClass => {
-                stablecoin_class_dispatch(storage, call.callee, call.data, call.caller, call.value)
-            }
+            Self::Exact(route) => route.dispatch(storage, execution_scope, readers, call),
+            Self::StablecoinClass => stablecoin_class_dispatch(storage, call),
         }
     }
 }
@@ -155,10 +149,14 @@ impl ExactRoute {
         storage: StorageHandle,
         execution_scope: &ExecutionScope,
         readers: Option<&RuntimeBodyReaders>,
-        data: &[u8],
-        caller: Address,
-        value: U256,
+        call: RouteCall<'_>,
     ) -> Result<Bytes> {
+        let RouteCall {
+            data,
+            caller,
+            value,
+            ..
+        } = call;
         // The boundary only decided that this *address* may be credited. Which
         // selectors may keep the value is the module's published list, enforced
         // here so a module cannot omit the check and silently accept value on
@@ -177,9 +175,16 @@ impl ExactRoute {
             (DispatchAdapter::ReadersRequired(_), None) => Err(PrecompileError::Fatal(
                 "execution body read authority was not supplied".into(),
             )),
-            (DispatchAdapter::ReadersOptional { with_readers, .. }, Some(readers)) => {
-                with_readers(storage, execution_scope, readers, data, caller, value)
-            }
+            (DispatchAdapter::ReadersOptional { with_readers, .. }, Some(readers)) => with_readers(
+                storage,
+                BeginBlockReaders {
+                    scope: execution_scope,
+                    parent: readers,
+                },
+                data,
+                caller,
+                value,
+            ),
             (
                 DispatchAdapter::ReadersOptional {
                     without_readers, ..
@@ -212,28 +217,19 @@ fn stablecoin_factory_dispatch(
     outbe_stablecoinfactory::precompile::dispatch(storage, data, caller, value)
 }
 
-fn stablecoin_class_dispatch(
-    storage: StorageHandle,
-    token: Address,
-    data: &[u8],
-    caller: Address,
-    value: U256,
-) -> Result<Bytes> {
+fn stablecoin_class_dispatch(storage: StorageHandle, call: RouteCall<'_>) -> Result<Bytes> {
+    let RouteCall {
+        callee: token,
+        data,
+        caller,
+        value,
+    } = call;
     let plain_native_transfer = data.is_empty() && !value.is_zero();
 
     // A plain native send must not be able to abort the whole transaction: a
     // registry error is fatal to a token call, but here it degrades to a revert
     // so the frame simply rolls back and the value returns to the sender.
-    let registered =
-        match outbe_stablecoinfactory::StablecoinFactoryApi::token_id_of(storage.clone(), token) {
-            Ok(registered) => registered,
-            Err(_) if plain_native_transfer => {
-                return Err(PrecompileError::Revert(
-                    "stablecoin registry unavailable".into(),
-                ))
-            }
-            Err(error) => return Err(error),
-        };
+    let registered = read_stablecoin_registration(&storage, token, plain_native_transfer)?;
 
     let Some(factory_token_id) = registered else {
         // Reserving the address class must not make native value unspendable at
@@ -259,6 +255,30 @@ fn stablecoin_class_dispatch(
         ));
     }
 
+    authenticate_registered_stablecoin(&storage, token, factory_token_id)?;
+
+    outbe_stablecoin::precompile::dispatch(storage, token, data, caller, value)
+}
+
+fn read_stablecoin_registration(
+    storage: &StorageHandle,
+    token: Address,
+    plain_native_transfer: bool,
+) -> Result<Option<B256>> {
+    match outbe_stablecoinfactory::StablecoinFactoryApi::token_id_of(storage.clone(), token) {
+        Ok(registered) => Ok(registered),
+        Err(_) if plain_native_transfer => Err(PrecompileError::Revert(
+            "stablecoin registry unavailable".into(),
+        )),
+        Err(error) => Err(error),
+    }
+}
+
+fn authenticate_registered_stablecoin(
+    storage: &StorageHandle,
+    token: Address,
+    factory_token_id: B256,
+) -> Result<()> {
     let expected_address = outbe_primitives::stablecoin::stablecoin_address(
         factory_token_id,
         STABLECOIN_ADDRESS_PREFIX,
@@ -301,7 +321,7 @@ fn stablecoin_class_dispatch(
         )));
     }
 
-    outbe_stablecoin::precompile::dispatch(storage, token, data, caller, value)
+    Ok(())
 }
 
 fn vote_dispatch(
@@ -526,9 +546,12 @@ mod tests {
                 storage,
                 &ExecutionScope::new(),
                 None,
-                &[],
-                Address::ZERO,
-                U256::ZERO,
+                RouteCall {
+                    callee: TRIBUTE_ADDRESS,
+                    data: &[],
+                    caller: Address::ZERO,
+                    value: U256::ZERO,
+                },
             )
             .unwrap_err();
         assert!(matches!(
@@ -591,9 +614,12 @@ mod tests {
                 StorageHandle::new(&mut provider),
                 &ExecutionScope::new(),
                 None,
-                &v1,
-                Address::ZERO,
-                U256::ZERO,
+                RouteCall {
+                    callee: TEE_REGISTRY_ADDRESS,
+                    data: &v1,
+                    caller: Address::ZERO,
+                    value: U256::ZERO,
+                },
             )
             .unwrap();
         assert!(
@@ -613,9 +639,12 @@ mod tests {
                 StorageHandle::new(&mut provider),
                 &ExecutionScope::new(),
                 None,
-                &legacy,
-                Address::ZERO,
-                U256::ZERO,
+                RouteCall {
+                    callee: TEE_REGISTRY_ADDRESS,
+                    data: &legacy,
+                    caller: Address::ZERO,
+                    value: U256::ZERO,
+                },
             )
             .is_err());
     }
@@ -635,9 +664,12 @@ mod tests {
                 storage,
                 &ExecutionScope::new(),
                 None,
-                &data,
-                Address::ZERO,
-                U256::ZERO,
+                RouteCall {
+                    callee: STABLECOIN_POLICY_REGISTRY_ADDRESS,
+                    data: &data,
+                    caller: Address::ZERO,
+                    value: U256::ZERO,
+                },
             )
             .unwrap();
         assert!(IStablecoinPolicyRegistry::policyExistsCall::abi_decode_returns(&output).unwrap());
@@ -655,9 +687,12 @@ mod tests {
                 storage,
                 &ExecutionScope::new(),
                 None,
-                &data,
-                Address::ZERO,
-                U256::ZERO,
+                RouteCall {
+                    callee: STABLECOIN_FACTORY_ADDRESS,
+                    data: &data,
+                    caller: Address::ZERO,
+                    value: U256::ZERO,
+                },
             )
             .unwrap();
         assert_eq!(

@@ -123,14 +123,14 @@ pub(super) fn admit<DB: StateDB>(
         return CarrierDecision::Execute;
     };
 
-    let ctx = BlockContext::new_with_genesis_hash(
-        block.number,
-        block.timestamp,
-        block.chain_id,
-        block.genesis_hash,
-        block.beneficiary,
-        Vec::new(),
-    );
+    let ctx = BlockContext::new_with_genesis_hash(outbe_primitives::block::BlockContextInput {
+        block_number: block.number,
+        timestamp: block.timestamp,
+        chain_id: block.chain_id,
+        genesis_hash: block.genesis_hash,
+        proposer: block.beneficiary,
+        validators: Vec::new(),
+    });
     let mut provider = DirectStorageProvider::new(db, ctx);
     let admission = verify_result_vote_carrier(
         StorageHandle::new(&mut provider),

@@ -200,41 +200,8 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
                 Err(()) => continue,
             };
 
-            // Strict hash check. A peer that returned a
-            // different parent for this round has nothing useful to offer on
-            // retry; fail immediately so the caller can fall back to
-            // proposer-forfeit.
-            if notarization.proposal.payload.0 != key.parent_hash {
-                return ProofFetchOutcome::NoProofForExactParent;
-            }
-            // The notarization must be for the requested round. Defence in
-            // depth - a transport implementation that did not enforce this is
-            // a bug, but we still fail fast rather than persist mismatched
-            // round bookkeeping.
-            if notarization.proposal.round != key.round {
-                return ProofFetchOutcome::NoProofForExactParent;
-            }
-
-            // Signature verification - same trust boundary the reporter uses
-            // for Activity::Certification (see `reporter.rs::handle_certification`).
-            let mut rng = bls_batch_verification_rng();
-            if !notarization.verify(&mut rng, &self.verifier_scheme, &Sequential) {
-                return ProofFetchOutcome::VerifyFailed;
-            }
-
-            // - local witness gate. A record produced from purely
-            // remote bytes is never written; the local node must have already
-            // observed `Activity::Certification` for the same key. The gate is
-            // the in-memory witness index, not the persistent CN record slot:
-            // CN rows may be pruned or withheld from proposer selection, while
-            // the witness fact remains a separate local observation.
-            let proof_key = CertifiedParentProofKey::new(
-                key.round.epoch().get(),
-                key.round.view().get(),
-                key.parent_hash,
-            );
-            if !self.proof_store.has_local_certification_witness(proof_key) {
-                return ProofFetchOutcome::NoLocalCertificationWitness;
+            if let Some(outcome) = self.fetched_notarization_rejection(key, &notarization) {
+                return outcome;
             }
 
             // Build the record and persist. Witness flag is true by the gate
@@ -293,6 +260,51 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
         }
 
         ProofFetchOutcome::BudgetExhausted
+    }
+
+    fn fetched_notarization_rejection(
+        &self,
+        key: ProofFetchKey,
+        notarization: &Notarization<HybridScheme<MinSig>, Digest>,
+    ) -> Option<ProofFetchOutcome> {
+        // Strict hash check. A peer that returned a
+        // different parent for this round has nothing useful to offer on
+        // retry; fail immediately so the caller can fall back to
+        // proposer-forfeit.
+        if notarization.proposal.payload.0 != key.parent_hash {
+            return Some(ProofFetchOutcome::NoProofForExactParent);
+        }
+        // The notarization must be for the requested round. Defence in
+        // depth - a transport implementation that did not enforce this is
+        // a bug, but we still fail fast rather than persist mismatched
+        // round bookkeeping.
+        if notarization.proposal.round != key.round {
+            return Some(ProofFetchOutcome::NoProofForExactParent);
+        }
+
+        // Signature verification - same trust boundary the reporter uses
+        // for Activity::Certification (see `reporter.rs::handle_certification`).
+        let mut rng = bls_batch_verification_rng();
+        if !notarization.verify(&mut rng, &self.verifier_scheme, &Sequential) {
+            return Some(ProofFetchOutcome::VerifyFailed);
+        }
+
+        // - local witness gate. A record produced from purely
+        // remote bytes is never written; the local node must have already
+        // observed `Activity::Certification` for the same key. The gate is
+        // the in-memory witness index, not the persistent CN record slot:
+        // CN rows may be pruned or withheld from proposer selection, while
+        // the witness fact remains a separate local observation.
+        let proof_key = CertifiedParentProofKey::new(
+            key.round.epoch().get(),
+            key.round.view().get(),
+            key.parent_hash,
+        );
+        if !self.proof_store.has_local_certification_witness(proof_key) {
+            return Some(ProofFetchOutcome::NoLocalCertificationWitness);
+        }
+
+        None
     }
 }
 
@@ -380,34 +392,15 @@ pub fn build_recovered_finalization_record(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bls::bootstrap_dkg;
     use crate::digest::Digest as OutbeDigest;
     use crate::proof::{committee_set_hash_v2, CommitteeEntry, CommitteeSnapshot};
     use alloy_primitives::address;
     use commonware_consensus::{
-        simplex::types::{Finalization, Proposal, Subject},
+        simplex::types::Finalization,
         types::{Epoch, View},
     };
-    use commonware_cryptography::bls12381;
     use commonware_cryptography::certificate::Scheme as _;
-    use commonware_cryptography::{Hasher as _, Sha256, Signer as _};
-    use commonware_utils::{
-        ordered::{Quorum as _, Set as OrderedSet},
-        TryCollect as _,
-    };
     use outbe_primitives::consensus_metadata::ParentParticipationProof;
-
-    fn participants(n: u8) -> (Vec<bls12381::PrivateKey>, OrderedSet<bls12381::PublicKey>) {
-        let keys: Vec<bls12381::PrivateKey> = (0..n)
-            .map(|i| bls12381::PrivateKey::from_seed((i + 1) as u64))
-            .collect();
-        let set = keys
-            .iter()
-            .map(|sk| bls12381::PublicKey::from(sk.clone()))
-            .try_collect()
-            .unwrap();
-        (keys, set)
-    }
 
     /// A finalization signed by all 3 committee members for `payload`, plus the
     /// matching verifier scheme - all from ONE DKG so the certificate verifies.
@@ -419,40 +412,16 @@ mod tests {
         Finalization<HybridScheme<MinSig>, OutbeDigest>,
         HybridScheme<MinSig>,
     ) {
-        let (keys, set) = participants(3);
-        let dkg = bootstrap_dkg(3).unwrap();
-        let schemes: Vec<HybridScheme<MinSig>> = keys
-            .iter()
-            .map(|key| {
-                let pk = bls12381::PublicKey::from(key.clone());
-                let idx = set.index(&pk).unwrap();
-                HybridScheme::signer(
-                    b"resolver-test",
-                    set.clone(),
-                    key.clone(),
-                    dkg.polynomial.clone(),
-                    dkg.shares[idx.get() as usize].clone(),
-                )
-                .unwrap()
-            })
-            .collect();
-        let verifier =
-            HybridScheme::<MinSig>::verifier(b"resolver-test", set, dkg.polynomial).unwrap();
-        let digest = OutbeDigest::from(B256::from_slice(Sha256::hash(&[payload]).as_ref()));
-        let proposal = Proposal::new(round, parent_view, digest);
-        let subject = Subject::Finalize {
-            proposal: &proposal,
-        };
-        let attestations: Vec<_> = schemes
-            .iter()
-            .map(|s| s.sign::<OutbeDigest>(subject).unwrap())
-            .collect();
-        let certificate = verifier
-            .assemble(
-                commonware_utils::iter::NonEmpty::try_new(attestations.into_iter()).unwrap(),
-                &Sequential,
-            )
-            .unwrap();
+        let crate::test_harness::SignedResolverProposal {
+            proposal,
+            certificate,
+            verifier,
+        } = crate::test_harness::signed_resolver_proposal(
+            round,
+            parent_view,
+            payload,
+            crate::test_harness::ResolverVote::Finalize,
+        );
         (
             Finalization {
                 proposal,

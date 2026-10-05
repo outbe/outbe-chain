@@ -47,7 +47,7 @@ use outbe_primitives::consensus_metadata::{
     CertifiedParentAccountingMetadata, ParentParticipationProof,
 };
 use outbe_rewards::runtime::compute_metadata_fingerprint;
-use outbe_validatorset::state::{committee_set_hash_v2, CommitteeEntry, CommitteeSnapshot};
+use outbe_validatorset::state::{committee_set_hash_v2, CommitteeSnapshot};
 use rand_commonware::rngs::ChaCha20Rng;
 use rand_commonware::SeedableRng;
 
@@ -83,25 +83,11 @@ fn build_dkg(n: u32) -> Dkg {
 }
 
 fn build_snapshot(dkg: &Dkg) -> CommitteeSnapshot {
-    let committee: Vec<CommitteeEntry> = dkg
-        .pubkeys
-        .iter()
-        .enumerate()
-        .map(|(i, pk)| {
-            let mut consensus_pubkey = [0u8; 48];
-            consensus_pubkey.copy_from_slice(pk.encode().as_ref());
-            CommitteeEntry {
-                address: Address::with_last_byte((i + 1) as u8),
-                consensus_pubkey,
-            }
-        })
-        .collect();
-    CommitteeSnapshot {
-        committee,
-        vrf_material_version: VRF_MATERIAL_VERSION,
-        vrf_group_public_key_bytes: dkg.vrf_group_public_key.encode().to_vec(),
-        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
-    }
+    outbe_consensus::test_harness::committee_snapshot(
+        &dkg.pubkeys,
+        &dkg.vrf_group_public_key,
+        VRF_MATERIAL_VERSION,
+    )
 }
 
 fn proposal_bytes(parent_hash: B256) -> (Round, Vec<u8>, Vec<u8>) {

@@ -64,24 +64,15 @@ pub(super) fn run_test_dkg_complete() -> (
         .map(|k| Player::new(info.clone(), k.clone()).unwrap())
         .collect();
 
-    for (dealer_idx, (pub_msg, priv_msgs)) in pub_msgs.iter().zip(all_priv_msgs.iter()).enumerate()
-    {
-        let dealer_pk = keys[dealer_idx].public_key();
-        for (player_pk, priv_msg) in priv_msgs {
-            let player_idx = keys
-                .iter()
-                .position(|k| &k.public_key() == player_pk)
-                .unwrap();
-            if let Some(ack) = players[player_idx]
-                .dealer_message::<N3f1>(dealer_pk.clone(), pub_msg.clone(), priv_msg.clone())
-                .expect("fixture dealing must be valid")
-            {
-                dealers[dealer_idx]
-                    .receive_player_ack(player_pk.clone(), ack)
-                    .unwrap();
-            }
-        }
-    }
+    outbe_consensus::test_harness::acknowledge_fixture_dealings(
+        &keys,
+        outbe_consensus::test_harness::FixtureDealings {
+            public_messages: &pub_msgs,
+            private_messages: &all_priv_msgs,
+        },
+        &mut dealers,
+        &mut players,
+    );
 
     // Finalize all dealers.
     let mut logs = std::collections::BTreeMap::new();
@@ -159,6 +150,27 @@ pub(super) fn recovery_block(number: u64) -> ConsensusBlock {
     ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
 }
 
+pub(super) fn bootstrap_fixture_signers(
+    keys: &[bls12381::PrivateKey],
+    participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
+    dkg: &outbe_consensus::bls::DkgBootstrapResult,
+) -> Vec<HybridScheme<MinSig>> {
+    keys.iter()
+        .map(|key| {
+            let pk = key.public_key();
+            let idx = participants.index(&pk).unwrap();
+            HybridScheme::signer(
+                &config::outbe_app_namespace(),
+                participants.clone(),
+                key.clone(),
+                dkg.polynomial.clone(),
+                dkg.shares[idx.get() as usize].clone(),
+            )
+            .unwrap()
+        })
+        .collect()
+}
+
 pub(super) fn recovery_finalization_fixture(
     block: &ConsensusBlock,
     round: Round,
@@ -173,21 +185,7 @@ pub(super) fn recovery_finalization_fixture(
         .try_collect()
         .unwrap();
     let dkg = bootstrap_dkg(3).unwrap();
-    let signers: Vec<HybridScheme<MinSig>> = keys
-        .iter()
-        .map(|key| {
-            let pk = key.public_key();
-            let idx = participants.index(&pk).unwrap();
-            HybridScheme::signer(
-                &config::outbe_app_namespace(),
-                participants.clone(),
-                key.clone(),
-                dkg.polynomial.clone(),
-                dkg.shares[idx.get() as usize].clone(),
-            )
-            .unwrap()
-        })
-        .collect();
+    let signers: Vec<HybridScheme<MinSig>> = bootstrap_fixture_signers(&keys, &participants, &dkg);
     let verifier = HybridScheme::<MinSig>::verifier(
         &config::outbe_app_namespace(),
         participants,

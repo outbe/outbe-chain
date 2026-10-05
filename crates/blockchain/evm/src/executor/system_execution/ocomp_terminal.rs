@@ -17,38 +17,10 @@ where
     where
         R: RecoveredTx<TransactionSigned>,
     {
-        if !self.ocomp_lifecycle_active {
-            return Err(BlockExecutionError::msg(
-                "OCOMP terminal request is not active for this block",
-            ));
-        }
-        if self.system_tx_phase_cursor != crate::system_tx::SystemTxPhase::UserTxs {
-            return Err(BlockExecutionError::msg(
-                "OCOMP terminal request arrived before the begin zone completed",
-            ));
-        }
-        if self.expected_end_system_txs.len() > 1 {
-            return Err(BlockExecutionError::msg(
-                "OCOMP lifecycle permits exactly one end-zone system transaction",
-            ));
-        }
+        self.validate_terminal_phase()?;
 
         let tx = recovered.tx();
-        if let Some(expected) = self.expected_end_system_txs.first() {
-            if expected.tx().tx_hash() != tx.tx_hash() {
-                return Err(BlockExecutionError::msg(
-                    "terminal system transaction differs from the validated block suffix",
-                ));
-            }
-        }
-        let input = SystemTxInputV2::decode(tx.input().as_ref()).map_err(|error| {
-            BlockExecutionError::msg(format!("decode terminal system tx input: {error}"))
-        })?;
-        if input != SystemTxInputV2::OcompTerminalRequest {
-            return Err(BlockExecutionError::msg(
-                "end-zone system transaction is not OcompTerminalRequest",
-            ));
-        }
+        self.validate_terminal_input(tx)?;
 
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
         let block_artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
@@ -151,5 +123,45 @@ where
             tx.tx_hash()
         );
         Ok(Some(gas))
+    }
+
+    fn validate_terminal_phase(&self) -> Result<(), BlockExecutionError> {
+        if !self.ocomp_lifecycle_active {
+            return Err(BlockExecutionError::msg(
+                "OCOMP terminal request is not active for this block",
+            ));
+        }
+        if self.system_tx_phase_cursor != crate::system_tx::SystemTxPhase::UserTxs {
+            return Err(BlockExecutionError::msg(
+                "OCOMP terminal request arrived before the begin zone completed",
+            ));
+        }
+        if self.expected_end_system_txs.len() > 1 {
+            return Err(BlockExecutionError::msg(
+                "OCOMP lifecycle permits exactly one end-zone system transaction",
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn validate_terminal_input(&self, tx: &TransactionSigned) -> Result<(), BlockExecutionError> {
+        if let Some(expected) = self.expected_end_system_txs.first() {
+            if expected.tx().tx_hash() != tx.tx_hash() {
+                return Err(BlockExecutionError::msg(
+                    "terminal system transaction differs from the validated block suffix",
+                ));
+            }
+        }
+        let input = SystemTxInputV2::decode(tx.input().as_ref()).map_err(|error| {
+            BlockExecutionError::msg(format!("decode terminal system tx input: {error}"))
+        })?;
+        if input != SystemTxInputV2::OcompTerminalRequest {
+            return Err(BlockExecutionError::msg(
+                "end-zone system transaction is not OcompTerminalRequest",
+            ));
+        }
+
+        Ok(())
     }
 }

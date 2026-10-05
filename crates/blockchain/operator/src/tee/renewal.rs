@@ -1,5 +1,7 @@
 //! Manual, crash-replay-safe TEE lease-renewal reducer.
 
+#[cfg(test)]
+use crate::tx::UnsignedRelayTransactionV1;
 mod identity;
 mod lifecycle;
 mod preparation;
@@ -560,14 +562,14 @@ mod tests {
             .unwrap();
         let relay = RelaySignerV1::new(&hex::encode([0x8f; 32])).unwrap();
         let raw = relay
-            .sign_renewal(
-                DEVNET_CHAIN_ID,
-                7,
-                U256::from(2_000_000_000_u64),
+            .sign_renewal(UnsignedRelayTransactionV1 {
+                chain_id: DEVNET_CHAIN_ID,
+                account_nonce: 7,
+                gas_price: U256::from(2_000_000_000_u64),
                 gas_limit,
-                TEE_REGISTRY_ADDRESS,
+                to: TEE_REGISTRY_ADDRESS,
                 calldata,
-            )
+            })
             .unwrap();
         (relay, raw)
     }

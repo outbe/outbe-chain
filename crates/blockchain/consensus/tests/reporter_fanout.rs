@@ -23,10 +23,7 @@ use commonware_cryptography::{
     Hasher as _, Sha256, Signer as _,
 };
 use commonware_parallel::Sequential;
-use commonware_utils::{
-    ordered::{Quorum as _, Set},
-    TryCollect as _,
-};
+use commonware_utils::{ordered::Set, TryCollect as _};
 use futures::channel::mpsc;
 use outbe_consensus::{
     bls::bootstrap_dkg,
@@ -77,21 +74,15 @@ type NotarizationFixture = (
 fn valid_notarization() -> NotarizationFixture {
     let (keys, participants) = test_participants(3);
     let dkg = bootstrap_dkg(3).unwrap();
-    let schemes: Vec<HybridScheme<MinSig>> = keys
-        .iter()
-        .map(|key| {
-            let pk = bls12381::PublicKey::from(key.clone());
-            let idx = participants.index(&pk).unwrap();
-            HybridScheme::signer(
-                b"reporter-test",
-                participants.clone(),
-                key.clone(),
-                dkg.polynomial.clone(),
-                dkg.shares[idx.get() as usize].clone(),
-            )
-            .unwrap()
-        })
-        .collect();
+    let schemes: Vec<HybridScheme<MinSig>> = outbe_consensus::test_harness::fixture_signer_schemes(
+        b"reporter-test",
+        &keys,
+        &participants,
+        outbe_consensus::test_harness::FixtureSignerSharing {
+            polynomial: &dkg.polynomial,
+            shares: &dkg.shares,
+        },
+    );
     let verifier =
         HybridScheme::<MinSig>::verifier(b"reporter-test", participants.clone(), dkg.polynomial)
             .unwrap();

@@ -4,7 +4,7 @@ mod proof_sources;
 pub(super) use proof_sources::{DeterministicProofSource, FinalizedFrameDriver};
 
 mod durability;
-pub(super) use durability::{FailOnceDurability, FailSync};
+pub(super) use durability::{FailOnceDurability, FailSync, FsyncFailurePolicy};
 
 pub(super) fn block(number: u64, state_root: B256, marker: u8) -> ConsensusBlock {
     block_extending(number, state_root, B256::ZERO, marker)

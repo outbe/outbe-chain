@@ -1835,7 +1835,12 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
             // rather than replaying the same latest price on subsequent blocks.
             let late = midnight + 3 * SECONDS_PER_DAY;
             let previous = previous_date_key(timestamp_to_date_key(late));
-            oracle.record_utc_day_vwap(previous, index, U256::from(100))?;
+            // Keep every closed day priced through the halt so the trailing
+            // window still meets the bucket's sealed call threshold.
+            for elapsed_days in 0..3 {
+                let day = timestamp_to_date_key(midnight + elapsed_days * SECONDS_PER_DAY);
+                oracle.record_utc_day_vwap(day, index, U256::from(100))?;
+            }
             oracle.utc_day_vwap_last_finalized.write(previous)?;
             let ctx = BlockRuntimeContext::new(block_ctx(5, late), storage.clone());
             crate::runtime::dispatch_triggers(&ctx, scope, &parent)?;

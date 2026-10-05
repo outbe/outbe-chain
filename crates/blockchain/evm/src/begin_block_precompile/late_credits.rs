@@ -20,19 +20,7 @@ pub(crate) fn authenticate_late_credit(
     credit: &PerBlockCredit,
 ) -> Result<()> {
     let rewards = storage.contract::<outbe_rewards::contract::Rewards<'_>>();
-    let escrowed_hash = rewards.pending_fb_hash_at.read(&credit.fb_number)?;
-    if escrowed_hash == B256::ZERO {
-        return Err(PrecompileError::Fatal(format!(
-            "LateFinalizeCredits: no escrow for fb_number {} (credit fb_hash {})",
-            credit.fb_number, credit.fb_hash
-        )));
-    }
-    if escrowed_hash != credit.fb_hash {
-        return Err(PrecompileError::Fatal(format!(
-            "LateFinalizeCredits: fb_hash mismatch for fb_number {} (escrow {escrowed_hash}, credit {})",
-            credit.fb_number, credit.fb_hash
-        )));
-    }
+    authenticate_late_credit_hash(&rewards, credit)?;
     let escrowed_epoch = rewards.pending_epoch_at.read(&credit.fb_number)?;
     if escrowed_epoch != credit.epoch {
         return Err(PrecompileError::Fatal(format!(
@@ -66,6 +54,26 @@ pub(crate) fn authenticate_late_credit(
         return Err(PrecompileError::Fatal(format!(
             "LateFinalizeCredits: parent_view mismatch for fb_number {} (escrow {escrowed_parent_view}, credit {})",
             credit.fb_number, credit.parent_view
+        )));
+    }
+    Ok(())
+}
+
+fn authenticate_late_credit_hash(
+    rewards: &outbe_rewards::contract::Rewards<'_>,
+    credit: &PerBlockCredit,
+) -> Result<()> {
+    let escrowed_hash = rewards.pending_fb_hash_at.read(&credit.fb_number)?;
+    if escrowed_hash == B256::ZERO {
+        return Err(PrecompileError::Fatal(format!(
+            "LateFinalizeCredits: no escrow for fb_number {} (credit fb_hash {})",
+            credit.fb_number, credit.fb_hash
+        )));
+    }
+    if escrowed_hash != credit.fb_hash {
+        return Err(PrecompileError::Fatal(format!(
+            "LateFinalizeCredits: fb_hash mismatch for fb_number {} (escrow {escrowed_hash}, credit {})",
+            credit.fb_number, credit.fb_hash
         )));
     }
     Ok(())

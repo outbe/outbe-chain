@@ -1,17 +1,11 @@
 use super::super::recovery::DkgRetryStore;
 use super::ceremony::{CeremonyChannels, CeremonyConfig, CeremonyState, MessageOutcome};
-use super::{recv_chain_finalized_log, sleep_until_optional, DkgComplete, DkgProgress};
-use alloy_primitives::Bytes;
+use super::{recv_chain_finalized_log, sleep_until_optional, DkgComplete};
+use super::{DkgParticipantParameters, DkgProgressChannels, DkgTransport};
 use commonware_cryptography::bls12381;
-use commonware_cryptography::bls12381::{
-    dkg::feldman_desmedt::Output,
-    primitives::{group::Share, variant::MinSig},
-};
 use commonware_p2p::{Receiver as P2pReceiver, Sender as P2pSender};
 use commonware_runtime::Clock;
-use commonware_utils::ordered::Set;
 use eyre::Result;
-use tokio::sync::mpsc;
 use tracing::debug;
 
 /// Run a DKG ceremony with durable local dealer and player recovery.
@@ -19,20 +13,29 @@ use tracing::debug;
 /// The dealer seed is persisted before any bundle is sent. Player inputs are
 /// persisted before their ACK is emitted. A restarted process reconstructs both
 /// roles and verifies byte-identical ACK replay before networking resumes.
-#[allow(clippy::too_many_arguments)]
 pub async fn run_initial_dkg_durable(
     clock: &impl Clock,
-    signing_key: bls12381::PrivateKey,
-    participants: Set<bls12381::PublicKey>,
-    previous_output: Option<Output<MinSig, bls12381::PublicKey>>,
-    previous_share: Option<Share>,
-    round: u64,
-    progress_tx: Option<mpsc::UnboundedSender<DkgProgress>>,
-    finalized_log_rx: Option<mpsc::UnboundedReceiver<Bytes>>,
+    parameters: DkgParticipantParameters,
+    progress: DkgProgressChannels,
     retry_store: DkgRetryStore,
-    sender: impl P2pSender<PublicKey = bls12381::PublicKey>,
-    receiver: impl P2pReceiver<PublicKey = bls12381::PublicKey>,
+    transport: DkgTransport<
+        impl P2pSender<PublicKey = bls12381::PublicKey>,
+        impl P2pReceiver<PublicKey = bls12381::PublicKey>,
+    >,
 ) -> Result<DkgComplete> {
+    let DkgParticipantParameters {
+        signing_key,
+        participants,
+        previous_output,
+        previous_share,
+        round,
+    } = parameters;
+    let DkgProgressChannels {
+        progress_tx,
+        finalized_log_rx,
+    } = progress;
+    let DkgTransport { sender, receiver } = transport;
+
     run(
         clock,
         CeremonyConfig {

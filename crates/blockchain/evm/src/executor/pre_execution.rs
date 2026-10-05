@@ -63,38 +63,7 @@ where
         //    Without bytecode these accounts are "empty" under EIP-161 and their
         //    storage is silently discarded during state root calculation.
         //    State::commit notifies reth's parallel state root task.
-        {
-            use revm::state::{Account, Bytecode, EvmState};
-            // Single source of truth (see `marker_addresses` + its superset test).
-            let precompile_addresses = marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES;
-
-            let db = self.inner.evm.db_mut();
-            let mut marker_state = EvmState::default();
-
-            for addr in precompile_addresses {
-                let info = db
-                    .basic(addr)
-                    .map_err(|e| {
-                        BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                            format!("load precompile account {addr}: {e}").into(),
-                        ))
-                    })?
-                    .unwrap_or_default();
-                if info.is_empty_code_hash() {
-                    let code = Bytecode::new_legacy([0xef].into());
-                    let mut new_info = info;
-                    new_info.code_hash = code.hash_slow();
-                    new_info.code = Some(code);
-                    let mut account: Account = new_info.into();
-                    account.mark_touch();
-                    marker_state.insert(addr, account);
-                }
-            }
-
-            if !marker_state.is_empty() {
-                self.inner.evm.db_mut().commit(marker_state);
-            }
-        }
+        self.preserve_runtime_markers()?;
 
         // 3. Open the block-scoped compressed-body overlay before any user or
         // system transaction can perform a body read or mutation. This also
@@ -103,40 +72,7 @@ where
         // complete CE begin/end lifecycle even though consensus-only Outbe
         // hooks remain disabled. The provisional tree batch is not published
         // without a final block hash.
-        {
-            let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
-            let chain_id = self.inner.evm.chain_id();
-            let proposer = self.inner.evm.block().beneficiary();
-            let scope = self.compressed_entities_scope.clone();
-            let (_changes, events) = {
-                let db = self.inner.evm.db_mut();
-                let ctx = build_block_context(
-                    db,
-                    block_number,
-                    timestamp,
-                    chain_id,
-                    self.genesis_hash,
-                    proposer,
-                )?;
-                run_atomic_storage_hooks(db, ctx, |hook_ctx| {
-                    let lifecycle =
-                        outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(
-                            hook_ctx.clone(),
-                            scope.as_ref(),
-                        );
-                    <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::begin_block(
-                        &lifecycle,
-                    )
-                })?
-            };
-            if !events.is_empty() {
-                return Err(BlockExecutionError::msg(
-                    "compressed-entity begin_block emitted an unexpected event",
-                ));
-            }
-
-            self.compressed_entities_started = true;
-        }
+        self.begin_compressed_entities(block_number)?;
 
         // Pending-block RPC has no proposer certificate or consensus system
         // transactions. Its isolated CE scope is active now, so user
@@ -198,11 +134,14 @@ where
             let db = self.inner.evm.db_mut();
             let ctx = build_block_context(
                 db,
-                block_number,
-                timestamp,
-                chain_id,
-                self.genesis_hash,
-                proposer,
+                BlockContext {
+                    block_number,
+                    timestamp,
+                    chain_id,
+                    genesis_hash: self.genesis_hash,
+                    proposer,
+                    validators: Vec::new(),
+                },
             )?;
             run_atomic_storage_hooks(db, ctx, |hook_ctx| -> outbe_primitives::error::Result<()> {
                 if let Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) =
@@ -252,6 +191,78 @@ where
         // Oracle slash-window work is part of that OracleSlashWindow system tx,
         // so there are no direct post-system storage hooks here.
 
+        Ok(())
+    }
+
+    fn preserve_runtime_markers(&mut self) -> Result<(), BlockExecutionError> {
+        use revm::state::{Account, Bytecode, EvmState};
+        // Single source of truth (see `marker_addresses` + its superset test).
+        let precompile_addresses = marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES;
+
+        let db = self.inner.evm.db_mut();
+        let mut marker_state = EvmState::default();
+
+        for addr in precompile_addresses {
+            let info = db
+                .basic(addr)
+                .map_err(|e| {
+                    BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                        format!("load precompile account {addr}: {e}").into(),
+                    ))
+                })?
+                .unwrap_or_default();
+            if info.is_empty_code_hash() {
+                let code = Bytecode::new_legacy([0xef].into());
+                let mut new_info = info;
+                new_info.code_hash = code.hash_slow();
+                new_info.code = Some(code);
+                let mut account: Account = new_info.into();
+                account.mark_touch();
+                marker_state.insert(addr, account);
+            }
+        }
+
+        if !marker_state.is_empty() {
+            self.inner.evm.db_mut().commit(marker_state);
+        }
+        Ok(())
+    }
+
+    fn begin_compressed_entities(&mut self, block_number: u64) -> Result<(), BlockExecutionError> {
+        let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
+        let chain_id = self.inner.evm.chain_id();
+        let proposer = self.inner.evm.block().beneficiary();
+        let scope = self.compressed_entities_scope.clone();
+        let (_changes, events) = {
+            let db = self.inner.evm.db_mut();
+            let ctx = build_block_context(
+                db,
+                BlockContext {
+                    block_number,
+                    timestamp,
+                    chain_id,
+                    genesis_hash: self.genesis_hash,
+                    proposer,
+                    validators: Vec::new(),
+                },
+            )?;
+            run_atomic_storage_hooks(db, ctx, |hook_ctx| {
+                let lifecycle = outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(
+                    hook_ctx.clone(),
+                    scope.as_ref(),
+                );
+                <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::begin_block(
+                    &lifecycle,
+                )
+            })?
+        };
+        if !events.is_empty() {
+            return Err(BlockExecutionError::msg(
+                "compressed-entity begin_block emitted an unexpected event",
+            ));
+        }
+
+        self.compressed_entities_started = true;
         Ok(())
     }
 }

@@ -30,6 +30,14 @@ use tracing::warn;
 /// Type alias for the engine handle (standard Ethereum engine types).
 type EngineHandle = ConsensusEngineHandle<OutbePayloadTypes>;
 
+/// Genesis identity and finalized tip recovered before executor startup.
+#[derive(Clone, Copy, Debug)]
+pub struct RecoveredFinalizedState {
+    pub genesis_hash: B256,
+    pub last_finalized_height: u64,
+    pub last_finalized_hash: B256,
+}
+
 /// The executor actor.
 pub struct ExecutorActor<E> {
     context: E,
@@ -61,12 +69,16 @@ where
     pub fn new(
         context: E,
         engine: EngineHandle,
-        genesis_hash: B256,
-        last_finalized_height: u64,
-        last_finalized_hash: B256,
+        recovered: RecoveredFinalizedState,
         projection_readiness: ProjectionReadinessHandle,
         execution_finalized_height_tx: Option<tokio::sync::mpsc::UnboundedSender<u64>>,
     ) -> (Self, Mailbox) {
+        let RecoveredFinalizedState {
+            genesis_hash,
+            last_finalized_height,
+            last_finalized_hash,
+        } = recovered;
+
         let (tx, rx) = futures::channel::mpsc::unbounded();
         let mailbox = Mailbox::from_sender(tx);
         let state = LastCanonicalized::from_recovered(

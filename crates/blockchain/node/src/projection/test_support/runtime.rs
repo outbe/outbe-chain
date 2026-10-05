@@ -106,19 +106,39 @@ where
 }
 
 #[cfg(test)]
+pub(in super::super) struct ProjectionLoopInputs<N, F> {
+    pub(in super::super) notifications: N,
+    pub(in super::super) finalized_blocks: F,
+    pub(in super::super) events: tokio::sync::mpsc::UnboundedSender<ExExEvent>,
+    pub(in super::super) projection_exit: tokio::sync::mpsc::UnboundedSender<ProjectionExit>,
+}
+
+#[cfg(test)]
+pub(in super::super) struct ProjectionProgressSenders<'a> {
+    pub(in super::super) logical_checkpoint:
+        &'a tokio::sync::mpsc::UnboundedSender<FinalizedTarget>,
+    pub(in super::super) durable_write:
+        &'a tokio::sync::mpsc::UnboundedSender<DurableProjectionWrite>,
+    pub(in super::super) recovery_ack: &'a tokio::sync::mpsc::UnboundedSender<()>,
+}
+
+#[cfg(test)]
 pub(in super::super) async fn run_projection_loop<P, N, F>(
     provider: P,
-    mut notifications: N,
-    mut finalized_blocks: F,
-    events: tokio::sync::mpsc::UnboundedSender<ExExEvent>,
+    inputs: ProjectionLoopInputs<N, F>,
     runtime: ProjectionRuntime,
-    projection_exit: tokio::sync::mpsc::UnboundedSender<ProjectionExit>,
 ) -> eyre::Result<()>
 where
     P: BlockIdReader + BlockReader + Clone + Send + 'static,
     N: Stream<Item = Result<(), String>> + Unpin,
     F: Stream<Item = FinalizedTarget> + Unpin,
 {
+    let ProjectionLoopInputs {
+        mut notifications,
+        mut finalized_blocks,
+        events,
+        projection_exit,
+    } = inputs;
     let mut runtime = runtime;
     let start_block = runtime.projector.state().start_block;
     let durable_startup_checkpoint = runtime
@@ -195,9 +215,11 @@ where
                         provider,
                         &projector,
                         target,
-                        &logical_checkpoint_tx,
-                        &durable_write_tx,
-                        &recovery_ack_tx,
+                        ProjectionProgressSenders {
+                            logical_checkpoint: &logical_checkpoint_tx,
+                            durable_write: &durable_write_tx,
+                            recovery_ack: &recovery_ack_tx,
+                        },
                     )
                 }) {
                     Ok(result_rx) => {
@@ -563,13 +585,16 @@ pub(in super::super) fn project_through_target<P>(
     provider: P,
     runtime: &Mutex<ProjectionRuntime>,
     target: FinalizedTarget,
-    logical_checkpoint_tx: &tokio::sync::mpsc::UnboundedSender<FinalizedTarget>,
-    durable_write_tx: &tokio::sync::mpsc::UnboundedSender<DurableProjectionWrite>,
-    recovery_ack_tx: &tokio::sync::mpsc::UnboundedSender<()>,
+    progress: ProjectionProgressSenders<'_>,
 ) -> eyre::Result<Option<FinalizedTarget>>
 where
     P: BlockReader,
 {
+    let ProjectionProgressSenders {
+        logical_checkpoint: logical_checkpoint_tx,
+        durable_write: durable_write_tx,
+        recovery_ack: recovery_ack_tx,
+    } = progress;
     // Only one worker is launched at a time. The mutex also makes that ownership explicit and
     // keeps the mutable projector state available across retry attempts.
     let mut runtime = runtime
@@ -598,30 +623,7 @@ where
     let checkpoint = state.checkpoint;
     let start_block = state.start_block;
 
-    if let Some(checkpoint) = checkpoint {
-        let canonical_hash = provider
-            .block_hash(checkpoint.block_number)
-            .wrap_err_with(|| {
-                format!(
-                    "load canonical hash for restored projection checkpoint {}",
-                    checkpoint.block_number
-                )
-            })?
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "canonical block {} for restored projection checkpoint is unavailable",
-                    checkpoint.block_number
-                )
-            })?;
-        if canonical_hash != checkpoint.block_hash {
-            bail!(
-                "projection checkpoint hash {} conflicts with canonical hash {} at height {}",
-                checkpoint.block_hash,
-                canonical_hash,
-                checkpoint.block_number
-            );
-        }
-    }
+    validate_restored_projection_checkpoint(&provider, checkpoint)?;
     recovery_ack_tx
         .send(())
         .map_err(|_| eyre::eyre!("projection recovery acknowledgement receiver is closed"))?;
@@ -668,48 +670,7 @@ where
 
     let mut durable_checkpoint = None;
     for block_number in first_block..=target.number {
-        let canonical_hash = provider
-            .block_hash(block_number)
-            .wrap_err_with(|| format!("load canonical hash for block {block_number}"))?
-            .ok_or(HistoricalProjectionDataError::CanonicalBlock { block_number })?;
-        let block = provider
-            .block_by_hash(canonical_hash)
-            .wrap_err_with(|| format!("load canonical block {block_number} ({canonical_hash})"))?
-            .ok_or(HistoricalProjectionDataError::CanonicalBlockByHash {
-                block_number,
-                block_hash: canonical_hash,
-            })?;
-
-        if block.header().number() != block_number {
-            bail!(
-                "provider returned block {} while canonical block {} was requested",
-                block.header().number(),
-                block_number
-            );
-        }
-        let block_hash = block.header().hash_slow();
-        if block_hash != canonical_hash {
-            bail!(
-                "block loaded for canonical hash {} recomputed to {} at height {}",
-                canonical_hash,
-                block_hash,
-                block_number
-            );
-        }
-        if block_number == target.number && block_hash != target.hash {
-            bail!(
-                "canonical block hash {} conflicts with finalized hash {} at height {}",
-                block_hash,
-                target.hash,
-                block_number
-            );
-        }
-
-        let receipts = provider
-            .receipts_by_block(block_hash.into())
-            .wrap_err_with(|| format!("load receipts for canonical block {block_number}"))?
-            .ok_or(HistoricalProjectionDataError::Receipts { block_number })?;
-        let normalized = normalize_finalized_block(block_number, block_hash, &block, &receipts)?;
+        let (block_hash, normalized) = load_projection_block(&provider, block_number, target)?;
 
         let prepared = projector
             .prepare_block(&normalized)
@@ -746,4 +707,87 @@ where
     }
 
     Ok(durable_checkpoint)
+}
+
+#[cfg(test)]
+fn validate_restored_projection_checkpoint<P: BlockReader>(
+    provider: &P,
+    checkpoint: Option<ProjectionCheckpoint>,
+) -> eyre::Result<()> {
+    if let Some(checkpoint) = checkpoint {
+        let canonical_hash = provider
+            .block_hash(checkpoint.block_number)
+            .wrap_err_with(|| {
+                format!(
+                    "load canonical hash for restored projection checkpoint {}",
+                    checkpoint.block_number
+                )
+            })?
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "canonical block {} for restored projection checkpoint is unavailable",
+                    checkpoint.block_number
+                )
+            })?;
+        if canonical_hash != checkpoint.block_hash {
+            bail!(
+                "projection checkpoint hash {} conflicts with canonical hash {} at height {}",
+                checkpoint.block_hash,
+                canonical_hash,
+                checkpoint.block_number
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn load_projection_block<P: BlockReader>(
+    provider: &P,
+    block_number: u64,
+    target: FinalizedTarget,
+) -> eyre::Result<(B256, outbe_offchain_data::FinalizedBlock)> {
+    let canonical_hash = provider
+        .block_hash(block_number)
+        .wrap_err_with(|| format!("load canonical hash for block {block_number}"))?
+        .ok_or(HistoricalProjectionDataError::CanonicalBlock { block_number })?;
+    let block = provider
+        .block_by_hash(canonical_hash)
+        .wrap_err_with(|| format!("load canonical block {block_number} ({canonical_hash})"))?
+        .ok_or(HistoricalProjectionDataError::CanonicalBlockByHash {
+            block_number,
+            block_hash: canonical_hash,
+        })?;
+
+    if block.header().number() != block_number {
+        bail!(
+            "provider returned block {} while canonical block {} was requested",
+            block.header().number(),
+            block_number
+        );
+    }
+    let block_hash = block.header().hash_slow();
+    if block_hash != canonical_hash {
+        bail!(
+            "block loaded for canonical hash {} recomputed to {} at height {}",
+            canonical_hash,
+            block_hash,
+            block_number
+        );
+    }
+    if block_number == target.number && block_hash != target.hash {
+        bail!(
+            "canonical block hash {} conflicts with finalized hash {} at height {}",
+            block_hash,
+            target.hash,
+            block_number
+        );
+    }
+
+    let receipts = provider
+        .receipts_by_block(block_hash.into())
+        .wrap_err_with(|| format!("load receipts for canonical block {block_number}"))?
+        .ok_or(HistoricalProjectionDataError::Receipts { block_number })?;
+    let normalized = normalize_finalized_block(block_number, block_hash, &block, &receipts)?;
+    Ok((block_hash, normalized))
 }
