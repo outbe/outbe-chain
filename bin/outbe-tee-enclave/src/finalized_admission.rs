@@ -662,12 +662,14 @@ mod tests {
             compact_certified_header(&transition.finalization, &transition.block);
         if indirect {
             let descendant = epoch0.certify_child_block(
-                Epoch::new(0),
-                2,
-                950,
-                B256::repeat_byte(0x82),
-                Vec::new(),
-                transition.block_hash,
+                outbe_consensus::finalized_admission_test_utils::CertifiedChildBlockInput {
+                    epoch: Epoch::new(0),
+                    height: 2,
+                    timestamp: 950,
+                    state_root: B256::repeat_byte(0x82),
+                    extra_data: Vec::new(),
+                    parent_hash: transition.block_hash,
+                },
             );
             let compact = compact_certified_header(&descendant.finalization, &descendant.block);
             transition_header.finalization = compact.finalization;
@@ -699,12 +701,14 @@ mod tests {
         };
         if indirect {
             let descendant = epoch1.certify_child_block(
-                Epoch::new(1),
-                admission_height + 1,
-                1_001,
-                B256::repeat_byte(0x83),
-                Vec::new(),
-                admission.block_hash,
+                outbe_consensus::finalized_admission_test_utils::CertifiedChildBlockInput {
+                    epoch: Epoch::new(1),
+                    height: admission_height + 1,
+                    timestamp: 1_001,
+                    state_root: B256::repeat_byte(0x83),
+                    extra_data: Vec::new(),
+                    parent_hash: admission.block_hash,
+                },
             );
             let compact = compact_certified_header(&descendant.finalization, &descendant.block);
             proof.admission.finalization = compact.finalization;
@@ -725,12 +729,14 @@ mod tests {
             .contains("skips an unauthenticated committee"));
         if indirect {
             let forged = epoch1.certify_child_block(
-                Epoch::new(1),
-                2,
-                950,
-                B256::repeat_byte(0x82),
-                Vec::new(),
-                transition.block_hash,
+                outbe_consensus::finalized_admission_test_utils::CertifiedChildBlockInput {
+                    epoch: Epoch::new(1),
+                    height: 2,
+                    timestamp: 950,
+                    state_root: B256::repeat_byte(0x82),
+                    extra_data: Vec::new(),
+                    parent_hash: transition.block_hash,
+                },
             );
             let signed = compact_certified_header(&forged.finalization, &forged.block);
             let mut circular = transition_header.clone();
