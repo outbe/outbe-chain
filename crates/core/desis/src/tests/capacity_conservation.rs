@@ -6,6 +6,7 @@ use outbe_primitives::{
     address_pair::AddressPair,
     addresses::DESIS_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
+    error::Result,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     time::{previous_date_key, timestamp_to_date_key, WorldwideDay},
 };
@@ -20,6 +21,7 @@ use crate::{
 
 const NOW: u64 = 1_704_067_205;
 const ANCHOR: u64 = NOW - 5;
+const CLEAR_AT: u64 = ANCHOR + 2 * 86_400;
 const DAY: WorldwideDay = WorldwideDay::new(20_240_101);
 const LOAD: u128 = 100_000_000_000;
 const LIMIT: u128 = 3 * LOAD + 7;
@@ -60,9 +62,12 @@ fn world(sale: bool) -> HashMapStorageProvider {
             crate::api::BriefOverflowPolicy::CarryOver,
         )
         .unwrap();
-        for at in [NOW, ANCHOR + 86_400, ANCHOR + 2 * 86_400] {
-            runtime::schedule_tick(&s, at).unwrap();
-        }
+    });
+    for at in [NOW, ANCHOR + 86_400, CLEAR_AT] {
+        p.set_timestamp(U256::from(at));
+        StorageHandle::enter(&mut p, |s| runtime::schedule_tick(&s, at).unwrap());
+    }
+    StorageHandle::enter(&mut p, |s| {
         let bids = if sale {
             vec![BidData {
                 bidder_address: Address::repeat_byte(1),
@@ -84,14 +89,18 @@ fn world(sale: bool) -> HashMapStorageProvider {
     p
 }
 
-fn clear(p: &mut HashMapStorageProvider) {
+fn gate(p: &mut HashMapStorageProvider) -> Result<()> {
+    p.set_timestamp(U256::from(CLEAR_AT));
     StorageHandle::enter(p, |s| {
         runtime::tick_gate(&BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(2, ANCHOR + 2 * 86_400, 1),
+            BlockContext::empty_for_tests(2, CLEAR_AT, 1),
             s,
         ))
-        .unwrap();
-    });
+    })
+}
+
+fn clear(p: &mut HashMapStorageProvider) {
+    gate(p).unwrap();
 }
 
 fn ledger(p: &mut HashMapStorageProvider, sold: bool, terminal: bool) {
@@ -133,7 +142,7 @@ fn ledger(p: &mut HashMapStorageProvider, sold: bool, terminal: bool) {
 }
 
 #[test]
-fn no_sale_returns_all_capacity_and_dust_once_after_cleanup() {
+fn no_sale_returns_all_capacity_and_dust_once_across_repeated_clears() {
     let mut p = world(false);
     clear(&mut p);
     ledger(&mut p, false, true);
@@ -156,6 +165,7 @@ fn every_clearing_write_failure_rolls_back_allocation_and_return_then_retries_on
         let mut baseline = world(sale);
         clear(&mut baseline);
         let count = baseline.clear_mutation_failure();
+        ledger(&mut baseline, sale, true);
         assert!(count > 0);
         for after in [false, true] {
             for point in 0..count {
@@ -165,7 +175,8 @@ fn every_clearing_write_failure_rolls_back_allocation_and_return_then_retries_on
                 } else {
                     p.fail_mutation_at(point);
                 }
-                clear(&mut p);
+                // The gate may swallow or surface the injected fault; only state is checked.
+                let _ = gate(&mut p);
                 let observed = p.clear_mutation_failure();
                 let reached = if after {
                     observed > point
