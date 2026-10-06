@@ -39,7 +39,7 @@ struct SessionState {
 /// One exact-finalized-parent catalog session for block execution.
 ///
 /// The Root Catalog is opened eagerly. Collection shard sets are opened only
-/// after their catalog leaf has been verified against the same MDBX snapshot.
+/// after their catalog leaf is verified against the same MDBX snapshot.
 pub struct MdbxAuthenticatedTree {
     identity: ExactParentIdentity,
     view: AuthenticatedCatalogView,
@@ -641,8 +641,8 @@ fn classify_snapshot_error(error: PersistenceError) -> PrecompileError {
             if required.commitment_scheme_version == actual.commitment_scheme_version
                 && required.block_number != actual.height =>
         {
-            // Payload jobs are asynchronous: an old job can legitimately run
-            // after finalization advanced the in-place materialization, while a
+            // Payload jobs are asynchronous. An old job can legitimately run
+            // after finalization advanced the in-place materialization. A
             // catching-up node can request a parent ahead of its marker. Neither
             // height skew proves corruption. Same-height hash/root mismatches and
             // scheme mismatches remain fatal below.

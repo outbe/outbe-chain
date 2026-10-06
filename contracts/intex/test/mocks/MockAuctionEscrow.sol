@@ -4,10 +4,10 @@ pragma solidity 0.8.30;
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 
 /// @title MockAuctionEscrow
-/// @notice Minimal escrow stub for IntexAuction unit tests. Selector-matches `IEscrowAdapter.lockFunds`
-///         without implementing the full interface. Supports a `lockShouldRevert` toggle and an
-///         `armReentry` hook for reentrancy probes.
-/// @dev The canonical full-interface mock lives in `MockEscrowAdapter.sol`; use that when a test
+/// @notice Minimal escrow stub for IntexAuction unit tests. Selector-matches
+///         `IEscrowAdapter.lockFunds` without implementing the full interface. Supports a
+///         `lockShouldRevert` toggle and an `armReentry` hook for reentrancy probes.
+/// @dev The canonical full-interface mock lives in `MockEscrowAdapter.sol`. Use that when a test
 ///      needs the entire IEscrowAdapter surface (finalization, etc.).
 contract MockAuctionEscrow {
     error MockLockReverted();

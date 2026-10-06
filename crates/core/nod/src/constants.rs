@@ -8,16 +8,16 @@ pub const TOKEN_DESCRIPTION: &str = concat!(
     "A Nod is never transferable."
 );
 
-/// Per-bin multiplicative step in basis points. PancakeSwap LB default; each
+/// Per-bin multiplicative step in basis points. PancakeSwap LB default. Each
 /// bin spans a 0.25% price band. The LB-protocol constants used alongside
 /// this value (`SCALE`, `SCALE_OFFSET`, `PRECISION`, `BASIS_POINT_MAX`,
 /// `REAL_ID_SHIFT`, `MAX_BIN_ID`) live in `outbe_primitives::math::constants`.
 pub const BIN_STEP_BP: u16 = 25;
 
-/// The four call terms below are snapshotted onto a bucket when it is first
-/// issued, and every later check reads the bucket's copy. Retuning one of them
-/// re-terms buckets issued afterwards, and leaves every already-issued bucket
-/// on the terms it was issued with - the same guarantee gem and intex give.
+/// The first issuance of a bucket snapshots the four call terms below onto it,
+/// and every later check reads the bucket's copy. Retuning one
+/// of them re-terms buckets issued afterwards. It leaves every already-issued
+/// bucket on the terms it was issued with. Gem and intex give the same guarantee.
 ///
 /// Call-price markup percent: `call = entry x (100 + CALL_RATE_PCT) / 100`
 /// (256 => +256%, i.e. 3.56x entry). Same shape as credis' 64 and
@@ -28,7 +28,7 @@ pub const CALL_RATE_PCT: u16 = 256;
 pub const FLOOR_RATE_PCT: u16 = 8;
 
 /// Seconds in a day. The call terms a bucket seals are second-encoded, the way
-/// gem's record stores them; the daily scan divides them back into day counts.
+/// gem's record stores them. The daily scan divides them back into day counts.
 pub const SECS_PER_DAY: u32 = 24 * 3600;
 
 /// Trailing window the daily call scan inspects, in whole UTC days.
@@ -49,16 +49,17 @@ pub const CALL_WINDOW: u32 = CALL_LOOKBACK_DAYS * SECS_PER_DAY;
 /// `GemData::call_threshold_seconds`.
 pub const CALL_THRESHOLD: u32 = CALL_THRESHOLD_DAYS * SECS_PER_DAY;
 
-/// Seconds after `called_at` within which the owner must settle. Once
-/// elapsed the bucket's remaining Nods are forfeit-burned.
+/// Seconds after `called_at` within which the owner must settle. Once the
+/// period elapses, the daily call scan forfeit-burns the bucket's remaining Nods.
 pub const CALL_NOTICE_PERIOD: u32 = 7 * SECS_PER_DAY;
 
-/// Buckets visited per call slice, across the call and forfeit arms; the cursors
+/// Buckets visited per call slice, across the call and forfeit arms. The cursors
 /// resume the rest on the next CycleTick against the same frozen UTC day.
 pub const MAX_NOD_CALL_VISITS_PER_BLOCK: u32 = 4096;
 
-/// Nod bodies forfeit-burned per call slice, far below the visit budget because a
-/// forfeit is a compressed-entity load plus delete rather than an EVM slot write.
+/// Nod bodies forfeit-burned per call slice. The cap is far below the visit budget
+/// because a forfeit is a compressed-entity load plus delete rather than an EVM
+/// slot write.
 /// A correlated mass-forfeit is the expected shape of a call event, not a tail
 /// case, so the burst needs its own cap.
 pub const MAX_NOD_FORFEITS_PER_BLOCK: u32 = 256;

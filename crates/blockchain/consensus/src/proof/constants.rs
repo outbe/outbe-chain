@@ -3,17 +3,20 @@
 //! Single source of truth for the application namespace + its derived Simplex
 //! sub-namespaces (`_NOTARIZE`, `_FINALIZE`, `_SEED`, `_SEEDATTEST`).
 //!
-//! **Chain binding.** The application namespace is
-//! `b"outbe" || chain_id_be`, so every signed consensus message and every
-//! verification (vote/nullify/finalize/seed/seed-attest, the P2P handshake, and
-//! SlashIndicator evidence) is bound to this chain. A validator that reuses its
-//! BLS key on another Outbe deployment produces signatures under a different
-//! namespace, so they no longer cross-verify or replay as fabricated
-//! equivocation evidence. The chain id is genesis-fixed and constant for the
-//! process; it is injected once at startup via [`init_consensus_chain_id`] and
-//! every namespace accessor reads it, so the signer (`HybridScheme`) and the
-//! deterministic verifier (this crate, run in the EVM executor - same process,
-//! same chain) can never drift.
+//! **Chain binding.** The application namespace is `b"outbe" || chain_id_be`.
+//! Thus the namespace binds every signed consensus message and every verification
+//! to this chain. This includes vote/nullify/finalize/seed/seed-attest, the P2P
+//! handshake, and SlashIndicator evidence.
+//!
+//! If a validator reuses its BLS key on another Outbe deployment, its signatures
+//! there use a different namespace. Thus they no longer cross-verify or replay as
+//! fabricated equivocation evidence.
+//!
+//! The chain id is genesis-fixed and constant for the process. The node injects it
+//! once at startup through [`init_consensus_chain_id`], and every namespace
+//! accessor reads it. Thus the signer (`HybridScheme`) and the deterministic
+//! verifier can never drift. The verifier is this crate, which runs in the EVM
+//! executor (same process, same chain).
 
 use commonware_codec::Encode;
 use commonware_consensus::simplex::scheme::Namespace;
@@ -102,9 +105,9 @@ fn consensus_domain(cell: &OnceLock<ConsensusDomain>) -> &ConsensusDomain {
 }
 
 /// Install the consensus chain id, once, at node startup - before any consensus
-/// signing or block verification runs. Reinstalling the same id is idempotent;
-/// a conflicting id, including a namespace previously cached under the test
-/// default `0`, is rejected without changing the installed domain.
+/// signing or block verification runs. Reinstalling the same id is idempotent.
+/// This function rejects a conflicting id, including a namespace previously cached
+/// under the test default `0`, and does not change the installed domain.
 pub fn init_consensus_chain_id(chain_id: u64) -> Result<(), ConsensusChainIdError> {
     install_consensus_domain(&CONSENSUS_DOMAIN, chain_id)
 }
@@ -120,26 +123,27 @@ pub fn outbe_app_namespace() -> Vec<u8> {
 }
 
 /// Ordered validator-set commitment: a 32-byte keccak over the committee's
-/// BLS MinPk public keys in **canonical commonware `Set` order** (sorted,
-/// deduplicated), domain-tagged and length-prefixed.
+/// BLS MinPk public keys. The keys are in **canonical commonware `Set` order**
+/// (sorted, deduplicated). The hashed input is domain-tagged and length-prefixed.
 ///
-/// This is the "ordered validator-set commitment" the consensus-signature
-/// invariant requires. It is folded into the INDIVIDUAL vote sub-namespaces
-/// (notarize/nullify/finalize), so a vote signature produced under committee A
-/// cannot verify under committee B even within the same chain and epoch -
-/// closing the residual that committee-scoped verification covered only
-/// operationally. The threshold seed / seed-attest namespaces stay chain-only:
-/// the seed is a threshold signature already bound to the committee by its group
-/// key, so a participant-set commitment there would be redundant.
+/// This is the "ordered validator-set commitment" that the consensus-signature
+/// invariant requires. The INDIVIDUAL vote sub-namespaces (notarize/nullify/finalize)
+/// include it. Thus a vote signature produced under committee A cannot verify
+/// under committee B, even within the same chain and epoch. This closes the
+/// residual that committee-scoped verification covered only operationally.
+///
+/// The threshold seed / seed-attest namespaces stay chain-only. The seed is a
+/// threshold signature that its group key already binds to the committee. Thus a
+/// participant-set commitment there would be redundant.
 ///
 /// **Parity contract.** This is the single source of truth for the commitment.
-/// Every party (the `HybridScheme` signer/verifier, the V2 proof verifier in the
-/// executor, the late-finalize verifier, and the SlashIndicator evidence
-/// verifier) computes it from the SAME ordered committee via THIS function. The
-/// input is a `Set`, whose `Ord`-sorted, deduplicated order matches the scheme's
-/// participant indexing exactly, so the bytes are identical across nodes,
-/// components, and crates by construction. Any divergence is caught pre-merge by
-/// the fingerprint test and the 4-node localnet lockstep.
+/// Every party computes it from the SAME ordered committee through THIS function.
+/// The parties are the `HybridScheme` signer/verifier, the V2 proof verifier in
+/// the executor, the late-finalize verifier, and the SlashIndicator evidence
+/// verifier. The input is a `Set`. Its `Ord`-sorted, deduplicated order matches
+/// the scheme's participant indexing exactly. Thus the bytes are identical across
+/// nodes, components, and crates by construction. The fingerprint test and the
+/// 4-node localnet lockstep catch any divergence pre-merge.
 pub fn participant_set_commitment(committee: &Set<bls12381::PublicKey>) -> [u8; 32] {
     let mut buf = Vec::with_capacity(
         COMMITTEE_COMMITMENT_DOMAIN.len() + 4 + committee.len().saturating_mul(48),
@@ -155,8 +159,8 @@ pub fn participant_set_commitment(committee: &Set<bls12381::PublicKey>) -> [u8; 
 }
 
 /// Chain-only sub-namespace (`outbe_app_namespace() || suffix`), matching
-/// commonware's `union(base, suffix)`. Used by the seed paths, which are already
-/// committee-bound by the threshold polynomial.
+/// commonware's `union(base, suffix)`. The seed paths use it. The threshold
+/// polynomial already binds the seed paths to the committee.
 fn sub_namespace(suffix: &[u8]) -> Vec<u8> {
     let mut v = outbe_app_namespace();
     v.extend_from_slice(suffix);
@@ -166,10 +170,10 @@ fn sub_namespace(suffix: &[u8]) -> Vec<u8> {
 /// Committee-bound vote sub-namespace:
 /// `outbe_app_namespace() || suffix || participant_set_commitment(committee)`.
 ///
-/// THE single derivation for the individual vote namespaces, used on both the
-/// signing side (the `HybridScheme` `Namespace` vote fields are overridden with
-/// these fns) and every verifying side (V2 proof verifier, late-finalize,
-/// SlashIndicator evidence), so they agree by construction.
+/// THE single derivation for the individual vote namespaces. The signing side
+/// uses it: these fns override the `HybridScheme` `Namespace` vote fields. Every
+/// verifying side uses it too (V2 proof verifier, late-finalize, SlashIndicator
+/// evidence). Thus all sides agree by construction.
 fn vote_sub_namespace(suffix: &[u8], committee: &Set<bls12381::PublicKey>) -> Vec<u8> {
     let mut v = outbe_app_namespace();
     v.extend_from_slice(suffix);
@@ -199,18 +203,20 @@ pub fn hybrid_seed_namespace() -> Vec<u8> {
     sub_namespace(b"_SEED")
 }
 
-/// The canonical `(namespace, message)` pair for verifying a threshold-VRF seed
-/// signature at `(round_epoch, round_view)`: the chain-bound seed namespace
-/// ([`hybrid_seed_namespace`]) and the `Round::encode()` seed message.
+/// The canonical `(namespace, message)` pair to verify a threshold-VRF seed
+/// signature at `(round_epoch, round_view)`. The pair is the chain-bound seed
+/// namespace ([`hybrid_seed_namespace`]) and the `Round::encode()` seed message.
 ///
-/// This is the single derivation shared by the consensus verify paths
-/// (`HybridScheme::verified_vrf_seed_for_round` / `verify_vrf_partial`) and the
-/// proof-side plain verifiers (`seed_partial`, `verifier`), so they cannot
-/// derive different bytes for the same seed round. `hybrid_seed_namespace()` is
-/// asserted byte-equal to commonware's `Namespace::new(..).seed` by
-/// [`tests::hybrid_seed_namespace_equals_commonware_seed_namespace`]; the seed
-/// round's offset (e.g. the elector's `view().previous()`) is the caller's
-/// responsibility - this helper is offset-agnostic.
+/// This is the single derivation that two groups share:
+/// - the consensus verify paths (`HybridScheme::verified_vrf_seed_for_round` /
+///   `verify_vrf_partial`).
+/// - the proof-side plain verifiers (`seed_partial`, `verifier`).
+///
+/// Thus the two groups cannot derive different bytes for the same seed round.
+/// [`tests::hybrid_seed_namespace_equals_commonware_seed_namespace`] asserts that
+/// `hybrid_seed_namespace()` is byte-equal to commonware's `Namespace::new(..).seed`.
+/// The caller is responsible for the seed round's offset (e.g. the elector's
+/// `view().previous()`). This helper is offset-agnostic.
 pub fn seed_namespace_and_message(round_epoch: u64, round_view: u64) -> (Vec<u8>, Vec<u8>) {
     let message = Round::new(Epoch::new(round_epoch), View::new(round_view))
         .encode()
@@ -222,21 +228,23 @@ pub fn seed_namespace_and_message(round_epoch: u64, round_view: u64) -> (Vec<u8>
 /// `outbe_app_namespace() || b"_SEEDATTEST"`. Chain-only (the VRF partial it
 /// attributes is already committee-bound via the threshold polynomial).
 ///
-/// Distinct from the four Simplex sub-namespaces so a seed-partial identity
-/// signature can never be confused with a vote, nullify, finalize, or the
-/// threshold-seed signature itself. Used by [`crate::proof::seed_partial`] - the
-/// signer (`HybridScheme::sign`) and the SlashIndicator evidence verifier both
-/// bind a validator's `bls_seed_partial` to its MinPk identity key under this
-/// namespace so the partial becomes non-repudiably attributable.
+/// It is distinct from the four Simplex sub-namespaces. Thus a seed-partial
+/// identity signature can never be confused with a vote, nullify, finalize, or the
+/// threshold-seed signature itself.
+///
+/// [`crate::proof::seed_partial`] uses it. The signer (`HybridScheme::sign`) and
+/// the SlashIndicator evidence verifier both bind a validator's `bls_seed_partial`
+/// to its MinPk identity key under this namespace. This makes the partial
+/// non-repudiably attributable.
 pub fn seed_attest_namespace() -> Vec<u8> {
     sub_namespace(b"_SEEDATTEST")
 }
 
 /// Process-wide singleton of `Namespace::new(outbe_app_namespace())`.
 ///
-/// Both signer (`outbe_consensus::config::simplex_namespace` re-exports this)
-/// and the V2 verifier (this crate) read from the same `OnceLock`, so the four
-/// `Vec<u8>` sub-namespaces are heap-allocated exactly once and signer/verifier
+/// The signer (`outbe_consensus::config::simplex_namespace` re-exports this) and
+/// the V2 verifier (this crate) both read from the same `OnceLock`. Thus the four
+/// `Vec<u8>` sub-namespaces are heap-allocated exactly once, and signer/verifier
 /// can never drift. [`init_consensus_chain_id`] MUST run before the first call
 /// so the cached namespace binds the real chain.
 pub fn simplex_namespace() -> &'static Namespace {
@@ -280,10 +288,10 @@ mod tests {
     /// `b"_SEED"` suffix), while the consensus signer/verifier derive the seed
     /// namespace from commonware's `Namespace::new(..).seed` (`base ||
     /// SEED_SUFFIX`). These MUST be byte-identical or seed verification on the
-    /// slashing and next-height-gate paths rejects valid signatures. This is the
-    /// cross-path equality that was previously asserted only in a doc comment;
-    /// pinning it as a test catches a commonware `SEED_SUFFIX` change (a reviewed
-    /// dependency bump) at CI rather than silently at runtime.
+    /// slashing and next-height-gate paths rejects valid signatures. Previously only
+    /// a doc comment asserted this cross-path equality. This test pins it, so CI
+    /// catches a commonware `SEED_SUFFIX` change (a reviewed dependency bump)
+    /// instead of a silent failure at runtime.
     #[test]
     fn hybrid_seed_namespace_equals_commonware_seed_namespace() {
         assert_eq!(

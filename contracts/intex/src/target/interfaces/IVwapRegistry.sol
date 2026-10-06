@@ -8,7 +8,7 @@ import {IVwapSource} from "../../shared/interfaces/IVwapSource.sol";
 /// @author Outbe
 /// @notice Target-chain record of the Oracle's finalized daily VWAPs, fed by the router.
 /// @dev Deployed on each target chain behind a UUPS proxy. Only the TargetRouter records days, one
-///      DAILY_VWAP message at a time; the collection reads them through {IVwapSource} to render
+///      DAILY_VWAP message at a time. The collection reads them through {IVwapSource} to render
 ///      Qualified. The origin chain has no registry: there the collection reads the IntexFactory.
 interface IVwapRegistry is IVwapSource {
     /// @notice Emitted when a day's prices are recorded.
@@ -29,7 +29,7 @@ interface IVwapRegistry is IVwapSource {
     /// @notice A recorded day arrived again with a different price.
     error DayAlreadyRecorded(uint32 utcDay, uint16 isoCode);
 
-    /// @notice Record one finalized day's prices. Router only, idempotent for the same prices; days
+    /// @notice Record one finalized day's prices. Router only, idempotent for the same prices. Days
     ///         may arrive in any order.
     /// @param utcDay UTC day (yyyymmdd).
     /// @param rows One price per reference currency.

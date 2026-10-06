@@ -54,7 +54,7 @@ const ADMIN: Address = Address::new([0xad; 20]);
 const RELAYER: Address = Address::new([0x4e; 20]);
 const ASSET: Address = Address::new([0x33; 20]);
 const VAULT: Address = Address::new([0x55; 20]);
-/// Where the linked `IntexMetadata` library lives; `fixtures/IntexNFT1155.hex` delegates there.
+/// Where the linked `IntexMetadata` library lives. `fixtures/IntexNFT1155.hex` delegates there.
 const METADATA_LIB: Address = Address::new([0x4c; 20]);
 const TIMESTAMP: u64 = 1_700_000_000;
 const SERIES: [u8; 14] = *b"20241220-USD-U";
@@ -91,8 +91,8 @@ struct World {
 }
 
 impl World {
-    /// Alice holds ten issued units on the real NFT; the Rust series record
-    /// mirrors the contract and a finalized day above the floor qualifies it.
+    /// Alice holds ten issued units on the real NFT. The Rust series record
+    /// mirrors the contract, and a finalized day above the floor qualifies it.
     fn new() -> Self {
         let mut db = CacheDB::new(EmptyDB::default());
         let counterparty = runtime_code(include_str!("fixtures/FactorySettlement.hex"));

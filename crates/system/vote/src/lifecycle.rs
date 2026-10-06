@@ -13,8 +13,8 @@ impl VoteLifecycle {
     /// Tally expired proposals and dispatch approved ones at the current block.
     ///
     /// The registry is owned outside `outbe-vote` so target handlers can live
-    /// in their owning crates without creating a dependency cycle - in production
-    /// this is `outbe_evm::handlers::vote::registry()`.
+    /// in their owning crates without a dependency cycle. In production, the
+    /// registry is `outbe_evm::handlers::vote::registry()`.
     pub fn begin_block_with_handlers(
         ctx: &BlockRuntimeContext,
         registry: &VoteTargetRegistry,

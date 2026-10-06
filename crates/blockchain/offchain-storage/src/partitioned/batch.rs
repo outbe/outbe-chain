@@ -1,4 +1,4 @@
-//! Ordered scope-addressed mutations; physical transactions belong to adapters.
+//! Ordered scope-addressed mutations. Physical transactions belong to adapters.
 
 use super::{PartitionedStorage, StorageScope};
 use crate::{AtomicWriteBatch, AtomicWriteOperation, StorageError, StorageWriter};

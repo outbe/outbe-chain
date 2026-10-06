@@ -2,8 +2,8 @@
 //! lapsed settlement window.
 //!
 //! Every test drives [`crate::called::scan_and_call`] through the `scan` harness
-//! helper against a seeded finalized daily series, which is the only price source
-//! the production trigger reads.
+//! helper against a seeded finalized daily series. This series is the only price
+//! source the production trigger reads.
 
 use alloy_primitives::{Address, U256};
 
@@ -269,8 +269,8 @@ fn the_window_absorbs_below_call_days_up_to_the_slack() {
         for i in 0..slack {
             let offset = i * stride + 1;
             // Guards the boundary: a below-call day placed past the window would
-            // silently leave more than `CALL_THRESHOLD_DAYS` breaches standing and
-            // make this test stop probing the threshold.
+            // silently leave more than `CALL_THRESHOLD_DAYS` breaches standing.
+            // Then this test would stop probing the threshold.
             assert!(
                 offset < CALL_LOOKBACK_DAYS,
                 "below-call day {offset} falls outside the lookback window"
@@ -319,7 +319,7 @@ fn missing_days_do_not_count_as_breaches() {
         advance_to(&storage, at);
 
         // Publish one day short of the threshold and leave the rest of the window
-        // unpublished. section 11.3's placeholder: a day with no reference price is not
+        // unpublished. Section 11.3's placeholder: a day with no reference price is not
         // a breach, so it can only delay a call.
         for i in 0..CALL_THRESHOLD_DAYS - 1 {
             set_vwap(&storage, day_back(at, i), above_call());
@@ -412,7 +412,7 @@ fn the_call_and_the_void_compose_across_runs() {
         assert_eq!(scan(&storage, at), 1);
         assert_eq!(state_of(&storage, position_id), CredisState::Called);
 
-        // A position called in this same run can never be voided by it: the
+        // This same run can never void a position that it called: the
         // window opens at `called_at = now`.
         assert_eq!(scan(&storage, at), 0);
 
@@ -423,8 +423,8 @@ fn the_call_and_the_void_compose_across_runs() {
         assert_eq!(scan(&storage, inside), 0);
         assert_eq!(state_of(&storage, position_id), CredisState::Called);
 
-        // The window lapses with the whole principal outstanding: the entire
-        // collateral is burned and credited to the Promis Reserve.
+        // The window lapses with the whole principal outstanding: the void burns
+        // the entire collateral and credits it to the Promis Reserve.
         let lapsed = at + NOTICE + 1;
         advance_to(&storage, lapsed);
         finalize_through(&storage, lapsed);
@@ -490,9 +490,9 @@ fn each_reference_currency_prices_off_its_own_daily_series() {
 }
 
 /// The call is anchored to the reference currency, never to the issuance currency
-/// the position is denominated in. Both directions, because getting the anchor
-/// wrong fails silently in one of them: with the two series moving together an
-/// issuance-keyed scan still reaches the right verdict by coincidence.
+/// the position is denominated in. This test checks both directions, because a
+/// wrong anchor fails silently in one of them. With the two series moving
+/// together, an issuance-keyed scan still reaches the right verdict by coincidence.
 #[test]
 fn the_call_follows_the_reference_series_and_ignores_the_issuance_one() {
     // Breach published only on the reference series -> the position is called.
@@ -615,7 +615,7 @@ fn a_resumed_pass_starts_at_the_cursor_and_walks_down() {
             above_call(),
         );
 
-        // Only indices 1 and 0 are visited; the position at index 2 is untouched.
+        // The run visits only indices 1 and 0. The position at index 2 is untouched.
         assert_eq!(scan(&storage, at), 2);
         assert_eq!(state_of(&storage, ids[0]), CredisState::Called);
         assert_eq!(state_of(&storage, ids[1]), CredisState::Called);
@@ -685,7 +685,7 @@ fn the_void_budget_bounds_one_run_without_starving_the_call_arm() {
         .collect();
     StorageHandle::enter(&mut provider, |storage| {
         // `ids[0]` sits at active index 0, so the descending walk reaches it
-        // LAST - after the void budget is already spent. Leave it Open; the rest
+        // LAST, after the void budget is already spent. Leave it Open. The rest
         // become called-and-lapsed.
         let called_at = CREATED_AT;
         {
@@ -707,8 +707,8 @@ fn the_void_budget_bounds_one_run_without_starving_the_call_arm() {
         );
 
         // A void costs two enclave round-trips, so the run stops voiding at the
-        // budget - but it must keep walking. The Open position behind the
-        // exhausted budget is still called in this same run.
+        // budget. But it must keep walking. This same run still calls the Open
+        // position behind the exhausted budget.
         assert_eq!(scan(&storage, lapsed), budget + 1, "64 voids plus the call");
         assert_eq!(
             state_of(&storage, ids[0]),

@@ -4,8 +4,7 @@
 //! fallback for an unavailable DCAP verifier. It is admitted on the devnet and
 //! testnet identities so the same fresh testnet topology can run without SGX.
 //! `DcapRequired` construction still requires the exact signed-enclave
-//! measurement tuple; no placeholder DCAP policy can be emitted through this
-//! API.
+//! measurement tuple. This API cannot emit a placeholder DCAP policy.
 
 use alloy_primitives::{keccak256, B256, U256};
 use serde_json::{json, Value};
@@ -23,7 +22,7 @@ pub const GRAMINE_DIRECT_DEV_CHAIN_ID: u64 = DEVNET_CHAIN_ID;
 
 /// Returns whether an explicitly configured development policy may use this
 /// fresh-network identity. Testnet keeps requiring an explicit genesis
-/// `GramineDirectDev` policy; this is not a runtime fallback from DCAP.
+/// `GramineDirectDev` policy. This is not a runtime fallback from DCAP.
 pub const fn is_gramine_direct_dev_chain_id(chain_id: u64) -> bool {
     chain_id == DEVNET_CHAIN_ID || chain_id == TESTNET_CHAIN_ID
 }

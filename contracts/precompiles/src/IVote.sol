@@ -32,10 +32,12 @@ interface IVote {
         uint64 createdHeight;
         uint64 votingDeadlineHeight;
         ProposalStatus status;
-        /// @notice Results of voting (if it would have been calculated now).
-        /// The actual state may differ, e.g. if validator set changes before voting deadline.
+        /// @notice Results of voting, as if calculated now.
+        /// The actual state may differ, e.g. if the validator set changes before the voting
+        /// deadline.
         VoteTally state;
-        /// @dev The full list of voters is not transmitted, and can be retrieved using `getProposalVoters`.
+        /// @dev This struct does not carry the full list of voters.
+        /// Use `getProposalVoters` to get it.
         uint256 votersCount;
     }
 
@@ -51,19 +53,19 @@ interface IVote {
     /// @notice Validator voted on a proposal.
     event VoteCast(uint256 indexed proposalId, address indexed validator, bool approve);
 
-    /// @notice Proposal was rejected by conflict with another approved proposal.
+    /// @notice A conflict with another approved proposal rejected the proposal.
     event ProposalRejected(uint256 indexed proposalId, VoteTally state, uint256 indexed conflictingproposalId);
 
-    /// @notice Proposal was expired by voting deadline.
+    /// @notice Proposal expired at the voting deadline.
     event ProposalExpired(uint256 indexed proposalId, VoteTally state);
 
-    /// @notice Proposal was cancelled by the proposer.
+    /// @notice The proposer cancelled the proposal.
     event ProposalCancelled(uint256 indexed proposalId, address indexed proposer);
 
-    /// @notice Proposal was approved by majority (2/3).
+    /// @notice A majority (2/3) approved the proposal.
     event ProposalApproved(uint256 indexed proposalId, VoteTally state);
 
-    /// @notice Approved target execution returned an error and its target effects were rolled back.
+    /// @notice Approved target execution returned an error. Its target effects were rolled back.
     event ProposalErrored(uint256 indexed proposalId, VoteTally state);
 
     /// @notice A target-specific proposal bond was recorded as an unsettled liability.

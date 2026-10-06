@@ -129,7 +129,7 @@ fn test_admitted_non_consensus_includes_registered_and_pending_not_active() {
     // TEE full-node admission: the secondary-tier P2P set must
     // contain REGISTERED (full-node, not staked) + PENDING (staked joiner), but NOT
     // ACTIVE (already a primary peer). The reshare target is the mirror image
-    // ({ACTIVE, PENDING}) - REGISTERED must never be a reshare player (no stake).
+    // ({ACTIVE, PENDING}). REGISTERED must never be a reshare player (no stake).
     with_vs_configured(128, |vs| {
         let reg = address!("0x1111111111111111111111111111111111111111");
         let pend = address!("0x2222222222222222222222222222222222222222");
@@ -161,7 +161,7 @@ fn test_admitted_non_consensus_includes_registered_and_pending_not_active() {
         );
 
         // Stale-join guard: a freshly-PENDING joiner is NOT yet in the reshare
-        // target until it confirms readiness; ACTIVE is always in.
+        // target until it confirms readiness. ACTIVE is always in.
         let reshare_before: Vec<_> = vs
             .get_reshare_target_set()
             .unwrap()

@@ -12,8 +12,8 @@ pub enum RegistryMutatorV1 {
 /// Canonical dimensions used to charge one block-1 `OST3` system call.
 ///
 /// `full_calldata_len` includes the four-byte selector and one-byte version.
-/// Collateral deduplication affects that encoded length only: every entry in
-/// `logical_evidence_lengths` is charged as a complete QVL verification.
+/// Collateral deduplication affects only that encoded length. The precharge counts
+/// every entry in `logical_evidence_lengths` as a complete QVL verification.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TeeBootstrapGasInputV1<'a> {
     pub full_calldata_len: usize,
@@ -184,7 +184,7 @@ impl TeeRegistryGasScheduleV1 {
 
     /// Hash-committed portion of `register_fixed` reserved for production
     /// warm-SLOAD and SSTORE-reset charges. No independent consensus constant
-    /// exists: changing the allowance requires changing the canonical schedule.
+    /// exists. Changing the allowance requires changing the canonical schedule.
     pub const fn register_storage_gas_allowance(&self) -> u64 {
         self.register_fixed / 2
     }

@@ -1,6 +1,6 @@
 use super::*;
 
-/// Settlement at the deadline remains valid; the paid Nod can then be mined.
+/// Settlement at the deadline remains valid. The paid Nod can then be mined.
 #[test]
 fn a_called_nod_still_mines_at_the_settlement_deadline() {
     let mut world = World::new();
@@ -79,7 +79,7 @@ fn settlement_is_rejected_once_the_deadline_has_passed() {
             if reason == &NodFactoryError::CallDeadlineExpired.to_string()),
         "unexpected error: {error:?}"
     );
-    // The Nod survives for the sweep to burn; the gate only refuses to mine it.
+    // The Nod survives for the sweep to burn. The gate only refuses to mine it.
     assert!(world
         .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
         .unwrap()

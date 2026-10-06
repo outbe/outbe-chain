@@ -3,10 +3,10 @@ import type { Abi } from "viem";
 /**
  * Generated precompile ABIs.
  *
- * Source of truth is `contracts/precompiles/src/I*.sol`; these JSON artifacts
- * are produced by `mise run export-abi` and checked for staleness in CI.
- * Nothing here is hand-written - a signature can only change by changing the
- * Solidity. Each ABI is used whole; the registry does not filter it.
+ * The source of truth is `contracts/precompiles/src/I*.sol`. `mise run export-abi`
+ * produces these JSON artifacts, and CI checks them for staleness.
+ * Nothing here is hand-written. A signature can only change when the Solidity
+ * changes. The registry uses each ABI whole and does not filter it.
  */
 import IAgentReward from "../../contracts/precompiles/abi-export/IAgentReward.json";
 import ICredis from "../../contracts/precompiles/abi-export/ICredis.json";

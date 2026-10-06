@@ -6,11 +6,11 @@ fn mine_promis_full_genesis_flow() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let load = U256::from(10u64) * six_decimal_unit();
-        // Genesis carries no floor. settle now carries a non-zero cost and
-        // deposits into the Reserve vault, which the storage-only harness
-        // can't service - force `Settled` directly so this test still covers
-        // the mine -> burn -> Promis path. The paid settle is exercised on
-        // localnet with a real Reserve (see the TODO in `tests.rs`).
+        // Genesis carries no floor. A settle now carries a non-zero cost and
+        // deposits into the Reserve vault. The storage-only harness cannot
+        // service that deposit. This test forces `Settled` directly, so it still
+        // covers the mine -> burn -> Promis path. Localnet exercises the paid
+        // settle with a real Reserve (see the TODO in `tests.rs`).
         let gem_id = issue_at_live_rate(storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
 
         gem_api::set_state(storage, gem_id, GemState::Settled).unwrap();
@@ -45,7 +45,7 @@ fn mine_promis_rejects_non_settled() {
             840,
         )
         .unwrap();
-        // WALLET is Issued, not Settled - mine should reject before PoW.
+        // WALLET is Issued, not Settled. Mine should reject before PoW.
         let res = runtime::mine_promis(storage, gem_id, 0, no_auth());
         assert!(err_msg(res).contains("invalid state"));
     });
@@ -76,8 +76,8 @@ fn statistics_track_mint_count() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let base = U256::from(1u64) * six_decimal_unit();
-        // `gem_id = keccak(owner || amount || block_number)` - vary `load`
-        // per issue so the same (owner, block) pair doesn't collide.
+        // `gem_id = keccak(owner || amount || block_number)`. Vary `load`
+        // per issue so the same (owner, block) pair does not collide.
         for i in 0..3 {
             let load = base + U256::from(i as u64);
             issue_at_live_rate(storage, ALICE, GemTypes::Wallet, load, 840, 840).unwrap();

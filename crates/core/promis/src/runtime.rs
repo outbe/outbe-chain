@@ -1,11 +1,16 @@
 //! Business logic for the confidential Promis token.
 //!
-//! Each write reads the account's current ciphertext from storage, hands the op to
-//! the enclave (which decrypts, enforces invariants, and re-encrypts
-//! deterministically), then stores the returned ciphertext verbatim, applies the
-//! plaintext aggregate delta, and emits the matching event. These methods are
-//! crate-private; other crates reach them through [`crate::api`]. The enclave is
-//! the sole party that sees plaintext balances (Enclave Return Rule).
+//! Each write does these steps:
+//!
+//! 1. Read the account's current ciphertext from storage.
+//! 2. Hand the op to the enclave. The enclave decrypts, enforces invariants, and
+//!    re-encrypts deterministically.
+//! 3. Store the returned ciphertext verbatim.
+//! 4. Apply the plaintext aggregate delta.
+//! 5. Emit the matching event.
+//!
+//! These methods are crate-private. Other crates reach them through [`crate::api`].
+//! The enclave is the sole party that sees plaintext balances (Enclave Return Rule).
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
@@ -41,7 +46,7 @@ fn base_request(op: PromisOp, chain_id: B256, account: Address, amount: U256) ->
 }
 
 /// Reject unless the supplied op-nonce equals the account's current on-chain
-/// counter - this is what makes a captured modify-auth non-replayable.
+/// counter. This check makes a captured modify-auth non-replayable.
 fn check_op_nonce(promis: &Promis<'_>, account: Address, provided: u64) -> Result<()> {
     let current = promis.op_nonce_of(account)?;
     if provided != current {

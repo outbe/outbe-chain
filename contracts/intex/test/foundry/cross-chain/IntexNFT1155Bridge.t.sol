@@ -18,7 +18,7 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 /// @notice direct coverage for the NFT-Batch outbound entry points
 ///         (`batchSend`, `multiSend`) and their `quote*` views. The inbound
 ///         `receiveMessage` validation matrix (malformed / duplicate / version / srcChainId) is covered by
-///         the sibling cross-chain suites; this file exercises the send-side surface that had no
+///         the sibling cross-chain suites. This file exercises the send-side surface that had no
 ///         direct test: happy-path delivery, every revert branch, the role gate, and quoting.
 contract IntexNFT1155BridgeTest is CrossChainTest {
     uint32 internal constant SRC_CHAIN_ID = 1;
@@ -94,7 +94,8 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
     // constructor - zero-address guards on immutable wiring
     // ---------------------------------------------------------------
 
-    /// @notice `token` is immutable; a zero address permanently bricks every crosschainMint/crosschainBurn path.
+    /// @notice `token` is immutable. A zero address permanently bricks every
+    ///         crosschainMint/crosschainBurn path.
     /// @dev Property of the implementation constructor.
     function test_Constructor_RevertsZeroToken() public {
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.ZeroAddress.selector, "token"));
@@ -136,7 +137,7 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
         assertEq(srcToken.balanceOf(sender, TID_A), 95, "src A crosschainBurned");
         assertEq(srcToken.balanceOf(sender, TID_B), 93, "src B crosschainBurned");
 
-        // Deliver the queued packet; recipient crosschainMinted on the destination.
+        // Deliver the queued packet. Recipient crosschainMinted on the destination.
         _deliverLast();
         assertEq(dstToken.balanceOf(recipientA, TID_A), 5, "dst A crosschainMinted");
         assertEq(dstToken.balanceOf(recipientA, TID_B), 7, "dst B crosschainMinted");
@@ -167,8 +168,9 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
     }
 
     function test_BatchSend_RevertsInvalidReceiver_ZeroTo() public {
-        // Sender holds balance, so the crosschainBurn loop succeeds; the zero `to` then trips InvalidReceiver
-        // inside `_buildBatchMsg`. The whole tx reverts, so the crosschainBurn rolls back too.
+        // Sender holds balance, so the crosschainBurn loop succeeds. The zero `to` then trips
+        // InvalidReceiver inside `_buildBatchMsg`. The whole tx reverts, so the crosschainBurn
+        // rolls back too.
         BatchSendParam memory p =
             BatchSendParam({dstChainId: DST_CHAIN_ID, to: bytes32(0), tokenIds: _u256One(TID_A), units: _u256One(1)});
         vm.expectRevert(IIntexNFT1155Bridge.InvalidReceiver.selector);
@@ -239,7 +241,7 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
         vm.prank(sender);
         srcBatch.batchSend{value: fee + 1 ether}(p);
 
-        // Caller paid only the fee; the 1 ether excess came back; the float was untouched.
+        // Caller paid only the fee. The 1 ether excess came back. The float was untouched.
         assertEq(sender.balance, senderBefore - fee, "only the fee charged");
         assertEq(address(srcBatch).balance, floatBefore, "system float untouched");
     }

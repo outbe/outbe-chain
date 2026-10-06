@@ -1,6 +1,6 @@
 //! Protocol update steps used by `features/governance.feature`.
 //! The update-operator feature. Each step drives the
-//! `World` handles only; no `cast`/`cli` strings appear here.
+//! `World` handles only. No `cast`/`cli` strings appear here.
 
 use std::thread::sleep;
 use std::time::Duration;
@@ -20,7 +20,7 @@ use crate::world::World;
 const MIN_ACTIVATION_BUFFER: u64 = 0;
 
 /// Encoded `v3.0` (`u8 major << 24 | u24 minor`). Localnet/testnet activation
-/// ceiling is `v2.3`; this is strictly greater and must Fatal at activation.
+/// ceiling is `v2.3`. This version is strictly greater and must Fatal at activation.
 const UNSUPPORTED_PROTOCOL_VERSION: u64 = 3u64 << 24;
 
 /// Valid secp256k1 key for a funded EOA that is deliberately outside the
@@ -150,7 +150,7 @@ fn propose_update_version(world: &mut World, name: &str, version: u64, info: &st
     let port = world.validators.primary_port();
     let head = world.rpc.head(port).expect("read head");
     let activation = head + world.state.voting_window + MIN_ACTIVATION_BUFFER + 30;
-    // VoteTarget JSON expects `"major.minor"`; on-chain ABI still uses packed u32.
+    // VoteTarget JSON expects `"major.minor"`. The on-chain ABI still uses packed u32.
     let version_str = format!("{}.{}", version >> 24, version & 0x00FF_FFFF);
 
     let payload = serde_json::json!({
@@ -315,10 +315,10 @@ fn proposal_parity(world: &mut World, id: u64) {
         "proposal #{id} must be visible on primary"
     );
     // `vote_status` reads `latest`, so the primary can expose a vote as soon as
-    // its containing block becomes canonical locally.  Consensus delivers the
+    // its containing block becomes canonical locally. Consensus delivers the
     // same block to the other RPCs a few hundred milliseconds later (notably
-    // with co-located hardware enclaves).  Establish a finalized observation
-    // boundary before asserting exact state parity; otherwise this step races
+    // with co-located hardware enclaves). Establish a finalized observation
+    // boundary before asserting exact state parity. Otherwise this step races
     // one node's pre-block state against the primary's post-block state.
     let observation_height = world
         .rpc
@@ -568,9 +568,9 @@ fn committee_continues_finalizing(world: &mut World) {
 /// (update_operator_flow.sh:287-294).
 #[then(expr = "proposal {int} is still pending with {int} yes votes")]
 fn still_pending_with_votes(world: &mut World, id: u64, yes: u64) {
-    // The just-fired votes may still be settling; poll until the tally is in,
-    // bounded so we stay inside the voting window (bail out the moment the
-    // proposal leaves `pending`).
+    // The just-fired votes may still be settling. Poll until the tally is in.
+    // Bound the poll so it stays inside the voting window, and stop the moment
+    // the proposal leaves `pending`.
     let mut vs = world
         .rpc
         .vote_status(id)

@@ -39,11 +39,11 @@ impl InitialDkgFixture {
 ///   logs. The chain carrier makes the selected subset canonical, so one or more
 ///   offline validators do NOT block the ceremony.
 /// - **Initial interactive bootstrap (genesis)**: requires ALL `n` genesis dealer
-///   logs. There is no canonical carrier yet, so every validator must agree on
-///   the identical complete dealer-log set to derive the same public polynomial;
-///   a `2f+1` subset would be non-deterministic and could fork the genesis
+///   logs. There is no canonical carrier yet. Thus every validator must agree on
+///   the identical complete dealer-log set to derive the same public polynomial.
+///   A `2f+1` subset would be non-deterministic and could fork the genesis
 ///   committee. A single offline founder therefore stalls genesis until the
-///   timeout - by design (see the completion guard below and
+///   timeout. This is by design (see the completion guard below and
 ///   `test_bootstrap_dkg_waits_for_all_genesis_nodes_*`).
 ///
 /// # Arguments
@@ -92,9 +92,9 @@ pub async fn run_initial_dkg(
 
 /// Run the dealer-only side of a live reshare.
 ///
-/// This is used by validators that are in the previous DKG output and hold a
-/// previous share, but are excluded from the target participant set. They must
-/// still deal to the new players so the reshare can complete, but they must not
+/// Validators use this when they are in the previous DKG output and hold a
+/// previous share, but the target participant set excludes them. They must still
+/// deal to the new players so that the reshare can complete. But they must not
 /// create a `Player` or wait for a new share.
 #[cfg(test)]
 pub async fn run_reshare_dealer_only(

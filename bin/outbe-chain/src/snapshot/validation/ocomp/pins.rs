@@ -11,7 +11,7 @@ pub(crate) struct VerifiedPin {
 }
 
 /// Bind a natively decoded journal record to immutable current-E authority.
-/// Local lifecycle progress may lag canonical completion; it is not a claim
+/// Local lifecycle progress may lag canonical completion. It is not a claim
 /// that the donor executed, exported or materialized the completed job.
 pub(crate) fn verify_pin_authority(
     state: &CanonicalState<'_>,
@@ -126,7 +126,7 @@ pub(crate) fn verify_pin_authority(
 }
 
 /// Close a required lease's live/retained body union to its canonical JobIntent.
-/// Callers decide which leases remain required; historical GC alone does not
+/// Callers decide which leases remain required. Historical GC alone does not
 /// create a requirement to reproduce a released population.
 pub(crate) fn verify_lease_inputs(
     reader: outbe_offchain_storage::StorageReaderHandle,

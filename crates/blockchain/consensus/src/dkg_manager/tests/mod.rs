@@ -1,8 +1,8 @@
 //! Unit tests for `dkg_manager`.
 //!
 //! `boundary` holds the DKG boundary-resolution tests that exercise
-//! `Mailbox::resolve_boundary` and its process-local boundary-status cache;
-//! they moved here with the production logic. The rest are the ceremony /
+//! `Mailbox::resolve_boundary` and its process-local boundary-status cache.
+//! They moved here with the production logic. The rest are the ceremony /
 //! boundary-artifact / dealer-log tests.
 
 mod admission;
@@ -28,9 +28,10 @@ use super::*;
 
 /// PHASE 0 de-risk spike: a node that NEVER ran DKG can rebuild an epoch's
 /// finalization verifier from the boundary outcome carried in the block
-/// (`extra_data`) - using only public data - and verify a real finalization
-/// certificate signed by that epoch's committee. This is the load-bearing
-/// assumption of the `--upstream` follower (committee-chaining trust model).
+/// (`extra_data`). It uses only public data. With that verifier, the node can
+/// verify a real finalization certificate signed by that epoch's committee.
+/// This is the load-bearing assumption of the `--upstream` follower
+/// (committee-chaining trust model).
 #[test]
 fn phase0_spike_follower_rebuilds_verifier_from_boundary_and_verifies_finalization() {
     use crate::digest::Digest as OutbeDigest;

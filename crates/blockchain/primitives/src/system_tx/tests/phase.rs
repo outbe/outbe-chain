@@ -44,7 +44,7 @@ fn advance_after_commit_interleaves_optional_phase3b() {
     );
 }
 
-// ---------- : SystemTxPhase cursor tests ----------
+// ---------- SystemTxPhase cursor tests ----------
 
 #[test]
 fn initial_for_block_block_1_is_cycletick() {
@@ -80,7 +80,7 @@ fn initial_for_block_block_2_is_phase1_preexecuted() {
 
 #[test]
 fn initial_for_block_block_0_is_cycletick_placeholder() {
-    // Block 0 is genesis; it has no begin-zone txs at all, but the cursor
+    // Block 0 is genesis. It has no begin-zone txs at all, but the cursor
     // initialisation must not panic and must not pick the Phase 1 branch.
     let cursor = SystemTxPhase::initial_for_block(0, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
     assert_eq!(cursor, SystemTxPhase::CycleTick { body_index: 0 });

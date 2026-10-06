@@ -2,7 +2,7 @@
 //!
 //! This module is available only through the explicit `test-utils` feature.
 //! It builds consensus-valid activation bytes and seeds the real Metadosis and
-//! owner storage APIs; it does not provide a production activation shortcut.
+//! owner storage APIs. It does not provide a production activation shortcut.
 
 #[cfg(test)]
 use std::cell::Cell;

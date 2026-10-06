@@ -74,7 +74,7 @@ fn committee_snapshot() -> CommitteeSnapshot {
     }
 }
 
-/// Committee-bound consensus sub-namespace - must match what the
+/// Committee-bound consensus sub-namespace. It must match what the
 /// SlashIndicator evidence verifier derives from the epoch's committee snapshot.
 fn ns_with(suffix: &[u8]) -> Vec<u8> {
     let c = committee_set();
@@ -192,7 +192,7 @@ fn conflicting_notarize_slashes_and_dedups() {
             .expect("conflicting notarize must slash");
         assert_jailed_once(&storage);
 
-        // Replay (either order) is rejected.
+        // SlashIndicator rejects a replay (either order).
         let mut si = SlashIndicator::new(storage.clone());
         assert!(si
             .submit_conflicting_notarize_evidence(SUBMITTER, &b2, &b1)

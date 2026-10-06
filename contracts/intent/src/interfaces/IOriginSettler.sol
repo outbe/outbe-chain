@@ -8,7 +8,7 @@ import {OnchainCrossChainOrder, ResolvedCrossChainOrder} from "./OrderTypes.sol"
 interface IOriginSettler {
     /// @notice Signals that an order has been opened
     /// @param orderId A unique order identifier within this settlement system
-    /// @param resolvedOrder Resolved order that would be returned by resolve if called instead of open
+    /// @param resolvedOrder Resolved order that resolve would return if a caller called it instead of open
     event Open(bytes32 indexed orderId, ResolvedCrossChainOrder resolvedOrder);
 
     /// @notice Emitted when an order is settled
@@ -39,7 +39,7 @@ interface IOriginSettler {
     // ============ Functions ============
 
     /// @notice Opens a cross-chain order
-    /// @dev To be called by the user. This method must emit the Open event
+    /// @dev The user calls this method. This method must emit the Open event
     /// @param order The OnchainCrossChainOrder definition
     function open(OnchainCrossChainOrder calldata order) external payable;
 

@@ -23,8 +23,8 @@ abstract contract OriginSettlerBase is OrderStatusStorage, RouterAccessors, IOri
     // ============ Constants ============
 
     /// @notice Minimum lead time an order's deadline must have over its creation block.
-    ///         Covers the auction (commit + reveal) plus the winning solver's claim + fill;
-    ///         a deadline shorter than this leaves no time to settle and is rejected at open().
+    ///         It covers the auction (commit + reveal) plus the winning solver's claim + fill.
+    ///         A deadline shorter than this leaves no time to settle, and open() rejects it.
     uint256 public constant MIN_ORDER_DURATION = 30 seconds;
 
     // ============ Public Storage ============
@@ -44,7 +44,7 @@ abstract contract OriginSettlerBase is OrderStatusStorage, RouterAccessors, IOri
 
     /**
      * @notice Opens a cross-chain order
-     * @dev To be called by the user. Emits the Open event
+     * @dev The user calls this function. It emits the Open event
      * @param _order The OnchainCrossChainOrder definition
      */
     function open(OnchainCrossChainOrder calldata _order) external payable {
@@ -133,7 +133,7 @@ abstract contract OriginSettlerBase is OrderStatusStorage, RouterAccessors, IOri
 
     /**
      * @notice Resolves an OnchainCrossChainOrder into a ResolvedCrossChainOrder
-     * @dev To be implemented by the inheriting contract
+     * @dev The inheriting contract implements this function
      * @param _order The OnchainCrossChainOrder to resolve
      * @return _resolvedOrder A ResolvedCrossChainOrder with hydrated data
      * @return _orderId The unique identifier for the order

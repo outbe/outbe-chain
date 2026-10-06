@@ -3,14 +3,18 @@ pragma solidity 0.8.30;
 
 /// @title IOriginRouter
 /// @author Outbe
-/// @notice Interface for the Outbe-side router. Broadcasts auction/series messages to every registered target chain
-///         and receives BIDS_BATCH / BIDS_DONE back from each over the protocol-agnostic ERC-7786 bridge.
-/// @dev Auction messages are keyed by `worldwideDay`; series (issuance/mark) messages by `seriesId`. The target set is
-///      a registry (see {addTarget}); it is snapshotted per day at STAGE_START so a mid-day membership change never
-///      reshapes an in-flight auction. Broadcast sends fan out over the snapshot; addressed sends carry a leading
-///      `dstChainId` and are checked against it. Every leg is isolated (see {resendParkedMessage}) - a single failing leg
-///      is parked, never reverting the fan-out. Sends are funded from the contract's relay float (`msg.value` must be
-///      0); `quote*` return the native fee. Inbound delivery arrives via {ERC7786MessengerBase-receiveMessage}.
+/// @notice Interface for the Outbe-side router. It broadcasts auction/series messages to every
+///         registered target chain. It receives BIDS_BATCH / BIDS_DONE back from each chain over
+///         the protocol-agnostic ERC-7786 bridge.
+/// @dev Auction messages use `worldwideDay` as key. Series (issuance/mark) messages use `seriesId`.
+///      The target set is a registry (see {addTarget}). The router takes a snapshot of it per day
+///      at STAGE_START, so a mid-day membership change never reshapes an in-flight auction.
+///      Broadcast sends fan out over the snapshot. Addressed sends carry a leading `dstChainId`,
+///      and the router checks it against the snapshot. Every leg is isolated (see
+///      {resendParkedMessage}). The router parks a single failing leg and never reverts the
+///      fan-out. The contract's relay float funds the sends (`msg.value` must be 0). `quote*`
+///      return the native fee. Inbound delivery arrives via
+///      {ERC7786MessengerBase-receiveMessage}.
 interface IOriginRouter {
     // --- Events ---
     /// @notice Emitted when a BIDS_BATCH is received from a target chain.
@@ -151,7 +155,8 @@ interface IOriginRouter {
         uint64 vwapMinor;
     }
 
-    /// @notice Auction stage start parameters grouped to keep the calldata layout resilient against stack limits.
+    /// @notice Auction stage start parameters. The struct groups them so that the calldata layout
+    ///         stays resilient against stack limits.
     struct AuctionStageStartParams {
         uint32 worldwideDay;
         /// @notice End of the commit stage (UNIX seconds).
@@ -174,19 +179,21 @@ interface IOriginRouter {
         uint32 callThreshold;
         /// @notice Minimum quantity per bid (Intex units).
         uint16 minIntexBidQuantity;
-        /// @notice Commit-entry bond (payment-token minor units); 0 disables the bond.
+        /// @notice Commit-entry bond (payment-token minor units). 0 disables the bond.
         uint128 commitBondMinor;
         /// @notice Final worldwide-day state (1 = Green, 2 = Red).
         uint8 dayState;
     }
 
-    /// @notice Issuance instructions parameters grouped to keep the calldata layout resilient against stack limits.
+    /// @notice Issuance instruction parameters. The struct groups them so that the calldata layout
+    ///         stays resilient against stack limits.
     /// @dev `issuedUnits` must equal the auction's cleared count.
     struct IssuanceInstructionsParams {
         bytes14 seriesId;
-        /// @notice Worldwide day the series was derived from (provenance; carried to the destination NFT).
+        /// @notice Worldwide day the series was derived from (provenance, carried to the
+        ///         destination NFT).
         uint32 worldwideDay;
-        /// @notice When the origin created the series; every chain dates it from this.
+        /// @notice When the origin created the series. Every chain dates the series from this.
         uint32 issuedAt;
         uint32 issuedUnits;
         uint128 promisLoadMinor;
@@ -217,7 +224,7 @@ interface IOriginRouter {
     error NoTargets();
     /// @notice Addressed send targets a chain outside the series' STAGE_START snapshot.
     error NotSeriesTarget(uint32 worldwideDay, uint32 dstChainId);
-    /// @notice `sendLeg` is an internal self-call seam; caller was not this contract.
+    /// @notice `sendLeg` is an internal self-call seam. The caller was not this contract.
     error OnlySelf();
     /// @notice No live parked send at `idx`.
     error NoParkedMessage(uint256 idx);
@@ -226,7 +233,8 @@ interface IOriginRouter {
     /// @notice Empty array provided.
     error EmptyArray();
 
-    /// @notice An authenticated inbound message, or one item of it, was acknowledged without effect.
+    /// @notice The router acknowledged an authenticated inbound message, or one item of it, without
+    ///         effect.
     /// @param srcChainId Source chainId the message was authenticated against.
     /// @param msgType Codec message type.
     /// @param key Identity of the ignored effect (worldwide day, series id, chunk, ...) as the handler keys it.
@@ -245,8 +253,8 @@ interface IOriginRouter {
 
     // --- Admin ---
     /// @notice Wire contract dependencies and grant the demand/supply roles.
-    /// @param desis Desis contract - must advertise `IDesis` via ERC-165; granted `DESIS_ROLE`.
-    /// @param intexFactory IntexFactory precompile; granted `INTEX_FACTORY_ROLE`.
+    /// @param desis Desis contract. It must advertise `IDesis` via ERC-165. It gets `DESIS_ROLE`.
+    /// @param intexFactory IntexFactory precompile. It gets `INTEX_FACTORY_ROLE`.
     function wire(address desis, address intexFactory) external;
 
     /// @notice Register (or clear) the matching messenger on `chainId` as an ERC-7930 interoperable address.
@@ -254,7 +262,8 @@ interface IOriginRouter {
     /// @param interop ERC-7930 interoperable address (empty to clear).
     function setRemoteMessenger(uint32 chainId, bytes calldata interop) external;
 
-    /// @notice Register `chainId` as an auction target; its peer messenger must already be set. Restricted to admin.
+    /// @notice Register `chainId` as an auction target. Its peer messenger must already be set.
+    ///         Restricted to admin.
     function addTarget(uint32 chainId) external;
     /// @notice Deregister `chainId` as an auction target (swap-pop). In-flight series keep their own snapshot.
     ///         Restricted to admin.
@@ -268,12 +277,12 @@ interface IOriginRouter {
 
     /// @notice Sweep native tokens (the relay-funded float) from the contract to an admin recipient.
     /// @param to Recipient address (must be non-zero).
-    /// @param amount Amount in wei to sweep; must be <= contract balance.
+    /// @param amount Amount in wei to sweep. It must be <= contract balance.
     function sweepNative(address payable to, uint256 amount) external;
 
     // --- Send ---
-    /// @notice Broadcast auction stage start to every registered target, snapshotting the target set for the day.
-    ///         Restricted to `DESIS_ROLE`.
+    /// @notice Broadcast auction stage start to every registered target, and take a snapshot of the
+    ///         target set for the day. Restricted to `DESIS_ROLE`.
     function sendAuctionStageStart(AuctionStageStartParams calldata params) external payable;
     /// @notice Broadcast auction stage clearing over the day's snapshot. Restricted to `DESIS_ROLE`.
     function sendAuctionStageClearing(uint32 worldwideDay, uint32 dstChainId, uint256 gasLimit) external payable;
@@ -295,9 +304,9 @@ interface IOriginRouter {
         uint16 totalChunks,
         IssuanceInstructionsParams[] calldata series
     ) external payable returns (bytes32 sendId);
-    /// @notice Send one chunk of a day's refunds to a single target chain: its winners and the day's clearing
-    ///         terms. A chain whose bids all lost still gets one empty chunk, which closes its day. Restricted to
-    ///         `DESIS_ROLE`.
+    /// @notice Send one chunk of a day's refunds to a single target chain. The chunk holds the
+    ///         winners on that chain and the day's clearing terms. A chain whose bids all lost still gets one
+    ///         empty chunk, which closes its day. Restricted to `DESIS_ROLE`.
     function sendRefundInstructions(
         uint32 dstChainId,
         uint32 worldwideDay,
@@ -324,7 +333,8 @@ interface IOriginRouter {
     /// @notice Parked outbound leg by index.
     function parkedMessage(uint256 idx) external view returns (ParkedMessage memory);
 
-    /// @notice How many messages have ever parked; `sent` in {parkedMessage} tells which are resolved.
+    /// @notice How many messages have ever parked. `sent` in {parkedMessage} tells which are
+    ///         resolved.
     function parkedMessageCount() external view returns (uint256);
 
     // --- Proceeds ---
@@ -337,7 +347,8 @@ interface IOriginRouter {
     /// @notice Parked proceeds awaiting retry, by enqueue index.
     function parkedProceeds(uint256 idx) external view returns (ParkedProceeds memory);
 
-    /// @notice How many proceeds have ever parked; `settled` in {parkedProceeds} tells which are resolved.
+    /// @notice How many proceeds have ever parked. `settled` in {parkedProceeds} tells which are
+    ///         resolved.
     function parkedProceedsCount() external view returns (uint256);
     /// @notice Permissionless retry of a parked distribution.
     function distributeParkedProceeds(uint256 idx) external;

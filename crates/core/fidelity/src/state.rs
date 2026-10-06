@@ -1,9 +1,9 @@
 //! Low-level storage access for the Fidelity module.
 //!
 //! CRUD over the encrypted cohort blob and the plaintext
-//! `first_qualified_start` anchor. Ciphertext is read/written verbatim - this
-//! layer never decrypts. Building enclave requests, applying the returned
-//! receipt, and RCFI/league orchestration live in [`crate::runtime`]; the
+//! `first_qualified_start` anchor. This layer reads and writes ciphertext
+//! verbatim. It never decrypts. Building enclave requests, applying the returned
+//! receipt, and RCFI/league orchestration live in [`crate::runtime`]. The
 //! cross-crate surface is [`crate::api`].
 
 use alloy_primitives::Address;

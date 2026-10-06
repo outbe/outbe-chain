@@ -18,8 +18,9 @@ import {
     TargetRouterStorage
 } from "../TargetRouterStorage.sol";
 
-/// @dev Self-call shims the router exposes for per-item isolation; called on `address(this)` from the
-///      delegated library context, so `msg.sender == address(this)` holds inside the shim.
+/// @dev Self-call shims the router exposes for per-item isolation. The library calls them on
+///      `address(this)` from the delegated library context, so `msg.sender == address(this)` holds
+///      inside the shim.
 interface ITargetRouterShims {
     function relayBidsToOutbe(uint32 worldwideDay) external;
     function reportBidsRemaining(uint32 worldwideDay) external;
@@ -35,15 +36,19 @@ interface ITargetRouterShims {
 library TargetInbound {
     /// @notice Whether a finished round owes the origin a remainder report. A round that sent nothing has
     ///         nothing to recover from: the origin would answer with the same budget for the same outcome,
-    ///         and that is a loop. A finished day is reported by its completeness marker instead.
+    ///         and that is a loop. A finished day's completeness marker reports it instead.
     function advanced(BidsRelayProgress storage relay, uint16 batchBefore) internal view returns (bool) {
         return !relay.done && relay.nextBatch > batchBefore;
     }
 
-    /// @notice Decode AUCTION_STAGE_START and forward the day state, schedule and params to the Auction contract.
-    /// @dev An auction the day already has (same terms -> duplicate, other terms -> conflict), a schedule the day
-    ///      can no longer honour, or an unknown day state are acknowledged without effect: no later state makes
-    ///      such a START applicable. Anything else propagates so the bridge redelivers.
+    /// @notice Decode AUCTION_STAGE_START and forward the day state, schedule and params to the Auction
+    ///         contract.
+    /// @dev The handler acknowledges these cases without effect, because no later state makes such a
+    ///      START applicable:
+    ///      - an auction the day already has (same terms -> duplicate, other terms -> conflict)
+    ///      - a schedule the day can no longer honour
+    ///      - an unknown day state
+    ///      Anything else propagates so the bridge redelivers.
     function handleAuctionStageStart(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
         external
     {
@@ -76,10 +81,13 @@ library TargetInbound {
     }
 
     /// @notice Decode AUCTION_STAGE_CLEARING, forward to Auction, then relay revealed bids to Outbe.
-    /// @dev A day already past clearing (Completed), a cancelled day or a day this chain never opened cannot take
-    ///      the transition any more and are acknowledged without effect (and without a relay). A day whose commit
-    ///      stage is still running propagates: time alone makes the transition valid, so the bridge redelivers.
-    ///      Only the outbound relay is caught (parked on failure).
+    /// @dev These days cannot take the transition any more. The handler acknowledges them without
+    ///      effect (and without a relay):
+    ///      - a day already past clearing (Completed)
+    ///      - a cancelled day
+    ///      - a day this chain never opened
+    ///      A day whose commit stage is still running propagates. Time alone makes the transition
+    ///      valid, so the bridge redelivers. Only the outbound relay is caught (parked on failure).
     function handleAuctionStageClearing(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
         external
     {
@@ -130,9 +138,12 @@ library TargetInbound {
     }
 
     /// @notice Decode AUCTION_RESULT and execute auction clearing on the Auction contract.
-    /// @dev A result the day already holds (same -> duplicate, other -> conflict), a cancelled or unknown day and a
-    ///      result that fails the auction's permanent sanity bounds are acknowledged without effect. A day whose
-    ///      reveal stage has not closed yet (clock skew) propagates so the bridge redelivers.
+    /// @dev The handler acknowledges these cases without effect:
+    ///      - a result the day already holds (same -> duplicate, other -> conflict)
+    ///      - a cancelled or unknown day
+    ///      - a result that fails the auction's permanent sanity bounds
+    ///      A day whose reveal stage has not closed yet (clock skew) propagates so the bridge
+    ///      redelivers.
     function handleAuctionResult(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message) external {
         (uint32 worldwideDay, uint32 issuedUnits, uint64 auctionClearingRate, uint32 wonBidsCount) =
             BridgeMsgCodec.decodeAuctionResult(message);
@@ -218,10 +229,13 @@ library TargetInbound {
         }
     }
 
-    /// @notice Decode one ISSUANCE_INSTRUCTIONS chunk, create the series it names, and issue to each winner once.
-    /// @dev A repeated chunk, a chunk whose header disagrees with the day's run, and a series whose stored
-    ///      params differ from the chunk's are acknowledged without effect (`InboundMessageIgnored`); the last
-    ///      applied chunk emits `IssuanceCompleted`.
+    /// @notice Decode one ISSUANCE_INSTRUCTIONS chunk, create the series it names, and issue to each
+    ///         winner once.
+    /// @dev The handler acknowledges these cases without effect (`InboundMessageIgnored`):
+    ///      - a repeated chunk
+    ///      - a chunk whose header disagrees with the day's run
+    ///      - a series whose stored params differ from the chunk's
+    ///      The last applied chunk emits `IssuanceCompleted`.
     function handleIssuanceInstructions(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
         external
     {
@@ -244,8 +258,10 @@ library TargetInbound {
             _ignore(srcChainId, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, chunkKey, InboundReason.CONFLICT);
             return;
         }
-        // Nothing of a chunk is applied when it names a series under other terms - held on-chain or earlier
-        // in this same chunk - or a series with no supply: the chunk index stays free for a corrected resend.
+        // Nothing of a chunk is applied when it names one of these:
+        // - a series under other terms, held on-chain or earlier in this same chunk
+        // - a series with no supply
+        // The chunk index then stays free for a corrected resend.
         // `known[s]` also records an in-chunk predecessor, so the second payload does not re-create the series.
         bool[] memory known = new bool[](series.length);
         for (uint256 s = 0; s < series.length; s++) {
@@ -309,7 +325,7 @@ library TargetInbound {
             _applySlottedMark($, payload.seriesId);
         }
 
-        // Past its deadline the series takes no units; parking each winner could never be applied.
+        // Past its deadline the series takes no units. Parking each winner could never be applied.
         if ($.intex.readData(payload.seriesId).state == IIntexNFT1155.IntexState.Expired) {
             _ignore(srcChainId, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, payload.seriesId, InboundReason.LATE);
             return;
@@ -320,7 +336,7 @@ library TargetInbound {
             uint256 units = payload.units[i];
             if (units == 0) continue;
             address recipient = payload.recipients[i];
-            // Units the NFT can never issue would park an unflushable entry; acknowledge it and leave
+            // Units the NFT can never issue would park an unflushable entry. Acknowledge it and leave
             // the winner unissued, so the day's other chunks can still carry a corrected allocation.
             if (units > type(uint16).max) {
                 _ignore(
@@ -389,9 +405,9 @@ library TargetInbound {
     }
 
     /// @notice Decode REFUND_INSTRUCTIONS and forward finalization instructions to the EscrowAdapter.
-    /// @dev `receiveId` is the escrow finalization tag. A chunk already applied, or one arriving after the escrow
-    ///      closed the day, is acknowledged without effect: bidders it would have settled recover through the
-    ///      escrow's own `claimRefund` path.
+    /// @dev `receiveId` is the escrow finalization tag. The handler acknowledges without effect a chunk
+    ///      already applied, or one arriving after the escrow closed the day. Bidders it would have
+    ///      settled recover through the escrow's own `claimRefund` path.
     function handleRefundInstructions(
         TargetRouterStorage storage $,
         uint32 srcChainId,
@@ -453,7 +469,8 @@ library TargetInbound {
 
     /// @notice Decode MARK_CALLED and apply it to every series it carries, parking the ones that
     ///         will not take the mark yet.
-    /// @dev A zero call time is acknowledged without effect: no series can take it, and a slot reads zero as empty.
+    /// @dev The handler acknowledges a zero call time without effect. No series can take it, and a
+    ///      slot reads zero as empty.
     function handleMarkCalled(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message) external {
         (uint32 worldwideDay, uint32 calledAt, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkCalled(message);
         if (calledAt == 0) {
@@ -472,8 +489,8 @@ library TargetInbound {
         emit ITargetRouter.DailyVwapReceived(srcChainId, utcDay, rows.length);
     }
 
-    /// @dev An unseen series keeps the mark in its slot; an already called one is acknowledged; any other
-    ///      failure slots it for `applyParkedMark`.
+    /// @dev An unseen series keeps the mark in its slot. An already called one is acknowledged. Any
+    ///      other failure slots it for `applyParkedMark`.
     function _applyMark(TargetRouterStorage storage $, uint32 srcChainId, bytes14 seriesId, uint32 calledAt) private {
         if (!$.intex.seriesExists(seriesId)) {
             _slotMark($, seriesId, calledAt);
@@ -514,8 +531,9 @@ library TargetInbound {
         }
     }
 
-    /// @dev Route proceeds to Outbe, parking series+amount on failure so a transport/float hiccup never rolls
-    ///      back the finalization (the WCOEN is already held here). Retried via `resendParkedProceeds`.
+    /// @dev Route proceeds to Outbe. On failure, park series+amount, so a transport/float hiccup never
+    ///      rolls back the finalization (the WCOEN is already held here). Retried via
+    ///      `resendParkedProceeds`.
     function _routeOrParkProceeds(TargetRouterStorage storage $, uint32 worldwideDay, uint128 amount) private {
         // solhint-disable-next-line no-empty-blocks
         try ITargetRouterShims(address(this)).routeProceedsExt(worldwideDay, amount) {}

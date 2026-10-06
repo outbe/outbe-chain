@@ -9,7 +9,7 @@ import { type Address, type Hex, concat, sha256, toBytes, toHex } from "viem";
  *   preimage = holder[20] ++ promisMinor_be32 ++ seriesId[14] ++ seq_be4
  *   hash     = SHA256(preimage ++ nonce_be8)
  *   valid    = first POW_DIFFICULTY bytes of hash are zero
- * `seq` is the per-(series, holder) mine counter - read it as the count of past
+ * `seq` is the per-(series, holder) mine counter. Read it as the count of past
  * PromisMined(series, holder) events. promisMinor = series.promisLoadMinor * units.
  */
 
@@ -39,7 +39,7 @@ export function grindNonce(
   seq: number,
 ): PowSolution {
   const prefix = preimage(holder, promisMinor, seriesId, seq);
-  // The precompile caps nonce at u64::MAX; difficulty 1 resolves far below that.
+  // The precompile caps nonce at u64::MAX. Difficulty 1 resolves far below that.
   for (let nonce = 0n; nonce <= 0xffff_ffff_ffff_ffffn; nonce++) {
     const data = concat([prefix, toBytes(toHex(nonce, { size: 8 }))]);
     const hash = sha256(data, "bytes");

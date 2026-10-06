@@ -229,9 +229,9 @@ impl NodContract<'_> {
                 "cannot issue a settled Nod".into(),
             ));
         }
-        // ISO 0 is not a currency, and its bin namespace aliases the
-        // un-namespaced key while never appearing in the oracle's
-        // reference-currency registry — a bucket parked there would be
+        // ISO 0 is not a currency. Its bin namespace aliases the
+        // un-namespaced key. ISO 0 also never appears in the oracle's
+        // reference-currency registry. A bucket parked there would be
         // invisible to the call scan forever.
         if item.reference_currency == 0 {
             return Err(NodError::ZeroReferenceCurrency.into());
@@ -432,8 +432,8 @@ impl NodContract<'_> {
     // --- Bin index helpers (PancakeSwap LB-style ladder) -------------------
 
     /// Maps a six-decimal call price (or oracle rate) to a 24-bit
-    /// bin id on the LB log-spaced ladder. Saturates to `[0, MAX_BIN_ID]` -
-    /// see `lb_math::get_id_from_price` for the deviation from LB's revert.
+    /// bin id on the LB log-spaced ladder. Saturates to `[0, MAX_BIN_ID]`.
+    /// See `lb_math::get_id_from_price` for the deviation from LB's revert.
     pub fn price_to_bin(price_minor: U256) -> Result<u32> {
         if price_minor.is_zero() {
             return Ok(0);
@@ -442,7 +442,7 @@ impl NodContract<'_> {
     }
 
     /// Inverse of `price_to_bin`: returns the lower edge of bin `bin_id` in
-    /// six-decimal minor units. Diagnostic-only - `bin_to_price_floor` may
+    /// six-decimal minor units. Diagnostic-only. `bin_to_price_floor` may
     /// fail at extreme bin ids whose LB-pow exponent exceeds `2^20`.
     pub fn bin_to_price_floor(bin_id: u32) -> Result<U256> {
         reference_price::bin_id_to_coen_iso_price(bin_id, BIN_STEP_BP)
@@ -451,10 +451,10 @@ impl NodContract<'_> {
     /// Namespaces a bin-column key by the bucket's reference currency.
     ///
     /// Mapping keys are left-padded to 32 bytes before hashing, so a wider
-    /// integer type alone namespaces nothing - the ISO has to occupy real
+    /// integer type alone namespaces nothing. The ISO has to occupy real
     /// high bits. Bin ids are 24-bit and the trie's mid/leaf keys are 16-bit,
     /// so the low 32 bits always hold `key` unambiguously. ISO `0` is the one
-    /// value that would alias the un-namespaced key; `record_nod_issued`
+    /// value that would alias the un-namespaced key. `record_nod_issued`
     /// rejects it at the funnel so it can never be written.
     pub(crate) const fn scoped(reference_currency: u16, key: u32) -> u64 {
         ((reference_currency as u64) << 32) | key as u64
@@ -617,7 +617,7 @@ impl NodContract<'_> {
     // --- Callable-bucket index ----------------------------------------------
 
     /// Writes the call terms a new bucket sealed at issuance. Later Nods that
-    /// join the same bucket inherit this copy; nothing reads the constants again.
+    /// join the same bucket inherit this copy. Nothing reads the constants again.
     pub(crate) fn seal_bucket_call_terms(
         &mut self,
         bucket_key: B256,
@@ -706,7 +706,8 @@ impl NodContract<'_> {
         self.called_bucket_index.clear(&bucket_key)
     }
 
-    /// No-op for a bucket the call index never held, so the removal funnel can call it unconditionally.
+    /// No-op for a bucket the call index never held, so the removal funnel can call it
+    /// unconditionally.
     pub(crate) fn remove_callable_bucket(&mut self, bucket_key: B256) -> Result<()> {
         self.remove_call_bin(bucket_key)?;
         self.remove_called_bucket(bucket_key)?;

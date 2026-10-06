@@ -2,19 +2,18 @@ use alloy_primitives::B256;
 
 use super::{SystemTxKind, GENESIS_BOOTSTRAP_BLOCK_NUMBER};
 
-/// Executor cursor that names the next system-tx phase the block executor
-/// expects to consume. introduces this enum so phase routing no
-/// longer derives from `self.inner.receipts.len()` once Phase 1 is committed
-/// in `apply_pre_execution_changes` (pre-execution) rather than the main tx
-/// loop.
+/// Executor cursor that names the next system-tx phase that the block executor
+/// expects to consume. With this enum, phase routing does not derive from
+/// `self.inner.receipts.len()` when the executor commits Phase 1 in
+/// `apply_pre_execution_changes` (pre-execution) and not in the main tx loop.
 ///
 /// Invariants:
 /// - On block `1` (genesis bootstrap), cursor starts at `CycleTick { body_index: 0 }`.
 /// - On block `n >= GENESIS_BOOTSTRAP_BLOCK_NUMBER + 1`, cursor starts at
 ///   `Phase1Preexecuted { body_index: 0, tx_hash, receipt_index: 0 }` after
 ///   the executor has pre-built and committed the Phase 1 system tx.
-/// - The cursor advances exactly once per consumed begin-zone system tx; on
-///   reaching the first non-system tx (or block end) it is `UserTxs`.
+/// - The cursor advances exactly once per consumed begin-zone system tx. When
+///   it reaches the first non-system tx (or block end), it is `UserTxs`.
 /// - Encoded purely in-memory: never serialised, hashed, or part of any
 ///   wire format or `header.extra_data`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,11 +38,11 @@ pub enum SystemTxPhase {
     /// Mandatory Rewards-owned delivery phase immediately after `CycleTick`.
     RewardsGemDelivery { body_index: u8 },
     /// Next expected begin-zone tx is the optional Phase 3
-    /// (`BoundaryOutcome`); only emitted when the header carries a boundary
-    /// outcome artifact.
+    /// (`BoundaryOutcome`). It is emitted only when the header carries a
+    /// boundary outcome artifact.
     BoundaryOutcomeOptional { body_index: u8 },
     /// Next expected begin-zone tx is the optional Phase 3b
-    /// (`TeeBootstrap`); present only in the one-time bootstrap block.
+    /// (`TeeBootstrap`). It is present only in the one-time bootstrap block.
     TeeBootstrapOptional { body_index: u8 },
     /// Next expected begin-zone tx is Phase 4 (`OracleSlashWindow`).
     OracleSlashWindow { body_index: u8 },
@@ -60,7 +59,7 @@ impl SystemTxPhase {
     /// so its cursor starts at `CycleTick { body_index: 0 }`. Block `n` with
     /// `n >= genesis_bootstrap_block_number + 1` starts at
     /// `Phase1Preexecuted { body_index: 0, .. }` with a zero placeholder
-    /// `tx_hash`; the executor overwrites the placeholder after the Phase 1
+    /// `tx_hash`. The executor overwrites the placeholder after the Phase 1
     /// preflight commits.
     pub const fn initial_for_block(block_number: u64, genesis_bootstrap_block_number: u64) -> Self {
         Self::initial_for_block_with_ocomp(block_number, genesis_bootstrap_block_number, false)

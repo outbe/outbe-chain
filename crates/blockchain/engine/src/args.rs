@@ -11,7 +11,7 @@ use outbe_primitives::tee_attestation_v1::AttestationMode;
 /// while publishing only `GramineDirectDev` evidence.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
 pub enum TeeSessionMode {
-    /// Preserve the historical policy defaults: DCAP uses NodeHost; the
+    /// Preserve the historical policy defaults: DCAP uses NodeHost. The
     /// hardware-free development lane uses its separate development transport.
     #[default]
     PolicyDefault,
@@ -76,7 +76,8 @@ pub struct ConsensusArgs {
     pub public_polynomial: Option<PathBuf>,
 
     /// Path to the full DKG output artifact (hex-encoded).
-    /// Required with manual share + polynomial provisioning for fresh bootstrap or true reshare continuity.
+    /// Required with manual share + polynomial provisioning for fresh bootstrap or true
+    /// reshare continuity.
     #[arg(long = "consensus.dkg-output", value_name = "PATH")]
     pub dkg_output: Option<PathBuf>,
 
@@ -97,7 +98,7 @@ pub struct ConsensusArgs {
     pub keys_dir: Option<PathBuf>,
 
     /// Trust the existing EL head when consensus-finalized height is 0.
-    /// This is consensus-archive recovery after a storage wipe; it never bypasses
+    /// This is consensus-archive recovery after a storage wipe. It never bypasses
     /// the permanent offer-key gate or regenerates a lost enclave identity.
     /// Only allowed on testnet/devnet chains (rejected on mainnet chain_id).
     #[arg(long = "testnet.trust-el-head", default_value_t = false)]
@@ -132,7 +133,7 @@ pub struct ConsensusArgs {
     pub payload_return_time_ms: u64,
 
     // Simplex leader / certification timeouts are NOT CLI flags. They are
-    // consensus-critical and must be identical across all validators, so the
+    // consensus-critical and must be identical across all validators. Thus the
     // only sources of truth are the `outbe_consensus::timing` defaults and
     // `genesis.json` (`leaderTimeoutMs` / `certificationTimeoutMs`). A per-node
     // CLI override could desync timings and fork the network.
@@ -142,7 +143,7 @@ pub struct ConsensusArgs {
 
     /// BLS key storage backend: plaintext, encrypted, or os-level.
     /// - `plaintext`: hex files on disk (default, suitable for development)
-    /// - `encrypted`: AES-256-GCM + Argon2id; requires --bls-passphrase
+    /// - `encrypted`: AES-256-GCM + Argon2id, requires --bls-passphrase
     /// - `os-level`: macOS Keychain / Linux Secret Service
     #[arg(
         long = "bls-key-backend",
@@ -152,14 +153,14 @@ pub struct ConsensusArgs {
     pub bls_key_backend: String,
 
     /// Passphrase for the `encrypted` BLS key backend.
-    /// Can also be provided via the BLS_PASSPHRASE environment variable.
+    /// You can also provide it through the BLS_PASSPHRASE environment variable.
     #[arg(long = "bls-passphrase", env = "BLS_PASSPHRASE", value_name = "SECRET")]
     pub bls_passphrase: Option<String>,
 
     /// Path or `host:port` endpoint for the `outbe-tee-enclave` sidecar.
-    /// Every `teeAttestationV1` ChainSpec requires it. The local session is
-    /// selected independently from the genesis-fixed attestation policy:
-    /// `DcapRequired` always needs NodeHost, while `GramineDirectDev` can use
+    /// Every `teeAttestationV1` ChainSpec requires it. The local session selection
+    /// is independent from the genesis-fixed attestation policy.
+    /// `DcapRequired` always needs NodeHost. `GramineDirectDev` can use
     /// either the development transport or an explicitly selected production
     /// NodeHost session. Missing or rejected transport stops startup and never
     /// selects an in-process stub or another attestation mode.
@@ -178,10 +179,10 @@ pub struct ConsensusArgs {
     pub tee_session_mode: TeeSessionMode,
 
     /// Local liveness deadline (seconds) for the one-time TEE DKG + bootstrap on a
-    /// fresh chain (block 0). The whole ceremony must finish before block 1; if it
-    /// times out (or fails), node startup fails fast and the node halts rather than
-    /// proceeding into a permanently un-bootstrapped chain. Local only - not a
-    /// consensus rule.
+    /// fresh chain (block 0). The whole ceremony must finish before block 1. If it
+    /// times out (or fails), node startup fails fast. The node halts rather than
+    /// proceeding into a permanently un-bootstrapped chain. This deadline is local
+    /// only. It is not a consensus rule.
     #[arg(
         long = "tee-bootstrap-timeout-secs",
         value_name = "SECS",
@@ -190,8 +191,8 @@ pub struct ConsensusArgs {
     pub tee_bootstrap_timeout_secs: u64,
 
     /// Interval between TEE-enclave canary probes (known-plaintext decrypt +
-    /// health telemetry). `0` disables the canary. Signal only - it never gates
-    /// consensus participation.
+    /// health telemetry). `0` disables the canary. The canary is a signal only. It
+    /// never gates consensus participation.
     #[arg(long = "tee-canary.interval-secs", default_value_t = 30)]
     pub tee_canary_interval_secs: u64,
 
@@ -202,10 +203,10 @@ pub struct ConsensusArgs {
     pub tee_canary_failure_threshold: u64,
 
     /// Interval, in seconds of canonical block time, between pending-pool
-    /// snapshots. A transaction present in two consecutive snapshots has stayed
-    /// pending for at least one full interval without being mined and is
-    /// evicted, so the effective pending lifetime is one to two intervals.
-    /// Node-local pool policy; it never affects block validity. Keep the value
+    /// snapshots. A transaction present in two consecutive snapshots stayed
+    /// pending for at least one full interval without being mined. The pool
+    /// evicts it. Thus the effective pending lifetime is one to two intervals.
+    /// This is node-local pool policy. It never affects block validity. Keep the value
     /// uniform across the fleet so every node sheds a stuck transaction at the
     /// same rate.
     #[arg(long = "txpool.outbe.pending-staleness-secs", default_value_t = 600)]
@@ -222,11 +223,11 @@ pub struct ConsensusArgs {
     #[arg(long = "radicle.status-address", value_name = "SOCKET")]
     pub radicle_status_address: Option<SocketAddr>,
 
-    /// Run as a FOLLOWER: cold-sync finalized blocks from this upstream node and
-    /// verify them against the committee (anchored on the genesis validator set,
-    /// read from the node's own genesis state), instead of running the consensus
-    /// engine. The lightweight full-node path. Mutually exclusive with
-    /// `--validator`.
+    /// Run as a FOLLOWER instead of running the consensus engine. A follower
+    /// cold-syncs finalized blocks from this upstream node. It verifies them
+    /// against the committee, anchored on the genesis validator set that the node
+    /// reads from its own genesis state. This is the lightweight full-node path.
+    /// Mutually exclusive with `--validator`.
     #[arg(long = "upstream", value_name = "URL", conflicts_with = "is_validator")]
     pub upstream: Option<String>,
 
@@ -298,8 +299,8 @@ impl ConsensusArgs {
         }
         // Follower mode (`--upstream`) is the lightweight full-node path and must
         // not be combined with validator/consensus participation. (clap's
-        // `conflicts_with` also enforces this on the CLI; this covers programmatic
-        // construction and gives a clear message.)
+        // `conflicts_with` also enforces this on the CLI. This check covers
+        // programmatic construction and gives a clear message.)
         if self.upstream.is_some() && self.is_validator {
             eyre::bail!("--upstream (follower mode) is mutually exclusive with --validator");
         }
@@ -350,10 +351,11 @@ impl ConsensusArgs {
     fn validate_key_material(&self) -> eyre::Result<()> {
         // Two valid manual-provisioning shapes:
         //   * signer triplet: all of signing-share + public-polynomial + dkg-output.
-        //   * verifier-join pair: public-polynomial + dkg-output WITHOUT signing-share
-        //     - a node joining a running chain that has no threshold share yet; it runs
-        //     the consensus engine in verifier (follow/verify) mode and acquires a share
-        //     at the next DKG reshare. Any other partial combination is an error.
+        //   * verifier-join pair: public-polynomial + dkg-output WITHOUT signing-share.
+        //     This is a node that joins a running chain and has no threshold share yet.
+        //     It runs the consensus engine in verifier (follow/verify) mode. It acquires
+        //     a share at the next DKG reshare.
+        // Any other partial combination is an error.
         let (share, poly, output) = (
             self.signing_share.is_some(),
             self.public_polynomial.is_some(),
@@ -394,7 +396,7 @@ impl ConsensusArgs {
     /// Effective validator EVM-key path.
     ///
     /// Returns `None` for full-node mode. In validator mode, an explicit
-    /// `--validator.evm-key` wins; otherwise the default is sibling
+    /// `--validator.evm-key` wins. Otherwise the default is sibling
     /// `evm-key.hex` next to `--consensus.signing-key`.
     pub fn effective_validator_evm_key(&self) -> eyre::Result<Option<PathBuf>> {
         if !self.is_validator {
@@ -836,7 +838,7 @@ mod tests {
 
     #[test]
     fn test_plaintext_backward_compatibility() {
-        // Default is plaintext - existing setups continue working.
+        // Default is plaintext. Existing setups continue working.
         let args = default_args();
         assert_eq!(args.bls_key_backend, "plaintext");
         assert!(matches!(
@@ -897,7 +899,7 @@ mod tests {
 
     #[test]
     fn test_removed_leader_timeout_flag_is_rejected() {
-        // Leader/cert timeouts are genesis-only now; the CLI flags were removed.
+        // Leader/cert timeouts are genesis-only now. The CLI flags were removed.
         let err =
             TestConsensusCli::try_parse_from(["test", "--consensus.leader-timeout-ms", "30000"])
                 .unwrap_err()

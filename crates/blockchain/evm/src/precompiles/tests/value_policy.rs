@@ -15,7 +15,7 @@ const PAYABLE: [Address; 6] = [
     VOTE_ADDRESS,
     CREDIS_FACTORY_ADDRESS,
     CCA_REGISTRY_ADDRESS,
-    // fund tops up the float that pays Interchain Account dispatch fees.
+    // fund refills the float that pays Interchain Account dispatch fees.
     HYPERLANE_CONTROLLER_ADDRESS,
 ];
 
@@ -79,7 +79,7 @@ fn transferred_value_to_a_reject_route_is_refused() {
 }
 
 /// Reserving the stablecoin address class must not make native value
-/// unspendable there; the class dispatch decides which addresses may keep it.
+/// unspendable there. The class dispatch decides which addresses may keep it.
 #[test]
 fn the_stablecoin_class_permits_value() {
     let token: Address = "0x53c0000000000000000000000000000000000001"
@@ -95,8 +95,8 @@ fn the_stablecoin_class_permits_value() {
 
 /// Pins which exact routes declare `Payable`. This catches an edit to the
 /// route table. A module that grows a payable selector without publishing it
-/// has that selector's funded calls refused - by the route before dispatch
-/// and again by the module - so the omission shows up as its own broken
+/// has that selector's funded calls refused. The route refuses them before dispatch,
+/// and the module refuses them again. Thus the omission shows up as its own broken
 /// entrypoint rather than as stranded value.
 #[test]
 fn only_the_expected_routes_accept_value_among_exact_routes() {

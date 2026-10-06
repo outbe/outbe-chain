@@ -47,7 +47,7 @@ pub fn witness(
                 "note commitment is not on-chain; deposit or change is not yet confirmed".into(),
             )
         })?;
-    // The depth-32 circuit uses u32 positions; do not truncate generic IMT indices.
+    // The depth-32 circuit uses u32 positions. Do not truncate generic IMT indices.
     let index = u32::try_from(position).map_err(|_| PayNoteError::TreeFull)?;
     let path = tree
         .inclusion_path(u64::from(index))
@@ -71,7 +71,7 @@ pub fn witness(
 
 /// Build the fixed-capacity merge witness from private `(amount, spend_key)`
 /// pairs. All notes must belong to this tree, chain and exact asset. Amounts
-/// stay in the witness; the public statement contains only their commitments'
+/// stay in the witness. The public statement contains only their commitments'
 /// canonical nullifiers. The caller must save the fresh output key durably.
 pub fn merge_witness(
     tree: &PayNoteTree,

@@ -581,9 +581,9 @@ fn execute_critical_cycle_fault(
 }
 
 /// A revert in a consensus-critical begin-zone phase (here
-/// CycleTick) is a hard block failure, not a soft-receipt skip - its one-shot
+/// CycleTick) is a hard block failure, not a soft-receipt skip. Its one-shot
 /// work (a day's emission / terminal Metadosis) must never be silently
-/// dropped. No receipt is pushed; the block aborts.
+/// dropped. The executor pushes no receipt, and the block aborts.
 #[test]
 fn critical_cycle_tick_revert_fails_block() {
     let (result, receipts) = execute_critical_cycle_fault(CriticalCycleFault::Revert);

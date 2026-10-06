@@ -45,8 +45,8 @@ pub fn poc_schema_limits() -> SchemaLimits {
         max_result_chunk_bytes: candidate.max_result_chunk_bytes,
         // Local control transports typed off-chain proofs and openings as well
         // as compact activation data. Method codecs enforce their narrower
-        // limits; the frame ceiling must not reject a body accepted by the
-        // shared canonical codec.
+        // limits. The frame ceiling must not reject a body that the shared
+        // canonical codec accepts.
         max_control_body_bytes: max_body_bytes,
     }
 }

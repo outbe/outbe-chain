@@ -141,7 +141,7 @@ pub(crate) fn assert_payment_guards(world: &World, target: &Target, other: &Targ
                 NodFactoryError::SettlementCurrencyMismatch { iso_code: EUR_ISO },
             );
             // Nod settlement writes its compressed body first, which only a block executes,
-            // so the refusal is a mined revert; a note bound to this Nod then pays it.
+            // so the refusal is a mined revert. A note bound to this Nod then pays it.
             assert_mined_refusal(
                 world,
                 &target.owner_key,

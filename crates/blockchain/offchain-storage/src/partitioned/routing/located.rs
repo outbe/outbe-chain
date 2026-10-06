@@ -3,7 +3,7 @@ use super::super::{
 };
 use crate::{Key, Namespace, ScanRequest, StorageError};
 
-/// Lookup by an entity-owned shared locator; primary scans remain independent.
+/// Lookup by an entity-owned shared locator. Primary scans remain independent.
 pub struct LocatedRouting {
     shared: StorageScope,
     namespace: Namespace,

@@ -43,15 +43,15 @@ pub fn unpledge_gratis(storage: StorageHandle<'_>, proof: &[u8]) -> Result<U256>
 }
 
 /// Mint `amount` gratis to `account` (authorized by the account owner's modify
-/// key) and record the Fidelity acquisition cohort. The `GratisMinted` event is
-/// emitted by the Gratis token.
+/// key) and record the Fidelity acquisition cohort. The Gratis token emits the
+/// `GratisMinted` event.
 pub fn mint(
     storage: StorageHandle<'_>,
     account: Address,
     amount: U256,
     auth: ModifyAuth,
 ) -> Result<()> {
-    // Fold the acquisition cohort into the gratis mint round-trip; persist the
+    // Fold the acquisition cohort into the gratis mint round-trip. Persist the
     // returned fidelity blob.
     let now = storage.timestamp()?.to::<u64>();
     let section =
@@ -70,7 +70,7 @@ pub fn mine_coen(
     let native_amount = checked_protocol_to_native(amount)
         .ok_or_else(|| PrecompileError::Revert("native COEN amount overflow".into()))?;
 
-    // Fold the sale cohort into the gratis burn round-trip; persist the returned
+    // Fold the sale cohort into the gratis burn round-trip. Persist the returned
     // fidelity blob.
     let now = storage.timestamp()?.to::<u64>();
     let section =
@@ -78,7 +78,7 @@ pub fn mine_coen(
     let outcome = gratis::burn_with_fidelity(storage.clone(), account, amount, auth, section)?;
     outbe_fidelity::api::apply_fidelity_outcome(storage.clone(), account, &outcome)?;
 
-    // GRATIS stays at six decimals; the matching native COEN exits at 18 decimals.
+    // GRATIS stays at six decimals. The matching native COEN exits at 18 decimals.
     storage.increase_balance(account, native_amount)?;
 
     storage.emit_event(

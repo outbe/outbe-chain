@@ -43,9 +43,9 @@ impl NodeHostIdentityV1 {
 /// initialization when no committed host manifest exists.
 ///
 /// `node_data_dir` is the resolved chain-specific reth data directory. The
-/// function owns only its fixed `tee-node-host-v1` child. A committed manifest
-/// is never replaced: losing or replacing the enclave identity is an explicit
-/// operator decision, not an implicit startup recovery path.
+/// function owns only its fixed `tee-node-host-v1` child. The function never
+/// replaces a committed manifest. Losing or replacing the enclave identity is
+/// an explicit operator decision, not an implicit startup recovery path.
 pub fn connect_or_initialize_node_host_enclave<F>(
     endpoint: &str,
     node_data_dir: &Path,
@@ -59,8 +59,8 @@ where
 }
 
 /// Reconnect to the one already committed NodeHost identity. This path never
-/// creates state and is used by later startup stages after the node entrypoint
-/// has resolved and committed the persistent Reth P2P identity.
+/// creates state. Later startup stages use it after the node entrypoint
+/// resolved and committed the persistent Reth P2P identity.
 pub fn connect_committed_node_host_enclave(
     endpoint: &str,
     node_data_dir: &Path,
@@ -80,8 +80,8 @@ pub fn connect_committed_node_host_enclave(
 }
 
 /// Load the one committed production manifest after applying the same bounded,
-/// owner-only NodeHost state checks used by startup. Missing, pending or
-/// inconsistent state is an error; this function never creates or recovers an
+/// owner-only NodeHost state checks that startup uses. Missing, pending or
+/// inconsistent state is an error. This function never creates or recovers an
 /// enclave identity.
 pub fn load_committed_enclave_manifest_v1(
     node_data_dir: &Path,
@@ -109,13 +109,15 @@ pub fn load_committed_enclave_manifest_v1(
 }
 
 /// Load the committed manifest AND the persistent NodeHost Noise key for the
-/// process-global enclave session. Same bounded, owner-only state checks as
-/// [`load_committed_enclave_manifest_v1`]; called once at install time so the
-/// session can later reconnect without re-acquiring the NodeHost file lock in
-/// the hot path (the committed manifest is write-once, and a legitimately
-/// replaced enclave fails the Noise-IK handshake against the cached responder
-/// static - fail-closed, requiring the operator restart that replacement
-/// already demands).
+/// process-global enclave session. It applies the same bounded, owner-only
+/// state checks as [`load_committed_enclave_manifest_v1`].
+///
+/// It is called once at install time. The session can then reconnect without
+/// re-acquiring the NodeHost file lock in the hot path:
+/// - The committed manifest is write-once.
+/// - A legitimately replaced enclave fails the Noise-IK handshake against the
+///   cached responder static. This fails closed and requires the operator
+///   restart that replacement already demands.
 pub fn committed_node_host_session_material(
     node_data_dir: &Path,
 ) -> Result<(EnclaveInitializationManifestV1, NodeHostNoiseKey), TransportError> {

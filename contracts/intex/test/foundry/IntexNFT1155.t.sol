@@ -10,7 +10,7 @@ import {Test} from "forge-std/Test.sol";
 
 /// @dev ERC1155 receiver that, during the `onERC1155Received` callback, snapshots
 ///      `totalSupply(tokenId)` against `balanceOf(self, tokenId)`. After the mint
-///      returns, the test asserts the two were equal mid-callback - which holds iff
+///      returns, the test asserts that the two were equal mid-callback. This holds iff
 ///      the contract writes `totalSupply` before `_mint` (the read-only-reentrancy guarantee).
 contract MidCallbackSnapshotReceiver is IERC1155Receiver {
     IntexNFT1155 public immutable nft;
@@ -33,7 +33,7 @@ contract MidCallbackSnapshotReceiver is IERC1155Receiver {
         external
         returns (bytes4)
     {
-        // Snapshot the last id in the batch - the mid-callback inconsistency exists
+        // Snapshot the last id in the batch. The mid-callback inconsistency exists
         // after the full _mint loop, before the post-loop totalSupply write.
         uint256 last = ids[ids.length - 1];
         observedTotalSupply = nft.totalSupply(last);
@@ -92,7 +92,8 @@ contract IntexNFT1155Test is Test {
         assertEq(data.calledAt, 0);
         assertEq(data.totalSupply, 0);
         assertEq(data.issuedUnits, ISSUED_UNITS);
-        // callPeriod is stored verbatim; defaulting/bounding is the caller's (intexfactory) responsibility.
+        // The contract stores callPeriod verbatim. Defaulting/bounding is the caller's
+        // (intexfactory) responsibility.
         assertEq(data.callTrigger.callNoticePeriod, callPeriod);
     }
 
@@ -121,8 +122,9 @@ contract IntexNFT1155Test is Test {
         assertEq(nft.seriesIdsByWorldwideDay(SERIES_ID_2_DAY)[0], SERIES_ID_2);
     }
 
-    /// @dev The day is stored verbatim, not inferred from `seriesId`: prove it with distinct values so a future
-    ///      composite seriesId (many series per day) records the real day. Fails if provenance reads `params.seriesId`.
+    /// @dev The contract stores the day verbatim and does not infer it from `seriesId`. The test
+    ///      proves this with distinct values, so that a future composite seriesId (many series per
+    ///      day) records the real day. Fails if provenance reads `params.seriesId`.
     function test_CreateSeries_StoresRealDay_DistinctFromSeriesId() public {
         bytes14 seriesId = "20250505-TRY-U";
         uint32 worldwideDay = 20260101;
@@ -319,8 +321,8 @@ contract IntexNFT1155Test is Test {
         vm.prank(bridger);
         nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
 
-        // Called freezes owner-to-owner transfers: the settlement obligation
-        // stays with the owner and cannot be passed on.
+        // Called freezes owner-to-owner transfers. The settlement obligation
+        // stays with the owner, and the owner cannot transfer it.
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferOnCalledForbidden.selector, TOKEN_ID_1));
         nft.safeTransferFrom(user, user2, TOKEN_ID_1, 3, "");
@@ -365,9 +367,10 @@ contract IntexNFT1155Test is Test {
         vm.stopPrank();
     }
 
-    /// @dev The Settled id is the series id with the bit above the 14-byte space set. That keeps the two
-    ///      classes apart by construction rather than by hash luck, so the widest possible series id must
-    ///      still land below the tag - widen `bytes14` and this is the test that has to fail first.
+    /// @dev The Settled id is the series id with the bit above the 14-byte space set. That keeps
+    ///      the two classes apart by construction rather than by hash luck. So the widest possible
+    ///      series id must still land below the tag. If a change widens `bytes14`, this is the
+    ///      test that has to fail first.
     function test_TokenIds_ClassesCannotOverlap() public view {
         bytes14 widest = bytes14(type(uint112).max);
         uint256 tag = 1 << 112;
@@ -561,7 +564,8 @@ contract IntexNFT1155Test is Test {
         assertEq(nft.balanceOf(user, TOKEN_ID_1), 10);
     }
 
-    /// @dev A notice period near `type(uint32).max` pushes the deadline past uint32; nothing may overflow.
+    /// @dev A notice period near `type(uint32).max` pushes the deadline past uint32. Nothing may
+    ///      overflow.
     function test_Deadline_BeyondUint32_DoesNotOverflow() public {
         _createSeries(SERIES_ID_1_DAY, type(uint32).max);
         vm.startPrank(bridger);
@@ -665,7 +669,8 @@ contract IntexNFT1155Test is Test {
         nft.issueIntex(user, 40_000, SERIES_ID_1);
         vm.stopPrank();
 
-        // 80_000 would wrap to 14_464 under the old uint16 field; the widened field must not truncate.
+        // 80_000 would wrap to 14_464 under the old uint16 field. The widened field must not
+        // truncate.
         IIntexNFT1155.OwnerBalances memory bals = nft.ownerBalances(SERIES_ID_1, user);
         assertEq(bals.issuedUnits, 80_000);
         assertEq(bals.settledUnits, 0);
@@ -673,7 +678,7 @@ contract IntexNFT1155Test is Test {
 
     function test_Settle_OnlySettlementRole() public {
         _createSeries(SERIES_ID_1_DAY, 0);
-        // Bridger has RELAYER_ROLE only - settle must reject.
+        // Bridger has RELAYER_ROLE only. Settle must reject.
         vm.expectRevert();
         vm.prank(bridger);
         nft.settleIntex(SERIES_ID_1, user, 1);
@@ -912,7 +917,8 @@ contract IntexNFT1155Test is Test {
 
         nft.sendToGemFactory(user, SERIES_ID_1, 4);
 
-        // Deliberate: the cap is enforced against live totalSupply, so parking frees mint room.
+        // Deliberate: the contract enforces the cap against live totalSupply, so parking frees mint
+        // room.
         vm.prank(bridger);
         nft.issueIntex(user2, 4, SERIES_ID_1);
         assertEq(nft.totalSupply(TOKEN_ID_1), 10);
@@ -928,7 +934,8 @@ contract IntexNFT1155Test is Test {
         nft.settleIntex(SERIES_ID_1, user, 5);
 
         uint256 sTok = nft.settledTokenId(SERIES_ID_1);
-        // crosschainBurn is gated by RELAYER_ROLE; bridger has it. Even so, Settled ids are rejected.
+        // RELAYER_ROLE gates crosschainBurn, and bridger has it. Even so, the contract rejects
+        // Settled ids.
         vm.prank(bridger);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeOnSettledForbidden.selector, sTok));
         nft.crosschainBurn(user, user, sTok, 1);
@@ -957,7 +964,7 @@ contract IntexNFT1155Test is Test {
         assertEq(allSeries[1], TOKEN_ID_2);
     }
 
-    /// @dev A batch that names one token id twice must move the whole amount: the hook walks the
+    /// @dev A batch that names one token id twice must move the whole amount. The hook walks the
     ///      pair, so a mishandled duplicate would double-count or drop half the transfer.
     function test_BatchTransferWithDuplicateTokenIds() public {
         _createSeries(SERIES_ID_1_DAY, 0);
@@ -1035,7 +1042,7 @@ contract IntexNFT1155Test is Test {
         assertEq(receiver.observedBalance(), 4, "settled balance updated mid-callback");
         assertEq(receiver.observedTotalSupply(), 4, "settled totalSupply must equal balance mid-callback");
 
-        // And the Issued burn must have happened before the Settled mint - so the
+        // And the Issued burn must have happened before the Settled mint. So the
         // Issued totalSupply read inside the callback would also be consistent.
         assertEq(nft.totalSupply(TOKEN_ID_1), iTokSupplyBefore - 4, "issued totalSupply decreased before settled mint");
         assertEq(nft.totalSupply(sTok), 4);

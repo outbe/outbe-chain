@@ -59,8 +59,8 @@ impl ValidatorSet<'_> {
     }
 
     /// Records a voluntary withdrawal and applies the complete coupled lifecycle
-    /// transition. Readiness is consumed on demotion, and a jailed validator may
-    /// leave only after fully unstaking.
+    /// transition. A demotion consumes readiness. A jailed validator may leave
+    /// only after it fully unstakes.
     pub fn record_unstake(
         &mut self,
         addr: Address,

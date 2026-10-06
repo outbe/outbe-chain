@@ -46,7 +46,7 @@ library DeployProxy {
         return escrow;
     }
 
-    /// @dev The router is not chain-pinned; targets are a runtime registry. Callers register
+    /// @dev The router is not chain-pinned. Targets are a runtime registry. Callers register
     ///      targets via `addTarget` after wiring the peer.
     function originRouter(address bridge, address delegate) internal returns (OriginRouter) {
         OriginRouter impl = new OriginRouter(bridge);

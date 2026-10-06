@@ -189,9 +189,9 @@ pub fn sign(
 }
 
 /// Creates the final network genesis from one approved seeded genesis and the
-/// exact measurements of an already signed bundle. The only JSON mutation is
-/// insertion of `config.teeAttestationV1`; the measured descriptor remains
-/// rooted in the unchanged chain identity and epoch-0 committee.
+/// exact measurements of an already signed bundle. The only JSON mutation
+/// inserts `config.teeAttestationV1`. The measured descriptor remains rooted
+/// in the unchanged chain identity and epoch-0 committee.
 pub fn finalize_genesis(
     repo_root: &Path,
     network: SgxReleaseNetwork,

@@ -5,9 +5,10 @@ pragma solidity 0.8.30;
  * @title IntexNFT1155BridgeCodec
  * @author Outbe
  * @notice Encode/decode for the `IntexNFT1155Bridge` ERC-7786 wire body.
- * @dev Wire layout: `[bodyVersion(1)][msgType(1)][abi.encode(payload)]`, single-pass `abi.encode`/`abi.decode`
- *      over named structs. `MAX_BATCH_SIZE` caps the decoded array length; address well-formedness and
- *      the zero-recipient reject stay with the adapter (it owns the crosschainMint semantics).
+ * @dev Wire layout: `[bodyVersion(1)][msgType(1)][abi.encode(payload)]`, single-pass
+ *      `abi.encode`/`abi.decode` over named structs. `MAX_BATCH_SIZE` caps the decoded array
+ *      length. Address well-formedness and the zero-recipient reject stay with the adapter (it owns
+ *      the crosschainMint semantics).
  */
 library IntexNFT1155BridgeCodec {
     /// @notice Active body version emitted by the encoders and required by every decoder.
@@ -19,13 +20,16 @@ library IntexNFT1155BridgeCodec {
     /// @notice `msgType` for a multi-recipient batch (`MultiPayload`).
     uint8 internal constant SEND_MULTI = 2;
 
-    /// @notice Items one bridge message may carry. Narrower than the other payload caps because a rejected
-    ///         item is recorded with its revert bytes, the dearest per-item work anywhere in the protocol.
-    /// @dev Enforced on the inbound decoded array length here and on the outbound crosschainBurn loop in the
-    ///      adapter, so an over-size batch fails fast on the source chain before paying a bridge fee.
+    /// @notice Items one bridge message may carry. Narrower than the other payload caps because a
+    ///         rejected item is recorded with its revert bytes, the dearest per-item work anywhere
+    ///         in the protocol.
+    /// @dev Enforced on the inbound decoded array length here and on the outbound crosschainBurn
+    ///      loop in the adapter. Thus an over-size batch fails fast on the source chain before
+    ///      paying a bridge fee.
     uint256 internal constant MAX_BATCH_SIZE = 16;
 
-    /// @notice Length of the `[bodyVersion(1)][msgType(1)]` header that precedes `abi.encode(body)`.
+    /// @notice Length of the `[bodyVersion(1)][msgType(1)]` header that precedes
+    ///         `abi.encode(body)`.
     uint256 internal constant HEADER_LEN = 2;
 
     /// @notice Single-recipient, multi-token batch body (`SEND`).
@@ -65,7 +69,7 @@ library IntexNFT1155BridgeCodec {
     error ArrayLengthMismatch();
 
     /// @notice The body is not the canonical `abi.encode` of the routed payload type. `abi.decode`
-    ///         is permissive - it will misread a wrong-schema body (e.g. a `MultiPayload` encoding
+    ///         is permissive. It will misread a wrong-schema body (e.g. a `MultiPayload` encoding
     ///         routed as `SEND`) into a garbage payload, and it ignores trailing bytes. Re-encoding
     ///         the decoded value and requiring an exact match closes both, so a mismatched or
     ///         padded packet fails closed instead of crosschain-minting to a wrong recipient.
@@ -85,10 +89,12 @@ library IntexNFT1155BridgeCodec {
         return abi.encodePacked(BODY_VERSION_V1, SEND_MULTI, abi.encode(_payload));
     }
 
-    /// @notice Decode + validate a `SEND` body. Reverts {UnsupportedBodyVersion} on a non-V1
-    ///         header, {MalformedBody} on a non-canonical/wrong-schema body, {ArrayLengthMismatch}
-    ///         on unequal tokenId/units arrays, and {BatchTooLarge} past the cap. Address
-    ///         well-formedness is the adapter's check (it casts + crosschain-mints).
+    /// @notice Decode + validate a `SEND` body. Reverts with:
+    ///         - {UnsupportedBodyVersion} on a non-V1 header.
+    ///         - {MalformedBody} on a non-canonical/wrong-schema body.
+    ///         - {ArrayLengthMismatch} on unequal tokenId/units arrays.
+    ///         - {BatchTooLarge} past the cap.
+    ///         Address well-formedness is the adapter's check (it casts + crosschain-mints).
     /// @param _message The full inbound wire body (including the 2-byte header).
     /// @return payload The decoded, length- and size-validated `BatchPayload`.
     function decodeBatch(bytes calldata _message) internal pure returns (BatchPayload memory payload) {

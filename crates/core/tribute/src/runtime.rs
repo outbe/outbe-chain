@@ -466,8 +466,8 @@ impl TributeContract<'_> {
     }
 
     /// Freezes the bounded Tribute projection after the WWD and its CE
-    /// collection have both been sealed. The root must come from the
-    /// terminal CE lifecycle; callers cannot replace an already sealed value.
+    /// collection are both sealed. The root must come from the terminal CE
+    /// lifecycle. Callers cannot replace an already sealed value.
     pub fn seal_pre_admission(
         &mut self,
         day: WorldwideDay,

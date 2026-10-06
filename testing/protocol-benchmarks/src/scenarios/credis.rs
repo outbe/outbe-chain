@@ -136,8 +136,9 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(Bytes, U256), String> {
         .write(&ISSUANCE_ISO, U256::from(43_000))
         .map_err(|error| error.to_string())?;
     // The elected threshold anchor must be a registered reference currency. This
-    // scenario anchors to the issuance currency, whose COEN pair is already seeded
-    // above. Issuance also requires that pair's previous closed UTC-day VWAP.
+    // scenario anchors to the issuance currency. The code above already seeds the
+    // COEN pair of that currency. Issuance also requires that pair's previous closed
+    // UTC-day VWAP.
     let oracle = OracleContract::new(storage.clone());
     oracle
         .reference_currencies

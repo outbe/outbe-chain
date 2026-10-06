@@ -130,16 +130,16 @@ impl ValidatorSet<'_> {
 
     /// Returns the lifecycle from the fully validated validator aggregate.
     ///
-    /// Hydrating the complete aggregate is intentional: lifecycle payloads own
-    /// registry identity, stake, P2P data, and history, so every query observes
-    /// the same coupled-field and index invariants.
+    /// Hydrating the complete aggregate is intentional. Lifecycle payloads own
+    /// registry identity, stake, P2P data, and history. Every query therefore
+    /// observes the same coupled-field and index invariants.
     pub fn validator_lifecycle(&self, addr: Address) -> Result<ValidatorLifecycle> {
         Ok(self.validator_state(addr)?.into_lifecycle())
     }
 
     /// Writes only changed fields of an already-decoded validator aggregate.
-    /// Registry identity is deliberately excluded: registration, re-registration,
-    /// and cleanup own the dense-index and consensus-key invariants.
+    /// This function deliberately excludes registry identity: registration,
+    /// re-registration, and cleanup own the dense-index and consensus-key invariants.
     pub(crate) fn persist_validator_state_delta(
         &mut self,
         before: &ValidatorState,
@@ -351,8 +351,8 @@ impl ValidatorSet<'_> {
     }
 
     /// Returns validators eligible for the NEXT consensus committee: `Active`
-    /// plus readiness-confirmed `Joining`. `WaitingForReadiness`, `Exiting`, and
-    /// both jailed phases are excluded. Boundary activation grants each included
+    /// plus readiness-confirmed `Joining`. This set excludes `WaitingForReadiness`,
+    /// `Exiting`, and both jailed phases. Boundary activation grants each included
     /// joiner a share while changing it to `Active` atomically.
     pub fn get_reshare_target_set(&self) -> Result<Vec<ValidatorRecord>> {
         let all = self.get_validators_matching(ValidatorLifecycle::is_reshare_target)?;
@@ -368,19 +368,20 @@ impl ValidatorSet<'_> {
         Ok(target)
     }
 
-    /// Returns validators with `status == PENDING` - staked joiners admitted to the
-    /// validator set but not yet granted a threshold share. Used to admit them to
-    /// consensus P2P as SECONDARY peers so they can sync to head before the reshare
-    /// that makes them signers; they are NOT consensus participants (no share).
+    /// Returns validators with `status == PENDING`. These are staked joiners
+    /// admitted to the validator set but not yet granted a threshold share. Used to
+    /// admit them to consensus P2P as SECONDARY peers, so they can sync to head
+    /// before the reshare that makes them signers. They are NOT consensus
+    /// participants (no share).
     pub fn get_pending_validators(&self) -> Result<Vec<ValidatorRecord>> {
         self.get_validators_matching(ValidatorLifecycle::is_pending)
     }
 
     /// Returns validators admitted to consensus P2P as secondary peers:
     /// `WaitingForStake`, both pending phases, and both jailed phases. This view
-    /// controls network admission only; the current-participant predicate remains
-    /// independently gated by a live share. Peers without P2P information are
-    /// dropped downstream.
+    /// controls network admission only. A live share independently gates the
+    /// current-participant predicate. Downstream code drops peers without P2P
+    /// information.
     pub fn get_admitted_non_consensus_validators(&self) -> Result<Vec<ValidatorRecord>> {
         self.get_validators_matching(ValidatorLifecycle::is_secondary_admission)
     }
@@ -405,7 +406,7 @@ impl ValidatorSet<'_> {
 
     /// number of validators currently in the `REGISTERED` (self-registered,
     /// not-yet-staked) state. Used to bound the free, permissionless
-    /// self-registration Sybil surface; see [`MAX_SELF_REGISTERED_UNSTAKED`].
+    /// self-registration Sybil surface. See [`MAX_SELF_REGISTERED_UNSTAKED`].
     pub fn registered_count(&self) -> Result<u32> {
         let count: u32 = self
             .validator_addresses_matching(ValidatorLifecycle::is_registered_status)?
@@ -449,7 +450,7 @@ impl ValidatorSet<'_> {
         self.active_consensus_set_hash.read()
     }
 
-    /// Returns the current epoch as `u64`; an oversized persisted value is
+    /// Returns the current epoch as `u64`. An oversized persisted value is
     /// deterministic state corruption and therefore fails closed.
     pub fn current_epoch_u64(&self) -> Result<u64> {
         self.epoch_number

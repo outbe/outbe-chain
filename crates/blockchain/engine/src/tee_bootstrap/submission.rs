@@ -1,8 +1,8 @@
 use super::*;
 
 /// Build this validator's complete block-1 OST3 submission. Production quote
-/// generation is available only through the NodeHost-authorized enclave and
-/// collateral acquisition is host-only startup work. The separate development
+/// generation is available only through the NodeHost-authorized enclave.
+/// Collateral acquisition is host-only startup work. The separate development
 /// mode signs an explicit GramineDirectDev intent and never creates a DCAP
 /// verdict or hardware-attestation claim.
 pub fn build_local_tee_bootstrap_submission_v2(

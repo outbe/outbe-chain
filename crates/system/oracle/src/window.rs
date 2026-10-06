@@ -19,7 +19,7 @@ const VERSION_SHIFT: usize = LOOKBACK_SHIFT + 32;
 const PACKED_BITS: usize = VERSION_SHIFT + 32;
 const _: () = assert!(MAX_SNAPSHOT_RETENTION_SECONDS < 1 << 32);
 
-/// Snapshots cover `[cutoff - lookback_seconds, cutoff)`; cutoffs fall every
+/// Snapshots cover `[cutoff - lookback_seconds, cutoff)`. Cutoffs fall every
 /// `update_interval_seconds` from the UTC epoch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VwapPolicy {
@@ -37,12 +37,15 @@ pub const DEFAULT_VWAP_POLICY: VwapPolicy = VwapPolicy {
 
 /// The policy the protocol constants pin for this network.
 ///
-/// This is the only pricing policy the node can price: it is read from the
-/// compiled protocol constants (genesis values are validated and, outside the
-/// `test-protocol-overrides` build, ignored), it has no on-chain record and no
-/// activation height, and every snapshot id names it. Changing it is a binary
-/// rollout that invalidates every outstanding snapshot authorization; there is
-/// no in-protocol activation path.
+/// This is the only pricing policy the node can price:
+///
+/// - It comes from the compiled protocol constants. Genesis values are validated
+///   and, outside the `test-protocol-overrides` build, ignored.
+/// - It has no on-chain record and no activation height.
+/// - Every snapshot id names it.
+///
+/// Changing it is a binary rollout that invalidates every outstanding snapshot
+/// authorization. There is no in-protocol activation path.
 pub fn active_vwap_policy() -> VwapPolicy {
     VwapPolicy {
         policy_version: outbe_chain_constants::get_vwap_policy_version(),

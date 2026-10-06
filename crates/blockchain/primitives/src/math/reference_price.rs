@@ -23,7 +23,7 @@ pub fn is_coen_iso_market(pair: AddressPair) -> bool {
     )
 }
 
-/// Decimals each side of a market is quoted in; both sides match today.
+/// Decimals each side of a market is quoted in. Both sides match today.
 pub fn pair_scales(pair: AddressPair) -> (u8, u8) {
     if is_coen_iso_market(pair) {
         (6, 6)

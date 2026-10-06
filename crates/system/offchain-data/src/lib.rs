@@ -89,7 +89,7 @@ impl PreparedReceipt {
     }
 }
 
-/// A fully decoded and simulated block. Constructed only after prepare succeeds.
+/// A fully decoded and simulated block. Only a successful prepare constructs it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreparedBlock {
     checkpoint: ProjectionCheckpoint,
@@ -362,7 +362,7 @@ enum NextBlock {
     AlreadyApplied(ProjectionCheckpoint),
 }
 
-/// Stable projector failures; no backend-specific type crosses this boundary.
+/// Stable projector failures. No backend-specific type crosses this boundary.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum ProjectionError {

@@ -100,11 +100,11 @@ pub struct GemData {
     pub issued_at: u64,
 
     /// Coen price level (Reference Currency) whose breach arms a Call Event.
-    /// `entry_price_minor * (1 + call_rate)`; call rate is 128% for agent gems.
+    /// `entry_price_minor * (1 + call_rate)`. The call rate is 128% for agent gems.
     #[attribute(order = 9)]
     pub call_price_minor: U256,
 
-    /// Block timestamp when the gem was force-called; `0` until Called.
+    /// Block timestamp when the gem was force-called. The value is `0` until Called.
     #[attribute(order = 10, default = 0)]
     pub called_at: u64,
 
@@ -114,23 +114,23 @@ pub struct GemData {
     #[attribute(order = 11, default = 0)]
     pub call_notice_period_seconds: u32,
 
-    /// Call-price markup percent (snapshot of `CALL_RATE` at issuance);
+    /// Call-price markup percent (snapshot of `CALL_RATE` at issuance).
     /// `call_price_minor = entry_price_minor * (100 + call_rate) / 100`
     /// (128 => 2.28x).
     #[attribute(order = 12, default = 0)]
     pub call_rate: u16,
 
     /// Call-trigger evaluation window in seconds (snapshot of `CALL_WINDOW` at
-    /// issuance); the trailing span scanned for Call Price breaches.
+    /// issuance). It is the trailing span scanned for Call Price breaches.
     #[attribute(order = 13, default = 0)]
     pub call_window_seconds: u32,
 
-    /// Breach threshold in seconds (snapshot of `CALL_THRESHOLD` at issuance);
-    /// divided by 86400 to get the required breach-day count.
+    /// Breach threshold in seconds (snapshot of `CALL_THRESHOLD` at issuance).
+    /// It is divided by 86400 to get the required breach-day count.
     #[attribute(order = 14, default = 0)]
     pub call_threshold_seconds: u32,
 
-    /// Block timestamp when the gem was Settled; `0` until Settled.
+    /// Block timestamp when the gem was Settled. The value is `0` until Settled.
     #[attribute(order = 16, default = 0)]
     pub settled_at: u64,
 }
@@ -193,7 +193,7 @@ pub struct GemContract {
     pub call_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
 
     // --- Called buckets, and gems called before buckets, queued by the hour their notice
-    // period closes in. Calling is driven by price and expiry only by time, so the two
+    // period closes in. Price drives calling and only time drives expiry, so the two
     // stages stay separate.
     #[attribute(order = 20)]
     pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
@@ -201,7 +201,7 @@ pub struct GemContract {
     pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 22)]
     pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
-    /// Queue entry -> `(hour << 32) | slot`; 0 = not queued.
+    /// Queue entry -> `(hour << 32) | slot`. 0 = not queued.
     #[attribute(order = 23)]
     pub called_bucket_slot: outbe_primitives::storage::dsl::Map<U256, u64>,
     /// Held off the record so the head check costs no record load.
@@ -209,20 +209,20 @@ pub struct GemContract {
     pub called_deadline: outbe_primitives::storage::dsl::Map<U256, u64>,
 
     /// UTC day an unfinished call sweep is pinned to, so its later slices decide
-    /// against the prices it opened with. 0 = none in flight; a date key is never 0.
+    /// against the prices it opened with. 0 = none in flight. A date key is never 0.
     #[attribute(order = 25)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
 
-    // Genesis parameter-profile selector (0 = auto, 1 = dev, 2 = prod); see crate::config.
+    // Genesis parameter-profile selector (0 = auto, 1 = dev, 2 = prod). See crate::config.
     #[attribute(order = 26)]
     pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
 
-    /// Widest window ever issued in a currency; it only grows, so the span the scan
+    /// Widest window ever issued in a currency. It only grows, so the span the scan
     /// collects always covers a gem whose record outruns the live profile.
     #[attribute(order = 27)]
     pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    /// Slots ever used in a bucket; retired ones are zeroed in place, not compacted.
+    /// Slots ever used in a bucket. Retired ones are zeroed in place, not compacted.
     #[attribute(order = 28)]
     pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 29)]
@@ -250,12 +250,12 @@ pub struct GemContract {
 
     // --- Call buckets: gems issued for the same first full day under the same call terms
     // breach together, so they are called and forfeited together.
-    /// Gem id -> its bucket; zero for a gem issued before buckets existed.
+    /// Gem id -> its bucket. The value is zero for a gem issued before buckets existed.
     #[attribute(order = 36)]
     pub gem_bucket: outbe_primitives::storage::dsl::Map<U256, B256>,
     #[attribute(order = 37)]
     pub bucket_gem_count: outbe_primitives::storage::dsl::Map<B256, u32>,
-    /// `bucket_member_key(bucket, index)` -> gem id; swap-popped.
+    /// `bucket_member_key(bucket, index)` -> gem id. Entries are swap-popped.
     #[attribute(order = 38)]
     pub bucket_gems: outbe_primitives::storage::dsl::Map<B256, U256>,
     /// Gem id -> its index in its bucket.
@@ -274,7 +274,7 @@ pub struct GemContract {
     pub bucket_call_threshold_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
     #[attribute(order = 45)]
     pub bucket_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
-    /// Block timestamp the bucket was called; `0` until then.
+    /// Block timestamp the bucket was called. The value is `0` until then.
     #[attribute(order = 46)]
     pub bucket_called_at: outbe_primitives::storage::dsl::Map<B256, u64>,
 
@@ -290,10 +290,10 @@ pub struct GemContract {
     /// `bin_index_key(currency, bin, index)` -> bucket.
     #[attribute(order = 51)]
     pub bucket_bin_at: outbe_primitives::storage::dsl::Map<B256, B256>,
-    /// Bucket -> its index in its bin, plus one; 0 once it left the trie.
+    /// Bucket -> its index in its bin, plus one. The value is 0 once it left the trie.
     #[attribute(order = 52)]
     pub bucket_bin_index: outbe_primitives::storage::dsl::Map<B256, u32>,
-    /// `(bin << 32) | buckets of that bin still to visit`; 0 = start from the lowest bin.
+    /// `(bin << 32) | buckets of that bin still to visit`. 0 = start from the lowest bin.
     #[attribute(order = 53)]
     pub bucket_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
 }

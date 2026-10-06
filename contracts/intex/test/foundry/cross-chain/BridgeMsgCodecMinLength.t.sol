@@ -6,8 +6,8 @@ import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 
-/// The inbound length floors are hand-derived ABI arithmetic, so each is pinned against the
-/// smallest message its encoder can produce.
+/// The inbound length floors are hand-derived ABI arithmetic, so this test pins each one against
+/// the smallest message its encoder can produce.
 contract BridgeMsgCodecMinLengthTest is Test {
     function test_RefundFloorIsTheSmallestRealRefund() public pure {
         bytes memory smallest = BridgeMsgCodec.encodeRefundInstructions(20_250_101, 0, 1, 0, 0, new address[](0), 0, 0);

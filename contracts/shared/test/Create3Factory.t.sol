@@ -4,9 +4,9 @@ pragma solidity 0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {Create3Factory} from "../src/Create3Factory.sol";
 
-/// @dev Minimal contract used as deployment payload; its constructor arg is part of its init code,
-///      so two probes with different args have different init code (used to prove the deployed
-///      address is independent of init code).
+/// @dev Minimal contract that the tests use as deployment payload. Its constructor arg is part
+///      of its init code, so two probes with different args have different init code. The tests
+///      use this to prove that the deployed address is independent of init code.
 contract Probe {
     uint256 public immutable value;
 
@@ -78,9 +78,10 @@ contract Create3FactoryTest is Test {
     }
 
     function test_SameAddressAcrossWipe() public {
-        // A "wipe" is modeled by reverting all state and redeploying the factory + contract from
-        // scratch. As long as the factory lands at the same address (here: same deployer/nonce),
-        // the CREATE3 address is identical, since it does not depend on the contract init code.
+        // This test models a "wipe": it reverts all state and redeploys the factory + contract
+        // from scratch. As long as the factory lands at the same address (here: same
+        // deployer/nonce), the CREATE3 address is identical. The CREATE3 address does not depend
+        // on the contract init code.
         address predicted = factory.predict(alice, SALT);
 
         uint256 snap = vm.snapshotState();

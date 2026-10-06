@@ -479,8 +479,8 @@ impl CompressedTreeService {
     }
 
     /// Opens one exact-parent tree session over one immutable MDBX snapshot.
-    /// Every marker field is checked against `identity` before the session is
-    /// returned.
+    /// It checks every marker field against `identity` before it returns the
+    /// session.
     pub fn open_parent(
         &self,
         identity: ExactParentIdentity,
@@ -530,8 +530,8 @@ impl CompressedTreeService {
             .map_err(Into::into)
     }
 
-    /// Fetches an immutable exact candidate. A matching hash at another height
-    /// is rejected instead of being silently reinterpreted.
+    /// Fetches an immutable exact candidate. It rejects a matching hash at
+    /// another height and does not silently reinterpret it.
     pub fn candidate(
         &self,
         block_number: u64,

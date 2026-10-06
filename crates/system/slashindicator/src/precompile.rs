@@ -21,12 +21,12 @@ sol!(
 ///
 /// Each evidence verifier runs ~2+ BLS12-381 pairings plus ecrecover/storage
 /// reads. On the ZeroFee chain those would be near-free to spam, so this charges
-/// a heavy base proportional to that work - block gas then bounds how many
-/// evidence txs fit in one block, complementing the ACTIVE-validator ACL. The
-/// value is the single source of truth in
-/// [`OutbeProtocolSchedule::slash_indicator_vrf_evidence_base_gas`], read here
-/// rather than duplicated as a local literal. View methods and unknown selectors
-/// fall back to the flat default.
+/// a heavy base proportional to that work. Block gas then bounds how many
+/// evidence txs fit in one block. This complements the ACTIVE-validator ACL. The
+/// single source of truth for the value is
+/// [`OutbeProtocolSchedule::slash_indicator_vrf_evidence_base_gas`]. This function
+/// reads it there and does not duplicate it as a local literal. View methods and
+/// unknown selectors use the flat default.
 fn evidence_submit_base_gas() -> u64 {
     OutbeProtocolSchedule::default().slash_indicator_vrf_evidence_base_gas
 }

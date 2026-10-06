@@ -176,7 +176,7 @@ fn issue_zero_owner_rejected() {
 #[test]
 fn issue_no_oracle_setup_rejected() {
     // The reference currency is registered but its COEN pair is not, so the gem
-    // has no price to anchor its entry, floor and call to and issuing reverts.
+    // has no price to anchor its entry, floor and call to. Issuing reverts.
     with_storage(None, |storage| {
         let res = issue_at_live_rate(
             storage,
@@ -244,8 +244,8 @@ fn settle_wallet_settles_with_a_registered_asset() {
     });
     StorageHandle::enter(&mut provider, |storage| {
         // STABLE reports 840, which is the gem's reference currency, so it
-        // settles on the reference rail. Real vault interaction is covered by
-        // integration tests; here the router is stubbed.
+        // settles on the reference rail. Integration tests cover real vault
+        // interaction. Here the router is stubbed.
         runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
         assert_eq!(
             gem_api::get_gem(&storage, gem_id).unwrap().unwrap().state,

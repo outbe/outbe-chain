@@ -2,8 +2,8 @@
  * Fail if any registry method is absent from the generated contract ABIs.
  *
  * `pick()` / `pickEvent()` throw at module load, so importing the registries is
- * the whole check - it needs no RPC and no network. Run in CI whenever the mcp
- * sources or any generated `abi-export` artifact changes.
+ * the whole check. The check needs no RPC and no network. Run it in CI whenever
+ * the mcp sources or any generated `abi-export` artifact changes.
  */
 import { CONTRACTS } from "../src/registry.js";
 import * as intent from "../src/intent/registry.js";

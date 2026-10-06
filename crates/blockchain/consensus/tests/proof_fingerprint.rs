@@ -1,7 +1,7 @@
 //! V2 canonical fingerprint helpers.
 //!
-//! Locks the byte layout from. Any drift is a hard-fork-equivalent
-//! change to Rewards / Slash / certified-parent proof store key derivation.
+//! Locks the byte layout. Any drift is a hard-fork-equivalent change to how
+//! Rewards / Slash / the certified-parent proof store derive their keys.
 
 use alloy_primitives::{address, b256, B256};
 use commonware_codec::Encode;
@@ -117,7 +117,7 @@ fn invalid_vrf_evidence_hash_v2_is_concat_keccak() {
 #[test]
 fn outbe_consensus_proof_exports_canonical_fingerprint_helpers() {
     // Compile-time proof that the four helpers are reachable at crate root.
-    // Their type signatures are tested by being called with concrete inputs.
+    // Calls with concrete inputs test their type signatures.
     let _: fn(u64, &CommitteeSnapshot) -> B256 = committee_set_hash_v2;
     let _: fn(&[u8]) -> B256 = canonical_signer_set_hash;
     let _: fn(B256, B256) -> B256 = invalid_vrf_evidence_hash_v2;

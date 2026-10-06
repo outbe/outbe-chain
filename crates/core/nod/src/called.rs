@@ -1,7 +1,7 @@
 //! Daily call scan: force-calls Nod buckets off the Oracle's finalized
 //! per-UTC-day VWAPs, then forfeit-burns the Nods of a bucket whose notice
 //! period lapsed. The Cycle daily trigger pins the closed UTC day and runs the
-//! first slice; later CycleTicks continue the same day.
+//! first slice. Later CycleTicks continue the same day.
 //!
 //! One pass applies at most one transition per bucket, in lifecycle order, over
 //! two arms sharing one visit budget:
@@ -14,14 +14,14 @@
 //!   fire in one pass, since a bucket called now cannot also be a notice period
 //!   past its call.
 //!
-//! All four terms are sealed onto the bucket at issuance and read back from it
-//! here, so retuning a constant leaves every issued bucket on the terms it was
-//! issued with. Gem and intex give the same guarantee.
+//! Issuance seals all four terms onto the bucket, and this scan reads them back
+//! from it. Retuning a constant therefore leaves every issued bucket on the
+//! terms it was issued with. Gem and intex give the same guarantee.
 //!
-//! The breach rule needs no per-bucket streak state: the daily series is global
+//! The breach rule needs no per-bucket streak state. The daily series is global
 //! per currency, so one trailing window per currency decides every bucket
-//! denominated in it, and the count is recomputed from oracle history on every
-//! run rather than carried. Mirrors `outbe_gem::hooks::scan_and_call` and
+//! denominated in it. Every run recomputes the count from oracle history rather
+//! than carrying it. Mirrors `outbe_gem::hooks::scan_and_call` and
 //! `outbe_credisfactory::called::scan_and_call`, which evaluate the same shape.
 //!
 //! Calls count only days from `first_full_day` of the bucket's sealed `issued_at`.
@@ -57,13 +57,13 @@ pub(crate) const CALL_ARM_DONE: u32 = u32::MAX;
 /// `None` marks a day the pair published no reference price.
 type VwapWindow = Vec<(u32, Option<U256>)>;
 
-/// Schedule the day the Oracle has just finalized: open a Called sweep over it
+/// Schedule the day the Oracle has just finalized. Open a Called sweep over it
 /// and run its first slice, or queue it behind the sweep still in flight.
 ///
-/// Never returns `Err` for missing market data: the Cycle dispatcher propagates
+/// Never returns `Err` for missing market data. The Cycle dispatcher propagates
 /// a handler error out of the `CycleTick` system transaction, which fails the
-/// block, so an unregistered pair, an unpriced currency or an unfinalized day
-/// each degrade to "no transition" instead.
+/// block. An unregistered pair, an unpriced currency or an unfinalized day
+/// therefore each degrade to "no transition" instead.
 pub fn scan_and_call(
     ctx: &BlockRuntimeContext,
     scope: &ExecutionScope,
@@ -380,9 +380,9 @@ fn forfeit_arm(
     let now = ctx.block.timestamp;
     let mut forfeited: u32 = 0;
 
-    // Descending walk: removing a bucket swap-pops the tail into the hole, and
-    // the tail is already behind a descending cursor, so no live entry is
-    // skipped and none is visited twice.
+    // Descending walk: removing a bucket swap-pops the tail into the hole. The
+    // tail is already behind a descending cursor, so the walk skips no live
+    // entry and visits none twice.
     let completed = loop {
         if *visits >= MAX_NOD_CALL_VISITS_PER_BLOCK {
             break false;
@@ -470,12 +470,12 @@ pub(crate) fn sweep_failure(error: &PrecompileError) -> SweepFailure {
 /// window in the currency, so this takes only its own prefix.
 ///
 /// Days at or below the call price, and days with no published price, both
-/// simply fail to count, so the window absorbs up to `window - threshold` of
-/// either. The walk stops at the first UTC day preceding `first_full_day` of
-/// the bucket's sealed `issued_at`, the logical issuance time however late the
-/// right materializes, so days before issuance and the partial issuance UTC day
-/// do not count. The window is newest-first, so everything beyond that point
-/// is older still.
+/// simply fail to count. The window therefore absorbs up to `window - threshold`
+/// of either. The walk stops at the first UTC day preceding `first_full_day` of
+/// the bucket's sealed `issued_at`. That `issued_at` is the logical issuance
+/// time, however late the right materializes. Days before issuance and the
+/// partial issuance UTC day therefore do not count. The window is newest-first,
+/// so everything beyond that point is older still.
 fn breached_enough(window: &[(u32, Option<U256>)], terms: &CallTerms, start_day: u32) -> bool {
     let window_days = terms.call_window_seconds / SECS_PER_DAY;
     let threshold_days = terms.call_threshold_seconds / SECS_PER_DAY;
@@ -530,8 +530,8 @@ fn mark_called(
 /// Forfeit-burns up to `budget` of a lapsed bucket's remaining unpaid Nods, newest
 /// first. Returns how many were burned.
 ///
-/// A bucket holding more members than the budget resumes on the next run, which
-/// cannot change an outcome: the deadline has already passed and settlement is
+/// A bucket holding more members than the budget resumes on the next run. The
+/// resume cannot change an outcome. The deadline has already passed and settlement is
 /// closed, so nothing can rescue the remainder. Removing the last member deletes
 /// the bucket body and drops it from the called list.
 ///
@@ -539,8 +539,8 @@ fn mark_called(
 /// early and keeps the members already burned.
 ///
 /// Each burned load returns to the Promis Reserve. Lysis drew it out of the day
-/// limit and only mining converts it into Gratis, so a load that is destroyed
-/// unmined would otherwise leave the reserve with nothing minted against it.
+/// limit, and only mining converts it into Gratis. Without this return, a load
+/// destroyed unmined would leave the reserve with nothing minted against it.
 /// The credit is one accumulated write per pass, and the caller's checkpoint
 /// makes it atomic with the burns it accounts for.
 pub(crate) fn forfeit_members(
@@ -644,7 +644,7 @@ fn window_for(
     }
     let mut window = Vec::new();
     if let Some(pair_index) = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso_code)? {
-        // Widest of the current constant and anything ever armed: a bucket keeps
+        // Widest of the current constant and anything ever armed. A bucket keeps
         // the window it was armed with, so a narrowed constant must not shorten
         // the span the scan collects for it.
         let window_days = nod

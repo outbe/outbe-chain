@@ -19,8 +19,8 @@ use crate::{
     marshal_types::FollowMarshalActor,
 };
 
-/// Real mailbox with an unstarted actor: its progress query stays pending until
-/// the actor is dropped. No replacement mailbox or production test override.
+/// Real mailbox with an unstarted actor. Its progress query stays pending until
+/// the test drops the actor. No replacement mailbox or production test override.
 async fn pending_marshal(
     context: &deterministic::Context,
 ) -> (FollowMarshalActor<deterministic::Context>, MarshalMailbox) {
@@ -59,7 +59,7 @@ async fn pending_marshal(
     )
     .await
     .unwrap();
-    // Block and certificate codec configs differ; retain the same storage
+    // Block and certificate codec configs differ. Keep the same storage
     // parameters while supplying the block codec's unit config.
     let base = archive_config(
         "blocks",

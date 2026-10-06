@@ -6,8 +6,8 @@ impl OcompTopology {
         self.cfg.ocomp_worker_port(slot, 0)
     }
 
-    /// Stop only one selected node's currently owned external clients. Every
-    /// owner is checked before the first stop; no protocol fault is recorded.
+    /// Stop only one selected node's currently owned external clients. This
+    /// checks every owner before the first stop. It records no protocol fault.
     #[cfg(feature = "ocomp-integration")]
     pub(crate) fn stop_node_facing_roles_for_snapshot(
         &mut self,
@@ -235,7 +235,7 @@ impl OcompTopology {
         self.ensure_validator_roles_alive()
     }
 
-    /// Stop only the compute clients; the synchronized FullNode process and
+    /// Stop only the compute clients. The synchronized FullNode process and
     /// durable domain remain intact for validator-mode promotion.
     #[cfg(feature = "ocomp-integration")]
     pub fn stop_keyless_full_node_roles(&mut self, validator_index: u8) -> Result<()> {
@@ -257,7 +257,7 @@ impl OcompTopology {
 
     /// Arm the test-only local-result mutation for one keyless FullNode job.
     /// The production binary claims and binds this empty marker to the first
-    /// observed JobId; the harness never supplies a digest or result payload.
+    /// observed JobId. The harness never supplies a digest or result payload.
     #[cfg(feature = "ocomp-integration")]
     pub fn arm_keyless_full_node_result_mismatch(&self, validator_index: u8) -> Result<PathBuf> {
         let root = self
@@ -284,8 +284,8 @@ impl OcompTopology {
     }
 
     /// Start the whole selected cohort before waiting for any one worker.
-    /// This preserves the single-worker restart contract without serial startup
-    /// sleeps letting the first workers finish before the last one is launched.
+    /// This preserves the single-worker restart contract. It avoids serial startup
+    /// sleeps that let the first workers finish before the last one launches.
     #[cfg(feature = "ocomp-integration")]
     pub(crate) fn restart_worker_cohort(&mut self, workers: &[(u8, u32)]) -> Result<()> {
         eyre::ensure!(
@@ -527,7 +527,7 @@ impl OcompTopology {
                 let status = process.guard.stop_and_reap()?;
                 // These external clients may use the OS default SIGTERM
                 // handler. Only accept that signal when we sent the stop to
-                // this live incarnation; an earlier crash is not cleanup.
+                // this live incarnation. An earlier crash is not cleanup.
                 eyre::ensure!(
                     status.success() || (before.is_none() && status.signal() == Some(15)),
                     "OCOMP child PID {} exited with {status}",

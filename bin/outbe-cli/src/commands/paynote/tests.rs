@@ -546,7 +546,7 @@ async fn deposited_note_partial_spend_and_saved_change_consume_real_proofs() {
     assert!(!artifact.contains(&format!("{:#x}", change.spend_key)));
     assert!(!artifact.contains(&format!("{:#x}", n.spend_key)));
 
-    // The command's deposit receipt is mocked; consumption runs the production
+    // The command's deposit receipt is mocked. Consumption runs the production
     // cross-module API and real frozen verifier against the corresponding pool.
     let mut provider = HashMapStorageProvider::new(CHAIN);
     seed_pool(&mut provider, CHAIN, tree.leaves());

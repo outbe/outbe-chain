@@ -3,7 +3,7 @@
 //! The precompile is called through `transact_system_call` with
 //! `SYSTEM_ADDRESS` as the EVM caller. It decodes a versioned
 //! [`SystemTxInputV2`](crate::system_tx::SystemTxInputV2) payload and routes to
-//! the begin_block system tx body so runtime events are emitted through the
+//! the begin_block system tx body. Thus runtime events are emitted through the
 //! EVM journal and become receipt-visible.
 
 use crate::system_tx::SystemTxInputV2;

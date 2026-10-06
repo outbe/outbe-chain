@@ -243,8 +243,8 @@ pub(crate) struct LocalResultsAudit {
 }
 
 /// Authenticate every surviving local result, including retired jobs absent
-/// from the live canonical inventory. Open the native reader once; its initial
-/// whole-directory validation must not be repeated for every result.
+/// from the live canonical inventory. Open the native reader once. Do not repeat
+/// its initial whole-directory validation for every result.
 /// Callback observations remain provisional until the entire traversal succeeds.
 pub(crate) fn verify_present_local_results(
     state: &CanonicalState<'_>,

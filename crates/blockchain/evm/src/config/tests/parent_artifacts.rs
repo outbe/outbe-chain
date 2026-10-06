@@ -48,7 +48,7 @@ impl HeaderProvider for TestHeaderProvider {
 /// cache-first lookup. When the bridge cache holds an entry
 /// keyed by exact `(block_number, block_hash)`, the provider must return
 /// it even if no Reth header is reachable yet. This is the proposer/
-/// validator fast-path before the import pipeline has indexed the parent.
+/// validator fast-path before the import pipeline indexes the parent.
 #[test]
 fn accounted_parent_artifact_provider_uses_cache_when_provider_header_is_not_visible_yet() {
     let bridge = ConsensusExecutionBridge::new();

@@ -14,16 +14,17 @@ pub struct IssuanceParams {
     pub worldwide_day: WorldwideDay,
     pub issued_units: u32,
     pub promis_load_minor: u128,
-    /// Entry price (per-unit, reference ISO stable-units, 1e6); cost/floor/call derive from it.
+    /// Entry price (per-unit, reference ISO stable-units, 1e6). Cost/floor/call derive from it.
     pub entry_price_minor: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
     /// Auction winners: per-address issue recipients for ISSUANCE_INSTRUCTIONS.
     pub recipients: Vec<Address>,
     pub units: Vec<U256>,
-    /// Source chain of each winner (parallel to `recipients`); routes each issue to its chain.
+    /// Source chain of each winner (parallel to `recipients`). It routes each issue to its chain.
     pub recipient_chains: Vec<u32>,
-    /// Every target chain of the day's snapshot; each gets an ISSUANCE (empty recipients = create only).
+    /// Every target chain of the day's snapshot. Each chain gets an ISSUANCE
+    /// (empty recipients = create only).
     pub snapshot_chains: Vec<u32>,
 }
 
@@ -36,7 +37,7 @@ pub struct IntexFactoryContract {
     #[attribute(order = 1)]
     pub mine_seq: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    // Call-price bin index the daily Called scan walks; a series enters it at issuance.
+    // Call-price bin index the daily Called scan walks. A series enters it at issuance.
     #[attribute(order = 6)]
     pub call_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
     #[attribute(order = 7)]
@@ -47,7 +48,7 @@ pub struct IntexFactoryContract {
     #[attribute(order = 9)]
     pub call_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
 
-    // Genesis parameter-profile selector (0 = auto, 1 = dev, 2 = prod); see crate::config.
+    // Genesis parameter-profile selector (0 = auto, 1 = dev, 2 = prod). See crate::config.
     #[attribute(order = 10)]
     pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
 
@@ -68,12 +69,12 @@ pub struct IntexFactoryContract {
     /// `keccak256(iso_be16 ++ worldwide_day_be32 ++ index_be32)` -> series_id word.
     #[attribute(order = 19)]
     pub call_group_members: outbe_primitives::storage::dsl::Map<B256, U256>,
-    /// `scoped(iso, worldwide_day)` -> the bin holding the group; valid while it has members.
+    /// `scoped(iso, worldwide_day)` -> the bin holding the group. Valid while it has members.
     #[attribute(order = 20)]
     pub call_group_bin: outbe_primitives::storage::dsl::Map<u64, u32>,
 
     // UTC day an unfinished call sweep is pinned to, so its later slices decide
-    // against the prices it opened with. 0 = none in flight; a date key is never 0.
+    // against the prices it opened with. 0 = none in flight. A date key is never 0.
     #[attribute(order = 21)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
 
@@ -111,14 +112,14 @@ pub struct IntexFactoryContract {
     #[attribute(order = 33)]
     pub called_group_members: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    // Widest terms ever issued in a currency; both only move outwards, so the range
+    // Widest terms ever issued in a currency. Both only move outwards, so the range
     // they define covers series the live profile no longer names.
     #[attribute(order = 34)]
     pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
     #[attribute(order = 35)]
     pub min_call_threshold_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    /// Slots ever used in a bucket; retired ones are zeroed in place, not compacted.
+    /// Slots ever used in a bucket. Retired slots are zeroed in place, not compacted.
     #[attribute(order = 36)]
     pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 37)]
@@ -126,7 +127,7 @@ pub struct IntexFactoryContract {
     /// `keccak256(bucket_be32 ++ slot_be32)` -> `scoped(iso, worldwide_day)`.
     #[attribute(order = 38)]
     pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, u64>,
-    /// `scoped(iso, day)` -> `(bucket << 32) | slot`; 0 = not queued.
+    /// `scoped(iso, day)` -> `(bucket << 32) | slot`. 0 = not queued.
     #[attribute(order = 39)]
     pub called_group_slot: outbe_primitives::storage::dsl::Map<u64, u64>,
     #[attribute(order = 40)]
@@ -141,7 +142,8 @@ pub struct IntexFactoryContract {
     /// As `parked_message_cursor`, for the proceeds the factory refused.
     #[attribute(order = 46)]
     pub parked_proceeds_cursor: outbe_primitives::storage::dsl::Value<u64>,
-    /// Newest finalized UTC day (yyyymmdd) sent to the target registries; 0 before the first send.
+    /// Newest finalized UTC day (yyyymmdd) sent to the target registries. 0 before the first
+    /// send.
     #[attribute(order = 47)]
     pub vwap_sent_day: outbe_primitives::storage::dsl::Value<u32>,
 }

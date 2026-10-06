@@ -1,14 +1,19 @@
 //! Fixture material for the L2Registry zk gate that every positive Tribute
-//! offer path shares: the deterministic root-signing key of a fixture L2
-//! network, one real Demo Tribute proof builder bound to a single offer
-//! statement, and the unique draft/SU identifiers an offer needs.
+//! offer path shares:
 //!
-//! ZK verification is mandatory, so a fixture operator can only offer with a
-//! real proof for its own caller, host chain, day, currency, amount and draft,
-//! signed over the proof's Merkle root by the key the registry stores for its
-//! chain. Keeping all of that in one module is what makes the small governed
-//! fixtures, the genesis-seeded bulk owners, and the specialized `0xdead`
-//! scenario provably use the same key and the same proving recipe.
+//! - the deterministic root-signing key of a fixture L2 network
+//! - one real Demo Tribute proof builder bound to a single offer statement
+//! - the unique draft/SU identifiers an offer needs.
+//!
+//! ZK verification is mandatory. A fixture operator can only offer with a real
+//! proof for its own caller, host chain, day, currency, amount and draft. The
+//! proof must be signed over its Merkle root by the key that the registry
+//! stores for its chain. This module keeps all of that in one place. As a
+//! result, these users provably use the same key and the same proving recipe:
+//!
+//! - the small governed fixtures
+//! - the genesis-seeded bulk owners
+//! - the specialized `0xdead` scenario.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -44,7 +49,7 @@ pub(crate) const ZK_MERKLE_ROOT_NAMESPACE: &[u8] = b"_PSO_CHAIN_COMMITMENT_ROOT"
 /// Frozen circuit version declared for the basic test L2 57005.
 ///
 /// Proving uses the active `demo_tribute` marker (1.2.0) while the binding
-/// enables 1.1.0: the two frozen `circuit.vk` files are byte-identical, so the
+/// enables 1.1.0. The two frozen `circuit.vk` files are byte-identical, so the
 /// generated proof verifies under the enabled version's key.
 pub(crate) const FIXTURE_CIRCUIT_VERSION: &str = "1.1.0";
 
@@ -57,10 +62,10 @@ pub(crate) fn circuit_selector(l2_chain_id: u64) -> u32 {
 }
 
 /// The TributeDraft an offer commits to. This mirrors the enclave's
-/// `TributeDraftClaim` field for field (`base` is the whole-unit amount and
-/// `atto` the raw six-decimal remainder) so the proof's `nft_hash` is the hash
-/// the enclave recomputes from the decrypted payload and the cleartext day and
-/// currency.
+/// `TributeDraftClaim` field for field. `base` is the whole-unit amount and
+/// `atto` is the raw six-decimal remainder. Thus the proof's `nft_hash` is the
+/// hash that the enclave recomputes from the decrypted payload and the
+/// cleartext day and currency.
 #[derive(Entity)]
 struct TributeDraftClaim {
     #[outbe(id_seed)]
@@ -79,9 +84,10 @@ struct TributeDraftClaim {
     su_ids: Vec<B256>,
 }
 
-/// One offer's circuit selector and zk calldata fields. The proof, its Merkle
-/// root and the root signature are kept as bytes; the CLI path renders the hex
-/// the product client takes, the raw-ABI paths use the bytes directly.
+/// One offer's circuit selector and zk calldata fields. This struct keeps the
+/// proof, its Merkle root and the root signature as bytes. The CLI path renders
+/// the hex that the product client takes. The raw-ABI paths use the bytes
+/// directly.
 pub(crate) struct TributeOfferZk {
     pub tribute_draft_id_hex: String,
     pub su_hash_hex: String,
@@ -108,15 +114,15 @@ impl TributeOfferZk {
 }
 
 /// Everything one proof is bound to. The harness supplies the caller and the
-/// host chain id from chain state, and the draft fields from the exact
-/// plaintext the offer encrypts, so the proof matches what the node and the
-/// enclave recompute.
+/// host chain id from chain state. It supplies the draft fields from the exact
+/// plaintext that the offer encrypts. Thus the proof matches what the node and
+/// the enclave recompute.
 pub(crate) struct TributeOfferStatement<'a> {
-    /// EVM chain id of the chain that executes the offer; the signature binding.
+    /// EVM chain id of the chain that executes the offer. It is the signature binding.
     pub host_chain_id: u64,
-    /// Offer caller; the binding is derived from exactly this address.
+    /// Offer caller. The binding is derived from exactly this address.
     pub caller: Address,
-    /// The selected registered L2 chain id; its administrator need not be the caller.
+    /// The selected registered L2 chain id. Its administrator need not be the caller.
     pub l2_chain_id: u64,
     pub worldwide_day: u64,
     pub tribute_currency: u16,
@@ -128,9 +134,10 @@ pub(crate) struct TributeOfferStatement<'a> {
 
 /// Deterministic MinSig root-signing key of the L2 network with `chain_id`.
 ///
-/// One key per fixture chain id, reproducible across processes: the genesis
+/// One key per fixture chain id, reproducible across processes. The genesis
 /// seeding path and the governed registration path must store the same public
-/// key that later signs the offer's Merkle root, or the node rejects the offer.
+/// key that later signs the offer's Merkle root. Otherwise, the node rejects
+/// the offer.
 pub(crate) fn root_signing_keypair(chain_id: u64) -> (Private, G2) {
     let mut seed = [0x5b_u8; 32];
     seed[..8].copy_from_slice(&chain_id.to_be_bytes());
@@ -155,11 +162,11 @@ pub(crate) fn sign_merkle_root(chain_id: u64, merkle_root: &[u8; 32]) -> Vec<u8>
         .to_vec()
 }
 
-/// Positive control for a signed root: decode `public_key` (the key the registry
-/// actually stores) and `signature` as MinSig group elements and verify the
-/// signature over `merkle_root` under [`ZK_MERKLE_ROOT_NAMESPACE`]. This is what
-/// the node's offer gate does, so a fixture can prove its key material agrees
-/// with chain state before it relies on an admitted offer.
+/// Positive control for a signed root. Decode `public_key` (the key that the
+/// registry actually stores) and `signature` as MinSig group elements. Then
+/// verify the signature over `merkle_root` under [`ZK_MERKLE_ROOT_NAMESPACE`].
+/// The node's offer gate does the same. Thus a fixture can prove that its key
+/// material agrees with chain state before it relies on an admitted offer.
 pub(crate) fn verify_merkle_root(
     public_key: &[u8],
     merkle_root: &[u8; 32],
@@ -177,7 +184,7 @@ pub(crate) fn verify_merkle_root(
 
 /// Fresh, unique field-canonical `(draft_id, su_hash)` pair for one offer.
 ///
-/// Both must be new for every submission: the host marks SU hashes as used, and
+/// Both must be new for every submission. The host marks SU hashes as used, and
 /// a repeated draft id would collide with an earlier Tribute draft. The tag
 /// keeps the ids attributable to the path that produced them.
 pub(crate) fn offer_identifiers(tag: &str, caller: Address, worldwide_day: u32) -> (B256, B256) {
@@ -197,9 +204,9 @@ pub(crate) fn offer_identifiers(tag: &str, caller: Address, worldwide_day: u32) 
 
 /// Prove one Tribute offer statement and sign its Merkle root.
 ///
-/// This is the single proving recipe the harness uses: the witness is the
+/// This is the single proving recipe that the harness uses. The witness is the
 /// TributeDraftCommitment claim above against the (empty) perpetual commitment
-/// tree, and the combined proof carries the four public inputs the node decodes.
+/// tree. The combined proof carries the four public inputs that the node decodes.
 /// Barretenberg's prover is process-global and serialized internally, so
 /// concurrent callers queue rather than race.
 pub(crate) fn prove_tribute_offer(statement: TributeOfferStatement<'_>) -> TributeOfferZk {
@@ -288,8 +295,8 @@ pub(crate) fn prove_tribute_offer(statement: TributeOfferStatement<'_>) -> Tribu
     })
     .join()
     .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
-    // Proving is serialized by Barretenberg's process-global prover, so the
-    // capacity population's wall time is dominated by this step; report it.
+    // Barretenberg's process-global prover serializes proving, so this step
+    // dominates the wall time of the capacity population. Report it.
     eprintln!(
         "E2E_TRIBUTE_PROOF caller={caller:#x} l2_chain_id={l2_chain_id} host_chain_id={host_chain_id} wwd={worldwide_day} currency={tribute_currency} base={base} micro={atto} proving_ms={}",
         started.elapsed().as_millis(),

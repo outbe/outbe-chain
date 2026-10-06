@@ -2,7 +2,7 @@
 //!
 //! All functions take a short-lived `&IntexContract` (or `&mut` for
 //! writes) constructed via `IntexContract::new(storage)`. They only
-//! touch local storage; orchestration and validation live in `api.rs`.
+//! touch local storage. Orchestration and validation live in `api.rs`.
 
 use alloy_primitives::U256;
 use outbe_primitives::error::Result;

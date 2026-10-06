@@ -43,7 +43,7 @@ fn test_reshare_activation_after_participation_decode() {
         assert_eq!(old_addrs.len(), 3);
 
         // Step 2-3: Participation/slashing would happen here using old_addrs.
-        // (We just verify the set is correct - actual slashing tested in Task 01 code.)
+        // (We only verify that the set is correct. Task 01 code tests actual slashing.)
 
         // Step 4: NOW activate new reshare with [A, B, D] (C removed, D added).
         let new_hash = B256::with_last_byte(0x02);
@@ -77,9 +77,9 @@ fn test_reshare_activation_after_participation_decode() {
 
 /// Task 01 test: committee size change doesn't corrupt participation.
 ///
-/// When old set has 3 validators and new set has 4, the participation
-/// bitmap encoded for 3 validators should be decoded against the 3-validator
-/// set, not the 4-validator set.
+/// The old set has 3 validators and the new set has 4. In this case, the
+/// participation bitmap encoded for 3 validators should be decoded against the
+/// 3-validator set, not the 4-validator set.
 #[test]
 fn test_committee_size_change_participation_safety() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);

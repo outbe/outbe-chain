@@ -13,8 +13,9 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 interface IEscrowAdapter {
     // --- Types ---
 
-    /// @notice Lock status for a bid. `Won`: the payment left with the day's proceeds and the rest waits for
-    ///         `claimRefund`. A claimed lock is deleted and reads as `None`.
+    /// @notice Lock status for a bid. `Won`: the payment left with the day's proceeds and the rest
+    ///         waits for `claimRefund`. `claimRefund` deletes a claimed lock, which then reads as
+    ///         `None`.
     enum LockStatus {
         None,
         Locked,
@@ -49,19 +50,22 @@ interface IEscrowAdapter {
     struct AuctionEscrowState {
         /// @notice Total payment-token currently locked for the series.
         uint128 totalLocked;
-        /// @notice Number of bid locks the series ever took; claims delete their locks but never lower it,
-        ///         which is what keeps `assetVersion` meaningful for a day whose locks are all claimed.
+        /// @notice Number of bid locks the series ever took. Claims delete their locks but never
+        ///         lower it. This keeps `assetVersion` meaningful for a day whose locks are all
+        ///         claimed.
         uint32 lockCount;
-        /// @notice Timestamp when `finalizeAuction` flipped `finalized = true` (UNIX seconds); 0 if never finalized.
+        /// @notice Timestamp when `finalizeAuction` flipped `finalized = true` (UNIX seconds).
+        ///         It is 0 if the series escrow was never finalized.
         uint32 finalizedAt;
-        /// @notice Whether the series escrow has been finalized.
+        /// @notice Whether the series escrow is finalized.
         bool finalized;
-        /// @notice Asset version the day's locks were taken under; meaningful once `lockCount > 0`.
+        /// @notice Asset version the day's locks were taken under. It is meaningful once
+        ///         `lockCount > 0`.
         uint8 assetVersion;
     }
 
     /// @notice Commit-entry bond taken at `commitBid` and held until reveal/cancel/claim.
-    /// @dev Existence sentinel is `amount > 0`; the record is deleted on release so a
+    /// @dev Existence sentinel is `amount > 0`. The escrow deletes the record on release, so a
     ///      commit->cancel->commit cycle can re-lock within the same series.
     struct CommitBond {
         /// @notice Amount of payment-token bonded.
@@ -106,7 +110,7 @@ interface IEscrowAdapter {
     event CommitBondReleased(uint32 indexed worldwideDay, address indexed bidder, uint128 amount);
 
     /// @notice Emitted when funds are refunded to a bidder.
-    /// @param receiveId `bytes32(0)`: a refund is paid by `claimRefund`, never by a bridge message.
+    /// @param receiveId `bytes32(0)`: only `claimRefund` pays a refund. A bridge message never does.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder who received the refund.
     /// @param amount Amount refunded to the bidder.
@@ -128,7 +132,7 @@ interface IEscrowAdapter {
 
     /// @notice Emitted on each successful `wire()` call (initial + rotations).
     /// @dev Carries old+new for every dependency so a rotation is reconstructible from the log
-    ///      alone; the `*Old` fields are `address(0)` on the initial wire.
+    ///      alone. The `*Old` fields are `address(0)` on the initial wire.
     /// @param intexAuctionOld IntexAuction address before this wire.
     /// @param intexAuctionNew IntexAuction address after this wire.
     /// @param compactOld The Compact address before this wire.
@@ -144,15 +148,19 @@ interface IEscrowAdapter {
         address paymentTokenNew
     );
 
-    /// @notice Emitted when a rotation retires the active asset; locks and bonds taken under it keep using it.
+    /// @notice Emitted when a rotation retires the active asset. Locks and bonds taken under it
+    ///         keep using it.
     /// @param version Version number the retired asset keeps.
     /// @param compact The Compact the retired position lives in.
     /// @param paymentToken Payment token of the retired position.
     /// @param lockId Resource lock id of the retired position.
     event AssetRetired(uint8 indexed version, address compact, address paymentToken, uint256 lockId);
 
-    /// @notice Emitted when a winner in a refund chunk cannot be settled - its lock is not live, the partial fill
-    ///         does not fit it, or its payment would exceed it. The lock is left as it was.
+    /// @notice Emitted when the escrow cannot settle a winner in a refund chunk, because:
+    ///         - its lock is not live,
+    ///         - the partial fill does not fit it, or
+    ///         - its payment would exceed it.
+    ///         The lock stays as it was.
     /// @param receiveId Inbound bridge message that carried the chunk.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Winner that was skipped.
@@ -236,8 +244,8 @@ interface IEscrowAdapter {
     // --- Admin ---
 
     /// @notice Wire contract dependencies.
-    /// @dev Rotating `_paymentToken` or `_compact` retires the active asset under its version; locks and
-    ///      bonds taken under it keep withdrawing from it.
+    /// @dev Rotating `_paymentToken` or `_compact` retires the active asset under its version.
+    ///      Locks and bonds taken under it keep withdrawing from it.
     /// @param _intexAuction IntexAuction contract address.
     /// @param _compact The Compact contract address.
     /// @param _paymentToken Active payment-token address.
@@ -255,8 +263,8 @@ interface IEscrowAdapter {
     function lockFunds(uint32 worldwideDay, address bidder, uint128 amount, uint32 bidRate, uint16 quantity) external;
 
     /// @notice Lock the commit-entry bond at `commitBid`. Callable only by the IntexAuction contract.
-    /// @dev The bidder must approve this contract to spend `paymentToken` beforehand. The bond is
-    ///      held in The Compact under the same lock id as bid escrow.
+    /// @dev The bidder must approve this contract to spend `paymentToken` beforehand. The Compact
+    ///      holds the bond under the same lock id as bid escrow.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address the bond is taken from (and later returned to).
     /// @param amount Bond amount (the series' `commitBondMinor`).
@@ -279,15 +287,19 @@ interface IEscrowAdapter {
 
     // --- Bridge Finalization ---
 
-    /// @notice Apply one refund chunk: take each winner's payment at the day's clearing terms and mark the
-    ///         rest of its lock owed. Nothing is paid out to bidders here; every bidder collects through
-    ///         `claimRefund`, and a bidder the day's chunks never name lost.
-    /// @dev A winner's lock leaves `Locked` on its first chunk, so none pays twice; `completesDay` closes the day.
+    /// @notice Apply one refund chunk: take each winner's payment at the day's clearing terms and
+    ///         mark the rest of its lock owed. This function pays nothing to bidders. Every
+    ///         bidder collects through `claimRefund`. A bidder that the day's chunks never name
+    ///         lost.
+    /// @dev A winner's lock leaves `Locked` on its first chunk, so none pays twice. `completesDay`
+    ///      closes the day.
     /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param receiveId Inbound bridge message id that carried the chunk; threaded into the emitted events.
+    /// @param receiveId Inbound bridge message id that carried the chunk. The function threads it
+    ///        into the emitted events.
     /// @param winners Winners on this chain in the chunk.
-    /// @param partialIndex Index of the partially filled winner; read only when `partialWon` is non-zero.
-    /// @param partialWon Units the partially filled winner received; zero when the chunk has none.
+    /// @param partialIndex Index of the partially filled winner. The function reads it only when
+    ///        `partialWon` is non-zero.
+    /// @param partialWon Units the partially filled winner received. Zero when the chunk has none.
     /// @param clearingRate The day's clearing rate.
     /// @param basis The day's escrow basis.
     /// @param completesDay Whether this is the day's last chunk.
@@ -305,18 +317,20 @@ interface IEscrowAdapter {
 
     // --- Recovery ---
 
-    /// @notice Permissionless refund, always paying the stored `bidder` rather than `msg.sender`, and deleting the
-    ///         lock: a winner collects the rest of its lock at once, a bidder the finalized day never named
-    ///         collects its full principal at once, and a bidder whose day never finalized collects its full
-    ///         principal after `UNFINALIZED_REFUND_DELAY`.
+    /// @notice Permissionless refund. It always pays the stored `bidder` rather than `msg.sender`,
+    ///         and deletes the lock.
+    ///         - A winner collects the rest of its lock at once.
+    ///         - A bidder that the finalized day never named collects its full principal at once.
+    ///         - A bidder whose day never finalized collects its full principal after
+    ///           `UNFINALIZED_REFUND_DELAY`.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address whose locked principal is being claimed.
     function claimRefund(uint32 worldwideDay, address bidder) external;
 
     /// @notice Escrow-local safety valve for a commit bond stranded past
     ///         `COMMIT_BOND_ABANDON_DELAY` (e.g. the auction contract was rotated away while the
-    ///         bond was live). Time-based only - never consults the auction - and pays the stored
-    ///         `bidder`, not `msg.sender`. The stage-aware fast path lives on IntexAuction.
+    ///         bond was live). It is time-based only and never consults the auction. It pays the
+    ///         stored `bidder`, not `msg.sender`. The stage-aware fast path lives on IntexAuction.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder whose bond is being claimed.
     function claimAbandonedCommitBond(uint32 worldwideDay, address bidder) external;
@@ -348,7 +362,7 @@ interface IEscrowAdapter {
 
     /// @notice Get series escrow status.
     /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @return hasLocks True if the series ever took a lock; claimed locks do not lower it.
+    /// @return hasLocks True if the series ever took a lock. Claimed locks do not lower it.
     /// @return isFinalized True if the series escrow is finalized.
     /// @return totalLocked Total payment-token currently locked for the series.
     function getAuctionStatus(uint32 worldwideDay)
@@ -362,7 +376,7 @@ interface IEscrowAdapter {
     /// @notice Version number of the active asset.
     function currentAssetVersion() external view returns (uint8 version);
 
-    /// @notice The asset a version refers to; the active version reads the live wiring.
+    /// @notice The asset a version refers to. The active version reads the live wiring.
     /// @param version Asset version.
     /// @return asset The Compact, payment token and lock id of that version.
     function getAssetVersion(uint8 version) external view returns (AssetVersion memory asset);

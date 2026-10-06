@@ -10,14 +10,14 @@ pub enum TributeFactoryError {
 
     /// Retained for deterministic enclave-reported decrypt failures surfaced
     /// through per-offer results. Transport faults and a dead sidecar no longer
-    /// map here - they are `PrecompileError::Fatal` (node-local, see
+    /// map here. They are `PrecompileError::Fatal` (node-local, see
     /// `enclave_offer`), because reverting a tx that healthy validators execute
     /// would diverge state.
     #[error("decryption failed: {0}")]
     DecryptionFailed(String),
 
-    /// The enclave processed the offer and returned `Rejected` - deterministic,
-    /// content-derived, so it reverts.
+    /// The enclave processed the offer and returned `Rejected`. This result is
+    /// deterministic and content-derived, so it reverts.
     #[error("enclave rejected the offer: {0}")]
     EnclaveRejected(String),
 

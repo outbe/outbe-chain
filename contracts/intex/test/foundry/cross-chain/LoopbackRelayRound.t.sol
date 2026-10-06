@@ -59,8 +59,9 @@ contract LoopStub {
     }
 }
 
-/// @notice Outbe as its own target: the bridge delivers inside the sending transaction, so a relay round
-///         answered inline would come back into `receiveMessage` while it still holds its re-entry guard.
+/// @notice Outbe as its own target. The bridge delivers inside the sending transaction. Thus a
+///         relay round answered inline would come back into `receiveMessage` while it still
+///         holds its re-entry guard.
 contract LoopbackRelayRoundTest is CrossChainTest {
     uint32 internal constant DAY = 20_260_801;
 
@@ -101,8 +102,9 @@ contract LoopbackRelayRoundTest is CrossChainTest {
         assertEq(origin.parkedMessageCount(), 0, "the start leg must land");
     }
 
-    /// @dev A day too heavy for one round parks its next round rather than answering inline, and the parked
-    ///      entry - resent in a transaction of its own, as the drain trigger does - finishes the day.
+    /// @dev A day too heavy for one round parks its next round rather than answering inline.
+    ///      The test resends the parked entry in a transaction of its own, as the drain trigger
+    ///      does. That entry then finishes the day.
     function test_AnUnfinishedLoopbackDayParksItsNextRound() public {
         stub.setCount(130);
 

@@ -132,10 +132,10 @@ impl OracleContract<'_> {
         }
 
         // Resolve every quoted pair up front. `require_pair` rejects an
-        // unregistered pair and one quoted against the registered direction -
-        // the rate is a bare scalar, so a flipped quote would otherwise feed an
-        // uninverted price into the tally median with nothing downstream able to
-        // notice.
+        // unregistered pair and one quoted against the registered direction.
+        // The rate is a bare scalar, so a flipped quote would otherwise feed an
+        // uninverted price into the tally median. Nothing downstream would be
+        // able to notice.
         let mut resolved = Vec::with_capacity(tuples.len());
         for (base, quote, _, _) in tuples {
             resolved.push(self.require_pair_from(*base, *quote)?);
@@ -353,7 +353,7 @@ impl OracleContract<'_> {
         Ok(total.finish())
     }
 
-    /// Whole hours come from the hourly cells; partial hours and hours whose cell
+    /// Whole hours come from the hourly cells. Partial hours and hours whose cell
     /// was already reused for a later hour are read from raw snapshots.
     fn add_sub_day_span(
         &self,
@@ -384,7 +384,7 @@ impl OracleContract<'_> {
 
     /// Whether the hour's cell accounts for it. Snapshots are written in time
     /// order, so a cell still labelled with an earlier hour proves the pair had no
-    /// entry in this one; only a cell reused for a later hour does not.
+    /// entry in this one. Only a cell reused for a later hour does not.
     fn add_hourly_aggregate(
         &self,
         pair: AddressPair,
@@ -413,11 +413,14 @@ impl OracleContract<'_> {
     /// VWAP over the snapshot's window once its cutoff has passed.
     ///
     /// Coverage is judged twice against the tally rounds the blocks allowed
-    /// (see [`MIN_WINDOW_COVERAGE`]): an hour counts only when the pair has at
-    /// least that share of the hour's rounds, and the hours that count must
-    /// together hold at least that share of the whole window's rounds. Hours
-    /// that do not count contribute neither price nor volume. `None` when the
-    /// window fails that test, holds no observation, or has no positive price.
+    /// (see [`MIN_WINDOW_COVERAGE`]):
+    /// - An hour counts only when the pair has at least that share of the hour's
+    ///   rounds.
+    /// - The hours that count must together hold at least that share of the whole
+    ///   window's rounds.
+    ///
+    /// Hours that do not count contribute neither price nor volume. `None` when
+    /// the window fails that test, holds no observation, or has no positive price.
     pub fn finalized_window_vwap(
         &self,
         pair: AddressPair,
@@ -437,7 +440,7 @@ impl OracleContract<'_> {
     }
 
     /// First block of every hour boundary in `[start, cutoff]`, zero where the
-    /// hour saw no block; the cutoff boundary falls back to the current block.
+    /// hour saw no block. The cutoff boundary falls back to the current block.
     /// `None` when the window is off the hour grid or no hour has a record.
     fn window_block_bounds(&self, start: u64, cutoff: u64) -> Result<Option<Vec<u64>>> {
         if !start.is_multiple_of(VWAP_HOUR_SECONDS) || !cutoff.is_multiple_of(VWAP_HOUR_SECONDS) {
@@ -510,8 +513,8 @@ impl OracleContract<'_> {
     }
 
     /// Adds one whole hour's sums to `total` and returns how many snapshots
-    /// carried the pair, from the hourly cell while it still holds that hour
-    /// and from raw snapshots once the cell was reused.
+    /// carried the pair. It reads the hourly cell while that cell still holds
+    /// that hour. It reads raw snapshots once the cell was reused.
     fn add_hour(&self, pair: AddressPair, hour: u64, total: &mut VwapAccumulator) -> Result<u64> {
         let cell = hourly_vwap_cell(hour);
         let held = self.hourly_vwap_hour.get_nested(&pair).read(&cell)?;
@@ -768,8 +771,8 @@ impl OracleContract<'_> {
     }
 
     /// Calculates VWAPs for the given WorldwideDay window and stores them in
-    /// oracle state. Returns `false` when the window held no oracle data, in
-    /// which case nothing is written - a deterministic no-op, not an error.
+    /// oracle state. Returns `false` when the window held no oracle data. In that
+    /// case nothing is written. This is a deterministic no-op, not an error.
     pub fn store_worldwide_day_vwap_snapshot(
         &mut self,
         worldwide_day: WorldwideDay,
@@ -788,9 +791,9 @@ impl OracleContract<'_> {
         start_time: u64,
         end_time: u64,
     ) -> Result<bool> {
-        // The forming window is a protocol parameter, not an oracle constant:
-        // a chain that shortens it (localnet, E2E) still hands Metadosis'
-        // real window here, and a second hardcoded copy would reject it.
+        // The forming window is a protocol parameter, not an oracle constant.
+        // A chain that shortens it (localnet, E2E) still hands Metadosis'
+        // real window here. A second hardcoded copy would reject it.
         let expected_start = worldwide_day.start_timestamp();
         let expected_end = expected_start
             .checked_add(outbe_chain_constants::get_metadosis_forming_period_seconds())
@@ -842,12 +845,12 @@ impl OracleContract<'_> {
     /// WorldwideDay, which is UTC+14). The window is the canonical
     /// `[date_key_to_utc_timestamp(utc_day), +SECONDS_PER_DAY)`.
     ///
-    /// Pairs without data for the day are skipped (mirrors `calculate_vwaps`);
-    /// if no pair has data, nothing is written, so the day stays empty and is
-    /// told apart from an unfinalized one by the `utc_day_vwap_last_finalized`
-    /// watermark. Emits one `VwapCalculated` event per written pair in
-    /// registration order. The method overwrites unconditionally - the
-    /// caller gates re-finalization via that same watermark.
+    /// Pairs without data for the day are skipped (mirrors `calculate_vwaps`).
+    /// If no pair has data, nothing is written. The day then stays empty, and the
+    /// `utc_day_vwap_last_finalized` watermark tells it apart from an unfinalized
+    /// one. Emits one `VwapCalculated` event per written pair in registration
+    /// order. The method overwrites unconditionally. The caller gates
+    /// re-finalization via that same watermark.
     pub fn finalize_utc_day_vwap(&mut self, utc_day: u32) -> Result<()> {
         if self.ocomp_profile_ready.read()? {
             let storage = self.storage.clone();
@@ -861,7 +864,7 @@ impl OracleContract<'_> {
         let day_start = date_key_to_utc_timestamp(utc_day);
         let day_end = day_start.saturating_add(SECONDS_PER_DAY);
 
-        // No vote-target pair had data for the day - leave it unwritten so the
+        // No vote-target pair had data for the day. Leave it unwritten so the
         // day reads as finalized-empty against the watermark.
         let Some((pairs, vwaps, _)) = self.try_calculate_vwaps(day_start, day_end)? else {
             return Ok(());
@@ -869,7 +872,7 @@ impl OracleContract<'_> {
         let next_ocomp_version = self.next_ocomp_state_version()?;
         let profile_ready = self.ocomp_profile_ready.read()?;
 
-        // Keyed by the registry index; unwritten entries stay zero and read back
+        // Keyed by the registry index. Unwritten entries stay zero and read back
         // as "no VWAP for this pair on this day". Re-finalizing a closed day
         // recomputes over the same immutable window, so no stale entry survives.
         for (pair, vwap) in pairs.iter().copied().zip(vwaps.iter().copied()) {

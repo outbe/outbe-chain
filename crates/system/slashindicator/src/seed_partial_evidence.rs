@@ -2,13 +2,13 @@
 //!
 //! A validator that identity-signs two DIFFERENT `bls_seed_partial`s for the
 //! same `(round, vrf_material_version)` has equivocated on its VRF
-//! contribution. Each partial is bound to the validator's MinPk identity key by
-//! a rider signature (see `outbe_consensus::proof::seed_partial`), so the two
-//! identity signatures alone self-authenticate the offense - no committee
-//! polynomial is needed, mirroring the existing double-sign / conflicting-vote
-//! evidence. An honest validator produces exactly one partial per
-//! `(round, version)` and never identity-signs a second distinct one, so a
-//! valid pair cannot frame an honest node.
+//! contribution. A rider signature binds each partial to the validator's MinPk
+//! identity key (see `outbe_consensus::proof::seed_partial`). Thus the two
+//! identity signatures alone self-authenticate the offense. No committee
+//! polynomial is needed. This mirrors the existing double-sign /
+//! conflicting-vote evidence. An honest validator produces exactly one partial
+//! per `(round, version)`. It never identity-signs a second distinct one. Thus
+//! a valid pair cannot frame an honest node.
 //!
 //! Wire (fixed 365 bytes, big-endian scalars):
 //! ```text
@@ -93,10 +93,10 @@ impl SeedPartialEquivocationEvidence {
         keccak256(self.signer_pubkey)
     }
 
-    /// Canonical dedup key: order-independent in the two partials, so the same
-    /// equivocation submitted with the partials in either order maps to one
-    /// slash. Binds the round and material version so distinct equivocations are
-    /// distinct keys.
+    /// Canonical dedup key. It is order-independent in the two partials. Thus
+    /// the same equivocation, submitted with the partials in either order, maps
+    /// to one slash. The key binds the round and material version, so distinct
+    /// equivocations are distinct keys.
     pub fn dedup_hash(&self) -> B256 {
         let (lo, hi) = if self.partial_1 <= self.partial_2 {
             (&self.partial_1, &self.partial_2)
@@ -116,7 +116,7 @@ impl SeedPartialEquivocationEvidence {
 }
 
 // =============================================================================
-// Invalid-partial evidence (IPE1) - slashes a single identity-signed partial
+// Invalid-partial evidence (IPE1). It slashes a single identity-signed partial
 // that fails verification against the committee's full VRF polynomial.
 // =============================================================================
 

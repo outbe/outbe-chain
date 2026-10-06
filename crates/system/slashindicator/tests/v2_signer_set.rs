@@ -1,19 +1,19 @@
 //! SlashIndicator V2 invariants for the V2-Certified-Parent
 //! Accounting epic.
 //!
-//! - `slash_voter` is proof-kind agnostic - absent
+//! - `slash_voter` is proof-kind agnostic. Absent
 //!   signers from a `Finalization` certificate slash to the exact same
 //!   on-chain state as absent signers from a `CertifiedNotarization`
 //!   certificate. The slash hook itself takes only `(fb_hash,
-//!   validator)`; the test pins this by running the hook twice with
+//!   validator)`. The test pins this. It runs the hook twice with
 //!   the same absent address against two distinct `fb_hash` values
-//!   that represent the two proof types and asserting identical
+//!   that represent the two proof types. Then it asserts identical
 //!   per-validator counters.
-//!   (e2e guard): non-empty `missed_proposers` in V2 metadata
-//!   is rejected by `outbe_consensus::proof::verify_v2_proof` BEFORE
-//!   the Phase 1 commit reaches the slashindicator entry. Verified
-//!   structurally because constructing a full executor in this test
-//!   crate is impractical.
+//!   (e2e guard): `outbe_consensus::proof::verify_v2_proof` rejects
+//!   non-empty `missed_proposers` in V2 metadata BEFORE the Phase 1
+//!   commit reaches the slashindicator entry. Verified structurally
+//!   because constructing a full executor in this test crate is
+//!   impractical.
 
 use alloy_primitives::{address, b256, Address, B256};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
@@ -40,8 +40,8 @@ fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
 fn certified_notarization_and_finalization_slash_absent_signers_identically() {
     // Per-fb_hash isolation is the contract: two distinct fb_hashes
     // representing two proof types each increment the validator's
-    // counter by exactly one. The counter is therefore +2 after both
-    // proof kinds have been processed - the SAME outcome you'd get if
+    // counter by exactly one. The counter is therefore +2 after the hook
+    // processes both proof kinds. That is the SAME outcome you'd get if
     // both kinds were Finalization, or both were CertifiedNotarization.
     let final_count = with_storage(|storage| {
         hooks::slash_window_voters(storage.clone(), FB_HASH_FINAL, &[ABSENT_VAL]).unwrap();
@@ -73,8 +73,8 @@ fn certified_notarization_and_finalization_slash_absent_signers_identically() {
     );
 
     // Per-fb_hash dedup is also unchanged. A duplicate hook for the
-    // same `(fb_hash, validator)` is a no-op - proves the guard runs
-    // regardless of how the absent address was discovered (which
+    // same `(fb_hash, validator)` is a no-op. This proves that the guard
+    // runs regardless of how the absent address was discovered (which
     // certificate type produced it).
     let dedup_count = with_storage(|storage| {
         hooks::slash_window_voters(storage.clone(), FB_HASH_FINAL, &[ABSENT_VAL]).unwrap();
@@ -92,8 +92,8 @@ fn certified_notarization_and_finalization_slash_absent_signers_identically() {
 
 // (e2e guard) was a source-text grep over `verify_v2_proof` that
 // asserted (a) the `V2VerifyError::NonEmptyMissedProposers` rejection exists
-// and (b) it precedes the Rule 2 exact-parent check. Both are now
-// covered behaviourally in
+// and (b) it precedes the Rule 2 exact-parent check. Tests in
 // `crates/blockchain/consensus/tests/proof_verifier.rs`
 // (`verifier_rejects_non_empty_missed_proposers_*` and the ordering
-// tests), so the source-grep was redundant *and* brittle to renames.
+// tests) now cover both behaviourally. Thus the source-grep was
+// redundant *and* brittle to renames.

@@ -7,11 +7,11 @@ use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 /// Storage slots:
 ///   0: ica_router - InterchainAccountRouter on Outbe (zero = not initialized)
 ///   1: ism_by_domain - mapping(domain => StorageMessageIdMultisigIsm on that
-///      chain), the Outbe chain included under its own domain (= chain id);
-///      zero = absent
+///      chain). The Outbe chain is included under its own domain (= chain id).
+///      Zero = absent
 ///   2: domains - enumerable list of the configured domains
-///   3: hook_by_domain - mapping(domain => MerkleTreeHook on that chain); the
-///      hook address is part of the checkpoint digest validators sign
+///   3: hook_by_domain - mapping(domain => MerkleTreeHook on that chain). The
+///      hook address is part of the checkpoint digest that validators sign
 ///   4: signer_of - mapping(validator => Hyperlane signing key); zero means
 ///      the validator address itself
 ///   5: submitted_index - mapping(validator_domain_key => latest submitted

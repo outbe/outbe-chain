@@ -98,7 +98,8 @@ contract RouterE2E is BaseTest {
             address(originBridge), owner, origin, address(mockCompact), bytes12(uint96(1)), address(0), address(auction)
         );
 
-        // Register the matching Router on each side (ERC-7930 interop addresses; domain == chainId).
+        // Register the matching Router on each side
+        // (ERC-7930 interop addresses, domain == chainId).
         originRouter.setRemoteRouter(destination, _interop(destination, address(destinationRouter)));
         destinationRouter.setRemoteRouter(origin, _interop(origin, address(originRouter)));
 
@@ -273,8 +274,8 @@ contract RouterE2E is BaseTest {
         destinationRouter.receiveMessage(bytes32(0), sender, payload);
     }
 
-    /// @dev A same-chain settle forwards no bridge fee, so attached native value would be trapped;
-    ///      the dispatch must reject it instead.
+    /// @dev A same-chain settle forwards no bridge fee, so attached native value would be trapped.
+    ///      The dispatch must reject it instead.
     function test_settle_RevertWhen_SameChainCarriesValue() public {
         // originDomain == destination => the same-chain dispatch branch.
         OrderData memory orderData = _prepareOrderData();

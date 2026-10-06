@@ -21,8 +21,8 @@ import {ResetPeriod} from "../vendor/the-compact/types/ResetPeriod.sol";
  * @notice Adapter contract for managing auction bid escrow via The Compact protocol.
  * @dev UUPS upgradeable: deployed behind an ERC1967 proxy, configured via `initialize`.
  *      Integrates with The Compact for fund locking and handles auction finalization.
- *      EscrowAdapter acts as SPONSOR (owns ERC6909 in Compact) and ALLOCATOR (attest);
- *      both roles bind to the proxy address.
+ *      EscrowAdapter acts as SPONSOR (owns ERC6909 in Compact) and ALLOCATOR (attest).
+ *      Both roles bind to the proxy address.
  *      All escrow state is keyed by `worldwideDay` (uint32).
  */
 contract EscrowAdapter is
@@ -48,8 +48,8 @@ contract EscrowAdapter is
     /// @notice Escrow-local safety window on `claimAbandonedCommitBond`, anchored at the bond's
     ///         `lockedAt`. Deliberately time-only (never consults the auction) so a bond survives
     ///         an auction-contract rotation. MUST exceed the auction-side no-reveal gate
-    ///         (`revealEnd + UNREVEALED_BOND_LOCK_PERIOD`), which holds while auction schedules span
-    ///         less than 29 days (daily series span ~2).
+    ///         (`revealEnd + UNREVEALED_BOND_LOCK_PERIOD`), which holds while auction schedules
+    ///         span less than 29 days (daily series span ~2).
     uint32 public constant COMMIT_BOND_ABANDON_DELAY = 30 days;
 
     /// @notice Decimals every payment token must report.
@@ -180,8 +180,9 @@ contract EscrowAdapter is
 
         EscrowAdapterStorage storage $ = _s();
 
-        // A rotation retires the active asset under its version: locks and bonds taken under it keep
-        // withdrawing from it, and the first deposit under the new token/Compact bootstraps its own lock.
+        // A rotation retires the active asset under its version. Locks and bonds taken under it
+        // keep withdrawing from it. The first deposit under the new token/Compact bootstraps its
+        // own lock.
         bool rotatingPaymentToken = address($.paymentToken) != address(0) && _paymentToken != address($.paymentToken);
         bool rotatingCompact = address($.compact) != address(0) && _compact != address($.compact);
         if (rotatingPaymentToken || rotatingCompact) {
@@ -191,7 +192,8 @@ contract EscrowAdapter is
             $.currentAssetVersion = retired + 1;
             emit AssetRetired(retired, address($.compact), address($.paymentToken), $.lockId);
             $.lockId = 0;
-            // A new Compact needs its own allocator registration; drop the stale allocatorId/lockTag.
+            // A new Compact needs its own allocator registration. Drop the stale
+            // allocatorId/lockTag.
             if (rotatingCompact) {
                 $.allocatorId = 0;
                 $.lockTag = bytes12(0);
@@ -216,8 +218,8 @@ contract EscrowAdapter is
         $.paymentToken.forceApprove(_compact, 0);
         $.paymentToken.forceApprove(_compact, type(uint256).max);
 
-        // CEI deviation: allocatorId / lockTag depend on __registerAllocator's return.
-        // Admin-only; a re-entrant `compact` lacks DEFAULT_ADMIN_ROLE, so re-entry can't reach here.
+        // CEI deviation: allocatorId / lockTag depend on __registerAllocator's return. Admin-only.
+        // A re-entrant `compact` lacks DEFAULT_ADMIN_ROLE, so re-entry can't reach here.
         if ($.allocatorId == 0) {
             // aderyn-fp-next-line(reentrancy-state-change)
             $.allocatorId = $.compact.__registerAllocator(address(this), "");
@@ -296,7 +298,7 @@ contract EscrowAdapter is
         if ($.commitBonds[worldwideDay][bidder].amount != 0) revert CommitBondAlreadyLocked();
 
         // CEI deviation mirrors `_executeLock`: the one-time lockId bootstrap inside
-        // `_depositToCompact` needs depositERC20's return; nonReentrant covers the deviation.
+        // `_depositToCompact` needs depositERC20's return. nonReentrant covers the deviation.
         // slither-disable-next-line arbitrary-send-erc20
         $.paymentToken.safeTransferFrom(bidder, address(this), amount);
         _depositToCompact(amount);
@@ -326,7 +328,7 @@ contract EscrowAdapter is
     }
 
     /// @dev Delete the bond record, withdraw from The Compact, and pay the stored bidder.
-    ///      CEI: the delete precedes both external calls; a re-claim reverts `CommitBondNotFound`.
+    ///      CEI: the delete precedes both external calls. A re-claim reverts `CommitBondNotFound`.
     function _releaseCommitBond(uint32 worldwideDay, address bidder) internal {
         EscrowAdapterStorage storage $ = _s();
         CommitBond memory bond = $.commitBonds[worldwideDay][bidder];
@@ -402,7 +404,8 @@ contract EscrowAdapter is
             if (paid == locked) {
                 delete $.bidLocks[worldwideDay][bidder];
             } else {
-                // The claim works the payment out again from the lock, so it has to read the units actually won.
+                // The claim computes the payment again from the lock, so it has to read the units
+                // actually won.
                 lock.status = LockStatus.Won;
                 lock.quantity = quantity;
                 // forge-lint: disable-next-line(unsafe-typecast) -- below `locked` just above
@@ -424,7 +427,8 @@ contract EscrowAdapter is
         }
     }
 
-    /// @dev Record the day's clearing terms on its first chunk with winners, and hold every later one to them.
+    /// @dev Record the day's clearing terms on its first chunk with winners, and hold every later
+    ///      one to them.
     function _recordClearing(uint32 worldwideDay, uint64 clearingRate, uint128 basis) private {
         if (clearingRate == 0 || basis == 0) revert ClearingTermsMissing();
         DayClearing storage clearing = _s().dayClearing[worldwideDay];
@@ -451,7 +455,8 @@ contract EscrowAdapter is
 
         uint8 version = state.assetVersion;
         delete $.bidLocks[worldwideDay][bidder];
-        // A winner's payment already left with the day's proceeds, so the refund is all the lock still holds.
+        // A winner's payment already left with the day's proceeds, so the refund is all the lock
+        // still holds.
         state.totalLocked -= refund;
 
         _withdrawFromCompact(version, refund);
@@ -461,9 +466,9 @@ contract EscrowAdapter is
         }
     }
 
-    /// @dev What a live lock is owed and from when. A winner is owed the rest of its lock at once. A bidder the
-    ///      finalized day never named lost and is owed its principal at once. A day that never finalized owes the
-    ///      principal after the delay.
+    /// @dev What a live lock is owed and from when. A winner is owed the rest of its lock at once.
+    ///      A bidder the finalized day never named lost and is owed its principal at once. A day
+    ///      that never finalized owes the principal after the delay.
     function _claimable(uint32 worldwideDay, AuctionEscrowState storage state, BidLock storage lock)
         private
         view
@@ -543,8 +548,8 @@ contract EscrowAdapter is
     /// @param bidder Bidder address.
     /// @param amount Amount to lock.
     function _validateLockInputs(uint32 worldwideDay, address bidder, uint128 amount) internal view {
-        // Cheap sanity floor: the AUCTION_ROLE gate already guarantees a real, stage-gated series,
-        // but a zero id is obviously bogus and is rejected before any state write.
+        // Cheap sanity floor: the AUCTION_ROLE gate already guarantees a real, stage-gated series.
+        // But a zero id is obviously bogus, so this check rejects it before any state write.
         if (worldwideDay == 0) revert ZeroValue("worldwideDay");
         if (bidder == address(0)) revert ZeroAddress("bidder");
         if (amount == 0) revert ZeroValue("amount");
@@ -575,7 +580,7 @@ contract EscrowAdapter is
 
         // CEI deviation: only the one-time lockId bootstrap needs depositERC20's return before
         // writing. Per-call bidLocks / auctionEscrowState writes follow for locality and could
-        // move above; nonReentrant on every outer entrypoint covers the deviation regardless.
+        // move above. nonReentrant on every outer entrypoint covers the deviation regardless.
         // slither-disable-next-line arbitrary-send-erc20
         $.paymentToken.safeTransferFrom(bidder, address(this), amount);
         _depositToCompact(amount);
@@ -599,7 +604,8 @@ contract EscrowAdapter is
 
     /// @notice Deposit `amount` of the payment token into The Compact (we receive ERC6909 tokens).
     /// @dev Bootstraps `lockId` and enables forced withdrawal on the first-ever deposit. The
-    ///      returned `withdrawableAt` is informational; withdrawals invoke forcedWithdrawal directly.
+    ///      returned `withdrawableAt` is informational. Withdrawals invoke forcedWithdrawal
+    ///      directly.
     /// @param amount Amount to deposit.
     function _depositToCompact(uint128 amount) internal {
         EscrowAdapterStorage storage $ = _s();
@@ -611,9 +617,10 @@ contract EscrowAdapter is
         }
     }
 
-    /// @notice Withdraw tokens from The Compact via forced withdrawal, out of the position `version` refers to.
-    /// @dev Reverts `NoDeposits` if that position never bootstrapped and `ForcedWithdrawalFailed` if the reset
-    ///      period has not elapsed (The Compact returns false).
+    /// @notice Withdraw tokens from The Compact via forced withdrawal, out of the position
+    ///         `version` refers to.
+    /// @dev Reverts `NoDeposits` if that position never bootstrapped and `ForcedWithdrawalFailed`
+    ///      if the reset period has not elapsed (The Compact returns false).
     /// @param version Asset version the funds were deposited under.
     /// @param amount Amount to withdraw.
     function _withdrawFromCompact(uint8 version, uint128 amount) internal {
@@ -634,7 +641,7 @@ contract EscrowAdapter is
 
     /// @dev Build the lock tag for The Compact deposits.
     /// @notice Combines allocatorId, scope, and reset period into a single 12-byte identifier.
-    ///         This tag is used by The Compact to identify which resource lock to use for deposits.
+    ///         The Compact uses this tag to identify which resource lock to use for deposits.
     /// @param _allocatorId Our allocator ID from The Compact registration.
     /// @param scope Whether the lock is multichain or chain-specific.
     /// @param resetPeriod Time period before forced withdrawal is allowed.

@@ -72,7 +72,7 @@ fn renewal_status_preserves_default_margins_and_explicit_overrides() -> eyre::Re
             "7",
         ],
     )?;
-    // Margin ordering is validated by the status service, after loading the manifest.
+    // The status service validates margin ordering after it loads the manifest.
     assert_eq!(explicit.get_one::<u64>("critical_blocks"), Some(&7));
     Ok(())
 }

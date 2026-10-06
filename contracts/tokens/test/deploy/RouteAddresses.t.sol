@@ -33,8 +33,9 @@ contract AddressHarness is DeployAll {
     }
 }
 
-/// @dev Pins the CREATE3 derivation for every route. Both addresses are live on three chains, so any change to the
-///      salt labels or to the hashing formula silently relocates deployed contracts.
+/// @dev Pins the CREATE3 derivation for every route. Both addresses are live on three chains.
+///      Any change to the salt labels or to the hashing formula therefore silently relocates
+///      deployed contracts.
 contract RouteAddressesTest is Test {
     string internal constant SALT = "TEST_V1";
 
@@ -50,8 +51,8 @@ contract RouteAddressesTest is Test {
         factory = new Create3Factory();
     }
 
-    /// @dev A literal snapshot, unlike the per-route checks below: those restate the derivation, so a change made in
-    ///      both the code and the expectation would slip through.
+    /// @dev A literal snapshot, unlike the per-route checks below. Those checks restate the
+    ///      derivation, so a change made in both the code and the expectation would slip through.
     function test_Salts_MatchTheDeployedSnapshot() public view {
         assertEq(
             deploy.exposedSalt("USDT", SALT), 0xf9451e8e547d5972cbb9c2b04172363a165d6eb926fa1cd2fcbb0d059ee466f3, "USDT"
@@ -93,8 +94,8 @@ contract RouteAddressesTest is Test {
         _assertRoute(deploy.routeByLabel("WCOEN").spec, "WCOEN");
     }
 
-    /// @dev The bridge label is the token label plus `Bridge`; dropping the stored `bridgeLabel` must keep that exact
-    ///      string, since it is what the live deployments were salted with.
+    /// @dev The bridge label is the token label plus `Bridge`. Dropping the stored `bridgeLabel`
+    ///      must keep that exact string, since it is what the live deployments were salted with.
     function _assertRoute(RouteSpec memory spec, string memory label) internal view {
         assertEq(spec.tokenLabel, label, "token label");
 

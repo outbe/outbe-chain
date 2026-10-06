@@ -13,9 +13,10 @@ import {RejectingReceiver} from "@test-mocks/RejectingReceiver.sol";
 
 /// @title IntexNFT1155BridgeSingleTest
 /// @notice Foundry tests for IntexNFT1155Bridge with IntexNFT1155 token.
-/// @dev Tests cross-chain transfers over the {MockERC7786Bridge} loopback via {CrossChainTest}. Series are keyed by
-///      `seriesId` (uint32); the issued token id is `uint256(seriesId)`. Delivery is manual: a send records the
-///      packet on the bridge and {_deliver} hands it to the destination adapter as the bridge.
+/// @dev Tests cross-chain transfers over the {MockERC7786Bridge} loopback via {CrossChainTest}.
+///      Series are keyed by `seriesId` (uint32). The issued token id is `uint256(seriesId)`.
+///      Delivery is manual: a send records the packet on the bridge and {_deliver} hands it to the
+///      destination adapter as the bridge.
 contract IntexNFT1155BridgeSingleTest is CrossChainTest {
     uint32 private constant A_CHAIN_ID = 1;
     uint32 private constant B_CHAIN_ID = 2;
@@ -273,14 +274,15 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         vm.prank(user);
         adapterA.send{value: fee}(sendParam);
 
-        // The bridge derives the receiveId from (sender interop, payload); recompute it to key the parked entry.
+        // The bridge derives the receiveId from (sender interop, payload). Recompute it to key the
+        // parked entry.
         bytes memory packet = bridge.lastPayload();
         bytes32 receiveId = keccak256(abi.encode(_interop(A_CHAIN_ID, address(adapterA)), packet));
 
         // Delivery must succeed (crosschainMint parked), not revert.
         _deliverAToB();
 
-        // Source burned; destination not minted; transfer parked under the bridge receiveId.
+        // Source burned, destination not minted, transfer parked under the bridge receiveId.
         assertEq(tokenA.balanceOf(user, failTokenId), 0, "source burned");
         assertEq(tokenB.balanceOf(user, failTokenId), 0, "not minted yet");
         (address to,, uint256 amount, bool exists) = adapterB.failedCrosschainMints(receiveId, 0);

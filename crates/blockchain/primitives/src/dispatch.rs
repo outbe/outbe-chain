@@ -1,6 +1,6 @@
 //! Precompile ABI dispatch helpers.
 //!
-//! Provides ergonomic helpers for routing ABI-encoded calldata to contract methods.
+//! Provides helpers that route ABI-encoded calldata to contract methods.
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
@@ -149,13 +149,12 @@ pub fn mutate_void<T: SolCall>(
 ///
 /// Similar to [`mutate_void`] but also passes `value` (msg.value) to the handler.
 ///
-/// `payable_selectors` is the calling module's `PAYABLE_SELECTORS`. Funded calls
-/// to a selector missing from that list are refused rather than handed the
-/// value: the route table binds the list to the address's value policy, so such
-/// a selector would consume value the boundary never authorized for this
-/// address. A zero-value call still dispatches, matching
-/// [`reject_value_unless_payable`] - an undeclared selector is refused its
-/// value, not disabled outright.
+/// `payable_selectors` is the calling module's `PAYABLE_SELECTORS`. This helper refuses a
+/// funded call to a selector that is missing from that list and does not hand it the value.
+/// The route table binds the list to the address's value policy. Such a selector would thus
+/// consume value that the boundary never authorized for this address. A zero-value call still
+/// dispatches, as in [`reject_value_unless_payable`]. The helper refuses the value of an
+/// undeclared selector, but does not disable the selector outright.
 #[inline]
 pub fn mutate_void_payable<T: SolCall>(
     call: T,
@@ -176,9 +175,9 @@ pub fn mutate_void_payable<T: SolCall>(
 /// Mutate payable helper: a state-changing function that accepts msg.value and
 /// returns a value.
 ///
-/// [`mutate_void_payable`] with a return value; the same
-/// `payable_selectors` guard applies, so an undeclared selector is refused its
-/// value rather than handed it.
+/// Same as [`mutate_void_payable`], but with a return value. The same
+/// `payable_selectors` guard applies. The guard refuses the value of an undeclared
+/// selector and does not hand the value to it.
 #[inline]
 pub fn mutate_payable<T: SolCall>(
     call: T,
@@ -201,10 +200,10 @@ pub fn mutate_payable<T: SolCall>(
 ///
 /// A module reaches this only because its address's route declares
 /// `ValuePolicy::Payable`, which the route table binds to `payable_selectors` at
-/// compile time. Checking the raw selector against that same list makes value
-/// default-denied for the whole module: a selector added later takes no value
-/// until it is published, rather than each non-payable arm having to remember a
-/// [`reject_value`] call of its own.
+/// compile time. This function checks the raw selector against that same list.
+/// This makes value default-denied for the whole module. A selector added later
+/// takes no value until the module publishes it. Each non-payable arm thus does
+/// not have to remember a [`reject_value`] call of its own.
 #[inline]
 pub fn reject_value_unless_payable(
     calldata: &[u8],
@@ -287,8 +286,8 @@ mod payable_witness_tests {
 
     /// The route table binds a module's `PAYABLE_SELECTORS` to its address's
     /// value policy at compile time. A selector that forwards value without
-    /// appearing in that list would take value the boundary never authorized
-    /// for the address, so it is refused at its own call site.
+    /// appearing in that list would take value that the boundary never authorized
+    /// for the address. Its own call site therefore refuses it.
     #[test]
     fn undeclared_payable_selector_is_refused() {
         let call = IWitness::fundCall {
@@ -300,9 +299,9 @@ mod payable_witness_tests {
         assert!(matches!(refused, Err(PrecompileError::Revert(_))));
     }
 
-    /// The module-wide default-deny: on a payable address every selector the
-    /// module has not published refuses value, so a new value-consuming arm
-    /// takes nothing until it is declared - no per-arm check to forget.
+    /// The module-wide default-deny: on a payable address, every selector that the
+    /// module has not published refuses value. A new value-consuming arm thus
+    /// takes nothing until the module declares it. There is no per-arm check to forget.
     #[test]
     fn unpublished_selector_refuses_value_on_a_payable_module() {
         use super::reject_value_unless_payable;

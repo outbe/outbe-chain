@@ -9,7 +9,7 @@ interface ICredisFactory {
         external
         payable
         returns (uint256 positionId, uint256 principalMinor);
-    /// Any payer may repay; freed collateral creates a note for the original source.
+    /// Any payer may repay. Freed collateral creates a note for the original source.
     function settleCredis(uint256 positionId, uint256 amountMinor)
         external
         returns (uint256 principalPaidMinor, uint256 interestMinor);

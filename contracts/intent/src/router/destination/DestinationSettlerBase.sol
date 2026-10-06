@@ -35,7 +35,7 @@ abstract contract DestinationSettlerBase is OrderStatusStorage, RouterAccessors,
      * @notice Fills a single leg of a particular order on the destination chain
      * @param _orderId Unique order identifier for this order
      * @param _originData Data emitted on the origin to parameterize the fill
-     * @param _fillerData Data provided by the filler to inform the fill or express their preferences
+     * @param _fillerData Data from the filler that informs the fill or expresses the filler's preferences
      */
     function fill(bytes32 _orderId, bytes calldata _originData, bytes calldata _fillerData) external payable virtual {
         if (destinationOrderStatus[_orderId] != CLAIMED) revert InvalidOrderStatus();
@@ -105,7 +105,7 @@ abstract contract DestinationSettlerBase is OrderStatusStorage, RouterAccessors,
 
     /**
      * @notice Fills an order with specific origin and filler data
-     * @dev To be implemented by the inheriting contract
+     * @dev The inheriting contract implements this
      * @param _orderId The unique identifier for the order to fill
      * @param _originData Data emitted on the origin chain to parameterize the fill
      * @param _fillerData Data provided by the filler
@@ -114,7 +114,7 @@ abstract contract DestinationSettlerBase is OrderStatusStorage, RouterAccessors,
 
     /**
      * @notice Settles a batch of orders using their origin and filler data
-     * @dev To be implemented by the inheriting contract
+     * @dev The inheriting contract implements this
      * @param _orderIds An array of order IDs to settle
      * @param _ordersOriginData The origin data for the orders being settled
      * @param _ordersFillerData The filler data for the orders being settled
@@ -127,7 +127,7 @@ abstract contract DestinationSettlerBase is OrderStatusStorage, RouterAccessors,
 
     /**
      * @notice Refunds a batch of OnchainCrossChainOrders
-     * @dev To be implemented by the inheriting contract
+     * @dev The inheriting contract implements this
      * @param _orders An array of OnchainCrossChainOrders to refund
      * @param _orderIds An array of IDs for the orders to refund
      */
@@ -135,7 +135,7 @@ abstract contract DestinationSettlerBase is OrderStatusStorage, RouterAccessors,
 
     /**
      * @notice Computes the unique identifier for an OnchainCrossChainOrder
-     * @dev To be implemented by the inheriting contract
+     * @dev The inheriting contract implements this
      * @param _order The OnchainCrossChainOrder to compute the ID for
      * @return The unique identifier for the order
      */

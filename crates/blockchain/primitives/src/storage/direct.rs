@@ -15,12 +15,12 @@ use crate::storage::PrecompileStorageProvider;
 /// Storage provider for block-level hooks, wrapping a mutable [`StateDB`].
 ///
 /// Reads go directly to the provided database.
-/// Writes accumulate in a pending [`HashMap`] and are committed to the
-/// underlying state when [`DirectStorageProvider::flush`] is called.
+/// Writes accumulate in a pending [`HashMap`].
+/// [`DirectStorageProvider::flush`] commits them to the underlying state.
 ///
-/// All state mutations (storage writes and balance transfers) are tracked
-/// so callers can retrieve the complete [`EvmState`] change set via
-/// [`DirectStorageProvider::take_committed_changes`] for notifying reth's
+/// The provider tracks all state mutations (storage writes and balance
+/// transfers). Callers can then retrieve the complete [`EvmState`] change set
+/// via [`DirectStorageProvider::take_committed_changes`] to notify reth's
 /// parallel state root task.
 ///
 /// This is the block-hook counterpart to [`super::evm::EvmStorageProvider`],
@@ -36,8 +36,9 @@ pub struct DirectStorageProvider<'a, DB: StateDB> {
     /// Accumulated state changes committed by `flush()`.
     /// Used to notify reth's state root hook after all hooks complete.
     committed_changes: AddressMap<Account>,
-    /// Events emitted by block-level hooks. Not journaled into EVM receipts,
-    /// but collected so the executor can log them via tracing for observability.
+    /// Events emitted by block-level hooks. They are not journaled into EVM
+    /// receipts. The provider collects them so the executor can log them via
+    /// tracing for observability.
     events: Vec<Log>,
     snapshots: Vec<DirectSnapshot>,
     ctx: BlockContext,
@@ -88,8 +89,8 @@ impl<'a, DB: StateDB> DirectStorageProvider<'a, DB> {
     /// Commits all pending writes accumulated via [`sstore`](Self::sstore) to
     /// the underlying [`State<DB>`].
     ///
-    /// Must be called after the contract logic completes so that writes are
-    /// visible to subsequent block processing steps.
+    /// Call it after the contract logic completes, so that writes are visible
+    /// to later steps of block processing.
     ///
     /// # Errors
     ///
@@ -158,9 +159,9 @@ impl<'a, DB: StateDB> DirectStorageProvider<'a, DB> {
         Ok(())
     }
 
-    /// Returns all accumulated state changes from `flush()` for notifying
-    /// reth's parallel state root task
-    /// via the `OnStateHook`. Must be called after `flush()`.
+    /// Returns all accumulated state changes from `flush()`. The caller uses
+    /// them to notify reth's parallel state root task via the `OnStateHook`.
+    /// Call this after `flush()`.
     pub fn take_committed_changes(&mut self) -> AddressMap<Account> {
         std::mem::take(&mut self.committed_changes)
     }
@@ -285,8 +286,8 @@ where
     fn is_static(&self) -> bool {
         // DirectStorageProvider serves block-level hooks (begin_block /
         // end_block) that are by construction non-STATICCALL contexts.
-        // Always `false`; if a hook were ever invoked from a static
-        // frame the executor would route through a different provider.
+        // Always `false`. If a hook were ever invoked from a static
+        // frame, the executor would route through a different provider.
         false
     }
 
@@ -321,7 +322,7 @@ where
             return Ok(());
         }
 
-        // Self-transfer is a no-op - prevents double-insert overwrite
+        // Self-transfer is a no-op. This prevents a double-insert overwrite
         // that would create tokens out of nothing.
         if from == to {
             return Ok(());

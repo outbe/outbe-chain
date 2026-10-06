@@ -13,7 +13,7 @@ use revm::{
     state::Bytecode,
 };
 
-/// Scoped execution adapter; never changes account code or precompile dispatch.
+/// Scoped execution adapter. It never changes account code or precompile dispatch.
 pub(crate) struct NativeDelegationEvm<E>(pub(crate) E);
 impl<E: EvmTr<Frame = EthFrame>> EvmTr for NativeDelegationEvm<E> {
     type Context = E::Context;

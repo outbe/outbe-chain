@@ -47,8 +47,8 @@ pub enum ValidatorCmd {
     },
     /// Deactivate your validator
     Deactivate,
-    /// Confirm your PENDING validator has caught up to head and is ready to be
-    /// included in the next DKG reshare target (stale-join guard). Send only
+    /// Confirm that your PENDING validator reached the head and is ready for
+    /// inclusion in the next DKG reshare target (stale-join guard). Send only
     /// after `outbe-cli monitor` / `outbe_syncStatus` shows the node at tip.
     ConfirmReady {
         /// Canonical binary OcompKeyRegistrationV1 produced for this validator.

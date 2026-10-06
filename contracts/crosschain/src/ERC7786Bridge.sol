@@ -9,10 +9,11 @@ import {IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote} from "./interfa
 
 /**
  *
- * NOTE: switching a gateway (the default or a per-chain override) drops messages already in flight from the affected
- * chain through the previous one: they are rejected on arrival ({ERC7786BridgeUnauthorizedGateway}) and never execute.
- * Recovery is by re-sending from the source through the new gateway, which is safe against double-execution because
- * the in-flight message never executes.
+ * NOTE: switching a gateway (the default or a per-chain override) drops messages already in
+ * flight from the affected chain through the previous one. The bridge rejects them on arrival
+ * ({ERC7786BridgeUnauthorizedGateway}), and they never execute. To recover, send the message again
+ * from the source through the new gateway. This is safe against double-execution because the
+ * in-flight message never executes.
  */
 contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote, Ownable, Pausable {
     using InteroperableAddress for bytes;
@@ -40,8 +41,8 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
     /// @dev The default gateway: used for any chain without a per-chain override.
     address private _activeGateway;
 
-    /// @dev Per-chain gateway override, for outbound sends to and inbound trust from that chain. Zero means "use the
-    /// default gateway".
+    /// @dev Per-chain gateway override, for outbound sends to and inbound trust from that chain.
+    /// Zero means "use the default gateway".
     mapping(uint256 chainId => address gateway) private _gateways;
 
     /// @dev Nonce for message deduplication (internal)
@@ -79,7 +80,8 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
         // wrapping the payload
         bytes memory wrappedPayload = abi.encode(++_nonce, sender, recipient, payload);
 
-        // Post on the active gateway, forwarding any native fee (fee-bearing transports charge per message).
+        // Post on the active gateway, forwarding any native fee (fee-bearing transports charge
+        // per message).
         bytes32 id = IERC7786GatewaySource(gateway).sendMessage{value: msg.value}(bridge, wrappedPayload, attributes);
         sendId = id == bytes32(0) ? bytes32(0) : keccak256(abi.encode(gateway, id));
 
@@ -89,8 +91,9 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
     // ============================================== IGatewayQuote ==============================================
 
     /// @inheritdoc IGatewayQuote
-    /// @dev Quotes the native fee {sendMessage} would require for the same `recipient`/`payload`, by delegating to the
-    /// recipient chain's gateway. The payload is wrapped exactly as in {sendMessage} so the quoted message size matches.
+    /// @dev Quotes the native fee {sendMessage} would require for the same `recipient`/`payload`.
+    /// The function delegates to the recipient chain's gateway. It wraps the payload exactly as
+    /// {sendMessage} does, so the quoted message size matches.
     function quote(bytes calldata recipient, bytes calldata payload) public view virtual returns (uint256 nativeFee) {
         (uint256 dstChainId,) = recipient.parseEvmV1Calldata();
         address gateway = getGateway(dstChainId);
@@ -122,13 +125,17 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
     /**
      * @inheritdoc IERC7786Recipient
      *
-     * @dev Delivers a message to its final recipient. Only the source chain's gateway may call this; the cross-chain
-     * `sender` must be the registered bridge on the source chain.
+     * @dev Delivers a message to its final recipient. Only the source chain's gateway may call
+     * this. The cross-chain `sender` must be the registered bridge on the source chain.
      *
-     * Reverts if the caller is not the source chain's gateway, if the message does not originate from the registered
-     * bridge, if it was already executed, or if the recipient reverts / returns an invalid value. On a recipient revert the
-     * whole call reverts (so the deduplication flag is rolled back) and the message stays retryable via the
-     * transport's own redelivery.
+     * Reverts if:
+     * - the caller is not the source chain's gateway,
+     * - the message does not originate from the registered bridge,
+     * - the message was already executed,
+     * - or the recipient reverts / returns an invalid value.
+     *
+     * On a recipient revert, the whole call reverts, so the deduplication flag is rolled back.
+     * The message stays retryable via the transport's own redelivery.
      */
     function receiveMessage(
         bytes32,
@@ -142,15 +149,18 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
         whenNotPaused
         returns (bytes4)
     {
-        // Only the source chain's gateway may deliver, and only from the registered bridge on the source chain.
+        // Only the source chain's gateway may deliver, and only from the registered bridge on the
+        // source chain.
         (uint256 srcChainId,) = sender.parseEvmV1Calldata();
         require(msg.sender == getGateway(srcChainId), ERC7786BridgeUnauthorizedGateway(msg.sender));
         require(keccak256(getRemoteBridge(sender)) == keccak256(sender), ERC7786BridgeInvalidCrosschainSender());
 
-        // Deduplicate. The id binds the source bridge (sender) and the wrapped payload (which carries the nonce).
+        // Deduplicate. The id binds the source bridge (sender) and the wrapped payload (which
+        // carries the nonce).
         bytes32 id = keccak256(abi.encode(sender, payload));
         require(!_executed[id], ERC7786BridgeAlreadyExecuted());
-        // Effects before interaction (CEI); rolled back with the tx if the recipient reverts, leaving it retryable.
+        // Effects before interaction (CEI). If the recipient reverts, this write rolls back with
+        // the tx, and the message stays retryable.
         _executed[id] = true;
 
         (, bytes memory originalSender, bytes memory recipient, bytes memory unwrappedPayload) =

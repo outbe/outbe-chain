@@ -281,7 +281,7 @@ where
     let mut projection_unavailable_since = None;
     let mut projection_runtime_recovery_task = None;
     // Keep one sampled target throughout catch-up. Historical voting state
-    // never authorizes effects; mandatory Completed verification uses this target.
+    // never authorizes effects. Mandatory Completed verification uses this target.
     let mut recovery_target = None;
     let mut initial_finished_height_published = false;
     loop {

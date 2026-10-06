@@ -9,8 +9,8 @@ const config: HardhatUserConfig = {
   plugins: [],
   tasks: [...generateCommitHashTasks, ...wireTasks],
   networks: {
-    // Data-driven target from the deploy workflow (WIRE_* env per targets.json entry);
-    // a static entry of the same name below takes precedence.
+    // Data-driven target from the deploy workflow (WIRE_* env per targets.json entry).
+    // A static entry of the same name below takes precedence.
     ...(process.env.WIRE_NETWORK
       ? {
           [process.env.WIRE_NETWORK]: {

@@ -103,8 +103,8 @@ impl JournalStore {
                 | RetentionError::UnsupportedJournalVersion { .. },
             ) => {
                 // The temp name is never published authority. A crash before
-                // its fsync may leave arbitrary/truncated bytes; discard those
-                // and replay from the last durable frame/journal generation.
+                // its fsync may leave arbitrary/truncated bytes. Discard those
+                // bytes and replay from the last durable frame/journal generation.
                 self.discard_temporary()?;
                 return Ok(());
             }

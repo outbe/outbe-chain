@@ -1,9 +1,9 @@
 use super::*;
 
 /// Restore a pre-admission-bounds ballot for lifecycle arithmetic regression
-/// tests. Current submitVote rejects these extreme values; admission tests cover
+/// tests. Current submitVote rejects these extreme values. Admission tests cover
 /// that boundary separately. Keep the validated pair/voter metadata, then seed
-/// only the historical rate/volume payload consumed by begin_block/run_tally.
+/// only the historical rate/volume payload that begin_block/run_tally consume.
 fn seed_legacy_vote(
     oracle: &mut OracleContract,
     voter: Address,

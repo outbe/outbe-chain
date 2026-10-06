@@ -11,7 +11,7 @@ import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 
 /// @dev Golden-value and per-field round-trip coverage for BridgeMsgCodec encode/decode.
 contract BridgeMsgCodecGoldenTest is Test {
-    /// @dev Fixed call stamp; these tests exercise the wire, not the clock.
+    /// @dev Fixed call stamp. These tests exercise the wire, not the clock.
     uint32 internal constant CALLED_AT = 1_777_000_000;
 
     // Byte-literal goldens for the fixed-width packed messages.

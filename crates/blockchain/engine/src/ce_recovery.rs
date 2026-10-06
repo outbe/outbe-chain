@@ -2,8 +2,8 @@
 //!
 //! This boundary runs after Marshal exposes durable consensus finality and
 //! before the executor/consensus actors participate. It accepts only an exact
-//! marker or a contiguous replay whose every root matches historical EVM slot
-//! 1. Local candidates are never a restart input.
+//! marker or a contiguous replay in which every root matches historical EVM
+//! slot 1. Local candidates are never a restart input.
 
 // Recovery conflicts deliberately retain both complete marker identities in
 // the typed error so operators can diagnose the fail-closed startup decision.
@@ -63,9 +63,9 @@ impl StartupCeTree for CompressedTreeService {
 }
 
 /// Reconstructs one exact finalized batch from canonical durable receipts and
-/// applies it through the normal candidate/marker transaction. This is shared
-/// by startup catch-up and the live finalizer when validator execution did not
-/// retain speculative state before Reth post-execution validation.
+/// applies it through the normal candidate/marker transaction. Startup catch-up
+/// uses this function. The live finalizer also uses it when validator execution
+/// did not retain speculative state before Reth post-execution validation.
 pub(crate) fn apply_replayed_block(
     tree: &CompressedTreeService,
     block: &CanonicalCeReplayBlock,

@@ -1,17 +1,17 @@
 //! EVM-level integration test for `IPayNote.deposit`.
 //!
 //! The paynote crate's own tests can only cover `deposit`'s pre-mutation
-//! guards: its body performs three real sub-calls — `asset.transferFrom`,
-//! `asset.approve`, and `VaultRouter.deposit` — which an in-memory storage
-//! provider cannot serve. This test drives the precompile through the actual
+//! guards. Its body performs three real sub-calls that an in-memory storage
+//! provider cannot serve: `asset.transferFrom`, `asset.approve`, and
+//! `VaultRouter.deposit`. This test drives the precompile through the actual
 //! EVM (`sub_call::run`, which installs the outbe precompile set in the child
-//! frame), so those sub-calls dispatch for real: the VaultRouter precompile
-//! runs its own liquidity-source gating and vault lookup, and the ERC20/ERC4626
+//! frame). Thus those sub-calls dispatch for real. The VaultRouter precompile
+//! runs its own liquidity-source gating and vault lookup. The ERC20/ERC4626
 //! counterparties are the stateful `FactorySettlement` fixture.
 //!
 //! What this pins that unit tests cannot:
-//!   * `PAYNOTE_ADDRESS` must be a registered VaultRouter liquidity source —
-//!     the `PayNoteDeposit` discriminant seeded at genesis is load-bearing.
+//!   * `PAYNOTE_ADDRESS` must be a registered VaultRouter liquidity source.
+//!     The `PayNoteDeposit` discriminant seeded at genesis is load-bearing.
 //!   * the asset must have a registered reserve vault.
 //!   * a revert anywhere in that chain rolls the tree back atomically.
 //!   * the appended leaf is the runtime-derived commitment, readable through
@@ -95,9 +95,9 @@ fn note_serial_word() -> alloy_primitives::B256 {
 }
 
 /// A database with the counterparty fixture deployed and VaultRouter seeded
-/// as production genesis would: a vault registered for `ASSET`, and paynote
-/// authorized as a `PayNoteDeposit` liquidity source unless `authorize_paynote`
-/// says otherwise.
+/// as production genesis would seed it. VaultRouter has a vault registered for
+/// `ASSET`. Paynote is an authorized `PayNoteDeposit` liquidity source unless
+/// `authorize_paynote` says otherwise.
 fn seeded_db(register_vault: bool, authorize_paynote: bool) -> CacheDB<EmptyDB> {
     let mut database = CacheDB::new(EmptyDB::default());
     database.insert_account_info(ASSET, fixture_account());
@@ -166,7 +166,7 @@ type EvmCtx = revm::Context<
 >;
 
 /// The EVM context the sub-call runs in. `Context::mainnet()` defaults to
-/// chain id 1; the runtime folds the live chain id into every note
+/// chain id 1. The runtime folds the live chain id into every note
 /// commitment, so the test would otherwise derive a leaf for the wrong chain.
 ///
 /// `ALICE` holds and has approved both assets to the pool, and the router has
@@ -216,9 +216,9 @@ fn fixture_call(ctx: &mut EvmCtx, caller: Address, target: Address, call: impl S
     );
 }
 
-/// The tree must be untouched: a VaultRouter revert has to roll the whole
-/// deposit back, leaf and all, not leave a commitment behind for value that
-/// never reached a vault.
+/// The tree must be untouched. A VaultRouter revert has to roll the whole
+/// deposit back, leaf and all. It must not leave a commitment behind for value
+/// that never reached a vault.
 macro_rules! assert_pristine {
     ($ctx:expr) => {{
         let count = run_call!(
@@ -337,9 +337,10 @@ fn deposit_reverts_and_leaves_no_leaf_when_the_asset_has_no_vault() {
 
 #[test]
 fn a_second_identical_deposit_reverts_on_the_duplicate_leaf() {
-    // Dedup is on the leaf, not the serial: re-depositing the same amount of
-    // the same asset under the same serial rebuilds the identical commitment,
-    // which would alias one nullifier onto two notes and lock one up forever.
+    // Dedup is on the leaf, not the serial. A re-deposit of the same amount of
+    // the same asset under the same serial rebuilds the identical commitment.
+    // That commitment would alias one nullifier onto two notes and lock one of
+    // them forever.
     let mut ctx = evm_ctx(seeded_db(true, true));
 
     let first = run_call!(

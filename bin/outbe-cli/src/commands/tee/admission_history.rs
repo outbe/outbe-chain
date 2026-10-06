@@ -1,4 +1,4 @@
-//! History discovery is untrusted; only certified headers authorize admission.
+//! History discovery is untrusted. Only certified headers authorize admission.
 use super::*;
 use eyre::WrapErr;
 use outbe_primitives::{
@@ -8,8 +8,8 @@ use outbe_primitives::{
 use outbe_tee::finalized_admission::CertifiedHeaderV1;
 
 /// Retry only the RPC's historical-proof-window error. Every returned opening
-/// remains tied to its exact finalized height; callers must rebuild the header
-/// witness for that height and the enclave rechecks all recipient claims.
+/// remains tied to its exact finalized height. Callers must rebuild the header
+/// witness for that height, and the enclave rechecks all recipient claims.
 pub(super) async fn registry_opening(
     rpc: &(impl Rpc + Sync),
     mut height: u64,
@@ -88,7 +88,7 @@ pub(super) async fn admission_public(
 }
 
 /// Convert RPC transport into the compact proof checked inside the enclave.
-/// Hash-link checks here catch transport corruption early; the enclave repeats
+/// Hash-link checks here catch transport corruption early. The enclave repeats
 /// them and authenticates the final signature against its committee chain.
 pub(super) fn compact_header(
     public: &serde_json::Value,

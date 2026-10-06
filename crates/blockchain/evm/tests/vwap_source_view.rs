@@ -1,4 +1,5 @@
-//! A Solidity view reads the IntexFactory precompile as its daily VWAP source, as the origin's IntexNFT1155 does.
+//! A Solidity view reads the IntexFactory precompile as its daily VWAP source,
+//! as the origin's IntexNFT1155 does.
 use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, U256};

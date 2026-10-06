@@ -1,10 +1,10 @@
 //! Clean-genesis byte-vector regression for the mandatory-VRF Hybrid
 //! certificate wire codec.
 //!
-//! The vectors are generated with deterministic BLS seeds so they are
+//! The vectors are generated with deterministic BLS seeds. Thus they are
 //! reproducible from `cargo test --test codec_compat -- --nocapture` if the
-//! `OUTBE_REGENERATE_LEGACY_VECTORS` env is set (no Cargo helper exposed by
-//! design: regeneration is a manual, audited action).
+//! `OUTBE_REGENERATE_LEGACY_VECTORS` env is set. By design, no Cargo helper
+//! is exposed: regeneration is a manual, audited action.
 //!
 //! Any change here changes the on-chain block hash. Do not regenerate without
 //! a coordinated rollout.
@@ -29,8 +29,8 @@ use rand_commonware::SeedableRng;
 /// Deterministic constructor: n=4 participants, signer indices {0, 2, 3},
 /// VRF present with material version = 1 and a MinSig key seeded from 7.
 ///
-/// The exact byte vector below was produced by encoding this certificate with
-/// the pre-move `outbe-consensus::hybrid` encoder and verified to equal the
+/// The exact byte vector below comes from encoding this certificate with
+/// the pre-move `outbe-consensus::hybrid` encoder. It was verified to equal the
 /// post-move `outbe-consensus-proof::hybrid_wire` encoder output.
 fn mandatory_vrf_fixture() -> HybridCertificate<MinSig> {
     let signers = Signers::new(4, [0u32, 2, 3].into_iter().map(Participant::new)).unwrap();

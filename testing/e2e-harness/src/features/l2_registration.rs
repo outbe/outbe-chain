@@ -1,6 +1,6 @@
 //! Explicit L2 registration prerequisites for Tribute offer fixtures.
 //!
-//! Small fixtures use validator governance; bulk owner sets are seeded in
+//! Small fixtures use validator governance. Bulk owner sets are seeded in
 //! genesis. Both store the deterministic per-chain root-signing key used by
 //! their real offer proofs.
 
@@ -94,9 +94,9 @@ fn assert_registered_operator(world: &World, l1_address: Address, chain_id: u64)
 /// Propose `payload` to L2Registry and drive it to `approved`, returning the
 /// proposal id the vote module allocated.
 ///
-/// Used by the governed zk-gate scenarios: the registration must be approved and
-/// observable before the scenario's offers run, so it is driven to its deadline
-/// here rather than left pending.
+/// Used by the governed zk-gate scenarios. The registration must be approved and
+/// observable before the scenario's offers run. This function therefore drives it
+/// to its deadline here rather than leaving it pending.
 pub(super) fn govern_l2_registry_payload(world: &mut World, payload: &str) -> u64 {
     let proposer = active_validators(world)
         .into_iter()
@@ -205,9 +205,9 @@ fn await_l2_proposal_visible(world: &World, proposal_id: u64) {
 /// Cast one approval per ACTIVE validator for `proposal_id` and report the
 /// number of ballots cast.
 ///
-/// The quorum is measured against the ACTIVE set, which is wider than the
-/// configured committee while a joiner is promoted, so the ballots come from
-/// every active validator the harness holds a key for rather than a fixed
+/// The quorum is measured against the ACTIVE set. While a joiner is promoted,
+/// that set is wider than the configured committee. The ballots therefore come
+/// from every active validator the harness holds a key for, rather than a fixed
 /// subset that could fall short of quorum.
 fn cast_l2_approvals(world: &World, voters: &[Validator], proposal_id: u64) -> u64 {
     for validator in voters {

@@ -3,9 +3,9 @@
 //! Two modes:
 //! - **Initial**: Standalone P2P ceremony, blocks consensus engine startup.
 //!   All validators are simultaneously Dealer AND Player.
-//! - **Reshare**: Runs in parallel with consensus; finalized dealer logs may be
-//!   carried in block headers while the ceremony is still in progress. Previous
-//!   share holders are Dealers; the frozen target set are Players.
+//! - **Reshare**: Runs in parallel with consensus. Block headers may carry
+//!   finalized dealer logs while the ceremony is still in progress. Previous
+//!   share holders are Dealers. The frozen target set are Players.
 
 pub mod actor;
 mod recovery;

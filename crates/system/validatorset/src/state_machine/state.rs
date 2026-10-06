@@ -22,21 +22,21 @@ pub struct ValidatorState {
 /// protocol states that the legacy `uint8` status cannot express by itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidatorLifecycle {
-    /// `address_to_index == 0`; all validator-owned storage is empty.
+    /// `address_to_index == 0`. All validator-owned storage is empty.
     Absent,
 
-    /// Persisted `REGISTERED`: identity exists, but bonded stake has not
+    /// Persisted `REGISTERED`. Identity exists, but bonded stake has not
     /// admitted the validator to the readiness path.
     WaitingForStake(WaitingForStake),
 
     /// Persisted `PENDING` with readiness not yet confirmed.
     WaitingForReadiness(WaitingForReadiness),
 
-    /// Persisted `PENDING` with readiness confirmed; eligible for the next
+    /// Persisted `PENDING` with readiness confirmed. Eligible for the next
     /// canonical DKG target but not a current consensus participant.
     Joining(Joining),
 
-    /// Persisted `ACTIVE`; always owns a live committee share.
+    /// Persisted `ACTIVE`. Always owns a live committee share.
     Active(Active),
 
     /// Persisted `JAILED` while its old live share remains accountable until
@@ -46,16 +46,16 @@ pub enum ValidatorLifecycle {
     /// Persisted `JAILED` after a successful boundary cleared the old share.
     Jail(Jail),
 
-    /// Persisted `EXITING`; always retained in the current committee until the
+    /// Persisted `EXITING`. Always retained in the current committee until the
     /// exclusion boundary.
     Exiting(Exiting),
 
-    /// Persisted `UNBONDING`; consensus membership is already cleared while
+    /// Persisted `UNBONDING`. Consensus membership is already cleared while
     /// Staking drains residual bonded value and live claims.
     Unbonding(Unbonding),
 
-    /// Persisted `INACTIVE`; bonded stake and the compatibility unbonding hint
-    /// are both zero, while registry identity remains until re-registration or
+    /// Persisted `INACTIVE`. Bonded stake and the compatibility unbonding hint
+    /// are both zero. Registry identity remains until re-registration or
     /// bounded cleanup.
     Inactive(Inactive),
 }

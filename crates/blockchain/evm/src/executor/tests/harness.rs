@@ -2,7 +2,7 @@ use super::{OutbeBlockExecutor, B256};
 
 // test-only opt-out: scoped flag that disables the Phase 1
 // `verify_v2_proof` preflight in `apply_pre_execution_changes`. The flag
-// is thread-local and one-shot per test; production code paths never set
+// is thread-local and one-shot per test. Production code paths never set
 // it. See `with_phase1_verify_disabled`.
 #[cfg(test)]
 thread_local! {

@@ -1,4 +1,4 @@
-//! Valid activation conserves the day limit; an over-ceiling Desis reservation
+//! Valid activation conserves the day limit. An over-ceiling Desis reservation
 //! fails activation before any owner write.
 use alloy_primitives::U256;
 use outbe_ocomp_protocol::receipts::{desis_request_brief_hash, RequestLimitSplitReceiptV1};
@@ -51,7 +51,7 @@ fn rebind_retained_receipt_hash(
 }
 
 fn apply_without_owner_writes(fixture: &mut ActivationFixture) -> String {
-    // A storage error here would mean an owner write was attempted first.
+    // A storage error here would mean that activation attempted an owner write first.
     fixture.provider.fail_mutation_at_address(NOD_ADDRESS);
     let error = fixture.apply().unwrap_err();
     fixture.provider.clear_mutation_failure();

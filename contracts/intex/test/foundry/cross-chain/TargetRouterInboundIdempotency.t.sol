@@ -14,10 +14,13 @@ import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {InboundReason} from "@contracts/shared/libs/InboundReason.sol";
 
-/// Auction-stage messages are acknowledged whatever the day's state: a START the day already has, a
-/// CLEARING or RESULT for a day that is past them or was never opened here, and a RESULT that fails the
-/// auction's permanent bounds all execute without effect and report why. Only a transition that time or a
-/// missing prerequisite will still make valid keeps reverting, so the bridge redelivers it.
+/// The router acknowledges auction-stage messages whatever the day's state. These messages execute
+/// without effect and report why:
+/// - a START that the day already has
+/// - a CLEARING or RESULT for a day that is past them or that was never opened here
+/// - a RESULT that fails the auction's permanent bounds
+/// Only a transition that time or a missing prerequisite will still make valid keeps reverting.
+/// Thus the bridge redelivers it.
 contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant DAY = 20_250_101;

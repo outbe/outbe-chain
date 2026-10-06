@@ -23,7 +23,7 @@ use outbe_vaultrouter::api::IVaultRouter;
 const T_NOW: u64 = 1_700_000_000;
 const ALICE: Address = address!("0x1111111111111111111111111111111111111111");
 const BOB: Address = address!("0x2222222222222222222222222222222222222222");
-/// Mock settlement stablecoin passed to `settle_gem` in tests; `isoCode()`
+/// Mock settlement stablecoin passed to `settle_gem` in tests. Its `isoCode()` is
 /// stubbed to 840 (USD), matching the default test currency.
 const STABLE: Address = address!("0x00000000000000000000000000000000000000AA");
 /// Mock stablecoin whose `isoCode()` is 978 (EUR): a currency mismatch for a
@@ -111,7 +111,7 @@ fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
         word(1),
     );
     StorageHandle::enter(&mut storage, |handle| {
-        // These cases assert the PROD gem terms; an unset profile would resolve
+        // These cases assert the PROD gem terms. An unset profile would resolve
         // by chain id, and the test chain is not mainnet.
         outbe_gem::schema::GemContract::new(handle.clone())
             .config_profile
@@ -327,8 +327,8 @@ fn register_currency(storage: &StorageHandle<'_>, iso: u16, rate: U256) {
 // TODO(reserve-config): the paid `settle_gem` path (Reserve vault deposit)
 // is not exercisable in the storage-only harness for ANY gem type now that
 // Genesis also carries a non-zero cost. Unit coverage forces `Settled` via
-// `gem_api::set_state` to reach the mine path; the real paid settle is
-// covered on localnet with a configured `RESERVE_ASSET` / `RESERVE_VAULT`.
+// `gem_api::set_state` to reach the mine path. Localnet covers the real paid
+// settle with a configured `RESERVE_ASSET` / `RESERVE_VAULT`.
 
 // --- Merchant gems ---
 

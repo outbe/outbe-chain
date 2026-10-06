@@ -7,16 +7,17 @@ import {CREATE3} from "./vendor/solady/CREATE3.sol";
  * @title Create3Factory
  * @author Outbe
  * @notice Ownerless CREATE3 factory. A deployed contract's address depends only on
- *         `(this factory, msg.sender, salt)` and not on its init code, so a contract keeps the
- *         same address across init-code iterations, library swaps, and full network wipes.
+ *         `(this factory, msg.sender, salt)`. It does not depend on the contract's init code. Thus a
+ *         contract keeps the same address across init-code iterations, library swaps, and full
+ *         network wipes.
  * @dev Deploy this factory once per chain through the canonical CREATE2 deployer
- *      (`0x4e59...956C`) with a pinned salt so the factory itself lands at the same address on
+ *      (`0x4e59...956C`) with a pinned salt. As a result, the factory itself lands at the same address on
  *      every chain. It has no constructor and no owner, so its init code is identical everywhere.
- *      Front-running is prevented by namespacing the CREATE3 salt with `msg.sender`: a caller can
- *      only deploy into addresses derived from its own address.
+ *      The factory prevents front-running: it namespaces the CREATE3 salt with `msg.sender`. A
+ *      caller can only deploy into addresses derived from its own address.
  */
 contract Create3Factory {
-    /// @notice A deployment was attempted to an address that already holds code.
+    /// @notice A caller attempted a deployment to an address that already holds code.
     error AlreadyDeployed(address target);
 
     /// @notice Emitted on every successful deployment.

@@ -279,8 +279,8 @@ fn scan_seed_predeploys(
         }
     }
     // A seed predeploy may intentionally have a matching canonical constant in
-    // addresses.rs (for example EntryPoint). Exact aliases are one address identity;
-    // overlap with a planned dynamic class remains forbidden above.
+    // addresses.rs (for example EntryPoint). Exact aliases are one address identity.
+    // Overlap with a planned dynamic class remains forbidden above.
     Ok(predeploys.len())
 }
 

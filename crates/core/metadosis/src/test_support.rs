@@ -52,9 +52,9 @@ pub fn seed_bootstrap_end_time(storage: StorageHandle<'_>, end_time: u64) -> Res
 
 /// Test/evidence-only sentinel probe for a fresh-devnet genesis snapshot.
 ///
-/// This is intentionally absent from the production API. The named sentinel
-/// is checked across every per-day durable surface without exposing raw keys
-/// or mutation access to the harness.
+/// This is intentionally absent from the production API. The probe checks the
+/// named sentinel across every per-day durable surface. It does not expose raw
+/// keys or mutation access to the harness.
 pub fn fresh_devnet_sentinel_is_pristine(
     storage: StorageHandle<'_>,
     sentinel_day: WorldwideDay,

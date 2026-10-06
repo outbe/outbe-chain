@@ -55,8 +55,8 @@ pub(super) fn finalized_parent_attestation_from_phase1_system_tx(
         ordered_committee: metadata.ordered_committee,
         signer_bitmap: metadata.signer_bitmap,
         certificate: metadata.proof,
-        // V2 `missed_proposers: Vec<MissedProposerEvent>` always
-        // empty under the verifier rule; the V1 attestation surface
+        // V2 `missed_proposers: Vec<MissedProposerEvent>` is always
+        // empty under the verifier rule. The V1 attestation surface
         // keeps the legacy `Vec<Address>` shape for backwards-compat callers.
         missed_proposers: metadata
             .missed_proposers
@@ -66,9 +66,9 @@ pub(super) fn finalized_parent_attestation_from_phase1_system_tx(
     }))
 }
 
-// Like `BuildBlockOutcome` above: an internal direct-parent proof lookup result,
-// produced once per proposal in `select_parent_proof_for_proposal` and consumed
-// immediately at the single match site. `Found` is the common case, so boxing the
+// Like `BuildBlockOutcome` above, this is an internal direct-parent proof lookup
+// result. `select_parent_proof_for_proposal` produces it once per proposal, and the
+// single match site consumes it immediately. `Found` is the common case, so boxing the
 // record would only add a heap allocation on the hot proposer path for no benefit.
 #[allow(clippy::large_enum_variant)]
 pub(super) enum ParentProofLookup {
@@ -90,17 +90,19 @@ impl ApplicationShared {
     /// record from marshal's durable finalization archive when the in-process
     /// selection store missed it (restart / late-join / brief finalization lag).
     ///
-    /// `get_finalization` is a LOCAL archive read - it never triggers a network
-    /// fetch, so this cannot block consensus on a peer; the archive is the same
-    /// durable store marshal repopulates during sync. The rebuilt record mirrors
-    /// the live [`FinalizationActor`](crate::finalization::actor) writer
-    /// field-for-field (pinned by the `record_builder_parity` test), so the
-    /// proposer's Phase 1 metadata stays canonical and every validator accepts
-    /// it. Returns `None` when the archive has no finalization for `parent_height`,
-    /// the recovered finalization does not finalize this exact parent, or the
-    /// finalized epoch's committee scheme / ordered addresses are not registered.
+    /// `get_finalization` is a LOCAL archive read. It never triggers a network
+    /// fetch, so this cannot block consensus on a peer. The archive is the same
+    /// durable store that marshal repopulates during sync. The rebuilt record
+    /// mirrors the live [`FinalizationActor`](crate::finalization::actor) writer
+    /// field-for-field, so the proposer's Phase 1 metadata stays canonical and
+    /// every validator accepts it. The `record_builder_parity` test pins this
+    /// parity. Returns `None` when one of these is true:
+    /// - the archive has no finalization for `parent_height`.
+    /// - the recovered finalization does not finalize this exact parent.
+    /// - the finalized epoch's committee scheme / ordered addresses are not
+    ///   registered.
     // `pub(crate)` for the regression test in `handler_tests` (a sibling
-    // module): exercises the selection-store-miss recovery branch directly.
+    // module). That test exercises the selection-store-miss recovery branch directly.
     pub(crate) async fn recover_parent_proof_from_marshal(
         &self,
         parent_proof_key: crate::finalization::parent_cert_store::CertifiedParentProofKey,
@@ -135,8 +137,8 @@ impl ApplicationShared {
             Ok(record) => Some(record),
             Err(error) => {
                 // Encode-invariant violation on the marshal-recovery path: no
-                // canonical record can be produced, so recovery is unavailable
-                // (deterministic; never a wrong proof). Logged, not fatal.
+                // canonical record can be produced, so recovery is unavailable.
+                // This is deterministic and never a wrong proof. Logged, not fatal.
                 tracing::warn!(
                     target: "outbe::application",
                     epoch = epoch.get(),
@@ -186,8 +188,8 @@ impl ApplicationShared {
             Some(record) => ParentProofLookup::Found(record),
             None => {
                 // The in-process selection store missed the direct parent's proof
-                // (post-restart, late-joining validator, or brief finalization lag),
-                // but marshal's DURABLE finalization archive may still hold the
+                // (post-restart, late-joining validator, or brief finalization lag).
+                // But marshal's DURABLE finalization archive may still hold the
                 // parent's finalization locally. Recover it and rebuild the
                 // canonical Finalization parent-proof record before forfeiting the
                 // slot.

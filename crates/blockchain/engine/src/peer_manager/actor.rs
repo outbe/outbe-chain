@@ -77,7 +77,7 @@ where
     }
 
     pub(crate) fn start(self) -> Handle<()> {
-        // commonware 2026.5.0: `Context` is no longer `Clone`; derive a scoped
+        // commonware 2026.5.0: `Context` is no longer `Clone`. Derive a scoped
         // child to spawn on (mirrors `outbe_consensus::executor::actor::start`).
         let context = self.context.child("peer_manager");
         context.spawn(move |_| self.run())
@@ -190,14 +190,14 @@ where
     #[instrument(skip_all, fields(height = block.number(), hash = %block.block_hash()))]
     async fn try_refresh_from_block(&mut self, block: ConsensusBlock) -> eyre::Result<()> {
         ensure_provider_ready(&self.node.provider, &block)?;
-        // PRIMARY = current consensus participants (ACTIVE|EXITING with share - the
+        // PRIMARY = current consensus participants (ACTIVE|EXITING with share, the
         // voting committee). SECONDARY = non-voting admitted peers (status in
-        // {REGISTERED, PENDING}, no share): PENDING joiners (staked, syncing toward
-        // their activating reshare) PLUS TEE full-nodes
-        // (REGISTERED, P2P-announced, enclave-registered, NOT staked). Both are
-        // admitted so they reach head and execute offer blocks BEFORE voting - a
-        // joiner must be synced before the reshare (else its DKG output diverges); a
-        // full-node just syncs + serves. Voting needs `has_bls_share`, so a secondary
+        // {REGISTERED, PENDING}, no share). SECONDARY holds:
+        // - PENDING joiners (staked, syncing toward their activating reshare).
+        // - TEE full-nodes (REGISTERED, P2P-announced, enclave-registered, NOT staked).
+        // Both are admitted so they reach head and execute offer blocks BEFORE voting.
+        // A joiner must be synced before the reshare, else its DKG output diverges. A
+        // full-node only syncs and serves. Voting needs `has_bls_share`, so a secondary
         // peer cannot affect consensus. The tiers are disjoint by status.
         let consensus_set =
             read_consensus_validators_at_block(&self.node.provider, block.block_hash())

@@ -45,8 +45,8 @@ where
 {
     let CarrierAdmissionContext { origin, candidate } = context;
     // `chain_info` reads one canonical head, so the hash and number cannot tear.
-    // State is loaded for that hash: a later tip does not pair this height with
-    // a different block. `best_block_number` and `latest` are separate reads.
+    // This function loads state for that hash. A later tip does not pair this
+    // height with a different block. `best_block_number` and `latest` are separate reads.
     let canonical = match inner.client().chain_info() {
         Ok(info) => info,
         Err(error) => {

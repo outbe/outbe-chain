@@ -496,7 +496,7 @@ impl Rpc {
         let key = "0x2222222222222222222222222222222222222222222222222222222222222222";
         let address = eth::address_of(key).ok_or_else(|| eyre!("derive negative signer"))?;
         // The negative lane deliberately submits several ordinary paid
-        // authorization/call envelopes; funding one COEN only covered a single
+        // authorization/call envelopes. Funding one COEN only covered a single
         // envelope's gas reservation on the fresh-chain base fee.
         let funding = self.fund_key(funder, key, 10)?;
         if !self.wait_successful_receipt(&funding, 20) {
@@ -540,7 +540,7 @@ impl Rpc {
         let address = zerofee_negative_address(state);
         // Authorization-list processing installs the designator before the
         // outer call executes. Calling the newly delegated Update target with
-        // empty calldata may revert; that receipt status is not the delegation
+        // empty calldata may revert. That receipt status is not the delegation
         // postcondition, so the live account code below is authoritative.
         let _delegation = eth::install_delegation(&self.cfg.rpc0, &key, addresses::UPDATE_ADDR)?;
         state.zerofee_wrong_target_balance_before = Some(

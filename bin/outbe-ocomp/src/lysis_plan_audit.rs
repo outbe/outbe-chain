@@ -2,8 +2,8 @@
 //!
 //! Every cursor step processes at most one bounded catalog entry, input chunk,
 //! unit artifact or directory entry. This layer does not bind finalized job
-//! authority and does not validate phase payload semantics, so neither an
-//! individual item nor `Complete` is a signing/finalization capability.
+//! authority and does not validate phase payload semantics. Therefore neither
+//! an individual item nor `Complete` is a signing/finalization capability.
 
 use std::collections::BTreeSet;
 
@@ -582,7 +582,7 @@ impl<'a> LocalLysisPlanAuditV1<'a> {
 
     /// Adds the shard plus the bounded one-shard lookahead needed to rederive
     /// the exact half-open primary interval. The lookahead is authenticated
-    /// authority only; phase semantics continue to consume the admitted
+    /// authority only. Phase semantics continue to consume the admitted
     /// Enumerate producer for the current shard.
     fn push_primary_input_authority_refs(
         &self,

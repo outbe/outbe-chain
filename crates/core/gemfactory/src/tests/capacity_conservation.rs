@@ -114,8 +114,8 @@ fn every_position_expiry_write_failure_preserves_remaining_load_then_retries_onc
             } else {
                 p.fail_mutation_at(point);
             }
-            // A failed queue compaction errors and a failed position is retained;
-            // either way the economic checkpoint must hold.
+            // A failed queue compaction errors, and the sweep retains a failed position.
+            // Either way the economic checkpoint must hold.
             let _ = sweep(&mut p, EXPIRES);
             let observed = p.clear_mutation_failure();
             let reached = if after {

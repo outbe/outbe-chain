@@ -24,12 +24,12 @@ where
                 .map_err(|error| BlockExecutionError::msg(error.to_string()))?;
             validate_compressed_entities_root_scheme(artifacts.compressed_entities_root)?;
         }
-        // initialise the begin-zone phase cursor for this block
+        // Initialise the begin-zone phase cursor for this block
         // BEFORE any pre-exec mutation that could affect routing. Block 1
-        // (genesis bootstrap) skips Phase 1 and starts at CycleTick; block
+        // (genesis bootstrap) skips Phase 1 and starts at CycleTick. Block
         // `n` with `n > GENESIS_BOOTSTRAP_BLOCK_NUMBER` enters Phase 1 with
-        // a zero placeholder tx_hash that the Phase 1 preflight (Batch 3)
-        // overwrites once `verify_v2_proof` returns Ok and the system tx
+        // a zero placeholder tx_hash. The Phase 1 preflight (Batch 3)
+        // overwrites it once `verify_v2_proof` returns Ok and the system tx
         // is committed in pre-execution.
         self.system_tx_phase_cursor = crate::system_tx::SystemTxPhase::initial_for_block_with_ocomp(
             block_number,
@@ -67,16 +67,16 @@ where
 
         // 3. Open the block-scoped compressed-body overlay before any user or
         // system transaction can perform a body read or mutation. This also
-        // applies to Reth's local pending-block construction: it executes
-        // txpool transactions against an isolated State and therefore needs a
-        // complete CE begin/end lifecycle even though consensus-only Outbe
+        // applies to Reth's local pending-block construction. That path executes
+        // txpool transactions against an isolated State. It therefore needs a
+        // complete CE begin/end lifecycle, even though consensus-only Outbe
         // hooks remain disabled. The provisional tree batch is not published
         // without a final block hash.
         self.begin_compressed_entities(block_number)?;
 
         // Pending-block RPC has no proposer certificate or consensus system
         // transactions. Its isolated CE scope is active now, so user
-        // transactions can be simulated faithfully; skip only the
+        // transactions can be simulated faithfully. Skip only the
         // consensus-specific hooks below.
         if !self.execute_outbe_block_hooks {
             return Ok(());
@@ -96,19 +96,19 @@ where
         }
 
         // Phase 1 `verify_v2_proof`
-        // preflight. Runs AFTER marker preservation + pending-RPC short-
-        // circuit + proposer identity validation, BEFORE
+        // preflight. It runs AFTER marker preservation + pending-RPC short-
+        // circuit + proposer identity validation. It runs BEFORE
         // `run_outbe_pre_execution_hooks` and BEFORE the main tx loop.
         // The verifier is a synchronous pure function with no state
-        // mutation; on `Err` the executor returns `BlockExecutionError`
+        // mutation. On `Err`, the executor returns `BlockExecutionError`
         // without signalling any begin-zone state diff to Reth's state-
         // root background task. Block 0 / block 1 skip Phase 1.
         self.verify_phase1_in_preexec(block_number, &block_artifacts)?;
 
-        // late-finalize-credit BLS aggregates are FATAL-verified
-        // here, on the same pre-exec path as Phase 1 and before any begin-zone
-        // state diff is signalled to Reth's state-root task. Proposer and
-        // validator both verify; a bad aggregate, an out-of-window target, or a
+        // Late-finalize-credit BLS aggregates are FATAL-verified
+        // here, on the same pre-exec path as Phase 1. This occurs before any
+        // begin-zone state diff is signalled to Reth's state-root task. Proposer and
+        // validator both verify. A bad aggregate, an out-of-window target, or a
         // missing committee snapshot aborts the block deterministically.
         self.verify_late_finalize_credits_in_preexec(block_number, &block_artifacts)?;
 
@@ -117,7 +117,7 @@ where
         // `run_outbe_pre_execution_hooks` (Cycle / Rewards / Oracle) observe
         // post-Phase-1 accounting state. The proposer-supplied body[0] in
         // the main tx loop is validated against the cached witness hash and
-        // skipped (validate-without-reexec) - receipt + state are already
+        // skipped (validate-without-reexec). Receipt + state are already
         // in place from this call. Reth state-root ordering is preserved
         // because the preceding `verify_phase1_in_preexec` returned `Ok`.
         self.apply_phase1_commit_in_preexec(block_number, &block_artifacts)?;
@@ -172,7 +172,7 @@ where
 
         // Log hook events via tracing for operator observability.
         // Whitelisted addresses are published through the mandatory HookEvents
-        // system tx receipt; non-whitelisted hook events stay tracing-only.
+        // system tx receipt. Non-whitelisted hook events stay tracing-only.
         for event in &hook_events {
             tracing::info!(
                 target: "outbe::hooks",

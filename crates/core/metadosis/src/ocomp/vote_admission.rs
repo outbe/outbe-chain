@@ -27,7 +27,7 @@ use super::{
 pub enum ResultVoteCarrierAdmission {
     /// The full vote, historical member and outer signer are valid now.
     Valid { represented_validator: Address },
-    /// The window is durably closed; execution must produce its existing
+    /// The window is durably closed. Execution must produce its existing
     /// deadline receipt instead of treating the carrier as invalid.
     DeadlinePassed { represented_validator: Address },
     /// The inclusion height reached the deadline while this window remains
@@ -46,10 +46,10 @@ pub enum ResultVoteCarrierAdmission {
 
 /// Verifies one complete `submitLysisResult(bytes)` carrier without writing.
 ///
-/// The full canonical vote is decoded here so pool and payload construction
-/// share the same job, committee, signature, and delegate decision. Consensus
-/// execution must still verify and record the vote when the transaction is
-/// actually included.
+/// The full canonical vote is decoded here so that pool and payload
+/// construction share the same job, committee, signature, and delegate
+/// decision. Consensus execution must still verify and record the vote when
+/// the transaction is actually included.
 type AdmissionResult<T> = Result<T, ResultVoteCarrierAdmission>;
 
 struct CarrierVote<'vote> {

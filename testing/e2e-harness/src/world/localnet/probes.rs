@@ -183,7 +183,7 @@ fn stopped_header_command(
     );
     // The DB subcommand does not raise the node's file-descriptor limit itself.
     // Set only this reader child's soft limit so RocksDB can open its files
-    // without a performance warning; preserve the hard limit and strict parser.
+    // without a performance warning. Preserve the hard limit and strict parser.
     let mut command = Command::new("sh");
     command
         .args([
@@ -222,7 +222,7 @@ pub struct CeStartupReplayObservationV1 {
 }
 
 /// One structured OCOMP execution-boundary marker parsed from a node's real
-/// runtime log. The producer emits only consensus-observational fields; this
+/// runtime log. The producer emits only consensus-observational fields. This
 /// probe never infers behavior from source code or mutates node state.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct OcompRuntimeTraceMarkerV1 {
@@ -466,7 +466,7 @@ impl Localnet {
     /// Parse OCOMP runtime markers for a named FullNode whose owned data lives
     /// in one allocated validator slot rather than a directory named after the
     /// process. The slot is the storage identity used by
-    /// `launch_dcap_full_node`; the display name only owns the child process.
+    /// `launch_dcap_full_node`. The display name only owns the child process.
     pub fn ocomp_runtime_trace_markers_at_validator_slot(
         &self,
         node: &str,

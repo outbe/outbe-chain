@@ -48,7 +48,7 @@ pub(crate) struct PendingDkgCheckpoint {
 
 impl PendingDkgCheckpoint {
     /// Observe the exact configured plaintext E2E keys directory. All four
-    /// pending files are mandatory; active files never substitute for them.
+    /// pending files are mandatory. Active files never substitute for them.
     pub(crate) fn observe(keys_dir: &Path, expected_consensus_pubkey: &[u8]) -> Result<Self> {
         let bytes = read_installed_file(keys_dir, SNAPSHOT)?;
         let checkpoint = decode_snapshot(&bytes)?;
@@ -59,7 +59,7 @@ impl PendingDkgCheckpoint {
 
     /// Verify promotion of this exact output and retirement of this ceremony's
     /// pending/retry state. Call at the captured activation, before another DKG
-    /// cycle starts; a later cycle is not evidence for this checkpoint.
+    /// cycle starts. A later cycle is not evidence for this checkpoint.
     pub(crate) fn verify_active(
         &self,
         keys_dir: &Path,

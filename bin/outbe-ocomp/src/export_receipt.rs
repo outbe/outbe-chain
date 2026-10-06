@@ -301,8 +301,8 @@ pub fn list_prepared_export_jobs(
 }
 
 /// Lists existing prepared receipts without creating directories or changing modes.
-/// Uses the native directory selector; exact receipt contents are verified by
-/// `ExportReceiptReader` when the caller opens each selected job.
+/// Uses the native directory selector. `ExportReceiptReader` verifies the exact
+/// receipt contents when the caller opens each selected job.
 pub fn list_prepared_export_jobs_read_only(
     base_root: impl AsRef<Path>,
     max_jobs: usize,

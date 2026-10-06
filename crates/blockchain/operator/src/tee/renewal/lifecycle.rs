@@ -56,7 +56,7 @@ pub(super) fn promoted_policy(
     if let Some(upgrade) = guard.load()? {
         if let super::super::UpgradeJournalStateV1::Promoted { context, .. } = &upgrade.lifecycle {
             // Promotion installs B's committed manifest. The completed journal
-            // remains as recovery evidence; it must not freeze B's renewals.
+            // remains as recovery evidence. It must not freeze B's renewals.
             // A caller still holding A's manifest may not use this exception.
             if config
                 .manifest

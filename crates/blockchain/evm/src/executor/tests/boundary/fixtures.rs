@@ -35,9 +35,9 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
         seed_test_committee_snapshot(storage.clone(), &[(active, active_key)]);
         // Seed the COEN/840 oracle pair + a 1.0 rate so begin-block
         // NOD/GEM/INTEX floor-price promotion resolves a live rate instead
-        // of soft-skipping the scan. 840 is also pushed onto the reference
-        // currency list, matching genesis: the Nod qualifier reads its ISO
-        // from there, not from a hard-coded constant.
+        // of soft-skipping the scan. Also push 840 onto the reference currency
+        // list to match genesis. The Nod qualifier reads its ISO from there, not
+        // from a hard-coded constant.
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
         outbe_oracle::schema::OracleContract::new(storage.clone())

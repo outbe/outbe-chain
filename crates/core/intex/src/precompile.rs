@@ -1,8 +1,8 @@
 //! Read-only view precompile for the Intex module.
 //!
-//! Writes stay Rust-to-Rust (IntexFactory); this surface only exposes reads so
+//! Writes stay Rust-to-Rust (IntexFactory). This surface only exposes reads so
 //! off-chain consumers can observe the canonical series identity + lifecycle.
-//! Every method is a view; `reject_value` rejects any `msg.value` before a read.
+//! Every method is a view. `reject_value` rejects any `msg.value` before a read.
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolInterface;

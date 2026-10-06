@@ -1,4 +1,4 @@
-//! Network provisioning of a staged enclave; never copies a predecessor seal.
+//! Network provisioning of a staged enclave. It never copies a predecessor seal.
 use super::admission_history;
 use super::args::{UpgradeCandidateArgs, UpgradeProvisionArgs};
 use super::join::{

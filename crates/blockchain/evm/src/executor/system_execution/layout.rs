@@ -17,7 +17,7 @@ type ExpectedSystemTransaction = (
 
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     /// read the current begin-zone system-tx phase cursor.
-    /// Test-only introspection point; the production driver is internal.
+    /// Test-only introspection point. The production driver is internal.
     /// Consumer (cursor-driven routing) lands Batch 3.
     #[allow(dead_code)]
     pub(crate) fn system_tx_phase_cursor(&self) -> crate::system_tx::SystemTxPhase {
@@ -61,7 +61,7 @@ where
 
     /// Layout-signaled flag for the one-time Phase 3b `TeeBootstrap`:
     /// true iff this block carries that system tx in the begin zone. Verifier
-    /// mode reads it from `expected_begin_system_txs` (the body); proposer mode
+    /// mode reads it from `expected_begin_system_txs` (the body). Proposer mode
     /// reads it from the injected `pending_tee_bootstrap` payload. Both feed the
     /// same `has_tee_bootstrap` cursor signal so the phase cursor matches the
     /// actual begin-zone on both paths.
@@ -95,7 +95,7 @@ where
         } else {
             OcompLifecycleActivation::Disabled
         };
-        // The shared layout defines order; block 1 always reserves mandatory OST3.
+        // The shared layout defines order. Block 1 always reserves mandatory OST3.
         let kinds = expected_begin_block_kinds_for_activation(
             block_number,
             has_boundary_outcome,
@@ -404,13 +404,13 @@ where
 
     /// resolve the expected system tx for the current cursor
     /// position. Replaces the receipts-len-driven routing for begin-zone
-    /// system transactions; the cursor is the single source of truth.
+    /// system transactions. The cursor is the single source of truth.
     /// Returns the resolved `(SystemTxKind, SystemTxInputV2,
     /// finalized_summary)` plus the body index the cursor is pointing at.
-    /// Errors if the cursor is `UserTxs` (no system tx expected) or if the
-    /// cursor's expected kind does not match the resolved expected kind for
-    /// that body index (e.g. block 1 + Phase 1 cursor - a programmer
-    /// invariant violation).
+    /// Errors if the cursor is `UserTxs` (no system tx expected). Also errors if
+    /// the expected kind of the cursor does not match the resolved expected kind
+    /// for that body index. An example is block 1 + Phase 1 cursor, which is a
+    /// programmer invariant violation.
     pub(in crate::executor) fn expected_system_tx_for_cursor(
         &self,
         block_number: u64,
@@ -419,9 +419,9 @@ where
         let cursor = self.system_tx_phase_cursor;
         let Some(body_index) = cursor.body_index() else {
             // Cursor=UserTxs: all begin-zone system txs are consumed.
-            // Encountering a reserved system transaction address here is
-            // either an unsolicited user-tx attempt at the reserved
-            // address or a duplicate / out-of-band system tx - both fatal.
+            // A reserved system transaction address here has two possible
+            // causes: an unsolicited user-tx attempt at the reserved address,
+            // or a duplicate / out-of-band system tx. Both are fatal.
             return Err(BlockExecutionError::Internal(
                 InternalBlockExecutionError::Other(
                     "tx to reserved system transaction address after begin-zone system txs are consumed"

@@ -3,8 +3,8 @@ use outbe_metadosis::api::{OcompFinalityAuthorityError, OcompFinalizedIntentAuth
 use reth_provider::{BlockHashReader, BlockIdReader};
 use std::sync::Arc;
 
-/// Live execution wrapper that first binds the relayer-carried request header
-/// to this node's canonical finalized chain, then delegates cryptographic and
+/// Live execution wrapper. It first binds the relayer-carried request header
+/// to this node's canonical finalized chain. It then delegates cryptographic and
 /// storage-proof verification to the protocol authority.
 pub(super) struct ProviderAnchoredOcompFinalityAuthority<P> {
     provider: P,

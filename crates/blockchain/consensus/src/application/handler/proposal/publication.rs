@@ -39,7 +39,7 @@ impl ApplicationShared {
             return Ok(ProposeOutcome::ExecutionUnavailable);
         }
         // Register the block and barrier before releasing the digest. Relay
-        // starts persistence after dissemination; certify awaits its completion.
+        // starts persistence after dissemination. Certify awaits its completion.
         if !self.publication.stage(round, block) {
             return Ok(ProposeOutcome::RoundAlreadyProposed);
         }

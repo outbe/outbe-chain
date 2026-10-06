@@ -15,7 +15,7 @@ fn issue_enrolls_in_call_bin() {
     });
 }
 
-/// Registry index the fixtures register the qualifier pair at; the rate
+/// Registry index the fixtures register the qualifier pair at. The rate
 /// columns are keyed by it.
 const PAIR_ID: u32 = 1;
 
@@ -147,7 +147,7 @@ fn try_call_skips_when_below_threshold() {
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
         let calm = U256::from(EXPECTED_TRIGGER); // equal: strict `>` is not a breach
-                                                 // 20 breach days + 10 calm days; threshold is 21.
+                                                 // 20 breach days + 10 calm days. Threshold is 21.
         let mut d = last_closed_day;
         for _ in 0..20 {
             set_vwap(&oracle, d, pair, breach);
@@ -230,7 +230,7 @@ fn try_call_excludes_pre_issuance_days() {
 }
 
 mod call_sweep {
-    //! A call sweep too large for one run carries on across blocks, pinned to the
+    //! A call sweep too large for one run continues across blocks, pinned to the
     //! day it opened on.
 
     use alloy_primitives::U256;
@@ -457,8 +457,8 @@ mod call_sweep {
     }
 
     /// The one place an off-by-one costs capacity twice: settlement is legal at
-    /// the deadline itself (`settle_rejects_expired_deadline` pins that side), and
-    /// a block hook runs before the block's transactions, so the sweep must wait
+    /// the deadline itself (`settle_rejects_expired_deadline` pins that side). A
+    /// block hook runs before the block's transactions, so the sweep must wait
     /// for the tick after it.
     #[test]
     fn the_sweep_waits_until_settlement_has_actually_closed() {
@@ -511,7 +511,7 @@ mod call_sweep {
     }
 
     /// A day's group holds one series per issuance currency, and the credit is
-    /// written once for the whole group - so the total has to be the sum over its
+    /// written once for the whole group. So the total has to be the sum over its
     /// members, with neither double-counted nor dropped.
     #[test]
     fn a_group_credits_every_member_exactly_once() {
@@ -906,7 +906,7 @@ mod call_sweep {
     }
 
     /// A price the bin ladder cannot hold skips its currency instead of halting the
-    /// block - the scan runs in `begin_block`, where an error is not survivable.
+    /// block. The scan runs in `begin_block`, where an error is not survivable.
     #[test]
     fn a_window_price_out_of_range_skips_the_currency() {
         with_factory(|s| {
@@ -1041,9 +1041,9 @@ mod call_sweep {
             .unwrap();
     }
 
-    /// A budget that gives out inside the last currency of the rotation must resume
-    /// there, not back at the first: the ones already closed would eat the next
-    /// slice's allowance before it ever reached the one that was cut off.
+    /// A budget that is exhausted inside the last currency of the rotation must resume
+    /// there, not back at the first. Otherwise the ones already closed would eat the
+    /// next slice's allowance before it ever reached the one where the budget stopped.
     #[test]
     fn a_slice_resumes_at_the_currency_it_gave_out_on() {
         with_factory(|s| {
@@ -1055,7 +1055,7 @@ mod call_sweep {
             fill_window(&oracle, last_closed_day, first, U256::from(TRIGGER + 1));
             fill_window(&oracle, last_closed_day, second, U256::from(TRIGGER + 1));
 
-            // The first currency is small; the second holds more than one slice can move.
+            // The first currency is small. The second holds more than one slice can move.
             seed_candidate_for(&s, REFERENCE_ISO, 20260101);
             for day in 20260201..20260201 + MAX_SERIES_ACTIONS_PER_BLOCK + 1 {
                 seed_candidate_for(&s, SECOND_ISO, day);
@@ -1067,8 +1067,8 @@ mod call_sweep {
             );
             called::scan_and_call(&ctx).unwrap();
 
-            // The rotation is [840, 978]; it gave out on the last one, so that is where
-            // the cursor stands.
+            // The rotation is [840, 978]. The budget was exhausted on the last one, so
+            // that is where the cursor stands.
             assert_eq!(
                 IntexFactoryContract::new(s.clone())
                     .call_currency_cursor
@@ -1176,9 +1176,9 @@ mod call_sweep {
         assert_eq!(events[0].inFlightDay, in_flight);
     }
 
-    /// Each currency is walked once a sweep. Were the ones closed behind the cursor
-    /// walked again, two currencies each holding more undecided groups than a slice
-    /// may decide would keep the sweep open for good.
+    /// Each currency is walked once a sweep. Assume the sweep walked the ones closed
+    /// behind the cursor again. Then two currencies, each holding more undecided groups
+    /// than a slice may decide, would keep the sweep open for good.
     #[test]
     fn a_sweep_over_several_currencies_always_ends() {
         with_factory(|s| {
@@ -1254,7 +1254,7 @@ mod call_sweep {
 
 mod called_pstar {
     //! `trigger < p_star` and "breached on at least `threshold` days" are the same
-    //! statement; these check that they stay the same statement.
+    //! statement. These tests check that they stay the same statement.
 
     use alloy_primitives::U256;
     use outbe_intex::SeriesId;
@@ -1414,7 +1414,7 @@ mod called_pstar {
             let pair = setup_pair(&oracle);
             seed_window(&oracle, pair, &vec![Some(300u64); 28]);
 
-            // Strictly below calls; equal does not.
+            // Strictly below calls. Equal does not.
             assert!(called_by_p_star(&oracle, pair, 299));
             assert!(!called_by_p_star(&oracle, pair, 300));
         });

@@ -4,12 +4,12 @@ pragma solidity ^0.8.30;
 /// @title IZeroFee
 /// @notice ZeroFee paymaster precompile at 0x000000000000000000000000000000000000EE09.
 ///
-/// Acts as the EIP-7702 delegation target for void sponsorship - EOAs
+/// Acts as the EIP-7702 delegation target for void sponsorship. EOAs
 /// that delegate to this address may submit up to 8 free transactions
-/// per UTC day, each capped by hard envelope limits enforced in the
-/// txpool admission policy and re-enforced by the executor pre-fee
-/// hook (`max_value == 0`, `gas_limit <= 500_000`, `calldata <= 16 KiB`,
-/// `max_priority_fee_per_gas == 0`, target in
+/// per UTC day. Hard envelope limits cap each transaction. The txpool
+/// admission policy enforces these limits, and the executor pre-fee
+/// hook enforces them again (`max_value == 0`, `gas_limit <= 500_000`,
+/// `calldata <= 16 KiB`, `max_priority_fee_per_gas == 0`, target in
 /// `SPONSORED_TARGET_WHITELIST`).
 ///
 /// Authorization rules:
@@ -25,7 +25,7 @@ interface IZeroFee {
     /// Emitted when the executor pre-fee hook grants a sponsored
     /// transaction to `signer` on UTC day `day` and bumps the
     /// per-signer counter to `newCount`. `newCount` is the post-write
-    /// value (1..=FREE_TX_DAILY_LIMIT); the previous value is
+    /// value (1..=FREE_TX_DAILY_LIMIT). The previous value is
     /// `newCount - 1`.
     event SponsorshipAuthorized(address indexed signer, uint32 indexed day, uint32 newCount);
 

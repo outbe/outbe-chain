@@ -1,8 +1,8 @@
 //! Cross-module API for the PayNote pool.
 //!
 //! In-process Rust surface for other precompile modules (gem, nod, …). This is
-//! deliberately **not** a Solidity ABI: spending a note is a privileged
-//! in-runtime transition, not something an EOA calls directly, so `consume`
+//! deliberately **not** a Solidity ABI. Spending a note is a privileged
+//! in-runtime transition, not something an EOA calls directly. Thus `consume`
 //! never appears in `IPayNote.sol` and never routes through dispatch.
 //!
 //! Callers depend on this module, not on [`crate::runtime`] or
@@ -28,13 +28,18 @@ pub use crate::context::{intex_holding_target, settlement_context, SettlementDom
 /// recomputes with [`settlement_context`].
 ///
 /// The claim comes from the proof itself, so the caller must check asset,
-/// amount, and context before acting on them — a valid proof for a different
+/// amount, and context before acting on them. A valid proof for a different
 /// statement is still a valid proof.
 ///
-/// Reverts if the tree is uninitialized, the chain ID does not match, the root
-/// is outside the acceptance window, the nullifier is already spent, or the
-/// proof fails verification. The nullifier write and the change append are one
-/// rollback unit with the caller's own effects.
+/// Reverts if one of these conditions is true:
+/// - the tree is uninitialized.
+/// - the chain ID does not match.
+/// - the root is outside the acceptance window.
+/// - the nullifier is already spent.
+/// - the proof fails verification.
+///
+/// The nullifier write and the change append are one rollback unit with the
+/// caller's own effects.
 pub fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNoteClaim> {
     runtime::consume(storage, proof)
 }

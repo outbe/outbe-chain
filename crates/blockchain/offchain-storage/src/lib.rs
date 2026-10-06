@@ -51,7 +51,7 @@ pub trait StorageReader: Send + Sync {
         key: &Key,
     ) -> Result<Option<StoredValue>, StorageError>;
 
-    /// Logical routing introspection for overlays; raw adapters may have no scope.
+    /// Logical routing introspection for overlays. Raw adapters may have no scope.
     fn storage_scope(
         &self,
         namespace: &Namespace,

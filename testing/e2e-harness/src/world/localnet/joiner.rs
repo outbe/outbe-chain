@@ -431,8 +431,8 @@ impl Localnet {
         result
     }
 
-    /// Materialize a prepared identity for a joiner node. Existing key files
-    /// are never overwritten.
+    /// Materialize a prepared identity for a joiner node. This method never
+    /// overwrites existing key files.
     pub fn install_registration_identity(
         &self,
         index: usize,
@@ -609,10 +609,12 @@ impl Localnet {
         radicle_node_id: B256,
         registration_signature: Bytes,
     ) -> Result<[TxOutcome; 2]> {
-        // Fund from validator-0, prove that an unrelated EOA cannot register
-        // this ValidatorSet identity, then self-register and publish the P2P
-        // address. The rejected call uses the joiner's otherwise-valid BLS
-        // binding, isolating caller authorization from proof validation.
+        // Steps:
+        // 1. Fund from validator-0.
+        // 2. Prove that an unrelated EOA cannot register this ValidatorSet identity.
+        // 3. Self-register and publish the P2P address.
+        // The rejected call uses the joiner's otherwise-valid BLS binding. This
+        // isolates caller authorization from proof validation.
         let v0 = read_evm_key(&self.cfg.validator_dir(0))?;
         eth::send_value(&self.cfg.rpc0, addr, &v0, eth::coen(2000))?;
         let registration = IValidatorSet::registerValidatorCall {
@@ -907,7 +909,7 @@ impl Localnet {
     /// Reopen the production enclave through its durable NodeHost identity and
     /// read the exact resident offer public key over authenticated Noise. The
     /// preceding `tee join` already required this key to match finalized chain
-    /// state; this method proves that the same key remains reachable after the
+    /// state. This method proves that the same key remains reachable after the
     /// enclave and node restart without reopening the plaintext dev transport.
     pub fn node_offer_public(&self, index: usize) -> Result<[u8; 32]> {
         let node_data_dir = self.cfg.validator_dir(index).join("data");

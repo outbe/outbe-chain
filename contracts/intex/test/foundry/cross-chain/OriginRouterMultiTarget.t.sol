@@ -114,8 +114,9 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         origin.sendAuctionStageStart(_params(DAY));
     }
 
-    /// @dev Clearing is addressed per chain now (each round is sized from that chain's own history), so
-    ///      membership is what the frozen snapshot says - a mid-day removal must not close a chain out.
+    /// @dev Clearing is now addressed per chain (each round is sized from that chain's own
+    ///      history). Thus membership is what the frozen snapshot says. A mid-day removal must
+    ///      not close a chain out.
     function test_clearing_addressesTheSnapshot_notLiveRegistry() public {
         _fireStart(DAY);
         origin.removeTarget(TARGET_B); // a mid-day removal must not shrink an in-flight fan-out
@@ -129,8 +130,8 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         origin.sendAuctionStageClearing(DAY, 4242, IntexGas.AUCTION_STAGE_CLEARING);
     }
 
-    /// @dev A round smaller than a round is worth comes back up to the floor, and one above what a target
-    ///      chain would accept comes down to the cap.
+    /// @dev A round smaller than a round is worth comes back up to the floor. A round above what a
+    ///      target chain would accept comes down to the cap.
     function test_clearing_clampsTheAskToWhatARoundIsWorth() public {
         _fireStart(DAY);
         vm.prank(desis);
@@ -174,7 +175,7 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
 
     // --- Per-leg park + flush ---
     function test_leg_parksOnMissingPeer_thenFlush() public {
-        origin.setRemoteMessenger(TARGET_B, ""); // drop B's peer so its leg fails; A still routes
+        origin.setRemoteMessenger(TARGET_B, ""); // drop B's peer so its leg fails. A still routes
         _fireStart(DAY);
 
         IOriginRouter.ParkedMessage memory p = origin.parkedMessage(0);
@@ -201,8 +202,8 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         _deliver(TARGET_A, peerA, address(origin), pkt);
     }
 
-    /// @dev A target whose relay stopped part way reports the remainder; the origin answers with another
-    ///      CLEARING round to that chain alone, so a heavy day finishes without a hand.
+    /// @dev A target whose relay stopped part way reports the remainder. The origin answers with
+    ///      another CLEARING round to that chain alone. Thus a heavy day finishes without a hand.
     function test_inbound_bidsRemaining_sendsAnotherRound() public {
         _fireStart(DAY);
         bytes memory pkt = BridgeMsgCodec.encodeBidsRemaining(DAY, TARGET_A, 2, 5);
@@ -221,8 +222,9 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         );
     }
 
-    /// @dev Once the day's intake has closed - cleared on the fan-in timeout, cancelled - another round
-    ///      would have every chunk it produces ignored on arrival, so the report is acknowledged instead.
+    /// @dev Once the day's intake has closed (cleared on the fan-in timeout, cancelled), another
+    ///      round would have every chunk it produces ignored on arrival. Thus the origin
+    ///      acknowledges the report instead.
     function test_inbound_bidsRemaining_ignoreClosedDay() public {
         _fireStart(DAY);
         MockDesis(desis).setAuctionStage(IDesis.AuctionStage.Cleared);
@@ -248,7 +250,7 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
     }
 
     function test_inbound_bids_ignoreNonSnapshotSource() public {
-        _fireStart(DAY); // snapshot = {TARGET_A, TARGET_B}; chain 9 is a registered peer but not a target
+        _fireStart(DAY); // snapshot = {TARGET_A, TARGET_B}. Chain 9 is a registered peer but not a target
         origin.setRemoteMessenger(9, _interop(9, address(0x9999)));
         bytes32 key = bytes32((uint256(DAY) << 32) | 9);
         bytes memory batch = BridgeMsgCodec.encodeBidsBatch(DAY, 9, 0, 1, new address[](0), new uint256[](0));

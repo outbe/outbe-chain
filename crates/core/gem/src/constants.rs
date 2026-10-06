@@ -9,14 +9,14 @@ pub const TOKEN_DESCRIPTION: &str = concat!(
 
 pub const BIN_STEP_BP: u16 = 25;
 
-/// Buckets one call slice may decide before it gives out; the sweep resumes on the
-/// next block.
+/// The number of buckets one call slice may decide before it stops. The sweep resumes on
+/// the next block.
 pub const MAX_BUCKET_VISITS_PER_BLOCK: u32 = 256;
 
 /// `SweepDaySkipped.sweep` of the Called sweep.
 pub const CALL_SWEEP: u8 = 1;
 
-/// Slots one block's expiry sweep may step through; a block hook is not gas-metered.
+/// Slots one block's expiry sweep may step through. A block hook is not gas-metered.
 pub const MAX_EXPIRY_STEPS_PER_BLOCK: u32 = 64;
 
 /// Call-trigger evaluation window in seconds (28 days): span scanned for
@@ -33,7 +33,7 @@ pub const CALL_THRESHOLD: u32 = 21 * 24 * 3600;
 pub const CALL_NOTICE_PERIOD: u32 = 7 * 24 * 3600;
 
 /// GemPosition validity period: an Intex in the Gem Factory expires this long after
-/// `issued_at`; no new gems may be issued afterward. 1 year.
+/// `issued_at`. No new gems may be issued afterward. 1 year.
 pub const POSITION_VALIDITY_SECONDS: u64 = 365 * 24 * 3600;
 
 /// Floor-price markup rate: floor = `entry x (100 + FLOOR_RATE) / 100`.

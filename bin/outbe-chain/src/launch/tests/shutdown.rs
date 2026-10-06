@@ -292,7 +292,7 @@ fn test_fullnode_drops_node_tx_consensus_thread_exits() {
     // Simulate full-node path: drop sender without sending.
     drop(node_tx);
 
-    // Consensus thread would call blocking_recv - should return Err immediately.
+    // The consensus thread would call blocking_recv. It should return Err immediately.
     let result = node_rx.blocking_recv();
     assert!(
         result.is_err(),

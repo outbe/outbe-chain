@@ -6,8 +6,8 @@ import {IReferenceCurrency} from "../interfaces/IReferenceCurrency.sol";
 
 /// @title BridgeableERC20Stable
 /// @notice ERC-7802 bridgeable ERC20 that denominates a reference currency. The
-///         ISO 4217 numeric code is fixed at construction and exposed via
-///         IReferenceCurrency (e.g. 840 = USD).
+///         constructor fixes the ISO 4217 numeric code. IReferenceCurrency exposes
+///         that code (e.g. 840 = USD).
 contract BridgeableERC20Stable is BridgeableERC20, IReferenceCurrency {
     uint16 private immutable _ISO_CODE;
 

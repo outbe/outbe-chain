@@ -48,7 +48,7 @@ fn data(log: &Value) -> Vec<u8> {
 }
 
 /// Committee observations use a common finalized checkpoint. The Anvil target
-/// has its own pinned mined head; it does not claim Outbe committee finality.
+/// has its own pinned mined head. It does not claim Outbe committee finality.
 fn view(world: &World, side: &VenueSide) -> (Vec<String>, u64, B256, String) {
     let height = eth::block_number(&side.url).expect("auction observation height");
     let urls = if side.is_target_chain {

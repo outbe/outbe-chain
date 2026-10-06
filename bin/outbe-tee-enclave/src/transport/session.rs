@@ -47,7 +47,7 @@ pub fn serve_connection_for_network_test<S: EnclaveTransportStream>(
 /// Serve a single client connection end-to-end. `offer_key` is the shared,
 /// write-once DKG-derived offer key slot (populated by the DKG connection's
 /// Seam F, read by the offer-decrypt path). `boot` carries the seal/unseal
-/// configuration (chain_id / tee-dir / isv_svn); when `Some`, the sealing path
+/// configuration (chain_id / tee-dir / isv_svn). When `Some`, the sealing path
 /// persists the offer secret + threshold share after Seam F. The production
 /// accept loop passes the resident chain independently because non-sealing
 /// enclaves still need a chain-scoped state-key domain.

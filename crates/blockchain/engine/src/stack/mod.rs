@@ -5,7 +5,7 @@
 //!
 //! Startup flow:
 //! 1. Load signing key and validator set
-//! 2. Set up P2P network (register ALL channels including DKG)
+//! 2. Configure P2P network (register ALL channels including DKG)
 //! 3. Start P2P network and register peers
 //! 4. Obtain threshold material:
 //!    a. From saved DKG state on disk (restart precedence)

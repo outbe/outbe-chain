@@ -19,7 +19,8 @@ pub fn from_file(path: impl AsRef<Path>) -> Result<OutbeEvmSigner, SignerError> 
 /// Unlike [`from_file`], this rejects symlinks, non-regular files,
 /// unexpected owners, modes other than `0600`, hard links, non-canonical
 /// lowercase 32-byte hex payloads, and path replacement during open.
-/// Surrounding ASCII whitespace is ignored and is not part of the key.
+/// This function ignores surrounding ASCII whitespace. That whitespace is not
+/// part of the key.
 #[cfg(unix)]
 pub fn from_strict_file(
     path: impl AsRef<Path>,

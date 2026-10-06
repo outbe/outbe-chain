@@ -53,8 +53,8 @@ fn request_limit_split_is_exact_at_zero_max_and_rejects_over_limit() {
 
 #[test]
 fn request_limit_split_auctions_the_day_nominal_and_leaves_limit_headroom_unbriefed() {
-    // A day that earned less than the limit auctions the rest of what it earned; the headroom is
-    // not briefed and goes back to the warehouse instead.
+    // A day that earned less than the limit auctions the rest of what it earned. The headroom is
+    // not briefed and returns to the warehouse instead.
     let weak = RequestLimitSplit::derive(
         U256::from(1_000),
         U256::from(32),
@@ -239,7 +239,7 @@ fn strict_desis_refusal_leaves_the_existing_brief_and_carry_over_unchanged() {
             logical_anchor: 1_699_920_005,
         };
 
-        // The request credits and reserves without touching Desis; the refusal comes when the
+        // The request credits and reserves without touching Desis. The refusal comes when the
         // auction tries to brief a day Desis already holds.
         let receipt = apply_fresh_request_limit_effect(storage.clone(), request.clone())
             .expect("the request credits without touching Desis");

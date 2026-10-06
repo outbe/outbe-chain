@@ -192,7 +192,7 @@ fn nod_fields_match_public_inputs(world: &mut World) {
         .expect("input JobIntent at request height")
         .intent;
     // Processing retires the current Tribute partition. Retain independently
-    // authenticated inputs before that transition, never read result bodies as
+    // authenticated inputs before that transition. Never read result bodies as
     // the source of expected economic fields.
     let inputs = world
         .state

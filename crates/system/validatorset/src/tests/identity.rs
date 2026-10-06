@@ -114,8 +114,8 @@ fn malformed_p2p_fails_all_complete_record_projections_closed() {
             .write(&[0xFF])
             .unwrap();
 
-        // Every complete projection now passes through the canonical aggregate;
-        // malformed coupled P2P fields therefore fail closed consistently.
+        // Every complete projection now passes through the canonical aggregate.
+        // Malformed coupled P2P fields therefore fail closed consistently.
         assert!(matches!(
             vs.get_validator(val_addr),
             Err(PrecompileError::Fatal(_))

@@ -3,9 +3,9 @@
 pragma solidity ^0.8.30;
 
 /**
- * @dev Minimal Hyperlane interfaces, vendored locally (single source of truth for cross-chain interfaces, like
- * {IERC7786}). Only the subset used by {HyperlaneGatewayAdapter} is declared; selectors match Hyperlane's core
- * contracts so calls interoperate with the real Mailbox.
+ * @dev Minimal Hyperlane interfaces, vendored locally (single source of truth for cross-chain
+ * interfaces, like {IERC7786}). This file declares only the subset that {HyperlaneGatewayAdapter}
+ * uses. Selectors match Hyperlane's core contracts, so calls interoperate with the real Mailbox.
  *
  * See https://docs.hyperlane.xyz for the full specification.
  */
@@ -13,8 +13,9 @@ interface IMailbox {
     /// @dev Local Hyperlane domain id of this mailbox.
     function localDomain() external view returns (uint32);
 
-    /// @dev Dispatches a message to `recipientAddress` on `destinationDomain` using the default hook. Returns the
-    /// message id. The native fee (see {quoteDispatch}) must be supplied as `msg.value`.
+    /// @dev Dispatches a message to `recipientAddress` on `destinationDomain` using the default
+    /// hook. Returns the message id. The caller must supply the native fee (see {quoteDispatch}) as
+    /// `msg.value`.
     function dispatch(uint32 destinationDomain, bytes32 recipientAddress, bytes calldata messageBody)
         external
         payable
@@ -26,8 +27,9 @@ interface IMailbox {
         view
         returns (uint256 fee);
 
-    /// @dev {dispatch} variant carrying post-dispatch hook `metadata` (e.g. a per-message destination gas
-    /// override via StandardHookMetadata). The native fee (see the matching {quoteDispatch}) must be `msg.value`.
+    /// @dev {dispatch} variant that carries post-dispatch hook `metadata` (e.g. a per-message
+    /// destination gas override via StandardHookMetadata). The native fee (see the matching
+    /// {quoteDispatch}) must be `msg.value`.
     function dispatch(
         uint32 destinationDomain,
         bytes32 recipientAddress,
@@ -45,6 +47,6 @@ interface IMailbox {
 }
 
 interface IMessageRecipient {
-    /// @dev Called by the local Mailbox to deliver a verified message from `_origin`/`_sender`.
+    /// @dev The local Mailbox calls this to deliver a verified message from `_origin`/`_sender`.
     function handle(uint32 _origin, bytes32 _sender, bytes calldata _message) external payable;
 }

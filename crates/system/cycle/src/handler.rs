@@ -1,10 +1,9 @@
 //! ProtocolCycle calendar orchestration and completed-day emission settlement.
 //!
 //! This is the natural home of the `Cycle -> EmissionLimit -> AgentReward
-//! -> Rewards -> Metadosis` orchestration. Putting
-//! it inside `outbe-cycle` (rather than `outbe-emissionlimit`) avoids
-//! a `outbe-emissionlimit -> outbe-rewards` dependency edge, which
-//! would close the cycle with the existing
+//! -> Rewards -> Metadosis` orchestration. The orchestration lives in `outbe-cycle`
+//! (rather than `outbe-emissionlimit`) to avoid a `outbe-emissionlimit -> outbe-rewards`
+//! dependency edge. That edge would close the cycle with the existing
 //! `outbe-rewards -> outbe-emissionlimit` re-export.
 
 use alloy_primitives::U256;
@@ -24,9 +23,9 @@ use outbe_primitives::{
 
 /// Calendar work owned by one hourly ProtocolCycle execution.
 ///
-/// This is intentionally not persisted or exposed through the EVM ABI. It is
-/// shared with the executor so command authority is derived from exactly the
-/// same calendar decision as the handler.
+/// This type is intentionally not persisted and not exposed through the EVM ABI.
+/// The executor shares it, so the executor derives command authority from exactly
+/// the same calendar decision as the handler.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProtocolDayAction {
     SameDay,
@@ -97,7 +96,7 @@ fn wrap(step: &str, r: Result<()>) -> Result<()> {
 }
 
 /// Settles one explicitly owned, completed UTC day. Calendar selection belongs
-/// to [`run_protocol_cycle`]; this function only performs the existing daily
+/// to [`run_protocol_cycle`]. This function only performs the existing daily
 /// economic calculation and commits its idempotency pair.
 pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<()> {
     let block_ts = ctx.block.timestamp;
@@ -109,15 +108,15 @@ pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<(
         ));
     }
 
-    // idempotency guard. This handler issues the CCA agent pool
-    // and re-dispatches terminal Metadosis with no PER-MINT day guard (only the
-    // validator topup is independently idempotent via `daily_topup_settled`), so
-    // a second invocation for an already-settled `prev_day` would double-mint
-    // those pools. That re-fire is reachable whenever more than one CycleTick
-    // resolves the same `prev_day` (e.g. several blocks within one UTC day after
-    // a forward timestamp advance - bounded but not eliminated by the C-01 drift
-    // band). Gate the WHOLE settlement on `daily_settled[prev_day]` so each day
-    // settles exactly once regardless of how many times the handler fires.
+    // idempotency guard. This handler issues the CCA agent pool and re-dispatches
+    // terminal Metadosis with no PER-MINT day guard. Only the validator topup is
+    // independently idempotent via `daily_topup_settled`. Thus a second invocation
+    // for an already-settled `prev_day` would double-mint those pools. That re-fire
+    // is reachable whenever more than one CycleTick resolves the same `prev_day`
+    // (e.g. several blocks within one UTC day after a forward timestamp advance).
+    // The C-01 drift band bounds that case but does not eliminate it. Gate the WHOLE
+    // settlement on `daily_settled[prev_day]` so each day settles exactly once,
+    // regardless of how many times the handler fires.
     let settled = outbe_rewards::api::is_day_settled(ctx, prev_day).map_err(|e| {
         tracing::error!(target: "outbe::cycle", step = "is_day_settled", prev_day, error = ?e, "emission_limit_daily step failed");
         e
@@ -307,11 +306,13 @@ pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<(
 
 /// Runs the single hourly protocol orchestration entry point.
 ///
-/// A contiguous completed UTC day is settled before the existing Metadosis
-/// command runs. Multi-day gaps are forfeited and advance the calendar cursor
-/// without synthesizing economic state. The existing command then runs exactly
-/// once to create the current WWD, advance every active WWD, and process at most
-/// one READY WWD.
+/// This function settles a contiguous completed UTC day before the existing
+/// Metadosis command runs. It forfeits multi-day gaps and advances the calendar
+/// cursor without synthesizing economic state. The existing command then runs
+/// exactly once to:
+/// - create the current WWD.
+/// - advance every active WWD.
+/// - process at most one READY WWD.
 pub fn run_protocol_cycle(
     ctx: &BlockRuntimeContext,
     scope: &ExecutionScope,

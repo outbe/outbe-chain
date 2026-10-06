@@ -116,7 +116,7 @@ fn current_record(root: &Path, expected: &OcompJobRecordV1, height: u64) -> Ocom
     actual
 }
 
-// Typed owner encodes the records; only these test-native words are seeded.
+// Typed owner encodes the records. Only these test-native words are seeded.
 // They are not EVM-executed and this fixture does not authenticate state roots
 // or parent certificates. All subsequent candidate and terminal reads use
 // the production RethFinalizedInputProofSource and actual native provider.

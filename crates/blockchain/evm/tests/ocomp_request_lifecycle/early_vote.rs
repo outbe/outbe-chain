@@ -1,12 +1,13 @@
 //! A validator may finish its result before the response window opens. The
 //! pool checks a vote against the canonical head for inclusion in the next
 //! block. On the committed state after block `open_height - 1`, the window is
-//! not open yet, but the begin zone of the `open_height` block opens it before
-//! any user transaction, so an honest vote for that block is valid. One block
+//! not open yet. The begin zone of the `open_height` block opens it before any
+//! user transaction, so an honest vote for that block is valid. One block
 //! earlier the vote cannot execute in the next block, so it is early: temporary,
-//! never a bad transaction. A vote for a job that does not exist, a vote with a
-//! wrong inner signature, and a vote carried by a signer the validator never
-//! authorized all stay invalid.
+//! never a bad transaction. These votes all stay invalid:
+//! - a vote for a job that does not exist
+//! - a vote with a wrong inner signature
+//! - a vote carried by a signer the validator never authorized
 
 use super::*;
 use outbe_metadosis::api::{verify_result_vote_carrier, ResultVoteCarrierAdmission};

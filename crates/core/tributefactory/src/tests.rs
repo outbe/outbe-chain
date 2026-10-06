@@ -67,7 +67,7 @@ mod l2_zk_gate {
         Address::repeat_byte(0x77)
     }
 
-    /// A valid calendar day; whether it is OFFERING depends on Metadosis state,
+    /// A valid calendar day. Whether it is OFFERING depends on Metadosis state,
     /// which these fixtures leave empty.
     pub(super) const DAY: u32 = 20250115;
 
@@ -108,7 +108,7 @@ mod l2_zk_gate {
     }
 
     // A signed, well-framed proof envelope lets these tests reach business
-    // validation; its dummy proof must never reach the crypto backend.
+    // validation. Its dummy proof must never reach the crypto backend.
     fn signed_gate_offer(storage: StorageHandle<'_>) -> OfferTributeInput {
         use commonware_codec::Encode;
         use commonware_cryptography::bls12381::primitives::{
@@ -160,7 +160,7 @@ mod l2_zk_gate {
             let scope = ExecutionScope::new();
             let mut factory = TributeFactoryContract::new(storage.clone());
 
-            // A missing signature is rejected before oracle/metadosis/enclave work.
+            // The factory rejects a missing signature before oracle/metadosis/enclave work.
             let err = factory
                 .offer_tribute(&scope, &NoParentBodies, offer(&root, &[]))
                 .unwrap_err();
@@ -283,7 +283,7 @@ mod l2_zk_gate {
     /// `worldwideDay` and `tributeCurrency` are cleartext ABI arguments precisely
     /// so a bad one costs no enclave round trip. These fixtures configure no
     /// enclave client at all, so reaching the sidecar would surface as
-    /// `tee_sidecar_unavailable` - the assertions below are what prove the host
+    /// `tee_sidecar_unavailable`. The assertions below prove that the host
     /// rejected first.
     #[test]
     fn host_rejects_an_invalid_calendar_day_before_the_enclave() {
@@ -306,10 +306,10 @@ mod l2_zk_gate {
     }
 
     /// The day check runs before the currency check, so this case needs the day to
-    /// be OFFERING first - which these fixtures cannot arrange. Assert the ordering
+    /// be OFFERING first. These fixtures cannot arrange that. Assert the ordering
     /// instead: an unregistered currency paired with a non-OFFERING day still
-    /// reports the day, proving the currency lookup is not reached and therefore
-    /// that neither reaches the enclave.
+    /// reports the day. This proves that the currency lookup is not reached, and
+    /// therefore that neither reaches the enclave.
     #[test]
     fn host_rejects_a_non_offering_day_before_pricing() {
         let mut storage = HashMapStorageProvider::new(super::CHAIN_ID);
@@ -688,14 +688,14 @@ fn su_hash_can_only_be_used_once() {
             .mark_su_hashes_used(&[a, b])
             .expect("distinct hashes ok");
 
-        // Reuse in a later call is rejected (persistent marker).
+        // The factory rejects reuse in a later call (persistent marker).
         expect_reused(
             TributeFactoryContract::new(storage.clone())
                 .mark_su_hashes_used(&[a])
                 .unwrap_err(),
         );
 
-        // Duplicate within a single array is rejected.
+        // The factory rejects a duplicate within a single array.
         let dup = B256::repeat_byte(0xCC);
         expect_reused(
             TributeFactoryContract::new(storage.clone())

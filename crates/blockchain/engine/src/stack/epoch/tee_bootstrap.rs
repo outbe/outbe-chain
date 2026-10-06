@@ -49,19 +49,21 @@ where
     // On a fresh chain (no executed blocks yet), this validator must run the TEE
     // enclave sidecar selected by the mandatory block-1 genesis policy:
     //   1. run the TEE DKG ceremony so the committee's enclaves collaboratively
-    //      derive the shared tribute offer key (Seam F: a group threshold
-    //      signature over a fixed message -> HKDF -> X25519; byte-identical on every
-    //      honest node, secret resident in each enclave); then
+    //      derive the shared tribute offer key. Seam F: a group threshold
+    //      signature over a fixed message -> HKDF -> X25519. The key is
+    //      byte-identical on every honest node, and the secret stays resident in
+    //      each enclave. Then:
     //   2. coordinate the committee's enclave registrations + EVM signatures into
-    //      the block-1 `TeeBootstrap` payload - registering the DKG-derived offer
-    //      key - and stash it in the bridge for the proposer to inject (slice 5.1).
+    //      the block-1 `TeeBootstrap` payload. This payload registers the
+    //      DKG-derived offer key. Stash it in the bridge for the proposer to
+    //      inject (slice 5.1).
     // `committee_snapshot_block` is the fixed block 1. The whole ceremony MUST
-    // complete before block 1: it is wrapped in `--tee-bootstrap-timeout-secs` and
-    // FAILS FAST (node halts via startup error) on timeout or error, rather than
-    // proceeding into a permanently un-bootstrapped chain (no offer key on-chain =>
-    // offers impossible). Local liveness only - not a consensus rule on imported
-    // blocks. Missing local enclave or NodeHost identity is a startup error,
-    // never a production fallback.
+    // complete before block 1. This code wraps it in `--tee-bootstrap-timeout-secs`.
+    // It FAILS FAST (node halts via startup error) on timeout or error. It does not
+    // proceed into a permanently un-bootstrapped chain (no offer key on-chain =>
+    // offers impossible). Local liveness only: this is not a consensus rule on
+    // imported blocks. Missing local enclave or NodeHost identity is a startup
+    // error, never a production fallback.
     let socket = args.tee_enclave_socket.clone().ok_or_else(|| {
         eyre::eyre!("mandatory TEE chain requires --tee-enclave-socket before consensus startup")
     })?;
@@ -155,11 +157,12 @@ where
 
             // Step 1 (TEE DKG -> shared offer key) + Step 2 (bootstrap coordination ->
             // block-1 payload), under one deadline. Any error or timeout halts.
-            // The deadline is measured on the consensus runtime `Clock` (the same
-            // time source the deterministic test runtime can mock and advance), not
-            // wall-clock - keeping startup-timeout behavior reproducible and free of a
-            // direct async-runtime timer dependency in the consensus stack.
-            // `Clock::timeout` requires a `Send + 'static` future; the `async move`
+            // This code measures the deadline on the consensus runtime `Clock` (the
+            // same time source the deterministic test runtime can mock and advance),
+            // not wall-clock. This keeps startup-timeout behavior reproducible. It
+            // also keeps the consensus stack free of a direct async-runtime timer
+            // dependency.
+            // `Clock::timeout` requires a `Send + 'static` future. The `async move`
             // owns every capture, so the bound holds.
             // Owned `Clock` clone moved into the `'static` startup future so the TEE
             // DKG identity-exchange cadence runs on the consensus runtime clock, not

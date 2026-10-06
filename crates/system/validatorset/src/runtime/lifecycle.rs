@@ -43,7 +43,8 @@ impl DeferredValidatorPunishment {
 }
 
 impl ValidatorSet<'_> {
-    /// Deactivates a validator - transitions to EXITING (awaiting DKG reshare to exclude).
+    /// Deactivates a validator. The validator transitions to EXITING and awaits a
+    /// DKG reshare that excludes it.
     ///
     /// The caller must be the config owner or the validator itself.
     pub fn deactivate_validator(&mut self, caller: Address, addr: Address) -> Result<()> {
@@ -111,9 +112,9 @@ impl ValidatorSet<'_> {
 
     /// Forces a validator out of consensus because of a severe fault.
     ///
-    /// The validator enters EXITING and is removed from consensus on the next
-    /// successful reshare. Stake withdrawal is handled by Staking after the
-    /// validator reaches UNBONDING.
+    /// The validator enters EXITING. The next successful reshare removes it from
+    /// consensus. Staking handles stake withdrawal after the validator reaches
+    /// UNBONDING.
     pub fn force_exit_validator(&mut self, addr: Address) -> Result<()> {
         if let Some(observability) = self.punish_validator(addr, false)? {
             observability.record();
@@ -121,16 +122,22 @@ impl ValidatorSet<'_> {
         Ok(())
     }
 
-    /// Jails a validator for a severe consensus/oracle fault (felony). Unlike
-    /// [`Self::force_exit_validator`], the validator is NOT removed from the
-    /// registry: it is frozen in JAILED, excluded from the next reshare target
-    /// (so the reshare clears its share), and may later return via
-    /// `unjailValidator` (`Jail -> WaitingForReadiness -> Joining -> Active`) or,
-    /// after boundary exclusion, leave via a full unstake
-    /// (`Jail -> Unbonding -> Inactive`). The slash itself is applied by the caller
-    /// AFTER this call (`slash_stake` leaves a jailed lifecycle untouched).
-    /// Increments `slash_count` once. Repeated punishment of the same lifecycle
-    /// is a no-op even if a caller bypasses SlashIndicator's replay guard.
+    /// Jails a validator for a severe consensus/oracle fault (felony).
+    ///
+    /// Unlike [`Self::force_exit_validator`], this does NOT remove the validator
+    /// from the registry. The validator is frozen in JAILED and excluded from the
+    /// next reshare target, so the reshare clears its share. Later, the validator
+    /// may:
+    ///
+    /// - return via `unjailValidator` (`Jail -> WaitingForReadiness -> Joining -> Active`),
+    ///   or
+    /// - after boundary exclusion, leave via a full unstake
+    ///   (`Jail -> Unbonding -> Inactive`).
+    ///
+    /// The caller applies the slash itself AFTER this call (`slash_stake` leaves a
+    /// jailed lifecycle untouched). Increments `slash_count` once. Repeated
+    /// punishment of the same lifecycle is a no-op even if a caller bypasses
+    /// SlashIndicator's replay guard.
     pub fn jail_validator(&mut self, addr: Address) -> Result<()> {
         if let Some(observability) = self.punish_validator(addr, true)? {
             observability.record();
@@ -139,7 +146,7 @@ impl ValidatorSet<'_> {
     }
 
     /// Applies the jail transition but leaves metrics, journal and tracing to
-    /// the caller so a wider atomic transition cannot publish rolled-back state.
+    /// the caller. A wider atomic transition then cannot publish rolled-back state.
     pub fn jail_validator_deferred(
         &mut self,
         addr: Address,
@@ -149,8 +156,8 @@ impl ValidatorSet<'_> {
 
     /// Jails an ACTIVE validator whose canonical TEE lease reached its deadline.
     ///
-    /// This is an availability/safety transition, not a slash: bonded stake and
-    /// `slash_count` are preserved exactly. The old committee share remains
+    /// This is an availability/safety transition, not a slash. It preserves bonded
+    /// stake and `slash_count` exactly. The old committee share remains
     /// accountable in `JailRetained` until the normal validated boundary removes
     /// it. Re-execution after the first transition is an idempotent no-op.
     pub fn jail_validator_for_tee_expiry(&mut self, addr: Address) -> Result<bool> {
@@ -196,11 +203,14 @@ impl ValidatorSet<'_> {
         Ok(true)
     }
 
-    /// Shared punitive transition for [`Self::force_exit_validator`] (`jail =
-    /// false` -> ACTIVE->EXITING, the validator leaves the registry via UNBONDING)
-    /// and [`Self::jail_validator`] (`jail = true` -> ACTIVE->JAILED, the validator
-    /// is frozen in the registry). Both signal a reshare and bump `slash_count`
-    /// exactly once.
+    /// Shared punitive transition for two callers:
+    ///
+    /// - [`Self::force_exit_validator`] (`jail = false` -> ACTIVE->EXITING). The
+    ///   validator leaves the registry via UNBONDING.
+    /// - [`Self::jail_validator`] (`jail = true` -> ACTIVE->JAILED). The validator
+    ///   is frozen in the registry.
+    ///
+    /// Both signal a reshare and bump `slash_count` exactly once.
     fn punish_validator(
         &mut self,
         addr: Address,
@@ -289,11 +299,15 @@ impl ValidatorSet<'_> {
         }))
     }
 
-    /// Unjails a JAILED validator back to PENDING. Called by Staking's
-    /// `unjailValidator` (which first verifies the caller's stake >= min_stake);
-    /// the caller must be the validator itself. Enforces the unjail cooldown,
-    /// clears missed-block/vote counters, and signals a reshare. Identity,
-    /// deactivation, slash and proposal history remain intact.
+    /// Unjails a JAILED validator back to PENDING. Staking's `unjailValidator`
+    /// calls this function after it first verifies the caller's stake >= min_stake.
+    /// The caller must be the validator itself. This function:
+    ///
+    /// - enforces the unjail cooldown,
+    /// - clears missed-block/vote counters,
+    /// - signals a reshare.
+    ///
+    /// Identity, deactivation, slash and proposal history remain intact.
     pub fn unjail_after_stake_check(&mut self, addr: Address) -> Result<()> {
         let before = self.validator_state(addr)?;
         let jailed = match before.lifecycle().clone() {

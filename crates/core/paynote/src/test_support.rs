@@ -1,7 +1,7 @@
 //! Proving and pool-seeding fixtures for PayNote, shared by this crate's own
 //! tests and by downstream modules that consume notes (`nodfactory`, …).
 //!
-//! Enabled by the `test-utils` feature. These reference fixtures are unreachable
+//! The `test-utils` feature enables this module. These reference fixtures are unreachable
 //! from [`crate::runtime`]. Client applications use [`crate::client`] for
 //! production membership witnesses.
 
@@ -52,8 +52,8 @@ fn note_under_key(chain_id: u64, key: Field, asset: Address, amount: U256) -> No
 /// full spend, which the circuit represents with the zero sentinel rather than
 /// a note for nothing.
 ///
-/// The change key is derived from the spent note's key and nullifier, so the
-/// owner can rebuild the change note from what they already hold — nothing
+/// The change key is derived from the spent note's key and nullifier. Thus the
+/// owner can rebuild the change note from what they already hold. Nothing
 /// about it is published beyond the commitment.
 pub fn change_note(chain_id: u64, note: &Note, spend_amount: U256) -> Option<Note> {
     let remaining = note.amount.checked_sub(spend_amount)?;
@@ -68,8 +68,8 @@ pub fn change_note(chain_id: u64, note: &Note, spend_amount: U256) -> Option<Not
 /// bound to `context`, returning combined public-inputs-plus-proof bytes.
 ///
 /// The tree is a parameter because a note's auth path only exists relative to
-/// the pool state it is spent against — including any change leaf an earlier
-/// spend appended.
+/// the pool state it is spent against. That state includes any change leaf an
+/// earlier spend appended.
 pub fn spend_proof(
     chain_id: u64,
     tree: &PayNoteTree,
@@ -195,7 +195,7 @@ pub struct SpendFixture {
 /// Builds a note of `note_amount` in `asset` and proves a `spend_amount` spend
 /// of it bound to `context`, over a tree holding that note alone.
 ///
-/// Proving is real Barretenberg work — roughly half a second per call — so
+/// Proving is real Barretenberg work, roughly half a second per call. Thus
 /// callers should build one fixture per assertion, not one per iteration.
 pub fn note_and_spend_proof(
     chain_id: u64,

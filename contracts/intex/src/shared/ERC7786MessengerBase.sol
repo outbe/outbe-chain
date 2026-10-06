@@ -8,20 +8,25 @@ import {IGatewayQuote} from "./interfaces/IGatewayQuote.sol";
 
 /// @title ERC7786MessengerBase
 /// @author Outbe
-/// @notice Shared base for intex cross-chain clients that speak to the protocol-agnostic ERC-7786 bridge (the
-///         `crosschain` hub's `ERC7786Bridge`). The active transport is selected on the bridge ({setGateway} there).
-/// @dev Provides the immutable bridge reference, an ERC-7930 remote-messenger registry keyed by chainId, a
-///      relay-float-aware {_send}, a fee {_quoteFee}, and an authenticated {receiveMessage} that dispatches to the
-///      abstract {_dispatch}. A base (rather than inlining like intent's single-client Router) avoids duplicating
-///      this across the four intex clients (both messengers + both NFT bridge clients).
+/// @notice Shared base for intex cross-chain clients that speak to the protocol-agnostic ERC-7786
+///         bridge (the `crosschain` hub's `ERC7786Bridge`). The active transport is set on the
+///         bridge ({setGateway} there).
+/// @dev Provides:
+///      - the immutable bridge reference.
+///      - an ERC-7930 remote-messenger registry with chainId as key.
+///      - a relay-float-aware {_send} and a fee {_quoteFee}.
+///      - an authenticated {receiveMessage} that dispatches to the abstract {_dispatch}.
+///      A base (rather than inlining like intent's single-client Router) avoids duplicating this
+///      across the four intex clients (both messengers + both NFT bridge clients).
 ///
-///      Upgrade-safe: the bridge is an implementation immutable, so every upgrade must pass the same bridge to the
-///      constructor; the registry lives in erc7201 namespaced storage.
+///      Upgrade-safe: the bridge is an implementation immutable, so every upgrade must pass the
+///      same bridge to the constructor. The registry lives in erc7201 namespaced storage.
 abstract contract ERC7786MessengerBase is IERC7786Recipient {
     using InteroperableAddress for bytes;
 
-    /// @notice The ERC-7786 bridge this client sends through and accepts deliveries from. Fixed at deploy; the
-    ///         cross-chain protocol is swapped on the bridge itself (its `setGateway`), not by repointing here.
+    /// @notice The ERC-7786 bridge this client sends through and accepts deliveries from. Fixed at
+    ///         deploy. To swap the cross-chain protocol, change it on the bridge itself (its
+    ///         `setGateway`), not by repointing here.
     IERC7786GatewaySource public immutable BRIDGE;
 
     /// @custom:storage-location erc7201:outbe.intex.ERC7786MessengerBase
@@ -34,8 +39,9 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
     bytes32 private constant _MESSENGER_STORAGE_SLOT =
         0x6702aa1076aac9174f7ad82f658a24b43715e5376566adbcf76ac99f64da8e00;
 
-    /// @dev ERC-7786 attribute selector for a per-message destination gas limit. Matches the crosschain hub's
-    ///      `GasLimitAttribute.SELECTOR`; redeclared here (not imported) to keep the intex build hub-decoupled.
+    /// @dev ERC-7786 attribute selector for a per-message destination gas limit. Matches the
+    ///      crosschain hub's `GasLimitAttribute.SELECTOR`. Redeclared here (not imported) to keep
+    ///      the intex build hub-decoupled.
     bytes4 private constant _GAS_LIMIT_SELECTOR = bytes4(keccak256("executionGasLimit(uint256)"));
 
     event RemoteMessengerRegistered(uint32 indexed chainId, bytes interop);
@@ -71,11 +77,12 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
         return _s().remoteMessenger[chainId];
     }
 
-    /// @dev Registers (or clears, with empty bytes) the matching messenger on `chainId`. Auth is the concrete's
-    ///      responsibility (AccessControl lives there).
+    /// @dev Registers (or clears, with empty bytes) the matching messenger on `chainId`. The
+    ///      concrete contract is responsible for auth (AccessControl lives there).
     function _setRemoteMessenger(uint32 chainId, bytes calldata interop) internal {
-        // Inbound auth derives the key from the sender's own bytes, so the interop must embed the same chainId as
-        // the key - a mismatch would silently blackhole every message from that chain.
+        // Inbound auth derives the key from the sender's own bytes, so the interop must embed the
+        // same chainId as the key. A mismatch would silently blackhole every message from that
+        // chain.
         if (interop.length != 0) {
             (uint256 embedded,) = interop.parseEvmV1Calldata();
             require(embedded == chainId, RemoteMessengerChainMismatch(chainId, embedded));
@@ -84,7 +91,8 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
         emit RemoteMessengerRegistered(chainId, interop);
     }
 
-    /// @dev Registered interoperable address of the matching messenger on `chainId`; reverts if never set.
+    /// @dev Registered interoperable address of the matching messenger on `chainId`. Reverts if
+    ///      never set.
     function _remoteMessenger(uint32 chainId) internal view returns (bytes memory interop) {
         interop = _s().remoteMessenger[chainId];
         require(interop.length != 0, RemoteMessengerNotSet(chainId));
@@ -92,11 +100,13 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
 
     // --- Outbound ---
 
-    /// @dev Sends `payload` to the matching messenger on `dstChainId` through the bridge, funding the native fee:
-    ///        * relay-funded (`msg.value == 0`): a chain-native module that cannot attach value triggered the send;
-    ///          pay the quoted fee from the contract's native float.
-    ///        * entry-funded (`msg.value > 0`): require the value covers the fee and refund the excess to the caller,
-    ///          so an entry caller's buffer never silently seeds (or drains) the relay float.
+    /// @dev Sends `payload` to the matching messenger on `dstChainId` through the bridge, and funds
+    ///      the native fee:
+    ///        * relay-funded (`msg.value == 0`): a chain-native module that cannot attach value
+    ///          triggered the send. Pay the quoted fee from the contract's native float.
+    ///        * entry-funded (`msg.value > 0`): require that the value covers the fee, and refund
+    ///          the excess to the caller. Thus an entry caller's buffer never silently seeds (or
+    ///          drains) the relay float.
     /// @param dstChainId Destination EVM chainId.
     /// @param payload Encoded message body delivered verbatim to the remote messenger.
     /// @param gasLimit Destination execution gas for the message (0 = let the active gateway use its default).
@@ -136,10 +146,11 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
     // --- Inbound ---
 
     /// @inheritdoc IERC7786Recipient
-    /// @dev Called by the {BRIDGE} with a message from the matching messenger on the source chain. Authenticates the
-    ///      caller (the bridge) and the inner `sender` (the registered peer for its chainId) before dispatching. The
-    ///      bridge already deduplicates and rolls back on revert, so a premature message simply reverts here and is
-    ///      redelivered by the transport once its prerequisite has landed.
+    /// @dev The {BRIDGE} calls this with a message from the matching messenger on the source chain.
+    ///      Authenticates the caller (the bridge) and the inner `sender` (the registered peer for
+    ///      its chainId) before it dispatches. The bridge already deduplicates and rolls back on
+    ///      revert. Thus a premature message simply reverts here, and the transport redelivers it
+    ///      after its prerequisite lands.
     function receiveMessage(bytes32 receiveId, bytes calldata sender, bytes calldata payload)
         public
         payable
@@ -149,7 +160,8 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
         require(msg.sender == address(BRIDGE), UnauthorizedBridge(msg.sender));
 
         (uint256 srcChainId,) = sender.parseEvmV1Calldata();
-        // Only uint32 chainIds are supported (the registry key); an out-of-range source is rejected outright.
+        // Only uint32 chainIds are supported (the registry key). The contract rejects an
+        // out-of-range source outright.
         uint32 chainId = SafeCast.toUint32(srcChainId);
 
         bytes memory expected = _s().remoteMessenger[chainId];
@@ -164,8 +176,9 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
 
     /// @dev Handles an authenticated inbound `payload` from the matching messenger on `srcChainId`.
     /// @param srcChainId Source EVM chainId the message was authenticated against.
-    /// @param receiveId Bridge-assigned unique message id (binds source bridge + nonce-bearing payload); usable as an
-    ///        idempotency/parking key by clients that isolate per-item work (e.g. the NFT bridge clients).
+    /// @param receiveId Bridge-assigned unique message id (binds source bridge + nonce-bearing
+    ///        payload). Clients that isolate per-item work (e.g. the NFT bridge clients) can use it
+    ///        as an idempotency/parking key.
     /// @param payload Encoded message body delivered verbatim from the remote messenger.
     function _dispatch(uint32 srcChainId, bytes32 receiveId, bytes calldata payload) internal virtual;
 

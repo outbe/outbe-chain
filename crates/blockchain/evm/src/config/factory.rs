@@ -34,9 +34,9 @@ impl BlockExecutorFactory for OutbeEvmConfig {
         <OutbeEvmFactory as alloy_evm::EvmFactory>::HaltReason,
         reth_ethereum::TxType,
     >;
-    /// Concrete executor type returned by `create_executor`. `OutbeBlockExecutor<'a, E>`
-    /// is parameterized by the raw EVM (`BlockExecutor::Evm = E`), which the trait
-    /// constrains to `<Self::EvmFactory>::Evm<DB, I>` (i.e. `EvmFor<Self, DB, I>`). The
+    /// Concrete executor type that `create_executor` returns. The raw EVM
+    /// (`BlockExecutor::Evm = E`) parameterizes `OutbeBlockExecutor<'a, E>`. The trait
+    /// constrains that EVM to `<Self::EvmFactory>::Evm<DB, I>` (i.e. `EvmFor<Self, DB, I>`). The
     /// `EthBlockExecutor` wrapper with `&Arc<ChainSpec<OutbeHeader>>` and
     /// `&RethReceiptBuilder` lives inside `OutbeBlockExecutor`, not in this type param.
     type Executor<

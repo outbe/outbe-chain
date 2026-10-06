@@ -17,10 +17,10 @@ pub const PROFILE_AUTO: u8 = 0;
 pub const PROFILE_DEV: u8 = 1;
 pub const PROFILE_PROD: u8 = 2;
 
-/// Resolved Nod call terms; all periods are seconds.
+/// Resolved Nod call terms. All periods are in seconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NodParams {
-    /// Percentage points over the entry price; see `crate::constants`.
+    /// Percentage points over the entry price. See `crate::constants`.
     pub call_rate: u16,
     pub call_window_seconds: u32,
     pub call_threshold_seconds: u32,
@@ -28,7 +28,7 @@ pub struct NodParams {
 }
 
 impl NodParams {
-    /// Real protocol terms; the default on mainnet.
+    /// Real protocol terms. The default on mainnet.
     pub const PROD: Self = Self {
         call_rate: CALL_RATE_PCT,
         call_window_seconds: CALL_WINDOW,
@@ -37,7 +37,7 @@ impl NodParams {
     };
 
     /// Short terms for dev/test, as Gem and Intex run them. The scan is day-granular,
-    /// so window and threshold stay whole days; the notice is a real wait.
+    /// so window and threshold stay whole days. The notice is a real wait.
     pub const DEV: Self = Self {
         call_rate: 10,
         call_window_seconds: 3 * SECS_PER_DAY,

@@ -8,8 +8,8 @@ use super::common::*;
 
 /// Probes the macro-assigned slot for `reference_currencies` so that
 /// `scripts/seed_genesis.py` can mirror the layout. The StorageVec stores
-/// its length at the base slot; we push two values and then linearly scan
-/// slots 0..128 looking for the length cell (== 2) to recover the slot.
+/// its length at the base slot. The test pushes two values. Then it scans
+/// slots 0..128 linearly for the length cell (== 2) to recover the slot.
 #[test]
 fn reference_currencies_occupies_slot_55() {
     use outbe_primitives::addresses::ORACLE_ADDRESS;
@@ -48,7 +48,7 @@ fn reference_currencies_occupies_slot_55() {
             "data[1] mismatch at slot {slot}"
         );
 
-        // Hard-coded slot used by scripts/seed_genesis.py; keep in sync.
+        // Hard-coded slot that scripts/seed_genesis.py uses. Keep in sync.
         assert_eq!(
             slot, 55,
             "macro-assigned reference_currencies slot changed; update scripts/seed_genesis.py"
@@ -58,12 +58,12 @@ fn reference_currencies_occupies_slot_55() {
 
 /// Pins `pair_by_index` to slot 43, and its quote word to that slot plus one.
 ///
-/// It sits immediately after the retired settlement hole (40-42), so the
-/// `#[slot(43)]` anchor is the only thing keeping it in place; without it the
-/// macro's running slot counter would slide it into the hole and silently
-/// repoint `scripts/seed_genesis.py`. The quote word lives at `+1` inside the
-/// key's own hashed namespace rather than in a declaration slot, so it is
-/// asserted directly instead of being found by sweeping slot numbers.
+/// It sits immediately after the retired settlement hole (40-42). Thus only the
+/// `#[slot(43)]` anchor keeps it in place. Without the anchor, the running slot
+/// counter of the macro would slide it into the hole and silently repoint
+/// `scripts/seed_genesis.py`. The quote word lives at `+1` inside the hashed
+/// namespace of the key, not in a declaration slot. Thus the test asserts the
+/// quote word directly and does not find it by sweeping slot numbers.
 #[test]
 fn pair_by_index_occupies_slot_43_as_a_two_word_value() {
     use outbe_primitives::addresses::ORACLE_ADDRESS;
@@ -96,14 +96,14 @@ fn pair_by_index_occupies_slot_43_as_a_two_word_value() {
 }
 
 /// Pins every base slot the frozen OCOMP V1 opening plan (`openings.rs`) and
-/// `scripts/seed_genesis.py` hardcode. Each field is written through the typed
-/// schema and read back at the raw slot those consumers derive, so any field
-/// reorder or mis-placed `#[slot(N)]` pin fails here rather than silently
-/// corrupting a genesis seed or an opening proof.
+/// `scripts/seed_genesis.py` hardcode. The test writes each field through the
+/// typed schema and reads it back at the raw slot that those consumers derive.
+/// Thus any field reorder or mis-placed `#[slot(N)]` pin fails here and does
+/// not silently corrupt a genesis seed or an opening proof.
 ///
-/// Slots 41 and 46 are retired holes: they stay in the V1 plan (whose codec
-/// descriptor is hashed into the protocol bundle) but have no live writer, so
-/// they must read as zero after a full genesis init.
+/// Slots 41 and 46 are retired holes. They stay in the V1 plan (whose codec
+/// descriptor is hashed into the protocol bundle), but they have no live
+/// writer. Thus they must read as zero after a full genesis init.
 #[test]
 fn ocomp_opening_plan_slots_match_the_schema_layout() {
     use outbe_primitives::addresses::ORACLE_ADDRESS;
@@ -150,8 +150,8 @@ fn ocomp_opening_plan_slots_match_the_schema_layout() {
         oracle.scurve_oldest_idx.write(1).unwrap();
         oracle.reference_currencies.push(iso).unwrap();
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
-        // Both VWAP value columns are keyed by the registry index the pair was
-        // given above, so the raw slot derivation is pinned against that index.
+        // Both VWAP value columns use the registry index that the pair got above
+        // as their key. Thus the test pins the raw slot derivation against that index.
         oracle
             .worldwide_day_vwap_value
             .get_nested(&wwd)
@@ -267,9 +267,9 @@ fn worldwide_day_partial_aggregates_occupy_slots_70_through_73() {
     });
 }
 
-/// Every retired slot in the settlement range must stay empty. Slots 41/42 are
-/// still opened by the frozen V1 plan, so a resurrected writer would change
-/// what that plan proves; 40/45/46 must stay clear so the holes remain
+/// Every retired slot in the settlement range must stay empty. The frozen V1
+/// plan still opens slots 41/42, so a resurrected writer would change what
+/// that plan proves. Slots 40/45/46 must stay clear so the holes remain
 /// reusable-free and the `#[slot(43)]` anchor keeps its meaning.
 #[test]
 fn retired_settlement_slots_stay_zero_after_genesis() {

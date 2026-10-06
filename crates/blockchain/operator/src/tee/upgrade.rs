@@ -840,7 +840,7 @@ pub fn transition_intent_v1(
 }
 
 /// Copy exactly `sealed_root.bin` from active A to prepared candidate B.
-/// A byte-identical destination is an idempotent crash retry; any other
+/// A byte-identical destination is an idempotent crash retry. Any other
 /// pre-existing destination fails closed.
 pub fn copy_same_platform_sealed_root_v1(context: &UpgradeContextV1) -> Result<B256> {
     context.validate()?;

@@ -199,7 +199,7 @@ pub fn settle(
     })
 }
 
-/// Burn only this position's remaining collateral; Fidelity cohorts stay untouched.
+/// Burn only this position's remaining collateral. Fidelity cohorts stay untouched.
 pub fn void_position(storage: StorageHandle<'_>, position_id: U256) -> Result<()> {
     storage.with_checkpoint(|| {
         let now =

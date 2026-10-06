@@ -277,7 +277,7 @@ fn preannounce_registers_and_self_finalized_boundary_cannot_override() {
     );
     chain.verify_finalization(e6, &c6.finalization(e6)).unwrap();
 
-    // A forged, self-finalized epoch-6 boundary is a NO-OP - it cannot overwrite
+    // A forged, self-finalized epoch-6 boundary is a NO-OP. It cannot overwrite
     // the chained committee (that overwrite would be the D1 bug).
     let forged_boundary = forged6.boundary_block_extra_data(e6);
     assert_eq!(
@@ -286,7 +286,7 @@ fn preannounce_registers_and_self_finalized_boundary_cannot_override() {
             .unwrap(),
         None
     );
-    // The forged committee's finalization is rejected; the real one still verifies.
+    // The forged committee's finalization is rejected. The real one still verifies.
     assert!(chain
         .verify_finalization(e6, &forged6.finalization(e6))
         .is_err());
@@ -336,7 +336,7 @@ fn committee_chain_rejects_noncanonical_or_mislabelled_outcomes() {
 fn committee_chain_advances_from_boundary_block_extra_data() {
     let e6 = Epoch::new(6);
     let c6 = committee(70);
-    // Anchor on epoch 6 - the boundary block we process announces it.
+    // Anchor on epoch 6. The boundary block we process announces it.
     let mut chain = CommitteeChain::new(e6, c6.participants.clone());
     // Feeding the boundary block's extra_data registers epoch 6's committee.
     let extra = c6.boundary_block_extra_data(e6);

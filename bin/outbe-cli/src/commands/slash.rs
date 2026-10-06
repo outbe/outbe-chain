@@ -201,7 +201,8 @@ async fn config(client: &(impl Rpc + Sync)) -> Result<()> {
 }
 
 async fn history(client: &(impl Rpc + Sync), limit: usize) -> Result<()> {
-    // Fetch all slash-related events: ProposerFelony, ProposerMisdemeanor, VoterMisdemeanor, EvidenceFelonyApplied
+    // Fetch all slash-related events: ProposerFelony, ProposerMisdemeanor, VoterMisdemeanor,
+    // EvidenceFelonyApplied
     let topic_proposer_felony = format!(
         "{:?}",
         B256::from(keccak256(b"ProposerFelony(address,uint64,uint64)",))

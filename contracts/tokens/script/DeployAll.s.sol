@@ -16,8 +16,8 @@ import {ConfigureRemotes} from "./2_ConfigureRemotes.s.sol";
 /// deliberately per-step rather than one top-level short-circuit: a partial state (token deployed, Safe has not yet
 /// executed `setTokenBridge`) must still be completed on the next run.
 ///
-/// Addresses come from CREATE3 and depend only on (factory, salt, deployer) - so the same command on every chain
-/// produces the same addresses, and step 3 is safe before the other chains exist.
+/// Addresses come from CREATE3 and depend only on (factory, salt, deployer). Thus the same command
+/// on every chain produces the same addresses, and step 3 is safe before the other chains exist.
 ///
 /// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `BRIDGE_ADDRESS`, `OUTBE_CHAIN_ID`, `EXTERNAL_CHAIN_ID`.
 /// Optional env: `OWNER_ADDRESS`, `ALLOW_EOA_OWNER`, `REMOTE_CHAIN_IDS`,

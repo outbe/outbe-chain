@@ -5,9 +5,9 @@ pragma solidity ^0.8.0;
 /// @notice Shielded pool at 0x0000000000000000000000000000000000001019.
 /// A deposit pulls `amount` of `asset` from the caller, routes it into the
 /// asset's reserve vault via VaultRouter, and appends a note commitment to an
-/// incremental Merkle tree. The commitment is always derived by the runtime
-/// from the transfer it actually performed — opaque caller-supplied commitments
-/// are prohibited, so Merkle membership attests both the asset and the amount.
+/// incremental Merkle tree. The runtime always derives the commitment from the
+/// transfer it actually performed. Opaque caller-supplied commitments are
+/// prohibited, so Merkle membership attests both the asset and the amount.
 ///
 /// Spending is deliberately **not** on this interface. It consumes a frozen
 /// `outbe.paynote`, version 1.3.0, UltraHonkKeccak proof and is exposed only as
@@ -28,7 +28,7 @@ interface IPayNote {
     /// @notice Deposit `amount` of `asset` into the pool under `noteSn`.
     /// @dev `noteSn` is the note serial number — a hiding commitment to the spend key,
     /// chosen off-chain as `P(NOTE_SN, [spendKey])`. It reveals nothing about the key.
-    /// @param asset ERC20 to deposit; must have a registered reserve vault.
+    /// @param asset ERC20 to deposit. It must have a registered reserve vault.
     /// @param amount Units to pull from the caller.
     /// @param noteSn Caller-supplied note serial. Must be a non-zero canonical
     /// BN254 field word.
@@ -46,7 +46,7 @@ interface IPayNote {
     /// @notice Latest commitment-tree root.
     function currentRoot() external view returns (bytes32 root);
 
-    /// @notice Number of leaves appended so far; `0` means a pristine tree.
+    /// @notice Number of leaves appended so far. `0` means a pristine tree.
     function leafCount() external view returns (uint64 count);
 
     /// @notice Whether `root` is inside the 32-root acceptance window. Proofs
@@ -65,7 +65,7 @@ interface IPayNote {
     /// @param leafIndex Zero-based leaf position of the append.
     /// @param rootAfter Tree root after the append.
     /// @param asset The note's bound ERC20 (indexed).
-    /// @param noteAmount Deposited public amount; `0` is the sentinel for a
+    /// @param noteAmount Deposited public amount. `0` is the sentinel for a
     /// change or merged note, whose value is private.
     event NewNote(
         bytes32 indexed commitment, uint32 leafIndex, bytes32 rootAfter, address indexed asset, uint256 noteAmount

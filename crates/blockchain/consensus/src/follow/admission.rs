@@ -1,12 +1,16 @@
 //! Committee admission: the one transition from a certified finalized header to
-//! the follower's committee chain, shared by live delivery, restart replay,
-//! restart rebuild, the trust-root anchor and the enclave's committee stream.
+//! the follower's committee chain. These paths share it:
+//! - live delivery
+//! - restart replay
+//! - restart rebuild
+//! - the trust-root anchor
+//! - the enclave's committee stream
 //!
 //! Every path verifies the header's finalization certificate against the
-//! already trusted committee *before* the chain changes, then applies the rule
-//! its policy names. The anchor is the one exception to "already trusted": its
-//! committee is authenticated by the genesis validator set, so it is verified
-//! against the committee it would install before that committee is installed.
+//! already trusted committee *before* the chain changes. Then it applies the rule
+//! its policy names. The anchor is the one exception to "already trusted". The
+//! genesis validator set authenticates its committee. Thus the anchor path verifies
+//! it against the committee it would install, before it installs that committee.
 
 use commonware_consensus::{simplex::types::Finalization, types::Epoch};
 use commonware_cryptography::bls12381::primitives::variant::MinSig;
@@ -21,16 +25,16 @@ use crate::{digest::Digest, hybrid::HybridScheme};
 /// What a certified header may change in the committee chain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AdmissionPolicy {
-    /// Delivery routed to `routed_epoch` (live and replay): the certificate is
+    /// Delivery routed to `routed_epoch` (live and replay). The certificate is
     /// from that epoch, or from its successor only on the block carrying that
     /// successor's `BoundaryOutcome`. A pre-announce must name the certifying
-    /// epoch's successor; a boundary must be the certifying epoch's own.
+    /// epoch's successor. A boundary must be the certifying epoch's own.
     Routed { routed_epoch: Epoch },
     /// A committee handoff that must pre-announce the certifying epoch's
     /// successor (the enclave's committee stream).
     Successor,
-    /// Rebuild scan for `epoch`'s carrier: only a pre-announce of `epoch`
-    /// changes the chain; any other artifact is ignored.
+    /// Rebuild scan for `epoch`'s carrier. Only a pre-announce of `epoch`
+    /// changes the chain. The scan ignores any other artifact.
     CarrierFor { epoch: Epoch },
 }
 
@@ -152,9 +156,9 @@ impl CommitteeChain {
         }
     }
 
-    /// Establish the trust root from the anchor epoch's boundary block: its
-    /// committee must be the genesis validator set, and the block's certificate
-    /// must verify against that committee before it is installed.
+    /// Establish the trust root from the anchor epoch's boundary block. Its
+    /// committee must be the genesis validator set. The block's certificate
+    /// must verify against that committee before this method installs it.
     pub fn admit_anchor(
         &mut self,
         finalization: &Finalization<HybridScheme<MinSig>, Digest>,

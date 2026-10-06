@@ -162,8 +162,8 @@ impl ZeroFeePolicyError {
     /// `outbe-zerofee` failure reasons (`crate::ZERO_FEE_POLICY_LOG_ADDRESS`).
     ///
     /// The values are part of the on-chain encoding and must not be
-    /// reordered or reused after they ship; the match is exhaustive so
-    /// adding a new variant is a compile error until a code is allocated.
+    /// reordered or reused after they ship. The match is exhaustive, so a
+    /// new variant is a compile error until it gets a code.
     pub const fn code(&self) -> u16 {
         match self {
             Self::UnknownHook(_) => 101,

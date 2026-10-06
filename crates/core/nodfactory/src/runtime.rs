@@ -115,7 +115,7 @@ fn issue_nod_inner(
     Ok(nod_id)
 }
 
-/// Exercise of one paid Nod. Any caller may submit; the owner's Gratis
+/// Exercise of one paid Nod. Any caller may submit. The owner's Gratis
 /// modify-key MAC/`opNonce` authorizes the mint to that owner.
 pub struct MineGratisRequest {
     pub caller: Address,
@@ -200,15 +200,15 @@ pub fn settle_nod_with_paynote(
     )
 }
 
-/// Currency pair and load a settlement charges against. Copied off the item
-/// before `settle_nod` consumes the loaded body.
+/// Currency pair and load a settlement charges against. Callers copy them off
+/// the item before `settle_nod` consumes the loaded body.
 struct SettlementTerms {
     issuance_currency: u16,
     reference_currency: u16,
     gratis_load_minor: U256,
 }
 
-/// `quote` prices and authorizes the payment before any state changes; `pay`
+/// `quote` prices and authorizes the payment before any state changes. `pay`
 /// then moves it after the transition, inside the same checkpoint.
 fn settle<Q>(
     storage: &StorageHandle<'_>,
@@ -323,7 +323,7 @@ pub fn mine_gratis(
                 gratisLoadMinor: gratis_load_minor,
             },
         )?;
-        // Anyone may submit; mint is authorized by the Nod owner's modify key.
+        // Anyone may submit. The Nod owner's modify key authorizes the mint.
         outbe_gratisfactory::api::mint(storage.clone(), owner, gratis_load_minor, auth)?;
         Ok(gratis_load_minor)
     })
@@ -360,9 +360,9 @@ struct PaidCost {
 /// Discharges a Nod's cost by spending one PayNote.
 ///
 /// The proof is the payment. `consume` books its nullifier before returning, so
-/// the note cannot be spent twice; running inside the caller's checkpoint means
-/// a later failure un-books it. It is called last, after the cheap
-/// qualification/deadline guards, so rejected settlement never pays for
+/// the note cannot be spent twice. Because it runs inside the caller's
+/// checkpoint, a later failure un-books it. Settlement calls it last, after the
+/// cheap qualification/deadline guards, so rejected settlement never pays for
 /// verification.
 fn discharge_cost(
     storage: &StorageHandle<'_>,
@@ -416,9 +416,9 @@ enum PaymentCurrency {
 }
 
 /// Vaulted asset whose `isoCode()` is the Nod's reference or issuance currency.
-/// Registration is checked first, so an unregistered asset need not implement
-/// `isoCode()` at all; reference is matched first, so a same-currency Nod takes
-/// the no-rate branch.
+/// The function checks registration first, so an unregistered asset need not
+/// implement `isoCode()` at all. It matches the reference currency first, so a
+/// same-currency Nod takes the no-rate branch.
 fn accept_payment_asset(
     storage: &StorageHandle<'_>,
     asset: Address,
@@ -460,8 +460,8 @@ fn require_snapshot(required: Option<VwapSnapshotId>, authorized: U256) -> Resul
 }
 
 /// Cost of one Nod in `asset`'s minor units and, on the issuance rail, the VWAP
-/// snapshot both COEN legs came from. The cross rate is folded into the same
-/// fraction, so the whole thing is floored once.
+/// snapshot both COEN legs came from. The function folds the cross rate into the
+/// same fraction, so it floors the whole result once.
 fn cost_in_asset(
     storage: &StorageHandle<'_>,
     terms: &SettlementTerms,
@@ -581,7 +581,8 @@ pub fn quote_settlement(
 }
 
 /// PoW gate for `mine_gratis`. The preimage is
-/// `OUTBE_NOD_MINING_V1 || nodId || owner || miningSequence=0 || nonce`; the caller is not in it.
+/// `OUTBE_NOD_MINING_V1 || nodId || owner || miningSequence=0 || nonce`. The caller is not in
+/// it.
 pub fn validate_pow(nod_id: WwdEntityId, owner: Address, nonce: u64) -> Result<()> {
     pow::validate_mining_pow(
         pow::MiningDomain::Nod,

@@ -116,8 +116,7 @@ fn validate_active_system_tx_set_accepts_expected_membership() {
     let block0 = split_system_layout(&[]).expect("layout");
     validate_active_system_tx_set(&block0, 0, false, false).expect("genesis ok");
 
-    // / V2: block 1 mandatorily carries a BoundaryOutcome for
-    // the genesis bootstrap.
+    // V2: block 1 must carry a BoundaryOutcome for the genesis bootstrap.
     let block1_txs = vec![
         system_tx(SystemTxKind::CycleTick, 0, 1),
         system_tx(SystemTxKind::RewardsGemDelivery, 1, 1),
@@ -178,7 +177,7 @@ fn validate_active_system_tx_set_requires_mandatory_and_conditional_kinds() {
         Err(SystemTxError::ActiveSystemTxSetMismatch { .. })
     ));
 
-    // / V2: block 1 must include CycleTick, BoundaryOutcome and TeeBootstrap.
+    // V2: block 1 must include CycleTick, BoundaryOutcome and TeeBootstrap.
     // Missing CycleTick (with the other mandatory phases present)
     // still yields ActiveSystemTxSetMismatch.
     let block1_missing_cycle_tick_txs = vec![
@@ -223,8 +222,8 @@ fn validate_active_system_tx_set_requires_mandatory_and_conditional_kinds() {
         "block 1 must contain exactly the six mandatory system transactions"
     );
 
-    // / V2: block 1 without BoundaryOutcome is rejected with
-    // the V2-specific genesis bootstrap error before structural checks.
+    // V2: block 1 without BoundaryOutcome fails with the V2-specific
+    // genesis bootstrap error before structural checks.
     let block1_no_boundary_txs = vec![
         system_tx(SystemTxKind::CycleTick, 0, 1),
         system_tx(SystemTxKind::RewardsGemDelivery, 1, 1),
@@ -280,9 +279,9 @@ fn validate_active_system_tx_set_requires_mandatory_and_conditional_kinds() {
 
 #[test]
 fn revert_fails_block_classifies_critical_begin_zone_phases() {
-    // consensus- and economic-critical phases fail the block on
-    // a revert/halt; non-critical phases keep the soft-receipt skip. Pin the
-    // full classification so a new phase is forced to make this choice.
+    // Consensus- and economic-critical phases fail the block on a
+    // revert/halt. Non-critical phases keep the soft-receipt skip. Pin the
+    // full classification so that each new phase must make this choice.
     for kind in [
         SystemTxKind::CertifiedParentAccounting,
         SystemTxKind::LateFinalizeCredits,

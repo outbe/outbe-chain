@@ -1,12 +1,12 @@
 //! DCAP (ECDSA) SGX quote measurement parsing shared by the enclave and host.
 //!
-//! Only the layout needed to extract MRENCLAVE/MRSIGNER/ISVSVN/report_data is
-//! modelled. This module parses fields; cryptographic quote verification belongs
-//! to the enclave-resident native QVL path.
+//! This module models only the layout needed to extract
+//! MRENCLAVE/MRSIGNER/ISVSVN/report_data. This module parses fields. Cryptographic
+//! quote verification belongs to the enclave-resident native QVL path.
 
 /// SGX report body offset inside a DCAP ECDSA quote (after the 48-byte header).
-/// A standalone local SGX report has its body at offset 0, so prepending this many
-/// bytes lets it be parsed by [`parse_quote_measurements`] at the same offsets.
+/// A standalone local SGX report has its body at offset 0. Prepend this many bytes
+/// to it, and [`parse_quote_measurements`] can parse it at the same offsets.
 pub const REPORT_BODY_OFFSET: usize = 48;
 const RB_MRENCLAVE: usize = 64;
 const RB_MRSIGNER: usize = 128;

@@ -72,7 +72,7 @@ struct Fixture {
     result_chunk_refs: Vec<CasObjectRefV1>,
 }
 // Protocol-shaped native CAS/planner fixture. Minimal non-root phase payloads
-// support structural/proof tests; this is not real worker-pipeline E2E evidence.
+// support structural/proof tests. This is not real worker-pipeline E2E evidence.
 fn protocol_bundle() -> ProtocolBundleV1 {
     ProtocolBundleV1 {
         protocol_version: 1,

@@ -43,7 +43,7 @@ impl OcompTopology {
     /// Prepare a public measurement chain whose base genesis funds exactly
     /// `tribute_count` deterministic, distinct Tribute owners. The owners still
     /// create every Tribute through the ordinary encrypted public transaction
-    /// path; this helper supplies only transaction gas funding before the base
+    /// path. This helper supplies only transaction gas funding before the base
     /// genesis hash and immutable fork bindings are derived.
     #[cfg(feature = "ocomp-integration")]
     pub fn prepare_public_capacity_fork_install(

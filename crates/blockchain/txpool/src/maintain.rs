@@ -1,20 +1,20 @@
 //! Outbe-owned pool maintenance: two-snapshot pending staleness eviction.
 //!
 //! Incident background (2026-08-22, `outbe-plan/txpool_stuck_tx_livelock_22-08-2026.md`):
-//! pending transactions have no lifetime bound in the upstream pool - only the
-//! parked subpools age out. A transaction that keeps landing in proposals that
-//! fail to finalize is re-injected by the reorg path and re-selected by every
-//! payload build, indefinitely. This task bounds pending residency node-locally.
+//! pending transactions have no lifetime bound in the upstream pool. Only the
+//! parked subpools age out. A transaction can keep landing in proposals that
+//! fail to finalize. The reorg path then re-injects it, and every payload build
+//! selects it again, indefinitely. This task bounds pending residency node-locally.
 //!
-//! Mechanism: on the canonical-state stream, at most once per configured
-//! interval (measured in canonical tip block TIMESTAMPS, not wall clock), take
-//! a snapshot of the pending-tx hash set. A hash present in two CONSECUTIVE
-//! snapshots has been pending for at least one full interval without being
-//! mined - evict it (with descendants). Mined or dropped transactions simply
-//! vanish from the next snapshot; a re-added transaction starts a fresh cycle.
+//! Mechanism: on the canonical-state stream, take a snapshot of the pending-tx
+//! hash set at most once per configured interval. The interval is measured in
+//! canonical tip block TIMESTAMPS, not wall clock. A hash present in two
+//! CONSECUTIVE snapshots was pending for at least one full interval and was not
+//! mined. Evict it (with descendants). Mined or dropped transactions simply
+//! vanish from the next snapshot. A re-added transaction starts a fresh cycle.
 //! Effective pending TTL is therefore one to two intervals.
 //!
-//! Eviction is node-local pool policy and never consensus-visible: payload
+//! Eviction is node-local pool policy and never consensus-visible. Payload
 //! content is proposer-discretionary, and block validation audits only parent
 //! binding, beneficiary and system-transaction layout.
 
@@ -31,10 +31,10 @@ use reth_transaction_pool::TransactionPool;
 /// Configuration for [`maintain_outbe_pool`].
 #[derive(Clone, Copy, Debug)]
 pub struct OutbePoolMaintainConfig {
-    /// Seconds (of canonical block time) between pending-set snapshots. A
-    /// pending transaction surviving two consecutive snapshots is evicted, so
-    /// the effective pending TTL is one to two intervals. Must be non-zero
-    /// (enforced by CLI validation).
+    /// Seconds (of canonical block time) between pending-set snapshots. The
+    /// tracker evicts a pending transaction that survives two consecutive
+    /// snapshots, so the effective pending TTL is one to two intervals. Must be
+    /// non-zero (CLI validation enforces this).
     pub staleness_interval_secs: u64,
 }
 
@@ -68,9 +68,9 @@ impl PendingStalenessTracker {
     /// clock). Returns the hashes to evict: transactions present both in the
     /// previous snapshot and in this one.
     ///
-    /// Outside a snapshot boundary (less than one interval since the last
-    /// snapshot, including out-of-order timestamps after a head switch) this
-    /// returns empty and keeps state unchanged.
+    /// Outside a snapshot boundary, this returns empty and keeps state
+    /// unchanged. Outside a boundary means less than one interval since the
+    /// last snapshot, including out-of-order timestamps after a head switch.
     pub fn check_and_update(
         &mut self,
         current_pending: HashSet<B256>,
@@ -108,12 +108,16 @@ impl PendingStalenessTracker {
 }
 
 /// One maintenance tick against `pool` at canonical tip time `tip_timestamp`.
-/// Snapshots the pending set, evicts what the tracker reports stale (with
-/// descendants), logs every removal and updates the metrics. Returns the hashes
-/// actually removed from the pool.
+/// The tick does these steps:
+/// - Snapshot the pending set.
+/// - Evict what the tracker reports stale (with descendants).
+/// - Log every removal.
+/// - Update the metrics.
 ///
-/// Split out of the stream loop so it can be driven directly in tests without a
-/// provider subscription.
+/// Returns the hashes actually removed from the pool.
+///
+/// This function is separate from the stream loop, so tests can drive it
+/// directly without a provider subscription.
 pub fn run_staleness_tick<Pool>(
     pool: &Pool,
     tracker: &mut PendingStalenessTracker,
@@ -154,10 +158,11 @@ where
     removed.iter().map(|tx| *tx.hash()).collect()
 }
 
-/// Long-running maintenance loop: subscribes to the canonical-state stream
-/// (alongside the upstream maintenance task, which keeps owning nonce/balance
-/// pruning and reorg handling) and applies pending staleness eviction. Runs on
-/// every node mode - full nodes are the RPC ingress and need it most.
+/// Long-running maintenance loop. It subscribes to the canonical-state stream
+/// and applies pending staleness eviction. It runs alongside the upstream
+/// maintenance task, which continues to own nonce/balance pruning and reorg
+/// handling. It runs on every node mode. Full nodes are the RPC ingress and
+/// need it most.
 pub async fn maintain_outbe_pool<Provider, Pool>(
     provider: Provider,
     pool: Pool,
@@ -174,7 +179,7 @@ pub async fn maintain_outbe_pool<Provider, Pool>(
         "pending staleness eviction active"
     );
     while let Some(notification) = stream.next().await {
-        // Commit and Reorg are handled identically: only the new tip's
+        // This loop handles Commit and Reorg identically. Only the new tip's
         // timestamp and the pool's CURRENT pending set matter.
         let Some(tip) = notification.tip_checked() else {
             continue;
@@ -251,8 +256,8 @@ mod tests {
         assert_eq!(tracker.check_and_update(set(&[1]), 130), vec![hash(1)]);
     }
 
-    /// End-to-end against a real pool: a transaction that survives two
-    /// snapshots is removed together with its higher-nonce descendant, while a
+    /// End-to-end against a real pool. The tick removes a transaction that
+    /// survives two snapshots, and also removes its higher-nonce descendant. A
     /// transaction admitted after the first snapshot survives this round.
     #[tokio::test]
     async fn tick_evicts_stale_pending_and_descendants_from_a_real_pool() {
@@ -277,7 +282,7 @@ mod tests {
             .expect("add descendant");
 
         let mut tracker = PendingStalenessTracker::new(10);
-        // First snapshot seeds; nothing is evicted.
+        // First snapshot seeds. Nothing is evicted.
         assert!(run_staleness_tick(&pool, &mut tracker, 100).is_empty());
 
         // A newcomer admitted between snapshots must survive this round.

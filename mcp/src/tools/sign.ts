@@ -24,7 +24,7 @@ const GAS_OFFER = 8_000_000n;
 const GAS_DEFAULT = 3_000_000n;
 const GAS_VOTE = 5_000_000n;
 
-/** `0x`-hex of any width; validity of the bytes themselves is the precompile's call. */
+/** `0x`-hex of any width. The precompile decides whether the bytes themselves are valid. */
 const HEX = /^0x([0-9a-fA-F]{2})*$/;
 /** `0x`-hex of exactly 32 bytes - the enclave parses these fields as fixed-width. */
 const HEX32 = /^0x(?:[0-9a-fA-F]{2}){32}$/;
@@ -304,7 +304,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
   );
 
   // --- agentreward -----------------------------------------------------------
-  // The Rewards precompile (EE03) exposes no callable methods - validator
+  // The Rewards precompile (EE03) exposes no callable methods. Validator
   // emission is paid in gems (crates/system/rewards/src/precompile.rs).
   server.tool(
     "agentreward_claim",

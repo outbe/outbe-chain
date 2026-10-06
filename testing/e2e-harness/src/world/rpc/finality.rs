@@ -252,7 +252,7 @@ impl Rpc {
     // ---- waits (poll loops) --------------------------------------------
 
     /// Wait for HEAD to reach `min`, including the final observation after retries.
-    /// This positions an execution-height trigger; it does not prove finality.
+    /// This positions an execution-height trigger. It does not prove finality.
     #[must_use = "a block wait must be checked; ignoring it can turn a stalled node into PASS"]
     pub fn wait_block(&self, port: u16, min: u64, tries: u32) -> Result<u64> {
         let mut remaining = tries;

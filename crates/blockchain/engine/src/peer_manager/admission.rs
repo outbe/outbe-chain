@@ -1,4 +1,4 @@
-//! Serialized publication of transport admission; DKG membership lives elsewhere.
+//! Serialized publication of transport admission. DKG membership lives elsewhere.
 use commonware_actor::Feedback;
 use commonware_p2p::{Address, AddressableManager, AddressableTrackedPeers};
 use commonware_utils::ordered::Map;

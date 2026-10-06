@@ -50,7 +50,7 @@ pub struct LiquidityReservation {
 #[storage_schema]
 #[contract(addr = VAULT_ROUTER_ADDRESS)]
 pub struct VaultRouterContract {
-    /// slot 0: owner (admin). Seeded at genesis; gates the `add*`/`remove*`
+    /// slot 0: owner (admin). Seeded at genesis. Gates the `add*`/`remove*`
     /// management methods. Replaces `OwnableUpgradeable`.
     #[attribute(order = 0)]
     pub owner: outbe_primitives::storage::dsl::Value<Address>,
@@ -59,8 +59,8 @@ pub struct VaultRouterContract {
     #[attribute(order = 1)]
     pub assets: outbe_primitives::storage::dsl::Set<Address>,
 
-    /// slot 3: base slot of the per-asset vault sets. The value mapping is
-    /// unused directly; `asset_vault_set(asset)` derives an enumerable
+    /// slot 3: base slot of the per-asset vault sets. No code uses the value
+    /// mapping directly. `asset_vault_set(asset)` derives an enumerable
     /// `Set<Address>` at this mapping's per-key slot.
     #[attribute(order = 2)]
     pub asset_vaults: outbe_primitives::storage::dsl::Map<Address, U256>,
@@ -94,8 +94,8 @@ pub struct VaultRouterContract {
     #[attribute(order = 9)]
     pub crosschain_operation_nonce: outbe_primitives::storage::dsl::Value<U256>,
 
-    /// slot 13: reserved legacy pause flag. Kept to preserve storage layout;
-    /// no VaultRouter function reads or writes it.
+    /// slot 13: reserved legacy pause flag. Kept to preserve storage layout.
+    /// No VaultRouter function reads or writes it.
     #[attribute(order = 10)]
     pub reserved_legacy_pause: outbe_primitives::storage::dsl::Value<bool>,
 
@@ -157,7 +157,7 @@ pub struct VaultRouterContract {
 
 impl<'storage> VaultRouterContract<'storage> {
     /// Returns the enumerable vault set for `asset`, laid out exactly as
-    /// Solidity's `mapping(address => EnumerableSet.AddressSet)` - the set's
+    /// Solidity's `mapping(address => EnumerableSet.AddressSet)`. The set's
     /// base slot is the `asset_vaults` mapping's per-key slot.
     pub fn asset_vault_set(&self, asset: Address) -> StorageSet<'storage, Address> {
         let base = asset.mapping_slot(self.asset_vaults.base_slot());

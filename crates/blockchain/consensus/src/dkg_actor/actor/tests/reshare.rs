@@ -110,9 +110,9 @@ fn reshare_retry_gives_online_player_time_to_ack_before_dealer_finalizes() {
 
             // Model a healthy player that disappears long enough for a real
             // node+enclave restart, then reconnects while the ceremony is still
-            // recoverable.  Three complete retry rounds are dropped; the next
-            // retry must still arrive before each dealer seals its log, otherwise
-            // Feldman-Desmedt permanently publishes that player's share.
+            // recoverable. The drop rule drops three complete retry rounds. The
+            // next retry must still arrive before each dealer seals its log.
+            // Otherwise Feldman-Desmedt permanently publishes that player's share.
             let drop_rule = Arc::new(Mutex::new(DropMessages {
                 from: None,
                 to: keys[1].public_key(),
@@ -176,9 +176,9 @@ fn reshare_retry_gives_online_player_time_to_ack_before_dealer_finalizes() {
 /// VALID signature but GARBAGE content (dealt from a wrong previous share). It
 /// passes the actor's signature-only acceptance check and lands in the raw
 /// first-2f+1, but `observe`/`select` drop it. The old code broke on the raw
-/// 2f+1 count and one-shot `finalize` then failed `DkgFailed` identically on
-/// every node -> chain halt. With the observe-gated trigger the actors keep
-/// collecting, complete on 2f+1 CONTENT-VALID logs, and every honest node
+/// 2f+1 count. Then one-shot `finalize` failed `DkgFailed` identically on
+/// every node -> chain halt. With the observe-gated trigger, the actors keep
+/// collecting and complete on 2f+1 CONTENT-VALID logs. Every honest node
 /// recovers a share (signer quorum preserved).
 #[test]
 fn reshare_survives_signed_but_garbage_dealer_log() {
@@ -200,8 +200,8 @@ fn reshare_survives_signed_but_garbage_dealer_log() {
             let info = &verification.info;
 
             // Byzantine dealer log from dealer 0, dealt with dealer 1's previous
-            // share (wrong): dealer 0 signs it (-> passes `check`), but its content
-            // is inconsistent with the previous output (-> dropped by `select`).
+            // share (wrong). Dealer 0 signs it (-> passes `check`). But its content
+            // is inconsistent with the previous output (-> `select` drops it).
             let byzantine_pk = keys[0].public_key();
             let (byz_dealer, _pub, _priv) = Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
                 rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
@@ -236,8 +236,8 @@ fn reshare_survives_signed_but_garbage_dealer_log() {
                 (senders, receivers),
             );
 
-            // Collect VALID dealer logs from dealers 1..=3 (skip dealer 0 - its slot
-            // is taken by the garbage log). We need 2f+1 = 3 valid logs.
+            // Collect VALID dealer logs from dealers 1..=3 (skip dealer 0 - the
+            // garbage log takes its slot). We need 2f+1 = 3 valid logs.
             let valid_logs = verification
                 .collect(
                     &mut progress_rx,
@@ -265,8 +265,8 @@ fn reshare_survives_signed_but_garbage_dealer_log() {
                 results.push(handle.await.unwrap().unwrap());
             }
 
-            // Canonical output agreed by all, and every node recovered a share
-            // (quorum preserved) - the lone garbage log was filtered, not fatal.
+            // All nodes agree on the canonical output, and every node recovered a
+            // share (quorum preserved). The lone garbage log was filtered, not fatal.
             let expected_public = results[0].output.public().encode();
             for result in &results {
                 assert_eq!(

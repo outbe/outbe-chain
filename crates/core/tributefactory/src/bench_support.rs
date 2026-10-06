@@ -1,8 +1,8 @@
 //! Narrow adapter used by the permanent Tribute creation benchmark.
 //!
-//! This module is absent from default builds. It exists so the external Cargo
-//! benchmark can exercise the same crate-private processor-injection seam as
-//! unit tests without making that seam part of TributeFactory's product API.
+//! This module is absent from default builds. It lets the external Cargo
+//! benchmark exercise the same crate-private processor-injection seam as unit
+//! tests. That seam does not become part of TributeFactory's product API.
 
 use alloy_primitives::{Address, Bytes, U256};
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
@@ -34,8 +34,8 @@ pub struct BenchOfferInput {
 }
 
 /// Execute one successful creation through the canonical TributeFactory
-/// runtime with a caller-supplied benchmark processor. The production processor
-/// contract is preserved while the node-local transport remains outside the
+/// runtime with a caller-supplied benchmark processor. This function keeps the
+/// production processor contract. The node-local transport stays outside the
 /// standalone Cargo benchmark.
 pub fn execute_offer_with_processor(
     storage: StorageHandle<'_>,

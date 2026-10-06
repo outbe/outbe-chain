@@ -92,8 +92,8 @@ impl PolicyDescriptor {
 
 /// Stable V1 layout:
 ///
-/// - slot 0: next policy id (`0` means pristine and therefore next id `2`);
-/// - slots 1..=7: descriptor mapping bases;
+/// - slot 0: next policy id (`0` means pristine and therefore next id `2`).
+/// - slots 1..=7: descriptor mapping bases.
 /// - slot 8: per-policy enumerable member-set mapping base.
 #[storage_schema]
 #[contract(addr = STABLECOIN_POLICY_REGISTRY_ADDRESS)]

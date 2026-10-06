@@ -47,8 +47,8 @@ fn capacity_owners_submit_public_tributes(world: &mut World, count: usize, batch
     );
     let private_keys = &private_keys[..count];
     // Distinct callers share the declared testnet circuit network. Each offer
-    // still has its own caller-bound proof and network-signed Merkle root;
-    // synthetic per-owner networks have no circuit binding on this host chain.
+    // still has its own caller-bound proof and network-signed Merkle root.
+    // Synthetic per-owner networks have no circuit binding on this host chain.
     const CAPACITY_L2_CHAIN_ID: u64 = 57_005;
     let network_operator = world
         .validators
@@ -348,7 +348,7 @@ fn mine_succeeds_after_materialization_completion(world: &mut World) {
         .nod_data_on(port, &nod_id)
         .expect("capacity owner NOD body");
     // Mining always burns a note, so the capacity Nod needs one deposited under
-    // an asset the router registers for its reference currency — the fixture
+    // an asset the router registers for its reference currency. The fixture
     // genesis registers liquidity sources but no vault.
     assert_eq!(
         body.referenceCurrency, 840,

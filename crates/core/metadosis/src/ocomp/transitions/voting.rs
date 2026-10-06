@@ -17,8 +17,8 @@ struct DueVotingJob {
     finalized: OcompFinalizedJobV1,
 }
 impl MetadosisContract<'_> {
-    /// Opens a finalized job once its open height has been reached while
-    /// preserving the immutable response deadline.
+    /// Opens a finalized job once `at_height` reaches its open height. The job
+    /// keeps its immutable response deadline.
     ///
     /// A delayed lifecycle tick may catch up before that deadline. At or after
     /// the deadline the caller must retire the still-unopened job as Expired.

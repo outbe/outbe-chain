@@ -6,7 +6,7 @@
 //! - `precompile.rs` - ABI dispatch.
 //!
 //! `pub use` re-exports below preserve the old `contract` / `logic`
-//! paths for external callers; migrate them opportunistically.
+//! paths for external callers. Migrate those callers opportunistically.
 mod evidence;
 pub mod hooks;
 pub mod metrics;

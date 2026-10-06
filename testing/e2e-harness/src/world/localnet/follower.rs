@@ -107,7 +107,7 @@ pub(super) fn derive_validator_recovery_follower_args(
 impl Localnet {
     /// Positive-start barrier for the selected upstream, not a substitute for
     /// the node's own authenticated admission. The owner is stopped while its
-    /// exact durable anchor is loaded; polling never reopens the owner journal.
+    /// exact durable anchor is loaded. Polling never reopens the owner journal.
     pub(super) fn wait_selected_upstream_admission(
         &self,
         index: usize,
@@ -175,7 +175,7 @@ impl Localnet {
                     );
 
                     // Pin all current reads to this finalized height. Renewal
-                    // may change the nonce/deadline; identity must still match.
+                    // may change the nonce/deadline. Identity must still match.
                     let current = eth::read_call_at_result(&url, address, &selector, *height)
                         .map_err(eyre::Report::msg)?;
                     let canonical = eth::read_call_at_result(
@@ -237,8 +237,8 @@ impl Localnet {
     }
 
     /// Provision the production FullNode NodeHost path for any enabled TEE
-    /// policy. DCAP and GramineDirectDev differ only in attestation authority;
-    /// both require the same resident offer-key delivery before node startup.
+    /// policy. DCAP and GramineDirectDev differ only in attestation authority.
+    /// Both require the same resident offer-key delivery before node startup.
     /// Prepare the same ordinary configuration without opening recipient databases.
     #[cfg(feature = "ocomp-integration")]
     pub(crate) fn prepare_snapshot_full_node(&mut self, index: usize) -> Result<()> {
@@ -473,8 +473,9 @@ impl Localnet {
     }
 
     /// Start an excluded validator's existing datadir as the ordinary certified
-    /// follower. The validator node and its Radicle signer are removed first so
-    /// this phase has one database writer and no validator authority process.
+    /// follower. This method removes the validator node and its Radicle signer
+    /// first, so this phase has one database writer and no validator authority
+    /// process.
     pub fn launch_validator_recovery_follower(
         &mut self,
         index: usize,
@@ -563,7 +564,7 @@ impl Localnet {
         Ok(recipe.observation)
     }
 
-    /// Strict snapshot boundary; unlike general teardown, missing or already
+    /// Strict snapshot boundary. Unlike general teardown, missing or already
     /// exited owners cannot establish successful stop evidence.
     #[cfg(feature = "ocomp-integration")]
     pub(crate) fn stop_follower_for_snapshot(

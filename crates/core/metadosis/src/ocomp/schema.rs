@@ -93,7 +93,7 @@ impl MetadosisContract<'_> {
 
     /// Returns only the first exact READY key in canonical due order.
     ///
-    /// Terminal request processing calls this once per block; it never scans
+    /// Terminal request processing calls this once per block. It never scans
     /// the active WorldwideDay set.
     pub(crate) fn next_ocomp_ready(
         &self,
@@ -115,7 +115,7 @@ impl MetadosisContract<'_> {
 
     /// Commits the exact owner-projection envelope once and retains its
     /// canonical bytes for finalized job reconstruction. An exact retry is
-    /// idempotent; any different envelope is invariant corruption.
+    /// idempotent. Any different envelope is invariant corruption.
     pub(crate) fn commit_pre_admission_envelope(
         &mut self,
         wwd: WorldwideDay,

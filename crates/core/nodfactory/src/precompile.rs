@@ -22,7 +22,7 @@ mod abi {
 }
 pub use abi::INodFactory;
 
-// A Nod is issued out of Lysis over a certified generation: only a throwaway build may
+// Lysis issues a Nod over a certified generation. Only a throwaway build may
 // skip that.
 #[cfg(feature = "e2e-test")]
 alloy_sol_types::sol! {

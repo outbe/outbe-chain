@@ -1,6 +1,6 @@
 //! Running the project's own wiring tasks against a chain.
 //!
-//! Deploy scripts place contracts; the roles and peer registrations that make
+//! Deploy scripts place contracts. The roles and peer registrations that make
 //! them callable live in hardhat tasks, and production wires through exactly
 //! these. Reimplementing them here would drift the moment one changes.
 

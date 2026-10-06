@@ -1,8 +1,9 @@
 //! Frozen V1 storage schema at `PAYNOTE_ADDRESS`.
 //!
-//! Tornado-style incremental Merkle tree state: no leaves, right nodes, paths,
-//! or empty hashes are ever stored. The empty ladder is chain-specific and
-//! rederived in memory per request (see [`crate::hash::empty_subtrees`]).
+//! Tornado-style incremental Merkle tree state. The schema never stores leaves,
+//! right nodes, paths, or empty hashes. The empty ladder is chain-specific. The
+//! runtime rederives it in memory per request (see
+//! [`crate::hash::empty_subtrees`]).
 //!
 //! There is deliberately no schema-version field: a pristine tree is exactly
 //! `leaf_count == 0`, so a version gate would add checks without adding state.
@@ -20,16 +21,16 @@ pub const PAYNOTE_TREE_DEPTH: usize = 32;
 /// Tree capacity: `2^32` leaves.
 ///
 /// Held as `u64` on purpose. The circuit's `leaf_index` is a `u32`, so the last
-/// valid index is `2^32 - 1` and the capacity itself does **not** fit in `u32`
-/// — a `u32` counter would wrap on the final append instead of reporting a full
-/// tree. [`PayNoteContract::leaf_count`] is therefore `u64` and every append
+/// valid index is `2^32 - 1` and the capacity itself does **not** fit in `u32`.
+/// A `u32` counter would wrap on the final append instead of reporting a full
+/// tree. [`PayNoteContract::leaf_count`] is therefore `u64`, and every append
 /// guards against this bound before incrementing.
 pub const PAYNOTE_TREE_CAPACITY: u64 = 1 << PAYNOTE_TREE_DEPTH;
 
 /// Number of accepted roots retained for spend proofs (the root window).
 ///
 /// A proof is built against whatever root was current when its witness was
-/// assembled; deposits landing before it is consumed would otherwise
+/// assembled. Deposits that land before the proof is consumed would otherwise
 /// invalidate it. Accepting the last 32 roots absorbs that race.
 pub const PAYNOTE_ROOT_WINDOW: u32 = 32;
 
@@ -55,7 +56,7 @@ pub struct PayNoteContract {
     pub recent_roots: outbe_primitives::storage::dsl::CircularBuffer<B256>,
 
     // slot 5: permanent duplicate prevention, keyed on the leaf (never the
-    // serial — two notes may legitimately share a serial)
+    // serial, because two notes may legitimately share a serial)
     #[attribute(order = 4)]
     pub commitments: outbe_primitives::storage::dsl::Map<B256, bool>,
 

@@ -130,7 +130,7 @@ impl NodeShutdown {
         let owner = self.clone();
         // Registration is synchronous, before returning to the launcher. Keep
         // the unpolled shutdown guard even for an engine that exits before any
-        // shutdown signal; observation must not wait for a process stop request.
+        // shutdown signal. Observation must not wait for a process stop request.
         drop(
             executor.spawn_with_graceful_shutdown_signal(async move |guard| {
                 let result = AssertUnwindSafe(exit)
@@ -194,8 +194,8 @@ impl NodeShutdown {
     }
 
     /// Publish a task panic before forwarding it to its existing JoinHandle.
-    /// A signal may drop the launcher before it joins that handle; the process
-    /// owner must still retain failures that have already occurred.
+    /// A signal may drop the launcher before it joins that handle. The process
+    /// owner must still retain failures that already occurred.
     pub fn track_task<F>(
         &self,
         name: &'static str,

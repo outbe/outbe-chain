@@ -17,7 +17,7 @@ interface IDestinationSettler {
     /// @param ordersFillerData The filler data for the settled orders
     event Settle(bytes32[] orderIds, bytes[] ordersFillerData);
 
-    /// @notice Emitted when an order is claimed by the winning solver
+    /// @notice Emitted when the winning solver claims an order
     /// @param orderId The ID of the claimed order
     /// @param winner The address of the winning solver
     /// @param outputAmount The winning output amount

@@ -1,15 +1,16 @@
 //! Builder-side admission of OCOMP result-vote carriers.
 //!
-//! A carrier whose inner vote is invalid fails identically on every node, so
-//! aborting the build on it would cost every leader its view for as long as the
-//! carrier stays in the pool. Before executing such a carrier, the builder asks
-//! the shared Metadosis verifier about it against the exact in-progress block
-//! state. It skips a carrier the verifier proves invalid, and defers one whose
-//! due response window this block has not closed yet.
+//! A carrier whose inner vote is invalid fails identically on every node. If the
+//! build aborted on such a carrier, every leader would lose its view for as long
+//! as the carrier stays in the pool. Before executing such a carrier, the builder
+//! asks the shared Metadosis verifier about it against the exact in-progress
+//! block state. It skips a carrier the verifier proves invalid, and defers one
+//! whose due response window this block has not closed yet.
 //!
 //! The check reads state and never writes it, so a skipped carrier leaves no
-//! trace in the block. Everything else keeps the existing path: the carrier is
-//! executed, and any failure aborts the build so the leader proposes nothing.
+//! trace in the block. Everything else keeps the existing path: the builder
+//! executes the carrier, and any failure aborts the build so the leader proposes
+//! nothing.
 
 use std::any::Any;
 
@@ -47,10 +48,10 @@ pub(super) enum CarrierDecision {
     Execute,
     /// The verifier proved the carrier invalid on this block state.
     Skip,
-    /// The carrier fails on this block state but may execute in a later block,
-    /// so it is left out of this block without being classified as bad.
+    /// The carrier fails on this block state but may execute in a later block.
+    /// The builder leaves it out of this block and does not classify it as bad.
     Defer,
-    /// The verifier could not decide from healthy state; the build must fail.
+    /// The verifier could not decide from healthy state. The build must fail.
     Abort(CarrierAdmissionAbort),
 }
 
@@ -115,7 +116,7 @@ pub(super) fn admit<DB: StateDB>(
         max_fee_per_gas: tx.max_fee_per_gas(),
         max_priority_fee_per_gas: tx.max_priority_fee_per_gas(),
     };
-    // Only a well-formed result-vote envelope is checked here. Malformed
+    // This function checks only a well-formed result-vote envelope. Malformed
     // envelopes and NOD materialization keep their existing execution path.
     let Ok(Some(OcompSystemCarrierCandidate::ResultVote { .. })) =
         classify_ocomp_system_carrier(view, &limits)
@@ -142,8 +143,8 @@ pub(super) fn admit<DB: StateDB>(
     decide(admission)
 }
 
-/// Maps the verifier outcome to the builder policy. Only a proven invalid
-/// carrier is skipped; state that cannot be read ends the build.
+/// Maps the verifier outcome to the builder policy. The builder skips only a
+/// proven invalid carrier. State that cannot be read ends the build.
 pub(super) fn decide(admission: ResultVoteCarrierAdmission) -> CarrierDecision {
     match admission {
         // A closed window still executes: execution records the soft-failure
@@ -152,7 +153,7 @@ pub(super) fn decide(admission: ResultVoteCarrierAdmission) -> CarrierDecision {
         | ResultVoteCarrierAdmission::DeadlinePassed { .. } => CarrierDecision::Execute,
         ResultVoteCarrierAdmission::InvalidCarrier { .. } => CarrierDecision::Skip,
         // Several windows can be due at one height while the begin zone closes
-        // only one of them, so this outcome is not a node failure: aborting on
+        // only one of them. Thus this outcome is not a node failure. Aborting on
         // it would stall every leader at this height.
         ResultVoteCarrierAdmission::DeadlineDueUnclosed { .. } => CarrierDecision::Defer,
         ResultVoteCarrierAdmission::NotYetOpen { open_height } => {

@@ -12,8 +12,8 @@ pub const BLS_PUBLIC_KEY_LEN: usize = 256;
 ///
 /// Storage remains three compressed 32-byte words, preserving existing records.
 /// Public inputs and outputs use the 256-byte EIP-2537 representation.
-/// All three words zero selects live `IDaInbox(inbox_address).groupPubKey()` lookup;
-/// the registration still exists because `l1_address` remains nonzero.
+/// All three words zero selects live `IDaInbox(inbox_address).groupPubKey()` lookup.
+/// The registration still exists because `l1_address` remains nonzero.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[storage_record(exists_field = l1_address)]
 pub struct L2NetworkRecord {
@@ -82,7 +82,7 @@ pub struct L2RegistryContract {
     pub networks: outbe_primitives::storage::dsl::Map<u64, L2NetworkRecord>,
 
     /// Reverse index: L1 operator address -> chain id. Zero means absent,
-    /// which is why chain id 0 is rejected at registration.
+    /// which is why registration rejects chain id 0.
     #[attribute(order = 1)]
     pub l1_to_chain: outbe_primitives::storage::dsl::Map<Address, u64>,
 

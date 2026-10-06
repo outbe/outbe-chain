@@ -27,29 +27,29 @@ pub(in crate::stack) fn vrf_group_public_key_hash(polynomial: &Sharing<MinSig>) 
 
 /// Resolve the consensus participant set for restart/live-join recovery.
 ///
-/// When the node recovers a finalized DKG boundary, the threshold material it
-/// restores (`signing_share`, `polynomial`, `last_dkg_output`) belongs to the
-/// committee the recovered ceremony ran for - recorded as the DKG output's
-/// `players()`. The latest on-chain consensus set may have DRIFTED from that
-/// committee (a join/exit/jail/slash after the recovered boundary activated but
-/// before the next reshare), so the scheme must NOT be reconstructed against the
-/// latest set: committee-dependent data (votes, VRF threshold partials) must be
-/// decoded against the committee it was encoded for.
+/// When the node recovers a finalized DKG boundary, it restores threshold material
+/// (`signing_share`, `polynomial`, `last_dkg_output`). That material belongs to the
+/// committee the recovered ceremony ran for, recorded as the DKG output's `players()`.
+/// The latest on-chain consensus set may have DRIFTED from that committee (a
+/// join/exit/jail/slash after the recovered boundary activated but before the next
+/// reshare). So the scheme must NOT be reconstructed against the latest set.
+/// Committee-dependent data (votes, VRF threshold partials) must be decoded against the
+/// committee it was encoded for.
 ///
 /// The recovered output's `players()` is already a sorted, deduplicated
-/// `commonware_utils::ordered::Set`, so participant indices derive from it
-/// canonically regardless of how the set was assembled - only the *membership*
-/// matters, and the members ARE the share holders. In the common no-churn restart
-/// this set is identical to the latest committed set, so recovery is unchanged;
-/// it diverges only across a churn window, which is exactly the bug this closes.
+/// `commonware_utils::ordered::Set`. Participant indices therefore derive from it
+/// canonically, regardless of how the set was assembled. Only the *membership* matters,
+/// and the members ARE the share holders. In the common no-churn restart, this set is
+/// identical to the latest committed set, so recovery is unchanged. It diverges only
+/// across a churn window, which is exactly the bug this closes.
 ///
 /// **Drift guard.** The recovered boundary records the committee the ceremony ran
 /// for in `reshare.new_active_set` (built 1:1 from the same `players()` list at
-/// proposal time). A size mismatch between the recovered output's players and
-/// that record means the restored consensus material does not correspond to the
-/// recovered chain boundary (e.g. a stale or partial consensus-archive restore),
-/// so recovery fails fast with an explicit drift error rather than reconstruct
-/// the scheme against the wrong committee.
+/// proposal time). A size mismatch between the recovered output's players and that
+/// record means that the restored consensus material does not correspond to the
+/// recovered chain boundary (e.g. a stale or partial consensus-archive restore).
+/// Recovery then fails fast with an explicit drift error, rather than reconstruct the
+/// scheme against the wrong committee.
 pub(in crate::stack) fn select_recovery_participants(
     recovered_output_players: &commonware_utils::ordered::Set<bls12381::PublicKey>,
     boundary: &DkgBoundaryArtifact,
@@ -113,7 +113,7 @@ pub(in crate::stack) struct StartupDkgRequest<'a> {
     pub(in crate::stack) last_consensus_finalized_height: u64,
 }
 
-/// Threshold selection inputs; runtime, key backend and transport stay separate.
+/// Threshold selection inputs. Runtime, key backend and transport stay separate.
 pub(in crate::stack) struct ThresholdMaterialRequest<'a> {
     pub(in crate::stack) args: &'a ConsensusArgs,
     pub(in crate::stack) signing_key: bls12381::PrivateKey,
@@ -180,16 +180,16 @@ fn read_startup_dkg_snapshot(
         args.trust_el_head,
     )?;
     // NORMALIZE the tuple height to the ACTIVATION ANCHOR. The header scan
-    // returns the height of the block CARRYING the boundary artifact, but that
-    // artifact always rides the FIRST block of the new epoch - one block ABOVE
-    // the activation height the committee anchored its rotation schedule on
-    // (genesis: activation 0, committed in block 1; a reshare activated at H is
-    // committed in block H+1). A restarted node that anchors on the commit
-    // height runs its whole freeze/activation schedule one block LATE: it waits
+    // returns the height of the block CARRYING the boundary artifact. That
+    // artifact always rides the FIRST block of the new epoch, one block ABOVE
+    // the activation height the committee anchored its rotation schedule on.
+    // Genesis: activation 0, committed in block 1. A reshare activated at H is
+    // committed in block H+1. A restarted node that anchors on the commit
+    // height runs its whole freeze/activation schedule one block LATE. It waits
     // for activation H+1 while the live committee restarts its engine at H. With
-    // one such node the committee still has quorum and the laggard self-heals
-    // one block later; with two of five (e.g. a restarted validator plus a
-    // freshly promoted one) the new epoch is 3-of-5 < quorum and the chain
+    // one such node, the committee still has quorum and the laggard self-heals
+    // one block later. With two of five (e.g. a restarted validator plus a
+    // freshly promoted one), the new epoch is 3-of-5 < quorum and the chain
     // deadlocks at the boundary. Anchor = commit_height - 1, uniformly.
     let recovered_boundary = recover_latest_boundary_artifact(
         &node.provider,
@@ -375,9 +375,9 @@ pub(in crate::stack) enum ThresholdMaterial {
         bootstrap_from_live_dkg: bool,
     },
     /// Verifier-join: the node has the public group polynomial + DKG output but NO
-    /// threshold share. It runs the consensus engine as a VERIFIER - it follows and
+    /// threshold share. It runs the consensus engine as a VERIFIER. It follows and
     /// verifies finalized blocks (driving its execution layer to sync) but cannot
-    /// propose/sign - and acquires a share at the next DKG reshare, after which the
+    /// propose/sign. It acquires a share at the next DKG reshare. After that, the
     /// epoch loop rebuilds its scheme as a signer (Stage 4).
     VerifierOnly {
         polynomial: Sharing<MinSig>,
@@ -462,7 +462,7 @@ pub(in crate::stack) fn startup_dkg_mode(
 ///
 /// Only proven block-1 founders may be keyless while canonical state is still
 /// zero. An empty-DB verifier join may carry an already-installed key until
-/// certified sync makes the canonical value locally available; every other
+/// certified sync makes the canonical value locally available. Every other
 /// existing identity must match canonical state exactly at this gate.
 pub(in crate::stack) fn validate_offer_key_before_threshold_work(
     context: StartupDkgContext,
@@ -710,8 +710,8 @@ pub(in crate::stack) fn build_genesis_dkg_boundary_artifact(
 /// Recover threshold signer/verifier material before any interactive ceremony.
 ///
 /// Saved local state takes precedence over matching pending recovery and manual
-/// provisioning. Only proven empty genesis formation admits interactive DKG;
-/// existing-chain recovery and corrupt-material errors remain fail-fast.
+/// provisioning. Only proven empty genesis formation admits interactive DKG.
+/// Existing-chain recovery and corrupt-material errors remain fail-fast.
 pub(in crate::stack) async fn obtain_threshold_material<C>(
     clock: C,
     key_backend: &bls::KeyBackend,

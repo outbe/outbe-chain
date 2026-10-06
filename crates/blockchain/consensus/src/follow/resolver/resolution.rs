@@ -43,9 +43,9 @@ impl<F: FinalizedSource, L: LocalBlockSource> FetchResolution<F, L> {
         // `response.is_closed()` at dequeue and silently skips a delivery whose
         // receiver is gone (see `handler::Message::response_closed`). Since this
         // fetch runs on its own spawned task, holding the receiver open until the
-        // marshal answers costs nothing - and the answer tells us whether the value
-        // was accepted. We do not retry on rejection (the marshal re-requests if it
-        // still needs the height).
+        // marshal answers costs nothing. The answer tells us whether the marshal
+        // accepted the value. We do not retry on rejection (the marshal re-requests
+        // if it still needs the height).
         match handler.deliver(delivery, value).await {
             Ok(true) => debug!(%key, "delivery accepted by marshal"),
             Ok(false) => warn!(%key, "delivery rejected by marshal"),
@@ -59,7 +59,7 @@ impl<F: FinalizedSource, L: LocalBlockSource> FetchResolution<F, L> {
             return Some(block.encode());
         }
         let Some(height) = block_request_height(subscriber) else {
-            // Round-bound requests carry no height; the follower cannot map them upstream.
+            // Round-bound requests carry no height. The follower cannot map them upstream.
             debug!(%key, "block request without a height annotation; dropping fetch");
             return None;
         };

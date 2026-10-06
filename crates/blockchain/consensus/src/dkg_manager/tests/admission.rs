@@ -229,7 +229,7 @@ async fn admission_table_is_enforced_for_every_state() {
             Some(preannounce(0, current.outcome.clone())),
         ),
     ];
-    // (state, carried) pairs that must be admitted; every other pair is rejected.
+    // The table must admit these (state, carried) pairs. It rejects every other pair.
     let admitted = [
         ("must-emit", "current-boundary"),
         ("already-committed", "none"),

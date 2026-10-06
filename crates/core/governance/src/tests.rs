@@ -144,7 +144,7 @@ fn oip_text_update_author_only_and_status_gated() {
         assert_eq!(o.text, "v2 longer text");
         assert_eq!(o.text_hash, keccak256(b"v2 longer text"));
 
-        // move to Approved; text no longer editable
+        // Move to Approved. After this, the text is not editable.
         gov.set_oip_status(AUTH, id, status::APPROVED).unwrap();
         assert!(gov.update_oip_text(AUTHOR, id, "v3").is_err());
     });
@@ -242,8 +242,8 @@ fn proposal_rejects_empty_and_oversize_text() {
 // ------------------------------------------------------- storage layout ---
 
 /// Pins the contract's slot layout, which `scripts/seed_genesis.py`
-/// (`seed_governance`) hardcodes. If a field is reordered/inserted, this test
-/// fails - a signal that the seeder must be updated in lockstep.
+/// (`seed_governance`) hardcodes. If someone reorders or inserts a field, this
+/// test fails. That failure signals that the seeder must change in lockstep.
 #[test]
 fn storage_layout_matches_seeder() {
     with_governance(|gov| {
@@ -275,11 +275,11 @@ fn storage_layout_matches_seeder() {
 // ------------------------------------ cross-impl: seeder writes, we read ---
 
 /// End-to-end proof that `scripts/seed_genesis.py::seed_governance` and the Rust
-/// contract agree on the storage layout: these `(slot, value)` pairs are the
+/// contract agree on the storage layout. These `(slot, value)` pairs are the
 /// verbatim output of the Python seeder for canon="gain takes time",
 /// meta="meta rules", authority=0xaaaa...0001. We load them raw and read them back
-/// through `GovernanceContract`. Python computed the slots (keccak/StorageBytes);
-/// Rust resolves them independently - agreement proves the seam.
+/// through `GovernanceContract`. Python computed the slots (keccak/StorageBytes).
+/// Rust resolves them independently. Agreement proves the seam.
 #[test]
 fn reads_python_seeder_output() {
     use outbe_primitives::addresses::GOVERNANCE_ADDRESS;

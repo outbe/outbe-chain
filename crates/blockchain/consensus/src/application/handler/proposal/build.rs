@@ -32,8 +32,8 @@ impl ApplicationShared {
         if !self.build_epoch_current(&request, "dropping stale proposal before FCU payload build") {
             return Ok(BuildBlockOutcome::EpochStale);
         }
-        // FCU-based payload building: canonicalize parent and start building
-        // in one atomic operation via the executor actor.
+        // FCU-based payload building: the executor actor canonicalizes the
+        // parent and starts the build in one atomic operation.
         let payload_id = self
             .executor_mailbox
             .canonicalize_and_build(parent_height, parent_digest, attrs)
@@ -69,8 +69,8 @@ impl ApplicationShared {
         propose_start: std::time::SystemTime,
     ) {
         // Give the payload builder a bounded chance to execute transactions before
-        // resolving. Elapsed is measured against the runtime clock (same source as
-        // the sleep below), so it is correct on the deterministic runtime too.
+        // resolving. This code measures elapsed time against the runtime clock (same
+        // source as the sleep below), so it is correct on the deterministic runtime too.
         let elapsed = clock
             .current()
             .duration_since(propose_start)

@@ -1,8 +1,8 @@
 //! Running the project's own deploy scripts against a chain.
 //!
-//! Both venues a scenario can own - the committee's chain and a local target -
-//! are deployed by the same scripts with the same throwaway key, so the runner
-//! and its inputs live here rather than in either of them.
+//! A scenario can own two venues: the committee's chain and a local target.
+//! The same scripts deploy both venues with the same throwaway key. So the
+//! runner and its inputs live here rather than in either of them.
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -13,8 +13,8 @@ use eyre::{bail, eyre, Result};
 
 /// The well-known first anvil account. Its key is public by construction, which
 /// is the point: a throwaway venue is deployed without a production key. The
-/// `e2e-test` contract addresses the node is built against derive from it, and
-/// the committee's genesis funds it so the same signer works on both chains.
+/// `e2e-test` contract addresses that the node is built against derive from it.
+/// The committee's genesis funds it, so the same signer works on both chains.
 pub(crate) const DEPLOYER_KEY: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 pub(crate) const DEPLOYER_ADDRESS: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
@@ -24,8 +24,8 @@ pub(crate) const SALT_VERSION: &str = "e2e-test";
 
 /// Run a deploy script or `forge create` and return its stdout.
 ///
-/// The environment is inherited so a mise-provisioned foundry resolves; only
-/// the deploy inputs the scripts read are added.
+/// The command inherits the environment, so a mise-provisioned foundry resolves.
+/// It adds only the deploy inputs that the scripts read.
 pub(crate) fn run(dir: &Path, args: &[&str], env: &[(&str, String)], url: &str) -> Result<String> {
     run_with_ctor(dir, args, &[], env, url)
 }
@@ -43,7 +43,7 @@ pub(crate) fn run_with_ctor(
     cmd.current_dir(dir)
         .args(args)
         .args(["--broadcast", "--rpc-url", url]);
-    // `forge create` takes the key directly; scripts read it from the env.
+    // `forge create` takes the key directly. Scripts read it from the env.
     if args.first() == Some(&"create") {
         cmd.args(["--private-key", DEPLOYER_KEY]);
     } else {

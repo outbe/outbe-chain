@@ -28,7 +28,7 @@ fn insert_submission(
 
 /// Coordinate complete canonical OST3 participant evidence and committee
 /// signatures over one deterministic body. The enclosing startup timeout is
-/// the liveness bound; malformed or unauthenticated gossip is ignored.
+/// the liveness bound. The coordinator ignores malformed or unauthenticated gossip.
 pub async fn coordinate_tee_bootstrap_v2<G: BootstrapGossip>(
     local_submission: TeeBootstrapParticipantSubmissionV2,
     coordination: TeeBootstrapCoordination<'_>,

@@ -5,18 +5,18 @@ use crate::state::author_index_key;
 
 use crate::errors::GovernanceError;
 use crate::precompile::IGovernance;
-// Per-kind event types, imported by name so the macro can name them with a
-// transparent `:ident` fragment (a `:path` fragment cannot sit in struct-literal
-// position).
+// Per-kind event types. This file imports them by name so that the macro can name
+// them with a transparent `:ident` fragment. A `:path` fragment cannot sit in
+// struct-literal position.
 use crate::precompile::IGovernance::{
     GipStatusChanged, GipSubmitted, GipTextUpdated, OipStatusChanged, OipSubmitted, OipTextUpdated,
 };
 use crate::schema::{Gip, GipEntryExt, GovernanceContract, Oip, OipEntryExt};
 use crate::status;
 
-/// Maximum size of any single normative / proposal text, enforced on every
-/// write path. Keeps a full-overwrite comfortably inside one block under the
-/// permissioned gas model (flat 5000/SSTORE).
+/// Maximum size of any single normative / proposal text. Every write path
+/// enforces it. This limit keeps a full-overwrite comfortably inside one block
+/// under the permissioned gas model (flat 5000/SSTORE).
 pub const MAX_TEXT_BYTES: usize = 128 * 1024;
 
 fn validate_text(text: &str) -> Result<()> {
@@ -31,7 +31,7 @@ fn validate_text(text: &str) -> Result<()> {
 
 /// Generates the submit / update-text / set-status methods for one proposal
 /// kind. OIP and GIP share this exact logic over separate typed maps and id
-/// counters; only the storage target and the per-kind event types differ.
+/// counters. Only the storage target and the per-kind event types differ.
 macro_rules! impl_proposal_ops {
     (
         submit = $submit:ident,
@@ -84,11 +84,12 @@ macro_rules! impl_proposal_ops {
 
         /// Creates a proposal already in `Approved`.
         ///
-        /// Used by the vote path ([`crate::vote_target::GovernanceVoteTarget`])
-        /// after quorum; not exposed on the public ABI submit path.
+        /// The vote path ([`crate::vote_target::GovernanceVoteTarget`]) uses
+        /// this after quorum. The public ABI submit path does not expose it.
         ///
-        /// Implemented as submit (Draft) then Draft -> Approved (same status
-        /// write as set-status, without the ABI authority gate).
+        /// It submits the proposal (Draft), then moves it Draft -> Approved.
+        /// This is the same status write as set-status, without the ABI
+        /// authority gate.
         pub fn $create_approved(&mut self, author: Address, text: &str) -> Result<U256> {
             let id = self.$submit(author, text)?;
             self.$apply_status(id, status::APPROVED)?;
@@ -114,7 +115,7 @@ macro_rules! impl_proposal_ops {
             record.text = text.to_string();
             record.text_hash = text_hash;
             record.updated_block = block;
-            // Full-record update; the text slot compare-skips when unchanged.
+            // Full-record update. The text slot compare-skips when unchanged.
             self.$map.update(&record)?;
             self.emit($text_event {
                 id,
@@ -125,7 +126,7 @@ macro_rules! impl_proposal_ops {
 
         /// Transitions a proposal's status. Authorities-gated, with one
         /// exception: the author may perform `Rework -> Draft` (resubmission).
-        /// Touches only the status/updated-block slots - never the text.
+        /// It touches only the status/updated-block slots, never the text.
         pub fn $set_status(&mut self, caller: Address, id: U256, new_status: u8) -> Result<()> {
             let entry = self.$map.entry(id);
             if !entry.exists()? {
@@ -144,8 +145,8 @@ macro_rules! impl_proposal_ops {
             self.$apply_status(id, new_status)
         }
 
-        /// Status write + index move + event. Caller must have already gated
-        /// authorization (or be the vote path).
+        /// Status write + index move + event. The caller must gate
+        /// authorization before this call (or be the vote path).
         fn $apply_status(&mut self, id: U256, new_status: u8) -> Result<()> {
             let entry = self.$map.entry(id);
             if !entry.exists()? {
@@ -182,9 +183,9 @@ impl GovernanceContract<'_> {
         }
     }
 
-    /// Adds an authority. Only an existing authority may add another (used by
-    /// tests and genesis-adjacent tooling; the genesis seed writes the initial
-    /// set directly).
+    /// Adds an authority. Only an existing authority may add another. Tests and
+    /// genesis-adjacent tooling use this. The genesis seed writes the initial set
+    /// directly.
     pub fn add_authority(&mut self, caller: Address, who: Address) -> Result<()> {
         self.ensure_authority(caller)?;
         self.authorities.write(&who, true)

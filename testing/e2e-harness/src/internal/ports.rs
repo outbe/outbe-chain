@@ -9,29 +9,31 @@
 //! Supervisor registration, Supervisor ZeroMQ, and four Worker observability ports.
 //! ```
 //!
-//! Blocks are handed out from a cursor that only ever moves forward, so they are
-//! disjoint by construction and no two services can collide. A node index the
-//! harness has never seen - the joiner at `i = committee size`, the followers at
-//! their high slots - simply takes the next block on first use, so the committee
-//! size need not be known up front.
+//! The allocator assigns blocks from a cursor that only ever moves forward. So
+//! the blocks are disjoint by construction, and no two services can collide. A
+//! node index that the harness did not see before takes the next block on first
+//! use. Examples are the joiner at `i = committee size` and the followers at
+//! their high slots. So the harness does not need to know the committee size in
+//! advance.
 //!
-//! A block is *scanned* for by default: the cursor walks forward until it finds
+//! By default, the allocator *scans* for a block: the cursor walks forward until it finds
 //! [`BLOCK`] consecutive ports the OS reports free. The window slides as a unit,
 //! so a block stays contiguous. `--no-resolve-ports` skips the scan and takes the
 //! cursor's block verbatim.
 //!
-//! A block's ports follow from *allocation order*, not from the node index - so a
+//! A block's ports follow from *allocation order*, not from the node index. So a
 //! node whose first candidate port is busy shifts only itself, never the nodes
 //! allocated after it.
 //!
 //! [`Ports::start_scenario`] forgets the node->block map but leaves the cursor
-//! alone, so each scenario's nodes land above the previous scenario's. A port is
-//! never reused within a process, which keeps a torn-down node's lingering socket
-//! (or a peer still dialing it) from bleeding into the next scenario.
+//! alone, so each scenario's nodes land above the previous scenario's. The
+//! allocator never reuses a port within a process. This keeps a torn-down node's
+//! lingering socket (or a peer still dialing it) from bleeding into the next
+//! scenario.
 //!
-//! The committee's consensus/p2p ports are baked into `validators.json`/genesis at
-//! bootstrap, so blocks `0..n` are allocated at the scenario's start and reused
-//! unchanged at launch. The cursor never rewinds, so a later block can't alias a
+//! Bootstrap bakes the committee's consensus/p2p ports into `validators.json`/genesis.
+//! So the allocator allocates blocks `0..n` at the scenario's start, and launch
+//! reuses them unchanged. The cursor never rewinds, so a later block can't alias a
 //! genesis-baked one.
 
 use std::collections::HashMap;
@@ -183,7 +185,7 @@ const RADICLE_BLOCK: u16 = Service::RADICLE.len() as u16;
 const RADICLE_BASE: u16 = 50_000;
 #[cfg(not(target_os = "macos"))]
 const SCANNED_RADICLE_BASE: u16 = RADICLE_BASE;
-// macOS's default ephemeral interval extends through u16::MAX; start below it
+// macOS's default ephemeral interval extends through u16::MAX. Start below it
 // when scanning. The explicit static layout retains the same ports everywhere.
 #[cfg(target_os = "macos")]
 const SCANNED_RADICLE_BASE: u16 = 30_000;
@@ -218,8 +220,8 @@ struct Resolver {
 impl Ports {
     /// An allocator with nothing handed out yet, its cursor at [`NODE_BASE`].
     ///
-    /// `scan` probes the OS for each free window (the default); `--no-resolve-ports`
-    /// turns it off, yielding the static `NODE_BASE + i * BLOCK` layout.
+    /// `scan` probes the OS for each free window (the default). `--no-resolve-ports`
+    /// disables it, which gives the static `NODE_BASE + i * BLOCK` layout.
     pub fn new(scan: bool) -> Self {
         Self {
             inner: Arc::new(Mutex::new(Resolver {
@@ -302,7 +304,7 @@ impl Ports {
 
     /// The port node `i` uses for `svc`, allocating its block on first use.
     ///
-    /// Panics only when the port space above the cursor is exhausted - an
+    /// Panics only when the port space above the cursor is exhausted. That is an
     /// unrecoverable property of the machine, not of the caller.
     pub(crate) fn port(&self, svc: Service, i: usize) -> u16 {
         let mut resolver = lock(&self.inner);
@@ -350,13 +352,13 @@ impl Ports {
 /// Lock the resolver, recovering from a poisoned mutex.
 ///
 /// The resolver outlives any one scenario, so a panic in one (cucumber catches
-/// them and moves on) must not brick every later scenario's port lookups.
+/// them and continues) must not brick every later scenario's port lookups.
 fn lock(inner: &Mutex<Resolver>) -> MutexGuard<'_, Resolver> {
     inner.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 impl Resolver {
-    /// First port of node `i`'s block - the one already allocated, or the next.
+    /// First port of node `i`'s block: the one already allocated, or the next.
     fn block_start(&mut self, i: usize) -> Result<u16> {
         if let Some(&start) = self.blocks.get(&i) {
             return Ok(start);
@@ -500,11 +502,11 @@ fn radicle_window_free(start: u16) -> bool {
 
 /// Whether `port` is bindable on loopback for the required transport(s).
 ///
-/// A bind probe alone is not enough for TCP: nodes bind their service ports on
+/// A bind probe alone is not enough for TCP. Nodes bind their service ports on
 /// the wildcard address, and BSD `SO_REUSEADDR` semantics let a later
-/// loopback-specific bind succeed over a live `0.0.0.0` listener. Ask for a
-/// connection first - an answer proves somebody owns the port whatever address
-/// they bound - and only then try to bind, so the probe's own listener can
+/// loopback-specific bind succeed over a live `0.0.0.0` listener. So ask for a
+/// connection first. An answer proves that somebody owns the port, whatever
+/// address they bound. Only then try to bind, so the probe's own listener can
 /// never answer its own connect.
 fn is_free(port: u16, proto: Proto) -> bool {
     let tcp = || {
@@ -654,7 +656,7 @@ mod tests {
     #[test]
     fn port_is_memoized() {
         // Memoization is independent of OS socket probing. Keep this unit test
-        // deterministic in restricted sandboxes where loopback bind is denied;
+        // deterministic in restricted sandboxes where loopback bind is denied.
         // `scan_shifts_whole_block_past_a_held_port` owns scan behavior.
         let p = Ports::new(false);
         p.start_scenario(1).expect("static allocation");

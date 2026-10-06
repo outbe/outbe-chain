@@ -38,16 +38,16 @@ interface INod {
 
     /// Bucket force-called by the daily Call scan: the reference price
     /// exceeded the bucket's call price on enough of the trailing window. Every
-    /// Nod in the bucket must be settled by `settlementDeadline` or it
-    /// is forfeit-burned.
+    /// Nod in the bucket must be settled by `settlementDeadline`. Otherwise the
+    /// Nod is forfeit-burned.
     event NodBucketCalled(bytes32 indexed bucketKey, uint64 calledAt, uint64 settlementDeadline);
 
     /// Nod burned by the Call scan because its bucket's settlement deadline
     /// lapsed while the Nod was still unpaid. No Gratis is minted.
     event NodForfeited(address indexed owner, uint256 nodId, uint256 gratisLoadMinor);
 
-    /// @notice The daily call sweep (`sweep` = 1) fell two days behind: `skippedDay`
-    ///         gave its place to a newer day and will not be walked.
+    /// @notice The daily call sweep (`sweep` = 1) fell two days behind. `skippedDay`
+    ///         gave its place to a newer day, and the sweep will not walk it.
     event SweepDaySkipped(uint8 indexed sweep, uint32 skippedDay, uint32 inFlightDay);
 
     struct NodData {
@@ -61,20 +61,20 @@ interface INod {
         /// Price of one whole COEN in referenceCurrency at six-decimal precision.
         uint256 entryPriceMinor;
         /// floor(entryPriceMinor * gratisLoadMinor / 1,000,000), in referenceCurrency
-        /// at six-decimal precision; payment in an asset is quoted separately.
+        /// at six-decimal precision. Payment in an asset is quoted separately.
         uint256 settlementCostMinor;
         /// Derived from finalized daily VWAPs, never stored.
         bool isQualified;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint64 issuedAt;
-        /// Block timestamp the Nod's bucket was force-called; `0` while not
+        /// Block timestamp when the Nod's bucket was force-called. `0` while not
         /// called. The settlement deadline is this plus the call notice period.
         uint64 calledAt;
         bool isSettled;
         /// Read-time state: 0 Issued, 1 Qualified, 2 Called, 3 Settled, 4 Forfeited.
-        /// Paid entitlements remain Settled after expiry. Forfeited items are
-        /// still stored pending cleanup; deleted items revert with NodNotFound.
+        /// Paid entitlements remain Settled after expiry. Forfeited items stay
+        /// in storage until cleanup. Reads of deleted items revert with NodNotFound.
         uint8 effectiveState;
         /// Bucket terms sealed at issuance, independent of current defaults.
         uint256 callPriceMinor;

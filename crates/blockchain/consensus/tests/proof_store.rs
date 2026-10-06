@@ -53,7 +53,7 @@ static SEED_NONCE: AtomicU64 = AtomicU64::new(0);
 
 fn test_participants(n: u8) -> (Vec<bls12381::PrivateKey>, Set<bls12381::PublicKey>) {
     // Each call uses a fresh seed offset so independent test fixtures don't
-    // share BLS keys - a shared keyset across DKGs in the same process would
+    // share BLS keys. A shared keyset across DKGs in the same process would
     // make the verifier from one DKG accept attestations from another and
     // mask real verification bugs.
     let nonce = SEED_NONCE.fetch_add(1, Ordering::Relaxed);
@@ -157,9 +157,9 @@ fn build_reporter(
     store: FinalizedParentCertStore,
 ) -> (OutbeReporter, mpsc::UnboundedReceiver<FinalizationMessage>) {
     use commonware_consensus::simplex::elector::Config as _;
-    // certified-notarization persistence is enqueued to the
-    // FinalizationActor mailbox; keep the receiver so the test can drain it and
-    // apply the write (what the actor does) before asserting on the store.
+    // The reporter enqueues certified-notarization persistence to the
+    // FinalizationActor mailbox. Keep the receiver so the test can drain it and
+    // apply the write (what the actor does) before it asserts on the store.
     let (tx, rx) = mpsc::unbounded::<FinalizationMessage>();
     // Certified-parent proof-store test: no finalize votes, so a verify actor
     // whose receiver is dropped (mailbox.verify is a no-op) is sufficient.
@@ -190,10 +190,10 @@ fn build_reporter(
 
 #[tokio::test(flavor = "current_thread")]
 async fn proof_store_persists_full_notarization_blob_before_simplex_journal_pruning() {
-    // ingest a real Activity::Certification through the reporter into a
+    // Ingest a real Activity::Certification through the reporter into a
     // durable MDBX-backed store. Drop the handle (simulating node shutdown).
-    // Reopen the store and assert the record is byte-equal -
-    // all preserved across restart, including the encoded_proof blob.
+    // Reopen the store and assert the record is byte-equal. The restart
+    // preserves all of it, including the encoded_proof blob.
     let temp = tempfile::tempdir().unwrap();
     let dir = temp.path().join("certified_parent_proof_records");
     let fx = fixture();
@@ -206,9 +206,9 @@ async fn proof_store_persists_full_notarization_blob_before_simplex_journal_prun
         let store = FinalizedParentCertStore::open(&dir).unwrap();
         let (mut reporter, mut rx) = build_reporter(&fx, store.clone());
         let _ = reporter.report(Activity::Certification(notarization));
-        // the durable write is now off the voter task - the reporter
+        // The durable write is now off the voter task. The reporter
         // built + verified the record inline and enqueued it. Drain the mailbox
-        // and apply the write exactly as the FinalizationActor would, then
+        // and apply the write exactly as the FinalizationActor would. Then
         // assert on the store.
         match rx
             .next()
@@ -365,8 +365,8 @@ fn proof_retention_depth_is_at_least_block_cache_keep_depth() {
     // Const invariant: the parent-cert keep depth must be at least as deep
     // as the block cache keep depth. If the proof store pruned faster than
     // the block cache, a Phase 1 build path could find a cached parent
-    // block but no proof record to embed - a hard liveness regression. The
-    // assertion is intentional even though both are consts - it fails the
+    // block but no proof record to embed. That is a hard liveness regression.
+    // The assertion is intentional even though both are consts. It fails the
     // build the moment someone shrinks PARENT_CERT_KEEP_DEPTH below the
     // block-cache window.
     const _: () = assert!(PARENT_CERT_KEEP_DEPTH >= BLOCK_CACHE_KEEP_DEPTH);
@@ -376,9 +376,9 @@ fn proof_retention_depth_is_at_least_block_cache_keep_depth() {
          ({BLOCK_CACHE_KEEP_DEPTH}) so every cached block has a recoverable parent proof"
     );
 
-    // Behavioural cross-check: prune_below_height with a floor below the
-    // retained record's stored_at_height does not drop it, even when the
-    // floor sits at exactly the BLOCK_CACHE_KEEP_DEPTH boundary.
+    // Behavioural cross-check: prune_below_height does not drop the retained
+    // record when the floor is below the record's stored_at_height. This holds
+    // even when the floor sits at exactly the BLOCK_CACHE_KEEP_DEPTH boundary.
     let store = FinalizedParentCertStore::new();
     let stored_height = BLOCK_CACHE_KEEP_DEPTH + 10;
     let proof_key = CertifiedParentProofKey::new(0, stored_height, B256::with_last_byte(0xAA));

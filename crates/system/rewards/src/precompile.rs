@@ -9,10 +9,10 @@ pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
 /// Dispatches an ABI-encoded call to the Rewards precompile.
 ///
-/// The Rewards precompile exposes **no** callable external methods. Validator
-/// daily emission is prepared and delivered as Gems by the Rewards batch API
-/// (validator emission is paid in Gems, not a claimable native balance), and
-/// per-block fees settle internally via the `LateFinalizeCredits` begin-zone
+/// The Rewards precompile exposes **no** callable external methods. The Rewards
+/// batch API prepares validator daily emission and delivers it as Gems
+/// (validator emission is paid in Gems, not a claimable native balance).
+/// Per-block fees settle internally via the `LateFinalizeCredits` begin-zone
 /// phase. The contract's state is accessed only in-process through the
 /// [`crate::schema::Rewards`] facade (api / lifecycle / hooks), never through
 /// this inbound ABI. `REWARDS_ADDRESS` stays a preserved system account holding

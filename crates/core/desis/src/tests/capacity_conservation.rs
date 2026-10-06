@@ -175,7 +175,7 @@ fn every_clearing_write_failure_rolls_back_allocation_and_return_then_retries_on
                 } else {
                     p.fail_mutation_at(point);
                 }
-                // The gate may swallow or surface the injected fault; only state is checked.
+                // The gate may swallow or surface the injected fault. The test checks only state.
                 let _ = gate(&mut p);
                 let observed = p.clear_mutation_failure();
                 let reached = if after {

@@ -177,7 +177,7 @@ where
 /// Reads and validates the managed projection state without acquiring a writer.
 ///
 /// Snapshot exporters use this narrow surface only as an availability signal.
-/// The checkpoint is never input authority; exported bodies still have to close
+/// The checkpoint is never input authority. Exported bodies still have to close
 /// against the exact finalized compressed-entity snapshot.
 pub fn read_projection_state(
     config: ProjectionConfig,

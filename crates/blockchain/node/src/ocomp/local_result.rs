@@ -34,8 +34,8 @@ pub struct LoadedLocalLysisResultV1 {
 /// Immutable node-local results keyed by the consensus `JobId`.
 ///
 /// The store owns the publication boundary. Callers can commit one canonical
-/// result, replay that exact result, or verify an independently computed value;
-/// there is no replace/delete API that could turn a mismatch into acceptance.
+/// result, replay that exact result, or verify an independently computed value.
+/// The store has no replace/delete API that could turn a mismatch into acceptance.
 pub struct LocalLysisResultStore {
     root: PathBuf,
     owner_uid: u32,

@@ -62,7 +62,7 @@ pub(crate) fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> 
     Ok(expired)
 }
 
-/// The record is kept: a merchant should still see the position they held.
+/// This function keeps the record: a merchant should still see the position they held.
 fn expire_position(ctx: &BlockRuntimeContext, record: &GemPosition) -> Result<()> {
     let storage = &ctx.storage;
     let mut factory = GemFactoryContract::new(storage.clone());

@@ -38,7 +38,7 @@ fn terminal_context(
 }
 
 fn classify_write(changes: revm::state::EvmState) -> Option<ObservedWrite> {
-    // Revm reports committed state directly; distinguish the terminal
+    // Revm reports committed state directly. Distinguish the terminal
     // call target, CE-only seal, and Ethereum post-block commits.
     if changes.contains_key(&outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS) {
         Some(ObservedWrite::TerminalTransaction)

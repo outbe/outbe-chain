@@ -2,7 +2,7 @@
 //!
 //! This host-side runner owns acquisition only. Quote generation and the public
 //! Begin/Chunk/Finish verifier both execute in the exact published Gramine SGX
-//! enclave; QPL/PCCS never enters consensus or supplies a verdict.
+//! enclave. QPL/PCCS never enters consensus or supplies a verdict.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};

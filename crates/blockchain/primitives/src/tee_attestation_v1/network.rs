@@ -20,8 +20,8 @@ impl AttestationMode {
     }
 }
 
-/// Immutable public identity of one TEE network. The binding is selected by the
-/// ChainSpec and sealed by the enclave; it is never inferred from a host runtime
+/// Immutable public identity of one TEE network. The ChainSpec selects the binding
+/// and the enclave seals it. The binding is never inferred from a host runtime
 /// fallback.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NetworkBindingV1 {
@@ -82,7 +82,7 @@ impl NetworkBindingV1 {
 /// manifest only when its network binding equals this descriptor exactly.
 ///
 /// `genesis_consensus_keys` are derived from that same final ChainSpec. The
-/// sorted MinPk keys are the epoch-0 finality trust root; every later committee
+/// sorted MinPk keys are the epoch-0 finality trust root. Every later committee
 /// must be authenticated by a certificate from its predecessor. The active TEE
 /// policy is deliberately not measured here: it contains `MRENCLAVE`, while a
 /// Gramine trusted file contributes to `MRENCLAVE`. Instead, onboarding proves

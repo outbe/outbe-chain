@@ -1,16 +1,18 @@
 //! EVM-level integration test for `IVaultRouter.rebalance`.
 //!
 //! The vaultrouter crate's own unit tests stub every sub-call with a fixed
-//! payload, so they cannot prove the four real sub-calls `rebalance` makes -
-//! `asset.transferFrom`, `vault.deposit`, `vault.withdraw`,
-//! `asset.transfer` - actually dispatch through the EVM's own precompile
-//! routing and that a failure anywhere in that chain propagates as a revert
-//! of the whole call. This test drives the precompile through the actual EVM
-//! (`sub_call::run`, which installs the outbe precompile set in the child
-//! frame), with two vaults sharing one stubbed asset - `rebalance`'s
-//! same-asset path needs no oracle or decimals lookup, so the counterparties
-//! can stay minimal raw bytecode, exactly as `paynote_deposit.rs` does for
-//! its own counterparties.
+//! payload. So they cannot prove two things:
+//!   * the four real sub-calls that `rebalance` makes (`asset.transferFrom`,
+//!     `vault.deposit`, `vault.withdraw`, `asset.transfer`) actually dispatch
+//!     through the EVM's own precompile routing.
+//!   * a failure anywhere in that chain propagates as a revert of the whole
+//!     call.
+//!
+//! This test drives the precompile through the actual EVM (`sub_call::run`,
+//! which installs the outbe precompile set in the child frame). Two vaults
+//! share one stubbed asset. The same-asset path of `rebalance` needs no
+//! oracle or decimals lookup. So the counterparties can stay minimal raw
+//! bytecode, exactly as `paynote_deposit.rs` does for its own counterparties.
 //!
 //! What this pins that the unit tests cannot:
 //!   * a real EOA-style caller reaches `rebalance` through the routed
@@ -69,10 +71,10 @@ fn code_account(code: &[u8]) -> AccountInfo {
 /// A vault stub: `asset()` and every other selector (`previewWithdraw`,
 /// `balanceOf`, `withdraw`, `deposit`) all answer with the same fixed
 /// 32-byte word, encoding `asset`'s address. An address word doubles as a
-/// (large but valid) `uint256`, so the same canned reply serves both the
-/// asset lookup and every share-count return this test does not otherwise
-/// care about: `PUSH32 word, PUSH1 0x00, MSTORE, PUSH1 0x20, PUSH1 0x00,
-/// RETURN`.
+/// (large but valid) `uint256`. So the same canned reply serves both the
+/// asset lookup and every share-count return that this test does not
+/// otherwise care about. The bytecode is `PUSH32 word, PUSH1 0x00, MSTORE,
+/// PUSH1 0x20, PUSH1 0x00, RETURN`.
 fn vault_account(asset: Address) -> AccountInfo {
     let mut code = Vec::with_capacity(34 + 8);
     code.push(0x7f); // PUSH32
@@ -85,9 +87,9 @@ fn block() -> BlockContext {
     BlockContext::new(1, 1, outbe_primitives::chain::CHAIN_ID, CCA, vec![CCA])
 }
 
-/// A database with both vaults sharing `ASSET`, and `VAULT_FROM`/`VAULT_TO`
-/// registered with the router as production `addVault` would leave them,
-/// unless `register_from`/`register_to` say otherwise. `asset_reverts`
+/// A database with both vaults sharing `ASSET`. The function registers
+/// `VAULT_FROM`/`VAULT_TO` with the router as production `addVault` would
+/// leave them, unless `register_from`/`register_to` say otherwise. `asset_reverts`
 /// swaps the asset stub for one that unconditionally reverts, simulating an
 /// unapproved caller.
 fn seeded_db(register_from: bool, register_to: bool, asset_reverts: bool) -> CacheDB<EmptyDB> {

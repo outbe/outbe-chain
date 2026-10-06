@@ -18,8 +18,8 @@ pub(super) enum BoundaryValue {
 /// the account whose storage dispatch is about to mutate.
 ///
 /// The `CallValue::Apparent` arm is therefore unreachable. It is not a fallback
-/// for the delegated-frame guard and must not be read as one: `CALLCODE` carries
-/// a `Transfer`, so removing that guard would leave this function crediting a
+/// for the delegated-frame guard and must not be read as one. `CALLCODE` carries
+/// a `Transfer`. If someone removes that guard, this function would credit a
 /// self-transfer that moved nothing. The guard is the only thing standing there.
 ///
 /// A route that declares `ValuePolicy::Reject` then refuses any credited amount,

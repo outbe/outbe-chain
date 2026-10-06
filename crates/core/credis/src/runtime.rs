@@ -1,9 +1,9 @@
 //! Business logic for the Credis contract.
 //!
 //! A position lives on the COEN price path, not on a calendar. Nothing here is
-//! scheduled off `issued_at`: the only time-driven quantity is the interest
-//! day count, and even that is evaluated lazily at settlement rather than
-//! accrued per block.
+//! scheduled off `issued_at`. The only time-driven quantity is the interest
+//! day count. Even that is evaluated lazily at settlement, not accrued per
+//! block.
 
 use alloy_primitives::{Address, B256, U256};
 
@@ -21,7 +21,8 @@ use crate::schema::{CredisContract, CredisState, Position};
 
 /// Current execution timestamp's UTC reward day key (YYYYMMDD).
 fn reward_day(storage: &StorageHandle<'_>) -> Result<u32> {
-    // Execution timestamps must fit Unix seconds in u64; reject rather than truncate.
+    // Execution timestamps must fit Unix seconds in u64. Reject a value that does not fit
+    // rather than truncate it.
     let timestamp =
         u64::try_from(storage.timestamp()?).map_err(|_| CredisError::ArithmeticOverflow)?;
     Ok(timestamp_to_date_key(timestamp))
@@ -54,9 +55,9 @@ pub struct OpenPositionParams {
     pub issued_at: u64,
 }
 
-/// Outcome of [`CredisContract::settle`]. The caller moves the money: it pulls
-/// `total_paid` from the payer into the vault and releases `gratis_returned_minor` to
-/// the pledger - never to the payer.
+/// Outcome of [`CredisContract::settle`]. The caller moves the money. It pulls
+/// `total_paid` from the payer into the vault. It releases `gratis_returned_minor` to
+/// the pledger, never to the payer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settlement {
     /// Interest collected, in full, before any principal.
@@ -118,17 +119,17 @@ pub fn effective_state(position: &Position, now: u64) -> Result<CredisState> {
 }
 
 impl CredisContract<'_> {
-    /// Whole UTC days charged by a settlement at `now`, i.e. the day count the
-    /// interest is computed over and the amount the accrual anchor advances by.
-    /// The sub-day remainder is deliberately not consumed: it stays on the
-    /// position and is charged by a later settlement.
+    /// Whole UTC days that a settlement at `now` charges. This is the day count
+    /// for the interest and the amount by which the accrual anchor advances.
+    /// The function deliberately does not consume the sub-day remainder. The
+    /// remainder stays on the position, and a later settlement charges it.
     fn elapsed_days(position: &Position, now: u64) -> u64 {
         now.saturating_sub(position.last_settled_at) / SECONDS_PER_DAY
     }
 
-    /// Interest accrued on the outstanding principal since the accrual anchor:
-    /// simple, non-compounding, ACT/365 over whole elapsed days, floored in the
-    /// user's favor to the asset's minor unit (C34).
+    /// Interest accrued on the outstanding principal since the accrual anchor.
+    /// The interest is simple and non-compounding, ACT/365 over whole elapsed days.
+    /// It is floored in the user's favor to the asset's minor unit (C34).
     pub fn accrued_interest(position: &Position, now: u64) -> Result<U256> {
         let days = Self::elapsed_days(position, now);
         if days == 0
@@ -153,12 +154,15 @@ impl CredisContract<'_> {
     /// Opens a position and returns its derived
     /// `position_id = keccak256(cca || smart_account || asset || block_number)`.
     ///
-    /// Everything the position will ever need is sealed here: the call price
-    /// derives from `call_anchor_price_minor`, `policy_rate` is pinned, and the four
-    /// call terms are snapshotted so a later retune of the constants cannot
-    /// re-term a live position. Collateral starts fully locked and the interest
-    /// anchor starts at issuance. Entry price, call anchor, and call price are
-    /// not written again.
+    /// This function seals everything the position will ever need:
+    ///
+    /// - The call price derives from `call_anchor_price_minor`.
+    /// - `policy_rate` is pinned.
+    /// - The four call terms are snapshotted, so a later retune of the constants
+    ///   cannot re-term a live position.
+    ///
+    /// Collateral starts fully locked and the interest anchor starts at issuance.
+    /// Entry price, call anchor, and call price are not written again.
     pub fn open_position(&mut self, params: OpenPositionParams) -> Result<U256> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
@@ -241,7 +245,7 @@ impl CredisContract<'_> {
     /// are unchanged throughout it. Idempotent: an already-called position
     /// returns `false` without moving its deadline.
     ///
-    /// The caller is responsible for having established the sustained breach.
+    /// The caller must establish the sustained breach before this call.
     pub fn mark_called(&mut self, position_id: U256, now: u64) -> Result<bool> {
         let mut position = self.load_position(position_id)?;
         if position.lifecycle_state()? != CredisState::Open {
@@ -262,18 +266,18 @@ impl CredisContract<'_> {
         Ok(true)
     }
 
-    /// Applies a settlement of `amount` - interest first, principal second.
+    /// Applies a settlement of `amount`: interest first, principal second.
     ///
-    /// Any payer may settle any open or called position: the collateral
-    /// released is owed to the pledger recorded on the position, so a payer can
-    /// never redirect value to themselves.
+    /// Any payer may settle any open or called position. The released collateral
+    /// is owed to the pledger recorded on the position. Thus a payer can never
+    /// redirect value to themselves.
     ///
-    /// - called positions accept repayment through deadline equality;
-    /// - a payment below the accrued interest is rejected outright;
-    /// - only what the position needs is consumed, so an over-payment is not
-    ///   over-pulled - the caller charges `Settlement::total_paid`;
-    /// - collateral release is principal-proportional, rounded up and capped by
-    ///   the locked remainder; final settlement releases exactly what is left.
+    /// - Called positions accept repayment through deadline equality.
+    /// - The function rejects a payment below the accrued interest outright.
+    /// - The function consumes only what the position needs, so it does not
+    ///   over-pull an over-payment. The caller charges `Settlement::total_paid`.
+    /// - Collateral release is principal-proportional, rounded up and capped by
+    ///   the locked remainder. Final settlement releases exactly what is left.
     pub fn settle(&mut self, position_id: U256, amount: U256, now: u64) -> Result<Settlement> {
         let mut position = self.load_position(position_id)?;
         let state_before = position.lifecycle_state()?;
@@ -316,11 +320,11 @@ impl CredisContract<'_> {
             .outstanding_gratis_minor
             .checked_sub(gratis_returned_minor)
             .ok_or(CredisError::ArithmeticOverflow)?;
-        // Accrual restarts on the reduced principal; no unpaid interest ever
+        // Accrual restarts on the reduced principal. No unpaid interest ever
         // carries between settlements. The anchor advances by the whole days
-        // actually charged, never to `now`: settling on a sub-day boundary must
-        // not discard the remainder, or repeated dust settlements just under
-        // 24h apart would hold `days` at zero and evade the coupon entirely.
+        // actually charged, never to `now`. Settling on a sub-day boundary must
+        // not discard the remainder. Otherwise, repeated dust settlements just
+        // under 24h apart would hold `days` at zero and evade the coupon entirely.
         position.last_settled_at = position
             .last_settled_at
             .saturating_add(days.saturating_mul(SECONDS_PER_DAY));
@@ -381,8 +385,8 @@ impl CredisContract<'_> {
     /// `sum released + outstanding_gratis_minor == G`. Rounded-up partial returns may
     /// leave zero collateral even while principal remains outstanding.
     ///
-    /// Returns what the caller must burn and credit; the position itself is
-    /// closed here.
+    /// Returns what the caller must burn and credit. This function closes the
+    /// position itself.
     pub fn void_position(&mut self, position_id: U256, now: u64) -> Result<Void> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
@@ -455,7 +459,7 @@ impl CredisContract<'_> {
         Ok(self.called_position_counts.read(&account)? > 0)
     }
 
-    /// Number of positions still on the price path - those the daily scan visits.
+    /// Number of positions still on the price path, that is, those the daily scan visits.
     pub fn active_len(&self) -> Result<u32> {
         self.read_active_len()
     }

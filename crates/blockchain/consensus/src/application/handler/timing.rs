@@ -34,8 +34,8 @@ pub(crate) const GENESIS_ANCHOR_POLL_INTERVAL: Duration = Duration::from_millis(
 /// Explicit source of proposer wall-clock time.
 ///
 /// Production injects [`SystemUnixTimeSource`]. Localnet tests may inject an
-/// [`OffsetUnixTimeSource`] through the explicitly testnet-scoped CLI option;
-/// consensus code never consults ambient process environment for logical time.
+/// [`OffsetUnixTimeSource`] through the explicitly testnet-scoped CLI option.
+/// Consensus code never consults ambient process environment for logical time.
 pub trait UnixTimeSource: Send + Sync {
     fn now_millis(&self) -> eyre::Result<u64>;
 }
@@ -85,19 +85,19 @@ pub(super) fn apply_unix_time_offset_millis(now: u64, offset_secs: i64) -> eyre:
 /// Clamp a proposer's block timestamp (ms) into the deterministic drift band
 /// `[parent + min_advance, parent + band]`, with the genesis-child exception.
 ///
-/// When `parent_timestamp_millis == 0` there is no finalized parent yet (the
-/// `finalization_view` is unseeded at genesis - it does NOT carry the genesis
-/// header timestamp), so the band is meaningless: capping at `0 + band` would
-/// clamp the real wall-clock time far below the genesis timestamp and reth
-/// would reject the payload as a past timestamp, stalling at block 0. In that
-/// case only monotonicity is enforced (`max(now, parent + 1)`), mirroring the
-/// validator-side genesis exemption (`parent.number() == 0`). For every real
-/// parent the full two-sided band applies, mirroring the validator-side
-/// `validate_against_parent_timestamp_millis`:
+/// When `parent_timestamp_millis == 0`, no finalized parent exists yet. The
+/// `finalization_view` is unseeded at genesis and does NOT carry the genesis
+/// header timestamp. The band is therefore meaningless. Capping at `0 + band`
+/// would clamp the real wall-clock time far below the genesis timestamp. Reth
+/// would then reject the payload as a past timestamp, stalling at block 0. For
+/// a zero parent timestamp the function enforces only monotonicity (`max(now, parent + 1)`),
+/// mirroring the validator-side genesis exemption (`parent.number() == 0`). For
+/// every real parent the full two-sided band applies, mirroring the
+/// validator-side `validate_against_parent_timestamp_millis`:
 /// - lower bound `parent + min_advance`: if the proposer's clock has not
-///   advanced `min_advance` past the parent, the timestamp is clamped *up* so
-///   the block still satisfies the validator minimum-advance rule and is never
-///   rejected; this is what denies a colluding leader majority the
+///   advanced `min_advance` past the parent, the function clamps the timestamp
+///   *up*. The block then still satisfies the validator minimum-advance rule and
+///   is never rejected. This denies a colluding leader majority the
 ///   `parent + 1 ms` timestamp freeze.
 /// - upper bound `parent + band` (C-01): an honest proposer never emits an
 ///   over-drifted block, and a long stall self-heals by ratcheting forward at
@@ -164,7 +164,7 @@ where
 }
 
 /// Pure min-block-time floor arithmetic: remaining pad = `min - elapsed`
-/// (`saturating_sub`). A zero result means the floor is already met - send the
+/// (`saturating_sub`). A zero result means the floor is already met. Send the
 /// digest immediately with no wait (case C / heavy block).
 pub(super) fn floor_remaining(
     min_block_time: std::time::Duration,
@@ -178,12 +178,12 @@ pub(super) fn floor_remaining(
 /// Holds the already-sealed `digest` until the floor (`min_block_time`) elapses,
 /// then hands it to Simplex via `response`. If the view is cancelled first
 /// (Simplex drops the proposal receiver), the `select!` aborts on
-/// `response.closed()` and nothing is sent. Liveness pacing only - it never
+/// `response.closed()` and nothing is sent. This is liveness pacing only. It never
 /// touches block bytes/hash/validation, so it is invisible to validators.
 ///
-/// `propose_start` is the closure-level instant captured before `handle_propose`;
-/// `elapsed` therefore subsumes the whole build + marshal path, making the floor
-/// a total ceiling (`max(floor, build)`), not an additive delay.
+/// `propose_start` is the closure-level instant captured before `handle_propose`.
+/// `elapsed` therefore subsumes the whole build + marshal path. This makes the
+/// floor a total ceiling (`max(floor, build)`), not an additive delay.
 pub(super) async fn pace_and_send<C>(
     ctx: &C,
     mut response: oneshot::Sender<Digest>,

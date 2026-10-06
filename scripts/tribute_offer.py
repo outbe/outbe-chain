@@ -15,10 +15,10 @@ Byte-for-byte port of `outbe-cli tribute offer`:
 
 ZK verification is mandatory: the offer must carry the combined Tribute proof,
 the L2 Merkle root it commits to and the network's BLS signature over that root,
-plus the circuit chain id/version the proof verifies under. The proof is produced
-on the L2 - this script never generates one. `tribute_draft_id`, `su_hash`(es),
+plus the circuit chain id/version the proof verifies under. The L2 produces the
+proof. This script never generates one. `tribute_draft_id`, `su_hash`(es),
 `--amount` and `--amount-micro` must be the values that proof and the caller's L2
-attestation bind: the enclave folds them into the `nft_hash` the node checks
+attestation bind. The enclave folds them into the `nft_hash` that the node checks
 against the proof's public input (and against the registered L2 chain).
 
 Deps:  pip install web3 cryptography
@@ -185,7 +185,7 @@ def hex_bytes_arg(value: str) -> bytes:
 
 
 def hex32_arg(value: str) -> bytes:
-    """`0x`-hex of exactly 32 bytes - the enclave parses these as B256."""
+    """`0x`-hex of exactly 32 bytes. The enclave parses these as B256."""
     data = hex_bytes_arg(value)
     if len(data) != 32:
         raise argparse.ArgumentTypeError("must be exactly 32 bytes of 0x-hex")
@@ -260,7 +260,7 @@ def main() -> None:
     day = args.day if args.day is not None else pick_offering_day(w3)
     print(f"worldwide_day: {day}")
 
-    # 3. plaintext payload - draft id + su hashes must be the proof-bound values,
+    # 3. plaintext payload. Draft id + su hashes must be the proof-bound values,
     #    since the enclave folds them into the nft_hash checked against the proof.
     #    worldwide_day + currency travel as cleartext ABI args, not in here.
     payload = {

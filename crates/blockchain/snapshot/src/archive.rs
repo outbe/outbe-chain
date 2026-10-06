@@ -1,4 +1,4 @@
-//! Portable tar container; reading never extracts or opens a declared host path.
+//! Portable tar container. The reader never extracts or opens a declared host path.
 
 use std::io::{self, Read, Write};
 

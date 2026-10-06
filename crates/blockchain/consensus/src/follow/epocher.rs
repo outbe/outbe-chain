@@ -7,7 +7,7 @@
 //! delayed rotation. [`FollowerEpocher`] records exact, authenticated
 //! `BoundaryOutcome` carrier heights and derives every completed interval from
 //! adjacent observations. Length and activation grace only bound discovery of
-//! the next boundary; they never select the active committee.
+//! the next boundary. They never select the active committee.
 
 use std::{
     collections::BTreeMap,
@@ -56,7 +56,7 @@ pub struct FollowerEpocher {
 
 impl FollowerEpocher {
     /// Create an observed-boundary epocher. Length and grace only bound the next
-    /// boundary; they never select an epoch.
+    /// boundary. They never select an epoch.
     pub fn new(length: u64, activation_grace: u64) -> Self {
         Self::from_anchor(length, activation_grace, Epoch::new(0), Height::new(1))
     }
@@ -96,8 +96,8 @@ impl FollowerEpocher {
         }
     }
 
-    /// Record an authenticated activating boundary. Exact replay is idempotent;
-    /// conflicts, jumps, and activations outside the validator grace window fail.
+    /// Record an authenticated activating boundary. Exact replay is idempotent.
+    /// Conflicts, jumps, and activations outside the validator grace window fail.
     pub fn observe_boundary(
         &self,
         epoch: Epoch,
@@ -286,7 +286,7 @@ mod tests {
         e.observe_boundary(Epoch::new(1), Height::new(61)).unwrap();
         e.observe_boundary(Epoch::new(2), Height::new(121)).unwrap();
         e.observe_boundary(Epoch::new(3), Height::new(181)).unwrap();
-        // first(0) = 0 (genesis anchor); epoch 0's boundary outcome rides block 1.
+        // first(0) = 0 (genesis anchor). Epoch 0's boundary outcome rides block 1.
         assert_eq!(e.first(Epoch::new(0)).unwrap().get(), 0);
         assert_eq!(e.first(Epoch::new(1)).unwrap().get(), 61);
         assert_eq!(e.first(Epoch::new(2)).unwrap().get(), 121);

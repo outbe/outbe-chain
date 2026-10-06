@@ -19,13 +19,14 @@ import {InboundReason} from "../shared/libs/InboundReason.sol";
 
 /// @title OriginRouter
 /// @author Outbe
-/// @notice Outbe-side router: broadcasts auction/series messages to every registered target chain and receives
-///         BIDS_BATCH / BIDS_DONE back from each over the protocol-agnostic ERC-7786 bridge (the `crosschain` hub).
-///         The active transport is selected on the bridge.
-/// @dev UUPS upgradeable behind an ERC1967 proxy; the bridge is an implementation immutable (from
-///      {ERC7786MessengerBase}), so every upgrade must pass the same bridge to the constructor. Auction messages are
-///      keyed by `worldwideDay`, series (issuance/mark) by `seriesId`. The target set is a registry snapshotted per
-///      day at STAGE_START; every leg is isolated so one failing destination never wedges the fan-out.
+/// @notice Outbe-side router. It broadcasts auction/series messages to every registered target
+///         chain. It receives BIDS_BATCH / BIDS_DONE back from each over the protocol-agnostic
+///         ERC-7786 bridge (the `crosschain` hub). The active transport is selected on the bridge.
+/// @dev UUPS upgradeable behind an ERC1967 proxy. The bridge is an implementation immutable (from
+///      {ERC7786MessengerBase}), so every upgrade must pass the same bridge to the constructor.
+///      Auction messages are keyed by `worldwideDay`, series (issuance/mark) by `seriesId`. The
+///      target set is a registry snapshotted per day at STAGE_START. Every leg is isolated, so one
+///      failing destination never wedges the fan-out.
 contract OriginRouter is
     IOriginRouter,
     IERC7786TokenReceiver,
@@ -41,7 +42,8 @@ contract OriginRouter is
 
     /// @custom:storage-location erc7201:outbe.intex.OriginRouter
     struct OriginRouterStorage {
-        /// @dev Desis recipient that processes inbound BIDS_BATCH payloads (and holds `DESIS_ROLE`).
+        /// @dev Desis recipient that processes inbound BIDS_BATCH payloads (and holds
+        ///      `DESIS_ROLE`).
         address desis;
         /// @dev IntexFactory authorized for the supply-side sends (holds `INTEX_FACTORY_ROLE`).
         address intexFactory;
@@ -54,18 +56,21 @@ contract OriginRouter is
         /// @dev Next index to assign in `parkedProceeds`.
         uint256 nextParkedProceedsIdx;
         // --- Multi-target registry ---
-        /// @dev Registered target chainIds; membership is via `targetIndexPlus1`.
+        /// @dev Registered target chainIds. `targetIndexPlus1` records membership.
         uint32[] targetChainIds;
-        /// @dev 1-based index in `targetChainIds` (0 = absent); 1-based disambiguates the first target under swap-pop.
+        /// @dev 1-based index in `targetChainIds` (0 = absent). The 1-based index disambiguates the
+        ///      first target under swap-pop.
         mapping(uint32 chainId => uint256 indexPlus1) targetIndexPlus1;
-        /// @dev Per-day target snapshot frozen at STAGE_START; the day's sends fan out over this, not the live registry.
+        /// @dev Per-day target snapshot frozen at STAGE_START. The day's sends fan out over this,
+        ///      not over the live registry.
         mapping(uint32 worldwideDay => uint32[] chainIds) seriesTargets;
         /// @dev Outbound legs that failed to dispatch, awaiting a permissionless flush.
         mapping(uint256 idx => ParkedMessage) parkedMessages;
         /// @dev Next index to assign in `parkedMessages`.
         uint256 nextParkedMessageIdx;
-        /// @dev Gas a day's CLEARING round asks of each chain, as desis sized it from that chain's recent
-        ///      bid counts. Later rounds of the same day reuse it, so a remainder report needs no sizing.
+        /// @dev Gas a day's CLEARING round asks of each chain, as desis sized it from that
+        ///      chain's recent bid counts. Later rounds of the same day reuse it, so a remainder
+        ///      report needs no sizing.
         mapping(uint32 worldwideDay => mapping(uint32 chainId => uint64 gasLimit)) clearingGas;
     }
 
@@ -92,7 +97,7 @@ contract OriginRouter is
         _grantRole(DEFAULT_ADMIN_ROLE, _delegate);
     }
 
-    /// @dev Upgrades are gated by the admin role.
+    /// @dev The admin role gates upgrades.
     // solhint-disable-next-line no-empty-blocks
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
@@ -182,13 +187,15 @@ contract OriginRouter is
     }
 
     // --- Per-leg send isolation ---
-    /// @dev External self-call seam so `try/catch` can isolate one leg; only the contract itself may call it.
+    /// @dev External self-call seam so `try/catch` can isolate one leg. Only the contract itself
+    ///      may call it.
     function sendLeg(uint32 dstChainId, bytes calldata payload, uint256 gasLimit) external returns (bytes32) {
         if (msg.sender != address(this)) revert OnlySelf();
         return _send(dstChainId, payload, gasLimit);
     }
 
-    /// @dev Send one leg; on any failure park it for a permissionless flush and continue. Returns 0 when parked.
+    /// @dev Send one leg. On any failure, park it for a permissionless flush and continue.
+    ///      Returns 0 when parked.
     function _sendOrPark(uint32 dstChainId, bytes memory payload, uint256 gasLimit) private returns (bytes32 sendId) {
         try this.sendLeg(dstChainId, payload, gasLimit) returns (bytes32 id) {
             sendId = id;
@@ -208,13 +215,14 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    /// @dev Deliberately not `nonReentrant`: on a chain that is its own target the send is delivered inside
-    ///      this frame and comes back through `receiveMessage`, which the contract-wide guard would reject.
-    ///      The `sent` flag below is set before the send, so a re-entrant call cannot send the entry twice.
+    /// @dev Deliberately not `nonReentrant`. On a chain that is its own target, the send is
+    ///      delivered inside this frame and comes back through `receiveMessage`. The
+    ///      contract-wide guard would reject that call. The code sets the `sent` flag below before
+    ///      the send, so a re-entrant call cannot send the entry twice.
     function resendParkedMessage(uint256 idx) external {
         ParkedMessage storage p = _os().parkedMessages[idx];
         if (p.payload.length == 0 || p.sent) revert NoParkedMessage(idx);
-        p.sent = true; // CEI; a revert in `_send` rolls this back, keeping the entry retryable
+        p.sent = true; // CEI. A revert in `_send` rolls this back and keeps the entry retryable.
         bytes32 sendId = _send(p.dstChainId, p.payload, p.gasLimit);
         emit ParkedMessageResent(idx, p.dstChainId, sendId);
     }
@@ -229,7 +237,8 @@ contract OriginRouter is
         return _os().nextParkedMessageIdx;
     }
 
-    /// @dev Whether `chainId` is in the series' STAGE_START snapshot (the frozen day-of target set).
+    /// @dev Whether `chainId` is in the series' STAGE_START snapshot (the frozen day-of target
+    ///      set).
     function _isSeriesTarget(uint32 worldwideDay, uint32 chainId) private view returns (bool) {
         uint32[] storage snapshot = _os().seriesTargets[worldwideDay];
         uint256 len = snapshot.length;
@@ -239,14 +248,16 @@ contract OriginRouter is
         return false;
     }
 
-    /// @dev Revert unless `dstChainId` is in the series' STAGE_START snapshot; addressed sends route only to a chain
-    ///      the day was actually started on (immune to a mid-day removeTarget).
+    /// @dev Revert unless `dstChainId` is in the series' STAGE_START snapshot. Addressed sends
+    ///      route only to a chain the day was actually started on (immune to a mid-day
+    ///      removeTarget).
     function _requireSeriesTarget(uint32 worldwideDay, uint32 dstChainId) private view {
         if (!_isSeriesTarget(worldwideDay, dstChainId)) revert NotSeriesTarget(worldwideDay, dstChainId);
     }
 
-    /// @dev Reverts `InvalidDesisInterface(_desis)` if the target is an EOA or does not advertise `IDesis` via
-    ///      ERC-165. Catches the common operator mistake of wiring a typo'd address that would brick inbound.
+    /// @dev Reverts `InvalidDesisInterface(_desis)` if the target is an EOA or does not advertise
+    ///      `IDesis` via ERC-165. Catches the common operator mistake of wiring a typo'd address
+    ///      that would brick inbound.
     function _assertDesisInterface(address _desis) private view {
         if (_desis.code.length == 0) revert InvalidDesisInterface(_desis);
         try IERC165(_desis).supportsInterface(type(IDesis).interfaceId) returns (bool supported) {
@@ -278,14 +289,15 @@ contract OriginRouter is
     {
         if (!_isSeriesTarget(worldwideDay, dstChainId)) revert NoTargets();
         uint64 budget = _clearingBudget(gasLimit);
-        // Remembered so the rounds that follow a remainder report ask for the same gas as the first one.
+        // Store the budget so the rounds that follow a remainder report ask for the same gas as the
+        // first one.
         _os().clearingGas[worldwideDay][dstChainId] = budget;
         bytes32 sendId = _sendOrPark(dstChainId, BridgeMsgCodec.encodeAuctionStageClearing(worldwideDay), budget);
         emit AuctionStageSent(sendId, worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING);
     }
 
-    /// @dev Keep the ask inside what a round is worth: below the floor a round could not even flip the
-    ///      stage, and above the cap no target chain would accept the delivery.
+    /// @dev Keep the ask inside what a round is worth. Below the floor, a round could not even flip
+    ///      the stage. Above the cap, no target chain would accept the delivery.
     function _clearingBudget(uint256 gasLimit) private pure returns (uint64) {
         if (gasLimit < IntexGas.AUCTION_STAGE_CLEARING) return uint64(IntexGas.AUCTION_STAGE_CLEARING);
         if (gasLimit > IntexGas.AUCTION_STAGE_CLEARING_MAX) return uint64(IntexGas.AUCTION_STAGE_CLEARING_MAX);
@@ -317,7 +329,8 @@ contract OriginRouter is
         uint16 totalChunks,
         IssuanceInstructionsParams[] calldata series
     ) external payable onlyRole(INTEX_FACTORY_ROLE) returns (bytes32 sendId) {
-        // Empty `recipients` is valid: a snapshot chain with no local winners still needs the series created.
+        // Empty `recipients` is valid: a snapshot chain with no local winners still needs the
+        // series created.
         uint256 recipients = _requireIssuanceBatch(dstChainId, worldwideDay, series);
         sendId = _sendOrPark(
             dstChainId,
@@ -327,8 +340,9 @@ contract OriginRouter is
         emit IssuanceInstructionsSent(sendId, series[0].seriesId, recipients);
     }
 
-    /// @dev Validates a batch and returns its total recipient count. The day must be one this chain is a
-    ///      target of; the codec owns the wire format (chunk header, per-series day and counts).
+    /// @dev Validates a batch and returns its total recipient count. The day must be one this chain
+    ///      is a target of. The codec owns the wire format (chunk header, per-series day and
+    ///      counts).
     function _requireIssuanceBatch(uint32 dstChainId, uint32 worldwideDay, IssuanceInstructionsParams[] calldata series)
         private
         view
@@ -365,8 +379,9 @@ contract OriginRouter is
         emit RefundInstructionsSent(sendId, worldwideDay, winners.length);
     }
 
-    /// @dev A chain's proceeds leave with whichever of its chunks lands last, and chunks land in any order, so
-    ///      every chunk of a chain with winners carries the leg. A run longer than one always has winners.
+    /// @dev A chain's proceeds leave with whichever of its chunks lands last. Chunks land in any
+    ///      order, so every chunk of a chain with winners carries the leg. A run longer than one
+    ///      always has winners.
     function _routesProceeds(uint16 totalChunks, uint256 winners) private pure returns (bool) {
         return totalChunks > 1 || winners != 0;
     }
@@ -421,8 +436,9 @@ contract OriginRouter is
         return super.receiveMessage(receiveId, sender, payload);
     }
 
-    /// @dev Decodes an authenticated inbound message and dispatches by msgType. BIDS_BATCH and BIDS_DONE are inbound
-    ///      here; a premature message reverts and is redelivered by the transport once its prerequisite has landed.
+    /// @dev Decodes an authenticated inbound message and dispatches by msgType. BIDS_BATCH and
+    ///      BIDS_DONE are inbound here. A premature message reverts, and the transport redelivers
+    ///      it once its prerequisite has landed.
     function _dispatch(
         uint32 srcChainId,
         bytes32,
@@ -446,8 +462,9 @@ contract OriginRouter is
         }
     }
 
-    /// @dev Decode a BIDS_BATCH and forward it to Desis; the body `srcChainId` is cross-checked against the
-    ///      authenticated source. Clearing is not fired here - the Desis begin-block gate owns that.
+    /// @dev Decode a BIDS_BATCH and forward it to Desis. The body `srcChainId` is cross-checked
+    ///      against the authenticated source. Clearing does not fire here. The Desis begin-block
+    ///      gate owns that.
     function _handleBidsBatch(uint32 srcChainId, bytes calldata payload) internal {
         (
             uint32 worldwideDay,
@@ -466,7 +483,8 @@ contract OriginRouter is
         emit BidsBatchReceived(srcChainId, worldwideDay, bidderAddresses.length);
     }
 
-    /// @dev Decode a BIDS_DONE marker and forward it to Desis; the body `srcChainId` is cross-checked as in BIDS_BATCH.
+    /// @dev Decode a BIDS_DONE marker and forward it to Desis. The body `srcChainId` is
+    ///      cross-checked as in BIDS_BATCH.
     function _handleBidsDone(uint32 srcChainId, bytes calldata payload) internal {
         (uint32 worldwideDay, uint32 bodySrcChainId, uint16 totalBatches, uint32 totalBids) =
             BridgeMsgCodec.decodeBidsDone(payload);
@@ -478,16 +496,17 @@ contract OriginRouter is
         emit BidsDoneReceived(srcChainId, worldwideDay, totalBatches, totalBids);
     }
 
-    /// @dev A target whose relay stopped part way asks for another round. Answered by sending the day's
-    ///      CLEARING again - the target resumes from the chunk it left, so the same message carries on
-    ///      rather than starting over. Parked like any other send when the relay float is empty.
+    /// @dev A target whose relay stopped part way asks for another round. The router answers by
+    ///      sending the day's CLEARING again. The target resumes from the chunk it left, so the
+    ///      same message continues rather than starting over. The send is parked like any other
+    ///      send when the relay float is empty.
     function _handleBidsRemaining(uint32 srcChainId, bytes calldata payload) private {
         (uint32 worldwideDay, uint32 bodySrcChainId, uint16 nextBatch, uint16 totalBatches) =
             BridgeMsgCodec.decodeBidsRemaining(payload);
         if (!_acceptBids(srcChainId, bodySrcChainId, worldwideDay, BridgeMsgCodec.MSG_BIDS_REMAINING)) return;
 
-        // A day whose intake has closed - cleared on the fan-in timeout, or cancelled - would have every
-        // chunk of the next round ignored on arrival, so the round is not worth paying for.
+        // A day whose intake has closed (cleared on the fan-in timeout, or cancelled) would have
+        // every chunk of the next round ignored on arrival. So the round is not worth paying for.
         IDesis.AuctionStage stage = IDesis(_os().desis).getAuctionStage(worldwideDay);
         if (stage != IDesis.AuctionStage.Revealing && stage != IDesis.AuctionStage.Clearing) {
             emit InboundMessageIgnored(
@@ -503,9 +522,10 @@ contract OriginRouter is
         uint256 gasLimit = budget == 0 ? IntexGas.AUCTION_STAGE_CLEARING : budget;
         bytes memory round = BridgeMsgCodec.encodeAuctionStageClearing(worldwideDay);
 
-        // A target on this very chain is delivered inside this frame, where `receiveMessage` still holds its
-        // re-entry guard - so the round's own chunk sends would be rejected coming back in. Park it instead
-        // and let the drain trigger carry it in a transaction of its own.
+        // A target on this very chain gets the delivery inside this frame, where `receiveMessage`
+        // still holds its re-entry guard. So the guard would reject the round's own chunk sends
+        // coming back in. Park the round instead, and let the drain trigger carry it in a
+        // transaction of its own.
         bytes32 sendId;
         if (srcChainId == block.chainid) {
             _park(srcChainId, round, gasLimit);
@@ -515,10 +535,11 @@ contract OriginRouter is
         emit BidsRelayRoundSent(sendId, worldwideDay, srcChainId, nextBatch, totalBatches);
     }
 
-    /// @dev Whether a relayed bids message may reach Desis. A body naming another source than the one the bridge
-    ///      authenticated, or a source outside the day's frozen snapshot, can never become acceptable: it is
-    ///      acknowledged without effect (a rogue/late-registered source would otherwise leave storage residue
-    ///      Desis never clears - it resets only snapshot chains).
+    /// @dev Whether a relayed bids message may reach Desis. A body that names another source than
+    ///      the one the bridge authenticated can never become acceptable. A source outside the
+    ///      day's frozen snapshot can never become acceptable either. The router acknowledges such
+    ///      a message without effect. Otherwise a rogue or late-registered source would leave
+    ///      storage residue that Desis never clears, because Desis resets only snapshot chains.
     function _acceptBids(uint32 srcChainId, uint32 bodySrcChainId, uint32 worldwideDay, uint8 msgType)
         private
         returns (bool)
@@ -571,7 +592,8 @@ contract OriginRouter is
         pure
         returns (BridgeMsgCodec.IssuanceInstructionsPayload memory payload)
     {
-        // Member-wise assignment (rather than a struct literal) keeps the payload within the IR stack bound.
+        // Member-wise assignment (rather than a struct literal) keeps the payload within the IR
+        // stack bound.
         payload.seriesId = p.seriesId;
         payload.worldwideDay = p.worldwideDay;
         payload.issuedAt = p.issuedAt;
@@ -600,7 +622,7 @@ contract OriginRouter is
         uint256 balance = address(this).balance;
         if (amount > balance) revert NativeBalanceInsufficient(balance, amount);
 
-        // admin-only native recovery; arbitrary destination is intentional
+        // admin-only native recovery. The arbitrary destination is intentional.
         // slither-disable-next-line arbitrary-send-eth
         (bool ok,) = to.call{value: amount}("");
         if (!ok) revert NativeSweepFailed();
@@ -640,9 +662,10 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IERC7786TokenReceiver
-    /// @dev The token bridge credits WCOEN before this call; we unwrap it and hand the native to the factory
-    ///      precompile, which pays the series' creators. A distribution failure parks the native for retry so
-    ///      the transfer still settles (returning the magic value) instead of bricking on redelivery.
+    /// @dev The token bridge credits WCOEN before this call. We unwrap it and hand the native to
+    ///      the factory precompile, which pays the series' creators. A distribution failure parks
+    ///      the native for retry, so the transfer still settles (returning the magic value) instead
+    ///      of bricking on redelivery.
     function onCrosschainTokensReceived(
         uint32 sourceDomain,
         bytes calldata from,
@@ -655,8 +678,9 @@ contract OriginRouter is
         uint32 worldwideDay = abi.decode(extraData, (uint32));
         // Source must be in the day's frozen snapshot.
         if (!_isSeriesTarget(worldwideDay, sourceDomain)) revert UnexpectedProceedsSource(sourceDomain);
-        // The bridge is permissionless: pin the source sender to the registered peer (its TargetRouter), else
-        // anyone could open a distribution for any series and wipe its contributor provenance.
+        // The bridge is permissionless. Pin the source sender to the registered peer (its
+        // TargetRouter). Otherwise anyone could open a distribution for any series and wipe its
+        // contributor provenance.
         if (keccak256(from) != keccak256(_remoteMessenger(sourceDomain))) revert UnauthorizedProceedsSender(from);
 
         IWCOEN($.wcoen).withdraw(amount);
@@ -674,10 +698,11 @@ contract OriginRouter is
         emit ParkedProceedsDistributed(idx, p.worldwideDay, p.amount);
     }
 
-    /// @dev Hand native proceeds to the factory precompile; park them for retry on failure. `srcChainId` lets the
-    ///      factory track fan-in across the day's paying chains.
+    /// @dev Hand native proceeds to the factory precompile. On failure, park them for retry.
+    ///      `srcChainId` lets the factory track fan-in across the day's paying chains.
     function _distributeOrPark(uint32 worldwideDay, uint32 srcChainId, uint128 amount) private {
-        // The sole caller (onCrosschainTokensReceived) is nonReentrant, so the catch-branch park write is safe.
+        // The sole caller (onCrosschainTokensReceived) is nonReentrant, so the catch-branch park
+        // write is safe.
         // slither-disable-next-line reentrancy-eth
         try IIntexFactory(_os().intexFactory).distribute{value: amount}(worldwideDay, srcChainId) {
             emit ProceedsDistributed(worldwideDay, amount);

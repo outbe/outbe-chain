@@ -39,17 +39,17 @@ enum DispatchAdapter {
     },
 }
 
-/// Whether a route's dispatch may receive credited native value. Declared on
+/// Whether a route's dispatch may receive credited native value. It is declared on
 /// the same line as the dispatch function, alongside the module's own
-/// `PAYABLE_SELECTORS`; `define_exact_routes!` asserts at compile time that the
-/// two agree, so a module cannot start accepting `msg.value` without the route
+/// `PAYABLE_SELECTORS`. `define_exact_routes!` asserts at compile time that the
+/// two agree. Thus a module cannot start accepting `msg.value` without the route
 /// declaring it, and a route cannot declare it without the module.
 ///
 /// The module's list is in turn what its own dispatch checks: a payable module
 /// refuses value for every selector it has not published.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ValuePolicy {
-    /// No selector is payable; the boundary rejects any credited value before
+    /// No selector is payable. The boundary rejects any credited value before
     /// dispatch, so value cannot strand at the address.
     Reject,
     /// At least one selector is payable. The boundary credits value to the
@@ -88,11 +88,11 @@ pub(crate) struct RouteCall<'input> {
 impl Route {
     /// The value policy the boundary applies to this route.
     ///
-    /// Exact routes carry their own from the route table. The stablecoin class
+    /// Exact routes carry their own policy from the route table. The stablecoin class
     /// permits value because an empty-calldata send to a reserved token address
-    /// is an ordinary native transfer that [`stablecoin_class_dispatch`] returns
-    /// from without touching token state; denying it would make native value
-    /// unspendable across the whole reserved class, including for an externally
+    /// is an ordinary native transfer. [`stablecoin_class_dispatch`] returns
+    /// from it without touching token state. Denying it would make native value
+    /// unspendable across the whole reserved class. This includes an externally
     /// owned account whose address happens to fall in the prefix.
     ///
     /// The class is the one route this policy is not compile-time bound to a
@@ -157,11 +157,11 @@ impl ExactRoute {
             value,
             ..
         } = call;
-        // The boundary only decided that this *address* may be credited. Which
-        // selectors may keep the value is the module's published list, enforced
-        // here so a module cannot omit the check and silently accept value on
-        // every selector it exposes. Payable modules repeat it at their own
-        // entry, which is what covers callers that reach them directly.
+        // The boundary only decided that this *address* may be credited. The
+        // module's published list decides which selectors may keep the value.
+        // This code enforces the list, so a module cannot omit the check and silently
+        // accept value on every selector it exposes. Payable modules repeat it at
+        // their own entry, which is what covers callers that reach them directly.
         outbe_primitives::dispatch::reject_value_unless_payable(
             data,
             self.payable_selectors,
@@ -226,16 +226,16 @@ fn stablecoin_class_dispatch(storage: StorageHandle, call: RouteCall<'_>) -> Res
     } = call;
     let plain_native_transfer = data.is_empty() && !value.is_zero();
 
-    // A plain native send must not be able to abort the whole transaction: a
-    // registry error is fatal to a token call, but here it degrades to a revert
-    // so the frame simply rolls back and the value returns to the sender.
+    // A plain native send must not be able to abort the whole transaction. A
+    // registry error is fatal to a token call, but here it degrades to a revert.
+    // Thus the frame simply rolls back and the value returns to the sender.
     let registered = read_stablecoin_registration(&storage, token, plain_native_transfer)?;
 
     let Some(factory_token_id) = registered else {
         // Reserving the address class must not make native value unspendable at
-        // an address the Factory never issued - an externally owned account
+        // an address the Factory never issued. An externally owned account
         // whose address happens to fall in the prefix must still receive plain
-        // transfers. This uses only revm's ordinary CALL balance semantics; it
+        // transfers. This uses only revm's ordinary CALL balance semantics. It
         // invokes no token ABI and falls through to no account bytecode.
         if plain_native_transfer {
             return Ok(Bytes::new());
@@ -374,7 +374,7 @@ macro_rules! define_exact_routes {
 
 // The only declaration of existing exact routes. Constant match patterns make a
 // duplicate address an unreachable-pattern error under the workspace's denied
-// warnings; the const validator below independently rejects duplicates and Ethereum
+// warnings. The const validator below independently rejects duplicates and Ethereum
 // precompile overlap during compilation.
 define_exact_routes! {
     GRATIS_ADDRESS => (DispatchAdapter::Basic(outbe_gratis::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_gratis::precompile::PAYABLE_SELECTORS),

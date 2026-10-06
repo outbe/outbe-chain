@@ -11,8 +11,8 @@ use crate::schema::Promis;
 /// without flipping the route fails the build.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
-/// `IPromis` interface ID (XOR of non-ERC-165 selectors in IPromis). Regenerated
-/// when the ABI surface changes; guarded by `test_iface_id_matches_selector_xor`.
+/// `IPromis` interface ID (XOR of non-ERC-165 selectors in IPromis). Regenerate it
+/// when the ABI surface changes. `test_iface_id_matches_selector_xor` guards it.
 pub(crate) const IPROMIS_INTERFACE_ID: [u8; 4] = [0x4b, 0xb3, 0x17, 0xe4];
 
 sol!(
@@ -42,7 +42,7 @@ pub fn dispatch(
             decimals(_) => metadata::<IPromis::decimalsCall>(|| Ok(promis.decimals())),
             totalSupply(_) => metadata::<IPromis::totalSupplyCall>(|| promis.total_supply()),
 
-            // Confidential read - return ciphertext; decrypt client-side.
+            // Confidential read: return ciphertext. The client decrypts it.
             balanceOf(c) => view(c, |c| promis.balance_ct_of(c.account).map(Bytes::from)),
             opNonceOf(c) => view(c, |c| promis.op_nonce_of(c.account)),
 

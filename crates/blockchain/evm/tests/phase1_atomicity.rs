@@ -1,10 +1,13 @@
 //! Phase 1 atomicity, cursor semantics, and soft-receipt narrowing.
 //!
-//! cursor is the sole phase-routing driver, cursor is
-//! the only driver after Phase 1 reorder, Phase 1 failure produces
-//! no soft receipt and does not advance `last_accounted_block_number`),
-//! (block-1 cursor map) (pending RPC skip)
-//! (ACCOUNTING_PROGRESS_ADDRESS in allowlist).
+//! Covers:
+//! - the cursor is the sole phase-routing driver.
+//! - the cursor is the only driver after the Phase 1 reorder.
+//! - a Phase 1 failure produces no soft receipt and does not advance
+//!   `last_accounted_block_number`.
+//! - the block-1 cursor map.
+//! - the pending RPC skip.
+//! - ACCOUNTING_PROGRESS_ADDRESS in the allowlist.
 //!
 //! Tests that require the actual Phase 1 commit-into-pre-execution move are
 //! marked `#[ignore]` and reference the follow-up.

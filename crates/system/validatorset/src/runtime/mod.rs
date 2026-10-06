@@ -37,18 +37,21 @@ pub mod status {
 /// (self-registered, not-yet-staked) state at once.
 ///
 /// `REGISTERED` self-registration is permissionless and free on the ZeroFee
-/// chain, and a `REGISTERED` node is intentionally admitted to the consensus
-/// P2P secondary tier so a TEE verifier full-node can sync and execute offer
-/// blocks before staking (see
-/// [`ValidatorSet::get_admitted_non_consensus_validators`]). That admission is
-/// by design, but without a bound an attacker can self-register up to
-/// `config_max_validators` free Sybil identities - consuming registration slots
-/// (griefing legitimate staked joins with "max validators reached") and
-/// consensus-P2P connection / handshake / decode slots. This caps the unstaked
-/// self-registration surface well below `config_max_validators` (default 128),
-/// so legitimate verifiers (few) still register while Sybils cannot fill the
-/// validator set. The owner (`config_owner`) is NOT subject to this cap and may
-/// register validators directly beyond it.
+/// chain. The consensus P2P secondary tier intentionally admits a `REGISTERED`
+/// node, so a TEE verifier full-node can sync and execute offer blocks before
+/// staking (see [`ValidatorSet::get_admitted_non_consensus_validators`]). That
+/// admission is by design. But without a bound, an attacker can self-register
+/// up to `config_max_validators` free Sybil identities. These identities consume:
+///
+/// - registration slots (griefing legitimate staked joins with "max validators
+///   reached"),
+/// - consensus-P2P connection / handshake / decode slots.
+///
+/// This constant caps the unstaked self-registration surface well below
+/// `config_max_validators` (default 128). Legitimate verifiers (few) still
+/// register, but Sybils cannot fill the validator set. The owner
+/// (`config_owner`) is NOT subject to this cap and may register validators
+/// directly beyond it.
 pub const MAX_SELF_REGISTERED_UNSTAKED: u32 = 32;
 
 /// Canonical committee/codec bound shared by every validator-registry scan.

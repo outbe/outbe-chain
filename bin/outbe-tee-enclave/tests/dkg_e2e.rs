@@ -1,11 +1,15 @@
 //! End-to-end TEE DKG ceremony over the real transport.
 //!
-//! Spins up N enclave servers (each a real UDS + Noise-IK responder), connects N
-//! host [`EnclaveClient`]s, and drives a full DKG ceremony with
-//! [`CeremonyCoordinator`]s routing messages between peers in-process. Every
-//! secret operation crosses the real Noise-IK channel to a separate enclave; the
-//! host only relays opaque bytes. This is the localnet ceremony minus the
-//! commonware P2P networking (substituted by in-process message routing).
+//! The test does these steps:
+//!
+//! 1. Start N enclave servers. Each server is a real UDS + Noise-IK responder.
+//! 2. Connect N host [`EnclaveClient`]s.
+//! 3. Drive a full DKG ceremony. [`CeremonyCoordinator`]s route messages between peers
+//!    in-process.
+//!
+//! Every secret operation crosses the real Noise-IK channel to a separate enclave. The host
+//! only relays opaque bytes. This is the localnet ceremony without the commonware P2P
+//! networking. In-process message routing replaces that networking.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::os::unix::net::UnixListener;
@@ -84,8 +88,8 @@ fn full_dkg_ceremony_over_real_noise_transport() {
         attestation_mode: outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired,
     };
 
-    // Spin up N enclaves: each a distinct identity, a UDS, and a server thread
-    // serving one connection (the whole ceremony) to completion.
+    // Start N enclaves. Each has a distinct identity, a UDS, and a server thread.
+    // The thread serves one connection (the whole ceremony) to completion.
     let mut servers = Vec::new();
     let mut socks = Vec::new();
     for i in 0..N {
@@ -166,7 +170,7 @@ fn full_dkg_ceremony_over_real_noise_transport() {
         }
     }
 
-    // Seam B: every node opens+verifies its incoming bundles; route acks back.
+    // Seam B: every node opens+verifies its incoming bundles. Route acks back.
     let mut ack_inbox: Vec<Vec<Ack>> = vec![Vec::new(); N];
     for j in 0..N {
         let bundles = std::mem::take(&mut bundle_inbox[j]);
@@ -188,7 +192,7 @@ fn full_dkg_ceremony_over_real_noise_transport() {
         }
     }
 
-    // Seam D: every dealer finalizes its log; broadcast (collect all).
+    // Seam D: every dealer finalizes its log. Broadcast (collect all).
     let logs: Vec<FinalizedLog> = (0..N)
         .map(|i| {
             coords[i]
@@ -206,7 +210,7 @@ fn full_dkg_ceremony_over_real_noise_transport() {
         })
         .collect();
 
-    // All parties agree on the public group key; each holds a distinct share.
+    // All parties agree on the public group key. Each holds a distinct share.
     let group = &outcomes[0].group_public;
     assert!(
         outcomes.iter().all(|o| &o.group_public == group),

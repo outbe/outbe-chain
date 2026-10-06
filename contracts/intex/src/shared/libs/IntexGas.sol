@@ -5,19 +5,21 @@ pragma solidity 0.8.30;
 /// @author Outbe
 /// @notice Destination gas budgets for intex cross-chain messages, passed into `ERC7786MessengerBase._send`
 ///         as the ERC-7786 executionGasLimit attribute whichever gateway is active.
-/// @dev Each budget is 1.5x the measured cost of its message's heaviest path; the transport bills the limit
-///      rather than the spend. `GasBudget.t.sol` pins them and must run with `--isolate`.
+/// @dev Each budget is 1.5x the measured cost of its message's heaviest path. The transport bills
+///      the limit rather than the spend. `GasBudget.t.sol` pins them and must run with `--isolate`.
 library IntexGas {
-    /// @dev 383k at six rows; the head/row split is by shape.
+    /// @dev 383k at six rows. The head/row split is by shape.
     uint256 internal constant AUCTION_STAGE_START_BASE = 365_000;
     uint256 internal constant AUCTION_STAGE_START_PER_PRICE = 35_000;
 
-    /// @dev Floor for a CLEARING round, and what the router clamps a smaller ask up to: driven through the
-    ///      whole inbound path it spends 1.56M and still places a chunk (`ClearingRelayMailboxGas.t.sol`).
+    /// @dev Floor for a CLEARING round, and what the router clamps a smaller ask up to. Driven
+    ///      through the whole inbound path, it spends 1.56M and still places a chunk
+    ///      (`ClearingRelayMailboxGas.t.sol`).
     uint256 internal constant AUCTION_STAGE_CLEARING = 2_300_000;
 
-    /// @dev Ceiling for a CLEARING round, under the tightest per-transaction cap our targets enforce
-    ///      (Ethereum's EIP-7825 is 16 777 216); a heavier day takes several rounds instead.
+    /// @dev Ceiling for a CLEARING round, under the tightest per-transaction cap our targets
+    ///      enforce (Ethereum's EIP-7825 is 16 777 216). A heavier day takes several rounds
+    ///      instead.
     uint256 internal constant AUCTION_STAGE_CLEARING_MAX = 14_000_000;
 
     /// @dev 147k.
@@ -35,12 +37,12 @@ library IntexGas {
     ///      against the canonical mailbox - ~157k the send, ~8.7k a bid.
     uint256 internal constant RELAY_CHUNK_GAS = 800_000;
 
-    /// @dev Held back on top of the last chunk for the completeness marker, ~157k measured; without it a
-    ///      round that just affords its final chunk reverts whole and reports nothing.
+    /// @dev Held back on top of the last chunk for the completeness marker, ~157k measured. Without
+    ///      it, a round that just affords its final chunk reverts whole and reports nothing.
     uint256 internal constant RELAY_MARKER_GAS = 250_000;
 
-    /// @dev Held back from the relay so an unfinished day can still be reported home: the 63/64 rule
-    ///      leaves the outer frame far too little to send a message of its own.
+    /// @dev Held back from the relay so an unfinished day can still be reported home. The 63/64
+    ///      rule leaves the outer frame far too little to send a message of its own.
     uint256 internal constant RELAY_REPORT_GAS = 400_000;
 
     /// @dev Recording a day into the VWAP registry: 168k at one currency, 476k at six, measured on the
@@ -54,14 +56,16 @@ library IntexGas {
     /// @dev 88k.
     uint256 internal constant BIDS_DONE = 135_000;
 
-    /// @dev The remainder report a stopped relay sends home. Dearer than the other inbound bids messages
-    ///      because its handler answers with an outbound CLEARING: 136k of it is the handler's own work
-    ///      against the stand, and the rest is what a real dispatch costs over the mock's.
+    /// @dev The remainder report a stopped relay sends home. Dearer than the other inbound bids
+    ///      messages because its handler answers with an outbound CLEARING. 136k of it is the
+    ///      handler's own work against the stand. The rest is what a real dispatch costs over the
+    ///      mock's.
     uint256 internal constant BIDS_REMAINING = 400_000;
 
-    /// @dev The one budget no test can measure - the receiver forwards into the Desis precompile. Derived
-    ///      from its tariff (read 100, write 2,900, six per bid), 17.6k on the generation-reset branch and
-    ///      the router's measured 144k share: ~921k for 64 bids. Replace with a live receipt.
+    /// @dev The one budget no test can measure. The receiver forwards into the Desis precompile.
+    ///      Derived from its tariff (read 100, write 2,900, six per bid), 17.6k on the
+    ///      generation-reset branch and the router's measured 144k share: ~921k for 64 bids.
+    ///      Replace with a live receipt.
     uint256 internal constant BIDS_BASE = 250_000;
     uint256 internal constant BIDS_PER_ITEM = 17_700;
 
@@ -70,13 +74,16 @@ library IntexGas {
     uint256 internal constant ISSUANCE_PER_SERIES = 195_000;
     uint256 internal constant ISSUANCE_PER_ITEM = 90_000;
 
-    /// @dev A refund chunk costs three separable things, measured against the canonical Compact with the
-    ///      proceeds leg wired to our own token bridge and ERC-7786 hub: any chunk 159k, a chunk that carries
-    ///      winners 83k more (the day's clearing snapshot, one Compact withdrawal, one transfer to the router)
-    ///      plus 7.1k a winner, and the chunk that routes the day's proceeds 82k more. The mailbox's own
-    ///      dispatch is outside that reading (it needs a fork): `ClearingRelayMailboxGas.t.sol` prices a send
-    ///      at ~157k against the canonical mailbox and production runs one hub hop more, so the routing part
-    ///      carries 170k for it. Every part then takes a 1.3x margin.
+    /// @dev A refund chunk costs three separable things. Each is measured against the canonical
+    ///      Compact, with the proceeds leg wired to our own token bridge and ERC-7786 hub:
+    ///      - any chunk: 159k.
+    ///      - a chunk that carries winners: 83k more (the day's clearing snapshot, one Compact
+    ///        withdrawal, one transfer to the router), plus 7.1k a winner.
+    ///      - the chunk that routes the day's proceeds: 82k more.
+    ///      The mailbox's own dispatch is outside that reading (it needs a fork).
+    ///      `ClearingRelayMailboxGas.t.sol` prices a send at ~157k against the canonical mailbox,
+    ///      and production runs one hub hop more. So the routing part carries 170k for it. Every
+    ///      part then takes a 1.3x margin.
     uint256 internal constant REFUND_BASE = 207_000;
     uint256 internal constant REFUND_SETTLE_BASE = 110_000;
     uint256 internal constant REFUND_PER_ITEM = 9_250;
@@ -106,7 +113,7 @@ library IntexGas {
         return DAILY_VWAP_BASE + rowCount * DAILY_VWAP_PER_ROW;
     }
 
-    /// @param winnerCount Winners the chunk carries; zero for the chunk that only closes a day.
+    /// @param winnerCount Winners the chunk carries. Zero for the chunk that only closes a day.
     /// @param routesProceeds Whether this chunk sends the day's proceeds home.
     function refund(uint256 winnerCount, bool routesProceeds) internal pure returns (uint256) {
         return REFUND_BASE + (winnerCount == 0 ? 0 : REFUND_SETTLE_BASE + winnerCount * REFUND_PER_ITEM)

@@ -184,7 +184,7 @@ fn config_max_validators_cannot_exceed_consensus_bound() {
 #[test]
 fn production_validator_set_selector_allow_list_is_exact() {
     // Explicit public signatures pin the security boundary independently of
-    // the generated ABI enum; adding any entry requires reviewing this list.
+    // the generated ABI enum. Adding any entry requires reviewing this list.
     let signatures = [
         "getValidators()",
         "getActiveValidators()",
@@ -382,8 +382,8 @@ fn test_register_self_invalid_sig_rejected() {
 }
 
 /// Valid self-registration with correct BLS signature succeeds.
-// the free, permissionless self-registration surface is capped at
-// MAX_SELF_REGISTERED_UNSTAKED; owner registrations bypass the cap.
+// The free, permissionless self-registration surface is capped at
+// MAX_SELF_REGISTERED_UNSTAKED. Owner registrations bypass the cap.
 #[test]
 fn m27_self_registration_capped_owner_bypasses() {
     use crate::runtime::MAX_SELF_REGISTERED_UNSTAKED;

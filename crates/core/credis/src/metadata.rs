@@ -5,7 +5,7 @@ use crate::constants::{TOKEN_DESCRIPTION, TOKEN_NAME};
 use crate::runtime::{effective_state, settlement_deadline};
 use crate::schema::{CredisContract, CredisState, Position};
 
-/// The position's `tokenURI` at block time `now`; accrued interest is evaluated then.
+/// The position's `tokenURI` at block time `now`. It evaluates accrued interest at `now`.
 pub(crate) fn token_uri(position: &Position, now: u64) -> Result<String> {
     let lifecycle = position.lifecycle_state()?;
     let state = match effective_state(position, now)? {

@@ -86,7 +86,7 @@ fn expiry_height(target: &FrozenTarget, grace: u64, before: u64) -> Result<u64> 
 }
 
 /// Missing handles, replacement PIDs, signalled exits and successful exits are
-/// different from the expected production error exit; none can establish halt.
+/// different from the expected production error exit. None can establish halt.
 fn checked_exit(expected: u32, actual: u32, status: Option<ExitStatus>) -> Result<bool> {
     ensure!(
         expected != 0 && expected == actual,
@@ -950,7 +950,7 @@ mod tests {
         let mut header = raw_headers().remove(0);
         header.inner.extra_data = b"OART\xff".to_vec().into();
         assert!(header_witness(&header).is_err());
-        // A boundary record with invalid payload must fail decoding too; it
+        // A boundary record with invalid payload must fail decoding too. It
         // cannot turn into a successfully decoded absence of activation.
         header.inner.extra_data = b"OART\x0b\x02\x00\x00".to_vec().into();
         assert!(header_witness(&header).is_err());

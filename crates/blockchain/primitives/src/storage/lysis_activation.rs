@@ -78,7 +78,7 @@ impl<'frame> CertifiedLysisActivation<'frame> {
     /// produced the terminal permit.
     ///
     /// This method does not itself create effect authority. The private
-    /// terminal permit lives in `outbe-lysis`; callers without a verified
+    /// terminal permit lives in `outbe-lysis`. Callers without a verified
     /// receipt set cannot construct it for the terminal owner API.
     pub fn authorize_terminal_receipt(&mut self) -> Result<()> {
         self.advance(

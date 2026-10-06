@@ -298,7 +298,7 @@ fn recorded_exported_requires_complete_native_export_even_when_entire_job_direct
                     drop(db);
                     let prepared = fixture(&request, Phase::VotingOpen, bind_source);
                     let export = write_export(&layout.ocomp_root, &prepared);
-                    // Baseline is validated through the native read-only composition
+                    // Validate the baseline through the native read-only composition
                     // before deleting any whole per-job public directory.
                     crate::snapshot::validation::ocomp::verify_export_inputs(
                         &layout.ocomp_root,

@@ -10,7 +10,7 @@ import IIntexNFT1155BridgeJson from "../../../contracts/intex/abi-export/IIntexN
 import IOriginRouterJson from "../../../contracts/intex/abi-export/IOriginRouter.json";
 import IERC20Json from "../../../contracts/tokens/abi-export/IERC20.json";
 
-/** contracts/intex exports as `{ contractName, abi }`; the others as a bare array. */
+/** contracts/intex exports as `{ contractName, abi }`. The others export a bare array. */
 const abiOf = (json: unknown): Abi =>
   (Array.isArray(json) ? json : (json as { abi: unknown }).abi) as Abi;
 
@@ -18,16 +18,16 @@ const abiOf = (json: unknown): Abi =>
  * Addresses + ABIs for the Intex tools (auction commit/reveal, escrow, NFT,
  * series registry, cross-chain bridge, settlement/Promis).
  *
- * Intex is cross-chain: the auction + escrow + NFT run on target chains (BSC
- * today, more later); the series ledger (Intex), settlement
- * (IntexFactory) and Promis live on outbe as runtime precompiles. Addresses are
- * embedded constants, keyed by network so a new target chain is an added branch,
- * not a rewrite. The ABI JSON is inlined at build time, never read at runtime.
+ * Intex is cross-chain. The auction + escrow + NFT run on target chains (BSC
+ * today, more later). The series ledger (Intex), settlement (IntexFactory) and
+ * Promis live on outbe as runtime precompiles. Addresses are embedded constants,
+ * keyed by network so a new target chain is an added branch, not a rewrite. The
+ * build inlines the ABI JSON. This module never reads it at runtime.
  *
  * ABIs are generated from Solidity (contracts/{intex,precompiles,tokens}), never
- * hand-written - matching the convention in src/registry.ts. Where a method is
- * only on the concrete contract and not its interface, the concrete artifact is
- * used.
+ * hand-written. This matches the convention in src/registry.ts. Where a method is
+ * only on the concrete contract and not on its interface, this module uses the
+ * concrete artifact.
  */
 
 export interface NetworkDef {
@@ -62,7 +62,7 @@ const a = (s: string): Address => getAddress(s);
 export const OUTBE = "outbe-testnet";
 
 // The app contracts are CREATE3 proxies (salt "outbe-intex:<Name>:v5.0.0"), so
-// each one shares a single address on every chain; only the wCOEN payment token
+// each one shares a single address on every chain. Only the wCOEN payment token
 // is a per-chain deployment. Networks gate availability, addresses do not.
 const APP = {
   auction: a("0x66F0377e4dCbf4df50134eAf147b2B305AE86813"),
@@ -91,9 +91,10 @@ const PAYMENT_TOKEN: Record<string, Address> = {
   "bsc-testnet": a("0x2FCC92D751086AFeECEaE0f3AC133B27E8F0D57c"),
 };
 
-/** Block the NFT pair was deployed at, per network. Holdings are read from transfer logs, and the
- *  scan starts here: an unset network scans from genesis, which public RPCs range-limit. Fill this
- *  in when the pair is deployed - recovering a deployment block afterwards needs archive state. */
+/** Block the NFT pair was deployed at, per network. The tools read holdings from transfer logs,
+ *  and the scan starts here. An unset network scans from genesis, which public RPCs range-limit.
+ *  Fill this in when the pair is deployed. Recovering a deployment block afterwards needs archive
+ *  state. */
 const NFT_DEPLOY_BLOCK: Record<string, bigint> = {};
 
 /** First block worth scanning for this network's NFT transfer logs. */
