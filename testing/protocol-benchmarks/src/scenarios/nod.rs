@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
+use outbe_compressed_entities::{begin_block, ExecutionReaders, ExecutionScope, WwdEntityId};
 use outbe_nod::{NodContract, NodIssueParams};
 use outbe_ocomp_protocol::{
     list::{ordered_list_root, streaming_ordered_list_membership_proof, OrderedListLimits},
@@ -366,8 +366,10 @@ fn measure_certified(prepared: &PreparedNod) -> Result<Observation, String> {
         completed = StorageHandle::enter(&mut provider, |storage| {
             outbe_nodfactory::api::materialize_certified_nods(
                 &storage,
-                &scope,
-                &EmptyParentBodies,
+                ExecutionReaders {
+                    scope: &scope,
+                    parent: &EmptyParentBodies,
+                },
                 Address::repeat_byte(0x42),
                 batch,
                 &poc_schema_limits(),

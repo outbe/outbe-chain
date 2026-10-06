@@ -1,7 +1,7 @@
 //! Cross-module NodFactory API.
 
 use alloy_primitives::{Address, U256};
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
+use outbe_compressed_entities::{ExecutionReaders, ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_nod::schema::NodIssueParams;
 use outbe_ocomp_protocol::{nod_materialization::NodMaterializationBatchV1, SchemaLimits};
 use outbe_primitives::{error::Result, storage::StorageHandle};
@@ -34,8 +34,7 @@ pub fn mine_gratis(
 /// Authorizes and atomically applies one canonical certified-NOD batch.
 pub fn materialize_certified_nods(
     storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
+    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     caller: Address,
     batch: &NodMaterializationBatchV1,
     limits: &SchemaLimits,
@@ -49,7 +48,7 @@ pub fn materialize_certified_nods(
             outbe_chain_constants::get_nod_materialization_max_attempts_per_block(),
     };
     crate::materialization::materialize_certified_nods_authorized(
-        storage, scope, parent, batch, profile, limits,
+        storage, readers, batch, profile, limits,
     )
 }
 

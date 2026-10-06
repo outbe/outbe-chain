@@ -189,7 +189,11 @@ fn dispatch_materialization(
                     ))
                 })?;
         crate::materialization::materialize_after_attempt(
-            &storage, scope, parent, &batch, profile, &limits,
+            &storage,
+            ExecutionReaders { scope, parent },
+            &batch,
+            profile,
+            &limits,
         )
         .map_err(crate::materialization::typed_materialization_error)?;
         Ok(Bytes::new())
