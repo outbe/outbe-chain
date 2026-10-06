@@ -215,21 +215,15 @@ impl GemContract<'_> {
         Ok(true)
     }
 
-    fn place_in_expiry_hour(&mut self, gem_id: U256, day: u32) -> Result<()> {
-        let slot = self.expiry_bucket_len.read(&day)?;
-        self.expiry_bucket_at
-            .write(&Self::hour_slot_key(day, slot), gem_id)?;
-        self.expiry_bucket_len.write(&day, slot.saturating_add(1))?;
-        self.called_bucket_slot
-            .write(&gem_id, Self::packed_slot(day, slot))?;
-
-        let live = self.expiry_bucket_live.read(&day)?;
-        self.expiry_bucket_live
-            .write(&day, live.saturating_add(1))?;
-        if live == 0 {
-            tree_math::add(&ExpiryDayTree(&*self), day)?;
-        }
-        Ok(())
+    outbe_common::expiry_queue_placement! {
+        fn place_in_expiry_hour(entry: U256);
+        len: expiry_bucket_len,
+        at: expiry_bucket_at,
+        slot_key: Self::hour_slot_key,
+        slot_of: called_bucket_slot,
+        packed_slot: Self::packed_slot,
+        live: expiry_bucket_live,
+        tree: ExpiryDayTree,
     }
 
     pub(crate) fn remove_called(&mut self, gem_id: U256) -> Result<()> {

@@ -214,21 +214,15 @@ impl IntexFactoryContract<'_> {
         self.place_in_expiry_bucket(key, day)
     }
 
-    fn place_in_expiry_bucket(&mut self, key: u64, day: u32) -> Result<()> {
-        let slot = self.expiry_bucket_len.read(&day)?;
-        self.expiry_bucket_at
-            .write(&Self::bucket_slot_key(day, slot), key)?;
-        self.expiry_bucket_len.write(&day, slot.saturating_add(1))?;
-        self.called_group_slot
-            .write(&key, Self::packed_slot(day, slot))?;
-
-        let live = self.expiry_bucket_live.read(&day)?;
-        self.expiry_bucket_live
-            .write(&day, live.saturating_add(1))?;
-        if live == 0 {
-            tree_math::add(&ExpiryDayTree(&*self), day)?;
-        }
-        Ok(())
+    outbe_common::expiry_queue_placement! {
+        fn place_in_expiry_bucket(entry: u64);
+        len: expiry_bucket_len,
+        at: expiry_bucket_at,
+        slot_key: Self::bucket_slot_key,
+        slot_of: called_group_slot,
+        packed_slot: Self::packed_slot,
+        live: expiry_bucket_live,
+        tree: ExpiryDayTree,
     }
 
     /// Hour since the epoch a deadline falls in: plain UTC, not a WorldwideDay.
