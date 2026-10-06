@@ -28,6 +28,7 @@ fn structural_verifier_produces_one_closed_four_owner_plan() {
             &fixture.payload,
             &fixture.result,
             &fixture.limits,
+            fixture.nod_issued_at,
         )
         .unwrap();
 
@@ -47,6 +48,11 @@ fn structural_verifier_produces_one_closed_four_owner_plan() {
                 .unwrap(),
             plan.request_limit_split_receipt_hash()
         );
+        assert_ne!(
+            fixture.nod_issued_at,
+            fixture.intent.logical_evaluation_time
+        );
+        assert_eq!(plan.nod().issued_at(), fixture.nod_issued_at);
         assert_eq!(plan.nod().nod_root(), fixture.result.roots.nod_root);
         assert_eq!(plan.nod().bucket_root(), fixture.result.roots.bucket_root);
         assert_eq!(
@@ -81,6 +87,7 @@ fn structural_verifier_rejects_result_and_completion_rebinding() {
         &wrong_job.activation_payload(&fixture.limits).unwrap(),
         &wrong_job,
         &fixture.limits,
+        fixture.nod_issued_at,
     )
     .is_err());
 
@@ -97,6 +104,7 @@ fn structural_verifier_rejects_result_and_completion_rebinding() {
             .unwrap(),
         &wrong_completion,
         &fixture.limits,
+        fixture.nod_issued_at,
     )
     .is_err());
 
@@ -113,6 +121,7 @@ fn structural_verifier_rejects_result_and_completion_rebinding() {
         &payload,
         &wrong_contributor_total,
         &fixture.limits,
+        fixture.nod_issued_at,
     )
     .is_err());
 
@@ -125,6 +134,7 @@ fn structural_verifier_rejects_result_and_completion_rebinding() {
         &payload_rebinding,
         &fixture.result,
         &fixture.limits,
+        fixture.nod_issued_at,
     )
     .is_err());
 }
@@ -207,6 +217,7 @@ fn receipt_verifier_closes_green_and_red_conservation_equations() {
             &fixture.payload,
             &fixture.result,
             &fixture.limits,
+            fixture.nod_issued_at,
         )
         .unwrap();
         let receipts = owner_receipts(&plan, &fixture.limits);
@@ -241,6 +252,7 @@ fn structural_verifier_rejects_nonzero_attempt_or_pending_nonce() {
             &fixture.payload,
             &fixture.result,
             &fixture.limits,
+            fixture.nod_issued_at,
         );
         assert!(matches!(
             result,
@@ -273,6 +285,7 @@ fn receipt_verifier_rejects_a_budget_effect_with_a_future_nonce_or_anchor() {
         &nonce_fixture.payload,
         &nonce_fixture.result,
         &nonce_fixture.limits,
+        nonce_fixture.nod_issued_at,
     )
     .unwrap();
     assert!(verify_receipts(
@@ -314,6 +327,7 @@ fn receipt_verifier_rejects_a_budget_effect_with_a_future_nonce_or_anchor() {
         &anchor_fixture.payload,
         &anchor_fixture.result,
         &anchor_fixture.limits,
+        anchor_fixture.nod_issued_at,
     )
     .unwrap();
     assert!(verify_receipts(
@@ -335,6 +349,7 @@ fn receipt_verifier_rejects_owner_projection_and_request_mutations() {
         &fixture.payload,
         &fixture.result,
         &fixture.limits,
+        fixture.nod_issued_at,
     )
     .unwrap();
     let receipts = owner_receipts(&plan, &fixture.limits);
@@ -461,6 +476,7 @@ fn assert_result_rejected(
         payload,
         result,
         &fixture.limits,
+        fixture.nod_issued_at,
     )
     .is_err());
 }
@@ -550,4 +566,23 @@ fn owner_receipts(
             .unwrap(),
         },
     }
+}
+
+#[test]
+fn nod_issuance_instant_rejects_zero() {
+    let fixture = activation_fixture(DayType::Green);
+    let error = verify_result(
+        fixture.intent_id,
+        fixture.job_id,
+        &fixture.intent,
+        &fixture.payload,
+        &fixture.result,
+        &fixture.limits,
+        0,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        outbe_ocomp_protocol::ProtocolError::InvalidInvariant("Lysis Nod issuance instant")
+    ));
 }
