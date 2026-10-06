@@ -302,7 +302,7 @@ impl Vote<'_> {
         Ok(())
     }
 
-    /// Tally proposals whose voting windows have closed.
+    /// Tallies proposals whose voting windows are closed.
     ///
     /// Transitions `Pending` -> `Approved` | `Expired` | `Error`, all terminal.
     /// Dispatches the tally outcome to the registered target-module handler in
@@ -322,8 +322,8 @@ impl Vote<'_> {
                 ProposalStatus::Pending if block_number > proposal.voting_deadline_height => {
                     self.finalize_voting(ctx, proposal_id, registry)?;
                 }
-                // Persisted by a previous binary, which left an Error proposal in
-                // the pending vector with its bond unsettled. Release it once.
+                // An earlier binary persisted this Error proposal in the pending
+                // vector and left its bond unsettled. Release it once.
                 ProposalStatus::Error => {
                     self.settle_legacy_error(proposal_id, proposal.proposer)?;
                 }
@@ -337,10 +337,10 @@ impl Vote<'_> {
     }
 
     /// Closes an Error proposal that an earlier binary left in the pending
-    /// vector: it leaves the bounded pending caps and its still-escrowed bond
-    /// is refunded exactly once. The target is not executed again and no
-    /// finalization is announced; the pending-vector walk is already bounded
-    /// by the admission caps.
+    /// vector. The proposal leaves the bounded pending caps, and this function
+    /// refunds its still-escrowed bond exactly once. This function does not
+    /// execute the target again and does not announce a finalization. The
+    /// admission caps already bound the pending-vector walk.
     fn settle_legacy_error(&mut self, proposal_id: U256, proposer: Address) -> Result<()> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
@@ -400,9 +400,10 @@ impl Vote<'_> {
                 };
                 (status, outcome)
             }
-            // A target-declared execution failure: its effects are dropped with
-            // the target checkpoint, the proposal is terminal in `Error`, and
-            // the proposer's bond is refunded in full exactly once below.
+            // A target-declared execution failure. Dropping the target checkpoint
+            // drops the effects of the failure. The proposal is terminal in
+            // `Error`. The code below refunds the proposer's bond in full
+            // exactly once.
             TargetExecutionOutcome::Error { reason: _ } => {
                 drop(target_checkpoint);
                 (ProposalStatus::Error, ProposalFinalization::Error)
@@ -435,7 +436,7 @@ impl Vote<'_> {
 
         match status {
             // Approved and target-execution Error both return the escrow to the
-            // proposer once; only an expired vote burns it.
+            // proposer once. Only an expired vote burns it.
             ProposalStatus::Approved | ProposalStatus::Error => {
                 self.storage
                     .transfer_balance(VOTE_ADDRESS, owner, bond.amount)?;

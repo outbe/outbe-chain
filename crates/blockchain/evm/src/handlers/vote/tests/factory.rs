@@ -254,7 +254,7 @@ fn pfs_010_06_execution_error_refunds_bond_once_and_retains_reservation() {
                 .unwrap(),
             ProposalStatus::Error
         );
-        // The bond is refunded once and the liability closed; the
+        // Vote refunds the bond once and closes the liability. The
         // target-owned reservation is admission state and stays.
         assert_eq!(
             vote.proposal_bond(proposal_id).unwrap().settlement,
