@@ -1,12 +1,14 @@
 //! Full-DKG failure-class tests for the metadata-bound `verify_v2_proof` entry
 //! (audit-001 closure).
 //!
-//! Each test builds a real DKG fixture, constructs a real BLS-signed
-//! `HybridCertificate` against the bytes the metadata-bound verifier
-//! derives internally (`Proposal::encode()` vote message under
-//! `finalize_namespace`, `Round::encode()` seed message under
-//! `hybrid_seed_namespace`), injects exactly one defect, and
-//! asserts the exact `V2VerifyError` variant.
+//! Each test does these steps:
+//! 1. Build a real DKG fixture.
+//! 2. Construct a real BLS-signed `HybridCertificate` against the bytes the
+//!    metadata-bound verifier derives internally (`Proposal::encode()` vote
+//!    message under `finalize_namespace`, `Round::encode()` seed message under
+//!    `hybrid_seed_namespace`).
+//! 3. Inject exactly one defect.
+//! 4. Assert the exact `V2VerifyError` variant.
 //!
 //! Implements the 13.rs` deferred
 //! because they required real signed certificates. Combined with the 20
@@ -146,8 +148,8 @@ fn build_cert(
     .unwrap();
 
     let (_, vote_message, seed_message) = proposal_bytes(parent_hash);
-    // vote namespaces bind the ordered committee; build the canonical `Set`
-    // from the full DKG committee (matches what the verifier rebuilds).
+    // Vote namespaces bind the ordered committee. Build the canonical `Set`
+    // from the full DKG committee (this matches what the verifier rebuilds).
     let committee_set: commonware_utils::ordered::Set<PublicKey> =
         commonware_utils::ordered::Set::from_iter_dedup(dkg.keys.iter().map(|k| k.public_key()));
     let namespace = match proof_kind {
@@ -240,7 +242,7 @@ fn is_non_envelope_wire_error(err: &V2VerifyError) -> bool {
 #[test]
 fn cluster_happy_path_quorum_certificate_verifies() {
     // Baseline: real cert against real metadata + snapshot -> verify_v2_proof
-    // returns Ok. Proves the fixture is well-formed; any failure-class test
+    // returns Ok. This proves the fixture is well-formed. Any failure-class test
     // that adjusts ONE field can attribute the rejection to that change.
     let dkg = build_dkg(4);
     let snapshot = build_snapshot(&dkg);
@@ -353,8 +355,8 @@ fn assembled_finalization_passes_hybrid_and_phase1_verification() {
 
 #[test]
 fn wrong_bls_domain_rejects() {
-    // Sign votes under the WRONG namespace; the metadata-bound verifier
-    // derives `finalize_namespace` internally and the aggregate
+    // Sign votes under the WRONG namespace. The metadata-bound verifier
+    // derives `finalize_namespace` internally, and the aggregate
     // verify fails.
     let dkg = build_dkg(4);
     let snapshot = build_snapshot(&dkg);
@@ -400,7 +402,7 @@ fn wrong_bls_domain_rejects() {
 fn proof_trailing_bytes_rejects() {
     // Append a trailing byte after the canonical HybridCertificate body.
     // The proof-bytes-equal-metadata.proof check fires first (since
-    // we must update the metadata.proof to match), then the inner
+    // we must update the metadata.proof to match). Then the inner
     // decoder sees trailing bytes.
     let dkg = build_dkg(4);
     let snapshot = build_snapshot(&dkg);
@@ -429,8 +431,8 @@ fn proof_trailing_bytes_rejects() {
 
 #[test]
 fn proof_codec_wrong_committee_size_rejects() {
-    // Cert built for 4 participants, snapshot has 3 -> metadata.ordered_committee
-    // length mismatch with snapshot.committee length triggers BitmapMismatch
+    // Cert built for 4 participants, snapshot has 3. The length mismatch between
+    // metadata.ordered_committee and snapshot.committee triggers BitmapMismatch
     // before the inner decoder sees the cert.
     let dkg_4 = build_dkg(4);
     let snapshot_3 = build_snapshot(&build_dkg(3));
@@ -517,9 +519,9 @@ fn hybrid_signer_length_mismatch_rejects() {
 
 #[test]
 fn hybrid_signer_duplicate_or_out_of_range_rejects() {
-    // Build cert; tamper metadata.signer_bitmap to be 1 byte too short.
+    // Build cert. Tamper metadata.signer_bitmap to be 1 byte too short.
     // This is the "signer index out of range / bitmap mismatch" failure
-    // class - the inner decoder + the metadata bitmap reconciliation
+    // class. The inner decoder + the metadata bitmap reconciliation
     // both catch it.
     let dkg = build_dkg(4);
     let snapshot = build_snapshot(&dkg);
@@ -574,8 +576,8 @@ fn signer_bitmap_round_trips_with_hybrid_signers_via_commonware_pk_order() {
     let verified = verify_v2_proof(&metadata, &snapshot, &cert_bytes, parent_hash)
         .expect("happy-path must verify");
     // VerifiedProof.signer_bitmap is the canonical reconstruction from the
-    // cert; equal-to-metadata is enforced by the verifier's bitmap
-    // reconciliation cross-check (BitmapMismatch on inequality).
+    // cert. The verifier's bitmap reconciliation cross-check enforces
+    // equal-to-metadata (BitmapMismatch on inequality).
     assert_eq!(verified.signer_bitmap, metadata.signer_bitmap);
 }
 
@@ -644,8 +646,8 @@ fn wire_level_certificate_without_mandatory_vrf_does_not_decode() {
 #[test]
 fn malformed_vrf_proof_encoding_rejects() {
     // Corrupt the VRF threshold signature bytes inside the encoded cert.
-    // The decoder may accept the bytes (length matches) but the verify
-    // step fails - yielding InvalidVrfSignature.
+    // The decoder may accept the bytes (length matches), but the verify
+    // step fails. This yields InvalidVrfSignature.
     let dkg = build_dkg(4);
     let snapshot = build_snapshot(&dkg);
     let parent_hash = B256::with_last_byte(0xAA);
@@ -668,7 +670,7 @@ fn malformed_vrf_proof_encoding_rejects() {
     );
     let err = verify_v2_proof(&metadata, &snapshot, &cert_bytes, parent_hash)
         .expect_err("malformed VRF proof bytes must reject");
-    // Either decode failure or VRF verify failure - both prove the verifier
+    // Either decode failure or VRF verify failure: both prove the verifier
     // rejected without panic.
     assert!(
         matches!(
@@ -685,9 +687,9 @@ fn malformed_vrf_proof_encoding_rejects() {
 
 #[test]
 fn wrong_vrf_seed_round_rejects() {
-    // Cert built with seed_message = Round(99, 99).encode(); metadata
+    // Cert built with seed_message = Round(99, 99).encode(). Metadata
     // claims (epoch=3, view=100). The verifier derives the seed message
-    // from metadata's round; VRF verify fails because the signature was
+    // from metadata's round. VRF verify fails because the signature was
     // produced over a different seed message.
     let dkg = build_dkg(4);
     let snapshot = build_snapshot(&dkg);
@@ -737,8 +739,8 @@ fn wrong_vrf_seed_round_rejects() {
 #[test]
 fn invalid_vrf_signature_rejects_before_state_change() {
     // Replace threshold signature with one signed under a completely
-    // different namespace; VRF verify fails. Verifier returns Err before
-    // VerifiedProof is constructed -> no state mutation, no proof-less
+    // different namespace. VRF verify fails. The verifier returns Err before
+    // it constructs VerifiedProof -> no state mutation, no proof-less
     // metadata leak ( in spirit, applied at the verifier layer).
     let dkg = build_dkg(4);
     let snapshot = build_snapshot(&dkg);
@@ -795,11 +797,11 @@ fn activity_envelope_notarization_rejected_as_system_tx_proof() {
 
 #[test]
 fn certified_notarization_proof_rejected_for_non_parent_ancestor() {
-    // Cert built for parent_hash X; metadata claims parent_hash Y AND
+    // Cert built for parent_hash X. Metadata claims parent_hash Y AND
     // verifier's header_parent_hash is Y. The proof-bytes-equal-metadata
-    // check passes (we put the cert bytes in metadata.proof), but the
+    // check passes (we put the cert bytes in metadata.proof). But the
     // inner BLS verifier fails because the Proposal payload derived from
-    // metadata uses Y while the cert was signed for X. failure
+    // metadata uses Y, while the cert was signed for X. failure
     // through the BLS aggregate layer.
     let dkg = build_dkg(4);
     let snapshot = build_snapshot(&dkg);

@@ -33,9 +33,9 @@ use crypto::verify_v2_certificate_low_level;
 
 /// Outcome of a successful V2 proof verification.
 ///
-/// All fields are derived from the decoded certificate; none are read from a
-/// `Mutex` or background channel. Callers can copy or persist this without
-/// holding any lock.
+/// The verifier derives all fields from the decoded certificate. It reads none
+/// of them from a `Mutex` or background channel. Callers can copy or persist
+/// this without holding any lock.
 #[derive(Debug, Clone)]
 pub struct VerifiedProof {
     /// Encoded signer bitmap (`1` = signed, `0` = absent), one byte per
@@ -50,9 +50,9 @@ pub struct VerifiedProof {
     pub vrf_material_version: u64,
 }
 
-// `V2VerifyError` lives in [`crate::error`]. The enum
-// was split out so the variant taxonomy is the single source
-// of truth for both the verifier and the downstream evidence wrappers.
+// `V2VerifyError` lives in [`crate::error`]. The enum is in a separate module
+// so that its variant taxonomy is the single source of truth for both the
+// verifier and the downstream evidence wrappers.
 
 /// Reason why a vote subject is required by the verifier.
 ///
@@ -66,10 +66,10 @@ pub enum VoteSubject {
 
 /// Borrowed view of the active committee snapshot at the proof's epoch.
 ///
-/// Field shapes are minimal on purpose: the verifier is self-contained and
-/// must not need anything beyond what is required to verify BLS aggregate
+/// Field shapes are minimal on purpose. The verifier is self-contained. It
+/// must not need anything beyond what is required to verify the BLS aggregate
 /// vote + threshold VRF. The on-chain persistence lives in
-/// `CommitteeSnapshotStore` slots 31..40 in `ValidatorSet`; the verifier
+/// `CommitteeSnapshotStore` slots 31..40 in `ValidatorSet`. The verifier
 /// only requires this borrowed view.
 #[derive(Debug, Clone, Copy)]
 pub struct CommitteeSnapshotView<'a> {
@@ -104,13 +104,13 @@ pub struct VoteBinding<'a> {
 
 /// Low-level Hybrid certificate verifier.
 ///
-/// Used internally by [`verify_v2_proof`] and retained for the
+/// [`verify_v2_proof`] uses it internally. It is also kept for the
 /// smoke-test fixture that drives the BLS+VRF rules in isolation. Callers
-/// implementing the V2 protocol should use the metadata-bound
-/// [`verify_v2_proof`] instead - it adds the A4 binding rules
+/// that implement the V2 protocol should use the metadata-bound
+/// [`verify_v2_proof`] instead. That function adds the A4 binding rules
 /// (missed_proposers, exact-parent, committee_set_hash, signer-bitmap
 /// reconciliation, VRF material/group-key binding) on top of the structural
-/// + crypto checks performed here.
+/// + crypto checks that this function does.
 ///
 /// ## Rules verified here
 ///
@@ -131,8 +131,9 @@ pub fn verify_v2_proof_low_level(
         &snapshot.participants.len(),
     )
     .map_err(V2VerifyError::Decode)?;
-    // The structural + crypto checks are shared with the metadata-bound path
-    // through the private checker; this public entry adds only the wire decode.
+    // This public entry and the metadata-bound path share the structural +
+    // crypto checks through the private checker. This entry adds only the wire
+    // decode.
     verify_v2_certificate_low_level(snapshot, binding, &cert)
 }
 
@@ -146,12 +147,12 @@ pub const fn simplex_n3f1_quorum(n: usize) -> usize {
 // Metadata-bound public verifier
 // =============================================================================
 
-/// self-contained V2 verifier. Verifies a Hybrid finalization /
+/// Self-contained V2 verifier. Verifies a Hybrid finalization /
 /// certified-notarization certificate against the proposer-claimed
 /// [`CertifiedParentAccountingMetadata`], the active [`CommitteeSnapshot`],
 /// and the block-header parent hash. Returns the canonical
-/// [`VerifiedProof`] on success; otherwise a precise [`V2VerifyError`]
-/// matching the violated rule.
+/// [`VerifiedProof`] on success. Otherwise returns a precise [`V2VerifyError`]
+/// that matches the violated rule.
 ///
 /// ## Rules verified
 ///
@@ -185,7 +186,7 @@ pub const fn simplex_n3f1_quorum(n: usize) -> usize {
 ///
 /// `verify_v2_proof` is a synchronous pure function. It does not read
 /// wall-clock time, OS entropy, network state, or any process-local mutable
-/// state - same inputs produce the same `Result`, byte-deterministically
+/// state. The same inputs produce the same `Result`, byte-deterministically
 /// within the installed chain namespace (proptest
 /// `verifier_outcome_deterministic_from_parent_state_and_body`).
 pub fn verify_v2_proof(

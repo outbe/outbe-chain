@@ -1,8 +1,8 @@
 //! Settlement statement bound into a PayNote spend proof.
 //!
 //! The circuit treats `context` as an opaque non-zero field. This module is the
-//! only place that defines what that field means: the canonical BN254 element of
-//! `keccak256(domain || target || units || snapshot)`.
+//! only place that defines what that field means. The field is the canonical
+//! BN254 element of `keccak256(domain || target || units || snapshot)`.
 
 use alloy_primitives::{keccak256, Address, B256, U256};
 use ark_ff::Zero;
@@ -21,7 +21,7 @@ pub enum SettlementDomain {
 }
 
 /// One owner's units of an Intex series, `keccak256(abi.encodePacked(bytes14 seriesId,
-/// address owner))`: a series has many owners, so the series alone names no one's units.
+/// address owner))`. A series has many owners, so the series alone names no one's units.
 pub fn intex_holding_target(series_id: &[u8; 14], owner: Address) -> B256 {
     let mut preimage = [0u8; 34];
     preimage[..14].copy_from_slice(series_id);
@@ -44,7 +44,7 @@ fn domain_byte(domain: SettlementDomain) -> u8 {
 /// for an Intex holding. `snapshot` is the quote's VWAP id, or zero on the
 /// reference rail.
 ///
-/// A reduction that lands on zero is a prove-time error: the circuit rejects it,
+/// A reduction that lands on zero is a prove-time error. The circuit rejects it,
 /// so a caller must not attempt to bind that statement.
 pub fn settlement_context(
     domain: SettlementDomain,

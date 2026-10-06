@@ -1,8 +1,12 @@
 //! Queue mechanics of the lifecycle notices the `intex_drain_notices` trigger sends.
 //!
-//! The router accepts every send unless a test says otherwise, so these pin the
-//! queue walk itself: the chunk bound, the resume point, that a drained entry is
-//! gone, and where a refused one goes.
+//! The router accepts every send unless a test says otherwise. So these tests pin
+//! the queue walk itself:
+//!
+//! - the chunk bound
+//! - the resume point
+//! - that a drained entry is gone
+//! - where a refused one goes
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolEvent;

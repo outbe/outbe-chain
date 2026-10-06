@@ -1,8 +1,8 @@
 //! Wire-codec types for the Outbe Hybrid certificate.
 //!
-//! The codec format is part of the V2 consensus protocol surface: every byte
-//! is observed by gossip, block header `extra_data` (via
-//! `OutbeBlockArtifacts`), and the marshal archive. This clean-genesis format
+//! The codec format is part of the V2 consensus protocol surface. Gossip, block
+//! header `extra_data` (via `OutbeBlockArtifacts`), and the marshal archive
+//! observe every byte. This clean-genesis format
 //! makes the threshold VRF proof structurally mandatory.
 //!
 //! Layout (encoded with `commonware-codec`):

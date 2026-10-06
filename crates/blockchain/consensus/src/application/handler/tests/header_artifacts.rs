@@ -22,9 +22,9 @@ fn header_fixture_deps<'a, A: crate::dkg_manager::AncestryReader>(
 const OUTSIDER: Address = address!("0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead");
 
 // `valid_metadata_with_supplemental_finalize_vote` and the
-// V1 supplemental-finalize-vote tests below are retired. V2 contract
+// V1 supplemental-finalize-vote tests below are retired. The V2 contract
 // uses the certificate's own signer bitmap as the sole participation
-// input; there is no supplemental-vote bitmap-extension path to test.
+// input. No supplemental-vote bitmap-extension path exists to test.
 
 fn valid_metadata() -> (
     CertifiedParentAccountingMetadata,
@@ -144,8 +144,8 @@ fn finalized_parent_sentinel_metadata_is_rejected_when_present() {
 // `supplemental_finalize_vote_extends_signer_bitmap` and
 // `supplemental_finalize_vote_is_required_for_extended_bitmap` were
 // V1-only tests of the legacy `build_signer_bitmap_with_finalize_votes`
-// reconciliation. Under V2 the certificate's own bitmap is authoritative;
-// these tests are retired in lockstep with the helper they exercised.
+// reconciliation. Under V2 the certificate's own bitmap is authoritative.
+// These tests are retired in lockstep with the helper they exercised.
 
 #[test]
 fn mismatched_ordered_committee_is_rejected() {
@@ -344,7 +344,7 @@ async fn dealer_log_header_artifact_rejects_wrong_ceremony() {
 //
 // A parent that already carries the pending epoch boundary puts the verifier in
 // `AlreadyCommitted`. Every artifact a block carries there must still pass the
-// same admission rule as in `NoPending`; a pre-announce is only admissible for
+// same admission rule as in `NoPending`. A pre-announce is only admissible for
 // the direct successor epoch and only with this node's own reconstructed outcome.
 
 fn boundary_for_epoch(
@@ -582,9 +582,9 @@ async fn no_pending_accepts_successor_preannounce() {
     .is_ok());
 }
 
-/// Block 1 without the genesis `BoundaryOutcome` is already rejected by the
-/// system-tx set rule, before header-artifact admission runs; this pins that the
-/// admission table needs no separate height-1 row.
+/// The system-tx set rule already rejects block 1 without the genesis
+/// `BoundaryOutcome`, before header-artifact admission runs. This test pins that
+/// the admission table needs no separate height-1 row.
 #[tokio::test]
 async fn height_one_without_boundary_is_rejected_by_system_tx_set() {
     let (keys, _participants, _output, _polynomial, _dealer_log) = dkg_runtime_artifacts();

@@ -12,13 +12,13 @@
 //!   upstream ([`FinalizedSource`]) and delivers the concatenated
 //!   `(Finalization, ConsensusBlock)` bytes, which the marshal decodes and
 //!   verifies against the epoch committee.
-//! * `Request::Notarized { .. }` -> ignored (the follower only consumes finalized
-//!   data; notarizations are a validator-internal concern).
+//! * `Request::Notarized { .. }` -> ignored. The follower only consumes finalized
+//!   data, and notarizations are a validator-internal concern.
 //!
 //! **Actor + mailbox split.** The runtime's `Context` is not `Clone`, but the
 //! marshal requires the resolver it holds to be `Clone`. So the spawnable half
-//! (which owns the context + sources) is a [`ResolverActor`] spawned once, and
-//! the marshal-facing half is [`FollowResolver`] - a cheap `Clone` mailbox that
+//! (which owns the context + sources) is a [`ResolverActor`] spawned once. The
+//! marshal-facing half is [`FollowResolver`], a cheap `Clone` mailbox that
 //! forwards each fetch to the actor over an unbounded channel. This mirrors the
 //! p2p resolver's `Engine` + `Mailbox` shape.
 //!
@@ -68,8 +68,8 @@ pub(super) struct ResolverActor<E, F, L> {
     upstream: F,
     local: L,
     /// Shared committee-chaining verifier. A finalized fetch is independently
-    /// authenticated before any pre-announce or boundary observation is applied;
-    /// the marshal then verifies the same certificate again on delivery.
+    /// authenticated before any pre-announce or boundary observation is applied.
+    /// The marshal then verifies the same certificate again on delivery.
     chain: SharedCommitteeChain,
     /// Shared authenticated height-to-epoch map used by the marshal.
     epocher: FollowerEpocher,
@@ -193,11 +193,11 @@ impl Resolver for FollowResolver {
         &mut self,
         _predicate: impl Fn(&Self::Key, &Self::Subscriber) -> bool + Send + 'static,
     ) -> Feedback {
-        // Each fetch is a fire-and-forget task that either delivers or drops;
-        // there is no persistent in-flight request table to prune. A task whose
-        // height is already processed has its delivery ignored by the marshal as
-        // stale, so retain is a no-op. (A cancellation table can be added later
-        // if long gaps prove too chatty; it is not required for correctness.)
+        // Each fetch is a fire-and-forget task that either delivers or drops.
+        // There is no persistent in-flight request table to prune. The marshal
+        // ignores a delivery as stale when its height is already processed, so
+        // retain is a no-op. (A cancellation table can be added later if long
+        // gaps prove too chatty. It is not required for correctness.)
         Feedback::Ok
     }
 }
@@ -210,7 +210,7 @@ impl TargetedResolver for FollowResolver {
         fetch: impl Into<Fetch<Self::Key, Self::Subscriber>> + Send,
         _targets: NonEmptyVec<bls12381::PublicKey>,
     ) -> Feedback {
-        // The follower has a single upstream; target hints (which consensus peer
+        // The follower has a single upstream. Target hints (which consensus peer
         // to ask) are meaningless here. Resolve from the upstream/EL regardless.
         self.enqueue(fetch.into())
     }

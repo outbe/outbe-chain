@@ -529,8 +529,8 @@ fn validate_audit_page(
     Ok(())
 }
 
-/// At most one native bounded page is retained. Only an absent continuation
-/// ends scanning; adapters may return a short page because of byte limits.
+/// The iterator retains at most one native bounded page. Only an absent continuation
+/// ends scanning. Adapters may return a short page because of byte limits.
 struct NodAuditEntries<'a> {
     storage: &'a StorageReaderHandle,
     namespace: Namespace,
@@ -630,7 +630,7 @@ pub struct NodRepositoryWriter {
 impl NodRepositoryWriter {
     /// Creates a writer. Both handles must address the same adapter instance.
     ///
-    /// The read handle is required for replacement and deletion.
+    /// Replacement and deletion require the read handle.
     #[must_use]
     pub fn new(reader: StorageReaderHandle, writer: StorageWriterHandle) -> Self {
         Self {

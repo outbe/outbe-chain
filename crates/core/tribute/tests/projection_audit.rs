@@ -475,7 +475,7 @@ fn retained_conflicting_valid_commitments_fail_across_spill_runs() {
         )
         .unwrap();
     assert_eq!(rows(&storage, RETAINED).len(), 5);
-    // Both bodies have valid native commitments; uniqueness is the failing invariant.
+    // Both bodies have valid native commitments. Uniqueness is the failing invariant.
     let dir = tempfile::tempdir().unwrap();
     let work = CeAuditWork::create(
         dir.path().join("audit"),

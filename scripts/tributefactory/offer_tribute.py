@@ -9,13 +9,14 @@ Required inputs:
 - --zk-proof / --zk-merkle-root / --signature / --chain-id / --version
 - --tribute-draft-id / --su-hash / --amount-base (the proof-bound draft fields)
 
-The HKDF salt is the fixed protocol constant `outbe_tee::OFFER_HKDF_SALT`; env
+The HKDF salt is the fixed protocol constant `outbe_tee::OFFER_HKDF_SALT`. Env
 TEE_SALT is optional and only overrides it for testing. ZK verification is
-mandatory: the proof is produced on the L2 and passed through unchanged (as are
-its root and BLS signature) - empty `0x` values are accepted only as a deliberate
-negative offer that the node rejects. The draft id, SU hashes, amount and day
-must be the values the proof and the caller's registered L2 attestation bind: the
-enclave folds them into the `nft_hash` the node checks against the proof.
+mandatory. The L2 produces the proof. This script sends the proof, its root and
+its BLS signature without changes. The script accepts empty `0x` values
+only as a deliberate negative offer that the node rejects. The draft id, SU hashes,
+amount and day must be the values the proof and the caller's registered L2
+attestation bind. The enclave folds them into the `nft_hash` that the node checks
+against the proof.
 
 Dependencies:
 - cast (Foundry)
@@ -105,7 +106,7 @@ def hex_bytes_arg(value: str) -> bytes:
 
 
 def hex32_arg(value: str) -> bytes:
-    """`0x`-hex of exactly 32 bytes - the enclave parses these as B256."""
+    """`0x`-hex of exactly 32 bytes. The enclave parses these as B256."""
     data = hex_bytes_arg(value)
     if len(data) != 32:
         raise argparse.ArgumentTypeError("must be exactly 32 bytes of 0x-hex")
@@ -133,10 +134,10 @@ def load_hex_env(name: str, expected_len: int) -> bytes:
     return data
 
 
-# Fixed, public HKDF salt for the tribute offer encryption key - the canonical
+# Fixed, public HKDF salt for the tribute offer encryption key. It is the canonical
 # protocol constant `outbe_tee::OFFER_HKDF_SALT` (ASCII "outbe/tribute/offer-salt/v1",
 # zero-padded to 32 bytes). It is the same for every enclave and client (an HKDF
-# salt is not secret); clients use this exact value, so TEE_SALT is optional and
+# salt is not secret). Clients use this exact value, so TEE_SALT is optional and
 # only needed to override it for testing.
 OFFER_HKDF_SALT = b"outbe/tribute/offer-salt/v1".ljust(32, b"\0")
 

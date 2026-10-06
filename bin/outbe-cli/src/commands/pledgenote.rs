@@ -22,7 +22,7 @@ use zeroize::Zeroizing;
 
 #[derive(Subcommand)]
 pub enum PledgeNoteCmd {
-    /// Prepare a note before pledgeGratis; modify_key_file contains a 32-byte hex key.
+    /// Prepare a note before pledgeGratis. modify_key_file contains a 32-byte hex key.
     Prepare {
         owner: Address,
         #[arg(value_parser = parse_amount)]
@@ -30,7 +30,7 @@ pub enum PledgeNoteCmd {
         nonce: u64,
         modify_key_file: PathBuf,
     },
-    /// Generate a proof bound to the exact stored reservation; retain its return key.
+    /// Generate a proof bound to the exact stored reservation. Retain its return key.
     IssueProof { note: PathBuf, reservation_id: U256 },
     /// Generate a withdrawal proof paying the note's original owner.
     UnpledgeProof {
@@ -106,7 +106,8 @@ impl PledgeNoteCmd {
                     .change(r.gratisMinor)?
                     .map(|n| save_note(dir, &n))
                     .transpose()?;
-                // Persist the input and context before exposing a usable proof. They recover every return note.
+                // Persist the input and context before exposing a usable proof.
+                // They recover every return note.
                 let path = save_json(
                     dir,
                     &format!(
@@ -191,7 +192,7 @@ async fn read_tree(rpc: &impl Rpc, chain_id: u64) -> Result<outbe_zk_canonical::
     let tag = format!("0x{head:x}");
     let mut tree = client::new_tree(chain_id)?;
     let mut from = 0u64;
-    // ponytail: scan all note events, cache the tree when pool history becomes costly.
+    // ponytail: scan all note events. Cache the tree when pool history becomes costly.
     loop {
         let to = from.saturating_add(999u64).min(head);
         let logs = rpc

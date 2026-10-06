@@ -332,7 +332,7 @@ impl CapacityRunBindingV1 {
     }
 }
 
-/// One cold public-path observation. A failed run stays failed; it cannot be
+/// One cold public-path observation. A failed run stays failed. It cannot be
 /// retried away or replaced by another ordinal.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -526,8 +526,8 @@ pub fn worker_shard_count(
 }
 
 /// Deterministic worst-case work reserved by one public result-vote
-/// transaction. Every vote is admitted as potentially q-forming, so the
-/// formula includes the four atomic root transitions and the current
+/// transaction. Every vote is admitted as potentially q-forming. For this
+/// reason, the formula includes the four atomic root transitions and the current
 /// validator's signature verification before any state-dependent branching.
 pub fn result_vote_internal_work(
     canonical_vote_bytes: usize,

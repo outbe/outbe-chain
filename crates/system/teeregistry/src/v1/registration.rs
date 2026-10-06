@@ -89,9 +89,9 @@ impl TeeRegistry<'_> {
     }
 
     /// Writes the independently authorized address-to-NodeHost association as
-    /// the second half of initial registration. ValidatorSet membership is not
-    /// consulted: key possession is not a validator role, and the ordinary
-    /// ValidatorSet lifecycle remains the sole owner of that role.
+    /// the second half of initial registration. This function does not consult
+    /// ValidatorSet membership. Key possession is not a validator role. The
+    /// ordinary ValidatorSet lifecycle remains the sole owner of that role.
     pub(super) fn apply_validator_node_binding_v1(
         &mut self,
         binding: &ValidatorNodeBindingV1,

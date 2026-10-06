@@ -97,7 +97,7 @@ pub(super) fn run(
     // `<consensus_storage>/slashing-journal.jsonl`. The journal
     // captures every SlashIndicator/ValidatorSet state transition
     // in JSONL form and is independent of reth log rotation. If
-    // initialization fails, log a warning and continue - the
+    // initialization fails, log a warning and continue. The
     // journal is best-effort observability and must not block node
     // startup.
     if let Err(error) = outbe_primitives::slashing_journal::init(&consensus_storage) {

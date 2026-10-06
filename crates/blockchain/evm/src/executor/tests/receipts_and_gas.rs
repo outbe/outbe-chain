@@ -969,7 +969,7 @@ fn apply_pre_execution_changes_emits_phase1_slashing_logs_in_system_receipt() {
     ctx.parent_consensus_metadata = Some(metadata.clone());
     let mut executor = config.create_executor(evm, ctx);
 
-    // opt out of Phase 1 `verify_v2_proof` preflight - this
+    // opt out of Phase 1 `verify_v2_proof` preflight. This
     // unit test exercises the slashing log emission path, not the
     // verifier itself, and does not seed a matching committee snapshot.
     super::with_phase1_verify_disabled(|| {
@@ -1029,10 +1029,10 @@ fn apply_pre_execution_changes_emits_phase1_slashing_logs_in_system_receipt() {
     StorageHandle::enter(&mut provider, |storage| {
         let si = outbe_slashindicator::contract::SlashIndicator::new(storage.clone());
         // Voter miss is now counted at the inclusion-window close (N+K), not at
-        // CPA: block 2's CPA leaves voter_miss_count untouched.
+        // CPA. Block 2's CPA leaves voter_miss_count untouched.
         assert_eq!(si.voter_miss_count.read(&absent)?, 0);
-        // Proposer slashing stays at CPA; the missed proposer is JAILED
-        // (felony threshold 1) and its proposer miss recorded.
+        // Proposer slashing stays at CPA. The missed proposer is JAILED
+        // (felony threshold 1), and its proposer miss is recorded.
         assert_eq!(si.proposer_miss_count.read(&absent)?, 1);
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
         let record = vs.get_validator(absent)?.expect("absent validator exists");

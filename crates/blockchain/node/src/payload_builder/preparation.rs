@@ -47,14 +47,14 @@ pub(super) fn prepare(
     let prefinal_extra_data = sanitize_prefinal_outbe_block_artifacts(attributes.extra_data())
         .map_err(PayloadBuilderError::other)?;
 
-    // / / prebuild and sign the Phase 1
-    // (CertifiedParentAccounting) body[0] tx BEFORE the executor enters
-    // `apply_pre_execution_changes`. The same `Recovered` is then handed
-    // to `build_begin_system_txs` for body[0] so the pre-exec commit
-    // witness and the body[0] tx are byte-identical (hash match). For
+    // Prebuild and sign the Phase 1 (CertifiedParentAccounting) body[0] tx
+    // BEFORE the executor enters `apply_pre_execution_changes`. This code then
+    // gives the same `Recovered` to `build_begin_system_txs` for body[0]. Thus
+    // the pre-exec commit witness and the body[0] tx are byte-identical (hash
+    // match). For
     // `block_number <= OutbeProtocolSchedule.genesis_bootstrap_block_number`
-    // (greenfield: block 0 / block 1) the helper returns `None` and
-    // Phase 1 is skipped entirely.
+    // (greenfield: block 0 / block 1), the helper returns `None` and Phase 1
+    // is skipped entirely.
     let prebuilt_phase1_tx = evm_config
         .build_signed_phase1_tx(
             block_number,
@@ -68,10 +68,10 @@ pub(super) fn prepare(
             PayloadBuilderError::Internal(err.into())
         })?;
 
-    // decode the parent's accounted-parent artifact from
-    // `parent_header.extra_data` so the executor has a fallback when the
-    // [`AccountedParentArtifactProvider`] cannot see the parent (e.g.,
-    // unfinalized side-chain whose header hasn't been indexed yet). The
+    // Decode the parent's accounted-parent artifact from
+    // `parent_header.extra_data`. The executor then has a fallback when the
+    // [`AccountedParentArtifactProvider`] cannot see the parent (e.g., an
+    // unfinalized side-chain whose header is not indexed yet). The
     // executor validates this hint against the Phase 1 metadata's
     // `(finalized_block_number, finalized_block_hash)` before accepting it.
     let parent_artifact_hint = decode_outbe_block_artifacts(parent_header.extra_data().as_ref())
@@ -84,19 +84,19 @@ pub(super) fn prepare(
         });
 
     // One-time TEE bootstrap: the consensus thread's TEE DKG coordination
-    // stashes the assembled `TeeBootstrapV2` in the bridge; the proposer
-    // clones it here and injects it into the begin-zone (slice 5.1). Only
-    // the proposer's bridge is read; validators verify the body-carried
+    // stashes the assembled `TeeBootstrapV2` in the bridge. The proposer
+    // clones it here and injects it into the begin-zone (slice 5.1). Only the
+    // proposer reads its bridge. Validators verify the body-carried
     // payload (slice 5.2). Candidate construction is retryable, so a rejected
-    // first candidate must not consume the only copy needed by later views.
+    // first candidate must not consume the only copy that later views need.
     //
     // Guard to block 1 (the fixed `committee_snapshot_block` target): every
     // node stashes its pending payload at startup, but only the block-1
-    // proposer must inject it. Without this guard a node that did not propose
-    // block 1 would still hold its pending payload and inject a stale
-    // `TeeBootstrap` when it later proposes block N > 1 - which the executor
-    // rejects (`committee_snapshot_block` mismatch / already bootstrapped),
-    // stalling that slot.
+    // proposer must inject it. Without this guard, a node that did not propose
+    // block 1 would still hold its pending payload. It would then inject a
+    // stale `TeeBootstrap` when it later proposes block N > 1. The executor
+    // rejects that payload (`committee_snapshot_block` mismatch / already
+    // bootstrapped), and that slot stalls.
     let pending_tee_bootstrap = if block_number == 1 {
         evm_config
             .bridge
@@ -146,8 +146,8 @@ pub(super) fn apply_pre_execution_changes(
         if ce_local_readiness_error(&err) {
             // This attempt raced finalization and cannot use the in-place
             // materialization for its old parent. Report a retryable build
-            // failure: Reth reserves `BuildOutcome::Cancelled` for futures
-            // whose supplied cancel signal actually fired and treats any
+            // failure. Reth reserves `BuildOutcome::Cancelled` for futures
+            // whose supplied cancel signal actually fired. Reth treats any
             // other use as an unreachable invariant violation.
             debug!(target: "payload_builder", %err, "payload exact-parent data is no longer locally available; retrying on the next build tick");
             return Err(PayloadBuilderError::Internal(err.into()));
@@ -188,7 +188,7 @@ impl SystemTransactions {
                 &inputs.prefinal_extra_data,
                 attributes.parent_consensus_metadata().cloned(),
                 attributes.proposer_evm_address(),
-                // reuse the prebuilt body[0] tx
+                // Reuse the prebuilt body[0] tx
                 // byte-for-byte. `build_begin_system_txs` validates
                 // calldata + signer match before substitution.
                 inputs.prebuilt_phase1_tx,

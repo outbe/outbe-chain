@@ -1,14 +1,14 @@
 //! - executor ordering contract.
 //!
-//! Pins the invariant that backs the slashindicator precompile's epoch-lag
-//! admissibility: `ValidatorSet.epoch_number` names the committee that was
-//! actually activated by a certified `BoundaryOutcome`, not the epoch whose
-//! nominal height has merely been reached.
+//! Pins the invariant that backs the epoch-lag admissibility of the
+//! slashindicator precompile. `ValidatorSet.epoch_number` names the committee
+//! that a certified `BoundaryOutcome` actually activated. It does not name the
+//! epoch whose nominal height was merely reached.
 //!
-//! The behaviour test here drives `run_outbe_pre_execution_hooks`
-//! against a primed in-memory storage provider and asserts that reaching the
-//! nominal boundary without carrying a certified `BoundaryOutcome` leaves the
-//! activated epoch untouched. The receipt-visible BoundaryOutcome path owns
+//! The behaviour test here drives `run_outbe_pre_execution_hooks` against a
+//! primed in-memory storage provider. It asserts that the activated epoch stays
+//! untouched when a block reaches the nominal boundary without a certified
+//! `BoundaryOutcome`. The receipt-visible BoundaryOutcome path owns
 //! the later atomic epoch/member/snapshot switch before user transactions.
 
 use alloy_primitives::{Address, U256};
@@ -74,9 +74,9 @@ fn nominal_epoch_boundary_without_certified_outcome_keeps_activated_epoch() {
             "pre-condition: epoch_start_block must be 0 before pre-exec",
         );
 
-        // (2) Drive the pre-execution hook chain. `genesis_validators
-        // = None` because we are well past block 1; the genesis-state
-        // validation branch is gated on `block_number <= 1`.
+        // (2) Drive the pre-execution hook chain. `genesis_validators = None`
+        // because we are well past block 1. The genesis-state validation branch
+        // runs only when `block_number <= 1`.
         let ctx = BlockRuntimeContext::new(
             BlockContext::new(
                 boundary_block,

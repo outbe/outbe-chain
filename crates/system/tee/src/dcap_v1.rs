@@ -178,7 +178,7 @@ pub fn verify_dcap_evidence(
 
 /// Signed Intel collateral time bounds needed by the host renewal scheduler.
 ///
-/// This is deliberately narrower than [`verify_dcap_evidence`]: it validates
+/// This is deliberately narrower than [`verify_dcap_evidence`]. It validates
 /// the canonical TCB-info and QE-identity envelopes under the active policy and
 /// returns only their intersection. Quote acceptance remains consensus work in
 /// the enclave QVL path.

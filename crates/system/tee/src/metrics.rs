@@ -25,7 +25,7 @@ pub(crate) fn record_reconnect(result: &'static str) {
     counter!("outbe_tee_reconnect_total", "result" => result).increment(1);
 }
 
-/// The session generation (bumped on every successful reconnect); a step here
+/// The session generation (bumped on every successful reconnect). A step here
 /// with no node restart marks an enclave-side restart or connection loss.
 pub(crate) fn record_session_generation(generation: u64) {
     // u64 -> f64 is lossless for any realistic reconnect count (< 2^53).

@@ -1,10 +1,10 @@
 //! Shared entrypoint for the enclave binaries.
 //!
 //! Both the production `outbe-tee-enclave` and the dev `outbe-tee-enclave-mock`
-//! binaries are thin shims over [`run`]; the only difference is the [`RunOpts`]
+//! binaries are thin shims over [`run`]. The only difference is the [`RunOpts`]
 //! they pass. Keeping the orchestration here (arg parsing, key init, boot config,
 //! listener selection, serve dispatch) guarantees the two binaries share one code
-//! path - the node always talks to *an* enclave over the same Noise-IK channel.
+//! path. The node always talks to *an* enclave over the same Noise-IK channel.
 //!
 //! `run` returns a process exit code instead of calling `std::process::exit`
 //! directly, so the shims own the single exit point and the body stays testable.
@@ -22,7 +22,7 @@ use crate::seal::EnclaveBootConfig;
 use crate::transport::{serve, serve_tcp};
 use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
 
-/// Per-binary behavior knobs. The production binary uses [`RunOpts::prod`]; the
+/// Per-binary behavior knobs. The production binary uses [`RunOpts::prod`]. The
 /// dev mock binary has its feature-gated constructor. The private field prevents
 /// an external production caller from selecting development behavior.
 #[derive(Clone, Copy, Debug)]
@@ -167,7 +167,7 @@ pub fn run(opts: RunOpts) -> i32 {
         }
     };
 
-    // Seal/unseal boot configuration. Production requires it; an explicitly
+    // Seal/unseal boot configuration. Production requires it. An explicitly
     // selected development process may omit it and starts as a fresh keyless
     // identity on its separate chain.
     let boot = match build_boot_config(&args, &keys) {
@@ -176,12 +176,12 @@ pub fn run(opts: RunOpts) -> i32 {
     };
 
     // Resident chain id from `--chain-id` (default ZERO), bound INDEPENDENTLY of
-    // sealing: it scopes every state-key derivation and the owner-authorized
+    // sealing. It scopes every state-key derivation and the owner-authorized
     // fidelity query, which cross-checks it against the node's chain. Sourcing it
-    // from `--chain-id` here (not from the seal-only boot config) is what lets a
+    // from `--chain-id` here (not from the seal-only boot config) lets a
     // non-sealing enclave still answer chain-scoped queries.
     // Shared, write-once permanent offer-key slot. It is restored only after the
-    // sealed initialization manifest has established the exact network binding.
+    // sealed initialization manifest establishes the exact network binding.
     let offer_key: crate::transport::SharedTributeOfferKey =
         std::sync::Arc::new(std::sync::OnceLock::new());
 
@@ -261,15 +261,15 @@ pub fn run(opts: RunOpts) -> i32 {
     let initialization = std::sync::Arc::new(initialization);
 
     // A `host:port` endpoint listens on TCP (required under Gramine, whose
-    // pathname UDS are process-internal so a host process cannot reach them);
-    // anything else is a UDS path. The Noise-IK handshake authenticates +
+    // pathname UDS are process-internal so a host process cannot reach them).
+    // Anything else is a UDS path. The Noise-IK handshake authenticates +
     // encrypts every byte either way, so the carrier choice does not weaken the
     // channel.
     let result = if socket.contains(':') {
         // The TCP carrier is loopback-only. It exists solely because Gramine
-        // pathname UDS are process-internal (unreachable from the host); it must
+        // pathname UDS are process-internal (unreachable from the host). It must
         // never expose the enclave off-host. Reject any non-loopback bind. (Noise-IK
-        // still authenticates + encrypts every byte regardless of carrier - this
+        // still authenticates + encrypts every byte regardless of carrier. This
         // guard is defense-in-depth so a misconfigured `--socket 0.0.0.0:port`
         // cannot accidentally publish the enclave.)
         if !is_loopback_endpoint(&socket) {
@@ -292,7 +292,7 @@ pub fn run(opts: RunOpts) -> i32 {
         );
         serve_tcp(&listener, keys, boot, offer_key, initialization, chain_id)
     } else {
-        // Fresh socket; UDS mode 0600 (owner-only), per plan section "Transport".
+        // Fresh socket. UDS mode 0600 (owner-only), per plan section "Transport".
         let _ = std::fs::remove_file(&socket);
         let listener = match UnixListener::bind(&socket) {
             Ok(listener) => listener,
@@ -301,7 +301,7 @@ pub fn run(opts: RunOpts) -> i32 {
                 return 1;
             }
         };
-        // Best-effort 0600 (non-fatal under Gramine - the bound UDS is an
+        // Best-effort 0600 (non-fatal under Gramine: the bound UDS is an
         // emulated socket object, not a chmod-able host file).
         if let Err(err) = std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))
         {
@@ -468,12 +468,13 @@ fn resolve_enclave_identity_seed(
 
 /// Build the optional seal/unseal boot configuration from CLI args.
 ///
-/// Returns `Ok(Some)` only when `--tee-dir <path>` is supplied; the directory is
-/// created (best-effort 0700) and `--chain-id <hex32>` binds the sealing AAD.
-/// Absent `--tee-dir` is permitted only for the explicitly selected development
-/// process and returns `Ok(None)` with no durable permanent key. Production
-/// rejects that configuration before serving. `Err(code)` propagates a fatal
-/// setup failure; `isv_svn` is the anti-rollback floor for unseal.
+/// Returns `Ok(Some)` only when `--tee-dir <path>` is supplied. In that case this
+/// function creates the directory (best-effort 0700) and `--chain-id <hex32>`
+/// binds the sealing AAD. Absent `--tee-dir` is permitted only for the explicitly
+/// selected development process and returns `Ok(None)` with no durable permanent
+/// key. Production rejects that configuration before serving. `Err(code)`
+/// propagates a fatal setup failure. `isv_svn` is the anti-rollback floor for
+/// unseal.
 fn build_boot_config(
     args: &[String],
     keys: &EnclaveKeys,
@@ -488,7 +489,7 @@ fn build_boot_config(
         );
         return Err(1);
     }
-    // Owner-only (0700); best-effort under Gramine (emulated FS is not chmod-able).
+    // Owner-only (0700). Best-effort under Gramine (emulated FS is not chmod-able).
     if let Err(err) = std::fs::set_permissions(&tee_dir, std::fs::Permissions::from_mode(0o700)) {
         eprintln!(
             "outbe-tee-enclave: chmod 0700 {} failed (continuing): {err}",
@@ -521,7 +522,7 @@ fn arg_value(args: &[String], flag: &str) -> Option<String> {
         .cloned()
 }
 
-/// Read a 32-byte hex value from `var` (optional `0x`); fall back to `default`
+/// Read a 32-byte hex value from `var` (optional `0x`). Fall back to `default`
 /// on absence or malformed input.
 #[cfg(feature = "mock")]
 fn dev_bytes_from_env(var: &str, default: [u8; 32]) -> [u8; 32] {
@@ -531,7 +532,7 @@ fn dev_bytes_from_env(var: &str, default: [u8; 32]) -> [u8; 32] {
         .unwrap_or(default)
 }
 
-/// Parse a 32-byte hex string (optional `0x`); `None` on malformed input.
+/// Parse a 32-byte hex string (optional `0x`). Returns `None` on malformed input.
 fn parse_hex32(value: &str) -> Option<[u8; 32]> {
     let trimmed = value.strip_prefix("0x").unwrap_or(value);
     match hex::decode(trimmed) {
@@ -546,7 +547,7 @@ fn parse_hex32(value: &str) -> Option<[u8; 32]> {
 
 /// True iff `endpoint` is an `ip:port` whose IP is loopback (`127.0.0.0/8` or
 /// `::1`). A non-IP host (e.g. `example.com:7000`) does not parse as a
-/// `SocketAddr` and is rejected - the TCP carrier must never bind a routable
+/// `SocketAddr` and is rejected. The TCP carrier must never bind a routable
 /// address.
 fn is_loopback_endpoint(endpoint: &str) -> bool {
     endpoint

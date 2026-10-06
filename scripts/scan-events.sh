@@ -24,8 +24,8 @@
 #   ./scripts/scan-events.sh 1000 latest --topic0 0x00c785ee... --json
 #   ./scripts/scan-events.sh 1000 1050 --sig 'Transfer(address,address,uint256)'
 #
-# Requires: curl, jq. Optional: cast (foundry) - used to compute keccak256 of
-# event signatures. Without cast, only the built-in pinned registry is used.
+# Requires: curl, jq. Optional: cast (foundry), which computes keccak256 of
+# event signatures. Without cast, the script uses only the built-in pinned registry.
 
 set -euo pipefail
 
@@ -111,9 +111,9 @@ fi
 #   TOPIC_VALS[i] = canonical "Name(t1,t2,...)" sig (used for display + jq)
 #   TOPIC_META[i] = pipe-delimited "field=type[ indexed]" entries (decode info)
 #
-# Auto-populated by scanning interfaces/*.sol, contracts/precompiles/src/*.sol,
-# and crates/**/*.rs sol! blocks.
-# A small pinned set is added unconditionally for cast-less mode.
+# The script auto-populates the arrays by scanning interfaces/*.sol,
+# contracts/precompiles/src/*.sol, and crates/**/*.rs sol! blocks.
+# It adds a small pinned set unconditionally for cast-less mode.
 # ---------------------------------------------------------------------------
 
 TOPIC_KEYS=()
@@ -270,8 +270,8 @@ decode_meta() {
     done
 }
 
-# Render a single indexed topic value for a Solidity type. Dynamic types
-# (string/bytes/array) are stored as keccak256(value) and cannot be recovered.
+# Render a single indexed topic value for a Solidity type. A topic stores dynamic
+# types (string/bytes/array) as keccak256(value), so the value cannot be recovered.
 decode_indexed_value() {
     local type="$1" raw="$2" val
     case "$type" in
@@ -335,7 +335,7 @@ decode_log_args() {
     done
 
     if [ -n "$data_types" ] && [ "$data" != "0x" ] && [ -n "$data" ] && [ "$data" != "null" ]; then
-        # cast abi-decode signature: `name(in-types)(out-types)` - we treat the
+        # cast abi-decode signature: `name(in-types)(out-types)`. We treat the
         # data section as a function "output" with no inputs.
         local decoded
         decoded="$(cast abi-decode "x()($data_types)" "$data" 2>/dev/null || true)"
@@ -415,7 +415,7 @@ format_human() {
     if [ "$data" != "0x" ] && [ "$data" != "null" ]; then
         printf '      data:   %s\n' "$data"
     fi
-    # Decoded args (best-effort; requires cast + a known signature).
+    # Decoded args (best-effort, requires cast + a known signature).
     local decoded_block
     decoded_block="$(decode_log_args "$t0" "$topics_rest" "$data" '        ')"
     if [ -n "$decoded_block" ]; then

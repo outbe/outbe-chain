@@ -1,11 +1,11 @@
 use crate::features::ocomp::*;
 
-// Keep real-SGX offers inside the genesis-bound phase window; the controlled
+// Keep real-SGX offers inside the genesis-bound phase window. The controlled
 // logical clock advances after the entire population has finalized.
 const METADOSIS_CAPACITY_OFFERING_SECONDS: u64 = 3_600;
 
-// A WWD begins at 10:00 UTC on the previous civil date (UTC+14 midnight), while
-// the block-1 bootstrap derives its first key from the raw UTC civil date.
+// A WWD begins at 10:00 UTC on the previous civil date (UTC+14 midnight).
+// The block-1 bootstrap derives its first key from the raw UTC civil date.
 // Starting 15 hours into the WWD places block 1 at 01:00 UTC on that same key:
 // both date conventions select the fixture WWD and it remains inside FORMING.
 const METADOSIS_INITIAL_WWD_ELAPSED_SECS: u64 = 15 * 3_600;
@@ -67,7 +67,7 @@ fn fresh_ocomp_public_capacity_localnet(world: &mut World) {
 #[given("a fresh four-validator OCOMP offline-snapshot localnet")]
 fn fresh_ocomp_offline_snapshot_localnet(world: &mut World) {
     // Both file-placement variants intentionally keep the donor offline. Budget
-    // that outage in this scenario's genesis; ordinary jail rules still apply.
+    // that outage in this scenario's genesis. Ordinary jail rules still apply.
     start_ocomp_measurement_localnet(
         world,
         Some(OCOMP_CAPACITY_TRIBUTE_COUNT),
@@ -158,7 +158,7 @@ fn fresh_metadosis_capacity_localnet_with_window(world: &mut World, window: Opti
     ];
     // This scenario completes two jobs, retires V1 and restarts the entire
     // cohort before repeating its vote. Keep both positive replays inside
-    // the immutable genesis window; do not weaken the production deadline.
+    // the immutable genesis window. Do not weaken the production deadline.
     if let Some(window) = window {
         tuning.push(("TESTNET_OCOMP_VOTE_WINDOW_BLOCKS", window.to_string()));
     }

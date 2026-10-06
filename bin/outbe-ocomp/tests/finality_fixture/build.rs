@@ -52,8 +52,8 @@ pub fn finalized_intent_proof_fixture(
     build_finalized_intent_proof_fixture(intent, limits, Vec::new(), None).0
 }
 
-/// Builds one state root containing ValidatorSet, JobIntent, Fidelity and
-/// Oracle, so the finality proof and both historical openings share the exact
+/// Builds one state root that contains ValidatorSet, JobIntent, Fidelity and
+/// Oracle. Thus the finality proof and both historical openings share the exact
 /// authenticated block identity.
 pub fn finalized_lysis_input_fixture(
     intent: JobIntentV1,
@@ -146,9 +146,9 @@ fn build_finalized_intent_proof_fixture(
         code_hash: KECCAK_EMPTY,
     };
     // The Fidelity league opening shares the Metadosis intent account, so it is
-    // NOT a distinct state account - only Oracle adds one. When no openings are
-    // requested (proof-only fixtures), Metadosis and ValidatorSet are the only
-    // accounts and no opening provider is produced.
+    // NOT a distinct state account. Only Oracle adds one. When the caller requests
+    // no openings (proof-only fixtures), Metadosis and ValidatorSet are the only
+    // accounts and the fixture produces no opening provider.
     let (state_accounts, opening_contracts) = match oracle_contract {
         Some(oracle_contract) => {
             let fidelity_opening = OpeningContractFixture {

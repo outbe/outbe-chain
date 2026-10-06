@@ -17,21 +17,26 @@ import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
 /// @title PayNativeAccountingTest
-/// @notice Behavioural coverage for the native-fee funding logic that {ERC7786MessengerBase-_send} owns for every
-///         intex bridge client. Two calling conventions are distinguished:
-///           * entry-funded (`msg.value > 0`): the send must cover the quoted fee and refund the excess to the
-///             caller, so an entry caller's buffer never silently seeds (or drains) the contract's relay float;
-///           * relay-funded (`msg.value == 0`): a chain-native module that cannot attach value triggered the send, so
-///             the fee is drawn from the contract's pre-funded native float and reverts `NotEnoughNative` when short.
-///         Conflating the two would let an entry caller's `msg.value` seed future relay sends without refund, or let
-///         an entry caller drain the relay float.
-/// @dev Entry path is driven through the user-facing `IntexNFT1155Bridge.send` (payable); the relay path by an
-///      inbound CLEARING whose handler relays the day's bids from inside `receiveMessage`.
+/// @notice Behavioural coverage for the native-fee funding logic that
+///         {ERC7786MessengerBase-_send} owns for every intex bridge client. The logic
+///         distinguishes two calling conventions:
+///           * entry-funded (`msg.value > 0`): the send must cover the quoted fee and refund the
+///             excess to the caller. Thus an entry caller's buffer never silently seeds (or
+///             drains) the contract's relay float.
+///           * relay-funded (`msg.value == 0`): a chain-native module that cannot attach value
+///             triggered the send. Thus the send draws the fee from the contract's pre-funded
+///             native float and reverts `NotEnoughNative` when short.
+///         Conflating the two would let an entry caller's `msg.value` seed future relay sends
+///         without refund, or let an entry caller drain the relay float.
+/// @dev The tests drive the entry path through the user-facing `IntexNFT1155Bridge.send` (payable).
+///      They drive the relay path by an inbound CLEARING whose handler relays the day's bids from
+///      inside `receiveMessage`.
 contract PayNativeAccountingTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
 
-    /// @dev Positive fee the loopback bridge charges; every send must fund this from `msg.value` or the float.
+    /// @dev Positive fee the loopback bridge charges. Every send must fund this from
+    ///      `msg.value` or the float.
     uint256 internal constant BRIDGE_FEE = 0.001 ether;
 
     TargetRouter internal bnbRouter;
@@ -49,8 +54,8 @@ contract PayNativeAccountingTest is CrossChainTest {
 
     function setUp() public {
         _setUpBridge();
-        // A positive fee is what makes the funding branches observable: entry sends must be covered and refunded,
-        // relay sends must draw a non-zero amount from the float.
+        // A positive fee is what makes the funding branches observable. Entry sends must be
+        // covered and refunded. Relay sends must draw a non-zero amount from the float.
         bridge.setFee(BRIDGE_FEE);
 
         intex = DeployProxy.intexNFT1155(admin, admin);
@@ -77,7 +82,7 @@ contract PayNativeAccountingTest is CrossChainTest {
         intex.issueIntex(owner, 5, SERIES_ID);
     }
 
-    /// @dev A 1-token bridge-out to Outbe; the entry path (payable `send`) burns it from `owner`.
+    /// @dev A 1-token bridge-out to Outbe. The entry path (payable `send`) burns it from `owner`.
     function _sendParam() internal view returns (SendParam memory) {
         return
             SendParam({dstChainId: OUTBE_CHAIN_ID, to: bytes32(uint256(uint160(owner))), tokenId: TOKEN_ID, units: 1});
@@ -105,7 +110,7 @@ contract PayNativeAccountingTest is CrossChainTest {
         vm.prank(owner);
         nftBridge.send{value: fee}(params);
 
-        // `msg.value` flowed through to the bridge exactly; nothing seeded the relay float.
+        // `msg.value` flowed through to the bridge exactly. Nothing seeded the relay float.
         assertEq(address(nftBridge).balance, floatBefore, "no leakage on exact-fee entry");
         assertEq(owner.balance, 0, "caller paid the full fee");
     }
@@ -159,9 +164,9 @@ contract PayNativeAccountingTest is CrossChainTest {
     }
 
     function test_Entry_RefundFailsRevertsRefundFailed() public {
-        // `_send` refunds excess to msg.sender via `.call{value: refund}("")`; a caller whose receive() reverts trips
-        // the RefundFailed guard. Without it, a refactor that swallowed the .call return would silently seed the
-        // relay float with the entry caller's excess.
+        // `_send` refunds excess to msg.sender via `.call{value: refund}("")`. A caller whose
+        // receive() reverts trips the RefundFailed guard. Without it, a refactor that swallowed
+        // the .call return would silently seed the relay float with the entry caller's excess.
         NftRefundRejector rejector = new NftRefundRejector(address(nftBridge));
         intex.issueIntex(address(rejector), 1, SERIES_ID);
 
@@ -193,7 +198,7 @@ contract PayNativeAccountingTest is CrossChainTest {
     }
 
     /// @dev With TargetRouter's float funded, the relay fired from inside `receiveMessage` draws the fee and
-    ///      sends cleanly - nothing is parked.
+    ///      sends cleanly. Nothing is parked.
     function test_Relay_InsideReceiveMessage_FundedFloatSucceeds() public {
         vm.deal(address(bnbRouter), 1 ether);
         uint256 floatBefore = address(bnbRouter).balance;
@@ -309,8 +314,8 @@ contract StubAuction {
     }
 }
 
-/// @dev Holds a bridgeable token (accepts the ERC-1155 mint) but whose `receive()` reverts; used to pin `_send`'s
-///      RefundFailed guard on the entry path via the NFT bridge.
+/// @dev Holds a bridgeable token (accepts the ERC-1155 mint), but its `receive()` reverts.
+///      Tests use it to pin `_send`'s RefundFailed guard on the entry path via the NFT bridge.
 contract NftRefundRejector {
     IntexNFT1155Bridge private immutable bridge;
 

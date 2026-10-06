@@ -6,9 +6,9 @@ import {Vm} from "forge-std/Vm.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {MockERC7786Bridge} from "@test-mocks/MockERC7786Bridge.sol";
 
-/// @dev Base for cross-chain protocol tests. A single loopback {MockERC7786Bridge} stands in for the hub; logical
-///      chainIds are explicit and delivery is manual (via {_deliver}), so a send never auto-loops unless a test opts
-///      in. Replaces the ERC-7786 `TestHelperOz5` harness.
+/// @dev Base for cross-chain protocol tests. A single loopback {MockERC7786Bridge} acts as the hub.
+///      Logical chainIds are explicit and delivery is manual (via {_deliver}). Thus a send never
+///      auto-loops unless a test opts in. Replaces the ERC-7786 `TestHelperOz5` harness.
 abstract contract CrossChainTest is Test {
     MockERC7786Bridge internal bridge;
 
@@ -31,7 +31,8 @@ abstract contract CrossChainTest is Test {
         }
     }
 
-    /// @dev Deliver `packet` to `recipient` as if sent by `src` on `srcChainId` (the bridge is the caller).
+    /// @dev Deliver `packet` to `recipient` as if `src` on `srcChainId` sent it. The bridge is the
+    ///      caller.
     function _deliver(uint32 srcChainId, address src, address recipient, bytes memory packet) internal {
         bridge.deliverAs(_interop(srcChainId, src), _interop(uint32(block.chainid), recipient), packet);
     }

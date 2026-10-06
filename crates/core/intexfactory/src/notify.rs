@@ -31,8 +31,8 @@ fn with_attempts(entry: U256, attempts: u8) -> U256 {
     (entry & !(U256::from(u8::MAX) << ATTEMPTS_SHIFT)) | (U256::from(attempts) << ATTEMPTS_SHIFT)
 }
 
-/// Whether a Called entry belongs to the run a message is being built for. The wire carries one day and
-/// one call time for the whole batch, so both must match for a series to ride along.
+/// Whether a Called entry belongs to the run a message is being built for. The wire carries
+/// one day and one call time for the whole batch, so both must match for a series to ride along.
 pub fn joins_run(day: WorldwideDay, called_at: u32, id: SeriesId, ts: u32) -> bool {
     ts == called_at && id.worldwide_day() == day
 }
@@ -53,7 +53,7 @@ pub(crate) fn enqueue_notice(factory: &IntexFactoryContract, entry: U256) -> Res
 
 /// Cycle-trigger entry: send the queued notices, at most
 /// [`MAX_ROUTER_CALLS_PER_FIRING`] router calls' worth. This is where every
-/// outbound mark leaves from - the scans that queue them run in a block hook,
+/// outbound mark leaves from. The scans that queue them run in a block hook,
 /// which cannot call contracts.
 pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     let storage = ctx.storage.clone();
@@ -94,9 +94,9 @@ pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
-/// Send the run of Called entries starting at `at` that shares its day and call time. `stop` bounds the
-/// look-ahead to this firing's entries; `notify_called` splits the run where the wire's cap forces it.
-/// Returns the entries consumed and whether the router refused all of them.
+/// Send the run of Called entries starting at `at` that shares its day and call time. `stop`
+/// bounds the look-ahead to this firing's entries. `notify_called` splits the run where the
+/// wire's cap forces it. Returns the entries consumed and whether the router refused all of them.
 fn drain_called_run(
     factory: &IntexFactoryContract,
     storage: &StorageHandle<'_>,

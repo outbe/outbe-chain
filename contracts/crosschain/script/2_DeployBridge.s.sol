@@ -7,8 +7,9 @@ import {console2} from "forge-std/console2.sol";
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {ERC7786Bridge} from "src/ERC7786Bridge.sol";
 
-/// @dev Deploys the {ERC7786Bridge} facade via CREATE3, with one adapter as the active gateway. The adapter address is
-///      derived deterministically (CREATE3), so the bridge does not depend on the adapter script's output.
+/// @dev Deploys the {ERC7786Bridge} facade via CREATE3, with one adapter as the active gateway.
+///      The script derives the adapter address deterministically (CREATE3), so the bridge does not
+///      depend on the adapter script's output.
 ///
 /// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATE3_FACTORY_ADDRESS`, `BRIDGE_OWNER`.
 /// Optional: `ACTIVE_GATEWAY` ("lz" | "hyperlane", default "lz").

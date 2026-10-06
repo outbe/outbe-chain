@@ -1,4 +1,5 @@
-//! Finalized daily VWAPs for the target chains' registries: each closed UTC day goes out once, in order.
+//! Finalized daily VWAPs for the target chains' registries: each closed UTC day goes out once,
+//! in order.
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
@@ -45,7 +46,8 @@ pub fn run(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
-/// The day's priced reference currencies. A price past the wire type saturates: it stays above every floor.
+/// The day's priced reference currencies. A price past the wire type saturates: it stays above
+/// every floor.
 pub(crate) fn day_rows(
     storage: &StorageHandle<'_>,
     day: u32,
@@ -69,8 +71,8 @@ pub(crate) fn day_rows(
     Ok(rows)
 }
 
-/// Whether the router took the day and answered with its legs; a refusal leaves it for the next
-/// firing, and a node-local failure fails the block.
+/// Whether the router took the day and answered with its legs. A refusal leaves the day for the
+/// next firing, and a node-local failure fails the block.
 fn send(
     storage: &StorageHandle<'_>,
     day: u32,

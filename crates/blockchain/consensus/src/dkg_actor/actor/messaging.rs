@@ -24,14 +24,14 @@ use tokio::sync::mpsc;
 use tracing::debug;
 use tracing::warn;
 
-/// Encode and send one DKG message over the P2P sender. The single owner of the
-/// `encode -> send -> "empty accepted-set is benign backpressure"` recipe, so every
-/// DKG send interprets the result identically.
+/// Encode and send one DKG message over the P2P sender. This function is the single
+/// owner of the `encode -> send -> "empty accepted-set is benign backpressure"` recipe.
+/// Thus every DKG send interprets the result identically.
 ///
 /// Returns `true` if at least one recipient accepted this attempt. An empty
-/// accepted-set (commonware 2026.5.0 sync `Sender::send` returns the accepting
-/// peers) means none accepted *this attempt* - benign rate-limit/backpressure,
-/// recovered by the ceremony retry tick and peer pull - never a hard failure.
+/// accepted-set means that no peer accepted *this attempt* (commonware 2026.5.0 sync
+/// `Sender::send` returns the accepting peers). This is benign rate-limit/backpressure.
+/// The ceremony retry tick and peer pull recover from it. It is never a hard failure.
 /// `#[must_use]`: callers must observe acceptance (typically to log backpressure).
 #[must_use]
 fn send_dkg_message(
@@ -42,9 +42,9 @@ fn send_dkg_message(
     !sender.send(recipients, message.encode(), true).is_empty()
 }
 
-/// Broadcast one finalized dealer log to all peers. The single site that encodes
-/// `DkgMessage::FinalizedLog` to `Recipients::All`, shared by the gossip loop and
-/// the two one-shot post-finalize broadcasts.
+/// Broadcast one finalized dealer log to all peers. This is the single site that
+/// encodes `DkgMessage::FinalizedLog` to `Recipients::All`. The gossip loop and the
+/// two one-shot post-finalize broadcasts share it.
 #[must_use]
 pub(super) fn send_finalized_log(
     sender: &mut impl P2pSender<PublicKey = bls12381::PublicKey>,
@@ -168,13 +168,14 @@ pub(super) fn record_signed_dealer_log(
 }
 
 /// Returns `true` when the canonical group output is reconstructable from the
-/// currently-collected finalized dealer logs - i.e. `observe` (public, share-free)
-/// succeeds, which means >= 2f+1 CONTENT-VALID logs are present. Mirrors
-/// `DkgManager`'s `ceremony::try_reconstruct`, so the actor completes at the SAME
-/// log-set prefix the manager freezes `canonical_output` at (-> matching output).
-/// Used as the chain-finalized completion gate: a signed-but-garbage dealer log
-/// inflates the raw log count but is dropped by `observe`'s content check, so
-/// gating on this (not the raw count) prevents finalizing over < 2f+1 valid logs.
+/// currently-collected finalized dealer logs. That is, `observe` (public, share-free)
+/// succeeds, which means >= 2f+1 CONTENT-VALID logs are present. This function
+/// mirrors `DkgManager`'s `ceremony::try_reconstruct`. Thus the actor completes at the
+/// SAME log-set prefix at which the manager freezes `canonical_output` (-> matching
+/// output). The actor uses it as the chain-finalized completion gate. A
+/// signed-but-garbage dealer log inflates the raw log count, but `observe`'s content
+/// check drops it. Thus gating on this (not the raw count) prevents finalizing over
+/// < 2f+1 valid logs.
 pub(super) fn chain_finalized_reconstructable(
     info: &Info<MinSig, bls12381::PublicKey>,
     finalized_logs: &BTreeMap<bls12381::PublicKey, DealerLog<MinSig, bls12381::PublicKey>>,
@@ -237,8 +238,9 @@ pub(super) async fn send_shares(
 
 /// Remove previously acknowledged remote dealings from the ordinary retry set
 /// and return them for restart replay. They remain in that replay set until the
-/// remote process regenerates the exact durable ACK, proving that its new
-/// process-local Player state ingested the byte-identical dealing.
+/// remote process regenerates the exact durable ACK. That ACK proves that the new
+/// process-local Player state of the remote process ingested the byte-identical
+/// dealing.
 pub(super) fn take_restart_replay_shares(
     retry_shares: &mut BTreeMap<
         bls12381::PublicKey,

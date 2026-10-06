@@ -126,11 +126,13 @@ interface IStablecoin {
     function forcedTransferWithMemo(address from, address to, uint256 amount, bytes32 memo) external returns (bool);
 
     /// @notice Grants one of ISSUER, CAP_MANAGER, GUARDIAN, COMPLIANCE, or ENFORCER.
-    /// @dev ADMIN is rejected with UnsupportedRole and changes only through two-step transfer.
+    /// @dev This call rejects ADMIN with UnsupportedRole. ADMIN changes only through
+    /// two-step transfer.
     function grantRole(bytes32 role, address account) external;
 
     /// @notice Revokes one of ISSUER, CAP_MANAGER, GUARDIAN, COMPLIANCE, or ENFORCER.
-    /// @dev ADMIN is rejected with UnsupportedRole and changes only through two-step transfer.
+    /// @dev This call rejects ADMIN with UnsupportedRole. ADMIN changes only through
+    /// two-step transfer.
     function revokeRole(bytes32 role, address account) external;
 
     function setSupplyCap(uint256 newCap) external;

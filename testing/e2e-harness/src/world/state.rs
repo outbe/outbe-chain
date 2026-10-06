@@ -1,12 +1,12 @@
 //! Mutable fixture state threaded across a scenario's steps.
 //!
-//! Values a step computes and a later step reads back (the proposal under test,
-//! the version/heights we proposed, the deadline we observed). Kept off the
-//! handles so `localnet`/`rpc`/`validators` stay stateless verbs.
+//! It holds values that a step computes and a later step reads back (the proposal
+//! under test, the version/heights we proposed, the deadline we observed). This
+//! state stays off the handles so `localnet`/`rpc`/`validators` stay stateless verbs.
 
 use serde::Serialize;
 
-/// Original owned committee incarnations; contains no signing material.
+/// Original owned committee incarnations. This record contains no signing material.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct DowntimeNode {
     pub index: usize,
@@ -128,7 +128,7 @@ pub struct TeeLeaseShutdownV1 {
     pub sinks: Vec<TeeLeaseLogIntervalV1>,
 }
 
-/// Pending-pool fixture identity; secret bytes stay in a private scenario file.
+/// Pending-pool fixture identity. Secret bytes stay in a private scenario file.
 #[derive(Clone, Debug)]
 pub(crate) struct PendingValidatorPoolFixture {
     pub key_file: std::path::PathBuf,
@@ -357,9 +357,9 @@ pub struct ContributorPayoutEvidenceV1 {
 
 /// Public-path observations retained after behavioral assertions complete.
 ///
-/// This is evidence, not a control surface: every field is populated from
-/// finalized public RPC data or from the result of a transaction exercised by
-/// a Cucumber step.
+/// This is evidence, not a control surface. Every field comes from finalized
+/// public RPC data or from the result of a transaction that a Cucumber step
+/// exercised.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct OcompPublicScenarioEvidenceV1 {
     pub job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
@@ -433,7 +433,7 @@ pub struct FixtureState {
     /// Voting window (blocks) the localnet was started with.
     pub voting_window: u64,
     /// The unsupported-update scenario deliberately emits one narrowly matched
-    /// fatal compatibility message; every other fatal/alarm remains forbidden.
+    /// fatal compatibility message. Every other fatal/alarm remains forbidden.
     pub allow_unsupported_update_fatal: bool,
     /// One stalled-reshare scenario deliberately leaves this exact participant
     /// offline long enough for the protocol's documented share-reveal path.
@@ -441,8 +441,8 @@ pub struct FixtureState {
     pub expected_dkg_reveal: Option<String>,
     pub(crate) expected_dkg_expiry_exits: Vec<DkgExpiryExpectedExit>,
     /// One manual-lease scenario deliberately fail-stops this validator after
-    /// its finalized lease expires. Only the exact two-sink Reth shutdown
-    /// trailers causally bound to that guard are accepted by the log audit.
+    /// its finalized lease expires. The log audit accepts only the exact two-sink
+    /// Reth shutdown trailers that are causally bound to that guard.
     pub expected_tee_lease_guard_shutdown_validator: Option<usize>,
     /// The same manual-lease scenario deliberately fail-stops this role-neutral
     /// FullNode. Acceptance requires the owned exit and exact bounded sink records.
@@ -932,7 +932,7 @@ mod snapshot {
         pub partial_state_trie: u64,
     }
 
-    /// Exact public NativeProgress field names; no normalization and no DB reader.
+    /// Exact public NativeProgress field names. No normalization and no DB reader.
     #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     pub(crate) struct SnapshotNativeProgress {
         pub finalized: SnapshotBlock,
@@ -1029,7 +1029,7 @@ mod snapshot {
         pub started: u64,
         pub pid: u32,
         pub argv: Vec<String>,
-        /// Independently read with all writers stopped; all handles dropped before spawn.
+        /// Independently read with all writers stopped. All handles are dropped before spawn.
         pub before_launch: SnapshotNativeObservation,
         pub recovery: SnapshotRecoveryObservation,
     }
@@ -1070,16 +1070,16 @@ mod snapshot {
     pub(crate) struct SnapshotFileRead {
         pub path: std::path::PathBuf,
         pub observed: u64,
-        /// None is an actual NotFound observation; permission/IO errors must fail collection.
+        /// None is an actual NotFound observation. Permission/IO errors must fail collection.
         pub bytes: Option<Vec<u8>>,
     }
 
     /// Raw relative names from a complete bounded traversal of this exact owned root.
-    /// An absent root is represented by the collector's actual NotFound result as an empty listing.
+    /// The collector's actual NotFound result represents an absent root as an empty listing.
     #[derive(Clone, Debug, serde::Serialize)]
     pub(crate) struct SnapshotDirectoryListing {
         pub root: std::path::PathBuf,
-        /// Actual (device, inode); None only for a root observed as NotFound.
+        /// Actual (device, inode). None only for a root observed as NotFound.
         pub directory_identity: Option<(u64, u64)>,
         pub started: u64,
         pub completed: u64,
@@ -1138,7 +1138,7 @@ mod snapshot {
     #[derive(Clone, Debug, serde::Serialize)]
     pub(crate) struct OfflineSnapshotEvidence {
         pub create: Option<SnapshotCommandObservation>,
-        /// Exact bytes retained before native runtime mutations; not reserialized.
+        /// Exact bytes retained before native runtime mutations. They are not reserialized.
         pub manifest_bytes: Vec<u8>,
         pub archive_sha256: String,
         pub transferred_archive_sha256: String,

@@ -5,9 +5,9 @@
 //! {"version":"1.2", "activationHeight":12345, "info":"notes", "mrenclave":"0x<64 hexadecimal digits>"}
 //! ```
 //!
-//! `version` is a `"major.minor"` string (no `v` prefix). Raw numeric JSON
-//! values and undotted version strings are rejected. An absent, null or empty
-//! `mrenclave` means no enclave update. Unknown fields are rejected.
+//! `version` is a `"major.minor"` string (no `v` prefix). The decoder rejects raw
+//! numeric JSON values and undotted version strings. An absent, null or empty
+//! `mrenclave` means no enclave update. The decoder rejects unknown fields.
 
 use alloy_primitives::B256;
 use outbe_ocompregistry::{poc_schema_limits, OcompSuccessorV1};
@@ -40,7 +40,7 @@ pub struct ScheduleUpdatePayload {
 }
 
 /// Empty optional UI fields do not request a code change. A supplied measurement
-/// must still be a valid 32-byte hash; zero is rejected by payload validation.
+/// must still be a valid 32-byte hash. Payload validation rejects zero.
 fn deserialize_mrenclave<'de, D>(deserializer: D) -> Result<Option<B256>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -156,7 +156,7 @@ impl ScheduleUpdatePayload {
 
     /// Parses a vote-payload `"major.minor"` version string.
     fn parse_version(version: &str) -> std::result::Result<ProtocolVersion, UpdateError> {
-        // Require dotted major.minor form; reject raw numeric strings like "65538".
+        // Require dotted major.minor form. Reject raw numeric strings like "65538".
         if !version.contains('.') {
             return Err(UpdateError::InvalidPayload);
         }

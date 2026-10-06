@@ -113,9 +113,9 @@ fn a_paynote_short_of_the_cost_leaves_the_nod_and_the_note_intact() {
         .is_some());
 }
 
-/// `consume` books the nullifier before the cover check runs, so this is the
-/// test that proves settlement is one rollback unit: rejected settlement must
-/// leave the note spendable rather than destroying it for nothing.
+/// `consume` books the nullifier before the cover check runs. This test proves
+/// that settlement is one rollback unit: rejected settlement must leave the
+/// note spendable and must not destroy it for nothing.
 #[test]
 fn rejected_settlement_unbooks_the_nullifier_it_had_already_spent() {
     let mut world = World::new();
@@ -288,7 +288,7 @@ fn any_asset_registered_for_the_reference_currency_pays_the_nod() {
     let input = params(Address::repeat_byte(0x6a));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
-    // The registry lists interchangeable assets for the currency; the payer
+    // The registry lists interchangeable assets for the currency. The payer
     // picks which one their note carries, and it need not be the first.
     let second_asset = Address::repeat_byte(0x6b);
     world.register_reference_currency_assets(vec![NOTE_ASSET, second_asset]);

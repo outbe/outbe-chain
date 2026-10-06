@@ -86,7 +86,7 @@ fn follower_shutdown_keeps_certificate_available_until_observer_drains() {
             .await
             .unwrap();
         // Use the NodeHost pre-stop handshake. An accepted notification must
-        // still be able to obtain its exact proof after shutdown is requested.
+        // still be able to obtain its exact proof after a shutdown request.
         let (control, drain) = crate::follower_shutdown::follower_drain_pair();
         let (tx, mut deliveries) = futures::channel::mpsc::unbounded();
         let _reporter = drain

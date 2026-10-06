@@ -280,7 +280,7 @@ impl Reporter for AckingMarshalReporter {
     type Activity = Update<ConsensusBlock, commonware_utils::acknowledgement::Exact>;
 
     // `report` is now SYNC and returns `Feedback` (commonware 2026.5.0). The
-    // body is unchanged work (acknowledge delivered blocks); we always return
+    // body is unchanged work (acknowledge delivered blocks). We always return
     // `Feedback::Ok` because this test reporter has no downstream mailbox that
     // can close.
     fn report(&mut self, activity: Self::Activity) -> Feedback {
@@ -296,12 +296,12 @@ impl Reporter for AckingMarshalReporter {
 /// commonware 2026.5.0 changed the resolver handoff: the marshal actor now
 /// takes `(handler::Receiver<Commitment>, R)` where `R: TargetedResolver`,
 /// instead of a raw `mpsc::Sender<handler::Message>` (now a private type, so
-/// it cannot be named or constructed by tests). The receiver is produced by
-/// `handler::init`, which also yields a `Handler` (the Consumer/Producer the
-/// p2p resolver engine would normally drive). For these availability-driven
-/// tests the resolver never delivers, so we keep the `Handler` alive as the
-/// keepalive: dropping it closes `handler::Receiver`, which makes the marshal
-/// actor's `run` loop shut down ("handler closed").
+/// tests cannot name or construct it). `handler::init` produces the receiver
+/// and also yields a `Handler` (the Consumer/Producer the p2p resolver engine
+/// would normally drive). For these availability-driven tests the resolver
+/// never delivers, so we keep the `Handler` alive as the keepalive. Dropping it
+/// closes `handler::Receiver`, which makes the marshal actor's `run` loop shut
+/// down ("handler closed").
 ///
 /// The previous `make_resolver`/generic `R` indirection is removed because
 /// every call site used `NoopResolver`.
@@ -420,9 +420,9 @@ async fn start_marshal_without_available_block(
 ///
 /// After step 21 the application handler no longer owns the
 /// finalization-side state (forkchoice / `last_finalized_*` / VRF seed),
-/// so the helper is reduced: the only inputs needed for verify-side
-/// coverage are the marshal mailbox and the certificate scheme
-/// provider. Finalization-side regressions live in
+/// so the helper is reduced. Verify-side coverage needs only two inputs:
+/// the marshal mailbox and the certificate scheme provider.
+/// Finalization-side regressions live in
 /// `crate::finalization::actor` (shared `FinalizationView` + actor
 /// handle_finalized).
 fn finalizer_test_shared(
@@ -658,11 +658,11 @@ fn locally_built_candidate_is_withheld_when_execution_is_not_ready() {
 
 /// bp-1 / BUG-A regression: opt3 dissemination. The proposer caches its block
 /// into marshal at propose time (`handle_propose` -> `marshal.proposed`, making
-/// it servable on demand), and `Relay::broadcast` then wire-pushes it by calling
-/// `marshal.forward(round, commitment, Recipients::All)` DIRECTLY - never via
-/// the bounded application mailbox (which could drop the trigger under
+/// it servable on demand). `Relay::broadcast` then wire-pushes it by calling
+/// `marshal.forward(round, commitment, Recipients::All)` DIRECTLY. It never goes
+/// through the bounded application mailbox (which could drop the trigger under
 /// saturation). With a recording buffer we assert `Relay::broadcast` reaches the
-/// `Buffer::send` wire-broadcast hook to ALL peers. If `Relay::broadcast`ever
+/// `Buffer::send` wire-broadcast hook to ALL peers. If `Relay::broadcast` ever
 /// stops forwarding (e.g. reverts to the droppable mailbox hop), this fails.
 #[test]
 fn relay_broadcast_forwards_proposed_block_directly_to_all_peers() {
@@ -720,8 +720,8 @@ fn relay_broadcast_forwards_proposed_block_directly_to_all_peers() {
     );
 }
 
-/// SD-6: `forward()` WITHOUT a prior `proposed()` is a safe no-op - marshal has
-/// nothing stashed for `take_proposed`, so `Buffer::send` is never called (no
+/// SD-6: `forward()` WITHOUT a prior `proposed()` is a safe no-op. Marshal has
+/// nothing stashed for `take_proposed`, so it never calls `Buffer::send` (no
 /// panic, no wrong send). In opt3 `handle_propose` always proposes before
 /// `Relay::broadcast` forwards, so this guards the fallback. A follow-up
 /// `proposed()`+`forward()` then DOES reach `Buffer::send`, proving the marshal
@@ -914,8 +914,8 @@ fn epoch_boundary_parent_uses_finalized_round_for_exact_proof_key() {
 /// the anchor hash but the marshal store has not yet durably stored the block
 /// (the lagging-store race at the first slot of a new epoch), the `Wait`
 /// subscription times out and `resolve_epoch_boundary_parent` returns
-/// `MissingMarshalBlock` - a deterministic forfeit signal. This must NOT hang
-/// or panic; the proposer simply forfeits the boundary slot until marshal
+/// `MissingMarshalBlock`, a deterministic forfeit signal. This must NOT hang
+/// or panic. The proposer simply forfeits the boundary slot until marshal
 /// catches up.
 #[test]
 fn epoch_boundary_anchor_wait_miss_forfeits_slot_not_stall() {
@@ -1306,10 +1306,12 @@ fn consensus_metadata_verify_accepts_canonical_marshal_mapping() {
 // parent's proof (post-restart, late-joining validator, brief finalization lag),
 // but marshal's DURABLE finalization archive may still hold it locally. Recovery
 // rebuilds the canonical parent-proof record so the slot is NOT forfeited. This
-// drives `recover_parent_proof_from_marshal` - the exact branch `build_block`
-// takes on a selection-store miss - and asserts: happy path recovers, the
-// hash-exact guard rejects a different parent, and a missing archive entry yields
-// None (deterministic forfeit, not a fabricated record).
+// test drives `recover_parent_proof_from_marshal`, the exact branch `build_block`
+// takes on a selection-store miss. It asserts:
+// - The happy path recovers.
+// - The hash-exact guard rejects a different parent.
+// - A missing archive entry yields None (deterministic forfeit, not a fabricated
+//   record).
 #[test]
 fn parent_proof_recovered_from_marshal_archive_on_selection_miss() {
     use crate::finalization::parent_cert_store::CertifiedParentProofKey;
@@ -1337,9 +1339,9 @@ fn parent_proof_recovered_from_marshal_archive_on_selection_miss() {
             .await;
 
             // Seed marshal's durable archive: propose the parent block (servable)
-            // and report its finalization, so `get_finalization(height)` returns it
-            // - the post-restart state where the in-process selection store is
-            // empty but marshal still holds the parent.
+            // and report its finalization, so `get_finalization(height)` returns it.
+            // This is the post-restart state where the in-process selection store
+            // is empty but marshal still holds the parent.
             let _ = marshal_mailbox.verified(round, block.clone()).await;
             let mut reporter = marshal_mailbox.clone();
             let _ = reporter.report(Activity::Finalization(finalization));
@@ -1808,16 +1810,16 @@ fn floor_zero_sends_immediately() {
 
 /// Test 13 (pacing-invisibility parity, unit level): the proposer hands Simplex a
 /// byte-identical digest regardless of the min-block-time floor. The build path is
-/// structurally floor-agnostic - `build_block` / `handle_propose` take no
-/// `min_block_time`, so the floor cannot influence block bytes - and
-/// `pace_and_send` only delays delivery of the already-sealed digest. This loops
-/// over the no-wait (case C, floor 0) and wait paths (250ms..5s) and asserts the
-/// delivered digest never changes.
+/// structurally floor-agnostic. `build_block` / `handle_propose` take no
+/// `min_block_time`, so the floor cannot influence block bytes. `pace_and_send`
+/// only delays delivery of the already-sealed digest. This loops over the no-wait
+/// (case C, floor 0) and wait paths (250ms..5s) and asserts the delivered digest
+/// never changes.
 ///
 /// Full proposer/validator EVM parity (equal post-block state root, event log,
-/// balance deltas, and block hash) requires a running node and is exercised by the
-/// localnet smoke run (Test 15); there is no in-process build harness to seal a
-/// real EVM block (handler_tests builds with `PayloadBuilder::noop()`).
+/// balance deltas, and block hash) requires a running node. The localnet smoke run
+/// (Test 15) exercises it. No in-process build harness exists to seal a real EVM
+/// block (handler_tests builds with `PayloadBuilder::noop()`).
 #[test]
 fn pacing_delivers_identical_digest_for_any_floor() {
     let digest = Digest(B256::repeat_byte(0x5a));

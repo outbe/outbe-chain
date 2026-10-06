@@ -206,9 +206,9 @@ pub fn collection_root(
 /// Reconstructs one independently sealed WWD Tribute collection root from its
 /// exact `(entity id, body commitment)` leaves.
 ///
-/// This is the public-RPC verification seam used by OCOMP: receipt payloads
-/// supply bodies, but they are accepted only when their recomputed leaves close
-/// to the collection root committed by the finalized `JobIntent`.
+/// This is the public-RPC verification seam used by OCOMP. Receipt payloads
+/// supply bodies. The bodies are accepted only when their recomputed leaves
+/// close to the collection root committed by the finalized `JobIntent`.
 pub fn tribute_partition_root_from_leaves(
     day: outbe_primitives::time::WorldwideDay,
     leaves: impl IntoIterator<Item = (WwdEntityId, crate::Commitment)>,

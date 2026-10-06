@@ -79,7 +79,7 @@ fn hardware_key(request: &KeyRequest) -> Result<Zeroizing<[u8; 32]>, String> {
     probe.zeroize();
     let mut raw = HardwareKey([0; 16]);
     let status: u64;
-    // SAFETY: both operands are aligned, resident enclave memory; KEYREQUEST
+    // SAFETY: both operands are aligned, resident enclave memory. KEYREQUEST
     // is fully initialized and canonical. RBX is preserved for the SysV ABI.
     unsafe {
         core::arch::asm!(
@@ -174,7 +174,7 @@ pub(crate) fn unseal_payload(
         return Ok(value);
     }
     // Read-only compatibility for old operator state. New production writes
-    // always use combined sealing; corruption never falls back to fresh state.
+    // always use combined sealing. Corruption never falls back to fresh state.
     let (key, policy) =
         crate::transport::sealing_key().ok_or_else(|| "SGX sealing key unavailable".to_string())?;
     let key = Zeroizing::new(key);

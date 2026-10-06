@@ -162,7 +162,7 @@ fn bucket_key_binds_the_reference_currency() {
 }
 
 /// Why the bin columns had to widen to `u64`: mapping keys are left-padded to
-/// 32 bytes before hashing, so integer width alone namespaces nothing — the
+/// 32 bytes before hashing, so integer width alone namespaces nothing. The
 /// ISO has to occupy real high bits, and those bits do not fit in a `u32`
 /// alongside a 24-bit bin id.
 #[test]
@@ -180,9 +180,9 @@ fn currency_scoped_bin_keys_do_not_alias() {
     assert_eq!(NodContract::scoped(0, 7), 7u64);
 }
 
-/// The headline regression: two Nods sharing a worldwide day and an identical
-/// `entry_price_minor` but denominated differently are two buckets in two
-/// independent bin tries, and a day price only qualifies its own currency.
+/// The headline regression: two Nods share a worldwide day and an identical
+/// `entry_price_minor`, but are denominated differently. Such Nods are two buckets
+/// in two independent bin tries. A day price only qualifies its own currency.
 #[test]
 fn same_day_and_entry_in_two_currencies_are_two_buckets_in_two_bins() {
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));

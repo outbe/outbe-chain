@@ -170,8 +170,8 @@ fn the_issuance_rail_floors_the_whole_obligation_in_the_payers_favour() {
 
 #[test]
 fn a_wider_asset_keeps_what_the_six_decimal_cost_dropped() {
-    // The reference cost floors to 1, the obligation is 1.500001: an eighteen-
-    // decimal asset carries all of it, scaling the floored 1 charged 1e12.
+    // The reference cost floors to 1. The obligation is 1.500001. An
+    // eighteen-decimal asset carries all of it. Scaling the floored 1 charged 1e12.
     let mut provider = test_storage(Some(U256::from(1_500_001u64)));
     let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE_18, |storage| {
         let gem_id =
@@ -355,7 +355,7 @@ fn settlement_scales_the_cost_to_the_asset_decimals() {
         gem_id
     });
     StorageHandle::enter(&mut provider, |storage| {
-        // An eighteen-decimal asset was a hard revert before; now it scales.
+        // An eighteen-decimal asset was a hard revert before. Now it scales.
         runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
     });
 
@@ -369,8 +369,8 @@ fn settlement_scales_the_cost_to_the_asset_decimals() {
 #[test]
 fn an_unassigned_issuance_code_mints_and_settles_on_the_reference_rail() {
     // 899 is inside the three-digit range but is not an assigned ISO 4217 code.
-    // Gem no longer refuses it: nothing prices against it, and no settlement
-    // asset can ever report it, so it is inert - exactly as it is for a bid.
+    // Gem no longer refuses it. Nothing prices against it, and no settlement
+    // asset can ever report it. So it is inert, exactly as it is for a bid.
     let rate = U256::from(2u64) * six_decimal_unit();
     let mut provider = test_storage(Some(rate));
     let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE, |storage| {

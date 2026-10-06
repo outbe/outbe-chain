@@ -23,26 +23,26 @@ pub const NOD_ADDRESS: Address = address!("0x00000000000000000000000000000000000
 
 /// Nod factory precompile address (orchestrator: issuance via cross-module
 /// API, `mineGratis` ABI). State lives in the Nod entity store at
-/// [`NOD_ADDRESS`]; NodFactory carries no persistent storage of its own.
+/// [`NOD_ADDRESS`]. NodFactory carries no persistent storage of its own.
 pub const NOD_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001007");
 
 /// Gem NFT precompile address. ERC-721 non-transferable registry.
 pub const GEM_ADDRESS: Address = address!("0x0000000000000000000000000000000000001013");
 
 /// Intex address. Canonical, cross-chain Intex series ledger
-/// (identity + lifecycle). Writes are Rust-to-Rust only (IntexFactory); the
+/// (identity + lifecycle). Writes are Rust-to-Rust only (IntexFactory). The
 /// precompile at this address dispatches read-only series views for off-chain
 /// observability.
 pub const INTEX_ADDRESS: Address = address!("0x0000000000000000000000000000000000001014");
 
 /// IntexFactory address. Drives Intex issuance, the autonomous
-/// Issued->Qualified->Called lifecycle, and two-step settlement; series state is
+/// Issued->Qualified->Called lifecycle, and two-step settlement. Series state is
 /// written to [`INTEX_ADDRESS`].
 pub const INTEX_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001015");
 
 /// Gem factory precompile address (orchestrator: `issue_gem` via cross-module
 /// API, `settleGem` / `minePromis` on the ABI). Per-Gem state lives at
-/// [`GEM_ADDRESS`]; GemFactory carries module-stats storage.
+/// [`GEM_ADDRESS`]. GemFactory carries module-stats storage.
 pub const GEM_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000002013");
 
 /// Credis precompile address.
@@ -101,9 +101,9 @@ pub const REWARDS_ADDRESS: Address = address!("0x0000000000000000000000000000000
 /// `last_accounted_block_number: u64`). System-only: there is **no** EVM
 /// precompile dispatch registered at this address, so user transactions
 /// CALLing it execute as no-op accounts. Only the V2 executor Phase 1 path
-/// may write slot 0. The address is included in the executor's EIP-161
-/// marker-bytecode allowlist so the slot survives state-root computation
-/// across all blocks.
+/// may write slot 0. The executor's EIP-161 marker-bytecode allowlist
+/// includes the address, so the slot survives state-root computation across
+/// all blocks.
 pub const ACCOUNTING_PROGRESS_ADDRESS: Address =
     address!("0x000000000000000000000000000000000000EE04");
 
@@ -114,11 +114,11 @@ pub const ORACLE_ADDRESS: Address = address!("0x00000000000000000000000000000000
 ///
 /// When the executor rejects a zero-fee user transaction (e.g.
 /// `Oracle.submitVote`) at stateless classification or stateful
-/// authorization time, it includes the transaction in the block with a
-/// `status=0` receipt carrying one `OutbeFailure(code, reason)` log
-/// emitted from this address. No EVM execution and no state mutation
-/// happen at this address - it is purely a logical namespace for
-/// `eth_getLogs` filtering. The matching log builder, the `OutbeFailure`
+/// authorization time, it includes the transaction in the block. The
+/// transaction gets a `status=0` receipt that carries one
+/// `OutbeFailure(code, reason)` log emitted from this address. No EVM
+/// execution and no state mutation happen at this address. It is purely a
+/// logical namespace for `eth_getLogs` filtering. The matching log builder, the `OutbeFailure`
 /// event definition, and the zero-fee error -> code mapping live in
 /// `outbe-evm` and `outbe-zerofee` respectively. See EPIC.
 pub const ZERO_FEE_POLICY_LOG_ADDRESS: Address =
@@ -126,18 +126,18 @@ pub const ZERO_FEE_POLICY_LOG_ADDRESS: Address =
 
 /// Poseidon-BN254 hash precompile address (stateless).
 ///
-/// Raw byte ABI: input is `Nx32` BE-encoded field elements (`1 <= N <= 12`,
-/// each mod-reduced to BN254 Fr); output is the 32-byte BE-encoded
-/// Poseidon hash. Matches `outbe-poseidon`'s Circom parameter set, so a
+/// Raw byte ABI. The input is `Nx32` BE-encoded field elements
+/// (`1 <= N <= 12`, each mod-reduced to BN254 Fr). The output is the 32-byte
+/// BE-encoded Poseidon hash. Matches `outbe-poseidon`'s Circom parameter set, so a
 /// hash computed by a wallet and the precompile agree byte-for-byte.
 pub const ZKPROOF_POSEIDON_ADDRESS: Address =
     address!("0x000000000000000000000000000000000000EE07");
 
 /// Groth16 / UltraHonkKeccak proof verifier precompile address (stateless).
 ///
-/// Input is `abi.encode(bytes32 circuit_hash, bytes proof)`; the
-/// precompile looks `circuit_hash` up against the canonical-circuit
-/// table from `outbe-zk-canonical` and dispatches verification to the
+/// Input is `abi.encode(bytes32 circuit_hash, bytes proof)`. The
+/// precompile does a lookup of `circuit_hash` in the canonical-circuit table from
+/// `outbe-zk-canonical`. It then dispatches verification to the
 /// Barretenberg FFI vendored by `outbe-zk-circuit-noir`. Output is 32
 /// bytes: `0x..01` on a valid proof, `0x..00` otherwise (including
 /// unknown circuit hashes).
@@ -145,17 +145,17 @@ pub const ZKPROOF_GROTH16_ADDRESS: Address = address!("0x00000000000000000000000
 
 /// ZeroFee paymaster precompile address (stateful).
 ///
-/// Acts as the EIP-7702 delegation target for "void sponsorship" - users
+/// Acts as the EIP-7702 delegation target for "void sponsorship". Users
 /// who delegate their EOA to this address may submit up to
-/// `FREE_TX_DAILY_LIMIT` (8) free transactions per UTC day, each capped by
-/// hard envelope limits (`gas_limit`, `calldata_size`, `value == 0`,
-/// `to in SPONSORED_TARGET_WHITELIST`). The contract holds a single
-/// `Mapping<Address, u64>` packing `(date_key: u32, count: u32)` per
-/// signer; lazy reset on day flip.
+/// `FREE_TX_DAILY_LIMIT` (8) free transactions per UTC day. Hard envelope
+/// limits cap each of these transactions (`gas_limit`, `calldata_size`,
+/// `value == 0`, `to in SPONSORED_TARGET_WHITELIST`). The contract holds a
+/// single `Mapping<Address, u64>` packing `(date_key: u32, count: u32)` per
+/// signer. The reset on day flip is lazy.
 ///
 /// View ABI (see `interfaces/IZeroFee.sol` for the authoritative
-/// definition) - two methods, both anchored to the current block's
-/// UTC day so callers never supply or reconcile the day themselves:
+/// definition). It has two methods. Both are anchored to the current
+/// block's UTC day, so callers never supply or reconcile the day themselves:
 ///   - `authorizeSponsorship(address signer) view returns (bool)` -
 ///     `true` if `signer` would be admitted to the sponsored path for
 ///     this block (mirrors the executor pre-fee gate: not self,
@@ -167,13 +167,13 @@ pub const ZKPROOF_GROTH16_ADDRESS: Address = address!("0x00000000000000000000000
 ///
 /// The raw packed slot (`date_key << 32 | count`) is readable via
 /// `eth_getStorageAt(ZEROFEE_ADDRESS, slot)` for anyone who needs the
-/// pre-reset value; it is not a precompile method. The mutating
-/// `record_use` is invoked only by the executor pre-fee hook and is
-/// deliberately not exposed through ABI so an attacker cannot burn
-/// their own quota via an unrelated sub-call.
+/// pre-reset value. It is not a precompile method. Only the executor pre-fee
+/// hook invokes the mutating `record_use`. The ABI deliberately does not
+/// expose it, so an attacker cannot burn their own quota via an unrelated
+/// sub-call.
 ///
-/// No native balance is held at this address; fee debit is simply skipped
-/// when the executor's pre-fee hook detects EIP-7702 delegation to it.
+/// This address holds no native balance. The executor's pre-fee hook simply
+/// skips fee debit when it detects EIP-7702 delegation to this address.
 pub const ZEROFEE_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE09");
 
 /// TEE Registry precompile (storage-backed KV).
@@ -181,14 +181,14 @@ pub const ZEROFEE_ADDRESS: Address = address!("0x0000000000000000000000000000000
 /// Records the per-validator TEE registration bundle and the global
 /// `tribute_offer_public_key` written once by the `TeeBootstrap` system
 /// transaction (Phase 3b). The public ABI is read-only (clients fetch the offer
-/// key via `eth_call`); the initial write is performed natively by the system-tx
-/// handler through `StorageHandle::contract`, not via the public ABI.
+/// key via `eth_call`). The system-tx handler performs the initial write
+/// natively through `StorageHandle::contract`, not via the public ABI.
 pub const TEE_REGISTRY_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0A");
 
 /// On-chain upgrade governance precompile address.
 ///
 /// Hosts proposal/vote state and the active protocol version. Callable
-/// dispatch is registered at `UPDATE_ADDRESS`; lifecycle activation is wired later.
+/// dispatch is registered at `UPDATE_ADDRESS`. Lifecycle activation is wired later.
 pub const UPDATE_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0B");
 
 /// Generic on-chain vote precompile address.
@@ -236,13 +236,13 @@ pub const OCOMP_REGISTRY_ADDRESS: Address = address!("0x000000000000000000000000
 
 /// HyperlaneController precompile address (stateful).
 ///
-/// Governance-owned controller of the Hyperlane bridge: owner of the Outbe
+/// Governance-owned controller of the Hyperlane bridge. It owns the Outbe
 /// Mailbox, ProxyAdmin, IGP, ProtocolFee, InterchainAccountRouter and the
-/// storage multisig ISM, and (through its Interchain Account) of the same
-/// contracts on remote chains. Stores only the local ISM / router addresses
-/// and the `domain -> remote ISM` table; validator sets live in the ISMs.
-/// `fund` is the only payable selector (float that pays ICA fees). Every
-/// mutation is applied by the validator vote target. See `outbe-hyperlanecontroller`.
+/// storage multisig ISM. Through its Interchain Account, it also owns the same
+/// contracts on remote chains. It stores only the local ISM / router addresses
+/// and the `domain -> remote ISM` table. Validator sets live in the ISMs.
+/// `fund` is the only payable selector (float that pays ICA fees). The
+/// validator vote target applies every mutation. See `outbe-hyperlanecontroller`.
 pub const HYPERLANE_CONTROLLER_ADDRESS: Address =
     address!("0x000000000000000000000000000000000000EE14");
 
@@ -267,9 +267,9 @@ pub const SYSTEM_ADDRESS: Address = Address::ZERO;
 /// Reserved sender/recipient address for signed system-transaction artifacts.
 ///
 /// System transactions are first-class block-body transactions used to expose
-/// begin-block runtime effects through normal Ethereum receipts. They are
-/// authenticated by the proposer signature but executed in EVM system mode via
-/// [`SYSTEM_ADDRESS`], so this address must remain distinct from both the fee
+/// begin-block runtime effects through normal Ethereum receipts. The proposer
+/// signature authenticates them, but they execute in EVM system mode via
+/// [`SYSTEM_ADDRESS`]. So this address must remain distinct from both the fee
 /// recipient and any user-facing precompile account.
 pub const OUTBE_SYSTEM_TX_ADDRESS: Address = address!("0xff00000000000000000000000000000000000001");
 
@@ -278,7 +278,7 @@ pub const OUTBE_SYSTEM_TX_ADDRESS: Address = address!("0xff000000000000000000000
 // ---------------------------------------------------------------------------
 //
 // These addresses hold canonical third-party runtime bytecode pre-allocated at
-// genesis. They execute as ordinary EVM accounts under standard semantics; the
+// genesis. They execute as ordinary EVM accounts under standard semantics. The
 // precompile lookup in `OutbeEvmFactory::create_evm` does not intercept them.
 
 /// Arachnid deterministic CREATE2 deployer.
@@ -314,9 +314,11 @@ pub const DESIS_ADDRESS: Address = address!("0x000000000000000000000000000000000
 pub const VAULT_ROUTER_ADDRESS: Address = address!("0x0000000000000000000000000000000000001017");
 
 /// Governance precompile address. On-chain registry of the normative texts
-/// (meta-canon, canon) and improvement proposals (OIP, GIP): read/update the
-/// texts, submit/read/update proposals, drive the proposal status model, and
-/// diff a proposal against the canon/meta-canon.
+/// (meta-canon, canon) and improvement proposals (OIP, GIP). It supports these operations:
+/// - read/update the texts
+/// - submit/read/update proposals
+/// - drive the proposal status model
+/// - diff a proposal against the canon/meta-canon
 pub const GOVERNANCE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001018");
 
 /// PayNote precompile address (stateful). Shielded ERC20 note pool. See `outbe-paynote`.

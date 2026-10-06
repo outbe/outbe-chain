@@ -1,6 +1,6 @@
-//! Entry points for the begin-block system phases. Both are best effort: a
-//! bridge failure must never block a boundary or the slash-window phase, so
-//! errors are logged and the next block retries.
+//! Entry points for the begin-block system phases. Both are best effort. A
+//! bridge failure must never block a boundary or the slash-window phase. So
+//! the entry points log errors, and the next block retries.
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
@@ -12,8 +12,9 @@ use crate::runtime::LIVENESS_WINDOW_BLOCKS;
 use crate::schema::HyperlaneControllerContract;
 
 /// Mirrors the active validator set into the Hyperlane ISMs by sub-calling
-/// the controller's `sync()`. A child frame so the controller, not the system
-/// tx, is the router's `msg.sender` (its Interchain Account derives from that).
+/// the controller's `sync()`. The sub-call uses a child frame, so the
+/// controller, not the system tx, is the router's `msg.sender`. The
+/// controller's Interchain Account derives from that sender.
 pub fn sync_validators(ctx: &BlockRuntimeContext) {
     let call = IHyperlaneController::syncCall {}.abi_encode().into();
     if let Err(error) = ctx

@@ -52,7 +52,7 @@ pub(crate) fn run_finalization_and_slashing(
     // preflight (`apply_pre_execution_changes::verify_phase1_in_preexec`)
     // captured this value from `outbe_consensus::proof::VerifiedProof::vrf_proof_hash`
     // and stashed it in the preloaded context. A zero hash here would
-    // pass the gate but produces a degenerate fingerprint; in production
+    // pass the gate but produces a degenerate fingerprint. In production
     // the preflight always populates a real value for `block_number >= 2`.
     let canonical_vrf_proof_hash = current_preloaded_system_tx_context()
         .map(|context| context.canonical_vrf_proof_hash)
@@ -89,10 +89,10 @@ pub(crate) fn run_finalization_and_slashing(
         }
     }
 
-    // Base voters = the k=0 quorum (direct-parent signers); they seed the fee
-    // escrow at k=0. The FULL absentee set and its miss / slashing accounting are
-    // deferred to the inclusion-window close at N+K (`record_window_close_absentees`
-    // in the LateFinalizeCredits phase), so a slow-but-honest validator credited at
+    // Base voters = the k=0 quorum (direct-parent signers). They seed the fee
+    // escrow at k=0. This step defers the FULL absentee set and its miss / slashing
+    // accounting to the inclusion-window close at N+K (`record_window_close_absentees`
+    // in the LateFinalizeCredits phase). Thus a slow-but-honest validator credited at
     // k=1..K is not counted "missed" or slashed.
     let mut voters = Vec::new();
     for (addr, did_sign) in metadata
@@ -116,8 +116,8 @@ pub(crate) fn run_finalization_and_slashing(
 
     // Missed-proposer slashing: idempotent + bounded via the per-`fb_hash`
     // `proposer_window_slashed` guard. The whole event list for this
-    // finalized parent is processed atomically; duplicate proposers across
-    // skipped views are each slashed within the one pass.
+    // finalized parent is processed atomically. The one pass slashes each
+    // duplicate proposer across skipped views.
     let missed_validators: Vec<Address> = metadata
         .missed_proposers
         .iter()

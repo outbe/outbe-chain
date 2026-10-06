@@ -36,7 +36,8 @@ use std::fs::File;
 use std::path::Path;
 
 /// Persist exact canonical registration material for the already committed
-/// enclave. Exact replay is idempotent; conflicting material is rejected.
+/// enclave. Exact replay is idempotent. The function rejects conflicting
+/// material.
 pub fn persist_committed_join_submission(
     node_data_dir: &Path,
     registration_caller: Address,
@@ -192,7 +193,7 @@ pub fn load_committed_join_relay(
 
 /// Remove an exact committed-join checkpoint only after the caller has proved
 /// the same intent completed locally. A crash between removals converges on
-/// retry because relay is removed before submission.
+/// retry because the function removes relay before submission.
 pub fn clear_committed_join_checkpoint(
     node_data_dir: &Path,
     expected_intent_hash: B256,
@@ -220,8 +221,8 @@ pub fn clear_committed_join_checkpoint(
 }
 
 /// Persist an exact finalized join checkpoint before any local promotion,
-/// checkpoint cleanup, or successful CLI return. Exact replay is idempotent;
-/// only a strictly later checkpoint for the same chain and NodeHost identity
+/// checkpoint cleanup, or successful CLI return. Exact replay is idempotent.
+/// Only a strictly later checkpoint for the same chain and NodeHost identity
 /// may replace it.
 pub fn persist_finalized_join_admission_anchor(
     node_data_dir: &Path,

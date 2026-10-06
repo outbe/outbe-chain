@@ -221,7 +221,7 @@ fn stop_workers_before_independent_public_exports(world: &mut World) {
         .stop_worker_cohort(world.state.ocomp_worker_outage.as_mut().unwrap())
         .expect("stop and reap all four owned workers before observing exports");
     // Capture the cut immediately after reaping. Later export publication cannot
-    // move this boundary; its independence from workers is the property tested.
+    // move this boundary. Its independence from workers is the property tested.
     let heads = world
         .validators
         .committee_ports()
@@ -738,7 +738,7 @@ fn late_local_result_is_not_fatal(world: &mut World) {
             transaction.block_number < request.deadline_height,
             "validator-3 vote succeeded at or after the exclusive deadline"
         );
-        // The first accepted signature owns the slot; later identical retries
+        // The first accepted signature owns the slot. Later identical retries
         // cannot replace it. Canonical block enumeration is height ordered.
         if late_vote.is_none() {
             late_vote = Some((transaction.block_number, vote.signature_rs.to_vec()));

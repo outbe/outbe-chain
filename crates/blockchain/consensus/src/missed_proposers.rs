@@ -4,10 +4,10 @@
 //! Phase 1 system transaction) and the verify side
 //! (`finalization::attestation::canonical_missed_proposers`, which recomputes and
 //! validates that metadata) must elect the *same* leader for every skipped
-//! view - otherwise a proposer's `missed_proposers` list would be rejected by
-//! validators and consensus would diverge. This module is the single source of
-//! truth for that election sequence; callers keep their own guards, index ->
-//! address mapping, out-of-bounds policy, logging, and metrics.
+//! view. Otherwise validators would reject a proposer's `missed_proposers` list
+//! and consensus would diverge. This module is the single source of truth for
+//! that election sequence. Callers keep their own guards, index -> address
+//! mapping, out-of-bounds policy, logging, and metrics.
 
 use commonware_consensus::simplex::elector::Elector as _;
 use commonware_consensus::types::{Epoch, Round, View};
@@ -29,10 +29,10 @@ pub(crate) struct SkippedViewRange {
 /// `(last_view, current_view)` (i.e. `last_view + 1 ..= current_view - 1`),
 /// stopping after `cap` entries.
 ///
-/// Returns one [`Participant`] per elected view, in view order. Mapping the
-/// participant index to a validator address, and deciding what to do when that
-/// index is out of range, is the caller's responsibility - the two call sites
-/// deliberately differ there (the reporter skips, the verifier rejects).
+/// Returns one [`Participant`] per elected view, in view order. The caller maps
+/// the participant index to a validator address and decides what to do when that
+/// index is out of range. The two call sites deliberately differ there (the
+/// reporter skips, the verifier rejects).
 pub(crate) fn elected_leaders_for_gap(
     epoch: Epoch,
     elector: &HybridRandomElector<MinSig>,

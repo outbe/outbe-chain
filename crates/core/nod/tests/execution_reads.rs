@@ -192,7 +192,7 @@ fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
             })
             .collect();
 
-        // COEN/840 closes the first full day at 1299; COEN/978 has no pair at all.
+        // COEN/840 closes the first full day at 1299. COEN/978 has no pair at all.
         let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         let pair = outbe_oracle::api::AddressPair::new_coen_to(840);
         let index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();

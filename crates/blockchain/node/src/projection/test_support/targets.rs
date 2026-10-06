@@ -48,7 +48,7 @@ pub(in super::super) fn record_finalized_target(
 
 /// During crash recovery Mongo can durably commit finalized block N just before
 /// Reth persists its finalized marker for N. Ignore the stale N-1 marker until
-/// Reth reaches the already-canonical Mongo checkpoint; never accept a conflict
+/// Reth reaches the already-canonical Mongo checkpoint. Never accept a conflict
 /// at the checkpoint height.
 #[cfg(test)]
 pub(in super::super) fn admit_startup_finalized_target(

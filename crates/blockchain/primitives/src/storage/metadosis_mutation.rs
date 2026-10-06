@@ -20,7 +20,7 @@ pub enum MetadosisMutationPurposeTag {
 }
 
 /// Compact executor-owned set of purposes admitted by one authenticated
-/// dispatch route. It is not authority by itself; the provider consumes it
+/// dispatch route. It is not authority by itself. The provider consumes it
 /// while issuing closure-bounded leases.
 const MAX_EXACT_BINDINGS_PER_PURPOSE: usize = 4;
 
@@ -94,9 +94,9 @@ impl MetadosisMutationEntitlements {
             || has_exact_binding(self.exact_bindings[purpose as usize])
     }
 
-    /// Consumes one route entitlement. Exact route bindings take precedence:
-    /// when any are configured for the purpose, an unlisted caller-computed
-    /// binding is rejected without consuming another command's authority.
+    /// Consumes one route entitlement. Exact route bindings take precedence.
+    /// When the purpose has any exact bindings, this method rejects an unlisted
+    /// caller-computed binding and does not consume another command's authority.
     pub fn consume(&mut self, purpose: MetadosisMutationPurposeTag, binding: B256) -> bool {
         let exact = &mut self.exact_bindings[purpose as usize];
         if exact.iter().any(Option::is_some) {
@@ -132,9 +132,10 @@ const fn has_exact_binding(bindings: [Option<B256>; MAX_EXACT_BINDINGS_PER_PURPO
 
 /// Exact certificate-derived data accepted by the Metadosis finality command.
 ///
-/// This value is not authority by itself: the EVM provider independently derives
+/// This value is not authority by itself. The EVM provider independently derives
 /// and installs the same binding from its verified certificate and preloaded
-/// finalized-parent summary before the command can enter its mutation frame.
+/// finalized-parent summary. The provider does this before the command can enter
+/// its mutation frame.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MetadosisCertifiedFinalityBinding {
     chain_id: u64,
@@ -361,8 +362,8 @@ define_purpose!(MetadosisVerifiedResultVote, VerifiedResultVote);
 ///
 /// Construction is private to [`StorageHandle::with_metadosis_mutation`]. The
 /// storage provider must independently grant the exact purpose for the current
-/// executor route before the callback is entered. The lease is never passed to
-/// that callback and cannot be obtained from a raw [`StorageHandle`].
+/// executor route before the callback runs. The lease is never passed to that
+/// callback. Callers cannot obtain the lease from a raw [`StorageHandle`].
 ///
 /// A downstream crate cannot import or construct a lease:
 ///
@@ -446,8 +447,8 @@ impl Drop for MetadosisMutationFrameGuard<'_> {
 
 impl<'storage> StorageHandle<'storage> {
     /// Runs one purpose-bound Metadosis command in a provider-granted frame and
-    /// a journal checkpoint. Nested Metadosis mutation is rejected by the
-    /// provider before the callback (and therefore before aggregate reads).
+    /// a journal checkpoint. The provider rejects nested Metadosis mutation
+    /// before the callback (and therefore before aggregate reads).
     pub fn with_metadosis_mutation<P, R>(
         &self,
         binding: B256,

@@ -2,7 +2,7 @@
 use super::*;
 
 /// Check a complete public export against an already authenticated canonical
-/// job. This compares saved authorities; it never replays an export operation.
+/// job. This compares saved authorities. It never replays an export operation.
 pub(crate) fn verify_export_inputs(
     ocomp_root: &Path,
     job: &OcompJobRecordV1,
@@ -126,7 +126,7 @@ pub(crate) struct DiscoveryAudit {
 
 /// Decode complete surviving native spools and bind each full offer to immutable
 /// current-E authority. Old absent spools are optional. Other native record stages
-/// retain their identity/status for the caller's relation checks; this reader does
+/// retain their identity/status for the caller's relation checks. This reader does
 /// not require or recreate a retired export merely because an offer survives.
 pub(crate) fn verify_present_discovery(
     state: &CanonicalState<'_>,

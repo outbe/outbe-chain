@@ -48,11 +48,11 @@ export function formatNativeAmount(
 }
 
 /**
- * Build the chain context. Chain id is read from the node (`eth_chainId`) so we
- * make no fork assumptions. The node supports EIP-1559 (block carries
- * baseFeePerGas), so transactions are type-2; viem fills the fee fields from the
- * node and we only override `gas` (estimateGas cannot simulate the in-enclave
- * tribute decrypt).
+ * Build the chain context. We read the chain id from the node (`eth_chainId`), so
+ * we make no fork assumptions. The node supports EIP-1559 (block carries
+ * baseFeePerGas), so transactions are type-2. viem fills the fee fields from the
+ * node. We only override `gas`, because estimateGas cannot simulate the
+ * in-enclave tribute decrypt.
  */
 export async function createCtx(rpcUrl: string, privateKey?: string): Promise<Ctx> {
   const transport = http(rpcUrl);

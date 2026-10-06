@@ -19,7 +19,7 @@ use outbe_primitives::{
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EnclaveContextKindV1 {
-    /// Initialization before chain state is available; zero is not a current tip.
+    /// Initialization before chain state is available. Zero is not a current tip.
     #[default]
     Bootstrap,
     /// Exact execution/eth_call state, which may precede the live chain tip.
@@ -37,7 +37,7 @@ pub struct EnclaveCallContextV1 {
     pub genesis_hash: B256,
     pub block_number: u64,
     pub block_timestamp: u64,
-    /// Canonical on-chain u32 encoding; zero is the pre-upgrade baseline.
+    /// Canonical on-chain u32 encoding. Zero is the pre-upgrade baseline.
     pub protocol_version: u32,
 }
 
@@ -65,8 +65,9 @@ thread_local! {
     static CURRENT: Cell<Option<EnclaveCallContextV1>> = const { Cell::new(None) };
 }
 
-/// Read the request-local context inside any enclave handler. No global tip is
-/// substituted: nested operations and concurrent sessions remain isolated.
+/// Read the request-local context inside any enclave handler. This function does
+/// not substitute a global tip: nested operations and concurrent sessions remain
+/// isolated.
 pub fn current() -> Option<EnclaveCallContextV1> {
     CURRENT.with(Cell::get)
 }

@@ -59,7 +59,7 @@ const MAX_REFERENCE_CURRENCIES: usize = 6;
 /// Configurable genesis parameters for the Oracle contract.
 ///
 /// Dimensionless policy fields retain FP18. COEN/ISO pair rates, volumes and
-/// snapshots use six decimals; the COEN/840 S-Curve uses the same rate scale 1e6.
+/// snapshots use six decimals. The COEN/840 S-Curve uses the same rate scale 1e6.
 /// Generic non-ISO pair data retains its existing contract.
 pub struct OracleGenesisConfig {
     /// Vote period in blocks (default: 2).
@@ -127,8 +127,8 @@ impl OracleGenesisConfig {
 /// Initializes all oracle state from a genesis configuration.
 ///
 /// Writes config slots, registers pairs, sets initial exchange rates, and
-/// records feeder delegations. The oracle is marked as enabled and
-/// initialized on success.
+/// records feeder delegations. On success, it marks the oracle as enabled and
+/// initialized.
 pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConfig) -> Result<()> {
     // Idempotency guard: skip if already initialized (safe for block 0 replay).
     if oracle.config_is_initialized.read()? {
@@ -243,8 +243,8 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
 /// penalty counters, pending aggregate votes, snapshots, S-curve entries, and
 /// protected validators.
 ///
-/// The exported config can be used to re-initialize a fresh oracle via
-/// `init_from_genesis`, enabling full state migration.
+/// `init_from_genesis` can use the exported config to re-initialize a fresh
+/// oracle. This enables full state migration.
 pub fn export_genesis(
     oracle: &OracleContract,
     validators: &[Address],
@@ -551,10 +551,10 @@ fn export_aggregate_votes(oracle: &OracleContract) -> Result<Vec<GenesisAggregat
 
 /// The registered pair at `index`, checked against the forward map.
 ///
-/// The zero address is a legitimate asset (native COEN), so an unwritten entry
-/// cannot be spotted by a zero check. Round-tripping the pair back through
-/// `pair_index` proves it is really there and doubles as the corruption check
-/// the old pair-hash comparison used to provide.
+/// The zero address is a legitimate asset (native COEN), so a zero check cannot
+/// spot an unwritten entry. Round-tripping the pair back through `pair_index`
+/// proves it is really there. It also acts as the corruption check that the old
+/// pair-hash comparison provided.
 fn export_pair_metadata(oracle: &OracleContract, pair_id: u32) -> Result<AddressPair> {
     let pair = oracle.pair_at(pair_id)?;
     if oracle.pair_index_of(pair)? != pair_id {

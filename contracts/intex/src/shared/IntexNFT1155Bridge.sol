@@ -18,10 +18,11 @@ import {IntexGas} from "./libs/IntexGas.sol";
 
 /// @title IntexNFT1155Bridge
 /// @author Outbe
-/// @notice Batch cross-chain ERC-1155 adapter over the protocol-agnostic ERC-7786 bridge: burns on the source and
-///         mints on the paired adapter registered as the remote messenger for a chainId.
-/// @dev UUPS upgradeable; the bridge and bridged token are implementation immutables. Modes: single-recipient batch
-///      and multi-recipient.
+/// @notice Batch cross-chain ERC-1155 adapter over the protocol-agnostic ERC-7786 bridge. It burns
+///         on the source and mints on the paired adapter registered as the remote messenger for a
+///         chainId.
+/// @dev UUPS upgradeable. The bridge and bridged token are implementation immutables. Modes:
+///      single-recipient batch and multi-recipient.
 contract IntexNFT1155Bridge is
     IIntexNFT1155Bridge,
     ERC7786MessengerBase,
@@ -37,10 +38,11 @@ contract IntexNFT1155Bridge is
     /// @notice The bridgeable ERC-1155 this adapter burns on send and mints on receive.
     IERC1155Bridgeable public immutable token;
 
-    /// @notice Snapshot of one batch item whose `token.crosschainMint` reverted; `exists` distinguishes
-    ///         never-failed from failed-and-retried. The revert data is not kept: neither
-    ///         `retryCrosschainMint` nor `reclaimToSource` reads it, and `CrosschainMintFailed` carries
-    ///         it for whoever diagnoses the failure. Ordered so the address, chain and flag share a slot.
+    /// @notice Snapshot of one batch item whose `token.crosschainMint` reverted. `exists`
+    ///         distinguishes never-failed from failed-and-retried. The struct does not keep the
+    ///         revert data: neither `retryCrosschainMint` nor `reclaimToSource` reads it.
+    ///         `CrosschainMintFailed` carries it for whoever diagnoses the failure. The field order
+    ///         lets the address, chain and flag share a slot.
     struct FailedCrosschainMint {
         address to;
         uint32 srcChainId;
@@ -122,7 +124,7 @@ contract IntexNFT1155Bridge is
 
     /// @dev A single transfer is a 1-item `SEND` batch: it shares the batch wire format and receive path.
     function _buildSingleMsg(SendParam calldata _sendParam) internal pure returns (bytes memory) {
-        // reject a malformed recipient before burning; the receive path rejects it too
+        // reject a malformed recipient before burning. The receive path rejects it too.
         IntexNFT1155BridgeCodec.assertAddress(_sendParam.to);
         if (_sendParam.to == bytes32(0)) revert InvalidReceiver();
         uint256[] memory tokenIds = new uint256[](1);
@@ -270,8 +272,8 @@ contract IntexNFT1155Bridge is
         emit MultiReceived(receiveId, srcChainId, p.recipients, p.tokenIds, p.units);
     }
 
-    /// @dev Isolate a per-item `token.crosschainMint` revert: park a snapshot for `retryCrosschainMint`
-    ///      instead of failing the whole batch.
+    /// @dev Isolate a per-item `token.crosschainMint` revert. Park a snapshot for
+    ///      `retryCrosschainMint` instead of failing the whole batch.
     function _tryCrosschainMintOne(
         uint32 srcChainId,
         bytes32 receiveId,
@@ -296,7 +298,8 @@ contract IntexNFT1155Bridge is
         token.crosschainMint(to, tokenId, units);
     }
 
-    /// @notice Permissionless retry of a previously-failed crosschainMint; the entry is cleared on success.
+    /// @notice Permissionless retry of a previously-failed crosschainMint. A success clears the
+    ///         entry.
     function retryCrosschainMint(bytes32 receiveId, uint256 idx) external nonReentrant {
         IntexNFT1155BridgeStorage storage $ = _bs();
         FailedCrosschainMint memory f = $.failedCrosschainMints[receiveId][idx];
@@ -306,9 +309,10 @@ contract IntexNFT1155Bridge is
         emit CrosschainMintRetried(receiveId, idx);
     }
 
-    /// @notice Permissionless reclaim of a batch item the destination gate rejects terminally: re-mints the owner
-    ///         on the origin chain via a reverse one-item transfer, the only exit that does not re-hit the
-    ///         destination lifecycle gate. Caller-funded; consumes the entry once (CEI delete first).
+    /// @notice Permissionless reclaim of a batch item that the destination gate rejects
+    ///         terminally. It re-mints the owner on the origin chain via a reverse one-item
+    ///         transfer. This is the only exit that does not re-hit the destination lifecycle gate.
+    ///         The caller funds it. It consumes the entry once (CEI delete first).
     /// @param receiveId Inbound message id where the item's crosschainMint is stranded.
     /// @param idx Position of the stranded item in that batch.
     function reclaimToSource(bytes32 receiveId, uint256 idx) external payable nonReentrant returns (bytes32 sendId) {
@@ -336,7 +340,7 @@ contract IntexNFT1155Bridge is
         uint256 balance = address(this).balance;
         if (amount > balance) revert NativeBalanceInsufficient(balance, amount);
 
-        // admin-only native recovery; arbitrary destination is intentional
+        // admin-only native recovery. The arbitrary destination is intentional.
         // slither-disable-next-line arbitrary-send-eth
         (bool ok,) = to.call{value: amount}("");
         if (!ok) revert NativeSweepFailed();

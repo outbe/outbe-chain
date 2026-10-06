@@ -41,7 +41,7 @@ pub(in crate::stack) async fn resolve_epoch_floor<E: Clock>(
     })
 }
 
-/// Distinguishes the two existing activation diagnostics; both require the
+/// Distinguishes the two existing activation diagnostics. Both require the
 /// exact activation height to be finalized before the next engine starts.
 #[derive(Clone, Copy)]
 pub(in crate::stack) enum AnchorTransition {

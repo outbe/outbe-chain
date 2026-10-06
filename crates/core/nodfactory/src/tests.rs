@@ -41,7 +41,7 @@ fn nod_context(nod_id: WwdEntityId, snapshot: U256) -> B256 {
     .unwrap()
 }
 
-/// The chain ID `World`'s storage provider reports; PayNote folds it into
+/// The chain ID `World`'s storage provider reports. PayNote folds it into
 /// every commitment, so fixtures must be built under the same one.
 const CHAIN_ID: u64 = 1;
 
@@ -331,8 +331,8 @@ impl World {
         self.fund_note(NOTE_ASSET, nod_id, cost, cost).0
     }
 
-    /// Stamps the bucket's call directly. The scan that decides *when* to stamp
-    /// is covered in `outbe_nod::called_tests`; what matters here is the gate
+    /// Stamps the bucket's call directly. `outbe_nod::called_tests` covers the
+    /// scan that decides *when* to stamp. What matters here is the gate
     /// `settle_nod` applies once it is stamped.
     fn mark_called(&mut self, nod_id: WwdEntityId, at: u64) {
         self.enter(|storage, scope, parent| {

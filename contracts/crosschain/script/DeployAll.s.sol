@@ -11,13 +11,15 @@ import {ConfigureBridge} from "./3_ConfigureBridge.s.sol";
 ///   1. Adapters - each deployed only when its endpoint env is set (`LZ_ENDPOINT` / `HYPERLANE_MAILBOX`)
 ///   2. Bridge (with the active gateway)
 ///   3. Wire remotes for each `REMOTE_CHAIN_IDS` (remote addresses == local CREATE3 addresses)
-/// The CREATE3 factory is not deployed here: it is built and deployed once from contracts/shared.
+/// This script does not deploy the CREATE3 factory. The factory is built and deployed once from
+/// contracts/shared.
 /// Remote addresses are deterministic, so step 3 is safe even before other chains are deployed.
 ///
-/// Required env: `DEPLOYER_PK` (= bridge owner), `CONTRACT_SALT`, `BRIDGE_OWNER`, `CREATE3_FACTORY_ADDRESS`,
-///   at least one of `LZ_ENDPOINT` / `HYPERLANE_MAILBOX`.
+/// Required env: `DEPLOYER_PK` (= bridge owner), `CONTRACT_SALT`, `BRIDGE_OWNER`,
+///   `CREATE3_FACTORY_ADDRESS`, at least one of `LZ_ENDPOINT` / `HYPERLANE_MAILBOX`.
 /// Optional: `ACTIVE_GATEWAY` ("lz" | "hyperlane"),
-///   `REMOTE_CHAIN_IDS` (csv; step 4 is a no-op if unset), `REMOTE_EIDS` (csv, parallel) for LayerZero,
+///   `REMOTE_CHAIN_IDS` (csv, step 4 is a no-op if unset), `REMOTE_EIDS` (csv, parallel) for
+///   LayerZero,
 ///   `WIRE_LOOPBACK` (route the local chain through the loopback adapter).
 contract DeployAll is DeployAdapters, DeployBridge, ConfigureBridge {
     function run() public override(DeployAdapters, DeployBridge, ConfigureBridge) {

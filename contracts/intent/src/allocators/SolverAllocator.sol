@@ -37,7 +37,7 @@ contract SolverAllocator is IAllocator {
     // ============ State ============
 
     /// @notice Authorized arbiter for withdrawals and slashing (SolverEscrow).
-    ///         Set once by OWNER after escrow is deployed.
+    ///         OWNER sets it once after the escrow is deployed.
     address public arbiter;
 
     // ============ Events ============
@@ -70,7 +70,7 @@ contract SolverAllocator is IAllocator {
 
     // ============ Admin ============
 
-    /// @notice Set the arbiter contract address. Can only be called once by OWNER.
+    /// @notice Set the arbiter contract address. Only OWNER can call this, and only once.
     /// @param _arbiter SolverEscrow contract address
     function setArbiter(address _arbiter) external {
         if (msg.sender != OWNER) revert UnauthorizedOwner();
@@ -91,7 +91,7 @@ contract SolverAllocator is IAllocator {
 
     /// @inheritdoc IAllocator
     /// @dev Allows ERC6909 transfers only when the operator is the arbiter (escrow).
-    ///      All other direct transfers are blocked - solvers must use escrow.withdraw().
+    ///      This function blocks all other direct transfers. Solvers must use escrow.withdraw().
     function attest(
         address operator,
         address, /* from */
@@ -109,7 +109,7 @@ contract SolverAllocator is IAllocator {
     }
 
     /// @inheritdoc IAllocator
-    /// @dev Called by The Compact during allocatedTransfer() and claim() processing.
+    /// @dev The Compact calls this when it processes allocatedTransfer() and claim().
     function authorizeClaim(
         bytes32 claimHash,
         address claimArbiter,
@@ -136,7 +136,7 @@ contract SolverAllocator is IAllocator {
         uint256[2][] calldata, /* idsAndAmounts */
         bytes calldata /* allocatorData */
     ) public view override returns (bool) {
-        // Only the arbiter (escrow) can claim - solvers must go through escrow - and not past expiry.
+        // Only the arbiter (escrow) can claim, and not past expiry. Solvers must go through escrow.
         return claimArbiter == arbiter && block.timestamp <= expires;
     }
 }

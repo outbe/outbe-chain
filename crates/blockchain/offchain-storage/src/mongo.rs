@@ -55,8 +55,8 @@ const RETRYABLE_READ_CODES: &[i32] = &[
 pub struct MongoStorageConfig {
     /// MongoDB connection string.
     ///
-    /// Read/write consistency options may be omitted or set to the required
-    /// primary/majority contract. Conflicting URI options are rejected.
+    /// The URI may omit read/write consistency options or set them to the required
+    /// primary/majority contract. `MongoStorage::connect` rejects conflicting URI options.
     pub uri: String,
     /// Database containing the namespace collections.
     pub database: String,

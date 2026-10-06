@@ -1,14 +1,15 @@
 //! Throughput benchmark for the in-enclave tribute-offer processing path.
 //!
 //! Measures the **pure CPU cost** the enclave pays per offer during block
-//! execution - the ceiling on how many tribute offers the network can settle:
+//! execution. This cost is the ceiling on how many tribute offers the network
+//! can settle. The measured path:
 //!   X25519 ECDHE -> HKDF-SHA256 -> ChaCha20Poly1305 decrypt -> JSON parse ->
 //!   U256 economics -> Poseidon-BN254 `token_id`.
 //!
 //! What is NOT here: the Noise/UDS transport round-trip and SGX enter/exit +
 //! gramine syscall-emulation overhead. Those bound the *transport* cost, not the
-//! compute; measure them with the `transport_throughput_offers_per_sec` ignored
-//! test (run it under gramine-sgx on real hardware for the production figure).
+//! compute. Measure them with the `transport_throughput_offers_per_sec` ignored
+//! test. Run it under gramine-sgx on real hardware for the production figure.
 //! The compute below runs at near-native speed inside SGX2, so this is a tight
 //! upper bound on per-offer enclave CPU time.
 //!
@@ -27,8 +28,8 @@ use outbe_tee_enclave::compute::compute_token_id;
 use outbe_tee_enclave::crypto::ecdhe_tribute_offer_decrypt;
 use outbe_tee_enclave::process::{process_tribute_offer_batch, TributeOfferKeyMaterial};
 
-/// Enclave-resident offer secret (the DKG-derived key in production; a fixed test
-/// scalar here - derivation cost is one-time at bootstrap, not per offer).
+/// Enclave-resident offer secret. Production uses the DKG-derived key. This bench
+/// uses a fixed test scalar. Derivation cost is one-time at bootstrap, not per offer.
 const OFFER_SK: [u8; 32] = [7u8; 32];
 const NONCE: [u8; 12] = [1u8; 12];
 const DRAFT: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";

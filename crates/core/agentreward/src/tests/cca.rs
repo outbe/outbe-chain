@@ -238,7 +238,7 @@ fn cca_pool_queries_and_claims_are_isolated() {
             amount: U256::ZERO,
         }
         .abi_encode();
-        // A registered caller cannot spend another account's rewards; unregistered calls also fail.
+        // A registered caller cannot spend another account's rewards. Unregistered calls also fail.
         for caller in [BOB, Address::repeat_byte(3)] {
             assert!(dispatch(storage.clone(), &claim, caller, U256::ZERO).is_err());
         }

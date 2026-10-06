@@ -4,11 +4,12 @@
 //! `outbe.paynote@1.3.0` statement from **Rust-computed** public inputs and
 //! verify it through the production decoder. If `hash.rs` drifted from the
 //! frozen circuit's `paynote.nr`, the Rust root/nullifier would disagree with
-//! the in-circuit ones and proving would fail — that is what pins the mirror.
+//! the in-circuit ones and proving would fail. That failure is what pins the
+//! mirror.
 //!
 //! `deposit` performs ERC20 and VaultRouter sub-calls, which the in-memory
-//! storage provider cannot serve, so only its pre-mutation guards are covered
-//! here; the full path belongs in an EVM-level integration test.
+//! storage provider cannot serve. Thus these tests cover only its pre-mutation
+//! guards. The full path belongs in an EVM-level integration test.
 
 mod merge;
 
@@ -191,7 +192,7 @@ fn root_window_retains_only_the_last_entries() {
 
 #[test]
 fn tree_capacity_bound_exceeds_u32() {
-    // The depth-32 capacity does not fit u32; a u32 leaf counter would wrap on
+    // The depth-32 capacity does not fit u32. A u32 leaf counter would wrap on
     // the final append instead of reporting a full tree.
     assert_eq!(PAYNOTE_TREE_CAPACITY, 1u64 << 32);
     assert!(PAYNOTE_TREE_CAPACITY > u64::from(u32::MAX));
@@ -298,7 +299,7 @@ fn full_spend_round_trip_books_the_nullifier_and_no_change() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let (proof, public, tree) = prove_spend(CHAIN_ID, USDC, 100, 100);
 
-    // The frozen circuit's transcript is fixed-length; this is what pins
+    // The frozen circuit's transcript is fixed-length. This is what pins
     // `PAYNOTE_PROOF_WORDS`.
     assert_eq!(
         proof.len(),

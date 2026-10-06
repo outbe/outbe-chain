@@ -1,6 +1,6 @@
 //! Node-level handler registries for vote target dispatch and upgrade migrations.
 //!
-//! Handler implementations live in their owning crates; this module wires them
+//! Handler implementations live in their owning crates. This module wires them
 //! into Vote and Update lifecycle at block processing time.
 
 pub mod vote {

@@ -1,5 +1,5 @@
-//! Promisfactory precompile at `0x2337`. ABI dispatch only - the promis
-//! mint/burn orchestration + Fidelity bookkeeping lives in [`crate::runtime`].
+//! Promisfactory precompile at `0x2337`. This file does ABI dispatch only. The promis
+//! mint/burn orchestration and the Fidelity bookkeeping live in [`crate::runtime`].
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};

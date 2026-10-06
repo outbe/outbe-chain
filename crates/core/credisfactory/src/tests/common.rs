@@ -1,11 +1,11 @@
 //! Shared test harness for the credisfactory crate.
 //!
 //! The confidential Gratis path runs against the in-process enclave engine
-//! (`outbe_gratis::enclave_client::test_enclave`); balances/pledged amounts are
-//! asserted by decrypting the ciphertext with the account's view key, exactly as
-//! a client would. `HashMapStorageProvider` does not run a real EVM, so the
-//! runtime's Rust -> Solidity sub-calls into `IVaultRouter` / `IERC20` are
-//! stubbed via `enable_sub_call_stub` (returns `default_success()`).
+//! (`outbe_gratis::enclave_client::test_enclave`). The tests assert
+//! balances/pledged amounts by decrypting the ciphertext with the account's view
+//! key, exactly as a client would. `HashMapStorageProvider` does not run a real
+//! EVM. So `enable_sub_call_stub` stubs the runtime's Rust -> Solidity sub-calls
+//! into `IVaultRouter` / `IERC20` (returns `default_success()`).
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS;
@@ -37,7 +37,7 @@ pub const ISSUANCE_ISO: u16 = 840;
 
 /// Reference currency every position here elects. Deliberately distinct from
 /// [`ISSUANCE_ISO`] so a test that passes on the wrong series cannot pass by
-/// coincidence. Both pairs are seeded at the same rate, so the default call
+/// coincidence. The fixture seeds both pairs at the same rate, so the default call
 /// anchor is 2.0 and the call price is 3.28.
 pub const REFERENCE_ISO: u16 = 978;
 
@@ -207,8 +207,8 @@ pub fn prove_latest(
 }
 
 /// Parks a live vault reservation for `smart_account` so `issue_credis` can
-/// consume it. The hold is written through VaultRouter storage, not the ABI,
-/// because these tests stub EVM sub-calls into the router.
+/// consume it. This helper writes the hold through VaultRouter storage, not the
+/// ABI, because these tests stub EVM sub-calls into the router.
 pub fn seed_reservation(storage: &StorageHandle<'_>, smart_account: Address, amount: U256) -> U256 {
     seed_reservation_at(
         storage,
@@ -264,10 +264,15 @@ pub fn chain_b256() -> B256 {
     B256::from(U256::from(CHAIN_ID))
 }
 
-/// Registers the `COEN/840` and `COEN/978` pairs, seeds both current prices, the
-/// previous closed UTC-day VWAP, the USD policy rate, and the reference-currency
-/// registry `issue_credis` validates the elected anchor against. Idempotent -
-/// `bootstrap_for` calls it once per owner.
+/// Registers the `COEN/840` and `COEN/978` pairs and seeds:
+///
+/// - both current prices
+/// - the previous closed UTC-day VWAP
+/// - the USD policy rate
+/// - the reference-currency registry that `issue_credis` validates the elected
+///   anchor against
+///
+/// Idempotent: `bootstrap_for` calls it once per owner.
 pub fn seed_oracle(storage: StorageHandle<'_>, coen_iso_rate: U256) {
     if outbe_oracle::api::coen_pair_index_opt(storage.clone(), ISSUANCE_ISO)
         .unwrap()
@@ -534,8 +539,8 @@ pub fn bootstrap_for(storage: &StorageHandle<'_>, who: Address, amount: U256) {
 }
 
 /// Gives `who` non-empty code so `issue_credis`'s deployed-account guard passes.
-/// The bytes are never executed - `HashMapStorageProvider` runs no EVM - only the
-/// code hash is read.
+/// Nothing executes the bytes (`HashMapStorageProvider` runs no EVM). The guard
+/// reads only the code hash.
 pub fn deploy_smart_account(storage: &StorageHandle<'_>, who: Address) {
     storage
         .set_code(who, Bytecode::new_raw(Bytes::from_static(&[0xef])))
@@ -545,8 +550,8 @@ pub fn deploy_smart_account(storage: &StorageHandle<'_>, who: Address) {
 /// Credits the factory with the stake the payable boundary would have credited.
 ///
 /// Tests drive `runtime::issue_credis` directly, below the precompile boundary that
-/// moves `msg.value`, so without this the escrow would have a claim with no COEN
-/// behind it and the release would underflow.
+/// moves `msg.value`. Without this credit, the escrow would have a claim with no
+/// COEN behind it, and the release would underflow.
 pub fn fund_stake(storage: &StorageHandle<'_>, amount: U256) {
     storage
         .increase_balance(CREDIS_FACTORY_ADDRESS, amount)

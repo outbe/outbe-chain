@@ -5,12 +5,12 @@ import {Test} from "forge-std/Test.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 
 /// @title LockAmountParityTest
-/// @notice Pins that the rate-based bid-lock amount is computed identically on BNB
-///         (`IntexAuction.revealBid`) and on Outbe (`Desis.rate_lock`): both evaluate
+/// @notice Pins that BNB (`IntexAuction.revealBid`) and Outbe (`Desis.rate_lock`) compute the
+///         rate-based bid-lock amount identically. Both evaluate
 ///         `qty * basis * rate / 1e6 * 1e12` in 256-bit space with protocol-6
-///         `basis = promis_load` and a native-18 WCOEN result. A
-///         cross-chain finalize can never skip a winner from width drift, because any bid
-///         that locks on BNB stays in the lockable range and Outbe reproduces the exact same value.
+///         `basis = promis_load` and a native-18 WCOEN result. A cross-chain finalize can never
+///         skip a winner from width drift. This is because any bid that locks on BNB stays in the
+///         lockable range, and Outbe reproduces the exact same value.
 contract LockAmountParityTest is Test {
     uint32 internal constant SCALE_1E6 = BridgeMsgCodec.SCALE_1E6;
     uint256 internal constant NATIVE_UNITS_PER_PROTOCOL_UNIT = 1e12;
@@ -37,8 +37,9 @@ contract LockAmountParityTest is Test {
         assertEq(this.bnbLockAmount(quantity, basis, rate), this.desisLockAmount(quantity, basis, rate));
     }
 
-    /// @dev Outside the range BNB rejects, so the bid never locks and never reaches Outbe clearing -
-    ///      the Outbe saturating path is unreachable for any bid that actually escrowed.
+    /// @dev Outside the range, BNB rejects the bid. The bid never locks and never reaches Outbe
+    ///      clearing. Thus the Outbe saturating path is unreachable for any bid that actually
+    ///      escrowed.
     function testFuzz_BnbRejectsOverflow(uint16 quantity, uint128 basis, uint32 rate) public {
         uint256 wide = uint256(quantity) * basis * rate / SCALE_1E6 * NATIVE_UNITS_PER_PROTOCOL_UNIT;
         vm.assume(wide > type(uint128).max);
@@ -66,7 +67,7 @@ contract LockAmountParityTest is Test {
         assertLe(expected, type(uint128).max);
     }
 
-    /// @dev The next protocol unit above the native-18 uint128 boundary is rejected on BNB.
+    /// @dev BNB rejects the next protocol unit above the native-18 uint128 boundary.
     function test_BnbRejects_FirstBasisAboveUint128Boundary() public {
         uint128 basis = uint128(type(uint128).max / NATIVE_UNITS_PER_PROTOCOL_UNIT) + 1;
         vm.expectRevert(bytes("BidAmountOverflow"));

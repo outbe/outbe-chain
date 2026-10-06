@@ -20,7 +20,7 @@ interface IIntexAuction {
     }
 
     /// @notice Worldwide-day state, final at `auctionStart`.
-    /// @dev `Green` = live auction, `Red` = cancelled record; `Unknown` never persists.
+    /// @dev `Green` = live auction, `Red` = cancelled record. `Unknown` never persists.
     enum WorldwideDayState {
         Unknown,
         Green,
@@ -61,7 +61,8 @@ interface IIntexAuction {
         uint32 callWindow;
         /// @notice Call-trigger threshold in seconds.
         uint32 callThreshold;
-        /// @notice Called->deadline window in seconds; stored verbatim, the issuer must supply a non-zero value.
+        /// @notice Called->deadline window in seconds. Stored verbatim. The issuer must supply a
+        ///         non-zero value.
         uint32 callNoticePeriod;
     }
 
@@ -79,15 +80,16 @@ interface IIntexAuction {
         uint128 promisLoadMinor;
         /// @notice Call-trigger parameters (window/threshold/period).
         IntexCallTrigger callTrigger;
-        /// @notice Minimum allowed bid rate (`1e6` fixed-point, % of the escrow basis); rejects bids below it on reveal.
+        /// @notice Minimum allowed bid rate (`1e6` fixed-point, % of the escrow basis). Reveal
+        ///         rejects bids below it.
         uint32 minIntexBidRate;
         /// @notice Minimum Intex units per bid.
         uint16 minIntexBidQuantity;
-        /// @notice One row per currency the day can clear in; the bid's reference
+        /// @notice One row per currency the day can clear in. The bid's reference
         ///         currency must appear here.
         ReferenceCurrencyPrice[] prices;
         /// @notice Entry bond (payment-token minor units) taken at `commitBid` and returned on
-        ///         reveal/cancel; 0 disables the bond.
+        ///         reveal/cancel. 0 disables the bond.
         uint128 commitBondMinor;
     }
 
@@ -99,7 +101,8 @@ interface IIntexAuction {
         uint32 wonBidsCount;
         /// @notice Number of Intex units issued.
         uint32 issuedUnits;
-        /// @notice Total Promis loaded into the issued Intex (`issuedUnits * promisLoadMinor`); derived on-chain at clearing.
+        /// @notice Total Promis loaded into the issued Intex (`issuedUnits * promisLoadMinor`).
+        ///         Derived on-chain at clearing.
         uint128 issuedPromisLoadMinor;
     }
 
@@ -123,7 +126,7 @@ interface IIntexAuction {
     /// @param worldwideDay Worldwide day (yyyymmdd, uint32).
     /// @param auctionStage Target stage.
     /// @param timestamp New stage timestamp (UNIX seconds).
-    /// @param reason Optional reason (e.g. "Red day - auction cancelled"); empty if not applicable.
+    /// @param reason Optional reason (e.g. "Red day - auction cancelled"). Empty if not applicable.
     event AuctionStageUpdated(uint32 indexed worldwideDay, AuctionStage auctionStage, uint32 timestamp, string reason);
 
     /// @notice Emitted when an auction is cleared.
@@ -152,11 +155,13 @@ interface IIntexAuction {
         uint16 referenceCurrency
     );
 
-    /// @notice Emitted on `cancelCommit` after the bidder withdraws their commit during the commit stage.
+    /// @notice Emitted on `cancelCommit` after the bidder withdraws their commit during the commit
+    ///         stage.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address.
     event CommitCancelled(uint32 indexed worldwideDay, address indexed bidder);
-    /// @notice A terminal auction's stored revealed-bid records were reclaimed; `remaining` still to reap.
+    /// @notice A terminal auction's stored revealed-bid records were reclaimed. `remaining` is still
+    ///         to reap.
     event AuctionReaped(uint32 indexed worldwideDay, uint256 remaining);
 
     /// @notice Emitted on `wire` after the escrow contract address is set.
@@ -224,7 +229,7 @@ interface IIntexAuction {
     /// @notice Wire contract dependencies.
     /// @dev A lock keeps its money on the escrow that took it and stays claimable there, so a rotation between
     ///      days costs nothing. Rotating while a day is still taking reveals splits that day's locks over two
-    ///      escrows, and its refunds only reach the one the target router points at.
+    ///      escrows. That day's refunds only reach the one the target router points at.
     /// @param _escrow Escrow contract address.
     function wire(address _escrow) external;
 
@@ -267,10 +272,10 @@ interface IIntexAuction {
     // --- User Actions ---
 
     /// @notice Commit a sealed bid hash for an auction.
-    /// @dev When the series carries a non-zero `commitBondMinor`, the bond is pulled from the
-    ///      caller into escrow in the same transaction (requires prior payment-token approval on
-    ///      the escrow adapter). Reveal/cancel return it immediately; a green-day no-reveal locks
-    ///      it until `revealEnd + UNREVEALED_BOND_LOCK_PERIOD` (see `claimCommitBond`).
+    /// @dev When the series carries a non-zero `commitBondMinor`, the bond moves from the caller
+    ///      into escrow in the same transaction. This requires prior payment-token
+    ///      approval on the escrow adapter. Reveal/cancel return it immediately. A green-day
+    ///      no-reveal locks it until `revealEnd + UNREVEALED_BOND_LOCK_PERIOD` (see `claimCommitBond`).
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param commitHash `keccak256(signature)`, where `signature` is an EIP-712 typed-data
     ///                   signature over `RevealBid(uint32 worldwideDay,address bidder,uint16 units,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)`
@@ -279,14 +284,14 @@ interface IIntexAuction {
 
     /// @notice Cancel an existing commit during the commit stage.
     /// @dev Only callable before `commitEnd`. Once the commit window closes a commit can no longer
-    ///      be cancelled or revealed - an unrevealed commit is permanently forfeited (its bond
+    ///      be cancelled or revealed. An unrevealed commit is permanently forfeited (its bond
     ///      stays claimable via `claimCommitBond`). Cancelling returns the bond immediately.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     function cancelCommit(uint32 worldwideDay) external;
 
     /// @notice Reclaim a terminal, past-issuance auction's stored revealed-bid records.
     /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param limit Maximum records to delete this call; paginate large sets across calls.
+    /// @param limit Maximum records to delete this call. Paginate large sets across calls.
     function reapAuction(uint32 worldwideDay, uint256 limit) external;
 
     /// @notice Reveal a bid.
@@ -295,11 +300,12 @@ interface IIntexAuction {
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param units Requested Intex units.
     /// @param bidRate Bid rate (`1e6` fixed-point, % of the escrow basis).
-    /// @param issuanceCurrency Declared issuance currency (ISO numeric); only its three-digit range
-    ///                         is checked, since the network keeps no list of issuance currencies.
-    /// @param referenceCurrency Reference currency the bid prices in; must be one the day carries.
-    /// @param chainId Chain id; must equal `block.chainid` (belt-and-braces; the EIP-712 domain
-    ///                already binds it inside the signature).
+    /// @param issuanceCurrency Declared issuance currency (ISO numeric). The contract checks only its
+    ///                         three-digit range, because the network keeps no list of issuance
+    ///                         currencies.
+    /// @param referenceCurrency Reference currency the bid prices in. It must be one the day carries.
+    /// @param chainId Chain id. It must equal `block.chainid`. This is a redundant check: the EIP-712
+    ///                domain already binds it inside the signature.
     /// @param signature 65-byte ECDSA signature over the EIP-712 `RevealBid` typed data.
     function revealBid(
         uint32 worldwideDay,
@@ -312,9 +318,9 @@ interface IIntexAuction {
     ) external;
 
     /// @notice Permissionless commit-bond claim for a bidder who committed but never revealed.
-    ///         A cancelled (red-day) auction releases immediately; otherwise the bond is claimable
+    ///         A cancelled (red-day) auction releases immediately. Otherwise the bond is claimable
     ///         only after `revealEnd + UNREVEALED_BOND_LOCK_PERIOD`. Pays the stored bidder, not the
-    ///         caller. The escrow-local time-based valve (`claimAbandonedCommitBond`) backs this up
+    ///         caller. The escrow-local time-based valve (`claimAbandonedCommitBond`) is the fallback
     ///         if the auction contract itself is rotated away.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder whose bond is being claimed.

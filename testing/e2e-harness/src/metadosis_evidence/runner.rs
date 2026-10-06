@@ -33,7 +33,7 @@ pub struct CommandPlan {
 }
 
 /// The domain adapter owns the small set of Cargo target shapes used by this
-/// pack. No command string or PASS status is accepted from evidence input.
+/// pack. The adapter accepts no command string or PASS status from evidence input.
 pub fn command_plan(
     test_id: &str,
     definition: &TestDefinitionV1,

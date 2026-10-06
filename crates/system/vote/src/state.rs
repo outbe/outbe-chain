@@ -151,7 +151,7 @@ impl<'storage> Vote<'storage> {
             .ok_or_else(|| VoteError::ProposalCounterExhausted.into())
     }
 
-    /// Returns `true` when `proposal_id` has been allocated by `write_proposal`.
+    /// Returns `true` when `write_proposal` allocated `proposal_id`.
     pub fn proposal_exists(&self, proposal_id: U256) -> Result<bool> {
         let count = self.proposal_count.read()?;
         Ok(!proposal_id.is_zero() && proposal_id <= count)
@@ -207,7 +207,7 @@ impl<'storage> Vote<'storage> {
     }
 
     /// Records one new proposal liability. The caller may wrap this in a wider
-    /// admission checkpoint; this method is independently atomic as well.
+    /// admission checkpoint. This method is also atomic on its own.
     pub fn record_proposal_bond(&mut self, proposal_id: U256, amount: U256) -> Result<()> {
         if amount.is_zero() {
             return Err(VoteError::InvalidBondAmount.into());

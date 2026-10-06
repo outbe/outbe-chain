@@ -82,8 +82,8 @@ fn nod_identity_and_abi_boundary_preserve_exact_32_bytes() {
     assert!(NodContract::parse_nod_id(&encoded[..62]).is_err());
 
     // The ABI carries the identity as one word, so a wrong-width id is no
-    // longer representable: the round trip through `uint256` is total, and the
-    // old "invalid bytes length" revert has no input that can reach it.
+    // longer representable. The round trip through `uint256` is total. The old
+    // "invalid bytes length" revert has no input that can reach it.
     let word = body.nod_id.to_u256();
     assert_eq!(WwdEntityId::from(word), body.nod_id);
     assert_eq!(word.to_be_bytes::<32>(), body.nod_id.0 .0);
@@ -261,9 +261,9 @@ fn member_count_overflow_and_underflow_roll_back_nod_mutations() {
     });
 }
 
-/// Slot assignment is dense in `order` sequence, so inserting a field rather
-/// than appending one silently reassigns the meaning of every slot after it -
-/// including the two the genesis alloc seeds. New fields must append.
+/// Slot assignment is dense in `order` sequence. Inserting a field rather than
+/// appending one silently reassigns the meaning of every slot after it,
+/// including the two slots that the genesis alloc seeds. New fields must append.
 #[test]
 fn nod_contract_slot_layout_is_pinned() {
     let mut provider = HashMapStorageProvider::new(1);
@@ -594,7 +594,7 @@ fn a_priced_currency_still_qualifies_when_a_sibling_currency_is_unpriced() {
 #[test]
 fn qualification_requires_a_finalized_day_above_the_floor_and_stays() {
     for (daily_rate, finalized, live_rate, qualifies) in [
-        (0, true, 14, false),  // Missing day; no fallback to a live price.
+        (0, true, 14, false),  // Missing day. No fallback to a live price.
         (4, true, 14, false),  // A live crossing cannot qualify.
         (5, true, 14, false),  // Equality is not enough.
         (6, false, 14, false), // Wait for Oracle finalization.

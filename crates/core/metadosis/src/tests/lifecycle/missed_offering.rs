@@ -49,7 +49,7 @@ fn missed_offering_routes_the_formed_limit_once_and_exposes_a_durable_receipt() 
     let base_limit = U256::from(100);
     let formation_carry = U256::from(9);
     let later_carry = U256::from(7);
-    // Formation no longer folds the accumulator in, so the day is formed against its own base.
+    // Formation no longer includes the accumulator, so the day is formed against its own base.
     let formed_limit = base_limit;
     let carried = formation_carry + later_carry;
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);

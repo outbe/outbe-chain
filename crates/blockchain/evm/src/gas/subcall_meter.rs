@@ -1,19 +1,18 @@
 //! `SubcallGasMeter` - a thin wrapper over [`revm::interpreter::Gas`] used by
 //! the outbe sub-call driver.
 //!
-//! Each method delegates 1:1 to the inner [`revm::interpreter::Gas`] instance
-//! so byte-for-byte parity vs upstream is guaranteed by construction. The
-//! mirror is verified by 5 differential proptests in
+//! Each method delegates 1:1 to the inner [`revm::interpreter::Gas`] instance.
+//! Thus byte-for-byte parity with upstream is guaranteed by construction. 5 differential
+//! proptests verify the mirror in
 //! `crates/blockchain/evm/tests/subcall_gas_meter_parity.rs`.
 
 use revm::interpreter::Gas;
 
 /// Sub-call gas meter mirroring [`revm::interpreter::Gas`] byte-for-byte.
 ///
-/// Owned per sub-call frame by the driver. All
-/// accounting semantics (regular gas, reservoir, refunds, state gas spent)
-/// match upstream `revm::interpreter::Gas` so the settlement triple in
-/// produces identical results across proposer and validator
+/// The driver owns one meter for each sub-call frame. All accounting semantics (regular
+/// gas, reservoir, refunds, state gas spent) match upstream `revm::interpreter::Gas`. Thus
+/// the settlement triple in produces identical results across proposer and validator
 /// re-execution paths.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SubcallGasMeter {
@@ -23,8 +22,8 @@ pub struct SubcallGasMeter {
 impl SubcallGasMeter {
     /// Creates a new meter with the given regular-gas limit.
     ///
-    /// Reservoir is zero - Outbe does not use EIP-8037 at this stage, so the
-    /// meter behaves as a single-pool tracker. The field is preserved to
+    /// Reservoir is zero. Outbe does not use EIP-8037 at this stage, so the
+    /// meter behaves as a single-pool tracker. The meter keeps the field to
     /// keep the byte-for-byte mirror with upstream `Gas`.
     ///
     /// Mirrors revm Gas::new.
@@ -87,7 +86,7 @@ impl SubcallGasMeter {
         self.inner.record_regular_cost(cost)
     }
 
-    /// Erases `returned` gas from the spent counter - i.e. returns unused
+    /// Erases `returned` gas from the spent counter. That is, it returns unused
     /// gas from a child frame back into the meter's `remaining` budget.
     ///
     /// Mirrors revm Gas::erase_cost.
@@ -96,7 +95,7 @@ impl SubcallGasMeter {
         self.inner.erase_cost(returned)
     }
 
-    /// Records a refund. `refund` may be negative; the cumulative refund
+    /// Records a refund. `refund` may be negative. The cumulative refund
     /// counter is expected to be non-negative at the end of execution.
     ///
     /// Mirrors revm Gas::record_refund.
@@ -125,10 +124,10 @@ impl SubcallGasMeter {
 
     /// Returns the underlying revm [`Gas`] instance.
     ///
-    /// Provided so the sub-call driver in can pass the
+    /// With this method, the sub-call driver in can pass the
     /// inner gas tracker to upstream helpers
     /// (`handle_reservoir_remaining_gas`, `load_acc_and_calc_gas`).
-    /// **Not** marked `Mirrors revm Gas::*` - this is an outbe-only escape
+    /// **Not** marked `Mirrors revm Gas::*`. This is an outbe-only escape
     /// hatch, not a method on `Gas`.
     #[inline]
     pub const fn inner(&self) -> &Gas {

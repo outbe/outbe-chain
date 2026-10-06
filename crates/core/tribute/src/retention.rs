@@ -74,7 +74,7 @@ pub struct RetainedTributeAuditEntry {
     pub stored_body: StoredBody,
 }
 
-/// Receives bounded observations; they are provisional until the audit succeeds.
+/// Receives bounded observations. They are provisional until the audit succeeds.
 pub trait RetainedTributeAuditVisitor {
     fn visit_retained(&mut self, entry: RetainedTributeAuditEntry) -> Result<(), CeAuditError>;
 }
@@ -132,7 +132,7 @@ impl RetainedTributeReader {
 
     /// Plans the immutable retained copy for one current canonical body.
     ///
-    /// The returned operations are deliberately not applied here: the
+    /// This function deliberately does not apply the returned operations. The
     /// finalized projection combines them with the current-body/index deletes
     /// and its checkpoint in one backend transaction.
     pub fn plan_retain_current(

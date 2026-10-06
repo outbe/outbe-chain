@@ -360,9 +360,9 @@ pub(in crate::transport) fn dispatch_with_initialization(
             };
             let (results, inputs_canonical_hash) = process_tribute_offer_batch(&km, &offers);
             // Sign (inputs_canonical_hash || results) with the enclave's
-            // Ed25519 attestation key. The host verifies this against the
-            // attestation key it pinned from the quote, proving the results were
-            // produced inside this attested enclave (not substituted by the host).
+            // Ed25519 attestation key. The host verifies this signature against the
+            // attestation key it pinned from the quote. This proves that this attested
+            // enclave produced the results and that the host did not substitute them.
             let preimage = outbe_tee::protocol::tribute_offer_attestation_preimage(
                 inputs_canonical_hash,
                 &results,
@@ -376,8 +376,8 @@ pub(in crate::transport) fn dispatch_with_initialization(
         }
         EnclaveRequest::ApplyGratisOp { request } => {
             // Derive the resident Gratis state key from the same DKG group
-            // signature as the offer key - identical on every enclave, so the
-            // re-encrypted state is byte-identical (consensus determinism).
+            // signature as the offer key. The key is identical on every enclave, so
+            // the re-encrypted state is byte-identical (consensus determinism).
             let Some(derived) = offer_key.get() else {
                 return EnclaveResponse::Error {
                     message: "ApplyGratisOp: no resident group key (DKG not complete)".to_string(),
@@ -393,9 +393,9 @@ pub(in crate::transport) fn dispatch_with_initialization(
                     }
                 };
             let mut result = crate::gratis::apply_op(&state_key, &request);
-            // Co-located Fidelity cohort section: applied atomically with the
-            // Gratis op under its own independent key domain. A failing section
-            // rejects the WHOLE op - the host writes neither ledger.
+            // Co-located Fidelity cohort section. This arm applies it atomically with
+            // the Gratis op under the section's own independent key domain. A failing section
+            // rejects the WHOLE op, and the host writes neither ledger.
             if let (outbe_tee::protocol::GratisOpStatus::Applied, Some(section)) =
                 (&result.status, &request.fidelity)
             {
@@ -492,9 +492,9 @@ pub(in crate::transport) fn dispatch_with_initialization(
             }
         }
         EnclaveRequest::QueryFidelityIndex { request } => {
-            // Owner-authorized read (eth_call path, NOT consensus). The signed,
-            // expiring authorization is verified inside the engine - the trust
-            // boundary is the enclave, not the host that forwards the call.
+            // Owner-authorized read (eth_call path, NOT consensus). The engine
+            // verifies the signed, expiring authorization. The trust boundary is
+            // the enclave, not the host that forwards the call.
             let Some(derived) = offer_key.get() else {
                 return EnclaveResponse::Error {
                     message: "QueryFidelityIndex: no resident group key (DKG not complete)"
@@ -564,7 +564,7 @@ pub(in crate::transport) fn dispatch_with_initialization(
             };
             // Prove the caller controls `account` INSIDE the enclave before releasing
             // its (secret) view/modify keys. The host RPC recovers the same signature
-            // as a fast reject, but a compromised host reaches this transport directly,
+            // as a fast reject. But a compromised host reaches this transport directly,
             // so the release decision must run in the enclave's trust domain, not the
             // host's. Same shared preimage + recover_signer the host uses (one impl, no
             // divergence).
@@ -751,7 +751,7 @@ pub(in crate::transport) fn dispatch_with_initialization(
             signed_logs,
         } => {
             // The session stays resident after finalize: Seam F (below) needs the
-            // recovered share. It is released by `DkgFinalizeTributeOffer`.
+            // recovered share. `DkgFinalizeTributeOffer` releases it.
             into_response(dkg.get_mut(&ceremony_id.0).and_then(|s| {
                 let (group_public, share_commitment) = s.player_finalize_encoded(&signed_logs)?;
                 Ok(EnclaveResponse::DkgPlayerFinalized {
@@ -804,8 +804,8 @@ pub(in crate::transport) fn dispatch_with_initialization(
                 };
             }
             // Complete founding Seam F and retain the group threshold signature
-            // in sealed restart state. Authorization has already proved this is
-            // a keyless Validator; a ready enclave cannot enter this arm.
+            // in sealed restart state. Authorization already proved that this is
+            // a keyless Validator. A ready enclave cannot enter this arm.
             let result = dkg.get_mut(&ceremony_id.0).and_then(|s| {
                 // The group public KEY (constant term) is the public verification key
                 // carried into the bootstrap payload for later reshare-endorsement

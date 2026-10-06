@@ -4,9 +4,10 @@ pragma solidity ^0.8.25;
 import {IERC7786GatewaySource, IERC7786Recipient} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
-/// @dev Loopback ERC-7786 bridge mock standing in for the `crosschain` hub's `ERC7786Bridge`. Each instance
-/// represents one chain (`localChainId`); `sendMessage` routes by destination chainId to that chain's bridge, which
-/// delivers to the recipient encoded in the message as that bridge (so the Router's `msg.sender == bridge` check passes).
+/// @dev Loopback ERC-7786 bridge mock that substitutes for the `crosschain` hub's `ERC7786Bridge`.
+/// Each instance represents one chain (`localChainId`). `sendMessage` routes by destination
+/// chainId to that chain's bridge. That bridge delivers to the recipient encoded in the message
+/// as that bridge (so the Router's `msg.sender == bridge` check passes).
 contract MockERC7786Bridge is IERC7786GatewaySource {
     using InteroperableAddress for bytes;
 
@@ -67,7 +68,8 @@ contract MockERC7786Bridge is IERC7786GatewaySource {
         return bytes32(0);
     }
 
-    /// @notice Delivery hook invoked by the source bridge; calls the recipient as this (destination) bridge.
+    /// @notice Delivery hook that the source bridge invokes. It calls the recipient as this
+    ///         (destination) bridge.
     function deliver(uint256 srcChainId, address srcRouter, address target, bytes calldata payload) external {
         bytes memory sender = InteroperableAddress.formatEvmV1(srcChainId, srcRouter);
         bytes4 magic = IERC7786Recipient(target).receiveMessage(bytes32(0), sender, payload);

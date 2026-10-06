@@ -632,9 +632,9 @@ fn public_capacity_fixture_funds_every_distinct_tribute_owner_before_genesis_is_
     });
 
     // The Tribute factory admits an offer only from an operator L2Registry
-    // knows, so the same owners must be registered - with zk verification
-    // enabled under the deterministic fixture key - in the genesis the factory
-    // will read.
+    // knows. So the same owners must be registered in the genesis the factory
+    // will read, with zk verification enabled under the deterministic fixture
+    // key.
     let registry_address = outbe_primitives::addresses::L2_REGISTRY_ADDRESS;
     let registry_key = find_alloc_address_key(alloc, registry_address)
         .unwrap()

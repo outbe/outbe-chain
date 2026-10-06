@@ -6,21 +6,21 @@
 //! ([`crate::proof::verifier`]) this:
 //!
 //! - **drops the 2f+1 quorum floor** - a late credit is, by construction, the
-//!   sub-quorum tail of validators who signed after the eager quorum froze;
-//! - **drops the mandatory threshold-VRF proof** - late credits carry no VRF;
+//!   sub-quorum tail of validators who signed after the eager quorum froze.
+//! - **drops the mandatory threshold-VRF proof** - late credits carry no VRF.
 //! - **drops the exact-parent Rule 2** - the target is any in-window finalized
 //!   block, not necessarily the header's parent.
 //!
-//! The finalized-block-hash binding is enforced by the signature itself: the
-//! verified message is rebuilt as `Proposal{round, parent, payload = fb_hash}`,
-//! and the aggregate verifies only if every signer actually signed exactly that
-//! proposal under the committee-bound finalize namespace
-//! (`finalize_namespace(committee)`, derived from the snapshot - never from the
-//! wire). The committee is pinned by `committee_set_hash`.
+//! The signature itself enforces the finalized-block-hash binding. The verifier
+//! rebuilds the verified message as `Proposal{round, parent, payload = fb_hash}`.
+//! The aggregate verifies only if every signer actually signed exactly that
+//! proposal under the committee-bound finalize namespace. This namespace is
+//! `finalize_namespace(committee)`, derived from the snapshot - never from the
+//! wire. `committee_set_hash` pins the committee.
 //!
-//! The whole aggregate is verified FIRST; state-level dedup of already-credited
-//! signers happens downstream, after this returns the verified
-//! signer set - filtering bits before verification would break the recomputed
+//! This verifier checks the whole aggregate FIRST. State-level dedup of
+//! already-credited signers happens downstream, after this returns the verified
+//! signer set. Filtering bits before verification would break the recomputed
 //! aggregate public key.
 
 use crate::digest::Digest as OutbeDigest;
@@ -58,7 +58,7 @@ pub fn verify_late_finalize_proof(
     let participants = decode_committee_participants(snapshot)?;
     let n = participants.len();
 
-    // Dense bit-packed bitmap (1 bit per committee member); length = ceil(N/8).
+    // Dense bit-packed bitmap (1 bit per committee member). Length = ceil(N/8).
     let expected_bitmap_len = n.div_ceil(8);
     if credit.signer_bitmap.len() != expected_bitmap_len {
         return Err(V2VerifyError::BitmapMismatch {
@@ -94,8 +94,8 @@ pub fn verify_late_finalize_proof(
         });
     }
 
-    // Rebuild the canonical finalize message. payload == fb_hash by construction;
-    // the aggregate only verifies if the signers signed this exact proposal.
+    // Rebuild the canonical finalize message. payload == fb_hash by construction.
+    // The aggregate only verifies if the signers signed this exact proposal.
     let proposal = Proposal::new(
         Round::new(Epoch::new(credit.epoch), View::new(credit.view)),
         View::new(credit.parent_view),
@@ -240,8 +240,8 @@ mod tests {
         }
     }
 
-    /// A sub-quorum (2 of 4) aggregate with no VRF proof verifies - proving the
-    /// quorum floor and threshold-VRF requirement are dropped.
+    /// A sub-quorum (2 of 4) aggregate with no VRF proof verifies. This proves
+    /// that the verifier drops the quorum floor and threshold-VRF requirement.
     #[test]
     fn bls_only_verifier_no_quorum_no_vrf() {
         let keys = keys(4);
@@ -286,10 +286,10 @@ mod tests {
         );
     }
 
-    /// the aggregate is verified over the FULL signer bitmap and
-    /// the verifier returns every set-bit index - state-level dedup of
-    /// already-credited signers happens downstream (in `record_late_credit`),
-    /// AFTER this returns. Filtering bits before verify would break the
+    /// The verifier checks the aggregate over the FULL signer bitmap and
+    /// returns every set-bit index. State-level dedup of already-credited
+    /// signers happens downstream (in `record_late_credit`), AFTER this
+    /// returns. Filtering bits before verify would break the
     /// recomputed aggregate public key, so verify must precede dedup.
     #[test]
     fn verify_precedes_dedup() {

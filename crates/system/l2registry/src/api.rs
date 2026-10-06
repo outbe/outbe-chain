@@ -31,8 +31,9 @@ pub enum ZkOfferCheck {
 /// - Chain not registered: [`ZkOfferCheck::NotRegistered`].
 /// - Registered chain: `zk_merkle_root` must be 32 bytes and `signature`
 ///   must be a valid BLS MinSig G1 signature over it under
-///   [`ZK_MERKLE_ROOT_NAMESPACE`]; any failure reverts.
-/// - An unset stored key is resolved from the registered inbox on every check.
+///   [`ZK_MERKLE_ROOT_NAMESPACE`]. Any failure reverts.
+/// - The function resolves an unset stored key from the registered inbox on
+///   every check.
 pub fn check_zk_merkle_root_signature(
     storage: StorageHandle<'_>,
     l2_chain_id: u64,
@@ -55,7 +56,7 @@ pub fn check_zk_merkle_root_signature(
     Ok(ZkOfferCheck::Verified { chain_id })
 }
 
-/// Exact deployment bindings; Devnet's extra fixture L2s reuse chain 57005.
+/// Exact deployment bindings. Devnet's extra fixture L2s reuse chain 57005.
 ///
 /// Basic fixtures use the declared 57005 binding directly. Additional L2s
 /// retain real signature and proof verification, and never gain bindings on

@@ -67,7 +67,7 @@ pub(in crate::stack) fn epoch_validation_inputs(
         eyre::eyre!("failed to build verifier scheme for validator set (epoch {epoch})")
     })?;
     // Simplex participant indices follow ordered::Set pubkey ordering, not the
-    // original validator_set order; certificate signer bitmaps use this order.
+    // original validator_set order. Certificate signer bitmaps use this order.
     // On restart/live-join with a recovered DKG boundary, provider-latest state
     // may include an unfinalized membership-changing head. Use the boundary's
     // own participant-index-aligned address vector for that recovered epoch.

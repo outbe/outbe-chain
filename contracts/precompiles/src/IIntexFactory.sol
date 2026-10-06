@@ -6,11 +6,11 @@ pragma solidity ^0.8.30;
 ///         settlement, Promis mining, auction proceeds intake and the
 ///         certified contributor payout. Issuance is a module-to-module call
 ///         (Desis -> IntexFactory) exposed through the Rust `api`, not a
-///         precompile selector. Series identity + lifecycle live in Intex; this
+///         precompile selector. Series identity + lifecycle live in Intex. This
 ///         precompile owns settlement bookkeeping and the call-price index.
 interface IIntexFactory {
     /// @notice Settle `units` Issued Intexes of `seriesId` held by
-    ///         `owner`, paying the cost in `asset`. Any caller may pay; the
+    ///         `owner`, paying the cost in `asset`. Any caller may pay. The
     ///         settled units stay with the owner. Allowed once qualified (voluntary,
     ///         see `isSeriesQualified`) and once called (forced, until the deadline).
     /// @dev Approve IntexFactory for the `quoteSettlement` amount before calling.
@@ -18,7 +18,7 @@ interface IIntexFactory {
     /// @param asset Token registered with the vault router under either of the
     ///        series' currencies. The issuance currency converts through COEN at
     ///        the trailing VWAP snapshot required at this block.
-    /// @param snapshotId The snapshot `quoteSettlement` returned; an issuance-currency
+    /// @param snapshotId The snapshot `quoteSettlement` returned. An issuance-currency
     ///        payment naming any other snapshot reverts. Ignored on the reference rail.
     function settleIntex(bytes14 seriesId, address owner, uint256 units, address asset, uint256 snapshotId) external;
 
@@ -39,7 +39,7 @@ interface IIntexFactory {
     ///         not accept.
     /// @return settlementCurrency ISO 4217 code the payment is denominated in.
     /// @return paymentMinor Amount to pay, in `asset`'s own minor units.
-    /// @return snapshotId Trailing VWAP snapshot the amount converts at; zero on the
+    /// @return snapshotId Trailing VWAP snapshot the amount converts at. Zero on the
     ///         reference rail. It goes stale at the next update cutoff.
     function quoteSettlement(bytes14 seriesId, address asset, uint256 units)
         external
@@ -49,15 +49,16 @@ interface IIntexFactory {
     /// @notice Derived from finalized daily VWAPs on every call, never stored.
     function isSeriesQualified(bytes14 seriesId) external view returns (bool);
 
-    /// @notice The origin's `IVwapSource`: the highest finalized daily VWAP from `fromUtcDay` on, 0 when none.
+    /// @notice The origin's `IVwapSource`: the highest finalized daily VWAP from `fromUtcDay`
+    ///         on, 0 when none.
     function maxUtcDayVwapSince(uint16 isoCode, uint32 fromUtcDay) external view returns (uint256);
 
     /// @notice Burn settled Intexes and mint confidential Promis, gated by
-    ///         off-chain proof of work. Any caller may submit; the units burn from
-    ///         `owner` and the Promis is minted to them. Authorized by the
-    ///         owner's Promis modify key: `mac = HMAC(modifyKey, op-preimage)`
-    ///         where `opNonce` MUST equal the owner's current on-chain promis
-    ///         op-nonce (fetch via `outbe_deriveKeys` + `IPromis.opNonceOf`) and the
+    ///         off-chain proof of work. Any caller may submit. The units burn from
+    ///         `owner` and the Promis is minted to them. The owner's Promis modify key
+    ///         authorizes the call: `mac = HMAC(modifyKey, op-preimage)`.
+    ///         `opNonce` MUST equal the owner's current on-chain promis
+    ///         op-nonce (fetch it via `outbe_deriveKeys` + `IPromis.opNonceOf`). The
     ///         bound amount is `promis_load_minor * units`. Returns the minted
     ///         Promis.
     function minePromis(bytes14 seriesId, address owner, uint256 units, uint64 nonce, bytes32 mac, uint64 opNonce)
@@ -67,7 +68,7 @@ interface IIntexFactory {
     /// @notice Credit auction proceeds (native COEN, sent as msg.value) from
     ///         `srcChainId` into the day's pot. Callable only by the OriginRouter.
     ///         The day's payout round opens once every winning chain has routed
-    ///         its proceeds (or the fan-in deadline passes); `payContributorBatch`
+    ///         its proceeds (or the fan-in deadline passes). `payContributorBatch`
     ///         pays each certified contributor in proportion to its nominal.
     /// @param worldwideDay Worldwide day (yyyymmdd) whose creators receive the proceeds.
     /// @param srcChainId Target chain the proceeds arrived from (for fan-in completeness).
@@ -87,7 +88,7 @@ interface IIntexFactory {
     ///      Each leaf receives `roundAmount * nominal / eligibleNominalTotal` and
     ///      is marked paid, so a replayed batch reverts before any transfer.
     /// @param worldwideDay Day whose payout round is open.
-    /// @param startIndex Global index of the first leaf; must be a multiple of 256.
+    /// @param startIndex Global index of the first leaf. Must be a multiple of 256.
     /// @param leaves Records of one result chunk: a full 256-leaf chunk, or the
     ///        final partial chunk of the day.
     /// @param proof Sibling hashes above the chunk subtree, bottom-up.
@@ -110,7 +111,7 @@ interface IIntexFactory {
     ///         zero when no round is open.
     function contributorPayoutRound(uint32 worldwideDay) external view returns (ContributorRound memory);
 
-    /// @notice Read one 256-leaf word of the paid bitmap; bit `b` of word `w`
+    /// @notice Read one 256-leaf word of the paid bitmap. Bit `b` of word `w`
     ///         is leaf `256 * w + b`.
     function contributorPaidWord(uint32 worldwideDay, uint32 wordIndex) external view returns (uint256);
 
@@ -133,7 +134,7 @@ interface IIntexFactory {
 
     /// @notice One owner's units of a series. `issuedUnits` and `settledUnits` are the
     ///         owner's current balances on this, the origin chain, with Issued units counted
-    ///         only while the series has not expired; units held on a target chain are not
+    ///         only while the series has not expired. Units held on a target chain are not
     ///         counted. `exercisedUnits` and `gemFactoryUnits` are the owner's history across
     ///         chains, since both happen only here, and do not move with a transfer.
     ///         `ownerUnits` is `issuedUnits + settledUnits`, derived on every call, never stored.
@@ -157,7 +158,7 @@ interface IIntexFactory {
     /// @notice Settled Intexes were burned and `promisMinor` Promis minted.
     event PromisMined(bytes14 indexed seriesId, address indexed owner, uint256 units, uint256 promisMinor);
 
-    /// @notice The series was force-called; it settles until `settlementDeadline`, inclusive.
+    /// @notice The series was force-called. It settles until `settlementDeadline`, inclusive.
     event SeriesCalled(bytes14 indexed seriesId, uint32 calledAt, uint64 settlementDeadline);
 
     /// @notice The router kept refusing the series' Called notice, so it was dropped
@@ -199,8 +200,8 @@ interface IIntexFactory {
     event ContributorBatchPaid(uint32 indexed worldwideDay, uint32 startIndex, uint32 leafCount, uint256 paidAmount);
 
     /// @notice Every contributor of `worldwideDay` has been paid. `burnedAmount`
-    ///         is what per-leaf floor division left behind and was destroyed;
-    ///         the day accepts no further batches.
+    ///         is what per-leaf floor division left behind and was destroyed.
+    ///         The day accepts no further batches.
     event ContributorRoundClosed(uint32 indexed worldwideDay, uint256 paidAmount, uint256 burnedAmount);
 
     /// @notice Proceeds arrived for `worldwideDay` after its payout round had

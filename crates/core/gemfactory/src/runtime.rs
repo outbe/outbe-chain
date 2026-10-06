@@ -135,7 +135,7 @@ pub fn issue_gem_position(
         series.reference_currency,
     )?;
 
-    // Burn `units` of the merchant's Intex; `sendToGemFactory` returns the
+    // Burn `units` of the merchant's Intex. `sendToGemFactory` returns the
     // burned count (and reverts on a state that may not be sent, or zero units).
     let burned = burn_intex_into_gem_factory(storage, caller, source_intex_id, units)?;
     let capacity = series
@@ -369,7 +369,7 @@ pub fn settle_gem_with_paynote(
     )
 }
 
-/// `quote` prices and authorizes the payment before any state changes; `pay`
+/// `quote` prices and authorizes the payment before any state changes. `pay`
 /// then moves it after the transition and returns the asset, the settlement
 /// currency and the amount it charged.
 fn settle<Q>(
@@ -379,7 +379,7 @@ fn settle<Q>(
     pay: impl FnOnce(&outbe_gem::GemData, Q) -> Result<(Address, u16, U256)>,
 ) -> Result<()> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
-    // Anyone may pay for a gem; it stays with its owner.
+    // Anyone may pay for a gem. It stays with its owner.
     // The qualification walk goes last.
     match item.state {
         s if s == GemState::Called as u8 => {
@@ -395,8 +395,8 @@ fn settle<Q>(
 
     let quoted = quote(&item)?;
     storage.clone().with_checkpoint(|| {
-        // Settled before payment so a token callback cannot settle the gem twice;
-        // a failed payment rolls the state back.
+        // Settle before payment so a token callback cannot settle the gem twice.
+        // A failed payment rolls the state back.
         gem_api::set_state(storage, gem_id, GemState::Settled)?;
         let (asset, settlement_currency, amount_paid) = pay(&item, quoted)?;
         emit_event(
@@ -496,9 +496,9 @@ enum PaymentCurrency {
     Issuance,
 }
 
-/// Which of the gem's two currencies `asset` is denominated in. Registration is
-/// checked first, so an unregistered asset need not implement `isoCode()` at all;
-/// reference is matched first, so a single-currency gem takes the no-rate branch.
+/// Which of the gem's two currencies `asset` is denominated in. The function checks
+/// registration first, so an unregistered asset need not implement `isoCode()` at all.
+/// It matches reference first, so a single-currency gem takes the no-rate branch.
 fn accept_payment_asset(
     storage: &StorageHandle<'_>,
     asset: Address,
@@ -527,8 +527,8 @@ fn accept_payment_asset(
 }
 
 /// Cost of one gem in `asset`'s minor units and, on the issuance rail, the VWAP
-/// snapshot both COEN legs came from. The cross rate is folded into the same
-/// fraction, so the whole thing is floored once.
+/// snapshot both COEN legs came from. The function folds the cross rate into the same
+/// fraction, so it floors the whole thing once.
 fn cost_in_asset(
     storage: &StorageHandle<'_>,
     item: &outbe_gem::GemData,
@@ -678,7 +678,7 @@ pub fn mine_promis(
     auth: outbe_promisfactory::api::ModifyAuth,
 ) -> Result<U256> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
-    // Anyone may submit; the owner's modify key authorizes the mint.
+    // Anyone may submit. The owner's modify key authorizes the mint.
     if item.state != GemState::Settled as u8 {
         return Err(GemFactoryError::InvalidState.into());
     }
@@ -727,8 +727,8 @@ fn compute_floor(
         GemTypes::Sra | GemTypes::Validator | GemTypes::Wallet | GemTypes::Cca => {
             derived_floor(coen_rate, terms.floor_rate)?
         }
-        // Merchant gems are issued via `issue_merchant_gem` against a GemPosition,
-        // not through this agent-class path.
+        // `issue_merchant_gem` issues Merchant gems against a GemPosition,
+        // not this agent-class path.
         GemTypes::Merchant => return Err(GemFactoryError::UnsupportedGemType.into()),
     };
     Ok(floor_price)
@@ -756,7 +756,7 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
 }
 
 /// PoW gate for `mine_promis`. The preimage is
-/// `OUTBE_GEM_MINING_V1 || gemId || owner || miningSequence=0 || nonce`; the caller is not in it.
+/// `OUTBE_GEM_MINING_V1 || gemId || owner || miningSequence=0 || nonce`. The caller is not in it.
 pub fn validate_pow(gem_id: U256, owner: Address, nonce: u64) -> Result<()> {
     pow::validate_mining_pow(
         pow::MiningDomain::Gem,

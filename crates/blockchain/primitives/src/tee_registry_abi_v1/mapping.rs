@@ -52,8 +52,8 @@ macro_rules! __impl_tee_registry_binding_v1_mapping {
 }
 
 /// Define a domain-owned Registry record using the canonical V1 field schema.
-/// Attributes, ownership and validation remain with the caller; this does not
-/// unify the resulting Rust types or change their wire representations.
+/// Attributes, ownership and validation remain with the caller. This macro does
+/// not unify the resulting Rust types or change their wire representations.
 #[macro_export]
 macro_rules! define_tee_registry_binding_v1 {
     ($(#[$attr:meta])* $visibility:vis struct $name:ident) => {

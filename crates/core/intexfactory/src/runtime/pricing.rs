@@ -25,7 +25,7 @@ pub(crate) fn settlement_units(
         .map_err(|e| IntexFactoryError::from(e).into())
 }
 
-/// Whether the series has qualified; derived from finalized daily VWAPs, never stored.
+/// Whether the series has qualified. It is derived from finalized daily VWAPs and never stored.
 pub fn is_qualified(
     storage: &StorageHandle<'_>,
     series: &outbe_intex::SeriesRecord,
@@ -70,7 +70,7 @@ pub(super) enum PaymentCurrency {
 
 /// Cost of `units` in `asset`'s minor units and, on the issuance rail, the
 /// VWAP snapshot both COEN legs came from. The Cost Amount is denominated in the
-/// reference currency; an issuance-currency asset is charged at the snapshot's
+/// reference currency. An issuance-currency asset is charged at the snapshot's
 /// COEN cross rate, folded into the same fraction so the conversion floors once.
 pub(super) fn cost_in_asset(
     storage: &StorageHandle<'_>,
@@ -106,7 +106,7 @@ pub(super) fn cost_in_asset(
 }
 
 /// Rejects `asset` unless the router holds a vault for it and the asset reports
-/// one of the series' two currencies; returns which one. Registration is checked
+/// one of the series' two currencies. Returns which one. Registration is checked
 /// first: an unregistered asset need not implement `isoCode()` at all.
 pub(super) fn accept_payment_asset(
     storage: &StorageHandle<'_>,

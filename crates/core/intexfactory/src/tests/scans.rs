@@ -69,13 +69,13 @@ fn a_called_series_reports_its_settlement_deadline() {
 
 #[test]
 fn scan_and_call_reads_daily_vwap_at_midnight() {
-    // Regression: the scan fires on the midnight Cycle tick, when yesterday's
+    // Regression: the scan fires on the midnight Cycle tick. At that time, yesterday's
     // WorldwideDay snapshot does not exist yet (metadosis writes it at noon of
     // the current day). The finalized per-UTC-day VWAP is already closed by
-    // then and must be the scan's price source. Exactly `threshold` (21)
-    // breach days are seeded through the production finalization path and the
-    // scan day itself stays unfinalized, so reading any other day - or any
-    // other store - drops below the threshold and fails the call.
+    // then and must be the scan's price source. The test seeds exactly `threshold` (21)
+    // breach days through the production finalization path. The scan day itself
+    // stays unfinalized. So a read of any other day, or of any other store, drops
+    // below the threshold and fails the call.
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
         let mut oracle = OracleContract::new(s.clone());
@@ -357,7 +357,7 @@ fn a_currency_rate_never_qualifies_another_currency_series() {
         write_day_vwap(&oracle, REFERENCE_ISO, PAIR_ID, MATURE_TS, above);
         write_day_vwap(&oracle, EUR_ISO, EUR_PAIR_ID, MATURE_TS, below);
 
-        // Both carry the same floor; only the euro's own day price decides for it.
+        // Both carry the same floor. Only the euro's own day price decides for it.
         let eur_id = eur_series(8).series_id;
         assert!(runtime::is_series_qualified(&s, sid(7)).unwrap());
         assert!(!runtime::is_series_qualified(&s, eur_id).unwrap());
@@ -939,7 +939,7 @@ fn a_group_left_unfinished_moves_to_the_next_bucket_and_credits_once() {
         );
         assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
 
-        // A member the registry never issued cannot expire; the group must survive it.
+        // A member the registry never issued cannot expire. The group must survive it.
         let day = WorldwideDay::new(7);
         let key = IntexFactoryContract::scoped(REFERENCE_ISO, day.value());
         let f = IntexFactoryContract::new(s.clone());

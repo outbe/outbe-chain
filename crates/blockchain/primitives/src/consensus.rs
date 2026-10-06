@@ -2,7 +2,7 @@
 //!
 //! Shared data structures for passive consensus status and execution-summary
 //! cache handoff. Finalized-parent certificate facts travel through Phase 1
-//! system transaction input, not through this bridge. Lives in
+//! system transaction input, not through this bridge. This module lives in
 //! `outbe-primitives` to avoid circular dependencies between `outbe-consensus`
 //! and `outbe-evm`.
 
@@ -20,99 +20,111 @@ const EXECUTION_SUMMARY_CACHE_LIMIT: usize = 1024;
 /// Maximum supported block `extra_data` size for Outbe payloads.
 ///
 /// Outbe reserves `header.extra_data` for DKG boundary outcomes and dealer
-/// logs. Those artifacts can be materially larger than Ethereum's default
-/// 32-byte budget, so the node validator and consensus runtime share a larger
+/// logs. Those artifacts can be much larger than Ethereum's default 32-byte
+/// budget. Thus the node validator and the consensus runtime share a larger
 /// explicit cap.
 pub const OUTBE_MAX_EXTRA_DATA_SIZE: usize = 64 * 1_024;
 
 /// Maximum allowed RLP-encoded size of a block, in bytes.
 ///
-/// The full block rides a single consensus P2P message (`ConsensusBlock`, and
-/// the marshal's `(notarization, block)` resolver co-transport), which
-/// commonware caps at `MAX_P2P_MESSAGE_SIZE` (2 MiB) and **panics** on overflow.
-/// The execution-layer gas limit permits far larger blocks (~7.5 MB of
-/// zero-byte calldata at 30M gas), so without this cap an honest proposer could
-/// build a valid block that can never be disseminated - verifiers could never
-/// pull it and the view would stall. This bound keeps a margin below the 2 MiB
-/// transport cap for the message envelope and the attached certificate.
+/// The full block travels in a single consensus P2P message (`ConsensusBlock`,
+/// and the marshal's `(notarization, block)` resolver co-transport).
+/// Commonware caps that message at `MAX_P2P_MESSAGE_SIZE` (2 MiB) and
+/// **panics** on overflow. The execution-layer gas limit permits far larger
+/// blocks (~7.5 MB of zero-byte calldata at 30M gas). Without this cap, an
+/// honest proposer could build a valid block that the network can never
+/// disseminate. Verifiers could never pull it, and the view would stall. This
+/// bound keeps a margin below the 2 MiB transport cap for the message envelope
+/// and the attached certificate.
 ///
-/// Enforced at block build (the payload builder skips txs / rejects a sealed
-/// block over this size) and re-checked deterministically at verify
-/// (`validate_block_pre_execution` measures `sealed_block.rlp_length()`), so a
-/// byzantine proposer that ignores the build cap is rejected rather than
-/// crashing the transport. Hard-fork-governed protocol constant; both the
-/// builder and the validator read it from here. A workspace test in
-/// `outbe-consensus` guards `OUTBE_MAX_BLOCK_SIZE < MAX_P2P_MESSAGE_SIZE`.
+/// Two paths enforce this bound:
+/// - Block build: the payload builder skips txs / rejects a sealed block over
+///   this size.
+/// - Verify: `validate_block_pre_execution` measures `sealed_block.rlp_length()`
+///   and re-checks the bound deterministically.
+///
+/// Thus the validator rejects a byzantine proposer that ignores the build cap,
+/// and the transport does not crash. This is a hard-fork-governed protocol
+/// constant. Both the builder and the validator read it from here. A workspace
+/// test in `outbe-consensus` guards `OUTBE_MAX_BLOCK_SIZE < MAX_P2P_MESSAGE_SIZE`.
 pub const OUTBE_MAX_BLOCK_SIZE: usize = 2 * 1024 * 1024 - 128 * 1024;
 
 /// Maximum allowed forward drift, in milliseconds, between a block's
 /// `timestamp_millis` and its parent's.
 ///
-/// Block timestamps are proposer-supplied and only checked for parent
-/// monotonicity by the stock Ethereum rules. Without an upper bound a single
-/// byzantine leader can ratchet chain time arbitrarily far forward in one
-/// block, which (a) instantly matures every pending unbonding entry and the
-/// slashed-withdrawal delay, letting the proposer's own stake escape the
-/// unbonding lock and slashing window, and (b) skips the day-indexed emission
-/// schedule. This bound is the deterministic, chain-state-only drift band
-/// shared by the proposer (which caps its assigned timestamp at
-/// `parent + this`) and every validator (which rejects a block whose delta
-/// exceeds `this`); see `crates/blockchain/node/src/consensus.rs`
+/// The proposer supplies block timestamps. The stock Ethereum rules check them
+/// only for parent monotonicity. Without an upper bound, a single byzantine
+/// leader can ratchet chain time arbitrarily far forward in one block. That
+/// jump has two effects:
+/// - (a) It instantly matures every pending unbonding entry and the
+///   slashed-withdrawal delay. The proposer's own stake can then escape the
+///   unbonding lock and the slashing window.
+/// - (b) It skips the day-indexed emission schedule.
+///
+/// This bound is the deterministic, chain-state-only drift band. The proposer
+/// and every validator share it:
+/// - The proposer caps its assigned timestamp at `parent + this`.
+/// - Every validator rejects a block whose delta exceeds `this`.
+///
+/// See `crates/blockchain/node/src/consensus.rs`
 /// (`validate_against_parent_timestamp_millis`) and the proposer build path in
 /// `crates/blockchain/consensus/src/application/handler.rs`.
 ///
-/// 1 hour is >400x the certification timeout, so honest operation - including
-/// view-nullification bursts and DKG-reshare pauses - never trips it, while a
-/// genuinely long outage self-heals: the proposer caps at `parent + this` and
-/// chain time ratchets forward in bounded steps until it catches up to real
-/// time, so the band never turns a recoverable stall into a permanent halt. It
-/// is ~504x smaller than the 21-day default unbonding period, so the
-/// single-block unbonding-lock bypass is eliminated and any residual time
-/// ratchet by a sustained byzantine leader is slow and on-chain visible.
-/// Hard-fork-governed protocol constant; both paths read it from here.
+/// 1 hour is >400x the certification timeout. Thus honest operation, including
+/// view-nullification bursts and DKG-reshare pauses, never trips it. A
+/// genuinely long outage self-heals: the proposer caps at `parent + this`, and
+/// chain time ratchets forward in bounded steps until it reaches real time.
+/// Thus the band never turns a recoverable stall into a permanent halt.
+/// The bound is ~504x smaller than the 21-day default unbonding period. This
+/// eliminates the single-block unbonding-lock bypass. Any residual time ratchet
+/// by a sustained byzantine leader is slow and visible on chain. This is a
+/// hard-fork-governed protocol constant. Both paths read it from here.
 pub const MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS: u64 = 60 * 60 * 1_000;
 
 /// Minimum advance, in milliseconds, that a block's `timestamp_millis` must add
-/// over its parent's - the lower bound of the two-sided drift band.
+/// over its parent's. This is the lower bound of the two-sided drift band.
 ///
-/// Stock monotonicity only requires `+1 ms`, so a colluding leader majority can
-/// keep `timestamp = parent + 1 ms` while real time advances, freezing every
-/// time-driven settlement that keys off block timestamp: the day-indexed
-/// emission schedule never crosses a UTC boundary and unbonding maturity
-/// (`complete_time`) is never reached, so stake never unlocks and emission
-/// stalls. This bound forces each block to advance chain time by at least
-/// `this`, so the freeze is neutralized - the only way to slow chain time below
-/// `this`-per-block is to withhold blocks, which the view-timeout / leader
-/// rotation machinery already bounds.
+/// Stock monotonicity requires only `+1 ms`. Thus a colluding leader majority
+/// can keep `timestamp = parent + 1 ms` while real time advances. This freezes
+/// every time-driven settlement that depends on the block timestamp:
+/// - The day-indexed emission schedule never crosses a UTC boundary, so
+///   emission stalls.
+/// - Unbonding maturity (`complete_time`) is never reached, so stake never
+///   unlocks.
+///
+/// This bound forces each block to advance chain time by at least `this`, and
+/// so neutralizes the freeze. The only way to slow chain time below
+/// `this`-per-block is to withhold blocks. The view-timeout / leader rotation
+/// machinery already bounds that case.
 ///
 /// Like the maximum bound, the rule is deterministic and chain-state-only
-/// (header + parent, no wall clock) so proposer and every validator agree. The
-/// proposer clamps its assigned timestamp *up* to `parent + this` when its clock
-/// has not advanced that far (see the consensus handler build path), so an
-/// honest block is never rejected; the clamp only bites under clock lag and any
-/// resulting forward inflation is bounded by
-/// [`MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS`] and self-corrects once real time catches
-/// up. The genesis child (parent block number `0`) is exempt on both paths: the
-/// `finalization_view` is unseeded at genesis, so block 1 is only checked for
-/// monotonicity.
+/// (header + parent, no wall clock). Thus the proposer and every validator
+/// agree. The proposer clamps its assigned timestamp *up* to `parent + this`
+/// when its clock has not advanced that far (see the consensus handler build
+/// path). Thus validators never reject an honest block. The clamp has an
+/// effect only under clock lag. [`MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS`] bounds any
+/// resulting forward inflation, and the inflation self-corrects once real time
+/// reaches chain time. The genesis child (parent block number `0`) is exempt on both
+/// paths. The `finalization_view` is unseeded at genesis, so the check for
+/// block 1 is only for monotonicity.
 ///
-/// 1 s is half the 2 s default block-time floor
-/// (`DEFAULT_MIN_BLOCK_TIME_MS`), so honest pacing - which leaves real intervals
-/// `>=` the floor between consecutive block timestamps - never trips the clamp at
-/// the default cadence, while a sub-second freeze is impossible. Operators who
-/// configure a block-time floor below `this` accept proportionally more bounded
-/// forward inflation. Hard-fork-governed protocol constant; both paths read it
-/// from here.
+/// 1 s is half the 2 s default block-time floor (`DEFAULT_MIN_BLOCK_TIME_MS`).
+/// Honest pacing leaves real intervals `>=` the floor between consecutive block
+/// timestamps. Thus honest pacing never trips the clamp at the default cadence,
+/// while a sub-second freeze is impossible. Operators who configure a
+/// block-time floor below `this` accept proportionally more bounded forward
+/// inflation. This is a hard-fork-governed protocol constant. Both paths read
+/// it from here.
 pub const MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS: u64 = 1_000;
 
 /// Inclusion-window depth `K` for the late-finalize-credits mechanism.
 ///
-/// Block `N`'s fees are escrowed and split at `N+K` across everyone whose
+/// Block `N`'s fees go into escrow. At `N+K` they are split across everyone whose
 /// finalize signature for `N` was gathered within `K` blocks. Inclusion distance
-/// is `k = inclusion_block - N`, `k in {0..=K}`; the window closes / settles at
-/// `N+K` and per-block state is freed at `N+K+1`. Hard-fork-set protocol
-/// constant. Shared by the executor (settle timing) and
-/// the rewards module (decay weights).
+/// is `k = inclusion_block - N`, `k in {0..=K}`. The window closes / settles at
+/// `N+K`, and per-block state is freed at `N+K+1`. This is a hard-fork-set
+/// protocol constant. The executor (settle timing) and the rewards module
+/// (decay weights) share it.
 pub const LATE_FINALIZE_WINDOW_K: u64 = 3;
 
 /// Decoded participation data from a finalized block.
@@ -126,9 +138,9 @@ pub struct ParticipationData {
 
 /// Canonical finalized-parent certificate artifact carried in block history.
 ///
-/// This is proposer-chosen but chain-carried data: once included in a block it
-/// becomes the canonical execution input for participation and missed-vote
-/// accounting for the finalized parent it references.
+/// The proposer chooses this data, but the chain carries it. Once a block
+/// includes it, it becomes the canonical execution input for participation
+/// and missed-vote accounting for the finalized parent it references.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FinalizedParentCertificateData {
     /// Finalized proposal epoch.
@@ -179,9 +191,10 @@ pub struct DkgBoundaryArtifact {
     /// Keccak256 hash of the serialized VRF group BLS public key.
     pub vrf_group_public_key: B256,
     /// Raw `commonware_codec::Encode(polynomial.public())` bytes for the VRF
-    /// group public key. Carried in the boundary artifact so that the executor
-    /// can build the incoming `CommitteeSnapshotStore` entry (slot 39) at the
-    /// activation block without rerunning the DKG. Empty before V2 wiring.
+    /// group public key. The boundary artifact carries them so that the
+    /// executor can build the incoming `CommitteeSnapshotStore` entry (slot 39)
+    /// at the activation block. Thus the executor does not need a new DKG run.
+    /// Empty before V2 wiring.
     pub vrf_group_public_key_bytes: Bytes,
     /// Canonical V2 `committee_set_hash`
     /// (`outbe-validatorset::state::committee_set_hash_v2`). Binds addresses,
@@ -197,13 +210,14 @@ pub struct DkgBoundaryArtifact {
     /// Execution-facing reshared-set activation payload.
     pub reshare: ReshareResult,
     /// Per-validator TEE recipient X25519 public keys for the activated
-    /// committee, carried so the tribute TEE DKG can address share-relay to the
-    /// right enclaves. Empty until the tribute DKG slice
-    /// populates it; OART wire `v0.07`.
+    /// committee. The artifact carries them so the tribute TEE DKG can address
+    /// share-relay to the right enclaves. Empty until the tribute DKG slice
+    /// populates it. OART wire `v0.07`.
     pub tee_recipient_pubkeys: Vec<(Address, B256)>,
-    /// Canonical storage-order list of ValidatorSet target members excluded at
-    /// the exact DKG freeze block because their DcapRequired lease was not ready.
-    /// This is the only authority for the narrow replayable expiry demotion.
+    /// List, in canonical storage order, of ValidatorSet target members
+    /// excluded at the exact DKG freeze block because their DcapRequired lease
+    /// was not ready. This is the only authority for the narrow replayable
+    /// expiry demotion.
     pub tee_expired_target_exclusions: Vec<Address>,
     /// Domain-separated commitment to [`Self::tee_expired_target_exclusions`].
     /// Honest voters compare the complete locally frozen artifact, including
@@ -250,19 +264,19 @@ pub struct ConsensusData {
 
 /// Execution summary decoded from a locally executed block header.
 ///
-/// This is a bounded live cache for the Reth in-memory-tree vs provider-DB
-/// handoff window. The authoritative data remains the canonical block header:
-/// callers must only use this cache after checking that the provider cannot
-/// read the header yet, not to override a readable canonical header.
+/// This is a bounded live cache for the handoff window between the Reth
+/// in-memory tree and the provider DB. The authoritative data remains the
+/// canonical block header. Callers must use this cache only after they check
+/// that the provider cannot read the header yet. Callers must not use it to
+/// override a readable canonical header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CachedExecutionSummary {
     pub summary: ExecutionSummaryArtifact,
     pub timestamp: u64,
     /// State root committed by the same exact block header as `summary`.
     ///
-    /// `None` is retained only for legacy/test cache writers. Consensus paths
-    /// that need to bind an OCOMP JobId require `Some` and fail closed
-    /// otherwise.
+    /// `None` is retained only for legacy/test cache writers. Consensus paths that need
+    /// to bind an OCOMP JobId require `Some` and fail closed otherwise.
     pub state_root: Option<B256>,
 }
 
@@ -321,9 +335,10 @@ pub struct ConsensusStatus {
 }
 
 impl ConsensusStatus {
-    /// Whether the node is synced and participating in consensus. Derived from
-    /// `randomness_status` (single source of truth) rather than stored, so it can
-    /// never drift from the VRF/DKG safety state it is computed from.
+    /// Whether the node is synced and participating in consensus. This value
+    /// comes from `randomness_status` (single source of truth) and is not
+    /// stored. Thus it can never drift from the VRF/DKG safety state it is
+    /// computed from.
     pub fn is_active(&self) -> bool {
         self.randomness_status.is_consensus_active()
     }
@@ -340,12 +355,13 @@ impl ConsensusStatus {
 
 /// Thread-safe bridge for passive consensus/execution status and caches.
 ///
-/// Finalized-parent attestations are no longer transported through this bridge
-/// or through `header.extra_data`; consensus writes exact-parent records into
-/// the consensus-owned parent certificate store and carries the selected record
-/// in the successor block's Phase 1 system transaction. The bridge keeps only
-/// bootstrap/status data and the short-lived execution-summary cache used while
-/// Reth's generic provider catches up to recently executed headers.
+/// Finalized-parent attestations no longer travel through this bridge or
+/// through `header.extra_data`. Consensus writes exact-parent records into the
+/// consensus-owned parent certificate store. It carries the selected record in
+/// the successor block's Phase 1 system transaction. The bridge keeps only
+/// bootstrap/status data and the short-lived execution-summary cache. That
+/// cache is in use while Reth's generic provider has not yet reached the
+/// recently executed headers.
 #[derive(Clone)]
 pub struct ConsensusExecutionBridge {
     inner: Arc<Mutex<BridgeState>>,
@@ -359,20 +375,21 @@ struct BridgeState {
     /// material. It is deliberately not persisted or consensus-visible.
     local_threshold_share_present: bool,
     execution_summary_cache: VecDeque<ExecutionSummaryCacheEntry>,
-    /// One-time TEE bootstrap payload produced by the consensus-thread TEE DKG
-    /// coordination, handed to the payload builder so every block-1 proposal
-    /// attempt injects the same bytes (slice 5.1). It must remain available
-    /// across rejected or abandoned proposal candidates; the block-number guard
-    /// in the payload builder makes it unreachable after block 1.
+    /// One-time TEE bootstrap payload from the consensus-thread TEE DKG
+    /// coordination. It goes to the payload builder so that every
+    /// block-1 proposal attempt injects the same bytes (slice 5.1). It must
+    /// remain available across rejected or abandoned proposal candidates. The
+    /// block-number guard in the payload builder makes it unreachable after
+    /// block 1.
     pending_tee_bootstrap: Option<crate::tee_bootstrap_v2::TeeBootstrapV2>,
     /// Channel to the consensus-side drainer that answers `outbe_getFinalization`
-    /// RPC requests from the marshal. Set once at marshal-start; `None` on a
-    /// node that does not serve finalizations (e.g. before consensus is up).
+    /// RPC requests from the marshal. Set once at marshal-start. `None` on a
+    /// node that does not serve finalizations (e.g. before consensus starts).
     finalization_fetcher: Option<FinalizationFetcherTx>,
 }
 
-/// The marshal-backed answer to an `outbe_getFinalization` request: the
-/// commonware-codec-encoded finalization certificate and the encoded
+/// The marshal-backed answer to an `outbe_getFinalization` request. It holds
+/// the commonware-codec-encoded finalization certificate and the encoded
 /// `ConsensusBlock`, ready to hex and ship. A follower's resolver reconstructs
 /// `finalization.encode() || block.encode()` from exactly these two fields.
 #[derive(Clone, Debug)]
@@ -386,9 +403,9 @@ pub struct FinalizedBlockBytes {
 }
 
 /// Sender half of the finalization fetch channel: a height plus a one-shot
-/// reply. Lives in the bridge so the `outbe-rpc` handler (which cannot see the
-/// marshal or `ConsensusBlock`) can request finalized bytes from the consensus
-/// thread.
+/// reply. It lives in the bridge so the `outbe-rpc` handler can request
+/// finalized bytes from the consensus thread. That handler cannot see the
+/// marshal or `ConsensusBlock`.
 type FinalizationFetcherTx =
     mpsc::UnboundedSender<(u64, oneshot::Sender<Option<FinalizedBlockBytes>>)>;
 
@@ -420,17 +437,17 @@ impl ConsensusExecutionBridge {
     }
 
     /// Stores the one-time TEE bootstrap payload for the payload builder to inject.
-    /// Set by the consensus thread once the TEE DKG bootstrap coordination completes.
+    /// The consensus thread sets it once the TEE DKG bootstrap coordination completes.
     pub fn set_pending_tee_bootstrap(&self, payload: crate::tee_bootstrap_v2::TeeBootstrapV2) {
         self.lock_state().pending_tee_bootstrap = Some(payload);
     }
 
     /// Returns a clone of the pending TEE bootstrap payload for a block-1 proposal.
     ///
-    /// Proposal construction is retryable: consuming this value while building a
-    /// candidate would make a rejected first candidate permanently prevent every
-    /// later block-1 proposal. The payload is bounded and immutable after startup,
-    /// so cloning it preserves identical bytes across retries.
+    /// Proposal construction is retryable. If a candidate build consumed this
+    /// value, a rejected first candidate would permanently prevent every later
+    /// block-1 proposal. The payload is bounded and immutable after startup.
+    /// Thus a clone of it preserves identical bytes across retries.
     pub fn pending_tee_bootstrap(&self) -> Option<crate::tee_bootstrap_v2::TeeBootstrapV2> {
         self.lock_state().pending_tee_bootstrap.clone()
     }
@@ -548,9 +565,9 @@ impl ConsensusExecutionBridge {
 
     /// Updates the last finalized block number in the consensus status.
     ///
-    /// Called by the application handler after processing a finalization,
-    /// since the reporter only knows the Simplex view number (not the
-    /// actual block height, which can differ when proposals are missed).
+    /// The application handler calls this after it processes a finalization.
+    /// The reporter knows only the Simplex view number, not the actual block
+    /// height. The two values can differ when proposals are missed.
     pub fn set_last_finalized_block_number(&self, number: u64) {
         let mut state = self.lock_state();
         state.consensus_status.last_finalized_block = number;
@@ -577,7 +594,7 @@ impl ConsensusExecutionBridge {
     /// Whether the local process currently has a usable active threshold share.
     ///
     /// Local share possession and network-level VRF safety are independent
-    /// facts: a shareless verifier can observe healthy public material, while a
+    /// facts. A shareless verifier can observe healthy public material. A
     /// signer can retain a private share that is unusable after expiry.
     pub fn has_threshold_shares(&self) -> bool {
         let state = self.lock_state();
@@ -594,10 +611,10 @@ impl ConsensusExecutionBridge {
         )
     }
 
-    /// Installs the finalization fetcher channel. Called once at marshal-start
-    /// (validator and follower paths both register one) with the sender; the
-    /// consensus thread drains the matching [`FinalizationFetcherRx`] and answers
-    /// from the marshal. Returns the receiver to hand to the drainer.
+    /// Installs the finalization fetcher channel and stores the sender. Called
+    /// once at marshal-start (validator and follower paths both register one).
+    /// The consensus thread drains the matching [`FinalizationFetcherRx`] and
+    /// answers from the marshal. Returns the receiver to hand to the drainer.
     pub fn set_finalization_fetcher(&self) -> FinalizationFetcherRx {
         let (tx, rx) = mpsc::unbounded_channel();
         self.lock_state().finalization_fetcher = Some(tx);
@@ -607,10 +624,13 @@ impl ConsensusExecutionBridge {
     /// Requests the finalized certificate + block bytes for `height` from the
     /// consensus thread (used by the `outbe_getFinalization` RPC handler).
     ///
-    /// Returns `None` if no fetcher is installed (consensus not serving), the
-    /// drainer dropped the reply (height not available), or the channel is
-    /// closed. The reply travels back over a one-shot so concurrent requests do
-    /// not interfere.
+    /// Returns `None` in these cases:
+    /// - No fetcher is installed (consensus not serving).
+    /// - The drainer dropped the reply (height not available).
+    /// - The channel is closed.
+    ///
+    /// The reply travels back over a one-shot so concurrent requests do not
+    /// interfere.
     pub async fn request_finalization(&self, height: u64) -> Option<FinalizedBlockBytes> {
         let sender = {
             let state = self.lock_state();

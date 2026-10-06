@@ -34,8 +34,8 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
 /// Capture series identity in Intex, enroll it in the call-price bin index, and send
 /// ISSUANCE_INSTRUCTIONS to every target chain of the day's snapshot. The
 /// canonical IntexNFT1155 createSeries now arrives per chain via the ISSUANCE
-/// broadcast (including a loopback leg on the origin), so there is no in-process
-/// NFT call here.
+/// broadcast. This includes a loopback leg on the origin. So there is no
+/// in-process NFT call here.
 pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<IssuanceLeg>> {
     if params.issued_units == 0 {
         // Whether the day distributes is the caller's decision: one empty group
@@ -43,7 +43,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
         return Ok(Vec::new());
     }
 
-    // u32 timestamp; bounded until 2106.
+    // u32 timestamp. It is bounded until 2106.
     let issued_at = u32::try_from(storage.timestamp()?.to::<u64>())
         .map_err(|_| PrecompileError::Revert("block timestamp exceeds u32".into()))?;
 
@@ -115,7 +115,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
     )?;
 
     // Arm the creator-reward proceeds fan-in: the winning chains are expected to
-    // route proceeds; creators are paid once all arrive or the deadline passes.
+    // route proceeds. Creators are paid once all arrive or the deadline passes.
     let deadline = storage
         .timestamp()?
         .to::<u64>()
@@ -157,7 +157,7 @@ pub fn pack_issuance_messages(
     for leg in legs {
         for slice in split_recipients(leg.payload) {
             // Legs arrive series by series, so this chain's open message is not the last one
-            // built; matching on the tail alone would batch nothing.
+            // built. Matching on the tail alone would batch nothing.
             let open = per_chain
                 .iter_mut()
                 .rev()
@@ -178,7 +178,7 @@ pub fn pack_issuance_messages(
 }
 
 /// Send a day's packed issuance messages, each stamped with its position in the chain's run.
-/// Relay-float-funded: value 0, the router quotes and pays the bridge fee from its own float.
+/// Relay-float-funded: value 0. The router quotes and pays the bridge fee from its own float.
 pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<IssuanceLeg>) -> Result<()> {
     for ((chain_id, worldwide_day), messages) in
         chunk_issuance_messages(pack_issuance_messages(legs))
@@ -204,12 +204,13 @@ pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<IssuanceLeg>) -> Res
     Ok(())
 }
 
-/// One (chain, worldwide day) run of issuance messages, in send order: what the chunk header numbers.
+/// One (chain, worldwide day) run of issuance messages, in send order: what the chunk header
+/// numbers.
 pub(crate) type IssuanceRun = ((u32, u32), Vec<Vec<IssuanceInstructionsParams>>);
 
-/// Group packed messages into the runs the chunk header numbers: one per (chain, day), the pair the
-/// receiver counts chunks against. Callers pass one day's legs (clearing does), which is also what
-/// keeps `pack_issuance_messages` from batching two days into one message.
+/// Group packed messages into the runs the chunk header numbers: one per (chain, day), the pair
+/// the receiver counts chunks against. Callers pass one day's legs (clearing does). This is also
+/// what keeps `pack_issuance_messages` from batching two days into one message.
 pub(crate) fn chunk_issuance_messages(
     packed: Vec<(u32, Vec<IssuanceInstructionsParams>)>,
 ) -> Vec<IssuanceRun> {
@@ -228,7 +229,7 @@ fn recipient_count(message: &[IssuanceInstructionsParams]) -> usize {
     message.iter().map(|item| item.recipients.len()).sum()
 }
 
-/// One series' instructions cut into pieces a message can carry; only the winners differ.
+/// One series' instructions cut into pieces a message can carry. Only the winners differ.
 fn split_recipients(payload: IssuanceInstructionsParams) -> Vec<IssuanceInstructionsParams> {
     if payload.recipients.len() <= MAX_RECIPIENTS_PER_ISSUANCE {
         return vec![payload];
@@ -246,9 +247,9 @@ fn split_recipients(payload: IssuanceInstructionsParams) -> Vec<IssuanceInstruct
         .collect()
 }
 
-/// One `(chain, recipients, units)` issuance leg per snapshot chain: winners land on their
-/// own chain and every other chain gets an empty leg, so the series is created there too (needed
-/// for user NFT bridging).
+/// One `(chain, recipients, units)` issuance leg per snapshot chain. Winners land on their
+/// own chain, and every other chain gets an empty leg. So the series is created there too
+/// (needed for user NFT bridging).
 pub(crate) fn issuance_legs(params: &IssuanceParams) -> Vec<(u32, Vec<Address>, Vec<U256>)> {
     params
         .snapshot_chains
@@ -288,10 +289,10 @@ const PRODUCT_DECIMALS: u32 = 2 * PROTOCOL_AMOUNT_DECIMALS as u32;
 /// Credit auction proceeds (native COEN, arriving as `amount` = msg.value) from
 /// one target chain into the day's pot. Gated to the OriginRouter. The day's
 /// payout round opens once every winning chain has routed its proceeds (or the
-/// fan-in deadline passes); `payContributorBatch` pays it out. Because proceeds
-/// arrive once per winning chain (loopback same-block, remote minutes later),
-/// the credit only accumulates - it never reverts on a repeat or ownerless day,
-/// which would strand that chain's delivery.
+/// fan-in deadline passes). `payContributorBatch` pays it out. Proceeds arrive
+/// once per winning chain (loopback same-block, remote minutes later). So the
+/// credit only accumulates. It never reverts on a repeat or ownerless day: a
+/// revert there would strand that chain's delivery.
 pub fn distribute(
     storage: &StorageHandle<'_>,
     caller: Address,
@@ -332,7 +333,7 @@ pub(crate) fn try_settle_proceeds(
     now: u64,
 ) -> Result<()> {
     // Batches drain a certified round, not this sweep, and a day gets exactly
-    // one - anything arriving after it opened missed the window.
+    // one. Anything that arrives after it opened missed the window.
     if outbe_intex::api::certified_payout_round(storage, worldwide_day.value())?.is_some() {
         let late = outbe_intex::api::take_proceeds_pot(storage, worldwide_day)?;
         if !late.is_zero() {
@@ -369,7 +370,7 @@ pub(crate) fn try_settle_proceeds(
         // Nothing to pay, and nothing left to wait for: an incomplete fan-in only
         // reaches here past its deadline. Finalize either way, so a day no chain
         // ever paid into leaves the awaiting set instead of being re-swept forever.
-        // A later arrival is still caught, and burned, by the branches above.
+        // The branches above still catch and burn a later arrival.
         outbe_intex::api::finalize_proceeds(storage, worldwide_day)?;
         return Ok(());
     }
@@ -452,7 +453,7 @@ pub(crate) fn pay_contributor_batch(
                 .ok_or(IntexFactoryError::DistributionOverflow(worldwide_day))?;
             shares.push(share);
         }
-        // One balance serves every day; bounding before any transfer keeps a
+        // One balance serves every day. Bounding before any transfer keeps a
         // bad denominator from spending another day's proceeds and from
         // draining into an insufficient-balance Fatal mid-batch.
         let total_paid = round
@@ -499,7 +500,7 @@ fn close_round_if_complete(
     if round.paid_leaf_count != contributor_count {
         return Ok(());
     }
-    // The per-batch cap keeps the sum within `amount`; a shortfall here means
+    // The per-batch cap keeps the sum within `amount`. A shortfall here means
     // the round accounting is corrupt.
     let remainder = round.amount.checked_sub(round.paid_so_far).ok_or_else(|| {
         PrecompileError::Fatal("certified payout exceeded the round amount".into())
@@ -571,7 +572,7 @@ pub(crate) fn owner_balances(
     })
 }
 
-/// Progress of one day's payout round; all-zero when no round is open.
+/// Progress of one day's payout round. It is all-zero when no round is open.
 pub(crate) fn contributor_payout_round(
     storage: &StorageHandle<'_>,
     worldwide_day: u32,
@@ -709,8 +710,8 @@ pub fn settle_intex_with_paynote(
     )
 }
 
-/// `settler` is the caller; the settled units stay with `owner`. `quote`
-/// prices and authorizes the payment before any state changes; `pay` then moves
+/// `settler` is the caller. The settled units stay with `owner`. `quote`
+/// prices and authorizes the payment before any state changes. `pay` then moves
 /// it after the units, inside the same checkpoint.
 fn settle<Q>(
     storage: &StorageHandle<'_>,
@@ -754,7 +755,7 @@ fn settle<Q>(
     let quoted = quote(&series)?;
     storage.clone().with_checkpoint(|| {
         // The units move before payment so a token callback cannot settle them
-        // twice; a failed payment rolls the move back.
+        // twice. A failed payment rolls the move back.
         storage.call(
             INTEX_NFT1155_ADDRESS,
             U256::ZERO,

@@ -21,12 +21,13 @@ bytes4 constant REENTRANCY_GUARD_REENTRANT_CALL = 0x3ee5aeb5;
 
 Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
-/// @dev Re-enters the router's bridge-gated inbound entry (`receiveMessage`) while the outer dispatch still
-///      holds the guard, by re-delivering an empty message through the loopback bridge. Returns true iff that
-///      re-entry reverts with `ReentrancyGuardReentrantCall` - the observable signature of the `nonReentrant`
-///      modifier on `receiveMessage`. Going through the bridge clears the `UnauthorizedBridge` gate so the guard
-///      (not the caller check) is what rejects the call; the empty payload can never be reached because the guard
-///      fires first.
+/// @dev Re-enters the router's bridge-gated inbound entry (`receiveMessage`) while the outer
+///      dispatch still holds the guard. It re-delivers an empty message through the loopback
+///      bridge. Returns true iff that re-entry reverts with `ReentrancyGuardReentrantCall`. That
+///      revert is the observable signature of the `nonReentrant` modifier on `receiveMessage`.
+///      Going through the bridge clears the `UnauthorizedBridge` gate, so the guard (not the
+///      caller check) is what rejects the call. The call can never reach the empty payload
+///      because the guard fires first.
 function reentryGuarded(address bridge, uint32 srcChainId, address peer, address router) returns (bool) {
     bytes memory sender = InteroperableAddress.formatEvmV1(srcChainId, peer);
     bytes memory recipient = InteroperableAddress.formatEvmV1(uint32(block.chainid), router);
@@ -37,8 +38,8 @@ function reentryGuarded(address bridge, uint32 srcChainId, address peer, address
 
 /// @notice Stub Auction that, during the inbound STAGE_START dispatch, tries to re-enter the router's inbound
 ///         entry. The re-entry reverts iff `receiveMessage` carries `nonReentrant`.
-/// @dev Does NOT inherit `IIntexAuction` - the high-level call dispatches by selector, so matching the
-///      `auctionStart` signature here is sufficient.
+/// @dev Does NOT inherit `IIntexAuction`. The high-level call dispatches by selector, so
+///      matching the `auctionStart` signature here is sufficient.
 contract ReentrancyProbeAuction {
     address public immutable bridge;
     uint32 public immutable srcChainId;

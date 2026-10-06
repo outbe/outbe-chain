@@ -76,8 +76,8 @@ pub(crate) fn plan_outer_transition_for_test_fixture(
 }
 
 /// The single production mutation seam. The provider grants an exact
-/// purpose-bound lease, its checkpoint covers state and EVM events, and the
-/// complete indexed WWD/OCOMP aggregate is validated both before effects and
+/// purpose-bound lease. Its checkpoint covers state and EVM events. This seam
+/// validates the complete indexed WWD/OCOMP aggregate both before effects and
 /// before commit.
 pub(crate) fn commit_transition<P, R>(
     storage: StorageHandle<'_>,
@@ -219,7 +219,7 @@ pub(crate) fn commit_outer_transition_with_rate(
 
 /// Commits one immutable Cycle day-limit formation while proving that the
 /// target WWD is a reducer-valid persisted outer aggregate. The permit is born
-/// and consumed inside this single no-op outer transition; callers can supply
+/// and consumed inside this single no-op outer transition. Callers can supply
 /// values, but cannot mutate WWD state directly.
 pub(crate) fn commit_day_limit_formation(
     metadosis: &mut MetadosisContract<'_>,

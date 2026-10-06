@@ -111,9 +111,9 @@ fn encode_boundary_payload(result: &DkgBoundaryArtifact) -> Result<Vec<u8>> {
         payload.extend_from_slice(address.as_slice());
         payload.extend_from_slice(recipient_pubkey.as_slice());
     }
-    // V0.0B: exact freeze-height TEE expiry exclusions. The explicit
-    // commitment is carried with the ordered unique list so proposal
-    // equality and execution bind the same authority.
+    // V0.0B: exact freeze-height TEE expiry exclusions. The payload carries the
+    // explicit commitment with the ordered unique list, so proposal equality
+    // and execution bind the same authority.
     payload.extend_from_slice(result.tee_expired_target_exclusions_hash.as_slice());
     payload.extend_from_slice(&(result.tee_expired_target_exclusions.len() as u16).to_be_bytes());
     for address in &result.tee_expired_target_exclusions {

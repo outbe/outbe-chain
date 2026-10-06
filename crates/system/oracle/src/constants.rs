@@ -19,20 +19,22 @@ pub(crate) const MAX_SNAPSHOT_RETENTION_SECONDS: u64 = 365 * 24 * 3600;
 /// Width of one hourly VWAP aggregate cell.
 pub(crate) const VWAP_HOUR_SECONDS: u64 = 60 * 60;
 
-/// Hourly cells kept per pair; a cell is reused for the same hour a day later.
+/// Hourly cells kept per pair. A cell is reused for the same hour a day later.
 pub(crate) const HOURLY_VWAP_CELLS: u64 = 24;
 
 /// Minimum share of possible tally rounds that must have produced a snapshot
-/// for a pair: two thirds. Applied to every hour of a finalized window (an
-/// hour below it is left out of the VWAP) and again to the window as a whole
-/// over the hours that count. Possible rounds are blocks divided by
-/// `vote_period`. Eight hours at exactly two thirds pass; six full hours pass;
-/// five full hours, or six hours at two thirds each, do not.
+/// for a pair: two thirds. It applies to every hour of a finalized window (an
+/// hour below it is excluded from the VWAP). It applies again to the window as a
+/// whole, over the hours that count. Possible rounds are blocks divided by
+/// `vote_period`. Examples:
+/// - Eight hours at exactly two thirds pass.
+/// - Six full hours pass.
+/// - Five full hours, or six hours at two thirds each, do not pass.
 pub(crate) const MIN_WINDOW_COVERAGE: (u64, u64) = (2, 3);
 
 /// Maximum number of closed UTC days the begin-block lifecycle finalizes in a
 /// single block. Normal operation finalizes exactly one day per UTC-midnight
-/// rollover; this cap only bounds catch-up after a long gap (cold start or
+/// rollover. This cap only bounds catch-up after a long gap (cold start or
 /// extended downtime). Days older than the cap stay unfinalized.
 pub const MAX_UTC_DAY_VWAP_BACKFILL_DAYS: u32 = 366;
 
@@ -42,10 +44,9 @@ pub const DAY_TYPE_ISO: u16 = 840;
 /// The day-type pair: COEN quoted in ISO 840. COEN is the zero address, so this
 /// is also its sorted storage-key form.
 ///
-/// Spelled as a literal because `AddressPair::new_coen_to` is not const -
-/// `copy_from_slice` is not. The
-/// `the_day_type_pair_key_is_the_coen_iso_840_pair` test is what keeps it
-/// honest.
+/// Spelled as a literal because `AddressPair::new_coen_to` is not const. It is
+/// not const because `copy_from_slice` is not. The
+/// `the_day_type_pair_key_is_the_coen_iso_840_pair` test keeps it honest.
 pub const DAY_TYPE_PAIR: AddressPair = AddressPair::new([
     // COEN - 20 zero bytes.
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //

@@ -62,7 +62,8 @@ fn provisioned_radicle_node_id(home: &Path) -> Result<[u8; 32]> {
 
 /// A TCP listener alone is not readiness. Retain ownership in the caller until
 /// native identity/config, status TCP and the final child observation succeed.
-/// Each blocking observation consumes the same deadline; no per-probe reset.
+/// Each blocking observation consumes the same deadline. There is no per-probe
+/// reset.
 fn wait_radicle_ready(
     guard: &mut ChildGuard,
     expected_node_id: [u8; 32],
@@ -418,7 +419,7 @@ impl Localnet {
         }
         self.user_radicle = None;
         // Retain local ownership until all setup succeeds. Validators' policies
-        // remain manager-owned; only this independent source is explicitly seeded.
+        // remain manager-owned. Only this independent source is explicitly seeded.
         let guard = self.spawn_user_radicle(&fixture.home)?;
         configure_user_radicle(
             self.cfg.user_radicle_control_socket(),
@@ -815,7 +816,7 @@ fn configure_user_radicle(socket: PathBuf, repo: [u8; 20], peers: Vec<PathBuf>) 
 }
 
 /// Keep the pinned native protocol, but bound the entire exchange rather than
-/// the SDK's individual reads. Cancellation drops the socket; no blocking I/O
+/// the SDK's individual reads. Cancellation drops the socket. No blocking I/O
 /// or detached task survives a timed-out control operation.
 fn source_control_response<T: serde::de::DeserializeOwned + Send + 'static>(
     socket: &Path,
@@ -921,7 +922,8 @@ fn wait_for_source_seeds(
         );
         // Discovery observes routing and connected identities, not synchronization
         // of the future update. The subsequent ordinary Git push must announce
-        // that update itself; no forced refs announcement or validator fetch.
+        // that update itself. There is no forced refs announcement or validator
+        // fetch.
         let seeds = source_control_response::<radicle::node::Seeds>(
             socket,
             radicle::node::Command::SeedsFor {
@@ -992,7 +994,8 @@ fn seed_scope_all(home: &Path, repo_id: &str) -> Result<bool> {
 fn repository_visible(home: &Path, fixture: &RadicleRepositoryFixtureV1) -> Result<bool> {
     let repo_id: radicle::identity::RepoId =
         fixture.repo_id.parse().wrap_err("parse repository ID")?;
-    // Parse before constructing the storage path; no Profile load or key access.
+    // Parse before constructing the storage path. Do not load a Profile or
+    // access a key.
     decode_repo_id(&fixture.repo_id)?;
     let path = home
         .join("storage")
@@ -1298,8 +1301,9 @@ mod tests {
             serde_json::json!({"externalAddresses": ["127.0.0.1:8776"]}),
         ]);
         let mut guard = readiness_child();
-        // Port zero cannot be a listening TCP endpoint; avoid a release/rebind
-        // race in this negative fixture by not selecting an ephemeral port.
+        // Port zero cannot be a listening TCP endpoint. This negative fixture
+        // avoids a release/rebind race because it does not select an ephemeral
+        // port.
         assert!(wait_radicle_ready(
             &mut guard,
             [7; 32],
@@ -2051,8 +2055,8 @@ mod tests {
     ///
     /// The managed directories are created just before the script execs the
     /// sidecar, so their presence is the last observable step of setup. It
-    /// used to wait on `config.json`, but the launcher no longer writes one -
-    /// the sidecar builds its runtime config from its command line and never
+    /// used to wait on `config.json`, but the launcher no longer writes one.
+    /// The sidecar builds its runtime config from its command line and never
     /// reads that file.
     fn wait_for_launcher(child: &mut Child, home: &Path) {
         let control_socket = home.join("node/outbe-control.sock");

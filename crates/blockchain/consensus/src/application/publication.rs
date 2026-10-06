@@ -126,7 +126,7 @@ impl ProposalPublication {
         (self.observe)(durable);
     }
 
-    /// First relay consumes the staged block atomically; later relays use
+    /// First relay consumes the staged block atomically. Later relays use
     /// marshal's digest lookup. Keep the gate until actual finalization.
     pub(crate) fn relay(
         &self,

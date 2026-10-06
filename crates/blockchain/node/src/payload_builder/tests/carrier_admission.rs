@@ -1,7 +1,9 @@
-//! Builder policy for result-vote carriers: a carrier the shared verifier
-//! proves invalid is skipped, one whose due window is not closed yet is
-//! deferred without blame, a check that cannot read healthy state ends the
-//! build, and every other transaction goes straight to execution.
+//! Builder policy for result-vote carriers:
+//! - The builder skips a carrier that the shared verifier proves invalid.
+//! - The builder defers, without blame, a carrier whose due window is not
+//!   closed yet.
+//! - A check that cannot read healthy state ends the build.
+//! - Every other transaction goes straight to execution.
 
 use crate::payload_builder::carrier_admission::{
     admit, decide, CarrierAdmissionAbort, CarrierBlock, CarrierDecision, DeferredResultVoteCarrier,

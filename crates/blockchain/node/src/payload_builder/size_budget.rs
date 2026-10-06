@@ -2,8 +2,8 @@
 //!
 //! A sealed block must fit one consensus P2P message, so the builder rejects a
 //! candidate transaction whose inclusion could push the final block over the
-//! protocol cap. The estimate is taken before the header is finalized, so it
-//! must bound every byte that finalization can still add.
+//! protocol cap. The builder takes the estimate before it finalizes the header,
+//! so the estimate must bound every byte that finalization can still add.
 
 use outbe_primitives::consensus::{OUTBE_MAX_BLOCK_SIZE, OUTBE_MAX_EXTRA_DATA_SIZE};
 use reth_consensus_common::validation::MAX_RLP_BLOCK_SIZE;

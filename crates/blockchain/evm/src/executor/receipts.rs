@@ -37,7 +37,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     /// execution gas in `system_tx_execution_gas`.
     ///
     /// Determinism: the synthetic log encoding depends only on
-    /// `(log_address, code, reason)`; identical inputs across proposer
+    /// `(log_address, code, reason)`. Identical inputs across proposer
     /// and validators yield byte-equal receipts and therefore byte-equal
     /// `receipts_root`. See `crate::failure_receipt`.
     pub(crate) fn push_failure_receipt(
@@ -165,7 +165,7 @@ where
     }
 
     /// Pushes a `status=0` system synthetic receipt and publishes only the
-    /// signed envelope plus explicit CE gas; unrelated internal-lane work
+    /// signed envelope plus explicit CE gas. Unrelated internal-lane work
     /// remains hidden.
     pub(in crate::executor) fn push_system_failure_receipt(
         &mut self,

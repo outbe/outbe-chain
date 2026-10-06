@@ -42,7 +42,7 @@ pub struct SettlementCurrency {
 
 /// Deploy the asset and its vault, then register the vault with the VaultRouter.
 ///
-/// `owner_key` must be the router's owner - `addVault` admits nobody else. The
+/// `owner_key` must be the router's owner. `addVault` admits nobody else. The
 /// vault renounces its own owner in its constructor, which the router demands
 /// before it will adopt one.
 pub(crate) fn deploy(
@@ -103,8 +103,8 @@ pub(crate) fn deploy_for(
         None,
     )?;
 
-    // Confirm the registration itself rather than its receipt: this count is what
-    // `settle` reads, and a zero here is the failure the whole fixture exists to avoid.
+    // Confirm the registration itself rather than its receipt. `settle` reads this
+    // count, and a zero here is the failure the whole fixture exists to avoid.
     let deadline = Instant::now() + Duration::from_secs(REGISTRATION_TIMEOUT_SECS);
     loop {
         let registered = eth::read_call(

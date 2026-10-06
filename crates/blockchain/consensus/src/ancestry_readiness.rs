@@ -5,10 +5,10 @@ use std::sync::{
 
 /// Shared readiness gate for ancestry reads that may fall through to marshal.
 ///
-/// The application handler uses this as a fast local guard before making
+/// The application handler uses this as a fast local guard before it makes
 /// consensus-critical ancestry decisions. The executor actor advances
-/// `ready_height` only after a finalized block has been successfully applied to
-/// execution, so startup backfill exposes one source of truth instead of a
+/// `ready_height` only after it successfully applies a finalized block to
+/// execution. Thus startup backfill exposes one source of truth instead of a
 /// separate stack-level heuristic.
 #[derive(Clone, Debug)]
 pub struct AncestryReadiness {

@@ -14,13 +14,13 @@ use super::{
 
 /// Versioned calldata body system transactions.
 ///
-/// completed the wire-format swap: Phase 1 system-tx input now
+/// The wire-format swap is complete: Phase 1 system-tx input now
 /// carries the V2 slim
 /// [`crate::consensus_metadata::CertifiedParentAccountingMetadata`]
 /// instead of the V1 `ConsensusMetadataEnvelope`. The V2 payload omits the
-/// dead `encoded_finalize_votes` field (V2 signer bitmap is authoritative)
-/// and carries the V2 `committee_set_hash`, `vrf_material_version`,
-/// `vrf_group_public_key_hash`, and `proof_kind` fields the verifier needs.
+/// dead `encoded_finalize_votes` field (the V2 signer bitmap is authoritative).
+/// It carries the V2 `committee_set_hash`, `vrf_material_version`,
+/// `vrf_group_public_key_hash`, and `proof_kind` fields that the verifier needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SystemTxInputV2 {
     CertifiedParentAccounting {
@@ -81,7 +81,7 @@ impl SystemTxInputV2 {
             | Self::HookEvents
             | Self::OcompTerminalRequest => {}
             Self::LateFinalizeCredits { artifact } => {
-                // Empty batches encode to empty bytes - the mandatory tx then
+                // Empty batches encode to empty bytes. The mandatory tx then
                 // carries an empty body and still drives the window-close settle.
                 out.extend_from_slice(
                     encode_late_finalize_credits_artifact(artifact)
@@ -122,7 +122,7 @@ impl SystemTxInputV2 {
                     .map_err(SystemTxError::from_precompile)?,
             }),
             SystemTxKind::LateFinalizeCredits => Ok(Self::LateFinalizeCredits {
-                // Empty body => empty (no-op) artifact; the matured-window close
+                // Empty body => empty (no-op) artifact. The matured-window close
                 // still runs on execution.
                 artifact: decode_late_finalize_credits_artifact(body)
                     .map_err(SystemTxError::from_precompile)?

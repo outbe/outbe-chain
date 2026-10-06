@@ -48,7 +48,7 @@ impl GemContract<'_> {
         let Some(mut item) = self.gem_items.get(gem_id)? else {
             return Ok(None);
         };
-        // A bucket member's record stays Issued; its Called state is the bucket's.
+        // A bucket member's record stays Issued. Its Called state is the bucket's.
         if is_callable(item.state) {
             let bucket = self.gem_bucket.read(&gem_id)?;
             if !bucket.is_zero() {
@@ -186,7 +186,7 @@ impl GemContract<'_> {
     }
 
     /// Put a called bucket or Called gem back in the queue at its own deadline, never
-    /// before the next hour; an entry that is neither leaves the queue instead.
+    /// before the next hour. An entry that is neither leaves the queue instead.
     pub(crate) fn requeue_or_drop(&mut self, entry: U256, now: u64) -> Result<bool> {
         let bucket = self.called_bucket(entry)?;
         let deadline = match bucket {
@@ -260,8 +260,8 @@ impl GemContract<'_> {
             self.expiry_bucket_len.clear(&day)?;
             self.expiry_bucket_live.clear(&day)?;
             tree_math::remove(&ExpiryDayTree(&*self), day)?;
-            // The cursor names a slot in a length that no longer exists; a refill of
-            // this day would otherwise resume past its new end.
+            // The cursor names a slot in a length that no longer exists. Otherwise, a
+            // refill of this day would resume past its new end.
             if self.expiry_sweep_day.read()? == day {
                 self.expiry_sweep_day.write(0)?;
                 self.expiry_cursor.write(0)?;
@@ -301,8 +301,8 @@ impl GemContract<'_> {
         Ok((!id.is_zero()).then_some(id))
     }
 
-    /// Retire a bucket the sweep has finished: a Called gem still in it moves on, a
-    /// stale entry goes. Returns how many were deferred and dropped.
+    /// Retire a bucket the sweep has finished: a Called gem still in it is requeued, and
+    /// a stale entry is dropped. Returns how many were deferred and dropped.
     pub(crate) fn force_retire_hour(&mut self, day: u32, now: u64) -> Result<(u32, u32)> {
         let len = self.expiry_bucket_len.read(&day)?;
         let (mut deferred, mut dropped) = (0u32, 0u32);
@@ -480,7 +480,7 @@ impl GemContract<'_> {
     }
 
     /// Take a member out of its called bucket and queue it on its own, as a Called gem,
-    /// no earlier than the next hour: one gem that cannot burn must not hold back the rest.
+    /// no earlier than the next hour. One gem that cannot burn must not block the rest.
     pub(crate) fn detach_called_member(&mut self, gem_id: U256, now: u64) -> Result<()> {
         let bucket = self.gem_bucket.read(&gem_id)?;
         let called_at = self.bucket_called_at.read(&bucket)?;
@@ -496,7 +496,7 @@ impl GemContract<'_> {
         Ok(())
     }
 
-    /// The called bucket an expiry-queue entry stands for; `None` for a gem id.
+    /// The called bucket that an expiry-queue entry stands for. Returns `None` for a gem id.
     pub(crate) fn called_bucket(&self, entry: U256) -> Result<Option<B256>> {
         let bucket = B256::from(entry.to_be_bytes::<32>());
         Ok((self.bucket_called_at.read(&bucket)? != 0).then_some(bucket))
@@ -584,7 +584,7 @@ impl GemContract<'_> {
     /// Namespaces a bin-column key by the gem's reference currency.
     ///
     /// Mapping keys are left-padded to 32 bytes before hashing, so a wider
-    /// integer type alone namespaces nothing - the ISO has to occupy real high
+    /// integer type alone namespaces nothing. The ISO has to occupy real high
     /// bits. Bin ids are 24-bit and the trie's mid/leaf keys are 16-bit, so the
     /// low 32 bits always hold `key` unambiguously.
     pub(crate) const fn scoped(reference_currency: u16, key: u32) -> u64 {

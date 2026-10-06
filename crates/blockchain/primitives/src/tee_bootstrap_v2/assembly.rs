@@ -4,9 +4,9 @@ use super::*;
 type ComponentIndices = BTreeMap<(u8, Vec<u8>), u16>;
 
 /// Assemble the deterministic unsigned body from complete per-validator
-/// evidence and the existing DKG/offer-key result. Committee signature
-/// records are installed in canonical validator order with zeroed bytes so
-/// every node derives the same signing hash; coordination replaces only
+/// evidence and the existing DKG/offer-key result. This function installs
+/// committee signature records in canonical validator order with zeroed bytes,
+/// so every node derives the same signing hash. Coordination replaces only
 /// those excluded signature bytes.
 pub fn assemble_unsigned(
     authority: TeeBootstrapAuthorityV2,

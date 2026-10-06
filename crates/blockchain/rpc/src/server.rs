@@ -80,9 +80,10 @@ pub struct OutbeApiHandler<P> {
     chain_identity: Option<(u64, B256)>,
     bridge: Option<ConsensusExecutionBridge>,
     /// Whether this node runs consensus as a VALIDATOR. A `--upstream` follower
-    /// also holds a bridge (to serve `outbe_getFinalization` to downstream
-    /// followers) but must report itself as a non-validator / TrustedFinality
-    /// node. This flag, NOT `bridge.is_some()`, drives validator-status fields.
+    /// also holds a bridge, to serve `outbe_getFinalization` to downstream
+    /// followers. But the follower must report itself as a non-validator /
+    /// TrustedFinality node. This flag, NOT `bridge.is_some()`, drives
+    /// validator-status fields.
     is_validator: bool,
     projection_readiness: ProjectionReadinessHandle,
     point_reads: Option<PointReadRuntime>,
@@ -129,7 +130,7 @@ impl<P> std::fmt::Debug for OutbeApiHandler<P> {
 
 impl<P> OutbeApiHandler<P> {
     /// Create a new handler backed by the given state provider factory (no
-    /// bridge; plain EL full node).
+    /// bridge, plain EL full node).
     pub fn new(provider: Arc<P>, projection_readiness: ProjectionReadinessHandle) -> Self {
         Self {
             provider,
@@ -157,9 +158,9 @@ impl<P> OutbeApiHandler<P> {
         handler
     }
 
-    /// Create a `--upstream` follower handler: it holds the bridge so it can
-    /// serve `outbe_getFinalization` (chaining followers), but reports itself as
-    /// a non-validator (TrustedFinality) node, not a validator.
+    /// Create a `--upstream` follower handler. It holds the bridge so it can
+    /// serve `outbe_getFinalization` (chaining followers). But it reports itself
+    /// as a non-validator (TrustedFinality) node, not a validator.
     pub fn with_follower_bridge(
         provider: Arc<P>,
         bridge: ConsensusExecutionBridge,
@@ -224,8 +225,9 @@ impl<P> OutbeApiHandler<P> {
     }
 }
 
-/// Map the canary snapshot into the RPC shape. Pure so it is unit-testable;
-/// `now_unix_ms` is passed in to keep assertions wall-clock-free.
+/// Map the canary snapshot into the RPC shape. The function is pure so that unit
+/// tests can test it. The caller supplies `now_unix_ms` to keep assertions
+/// wall-clock-free.
 pub(crate) fn enclave_health_info(
     snapshot: &outbe_tee::TeeEnclaveHealthSnapshot,
     now_unix_ms: u64,
@@ -436,20 +438,21 @@ where
     ) -> RpcResult<GratisKeysSealed> {
         use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 
-        // Prove the caller controls `account` before the enclave derives its
-        // (secret) modify key: recover the EIP-191 personal_sign signer over
-        // `"outbe/<ledger>/derive-keys/v1" || account || ephemeralPubkey` and require
-        // it to equal `account`.
+        // Prove that the caller controls `account` before the enclave derives its
+        // (secret) modify key. Recover the EIP-191 personal_sign signer over
+        // `"outbe/<ledger>/derive-keys/v1" || account || ephemeralPubkey`. Require
+        // the signer to equal `account`.
         let sig65: [u8; 65] = signature.as_ref().try_into().map_err(|_| {
             invalid_params_err(format!(
                 "signature must be 65 bytes (r||s||v), got {}",
                 signature.len()
             ))
         })?;
-        // Fast reject: recover the signer here so an unauthorized request is dropped
-        // before the enclave round-trip. This is defense-in-depth only - the enclave
-        // re-verifies the same signature, because a compromised host could bypass this
-        // check and reach the enclave transport directly (see DeriveAccountKeys arm).
+        // Fast reject: recover the signer here so that this handler drops an
+        // unauthorized request before the enclave round-trip. This is defense-in-depth
+        // only. The enclave re-verifies the same signature, because a compromised host
+        // could bypass this check and reach the enclave transport directly (see
+        // DeriveAccountKeys arm).
         let prehash = outbe_tee::protocol::eip191_hash(
             &outbe_tee::protocol::derive_account_keys_message(ledger, account, ephemeral_pubkey),
         );
@@ -461,9 +464,9 @@ where
             )));
         }
 
-        // Off-chain key delivery via the process-global enclave client (no state).
-        // Thread `owner_sig` through so the enclave enforces ownership in its own
-        // trust domain, not ours.
+        // Off-chain key delivery through the process-global enclave client (no state).
+        // Pass `owner_sig` to the enclave so that the enclave enforces ownership in its
+        // own trust domain, not ours.
         let response = outbe_tee::try_with_enclave(|client| {
             client.request(&EnclaveRequest::DeriveAccountKeys {
                 ledger,
@@ -500,7 +503,7 @@ where
         ephemeral_pubkey: B256,
         signature: alloy_primitives::Bytes,
     ) -> RpcResult<GratisKeysSealed> {
-        // Deprecated alias - the Gratis ledger of the unified `deriveKeys`.
+        // Deprecated alias for the Gratis ledger of the unified `deriveKeys`.
         self.derive_keys(
             outbe_tee::protocol::Ledger::Gratis,
             account,
@@ -669,13 +672,13 @@ where
     }
 
     async fn get_vrf_seed(&self, block_number: Option<u64>) -> RpcResult<Option<B256>> {
-        // read the committed VRF seed from the target block header's
-        // `mixHash` (prev_randao) via the provider, honoring `block_number`.
-        // This is the authoritative, per-node-consistent committed value - not
-        // the process-local in-memory consensus seed (which a full node never
-        // has and which can diverge between nodes). `None` resolves to the
-        // latest canonical block, which under Outbe's fast finality is the
-        // latest finalized block.
+        // Read the committed VRF seed from the target block header's `mixHash`
+        // (prev_randao) through the provider. Honor `block_number`. This is the
+        // authoritative committed value, and it is consistent across nodes. It is not
+        // the process-local in-memory consensus seed. A full node never has that
+        // seed, and that seed can diverge between nodes. `None` resolves to the
+        // latest canonical block. Under Outbe's fast finality, that is the latest
+        // finalized block.
         let target = match block_number {
             Some(n) => n,
             None => self
@@ -687,7 +690,7 @@ where
             .provider
             .header_by_number(target)
             .map_err(|e| internal_err(format!("failed to read header for block {target}: {e}")))?;
-        // `mix_hash()` is itself `Option<B256>`; a missing block also yields None.
+        // `mix_hash()` is itself `Option<B256>`. A missing block also yields None.
         Ok(header.and_then(|h| h.mix_hash()))
     }
 
@@ -728,8 +731,8 @@ where
                 })
             }
             None => {
-                // Full-node mode: sync is handled by DevP2P (eth_syncing).
-                // Report not syncing since we have no consensus bridge.
+                // Full-node mode: DevP2P handles sync (eth_syncing).
+                // Report not syncing because this node has no consensus bridge.
                 Ok(SyncStatusInfo {
                     is_syncing: false,
                     current_block: 0,
@@ -773,7 +776,7 @@ where
 
     async fn get_finalization(&self, height: u64) -> RpcResult<FinalizationProof> {
         // Only nodes running consensus (or a follower that has itself synced the
-        // height) can serve this - both install a finalization fetcher on the
+        // height) can serve this. Both install a finalization fetcher on the
         // bridge at marshal-start. A node without a bridge (pure EL full node)
         // has no marshal and cannot answer.
         let bridge = self.bridge.as_ref().ok_or_else(|| {

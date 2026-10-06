@@ -1,10 +1,14 @@
 //! Host-side enclave client for the confidential Promis write path.
 //!
-//! Every Promis state transition routes through the enclave: [`crate::runtime`]
-//! reads the current ciphertext from committed storage, hands it + the op to the
-//! enclave via [`apply_promis_op`], and stores the returned ciphertext verbatim.
-//! Mirrors `gratis::enclave_client` - same determinism (canonical-hash recheck)
-//! and attestation (verify-then-discard) guarantees, and the same
+//! Every Promis state transition routes through the enclave. [`crate::runtime`] does these
+//! steps:
+//!
+//! 1. Read the current ciphertext from committed storage.
+//! 2. Hand it and the op to the enclave via [`apply_promis_op`].
+//! 3. Store the returned ciphertext verbatim.
+//!
+//! This module mirrors `gratis::enclave_client`. It has the same determinism (canonical-hash
+//! recheck) and attestation (verify-then-discard) guarantees. It has the same
 //! `tee_sidecar_unavailable` failure mode when no enclave is configured.
 
 use outbe_primitives::error::{PrecompileError, Result};
@@ -16,11 +20,11 @@ use outbe_tee::protocol::{
 ///
 /// Determinism: recompute the canonical inputs hash and reject a mismatch
 /// (`tee_enclave_nondeterminism`). Attestation: verify the tag against the enclave
-/// key pinned from its quote (`tee_promis_attestation_invalid`), then discard it -
-/// it is never written to state. A missing enclave is `tee_sidecar_unavailable`.
-/// All of these are `Fatal` (a node/consensus fault, not a user revert); a
-/// *business* rejection is carried in `PromisOpResult::status` and handled by the
-/// caller.
+/// key pinned from its quote (`tee_promis_attestation_invalid`), then discard it.
+/// Nothing writes it to state. A missing enclave is `tee_sidecar_unavailable`.
+/// All of these are `Fatal` (a node/consensus fault, not a user revert). A
+/// *business* rejection is in `PromisOpResult::status`, and the caller handles
+/// it.
 pub(crate) fn apply_promis_op(req: PromisOpRequest) -> Result<PromisOpResult> {
     #[cfg(any(test, feature = "test-enclave"))]
     if let Some(result) = test_enclave::try_apply(&req) {
@@ -71,8 +75,8 @@ pub(crate) fn apply_promis_op(req: PromisOpRequest) -> Result<PromisOpResult> {
 /// In-process enclave stand-in for tests (this crate's tests and any downstream
 /// crate that enables the `test-enclave` feature). It runs the **real**
 /// `outbe_tee_enclave::promis::apply_op` engine against a fixed dev state key, so
-/// the full confidential path is exercised without an SGX sidecar. Attestation is
-/// not checked on this path.
+/// tests exercise the full confidential path without an SGX sidecar. This path
+/// does not check attestation.
 #[cfg(any(test, feature = "test-enclave"))]
 pub mod test_enclave {
     use super::*;

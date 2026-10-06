@@ -37,7 +37,7 @@ fn not_transferable(world: &mut World, entity: Entity) {
     guards::assert_soulbound(world, &first);
 }
 
-/// One closed day between floor and call price qualifies without calling; a close a
+/// One closed day between floor and call price qualifies without calling. A close a
 /// target chain already holds is kept, since it records a day's price once.
 #[when(expr = "the reference rate stands above the {entity} floor")]
 fn rate_above_floor(world: &mut World, entity: Entity) {

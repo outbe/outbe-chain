@@ -14,14 +14,15 @@ wrap_fixed_bytes!(
     /// Declared with the [`wrap_fixed_bytes!`] macro, so it
     /// inherits hex parsing, formatting, serde, and `FixedBytes` conversions.
     ///
-    /// The day occupies the top four bytes, which is what makes the `uint256`
-    /// the ABI carries meaningful day, and ordering by the word orders by day and then by body.
+    /// The day occupies the top four bytes. This is what makes the `uint256`
+    /// that the ABI carries meaningful by day. Ordering by the word orders by day and
+    /// then by body.
     pub struct WwdEntityId<32>;
 );
 
 impl WwdEntityId {
     /// Builds an identity from a day and a digest, keeping the digest's last
-    /// 28 bytes. The four discarded bytes are the price of the day prefix; a
+    /// 28 bytes. The four discarded bytes are the price of the day prefix. A
     /// caller that needs the whole digest must keep it separately.
     pub fn from_day_and_digest(worldwide_day: WorldwideDay, digest: impl Into<B256>) -> Self {
         let digest = digest.into();
@@ -54,7 +55,7 @@ impl WwdEntityId {
     /// so the day stays in the high bytes and survives the round trip.
     ///
     /// Spelled as an inherent method because `U256::from` is an inherent method
-    /// on `Uint` bounded by `UintTryFrom`; it shadows the `From` impl below, so
+    /// on `Uint` bounded by `UintTryFrom`. It shadows the `From` impl below, so
     /// `U256::from(id)` does not compile. `id.into()` does.
     pub fn to_u256(self) -> U256 {
         U256::from_be_bytes(self.0 .0)

@@ -1,9 +1,9 @@
 //! Local OCOMP lifecycle shared by embedded Validator and FullNode policies.
 //!
-//! Canonical state is the authority. Every asynchronous result is correlated
-//! with the process-local generation that started it and is reduced here before
-//! callers perform effects. This keeps terminal authority absorbing even when a
-//! worker or transaction outcome was already queued.
+//! Canonical state is the authority. This module correlates every asynchronous
+//! result with the process-local generation that started it. It reduces the
+//! result here before callers perform effects. This keeps terminal authority
+//! absorbing even when a worker or transaction outcome was already queued.
 
 use std::collections::BTreeMap;
 

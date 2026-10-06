@@ -1,9 +1,9 @@
 //! Pin the chain-bound V2 sub-namespace structure and the
 //! committee binding of the individual vote namespaces. Each seed
-//! sub-namespace is `outbe_app_namespace() || suffix`; each vote sub-namespace is
-//! `outbe_app_namespace() || suffix || participant_set_commitment(committee)`,
-//! where `outbe_app_namespace() == b"outbe" || chain_id_be`, so every signed
-//! consensus message binds the chain and every vote additionally binds the
+//! sub-namespace is `outbe_app_namespace() || suffix`. Each vote sub-namespace is
+//! `outbe_app_namespace() || suffix || participant_set_commitment(committee)`.
+//! Here `outbe_app_namespace() == b"outbe" || chain_id_be`. Thus every signed
+//! consensus message binds the chain, and every vote also binds the
 //! ordered committee. Drift here is a hard-fork-equivalent break of consensus
 //! verification. The verifier (this crate) and the signer (`HybridScheme`) read
 //! the identical accessors, so they cannot diverge.
@@ -70,8 +70,8 @@ fn vote_namespaces_bind_chain_and_committee() {
     assert_eq!(nullify_namespace(&committee), with(b"_NULLIFY"));
     assert_eq!(finalize_namespace(&committee), with(b"_FINALIZE"));
 
-    // Not the chain-independent constants a cross-chain replay would match, and
-    // not the chain-only (committee-independent) form either.
+    // The namespaces are not the chain-independent constants that a cross-chain
+    // replay would match. They are also not the chain-only (committee-independent) form.
     assert_ne!(notarize_namespace(&committee).as_slice(), b"outbe_NOTARIZE");
     let mut chain_only = base();
     chain_only.extend_from_slice(b"_NOTARIZE");
@@ -80,7 +80,7 @@ fn vote_namespaces_bind_chain_and_committee() {
 
 #[test]
 fn vote_namespace_changes_with_committee() {
-    // a vote signed for committee A cannot verify under committee B - the
+    // A vote signed for committee A cannot verify under committee B. The
     // namespace differs, so the BLS verification fails on the wrong committee.
     let a = committee_from(&[1, 2, 3]);
     let b = committee_from(&[1, 2, 4]);

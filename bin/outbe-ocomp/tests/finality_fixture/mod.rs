@@ -1,8 +1,8 @@
 //! Real q=3/4 Commonware finality and Ethereum-MPT fixture for OCOMP process tests.
 //!
 //! This module does not provide an accepting verifier or inject a trusted
-//! result. It constructs the same canonical proof bytes consumed by the
-//! production verifier, allowing process-boundary tests to derive `JobIntent`
+//! result. It constructs the same canonical proof bytes that the production
+//! verifier consumes. Thus process-boundary tests can derive `JobIntent`
 //! exclusively from authenticated node responses.
 
 #![allow(dead_code)]

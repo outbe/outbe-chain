@@ -12,10 +12,11 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
 /// @title DuplicateProtectionTest
 /// @notice Duplicate-execution protection on the NFT batch adapter.
-/// @dev Message-level dedup belongs to the hub: it marks every delivery before handing it on and rolls the mark
-///      back with the transaction, so an exact replay never reaches a client (covered by
-///      `ERC7786Bridge.t.sol:test_RevertWhen_ReceiveAlreadyExecuted`). Clients therefore keep no copy of it. What
-///      stays worth pinning here is the other direction: distinct payloads carry distinct ids and must both land.
+/// @dev Message-level dedup belongs to the hub. The hub marks every delivery before it forwards the
+///      delivery, and it rolls the mark back with the transaction. Thus an exact replay never
+///      reaches a client (covered by `ERC7786Bridge.t.sol:test_RevertWhen_ReceiveAlreadyExecuted`).
+///      Clients therefore keep no copy of it. What stays worth pinning here is the other direction:
+///      distinct payloads carry distinct ids and must both land.
 contract DuplicateProtectionTest is CrossChainTest {
     uint32 internal constant SRC_CHAIN_ID = 1;
     uint32 internal constant DST_CHAIN_ID = 2;
@@ -74,9 +75,10 @@ contract DuplicateProtectionTest is CrossChainTest {
         });
     }
 
-    /// @notice Two sends carrying distinct payloads -> distinct receiveIds, so both land. Proves the guard keys on
-    ///         the message id, not merely on the source. (Different recipients keep the payloads distinct, which the
-    ///         loopback bridge needs since it binds the receiveId to the payload bytes.)
+    /// @notice Two sends carrying distinct payloads -> distinct receiveIds, so both land. This
+    ///         proves that the guard keys on the message id, not merely on the source. (Different
+    ///         recipients keep the payloads distinct. The loopback bridge needs this because it
+    ///         binds the receiveId to the payload bytes.)
     function test_NFTBatch_DistinctMessages_BothSucceed() public {
         address other = address(0xCAFE);
 

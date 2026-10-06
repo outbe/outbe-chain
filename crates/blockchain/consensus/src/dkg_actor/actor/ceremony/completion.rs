@@ -24,7 +24,7 @@ impl CeremonyState {
     ) -> Result<MessageOutcome> {
         // A threshold is enough for liveness, but not enough to avoid publicly
         // revealing a healthy player's evaluation. Give the remaining players a
-        // bounded ACK grace; finalize immediately if everybody already ACKed.
+        // bounded ACK grace. Finalize immediately if everybody already ACKed.
         if self.roles.dealer.is_some()
             && self.roles.acked_players.len() >= self.player_threshold as usize
             && self.ack_collection_deadline.is_none()
@@ -60,10 +60,10 @@ impl CeremonyState {
                 "dealer finalized, broadcasting log"
             );
 
-            // Verify our own log. In chain-finalized mode it is only used
-            // after the log appears in a finalized block and is fed back by
-            // `DkgManager`, so local/P2P subsets cannot diverge from the
-            // canonical output.
+            // Verify our own log. In chain-finalized mode, the log is used only
+            // after it appears in a finalized block and `DkgManager` feeds it
+            // back. Thus local/P2P subsets cannot diverge from the canonical
+            // output.
             if signed_log.clone().check(&self.info).is_none() {
                 return Err(eyre::eyre!("our own finalized log failed verification"));
             }
@@ -98,20 +98,20 @@ impl CeremonyState {
         clock: &impl Clock,
         sender: &mut impl P2pSender<PublicKey = bls12381::PublicKey>,
     ) -> bool {
-        // Non-chain interactive bootstrap: there is no canonical chain carrier yet,
-        // so a validator completes only when ALL genesis dealer logs are collected
-        // (threshold P2P subsets are not canonical and may otherwise produce
-        // different public polynomials on different validators). Chain-finalized
-        // reshare does NOT complete on the raw all-n count - it flows through the
-        // observe gate below (C1), so the actor breaks at the same log-set prefix
-        // `DkgManager` freezes `canonical_output` at.
+        // Non-chain interactive bootstrap: there is no canonical chain carrier yet.
+        // Thus a validator completes only when it has collected ALL genesis dealer
+        // logs. Threshold P2P subsets are not canonical and may otherwise produce
+        // different public polynomials on different validators. Chain-finalized
+        // reshare does NOT complete on the raw all-n count. It flows through the
+        // observe gate below (C1). Thus the actor breaks at the same log-set prefix
+        // at which `DkgManager` freezes `canonical_output`.
         if !self.chain_finalized_mode && self.finalized_logs.len() as u32 >= self.n {
             let now = clock.current();
             match self.bootstrap_all_logs_collected_at {
                 // `SystemTime::duration_since` errors only if `collected_at` is in the
-                // future relative to `now`; the runtime clock is monotonic across these
-                // reads, so `unwrap_or_default()` (a zero elapsed) is safe and panic-free,
-                // deferring the grace by one loop iteration in the impossible skew case.
+                // future relative to `now`. The runtime clock is monotonic across these
+                // reads. Thus `unwrap_or_default()` (a zero elapsed) is safe and panic-free.
+                // In the impossible skew case, it defers the grace by one loop iteration.
                 Some(collected_at)
                     if now.duration_since(collected_at).unwrap_or_default()
                         >= BOOTSTRAP_FINALIZED_LOG_GOSSIP_GRACE =>
@@ -142,9 +142,9 @@ impl CeremonyState {
     }
     pub(in crate::dkg_actor::actor) fn chain_complete(&mut self) -> bool {
         // Once the finalized chain carries a reconstructable threshold, an
-        // interrupted local dealer must not hold recovery hostage waiting for
-        // ACKs from peers that have already completed this ceremony. The
-        // canonical logs are the decision; durable Player replay lets a target
+        // interrupted local dealer must not hold recovery hostage. It must not
+        // wait for ACKs from peers that have already completed this ceremony.
+        // The canonical logs are the decision. Durable Player replay lets a target
         // participant recover its private share from them. Bootstrap still
         // requires the local dealer to finish because it has no chain-finalized
         // carrier.
@@ -166,8 +166,8 @@ impl CeremonyState {
             return false;
         }
         // C1: a signed log can still contain garbage. Probe public reconstruction
-        // over the full canonical set once per new log count, completing at the
-        // same first-observe-success prefix frozen by `DkgManager`.
+        // over the full canonical set once per new log count. Complete at the same
+        // first-observe-success prefix that `DkgManager` freezes.
         if self.finalized_logs.len() <= self.last_reconstruct_probe_len {
             return false;
         }
@@ -217,15 +217,15 @@ impl CeremonyState {
 
         info!("DKG ceremony complete - threshold material obtained");
 
-        // surface validators whose individual share evaluation was publicly
-        // REVEALED during the ceremony (they were offline/non-acking, so
-        // `feldman_desmedt` reveals their share so recovery can complete). The
-        // reveals are permanently committed on-chain in the `DealerLog` artifacts,
-        // and a revealed share makes that validator's VRF threshold partial publicly
-        // forgeable - bounded (VRF drives leader election/fairness, not BFT safety:
-        // the BLS individual aggregate stays authoritative), but operators must
-        // rotate the affected validator's consensus key. `Output::revealed()` was
-        // previously never consumed.
+        // Surface validators whose individual share evaluation was publicly
+        // REVEALED during the ceremony. These validators were offline/non-acking, so
+        // `feldman_desmedt` reveals their share so that recovery can complete. The
+        // `DealerLog` artifacts permanently commit the reveals on-chain. A revealed
+        // share makes the VRF threshold partial of that validator publicly
+        // forgeable. The effect is bounded: VRF drives leader election/fairness, not
+        // BFT safety, and the BLS individual aggregate stays authoritative. But
+        // operators must rotate the consensus key of the affected validator.
+        // Previously, nothing consumed `Output::revealed()`.
         let revealed = output.revealed();
         if !revealed.is_empty() {
             crate::metrics::record_dkg_revealed_shares(revealed.len());

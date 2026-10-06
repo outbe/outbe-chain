@@ -80,10 +80,10 @@ where
             })?
         } else {
             // Verifier mode (no threshold share this epoch): the engine follows and
-            // verifies finalized blocks - driving its execution layer to sync - but
+            // verifies finalized blocks, which drives its execution layer to sync. It
             // cannot propose or sign. `me()` is None, so the simplex engine never
-            // invokes signing. The node acquires a share at the next reshare, after
-            // which the next epoch iteration rebuilds this scheme as a signer (Stage 4).
+            // invokes signing. The node acquires a share at the next reshare. After
+            // that, the next epoch iteration rebuilds this scheme as a signer (Stage 4).
             info!(
             target: "outbe_engine::stack",
                            epoch = %self.state.current_epoch,
@@ -159,14 +159,14 @@ where
         // `Activity::Certification` -> CertifiedParentProofStore.
         // - Marshal: finalized block delivery -> executor -> ack -> recovery truth.
         //   Marshal's mailbox drops Certification via its `_ => return;` arm
-        //   (monorepo `consensus/src/marshal/core/mailbox.rs:396-410`), so
-        //   ordering between Outbe and marshal does not need to be sequential;
-        //   `Reporters::from((outbe, marshal))` runs both via `futures::join!`
+        //   (monorepo `consensus/src/marshal/core/mailbox.rs:396-410`). So
+        //   ordering between Outbe and marshal does not need to be sequential.
+        //   `Reporters::from((outbe, marshal))` runs both via `futures::join!`,
         //   and Outbe is the sole persistent consumer of Certification.
         let combined_reporter = Reporters::from((outbe_reporter, self.marshal_mailbox.clone()));
 
         // -- d. Resolve the Simplex genesis floor -------------------------
-        // commonware 2026.5.0 removed `Automaton::genesis(epoch)`; the
+        // commonware 2026.5.0 removed `Automaton::genesis(epoch)`. The
         // genesis anchor is now an explicit `simplex::Config.floor`. We must
         // feed the byte-identical value the old `handle_genesis(epoch)`
         // returned:
@@ -181,7 +181,7 @@ where
         //
         // The bounded-wait guard below preserves the prior epoch-restart
         // invariant: for `epoch > 0` we must not start the engine until the
-        // FinalizationActor has published the boundary block's anchor, or the
+        // FinalizationActor publishes the boundary block's anchor. Otherwise the
         // floor (and Phase 1 finalized-round proof key) would be missing. The
         // 5s deadline accommodates transient races between the
         // FinalizationActor and the DKG-manager-driven epoch advance.

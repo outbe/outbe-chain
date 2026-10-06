@@ -1,7 +1,7 @@
 //! Cross-module API for the Fidelity module.
 //!
 //! Cohort mutations and league lookups route through the enclave (see
-//! [`crate::enclave_client`]); callers keep their existing signatures. RCFI/league
+//! [`crate::enclave_client`]). Callers keep their existing signatures. RCFI/league
 //! are never computed on-chain.
 
 use alloy_primitives::{Address, U256};
@@ -47,7 +47,7 @@ pub fn league_at(storage: StorageHandle<'_>, account: Address, timestamp: u64) -
 }
 
 /// Batch league snapshot for `owners` at `timestamp` (one enclave round-trip),
-/// returned in `owners` order. Used by the OCOMP prepare phase to snapshot the
+/// returned in `owners` order. The OCOMP prepare phase uses it to snapshot the
 /// day's leagues. See [`FidelityContract::snapshot_leagues`].
 pub fn snapshot_leagues(
     storage: StorageHandle<'_>,

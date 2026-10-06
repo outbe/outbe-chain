@@ -12,12 +12,13 @@ Usage:
 
 Outputs (under --out-dir, default scripts/contracts/):
   <name>.code.hex    0x-prefixed bytecode
-  <name>.state.json  { "<slot 0xhex32>": "<value 0xhex32>", ... }; possibly empty
+  <name>.state.json  { "<slot 0xhex32>": "<value 0xhex32>", ... } (possibly empty)
   <name>.meta.json   provenance: address, rpc, block, balance, nonce, storage_method
 
-Storage is fetched via debug_storageRangeAt (geth/erigon-style). If the RPC
-does not expose that method, an empty state file is written and a warning is
-logged. eth_getCode returning "0x" is treated as a hard error (not a contract).
+The script fetches storage via debug_storageRangeAt (geth/erigon-style). If the
+RPC does not expose that method, the script writes an empty state file and logs
+a warning. The script treats an eth_getCode result of "0x" as a hard error (not
+a contract).
 
 Stdlib only - no external dependencies.
 """
@@ -84,8 +85,8 @@ def normalize_hex32(value: str) -> str:
 def resolve_block(rpc_url: str, block_arg: str) -> tuple[str, int, str]:
     """
     Resolve --block to (block_tag_for_eth_calls, block_number_int, block_hash_hex).
-    block_tag_for_eth_calls is a quantity hex like "0x12ab" so all subsequent
-    eth_* calls observe the exact same snapshot the storage range was taken at.
+    block_tag_for_eth_calls is a quantity hex like "0x12ab". Thus all later
+    eth_* calls observe the exact same snapshot as the storage range.
     """
     if block_arg == "latest":
         latest = rpc_result_or_die(rpc_url, "eth_blockNumber", [])
@@ -133,7 +134,7 @@ def fetch_storage(rpc_url: str, block_hash: str, address: str) -> tuple[dict, st
             key = entry.get("key")
             value = entry.get("value")
             if key is None or value is None:
-                # Some nodes omit preimages for unknown keys; skip rather than crash.
+                # Some nodes omit preimages for unknown keys. Skip the entry rather than crash.
                 continue
             storage[normalize_hex32(key)] = normalize_hex32(value)
         next_key = result.get("nextKey")

@@ -430,9 +430,9 @@ fn an_hourly_cell_serves_a_whole_hour_whose_raw_snapshots_were_evicted() {
     });
 }
 
-/// The bulk calculators skip pairs that hold no samples, but a rejected argument
-/// is not "no data" - it has to reach the caller instead of being absorbed into
-/// the empty-result path.
+/// The bulk calculators skip pairs that hold no samples. But a rejected argument
+/// is not "no data". It has to reach the caller, and the empty-result path must
+/// not absorb it.
 #[test]
 fn bulk_calculators_propagate_argument_errors_instead_of_reporting_no_data() {
     with_storage(|storage| {

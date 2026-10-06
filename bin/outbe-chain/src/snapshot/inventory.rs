@@ -1,4 +1,4 @@
-//! Select native public files; identity and signing authority remain local.
+//! Select native public files. Identity and signing authority remain local.
 
 use std::{
     fs,

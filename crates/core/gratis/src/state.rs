@@ -1,9 +1,9 @@
 //! Low-level storage access for the confidential Gratis token.
 //!
 //! CRUD over the encrypted blob slots, the plaintext aggregates, and the
-//! modify-auth replay counter. Ciphertext is read/written verbatim - this layer
+//! modify-auth replay counter. This layer reads and writes ciphertext verbatim. It
 //! never decrypts. Business orchestration (building enclave requests, applying
-//! the returned receipt, emitting events) lives in [`crate::runtime`]; the
+//! the returned receipt, emitting events) lives in [`crate::runtime`]. The
 //! cross-crate surface is [`crate::api`].
 
 use alloy_primitives::{Address, U256};
@@ -36,10 +36,10 @@ impl Gratis<'_> {
         self.pledged_total_supply.read()
     }
 
-    // --- Ciphertext reads (returned verbatim; the view-key holder decrypts) ---
+    // --- Ciphertext reads (returned verbatim for the view-key holder to decrypt) ---
 
-    /// Encrypted balance blob for `account` (`version(8) || AEAD-ct`); empty if
-    /// the account has never held a balance.
+    /// Encrypted balance blob for `account` (`version(8) || AEAD-ct`). Empty if
+    /// the account never held a balance.
     pub fn balance_ct_of(&self, account: Address) -> Result<Vec<u8>> {
         self.balance_ct.get_bytes(&account).read()
     }
@@ -50,7 +50,7 @@ impl Gratis<'_> {
         self.op_nonce.read(&account)
     }
 
-    // --- Writers (all `&self`; storage mutates through interior mutability) ---
+    // --- Writers (all take `&self`. Storage mutates through interior mutability) ---
 
     pub(crate) fn write_balance_ct(&self, account: Address, blob: &[u8]) -> Result<()> {
         self.balance_ct.get_bytes(&account).write(blob)

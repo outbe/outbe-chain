@@ -7,8 +7,9 @@ import {console2} from "forge-std/console2.sol";
 import {TargetChainVaultRouter} from "src/TargetChainVaultRouter.sol";
 
 /// @notice Deploys the fixed external-chain WCOEN vault adapter.
-/// @dev The WCOEN addresses come from the `tokens` package, which names the two ends of a route by network role:
-///      `OUTBE_*` is always Outbe, `EXTERNAL_*` is whichever external chain this deployment targets.
+/// @dev The WCOEN addresses come from the `tokens` package, which names the two ends of a route by
+///      network role. `OUTBE_*` is always Outbe. `EXTERNAL_*` is whichever external chain this
+///      deployment targets.
 ///
 ///      Required env: DEPLOYER_PK, BRIDGE_ADDRESS, EXTERNAL_CHAIN_ID, OUTBE_CHAIN_ID,
 ///      EXTERNAL_WCOEN_TOKEN, EXTERNAL_WCOEN_BRIDGE, EXTERNAL_WCOEN_VAULT.

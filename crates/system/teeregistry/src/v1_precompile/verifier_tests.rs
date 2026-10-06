@@ -1,8 +1,8 @@
 use super::*;
 use crate::v1::{NodeHostAssociationV1, VerifiedIntentV1};
 
-/// Hardware-free I3 boundary: canonical ABI and full gas precharge stay real;
-/// only the already-authenticated enclave outcome is supplied as a typed,
+/// Hardware-free I3 boundary: canonical ABI and full gas precharge stay real.
+/// Only the already-authenticated enclave outcome is supplied as a typed,
 /// test-only capability.
 pub(crate) fn dispatch_register_after_verifier_for_test(
     storage: StorageHandle<'_>,

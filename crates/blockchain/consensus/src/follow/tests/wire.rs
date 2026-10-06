@@ -8,9 +8,9 @@ use super::*;
 /// the epoch verifier's certificate codec config, then decoding the
 /// `ConsensusBlock` from the REMAINING buffer. This pins that two-step decode
 /// against the resolver's `finalization.encode() ++ block.encode()` wire
-/// format - the load-bearing interop contract between the follower's
-/// resolver and the marshal (a divergence here would compile clean but fail
-/// every backfill at runtime).
+/// format. That format is the load-bearing interop contract between the
+/// follower's resolver and the marshal. A divergence here would compile clean
+/// but fail every backfill at runtime.
 #[test]
 fn finalized_delivery_wire_format_round_trips() {
     use crate::block::ConsensusBlock;
@@ -73,9 +73,9 @@ fn finalized_delivery_wire_format_round_trips() {
 
 /// Full `outbe_getFinalization` server->client interop. The SERVER side
 /// (drainer) encodes the certificate and block separately and hexes them
-/// (`FinalizedBlockBytes` -> `FinalizationProof`); the CLIENT side hex-decodes
+/// (`FinalizedBlockBytes` -> `FinalizationProof`). The CLIENT side hex-decodes
 /// and decodes the certificate with the UNBOUNDED committee config (the
-/// engine `UpstreamRpcClient` path - it has no committee size yet), then the
+/// engine `UpstreamRpcClient` path, which has no committee size yet). Then the
 /// follower registers the epoch committee from the boundary block and the
 /// marshal-equivalent verification passes. This pins that:
 ///   (a) the unbounded cfg decodes a real committee-length certificate, and

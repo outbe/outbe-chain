@@ -76,8 +76,9 @@ pub enum LysisSchedulerError {
 /// Re-derives the exact plan member and all of its CAS authority after cold
 /// restart, semantically replays the worker output, then durably admits it.
 ///
-/// The caller supplies only the plan ordinal and the worker completion report;
-/// roots, specs, input references and producer artifacts are not injectable.
+/// The caller supplies only the plan ordinal and the worker completion report.
+/// The caller cannot inject roots, specs, input references or producer
+/// artifacts.
 #[allow(clippy::too_many_arguments)]
 pub fn admit_reported_lysis_unit_v1(
     plan_ordinal: u32,

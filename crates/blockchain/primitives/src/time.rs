@@ -1,8 +1,8 @@
 //! UTC date and time helpers.
 //!
-//! All functions are pure integer arithmetic - no `chrono`, no float, no
-//! locale, no DST. The yyyymmdd "date key" is a `u32` like `20251205`. UTC
-//! is the only calendar; `worldwide_day_from_timestamp` shifts by +14h
+//! All functions use only integer arithmetic. They use no `chrono`, no float, no
+//! locale, and no DST. The yyyymmdd "date key" is a `u32` like `20251205`. UTC
+//! is the only calendar. `worldwide_day_from_timestamp` shifts by +14h
 //! (UTC+14) for Metadosis-internal "Worldwide Day" semantics.
 
 use alloy_primitives::U256;
@@ -22,15 +22,15 @@ pub const SECONDS_PER_DAY: u64 = 86_400;
 /// use the same constant.
 pub const UTC_PLUS_14_OFFSET: u64 = 50_400;
 
-/// Errors returned by the time helpers. Currently only one variant; the
-/// enum is `non_exhaustive` so additional variants can be introduced
-/// without breaking callers.
+/// Errors returned by the time helpers. Currently there is only one variant.
+/// The enum is `non_exhaustive`, so you can add variants without breaking
+/// callers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TimeError {
-    /// `utc_day` is strictly before `genesis_utc_day`. Caller is expected
-    /// to translate this into a fatal protocol error - a finalized block
-    /// predating genesis must not be processed.
+    /// `utc_day` is strictly before `genesis_utc_day`. The caller should
+    /// translate this into a fatal protocol error. The node must not process
+    /// a finalized block that predates genesis.
     PreGenesis { utc_day: u32, genesis_utc_day: u32 },
 }
 
@@ -51,7 +51,7 @@ impl core::fmt::Display for TimeError {
 /// Converts a unix timestamp to a yyyymmdd date key in UTC.
 pub fn timestamp_to_date_key(timestamp: u64) -> u32 {
     // `timestamp / SECONDS_PER_DAY` is at most `u64::MAX / 86_400` ~= 2.1e14, far
-    // below `i64::MAX`, so this never saturates; `try_from` (not `as`) keeps the
+    // below `i64::MAX`, so this never saturates. `try_from` (not `as`) keeps the
     // conversion non-narrowing and deterministic on the consensus date path.
     let days = i64::try_from(timestamp / SECONDS_PER_DAY).unwrap_or(i64::MAX);
     civil_date_from_days(days)
@@ -79,8 +79,8 @@ pub fn previous_date_key(date_key: u32) -> u32 {
 
 /// Returns the next calendar day key for a yyyymmdd date key.
 ///
-/// Walks forward 24h via integer timestamp arithmetic; this is the only
-/// correct way to advance across month/year boundaries - direct `u32`
+/// Walks forward 24h with integer timestamp arithmetic. This is the only
+/// correct way to advance across month/year boundaries. Direct `u32`
 /// arithmetic on `yyyymmdd` is wrong (e.g., `20251231 + 1 != 20260101`).
 pub fn next_date_key(date_key: u32) -> u32 {
     let ts = date_key_to_utc_timestamp(date_key).saturating_add(SECONDS_PER_DAY);
@@ -103,10 +103,10 @@ pub fn first_full_day(issued_at: u64) -> u32 {
 /// `Ok(n)` when `utc_day > genesis_utc_day`, and
 /// `Err(TimeError::PreGenesis)` when `utc_day < genesis_utc_day`.
 ///
-/// Computed via `(date_key_to_timestamp(utc_day) -
+/// The function computes `(date_key_to_timestamp(utc_day) -
 /// date_key_to_timestamp(genesis_utc_day)) / SECONDS_PER_DAY`. Direct
 /// `u32` subtraction of `yyyymmdd` keys is wrong across month/year
-/// boundaries and must not be used.
+/// boundaries. Do not use it.
 pub fn day_number_between(genesis_utc_day: u32, utc_day: u32) -> Result<u32, TimeError> {
     let g_ts = date_key_to_utc_timestamp(genesis_utc_day);
     let u_ts = date_key_to_utc_timestamp(utc_day);
@@ -114,8 +114,8 @@ pub fn day_number_between(genesis_utc_day: u32, utc_day: u32) -> Result<u32, Tim
         utc_day,
         genesis_utc_day,
     })?;
-    // Day count since genesis. `u32` covers ~11.7M years of days; saturating
-    // `try_from` (not `as`) keeps it non-narrowing and deterministic - an
+    // Day count since genesis. `u32` covers ~11.7M years of days. Saturating
+    // `try_from` (not `as`) keeps it non-narrowing and deterministic. An
     // unreachable overflow clamps rather than silently wrapping.
     Ok(u32::try_from(delta / SECONDS_PER_DAY).unwrap_or(u32::MAX))
 }
@@ -407,9 +407,9 @@ mod tests {
         assert_eq!(wwd.key_bytes(), vec![0x01, 0x02, 0x03, 0x04]);
     }
 
-    /// Storage-compatible with the raw `u32` day key it replaced: schemas that
+    /// Storage-compatible with the raw `u32` day key it replaced. Schemas that
     /// retyped a `Map<u32, _>` / `Map<_, u32>` day slot must address and store the
-    /// exact same bytes, or live state silently moves.
+    /// exact same bytes. If not, live state silently moves.
     #[test]
     fn storage_encoding_is_identical_to_the_raw_u32_day() {
         for raw in [0u32, 1, 20_260_101, u32::MAX] {

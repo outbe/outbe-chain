@@ -31,9 +31,9 @@ fn main() {
     let expected_target = project_pin["target"]
         .as_str()
         .expect("project toolchain must pin target");
-    // native-QVL links a Linux SGX .so; on any other host
-    // there is nothing to link, so skip. The real enclave build runs on the
-    // pinned target and takes the full verification path below.
+    // native-QVL links a Linux SGX .so. On any other host there is nothing to
+    // link, so skip. The real enclave build runs on the pinned target and takes
+    // the full verification path below.
     if target != expected_target {
         skip_native_qvl_link(&format!("host {target} != pinned {expected_target}"));
         return;
@@ -46,7 +46,7 @@ fn main() {
         .as_array()
         .expect("native-QVL manifest must declare artifacts");
     // The exact-pinned Intel stack only exists on the SGX build image. CI
-    // lint/test runners and dev hosts have nothing to link, so skip; an
+    // lint/test runners and dev hosts have nothing to link, so skip. An
     // installed-but-mismatched stack still fails hard below.
     if let Some(missing) = build_inputs
         .iter()

@@ -32,9 +32,9 @@ pub const EXACT_REGISTRY_STORAGE_PROOFS: usize = 9;
 const ONBOARDING_INGEST_REQUEST_DOMAIN_V1: &[u8] =
     b"outbe/tee/onboarding-artifact-ingest-request/v1";
 
-/// Commits the immutable start of one streaming target-enclave ingest. Every
-/// later committee transition is independently authenticated by the current
-/// committee, so the transcript does not need to be buffered or pre-hashed.
+/// Commits the immutable start of one streaming target-enclave ingest. The
+/// current committee independently authenticates every later committee
+/// transition, so the transcript does not need to be buffered or pre-hashed.
 pub fn onboarding_artifact_ingest_request_hash_v1(
     artifact: &[u8],
     anchor_outcome: &[u8],

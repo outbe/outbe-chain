@@ -40,7 +40,7 @@ impl Cursor {
         }
     }
 
-    /// An entry that needs nothing more from us; the cursor may pass it for good.
+    /// An entry that needs nothing more from us. The cursor may pass it for good.
     pub(crate) fn resolved(&mut self) {
         if self.prefix_resolved {
             self.head = self.at.saturating_add(1);
@@ -91,7 +91,8 @@ fn drain_messages(storage: &StorageHandle<'_>, budget: &mut u32) -> Result<()> {
         let parked =
             read.and_then(|ret| IOriginRouter::parkedMessageCall::abi_decode_returns(&ret).ok());
         match parked {
-            // An empty payload is an index the router never filled; `sent` is one we already pushed.
+            // An empty payload is an index the router never filled. `sent` is one we
+            // already pushed.
             Some(entry) if !entry.sent && !entry.payload.is_empty() => {
                 let idx = cursor.at;
                 let sent = storage.with_checkpoint(|| {
@@ -198,7 +199,8 @@ fn drain_proceeds(storage: &StorageHandle<'_>, budget: &mut u32) -> Result<()> {
         .or_else(skip_unless_node_local)
 }
 
-/// A failure every node meets leaves the entry for a later pass; a node-local one fails the block.
+/// A failure every node meets leaves the entry for a later pass. A node-local failure fails the
+/// block.
 fn skip_unless_node_local(error: PrecompileError) -> Result<()> {
     match error.sweep_failure() {
         SweepFailure::Propagate => Err(error),

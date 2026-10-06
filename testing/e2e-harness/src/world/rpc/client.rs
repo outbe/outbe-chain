@@ -197,7 +197,7 @@ impl Rpc {
         )
     }
 
-    /// Wait for a tx receipt; `true` on success, `false` on revert/timeout.
+    /// Wait for a tx receipt. Returns `true` on success, `false` on revert/timeout.
     #[must_use = "transaction completion must be checked"]
     pub fn wait_tx(&self, tx: &str, tries: u32) -> bool {
         for _ in 0..tries {

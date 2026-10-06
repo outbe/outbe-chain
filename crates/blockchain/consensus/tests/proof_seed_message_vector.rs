@@ -58,7 +58,7 @@ fn outbe_hybrid_seed_namespace_v2_byte_pin() {
     // Chain-bound V2 seed namespace: `outbe_app_namespace()
     // || b"_SEED"`, where `outbe_app_namespace() == b"outbe" || chain_id_be`.
     // The signer side (`simplex_namespace().seed`) and the verifier hot path
-    // read the identical accessor, so they cannot drift; any change here is a
+    // read the identical accessor, so they cannot drift. Any change here is a
     // hard-fork-equivalent change to certificate verification.
     let mut expected = outbe_consensus::proof::outbe_app_namespace();
     expected.extend_from_slice(b"_SEED");
@@ -72,8 +72,9 @@ fn outbe_hybrid_seed_namespace_v2_byte_pin() {
 fn outbe_notarize_finalize_namespace_byte_pins() {
     // Committee-bound notarize/finalize sub-namespaces:
     // `outbe_app_namespace() || suffix || participant_set_commitment(committee)`.
-    // No longer the chain-independent `b"outbe_NOTARIZE"` a cross-chain replay
-    // would match, nor the chain-only form a wrong-committee vote would match.
+    // It is no longer the chain-independent `b"outbe_NOTARIZE"` that a cross-chain
+    // replay would match. It is also not the chain-only form that a wrong-committee
+    // vote would match.
     let committee: Set<bls12381::PublicKey> = Set::from_iter_dedup(
         (1u64..=3).map(|s| bls12381::PublicKey::from(bls12381::PrivateKey::from_seed(s))),
     );
@@ -86,7 +87,7 @@ fn outbe_notarize_finalize_namespace_byte_pins() {
     };
     assert_eq!(notarize_namespace(&committee), with(b"_NOTARIZE"));
     assert_eq!(finalize_namespace(&committee), with(b"_FINALIZE"));
-    // 5 + 8 + 9 (b"_NOTARIZE") + 32 (commitment) = 54; finalize is the same.
+    // 5 + 8 + 9 (b"_NOTARIZE") + 32 (commitment) = 54. Finalize is the same.
     assert_eq!(notarize_namespace(&committee).len(), 54);
     assert_eq!(finalize_namespace(&committee).len(), 54);
     assert_ne!(notarize_namespace(&committee).as_slice(), b"outbe_NOTARIZE");

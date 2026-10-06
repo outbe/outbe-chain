@@ -214,7 +214,7 @@ fn certified_authority_is_installed(world: &mut World) {
     );
 
     // Quorum installed one authority, so every validator must expose that exact
-    // record - a divergence here is a consensus fault, not a read race.
+    // record. A divergence here is a consensus fault, not a read race.
     for port in ports.iter().skip(1) {
         assert_eq!(
             authority_on(world, *port, day, checkpoint.height),

@@ -9,8 +9,8 @@ import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
-/// @dev Against the canonical Compact brought up from the genesis predeploy: its lock id depends on the token,
-///      so a rotated token really lands in a separate position.
+/// @dev Runs against the canonical Compact, set up from the genesis predeploy code. Its lock id
+///      depends on the token, so a rotated token really lands in a separate position.
 contract EscrowAdapterAssetVersionTest is Test {
     address internal constant COMPACT = 0x00000000000000171ede64904551eeDF3C6C9788;
     address internal constant COMPACT_2 = address(0xC0DE2);

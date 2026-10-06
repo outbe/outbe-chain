@@ -110,7 +110,7 @@ impl Rpc {
 
 /// Finalized, cross-owner authority for one proof-backed Nod generation.
 ///
-/// Both owner projections are read at `block_number`; off-chain storage never supplies
+/// Both owner projections are read at `block_number`. Off-chain storage never supplies
 /// any field in this record.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct OcompCertifiedGenerationV1 {

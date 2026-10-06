@@ -38,8 +38,8 @@ pub struct RelayEnd {
     pub domain: u32,
 }
 
-/// How often the pump looks for new dispatches. A real relayer is asynchronous;
-/// scenarios assert arrival with a deadline rather than assuming it is instant.
+/// How often the pump looks for new dispatches. A real relayer is asynchronous.
+/// Scenarios assert arrival with a deadline rather than assuming it is instant.
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 /// A running pump. Dropping it stops the thread.
@@ -57,9 +57,9 @@ impl Relay {
         let thread = std::thread::Builder::new()
             .name("e2e-relay".to_owned())
             .spawn(move || {
-                // Each direction keeps its own cursor: a message already carried
-                // must not be delivered twice, which the inbound side would
-                // acknowledge and drop but which would hide a real duplicate.
+                // Each direction keeps its own cursor. The pump must not deliver
+                // an already carried message twice. The inbound side would
+                // acknowledge and drop it, but that would hide a real duplicate.
                 let mut carried_a = 0usize;
                 let mut carried_b = 0usize;
                 // What each direction last failed with, so a retry loop reports the
@@ -112,7 +112,7 @@ fn carry(
     for dispatch in dispatches.into_iter().skip(already) {
         if let Err(error) = deliver(to, from.domain, &dispatch, sender_key) {
             // Stop at the first failure so the cursor never runs ahead of what
-            // actually landed; the next round retries from the same message.
+            // actually landed. The next round retries from the same message.
             report(
                 failure,
                 format!(
@@ -128,7 +128,7 @@ fn carry(
     carried
 }
 
-/// Report a relay failure once rather than once per round: the pump retries twice a
+/// Report a relay failure once rather than once per round. The pump retries twice a
 /// second, and a repeated line would bury the run log it exists to explain. A step
 /// that waits on a message it never receives now has the reason next to it.
 fn report(last: &mut Option<String>, message: String) {

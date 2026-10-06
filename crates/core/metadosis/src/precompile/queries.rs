@@ -16,8 +16,8 @@ pub(super) fn worldwide_day(
             "WorldwideDay",
         ));
     };
-    // Persisted bytes are validated as closed tags before they are
-    // returned through the raw ABI representation.
+    // This function validates the persisted bytes as closed tags before it
+    // returns them through the raw ABI representation.
     WwdStatus::try_from(day.status)?;
     WwdDayType::try_from(day.day_type)?;
     Ok((

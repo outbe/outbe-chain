@@ -7,11 +7,13 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
 
-/// @dev The Settled class carries no identity record of its own: its id is the series id with the
-///      Settled tag set, so identity resolves to the Issued entry and only the settled supply is
-///      stored. These pin that nothing is written under the Settled id, that the class is still
-///      recognised without a record, and that a settled position's card does not move with the
-///      series' lifecycle. Slots are read raw via `vm.load` - there is no public reader.
+/// @dev The Settled class carries no identity record of its own. Its id is the series id with the
+///      Settled tag set. Identity therefore resolves to the Issued entry, and only the settled
+///      supply is stored. These tests pin that:
+///      - nothing is written under the Settled id.
+///      - the class is still recognised without a record.
+///      - a settled position's card does not move with the series' lifecycle.
+///      The tests read slots raw via `vm.load`. There is no public reader.
 contract IntexNFT1155SettledRecordTest is Test {
     uint32 internal constant SERIES_ID_DAY = 20260622;
     bytes14 internal constant SERIES_ID = "20260622-USD-U";

@@ -33,7 +33,7 @@ pub fn require_active_cca(storage: &StorageHandle<'_>, cca: Address) -> Result<(
     }
 }
 
-/// Raw GRATIS in one UTC day bucket (YYYYMMDD); normalized only during distribution.
+/// Raw GRATIS in one UTC day bucket (YYYYMMDD). Distribution is the only step that normalizes it.
 pub fn reward_weight(storage: &StorageHandle<'_>, cca: Address, day: u32) -> Result<U256> {
     CcaContract::new(storage.clone())
         .gratis_sum_per_utc_day
@@ -53,7 +53,7 @@ pub fn get_cca(storage: &StorageHandle<'_>, cca: Address) -> Result<ICcaRegistry
 }
 
 /// Positive net Gratis weights for CCAs active at the time of settlement.
-/// Historical day buckets are read without mutation.
+/// This function reads historical day buckets and does not mutate them.
 ///
 /// Enumeration is limited to [`MAX_ACTIVE_CCAS`]. A longer index fails settlement.
 pub fn active_reward_weights(

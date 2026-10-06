@@ -1,8 +1,8 @@
-//! End-to-end TEE DKG ceremony driven by the async [`run_tee_dkg_ceremony`]
-//! event loop over an in-memory gossip bus, with N separate real enclaves over
-//! UDS + Noise-IK. This exercises the host-side ceremony driver the consensus
-//! stack will run (one task per node, messages routed by BLS pubkey) - the same
-//! loop that, in the node, runs over the commonware P2P channel.
+//! End-to-end TEE DKG ceremony. The async [`run_tee_dkg_ceremony`] event loop drives it
+//! over an in-memory gossip bus, with N separate real enclaves over UDS + Noise-IK.
+//! This test exercises the host-side ceremony driver that the consensus stack will run:
+//! one task per node, with messages routed by BLS pubkey. In the node, the same loop runs
+//! over the commonware P2P channel.
 
 use std::collections::BTreeMap;
 use std::os::unix::net::UnixListener;
@@ -22,7 +22,7 @@ const N: usize = 4;
 type Envelope = (Vec<u8>, DkgWireMessage);
 
 /// In-memory gossip bus: routes messages between the in-process node tasks by
-/// BLS pubkey. Stands in for the consensus P2P channel in the test.
+/// BLS pubkey. It replaces the consensus P2P channel in the test.
 struct InMemoryGossip {
     my_bls: Vec<u8>,
     senders: BTreeMap<Vec<u8>, mpsc::UnboundedSender<Envelope>>,

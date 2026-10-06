@@ -11,7 +11,7 @@ use outbe_primitives::storage::{Storable, StorableType};
 /// Flow:
 /// 1. `Pending` - created, voting open until `voting_deadline_height`.
 /// 2. On deadline (`begin_block`): `Pending` -> `Approved` | `Expired` | `Error`.
-/// 3. For `Approved`, vote dispatches to the target-module handler; further
+/// 3. For `Approved`, vote dispatches to the target-module handler. Further
 ///    state (e.g. scheduled update, activation) lives in that module, not here.
 /// 4. `Error` means deterministic target execution failure. It remains unsettled
 ///    and is not retried automatically.

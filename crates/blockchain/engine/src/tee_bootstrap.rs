@@ -1,11 +1,15 @@
-//! Consensus-thread TEE bootstrap: run the one-time committee coordination at
-//! startup (exactly like the consensus DKG), assemble the canonical OST3 payload,
-//! and hand it to the payload builder via the bridge so the **block-1** proposer
-//! injects it (slice 5.1). `committee_snapshot_block` is the fixed block 1 - the
-//! known injection target, mirroring how `BoundaryOutcome` lands at block 1 - so
-//! there is no run-time block-number ambiguity.
+//! Consensus-thread TEE bootstrap. At startup, this module does these steps:
 //!
-//! The secret operations stay in the enclave; this glue only adapts the
+//! 1. Run the one-time committee coordination (exactly like the consensus DKG).
+//! 2. Assemble the canonical OST3 payload.
+//! 3. Give the payload to the payload builder through the bridge, so that the **block-1**
+//!    proposer injects it (slice 5.1).
+//!
+//! `committee_snapshot_block` is the fixed block 1. It is the known injection target, the same
+//! as `BoundaryOutcome`, which lands at block 1. Thus there is no run-time block-number
+//! ambiguity.
+//!
+//! The secret operations stay in the enclave. This glue only adapts the
 //! consensus P2P channel to [`BootstrapGossip`] and signs the payload with the
 //! validator's EVM key.
 

@@ -66,8 +66,8 @@ impl ValidatorSet<'_> {
     /// Records vote participation for a historical (finalized-parent) committee.
     ///
     /// Finalized-parent metadata describes a committee captured at a previous
-    /// finalized block. By the time it is applied here, some members may no
-    /// longer be current consensus participants (e.g. transitioned to
+    /// finalized block. By the time this function applies it, some members may
+    /// no longer be current consensus participants (e.g. transitioned to
     /// `UNBONDING` after a reshare). This entrypoint validates that every
     /// supplied address is a registered validator but does not require current
     /// `ACTIVE`/`EXITING` + `has_bls_share` membership.
@@ -109,11 +109,11 @@ impl ValidatorSet<'_> {
     pub fn reset_epoch_counters(&mut self) -> Result<()> {
         for addr in self.registered_validator_addresses()? {
             // Only reset counters for validators that accumulate them.
-            // Include EXITING - they still participate in consensus
+            // Include EXITING. They still participate in consensus
             // until reshare completes and accumulate per-epoch counters.
             // JailRetained is likewise still in the live committee until the
             // next reshare clears its share, so reset its counters too. Jail is
-            // already excluded; late historical counters are cleared on unjail.
+            // already excluded. Unjail clears late historical counters.
             if !matches!(
                 self.validator_lifecycle(addr)?,
                 ValidatorLifecycle::Active(_)

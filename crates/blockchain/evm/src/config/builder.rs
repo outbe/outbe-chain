@@ -24,7 +24,7 @@ use super::{
 // ExecutorBuilder
 // ---------------------------------------------------------------------------
 
-/// Executor builder that wires up [`OutbeEvmConfig`] as the node's EVM config.
+/// Executor builder that wires [`OutbeEvmConfig`] as the node's EVM config.
 #[derive(Clone, Default)]
 pub struct OutbeExecutorBuilder {
     /// Optional bridge to the consensus layer, injected by the node binary.
@@ -33,7 +33,7 @@ pub struct OutbeExecutorBuilder {
     pub evm_signer: Option<SharedOutbeEvmSigner>,
     /// Required read-only Tribute and Nod body authority for live execution.
     pub runtime_body_readers: Option<RuntimeBodyReaders>,
-    /// Explicit CE tree owner; mandatory for live execution.
+    /// Explicit CE tree owner. It is mandatory for live execution.
     pub compressed_tree_service: Option<Arc<CompressedTreeService>>,
     /// Inert until the canonical OCM-26 devnet schedule is supplied.
     pub ocomp_lifecycle_activation: OcompLifecycleActivation,

@@ -6,8 +6,9 @@
 //! holding are the ones registered in the `RadicleRegistry` precompile.
 //!
 //! `rad init` rewrites the network-facing part of that config from chain
-//! state - validator set, Radicle NodeId bindings and P2P hosts are all read
-//! over RPC, never hard-coded - and leaves the identity keys untouched.
+//! state and leaves the identity keys untouched. It reads the validator set,
+//! the Radicle NodeId bindings and the P2P hosts over RPC. It never hard-codes
+//! them.
 
 use std::{
     fs,
@@ -29,7 +30,7 @@ use crate::{
     rpc::Rpc,
 };
 
-/// Heartwood's replication port. Validators run the sidecar on this port; the
+/// Heartwood's replication port. Validators run the sidecar on this port. The
 /// chain records their consensus P2P endpoint, not the Radicle one, so the host
 /// comes from chain state and the port from here.
 const DEFAULT_RADICLE_PORT: u16 = 8776;
@@ -194,11 +195,11 @@ async fn init(
     );
     // Static peers: talk to exactly this list, no dynamic discovery.
     node.insert("peers".to_string(), json!({ "type": "static" }));
-    // Block by default; repositories are added explicitly with `rad seed`.
+    // Block by default. `rad seed` adds repositories explicitly.
     // Without this the node accepts every announcement it hears.
     node.insert("seedingPolicy".to_string(), json!({ "default": "block" }));
     // A client is not a relay. The validators' sidecars run `relay: always`
-    // because they are reachable seeds with external addresses; setting it on a
+    // because they are reachable seeds with external addresses. Setting it on a
     // loopback client stops sessions from establishing at all.
     node.insert("relay".to_string(), Value::String("auto".to_string()));
     if let Some(alias) = alias {
@@ -225,9 +226,10 @@ async fn init(
 /// Reads every validator's Radicle peer address from chain state.
 ///
 /// The chain binds a NodeId per validator but records only the consensus P2P
-/// endpoint, so the host is taken from there and paired with `radicle_port`.
-/// Validators without a binding or without a P2P address are skipped: they are
-/// not reachable as Radicle peers, and a partial list is more useful than none.
+/// endpoint. This function takes the host from that endpoint and pairs it with
+/// `radicle_port`. It skips validators without a binding or without a P2P
+/// address, because they are not reachable as Radicle peers. A partial list is
+/// more useful than none.
 async fn read_peers(client: &(impl Rpc + Sync), radicle_port: u16) -> Result<Vec<Peer>> {
     let output = client
         .eth_call(
@@ -404,9 +406,9 @@ fn start(home: &Path, listen: &str, binary: &str) -> Result<()> {
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(errors))
-        // Own process group: without it the node stays in this shell's group and
-        // dies with it - a Ctrl-C, a closed SSH session or a timeout signalling
-        // the group would take the node down with the command that started it.
+        // Own process group: without it, the node stays in this shell's group and
+        // dies with it. A Ctrl-C, a closed SSH session or a timeout that signals
+        // the group would stop the node together with the command that started it.
         .process_group(0)
         .spawn()
         .wrap_err_with(|| format!("failed to start `{binary}` - is it on PATH?"))?;

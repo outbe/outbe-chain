@@ -2,7 +2,7 @@
 //!
 //! All functions take a short-lived `&mut CredisContract` (or `&CredisContract`
 //! for reads) constructed via `CredisContract::new(storage)`. They only touch
-//! local storage; orchestration logic lives in `runtime.rs`.
+//! local storage. Orchestration logic lives in `runtime.rs`.
 
 use alloy_primitives::{Address, U256};
 

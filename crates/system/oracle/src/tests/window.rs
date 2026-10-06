@@ -221,9 +221,9 @@ fn get_policy_rate_reverts_for_an_unregistered_iso_code() {
     });
 }
 
-/// The soft read used by block hooks that walk the whole reference-currency
-/// registry: currencies are listed independently of whether their COEN pair
-/// has been registered and priced, so "not priceable yet" must be reportable
+/// The soft read that block hooks use when they walk the whole reference-currency
+/// registry. The registry lists currencies independently of whether their COEN
+/// pair is registered and priced. So "not priceable yet" must be reportable
 /// without reverting and halting the block.
 #[test]
 fn coen_rate_for_opt_reports_unpriceable_currencies_instead_of_reverting() {
@@ -643,7 +643,7 @@ fn an_authorization_naming_another_pricing_policy_never_matches_the_required_sna
                 .unwrap();
         }
         // The required snapshot is derived from block time and the active
-        // policy only; this is the identity every direct settlement compares
+        // policy only. This is the identity every direct settlement compares
         // its authorization against.
         let required = crate::api::current_vwap_snapshot(storage.clone()).unwrap();
         assert_eq!(required, default_snapshot_at(day + 10 * hour + 5 * 60));
@@ -651,8 +651,8 @@ fn an_authorization_naming_another_pricing_policy_never_matches_the_required_sna
 
         // Same cutoff, well-formed ids, but they name a policy that is not the
         // chain's active one: a different version and a different lookback.
-        // They can never equal the required identity, so a direct settlement
-        // authorized under them is rejected by the factories' snapshot check.
+        // They can never equal the required identity, so the factories' snapshot
+        // check rejects a direct settlement authorized under them.
         // The reader itself keeps pricing them: finalized history is readable
         // and unchanged across a policy change (see
         // a_policy_change_leaves_an_old_snapshot_readable_and_unchanged).

@@ -46,10 +46,11 @@ import { POW_DIFFICULTY, grindNonce } from "../intex/pow.js";
  * the series ledger, the BSC->outbe bridge, and settlement/Promis on outbe.
  *
  * Domain (addresses, ABIs, decoders) lives in src/intex/. Networks come from the
- * NETWORKS table; a resolved network reuses the connected `ctx` when chain ids
- * match, else opens a fresh client via createCtx - same shape as src/tools/intent.ts.
+ * NETWORKS table. A resolved network reuses the connected `ctx` when chain ids
+ * match. Otherwise it opens a fresh client via createCtx. This is the same shape
+ * as src/tools/intent.ts.
  *
- * Read tools work without a key; signing tools require OUTBE_PRIVATE_KEY.
+ * Read tools work without a key. Signing tools require OUTBE_PRIVATE_KEY.
  */
 
 interface Network {
@@ -72,7 +73,7 @@ const PROMIS_MINED_EVENT = getAbiItem({ abi: FACTORY_ABI, name: "PromisMined" })
 const TRANSFER_SINGLE_EVENT = getAbiItem({ abi: NFT_ABI, name: "TransferSingle" }) as AbiEvent;
 const TRANSFER_BATCH_EVENT = getAbiItem({ abi: NFT_ABI, name: "TransferBatch" }) as AbiEvent;
 
-// Auction ids are worldwide days (yyyymmdd), one per day; the auction runs weeks
+// Auction ids are worldwide days (yyyymmdd), one per day. The auction runs weeks
 // after its day, so active ids sit up to ~26 days in the past. Discovery probes
 // getAuctionStage across a date window - a few cheap point reads - rather than
 // scanning logs, which public RPCs range-limit.
@@ -126,7 +127,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     return n;
   }
 
-  /** The address arg or the configured signer; throws if neither is available. */
+  /** The address arg or the configured signer. Throws if neither is available. */
   function whoever(explicit?: string): Address {
     if (explicit) return getAddress(explicit);
     if (ctx.account) return ctx.account.address;
@@ -137,7 +138,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     return intexAddress(n.name, key);
   }
 
-  /** Whether the series has qualified; the outbe factory derives it from finalized daily VWAPs. */
+  /** Whether the series has qualified. The outbe factory derives it from finalized daily VWAPs. */
   async function seriesQualified(n: Network, series: Hex): Promise<boolean> {
     return (await n.client.readContract({
       address: addr(n, "factory"),
@@ -231,7 +232,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     metaCache.set(n.name, meta);
     return meta;
   }
-  /** Per-token NFT metadata documents for a series; undefined when the chain has no NFT deployed. */
+  /** Per-token NFT metadata documents for a series.
+   *  Undefined when the chain has no NFT deployed. */
   async function seriesMetadata(
     n: Network,
     series: Hex,
@@ -261,7 +263,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   /**
    * Payment tokens a series accepts: the vault router's assets for either of its
    * currencies. An issuance-currency token only settles while the trailing VWAP
-   * window prices both COEN legs, which `quoteSettlement` is the one to answer.
+   * window prices both COEN legs. `quoteSettlement` answers that question.
    */
   async function settlementTokens(n: Network, series: Hex): Promise<`0x${string}`[]> {
     const d = (await n.client.readContract({
@@ -292,10 +294,10 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
    * What settling `units` Intex of `series` with `token` costs, in that token's
    * minor units, and the ISO 4217 code the payment is denominated in. The chain
    * prices the whole operation, rounds once and applies its one-minor-unit
-   * minimum once, so a quote for many units can be well under the per-unit
-   * quote times that many. `snapshotId` is the
-   * trailing VWAP snapshot an issuance-currency payment must name (zero on the
-   * reference rail); it goes stale at the next hourly cutoff.
+   * minimum once. So a quote for many units can be well under the per-unit
+   * quote times that many. `snapshotId` is the trailing VWAP snapshot an
+   * issuance-currency payment must name (zero on the reference rail). It goes
+   * stale at the next hourly cutoff.
    */
   async function quoteSettlement(
     n: Network,
@@ -360,7 +362,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         functionName: "seriesData",
         args: [series],
       })) as Record<string, bigint | number>;
-      // The engine owns the split; exercised units are not on the series record.
+      // The engine owns the split. Exercised units are not on the series record.
       const counts = (await n.client.readContract({
         address: addr(n, "factory"),
         abi: FACTORY_ABI,
@@ -453,7 +455,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           })) as number;
           const base = { tokenId: tokenId.toString(), balance: balances[i].toString(), status: intexStatus(status) };
           // An Issued token id is the series id itself, so the lifecycle is one read away. A Settled id
-          // carries no deadline - that position is already settled.
+          // carries no deadline, because that position is already settled.
           if (base.status.name !== "Issued") return base;
           const seriesHex = `0x${tokenId.toString(16).padStart(28, "0")}` as Hex;
           try {
@@ -619,7 +621,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           // bid rates are 1e6 fixed-point (fraction of strike).
           minIntexBidRate: { raw: d.params.minIntexBidRate.toString(), value: formatUnits(d.params.minIntexBidRate, 6) },
           minIntexBidQuantity: Number(d.params.minIntexBidQuantity),
-          // entry bond pulled at commit and returned at reveal/cancel; 0 = no bond.
+          // entry bond pulled at commit and returned at reveal/cancel. 0 = no bond.
           commitBondMinor: { raw: d.params.commitBondMinor.toString(), value: formatUnits(d.params.commitBondMinor, dec) },
           // A bid's reference currency must appear here.
           prices: d.params.prices.map((row) => ({
@@ -717,8 +719,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           const hints: string[] = [];
           if (bond.amount > 0n) {
             out.commitBond = { amount: bond.amount.toString(), lockedAt: epochIso(bond.lockedAt) };
-            // A held bond during commit/reveal is normal (it returns at reveal/cancel); past
-            // that window a no-reveal commit left it behind.
+            // A held bond during commit/reveal is normal (it returns at reveal/cancel). Past
+            // that window, the bond remains because of a no-reveal commit.
             if (!revealed && !isActiveStage(stage)) {
               hints.push(
                 "entry bond left by a no-reveal commit; reclaim via intex_claim_commit_bond (immediately on a cancelled day, else 24 hours past revealEnd)",
@@ -735,7 +737,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
               status: lockStatus(lock.status),
               finalized,
               claimable: claimable.toString(),
-              // Zero means the escrow owes it now; a date means the day never finalized and the
+              // Zero means the escrow owes it now. A date means the day never finalized and the
               // full principal waits out the anomaly window.
               claimableAt: epochIso(claimableAt),
             };
@@ -803,7 +805,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       const account = requireAccount();
       const bidRate = toBidRate(rate);
 
-      // Entry bond: the escrow pulls it inside commitBid, so cover the allowance up front.
+      // Entry bond: the escrow pulls it inside commitBid, so cover the allowance first.
       const info = (await n.client.readContract({
         address: addr(n, "auction"),
         abi: AUCTION_ABI,

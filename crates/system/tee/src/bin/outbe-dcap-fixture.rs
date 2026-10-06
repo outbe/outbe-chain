@@ -1,7 +1,7 @@
 //! Host-only preparation and assembly of real Intel DCAP consensus fixtures.
 //!
-//! This binary is available only with `dcap-fixture-tool`; it is never linked
-//! into the consensus library or the production enclave process.
+//! This binary is available only with `dcap-fixture-tool`. The build never links
+//! it into the consensus library or the production enclave process.
 
 use std::{
     env, fs,

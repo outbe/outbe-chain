@@ -1,23 +1,24 @@
 //! End-to-end: one deposited PayNote pays two Nods, the second from its change.
 //!
 //! With PayNote settlement, the value reaches the reserve vault when a note
-//! is deposited, and `settleNodWithPayNote` only has to be shown
-//! a spend proof. This test drives that whole chain through the real EVM:
-//! `IPayNote.deposit` routes an ERC20 into the vault via VaultRouter and appends
-//! a leaf, then two `INodFactory.settleNodWithPayNote` calls spend against that leaf.
+//! is deposited. `settleNodWithPayNote` then only has to see a spend proof.
+//! This test drives that whole chain through the real EVM. `IPayNote.deposit`
+//! routes an ERC20 into the vault via VaultRouter and appends a leaf. Then two
+//! `INodFactory.settleNodWithPayNote` calls spend against that leaf.
 //!
 //! What it pins that the module tests cannot:
-//!   * a note deposited by the real `deposit` path — commitment derived by the
-//!     runtime, not handed to it — is spendable by `settleNodWithPayNote`;
+//!   * a note from the real `deposit` path is spendable by
+//!     `settleNodWithPayNote`. The runtime derives its commitment. Nothing hands
+//!     the commitment to the runtime.
 //!   * notes are bearer instruments: `ALICE2` pays for the deposit and `ALICE1`
 //!     submits settlement. Spend authority is the note spend key. The proof
-//!     binds the Nod being settled, so a relayed proof still pays that Nod;
-//!   * a partial spend leaves change *in the pool*, and that change note is a
-//!     first-class note: it pays the next Nod on its own;
+//!     binds the Nod being settled, so a relayed proof still pays that Nod.
+//!   * a partial spend leaves change *in the pool*. That change note is a
+//!     first-class note: it pays the next Nod on its own.
 //!   * one note is one payment. Replaying the first proof against the second Nod
 //!     reverts, so the change note is the only way to pay it.
 //!
-//! The ERC20/ERC4626 counterparties are the stateful `FactorySettlement` fixture;
+//! The ERC20/ERC4626 counterparties are the stateful `FactorySettlement` fixture.
 //! VaultRouter, PayNote, NodFactory, Nod, GratisFactory and Gratis all run for real.
 
 #[path = "common/nod_qualification.rs"]
@@ -64,8 +65,8 @@ use revm::{
 
 /// Owns both Nods, holds the note spend key, and calls settlement and mining.
 const ALICE1: Address = Address::new([0x11; 20]);
-/// Funds the pool. Never appears again: the note it deposits is spent by
-/// `ALICE1`, and the chain never learns the two are related.
+/// Funds the pool. Never appears again: `ALICE1` spends the note it deposits,
+/// and the chain never learns the two are related.
 const ALICE2: Address = Address::new([0x12; 20]);
 const ASSET: Address = Address::new([0x33; 20]);
 const VAULT: Address = Address::new([0x55; 20]);
@@ -179,8 +180,10 @@ fn nod_params(day: u32) -> NodIssueParams {
 }
 
 /// Registers the vault as production genesis would, minus `addVault`'s own
-/// ERC20 metadata round-trip: the reserve vault for `ASSET`, its reference
-/// currency index, and PayNote as a `PayNoteDeposit` liquidity source.
+/// ERC20 metadata round-trip. It registers:
+///   * the reserve vault for `ASSET`,
+///   * its reference currency index,
+///   * PayNote as a `PayNoteDeposit` liquidity source.
 fn seed_vault_router(storage: &StorageHandle<'_>) {
     let router = VaultRouterContract::new(storage.clone());
     router.assets.insert(ASSET).unwrap();
@@ -477,8 +480,8 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
     let (mut ctx, scope, readers, nods) = fixture();
 
     // One deposit funds both Nods, and ALICE2 pays for it. The pool derives the
-    // leaf itself from the asset and amount it moved, so the note ALICE1 proves
-    // against is only valid because it matches what ALICE2's deposit did.
+    // leaf itself from the asset and amount it moved. So the note that ALICE1
+    // proves against is valid only because it matches what ALICE2's deposit did.
     let funding = note(CHAIN_ID, NOTE_KEY, ASSET, U256::from(2 * COST));
     deposit(&mut ctx, &scope, ALICE2, &funding);
     assert_eq!(leaf_count(&mut ctx, &scope), 1);
@@ -584,7 +587,7 @@ fn measure_settle_gem_gas_with_real_paynote() {
     let (mut ctx, scope, _, _) = fixture();
     let funding = note(CHAIN_ID, NOTE_KEY, ASSET, U256::from(COST));
     deposit(&mut ctx, &scope, ALICE2, &funding);
-    // Sub-calls retain writes in the journal; materialize the completed deposit
+    // Sub-calls retain writes in the journal. Materialize the completed deposit
     // before constructing an independent transaction executor from this DB.
     use revm::DatabaseCommit as _;
     let deposited_state = ctx.journaled_state.inner.state.clone();

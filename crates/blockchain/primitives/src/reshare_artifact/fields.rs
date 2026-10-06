@@ -1,4 +1,4 @@
-//! Fixed-size execution-produced record payloads; validation is structural only.
+//! Fixed-size record payloads that execution produces. Validation is structural only.
 use super::{
     CompressedEntitiesRootArtifact, ExecutionSummaryArtifact, PrecompileError, Result, B256,
     COMPRESSED_ENTITIES_ROOT_PAYLOAD_LEN, EXECUTION_SUMMARY_LEN, TIMESTAMP_MILLIS_PART_LEN, U256,
@@ -48,8 +48,8 @@ pub(super) fn decode_timestamp(payload: &[u8]) -> Result<u64> {
     }
     let mut buf = [0u8; TIMESTAMP_MILLIS_PART_LEN];
     buf.copy_from_slice(payload);
-    // Range check (`< 1000`) is owned by the consensus
-    // header validator; the codec is structural-only.
+    // The consensus header validator owns the range check (`< 1000`).
+    // The codec is structural-only.
     Ok(u64::from_be_bytes(buf))
 }
 

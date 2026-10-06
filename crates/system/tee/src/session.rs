@@ -2,13 +2,13 @@
 //! pinned [`RuntimeEnclaveClient`].
 //!
 //! The node installs one session at startup. When a request fails with a
-//! connection-class fault ([`TransportError::is_connection_fault`]) the session
-//! performs ONE bounded reconnect with identity re-validation and re-sends the
-//! request once - only when [`EnclaveRequest::is_idempotent`] allows it. A
-//! reconnected peer must present the byte-identical identity that was pinned at
-//! install; any mismatch permanently revokes the session (fail-closed), because
-//! every later attestation-tag check would otherwise validate against the
-//! impostor's own key.
+//! connection-class fault ([`TransportError::is_connection_fault`]), the session
+//! does ONE bounded reconnect with identity re-validation. Then it re-sends the
+//! request once, but only when [`EnclaveRequest::is_idempotent`] allows it. A
+//! reconnected peer must present the byte-identical identity that the session
+//! pinned at install. Any mismatch permanently revokes the session (fail-closed).
+//! Without this revocation, every later attestation-tag check would validate
+//! against the impostor's own key.
 //!
 //! Locking stays with the caller ([`crate::client_global::try_with_enclave`]):
 //! the session is single-threaded under that mutex, so a reconnect can never
@@ -31,7 +31,7 @@ use crate::protocol::{EnclaveRequest, EnclaveResponse};
 use outbe_primitives::tee_attestation_v1::{EnclaveInitializationManifestV1, RegistrationIntentV1};
 
 /// Identity pinned from a development client's structurally validated quote at
-/// install time; a reconnected peer must match every field byte-for-byte.
+/// install time. A reconnected peer must match every field byte-for-byte.
 #[derive(Clone, Debug)]
 struct DevPinnedIdentity {
     mrenclave: B256,
@@ -83,7 +83,7 @@ enum SessionContext {
     },
     Production {
         endpoint: String,
-        /// Retained for operator diagnostics; reconnect deliberately does NOT
+        /// Retained for operator diagnostics. Reconnect deliberately does NOT
         /// re-read NodeHost state (see `committed_node_host_session_material`).
         #[allow(dead_code)]
         node_data_dir: PathBuf,
@@ -94,13 +94,13 @@ enum SessionContext {
 
 /// The process-global enclave session (see module docs).
 pub struct EnclaveSession {
-    /// `None` = disconnected; the next request forces a clean reconnect.
+    /// `None` = disconnected. The next request forces a clean reconnect.
     client: Option<RuntimeEnclaveClient>,
     context: SessionContext,
     /// The resident permanent offer public key observed most recently. `None`
     /// until the enclave reports `offer_key_ready` (legal pre-DKG state).
     pinned_offer_public: Option<B256>,
-    /// Bumped on every successful reconnect. Generation 1 is the installed
+    /// Every successful reconnect bumps this value. Generation 1 is the installed
     /// connection.
     generation: u64,
     /// A permanently revoked session refuses every request (fail-closed).
@@ -167,10 +167,10 @@ impl EnclaveSession {
         })
     }
 
-    /// The pinned enclave attestation key. Sourced from install-time identity
-    /// (dev: quote pin; production: committed manifest), NOT from the live
-    /// connection - so post-reconnect attestation-tag checks verify against the
-    /// identity the operator installed, not whatever peer answered last.
+    /// The pinned enclave attestation key. The session takes it from install-time
+    /// identity (dev: quote pin, production: committed manifest), NOT from the live
+    /// connection. Post-reconnect attestation-tag checks therefore verify against
+    /// the identity the operator installed, not whatever peer answered last.
     pub fn attestation_pub(&self) -> [u8; 32] {
         match &self.context {
             SessionContext::Development { pinned, .. } => pinned.attestation_pub,
@@ -188,10 +188,10 @@ impl EnclaveSession {
         self.poison_recovered
     }
 
-    /// Recover after a caller panicked while holding the session mutex: the
-    /// interrupted request left the Noise cipher state unknown, so drop the
-    /// client and force a clean reconnect on next use. Latched - later lock
-    /// acquisitions must not tear down a healthy reconnected client.
+    /// Recover after a caller panicked while holding the session mutex. The
+    /// interrupted request left the Noise cipher state unknown. Thus, drop the
+    /// client and force a clean reconnect on next use. Latched: later lock
+    /// acquisitions must not drop a healthy reconnected client.
     pub fn recover_from_poison(&mut self) {
         if !self.poison_recovered {
             self.poison_recovered = true;
@@ -199,7 +199,7 @@ impl EnclaveSession {
         }
     }
 
-    /// Send an operation with an explicit block context; retries preserve it.
+    /// Send an operation with an explicit block context. Retries preserve it.
     pub fn request_with_context(
         &mut self,
         ctx: crate::call_context::EnclaveCallContextV1,
@@ -236,7 +236,7 @@ impl EnclaveSession {
         }
         let Some(client) = self.client.as_mut() else {
             // Unreachable in practice (reconnect either installs a client or
-            // errors), kept as a structured error per the no-panic rule.
+            // errors). This path stays a structured error per the no-panic rule.
             return Err(TransportError::EnclaveError(
                 "enclave session has no connection after reconnect".into(),
             ));
@@ -250,9 +250,9 @@ impl EnclaveSession {
         self.client = None;
         self.reconnect()?;
         if !req.is_idempotent() {
-            // The session is healed for the next caller, but this request may
-            // already have executed inside the enclave - surface the original
-            // fault instead of risking a double apply.
+            // The reconnect healed the session for the next caller. But this
+            // request may already have executed inside the enclave. Surface the
+            // original fault instead of risking a double apply.
             return Err(first_err);
         }
         match self.client.as_mut() {
@@ -263,10 +263,10 @@ impl EnclaveSession {
         }
     }
 
-    /// Whole-operation wrapper for the production-only DCAP flows: run the
-    /// operation once; on a connection fault reconnect once and rerun the WHOLE
-    /// operation (a multi-frame upload restarts from `Begin` on the fresh
-    /// session - the enclave keys upload state per connection).
+    /// Whole-operation wrapper for the production-only DCAP flows. It runs the
+    /// operation once. On a connection fault, it reconnects once and reruns the
+    /// WHOLE operation. A multi-frame upload restarts from `Begin` on the fresh
+    /// session, because the enclave keys upload state per connection.
     fn with_production_retry<T>(
         &mut self,
         op_label: &'static str,
@@ -411,7 +411,7 @@ impl EnclaveSession {
     }
 
     /// One bounded reconnect: fresh transport, identity re-validation, offer-key
-    /// pin check. Success installs the client and bumps the generation; an
+    /// pin check. Success installs the client and bumps the generation. An
     /// identity or offer-key mismatch revokes the session permanently.
     fn reconnect(&mut self) -> Result<(), TransportError> {
         if let Some(reason) = self.revoked {
@@ -443,9 +443,9 @@ impl EnclaveSession {
                 // Noise-IK against `manifest.noise_responder_x25519` IS the
                 // identity check: an impostor can never complete the handshake.
                 // Handshake failure therefore stays retryable (connect_failed),
-                // never a revocation - a legitimately replaced enclave keeps
-                // failing here until the operator restarts the node, which the
-                // replacement flow already requires.
+                // never a revocation. A legitimately replaced enclave keeps
+                // failing here until the operator restarts the node. The
+                // replacement flow already requires that restart.
                 match AuthorizedEnclaveClient::connect_endpoint(endpoint, manifest, node_host) {
                     Ok(client) => RuntimeEnclaveClient::Production(client),
                     Err(error) => {
@@ -456,7 +456,7 @@ impl EnclaveSession {
             }
         };
         // Offer-key pin: the resident permanent key must never change or
-        // disappear across a reconnect; appearing (pre-DKG -> post-DKG) is the
+        // disappear across a reconnect. Appearing (pre-DKG -> post-DKG) is the
         // one legal upgrade.
         let fresh = match probe_offer_key(&mut client) {
             Ok(fresh) => fresh,
@@ -490,8 +490,8 @@ impl EnclaveSession {
     }
 }
 
-/// `GetPublicKeys` probe shared by install and reconnect: `Ok(None)` is the
-/// legal keyless (pre-DKG) state; a ready-but-zero key is an enclave fault.
+/// `GetPublicKeys` probe shared by install and reconnect. `Ok(None)` is the
+/// legal keyless (pre-DKG) state. A ready-but-zero key is an enclave fault.
 fn probe_offer_key(client: &mut RuntimeEnclaveClient) -> Result<Option<B256>, TransportError> {
     match client.request(&EnclaveRequest::GetPublicKeys)? {
         EnclaveResponse::PublicKeys {
@@ -540,7 +540,7 @@ mod tests {
         /// Hold a Health response until the test releases it. Other connections
         /// must remain usable while this request is in flight.
         health_gate: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
-        /// Offer pubkey reported by `GetPublicKeys`; `None` = keyless.
+        /// Offer pubkey reported by `GetPublicKeys`. `None` = keyless.
         offer_key: Mutex<Option<[u8; 32]>>,
         /// Drop the connection after serving this many post-handshake requests
         /// (0 = unlimited).
@@ -842,13 +842,13 @@ mod tests {
         let server = spawn_server(Arc::clone(&enclave));
         let mut session = connect_session(&server);
         assert_eq!(session.generation(), 1);
-        // Install consumed request #1 (the probe); #2 succeeds; #3 gets the
+        // Install consumed request #1 (the probe). #2 succeeds. #3 gets the
         // connection dropped mid-request -> reconnect (fresh connection, its own
         // probe) -> retry succeeds.
         let first = session.request(&EnclaveRequest::GetPublicKeys).expect("ok");
         assert!(matches!(first, EnclaveResponse::PublicKeys { .. }));
         // Request #3 on connection 1 exceeds the per-connection budget -> the
-        // server drops it mid-request; the reconnect's fresh connection serves
+        // server drops it mid-request. The reconnect's fresh connection serves
         // its probe + the retry within the same budget.
         let retried = session
             .request(&EnclaveRequest::GetPublicKeys)
@@ -864,7 +864,7 @@ mod tests {
         let enclave = Arc::new(FakeEnclave::generate(Arc::clone(&script)));
         let server = spawn_server(Arc::clone(&enclave));
         let mut session = connect_session(&server);
-        // Kill the listener; the pinned connection dies with the next fault.
+        // Kill the listener. The pinned connection dies with the next fault.
         server.stop.store(true, Ordering::Relaxed);
         std::thread::sleep(std::time::Duration::from_millis(20));
         drop(server);
@@ -878,8 +878,8 @@ mod tests {
             !matches!(error, TransportError::SessionRevoked(_)),
             "connect failure must stay retryable, got: {error}"
         );
-        // A new server at the SAME endpoint path cannot be rebuilt (tempdir
-        // dropped); the point above - no revocation - is the invariant.
+        // The test cannot rebuild a new server at the SAME endpoint path (tempdir
+        // dropped). The point above (no revocation) is the invariant.
     }
 
     #[test]

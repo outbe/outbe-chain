@@ -1,7 +1,7 @@
 use super::*;
 
 /// Candidate-enclave proof that a measurement successor already holds the
-/// chain's permanent offer key before Registry binding mutation.
+/// chain's permanent offer key before Registry mutates the binding.
 ///
 /// The candidate computes its own initialized-manifest hash and signs the
 /// exact transition context with the quote-bound Ed25519 key. Registry can

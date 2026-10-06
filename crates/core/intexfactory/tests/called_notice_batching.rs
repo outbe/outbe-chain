@@ -1,7 +1,7 @@
 //! Coalescing of Called notices in the `intex_drain_notices` drain.
 //!
-//! The harness cannot observe outbound calls, so the grouping rule is pinned as a predicate and the
-//! rest covers the queue walk: what each firing consumes and where it resumes.
+//! The harness cannot observe outbound calls, so these tests pin the grouping rule as a predicate.
+//! The rest covers the queue walk: what each firing consumes and where it resumes.
 
 use alloy_primitives::U256;
 use outbe_intex::SeriesId;
@@ -19,7 +19,7 @@ const DAY: u32 = 20_260_101;
 const CALLED_AT: u32 = NOW as u32 - 3_600;
 
 fn series(index: u32) -> SeriesId {
-    // Three digits of currency, so a long queue wraps; these tests measure the walk.
+    // Three digits of currency, so a long queue wraps. These tests measure the walk.
     let index = index % 1000;
     let iso = [
         b'0' + (index / 100) as u8,

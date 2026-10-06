@@ -8,9 +8,9 @@ import { PRECOMPILE_ABI as ABI } from "./abi.js";
  * Dispatch:  crates/blockchain/evm/src/precompiles.rs::outbe_dispatch_fn
  * ABIs:      generated from contracts/precompiles/src/I*.sol - see ./abi.ts.
  *
- * Each entry pairs an address with the whole generated ABI of its interface, so
- * the signatures - and the output parameter names `humanize()` in format.ts
- * keys off - always come from the Solidity, never from a hand-written string.
+ * Each entry pairs an address with the whole generated ABI of its interface. So
+ * the signatures always come from the Solidity, never from a hand-written string.
+ * This includes the output parameter names that `humanize()` in format.ts uses as keys.
  */
 
 export interface ContractEntry {
@@ -204,7 +204,7 @@ export const GEM_STATE = ["Issued", "Qualified", "Called", "Settled", "Forfeited
 // Credis position state (crates/core/credis/src/schema.rs::CredisState).
 export const CREDIS_STATE = ["Open", "Called", "Settled", "Void"] as const;
 
-// ISO 4217 numeric -> symbol. Chain currently accepts 840 (USD) only; the rest
+// ISO 4217 numeric -> symbol. Chain currently accepts 840 (USD) only. The rest
 // are convenience labels for display.
 export const ISO_4217: Record<number, string> = {
   840: "USD",

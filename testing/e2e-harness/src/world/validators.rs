@@ -2,8 +2,8 @@
 //!
 //! Replaces the `e2e_vkey`/`e2e_v0key` key readers and the address helpers in
 //! the legacy localnet contract (and on-chain status, wired as the
-//! lifecycle flows land). A validator is addressed by index (`validator-<i>`);
-//! an `Operator` is just an active validator acting as proposer/voter.
+//! lifecycle flows land). A validator is addressed by index (`validator-<i>`).
+//! An `Operator` is just an active validator acting as proposer/voter.
 
 use std::fmt;
 use std::fs::{self, OpenOptions};
@@ -23,7 +23,7 @@ pub struct Validator {
 }
 
 impl Validator {
-    /// The EOA private key (`validator-<i>/evm-key.hex`), `0x`-prefixed - matches
+    /// The EOA private key (`validator-<i>/evm-key.hex`), `0x`-prefixed. It matches
     /// the shell `"0x$(tr -d '[:space:]' < evm-key.hex)"`.
     pub fn evm_key(&self) -> Result<String> {
         let path = self.evm_key_path();

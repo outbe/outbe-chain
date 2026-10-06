@@ -9,8 +9,9 @@ import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
-/// @dev ERC20 that skims a fee on every move: the sender is crosschainBurned the full amount but the
-///      recipient is crosschainMinted amount minus fee. Breaks the "exactly `amount` lands" assumption.
+/// @dev ERC20 that skims a fee on every move. The sender is crosschainBurned the full amount, but
+///      the recipient is crosschainMinted amount minus fee. Breaks the "exactly `amount` lands"
+///      assumption.
 contract FeeOnTransferToken is IERC20 {
     mapping(address => uint256) private _balances;
     mapping(address => mapping(address => uint256)) private _allowances;

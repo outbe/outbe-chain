@@ -35,14 +35,16 @@ pub(crate) struct OfferTributeInput {
 }
 
 impl TributeFactoryContract<'_> {
-    /// Single live offer path: an encrypted offer arrives; the host validates the
-    /// cleartext day and currency, resolves the COEN price for that exact pair and
-    /// day, hands offer + price to the enclave (`ProcessTributeOfferBatch`), and
-    /// issues the Tribute from the returned `TributeOfferResult`. The enclave
-    /// returns only what it computed - the amounts, the draft-derived fields and
-    /// the Poseidon `token_id` - so everything public on the Tribute comes from
-    /// this function's own inputs. The canonical identity is independently
-    /// recomputed and checked before issuance.
+    /// Single live offer path. When an encrypted offer arrives, the host does these steps:
+    /// 1. Validate the cleartext day and currency.
+    /// 2. Resolve the COEN price for that exact pair and day.
+    /// 3. Hand offer + price to the enclave (`ProcessTributeOfferBatch`).
+    /// 4. Issue the Tribute from the returned `TributeOfferResult`.
+    ///
+    /// The enclave returns only what it computed: the amounts, the draft-derived fields
+    /// and the Poseidon `token_id`. So everything public on the Tribute comes from this
+    /// function's own inputs. This function independently recomputes and checks the
+    /// canonical identity before issuance.
     pub(crate) fn offer_tribute(
         &mut self,
         scope: &ExecutionScope,
@@ -136,8 +138,8 @@ impl TributeFactoryContract<'_> {
             }
         };
 
-        // Everything below is settled from chain state before the enclave is
-        // contacted, so a bad day or an unpriceable currency costs no round trip.
+        // The code below settles everything from chain state before it contacts the
+        // enclave, so a bad day or an unpriceable currency costs no round trip.
         if !worldwide_day.is_valid() {
             return Err(TributeFactoryError::InvalidWorldwideDay { worldwide_day }.into());
         }
@@ -158,7 +160,7 @@ impl TributeFactoryContract<'_> {
             reference_currency,
         )?;
 
-        // Priced against the tribute's own day, not whichever day happens to be
+        // Price the tribute against its own day, not whichever day happens to be
         // first in the OFFERING list.
         let pricing = outbe_oracle::api::tribute_pricing_inputs(
             self.storage.clone(),
@@ -198,8 +200,8 @@ impl TributeFactoryContract<'_> {
             zk_context,
         };
         // Node-local enclave faults (dead sidecar after the session's bounded
-        // reconnect+retry, non-determinism, bad attestation) are Fatal - see
-        // `enclave_offer` - never a deterministic revert.
+        // reconnect+retry, non-determinism, bad attestation) are Fatal (see
+        // `enclave_offer`), never a deterministic revert.
         let results = processor(&[offer])?;
         let result = results.into_iter().next().ok_or_else(|| {
             PrecompileError::Fatal("enclave returned an empty tribute offer result".into())
@@ -215,10 +217,10 @@ impl TributeFactoryContract<'_> {
             result.zk_expected_hashes.as_ref(),
         )?;
 
-        // Recomputed from this call's own inputs, so it checks the enclave's
-        // Poseidon rather than the enclave's own consistency with itself.
-        // The identity keeps only the digest tail, so the enclave's token id is
-        // checked against the whole digest rather than against the identity.
+        // The host recomputes the digest from this call's own inputs, so it checks the
+        // enclave's Poseidon rather than the enclave's own consistency with itself.
+        // The identity keeps only the digest tail, so the host checks the enclave's
+        // token id against the whole digest rather than against the identity.
         let expected_digest = derive_poseidon_digest(caller, worldwide_day)
             .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
         if result.owner != caller || result.token_id != expected_digest {
@@ -259,8 +261,8 @@ impl TributeFactoryContract<'_> {
         Ok(tribute_id)
     }
 
-    /// Records one successful offer in the UTC reward-day bucket consumed by
-    /// Cycle on the following calendar day. The Tribute target WWD deliberately
+    /// Records one successful offer in the UTC reward-day bucket that Cycle
+    /// consumes on the following calendar day. The Tribute target WWD deliberately
     /// does not cross this boundary: all offers executed on the same UTC day
     /// share that day's WAA and SRA pools.
     fn record_agent_reward_activity(

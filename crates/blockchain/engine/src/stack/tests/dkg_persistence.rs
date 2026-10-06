@@ -323,7 +323,7 @@ fn test_pending_dkg_material_alone_does_not_restore_boundary() {
 
     // Crash cut point: pending DKG triplet reached disk, but the boundary
     // snapshot did not. Restart must not infer/activate a boundary from material
-    // alone; the pending-boundary file remains absent and DkgManager has no
+    // alone. The pending-boundary file remains absent and DkgManager has no
     // pending artifact to verify/drain.
     save_pending_dkg_state(
         DkgStateStore::new(dir.path(), &backend),
@@ -378,7 +378,7 @@ fn test_pending_boundary_snapshot_restores_manager_before_commit() {
     };
 
     // Crash cut point: pending material + pending boundary snapshot exist, but
-    // process memory was lost before/around note_ceremony_completed. Restart can
+    // the process lost its memory before/around note_ceremony_completed. Restart can
     // load both durable pieces and restore the boundary into DkgManager without
     // creating a committed marker.
     save_pending_dkg_state(
@@ -555,11 +555,12 @@ fn test_load_saved_dkg_state_rejects_incomplete_files() {
     assert!(error.to_string().contains("saved DKG state is incomplete"));
 }
 
-/// A node that has already finalized (`Some(N>0)`) - or whose execution layer
-/// recovered after a crash with consensus still durable - must classify as an
-/// existing-chain join: it must NOT re-run the initial genesis DKG and the
-/// genesis-formation gate must NOT (re)form genesis. An inverted height check
-/// would compile clean but re-run genesis DKG on a restarted validator.
+/// A node that has already finalized (`Some(N>0)`) must classify as an
+/// existing-chain join. The same applies to a node whose execution layer
+/// recovered after a crash with consensus still durable. Such a node must NOT
+/// re-run the initial genesis DKG, and the genesis-formation gate must NOT
+/// (re)form genesis. An inverted height check would compile clean but re-run
+/// genesis DKG on a restarted validator.
 #[test]
 fn restarted_finalized_node_does_not_refresh_genesis_dkg() {
     let fresh = StartupDkgContext {

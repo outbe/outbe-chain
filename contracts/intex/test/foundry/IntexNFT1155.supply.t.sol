@@ -144,7 +144,7 @@ contract IntexNFT1155SupplyTest is Test {
         _createSeries(10);
         vm.prank(bridger);
         nft.issueIntex(ownerA, 5, SERIES_ID);
-        // units == 0 is rejected before any series-state work.
+        // The contract rejects units == 0 before any series-state work.
         vm.prank(settler);
         vm.expectRevert(IIntexNFT1155.ZeroUnits.selector);
         nft.settleIntex(SERIES_ID, ownerA, 0);

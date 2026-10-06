@@ -81,9 +81,9 @@ fn register_pair_rejects_an_asset_paired_with_itself() {
 fn register_pair_preserves_a_generic_market_orientation() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        // The ISO address sorts below every token stand-in, so this proves the
-        // registry value is the configured orientation rather than the sorted
-        // storage-key orientation.
+        // The ISO address sorts below every token stand-in. So this proves that the
+        // registry value is the configured orientation, not the sorted storage-key
+        // orientation.
         let backwards = AddressPair::from_addresses(ETH, usd());
         assert!(
             !backwards.is_canonical(),
@@ -257,7 +257,7 @@ fn a_backwards_quote_prices_at_the_reciprocal() {
 
         assert_eq!(forward, rate);
         assert_eq!(backward, U256::from(400_000_000_000_000_000u128));
-        // The observation is one event; only its quoting differs.
+        // The observation is one event. Only its quoting differs.
         assert_eq!((fwd_block, fwd_ts), (42, 86_400));
         assert_eq!((bwd_block, bwd_ts), (42, 86_400));
     });
@@ -330,7 +330,7 @@ fn a_pair_is_deterministic_direction_sensitive_and_distinct_per_market() {
     assert_eq!(pair_key(COEN, USDT), pair_key(COEN, USDT));
     assert_ne!(pair_key(COEN, USDT), pair_key(ETH, USDT));
 
-    // The value keeps the quote direction; only the storage key drops it.
+    // The value keeps the quote direction. Only the storage key drops it.
     assert_ne!(pair_key(COEN, USDT), pair_key(USDT, COEN));
     assert!(pair_key(COEN, USDT).same_market(&pair_key(USDT, COEN)));
     assert_eq!(
@@ -397,10 +397,10 @@ fn get_exchange_rate_reverts_for_an_unregistered_pair() {
 }
 
 /// The three rate columns key on the registry index, so a price read is
-/// `pair_to_index` and then slot 12. Pins the raw slots `scripts/seed_genesis.py`
-/// writes, and asserts nothing lands at the pair-derived slot they used to use -
-/// a schema key-type revert would otherwise pass every behavioural test above
-/// while silently orphaning every seeded rate.
+/// `pair_to_index` and then slot 12. This test pins the raw slots that
+/// `scripts/seed_genesis.py` writes. It also asserts that nothing lands at the
+/// pair-derived slot they used to use. Otherwise a schema key-type revert would
+/// pass every behavioural test above while silently orphaning every seeded rate.
 #[test]
 fn the_rate_columns_are_keyed_by_the_registry_index() {
     use outbe_primitives::addresses::ORACLE_ADDRESS;
@@ -445,7 +445,7 @@ fn the_rate_columns_are_keyed_by_the_registry_index() {
 }
 
 /// Deactivated pairs lose their rate, and an active neighbour registered after
-/// them keeps its own - the clear walks the registry by index, so an off-by-one
+/// them keeps its own. The clear walks the registry by index, so an off-by-one
 /// would wipe the wrong column.
 #[test]
 fn remove_excess_feeds_clears_only_the_deactivated_pairs_rate() {

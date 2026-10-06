@@ -1,5 +1,6 @@
 //! Pending eviction on an ACTIVE proposer, not an isolated FullNode. Canonical
-//! notifications drive production maintenance; no pool/state writes are injected.
+//! notifications drive production maintenance. The scenario injects no pool/state
+//! writes.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write as _;
@@ -20,7 +21,7 @@ use crate::world::World;
 const OWNER: usize = 0;
 const STALENESS_SECS: u64 = 20;
 // This funded test transaction's fee budget, not a production cap. Every
-// observed canonical tip must remain below it; fee eviction cannot pass.
+// observed canonical tip must remain below it. Fee eviction cannot pass.
 const FIXTURE_MAX_FEE: u128 = 10_000_000_000;
 
 fn require_eligible_account(
@@ -251,7 +252,7 @@ fn wait_active_pending_eviction(world: &mut World) {
                 );
                 // Peers receive the candidate and maintenance notifications at
                 // different instants. Wait for their own eviction before the
-                // restart fault; never use replacement mining to hide a copy.
+                // restart fault. Never use replacement mining to hide a copy.
                 let mut all_absent = true;
                 for peer in &ports {
                     match world

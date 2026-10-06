@@ -19,7 +19,7 @@ pub struct CcaRecord {
     /// Native COEN atomic units, retained during deregistration until claimed.
     #[attribute(order = 2)]
     pub bonded_amount: U256,
-    /// Unix seconds; checked conversion from the execution timestamp.
+    /// Unix seconds. The value comes from a checked conversion of the execution timestamp.
     #[attribute(order = 3)]
     pub unbond_unlocks_after: u64,
 }
@@ -52,7 +52,7 @@ impl StorableType for ICcaRegistry::State {
 
 impl Storable for ICcaRegistry::State {
     fn from_word(word: U256) -> Self {
-        // Check the full word fits u8 before decoding the enum; never truncate storage.
+        // Check the full word fits u8 before decoding the enum. Never truncate storage.
         // Storable is infallible, so validation rejects this sentinel at the record boundary.
         u8::try_from(word)
             .ok()

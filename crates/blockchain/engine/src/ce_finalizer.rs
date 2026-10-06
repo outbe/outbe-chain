@@ -1,9 +1,11 @@
 //! Durable Reth -> CE-MDBX finalization barrier.
 //!
 //! This module is deliberately outside the executor actor. The actor only owns
-//! Marshal ordering; this adapter owns Reth's persistence notification, the
-//! DB-only canonical/root check, and the CE tree commit which must all complete
-//! before the actor may acknowledge the finalized block.
+//! Marshal ordering. This adapter owns the items below. All of them must complete
+//! before the actor may acknowledge the finalized block:
+//! - Reth's persistence notification.
+//! - The DB-only canonical/root check.
+//! - The CE tree commit.
 
 use std::{sync::Arc, time::Duration};
 
@@ -131,9 +133,9 @@ pub trait DurableCeState: Send + Sync {
     fn replay_block(&self, height: u64) -> eyre::Result<Option<CanonicalCeReplayBlock>>;
 }
 
-/// Production Reth adapter. The block identity is checked through a fresh
-/// read-only DB provider before historical state is opened for the same durable
-/// hash, preventing an in-memory candidate from satisfying the barrier.
+/// Production Reth adapter. It checks the block identity through a fresh
+/// read-only DB provider before it opens historical state for the same durable
+/// hash. This prevents an in-memory candidate from satisfying the barrier.
 #[derive(Clone, Debug)]
 pub struct RethDurableCeState<P> {
     provider: P,
@@ -326,7 +328,7 @@ where
         let parent_hash = parent.block_hash;
         let parent_root = validate_durable_header_evidence(height - 1, parent)?;
 
-        // Receipts are read from a fresh DB-only provider. Blockchain-tree or
+        // This function reads receipts from a fresh DB-only provider. Blockchain-tree or
         // ExEx memory cannot fill a pruned/missing replay row.
         let durable = self
             .provider

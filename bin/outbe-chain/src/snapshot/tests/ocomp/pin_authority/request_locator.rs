@@ -113,8 +113,8 @@ fn setup_frame(layout: &NativeLayout, backend: Receipts, case: Case) {
     let tx = db.tx_mut().unwrap();
     let mut request = tx.get::<tables::Headers<OutbeHeader>>(B).unwrap().unwrap();
     request.inner.timestamp = 1_000;
-    // IntentId does not contain B's hash. Construct the event first, then
-    // finalize receipt/transaction roots and only then derive final JobId.
+    // IntentId does not contain B's hash. Construct the event first. Then
+    // finalize receipt/transaction roots. Only then derive the final JobId.
     let job = job_for(&request, case);
     let mut event = request_event(&job);
     match case {

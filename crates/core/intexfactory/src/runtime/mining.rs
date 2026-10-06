@@ -28,7 +28,7 @@ pub fn mine_promis(
         .checked_mul(units)
         .ok_or_else(|| PrecompileError::Revert("promis overflow".into()))?;
 
-    // PoW over the per-(series, owner) sequence; bump it on success.
+    // PoW over the per-(series, owner) sequence. Bump it on success.
     let mut factory = IntexFactoryContract::new(storage.clone());
     let seq = factory.read_mine_seq(series_id, owner)?;
     validate_pow(owner, promis_minor, series_id, seq, nonce)?;
@@ -80,7 +80,7 @@ pub(crate) fn issued_token_id(series_id: SeriesId) -> U256 {
 
 /// Settled token id = the series id with `SETTLED_TAG` set. A series id is 14 bytes, so the issued
 /// space ends at 2**112 and the bit above it distinguishes the classes without a hash. Mirrors
-/// `IntexNFT1155._settledTokenId`; the two derivations must stay identical.
+/// `IntexNFT1155._settledTokenId`. The two derivations must stay identical.
 pub(crate) fn settled_token_id(series_id: SeriesId) -> U256 {
     issued_token_id(series_id) | SETTLED_TAG
 }
@@ -110,7 +110,7 @@ pub(crate) fn compute_pow_hash(
     out
 }
 
-/// The preimage is Intex's own; the difficulty it must clear is the protocol's.
+/// The preimage is Intex's own. The difficulty it must clear is the protocol's.
 pub(crate) fn validate_pow(
     owner: Address,
     promis_amount: U256,

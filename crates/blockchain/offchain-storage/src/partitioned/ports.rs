@@ -4,7 +4,7 @@ use super::{PartitionedBatch, StorageScope};
 use crate::{Key, Namespace, ScanRequest, StorageError, StorageReaderHandle};
 
 pub trait PartitionReadSource: Send + Sync {
-    /// Missing partitions stay missing; this call must never initialize a database.
+    /// Missing partitions stay missing. This call must never initialize a database.
     fn open_reader(
         &self,
         scope: &StorageScope,
@@ -23,11 +23,11 @@ pub trait PartitionDataSource: PartitionReadSource {
 #[derive(Clone)]
 pub struct ReadLocation {
     pub scope: StorageScope,
-    /// Index-selected records must exist; absence is corruption, not a miss.
+    /// Index-selected records must exist. Absence is corruption, not a miss.
     pub require_present: bool,
 }
 
-/// Domain-owned routing; storage has no knowledge of entity names or ID formats.
+/// Domain-owned routing. Storage has no knowledge of entity names or ID formats.
 pub trait PartitionRouting: Send + Sync {
     /// Bulk lookup lets locator-backed rules use one indexed datasource read.
     fn points(

@@ -1,7 +1,7 @@
 //! V2 Phase 1 metadata invariants.
 //!
 //! INV4: `CertifiedParentAccountingMetadata` carries no money
-//! fields and no raw consensus public keys; only fingerprint hashes survive.
+//! fields and no raw consensus public keys. Only fingerprint hashes survive.
 
 use alloy_primitives::{address, B256};
 use outbe_primitives::consensus_metadata::{

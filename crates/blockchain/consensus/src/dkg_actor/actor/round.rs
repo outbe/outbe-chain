@@ -10,8 +10,8 @@ use tracing::debug;
 
 /// Run a DKG ceremony with durable local dealer and player recovery.
 ///
-/// The dealer seed is persisted before any bundle is sent. Player inputs are
-/// persisted before their ACK is emitted. A restarted process reconstructs both
+/// This function persists the dealer seed before it sends any bundle. It persists
+/// player inputs before it emits their ACK. A restarted process reconstructs both
 /// roles and verifies byte-identical ACK replay before networking resumes.
 pub async fn run_initial_dkg_durable(
     clock: &impl Clock,

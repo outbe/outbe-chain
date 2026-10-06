@@ -263,8 +263,8 @@ fn begin_block_scurve_hook_records_the_daily_peak() {
             )
             .unwrap();
 
-        // Hook fires on the first block of day_4 - the current day has NO
-        // close yet, mirroring the real start-of-day boundary block.
+        // The hook fires on the first block of day_4. The current day has NO
+        // close yet. This mirrors the real start-of-day boundary block.
         let runtime_ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(4, day_4 + 120, 1),
             storage.clone(),
@@ -287,7 +287,7 @@ fn begin_block_scurve_hook_records_the_daily_peak() {
         assert!(active_value < coen_iso(150));
 
         // The begin-block owner must keep the same chain alive after the first
-        // 128-day coefficient period; no expiry/eviction or successor row is
+        // 128-day coefficient period. No expiry/eviction or successor row is
         // required for continuation.
         let day_130 = day_2 + 128 * crate::scurve::DAY_SECONDS;
         let runtime_ctx = BlockRuntimeContext::new(

@@ -23,7 +23,7 @@ pub(crate) fn run() {
         finalized_record.finalized.as_ref().unwrap().job_id,
     );
     let mut vote = voting.signed_vote(0);
-    // Same job, committee and outer signer; only the inner vote signature is wrong.
+    // Same job, committee and outer signer. Only the inner vote signature is wrong.
     vote.signature_rs[63] ^= 0x01;
     let calldata = encode_submit_lysis_result_calldata(&vote, &poc_schema_limits())
         .expect("a tampered signature keeps the canonical carrier encoding");

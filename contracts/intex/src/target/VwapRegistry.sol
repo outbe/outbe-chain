@@ -104,7 +104,7 @@ contract VwapRegistry is IVwapRegistry, AccessControlUpgradeable, UUPSUpgradeabl
 
     /// @inheritdoc IVwapSource
     /// @dev Reads the first month day by day and every later month once, from no earlier than the
-    ///      first recorded day, so the cost follows the history's length in months.
+    ///      first recorded day. So the cost follows the history's length in months.
     function maxUtcDayVwapSince(uint16 isoCode, uint32 fromUtcDay) external view returns (uint256 max) {
         if (fromUtcDay == 0) return 0;
         VwapRegistryStorage storage $ = _vs();

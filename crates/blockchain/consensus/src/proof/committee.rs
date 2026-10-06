@@ -1,13 +1,13 @@
 //! Canonical V2 committee snapshot types and pure-function hashers.
 //!
 //! This module is the **single source of truth** for the wire-visible committee
-//! snapshot shape used by every V2 consensus-proof path (Phase 1 verifier,
+//! snapshot shape. Every V2 consensus-proof path uses it (Phase 1 verifier,
 //! certified-parent proof store, Rewards/Slash fingerprints, slashing evidence
 //! dedup, and the `apply_boundary_outcome` writer that seeds
 //! `CommitteeSnapshotStore`). Everything in this file is pure data and pure
-//! arithmetic - no storage, no async, and only a pure allocation-free build error - so it can be reused by full
-//! nodes that have no validator runtime, and by the EVM executor that has no
-//! consensus stack.
+//! arithmetic: no storage, no async, and only a pure allocation-free build error.
+//! Thus full nodes that have no validator runtime can reuse it. The EVM executor
+//! that has no consensus stack can reuse it too.
 //!
 
 use alloy_primitives::{Address, B256};
@@ -53,7 +53,7 @@ pub struct CommitteeEntry {
 /// the DKG.
 ///
 /// The epoch is intentionally *not* part of the snapshot struct because the
-/// snapshot store is keyed by `(epoch, committee_set_hash)`; callers pass
+/// snapshot store is keyed by `(epoch, committee_set_hash)`. Callers pass
 /// `epoch` to the hashing/keying helpers explicitly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitteeSnapshot {
@@ -66,15 +66,16 @@ pub struct CommitteeSnapshot {
     /// bootstrap outcome).
     ///
     /// Unlike [`Self::vrf_group_public_key_bytes`] (only the constant term /
-    /// group key), this commits to ALL coefficients, which is what lets a
-    /// verifier derive any signer's threshold public key `PK_i` and check an
-    /// individual seed partial. Stored so SlashIndicator can verify an
-    /// "invalid seed partial" slash offense; the executor derives it from the
+    /// group key), this commits to ALL coefficients. This lets a verifier
+    /// derive any signer's threshold public key `PK_i` and check an individual
+    /// seed partial. The field is stored so SlashIndicator can verify an
+    /// "invalid seed partial" slash offense. The executor derives it from the
     /// already-consensus-validated boundary `outcome`, so a proposer cannot
-    /// forge it (which would otherwise let an attacker frame an honest
-    /// validator). Intentionally NOT folded into [`committee_set_hash_v2`] -
-    /// its authenticity comes from the validated boundary artifact, not the
-    /// committee fingerprint, so adding it changes no V2 binding.
+    /// forge it. A forged value would otherwise let an attacker frame an honest
+    /// validator. The field is intentionally NOT folded into
+    /// [`committee_set_hash_v2`]. Its authenticity comes from the validated
+    /// boundary artifact, not the committee fingerprint, so adding it changes
+    /// no V2 binding.
     pub vrf_public_polynomial_hash: B256,
 }
 
@@ -107,7 +108,7 @@ impl CommitteeSnapshot {
 /// ```
 ///
 /// The domain prefix and the per-entry pubkey both differ from the legacy
-/// address-only `hash_active_set`; equality between the two hashes for any
+/// address-only `hash_active_set`. Equality between the two hashes for any
 /// committee is a fingerprint mismatch (tested explicitly).
 pub fn committee_set_hash_v2(epoch: u64, snapshot: &CommitteeSnapshot) -> B256 {
     let committee_len_bytes = (snapshot.committee.len() as u64).to_be_bytes();
@@ -159,9 +160,9 @@ pub fn committee_snapshot_key(epoch: u64, committee_set_hash: B256) -> B256 {
 /// Pure and allocation-free, so `committee.rs` stays reusable by full nodes and
 /// the EVM executor (no runtime, no storage, no async). Both variants are
 /// invariant violations that, under the current Commonware MinPk encoding,
-/// cannot occur; the strict checks exist so a future encode-size drift surfaces
-/// as a typed error here instead of a silent truncation that would fork the
-/// committee fingerprint downstream.
+/// cannot occur. The strict checks exist so a future encode-size drift surfaces
+/// as a typed error here. Without them, the drift would be a silent truncation
+/// that would fork the committee fingerprint downstream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum SnapshotBuildError {
@@ -181,18 +182,18 @@ pub enum SnapshotBuildError {
 /// This is the one construction path feeding [`committee_set_hash_v2`]. Runtime
 /// callers (the finalization actor/resolver, the reporter, and the DKG manager)
 /// extract the ordered committee from their `HybridScheme` / DKG output and pass
-/// primitives here, so `committee.rs` never sees a runtime type and stays
+/// primitives here. Thus `committee.rs` never sees a runtime type and stays
 /// reusable by the EVM executor and full nodes.
 ///
 /// `addresses[i]` and `encoded_pubkeys[i]` MUST be in the SAME Commonware
-/// `ordered::Set` participant order (the certificate signer-bitmap order);
+/// `ordered::Set` participant order (the certificate signer-bitmap order).
 /// `encoded_pubkeys[i]` is the raw `commonware_codec::Encode` of the i-th MinPk
 /// public key. Encoding to 48 bytes is **strict**: a pubkey that is not exactly
 /// 48 bytes is a [`SnapshotBuildError::PubkeyLength`], never a silent truncation.
 ///
-/// `vrf_public_polynomial_hash` is stored as-is and is intentionally NOT folded
-/// into [`committee_set_hash_v2`] (see
-/// [`CommitteeSnapshot::vrf_public_polynomial_hash`]), so passing `B256::ZERO`
+/// This function stores `vrf_public_polynomial_hash` as-is and intentionally
+/// does NOT fold it into [`committee_set_hash_v2`] (see
+/// [`CommitteeSnapshot::vrf_public_polynomial_hash`]). Thus passing `B256::ZERO`
 /// (the metadata-reconstruction paths) versus the real hash (the
 /// proposer/executor paths) does not change the committee fingerprint.
 pub fn build_committee_snapshot(

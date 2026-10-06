@@ -8,7 +8,7 @@ use super::Storable;
 
 /// EVM-compatible fixed-capacity ring buffer (port of OpenZeppelin `CircularBuffer`).
 ///
-/// Retains the last `capacity` pushed elements; pushing into a full buffer
+/// Retains the last `capacity` pushed elements. A push into a full buffer
 /// overwrites (and returns) the oldest one. `push` is O(1).
 ///
 /// Storage layout:
@@ -16,7 +16,7 @@ use super::Storable;
 /// - Base slot + 1:  `capacity` (`u32`)
 /// - Data:           `keccak256(base_slot) + index * T::SLOTS`, `index` in `0..capacity`
 ///
-/// [`setup`](Self::setup) must be called once before [`push`](Self::push).
+/// The caller must call [`setup`](Self::setup) once before [`push`](Self::push).
 pub struct StorageCircularBuffer<'storage, T> {
     base_slot: U256,
     address: Address,
@@ -34,7 +34,7 @@ impl<'storage, T: Storable> StorageCircularBuffer<'storage, T> {
         }
     }
 
-    /// The schema slot this buffer is anchored at (`total`; `capacity` is `base_slot + 1`).
+    /// The schema slot that anchors this buffer (`total`). `capacity` is at `base_slot + 1`.
     pub fn base_slot(&self) -> U256 {
         self.base_slot
     }
@@ -69,7 +69,7 @@ impl<'storage, T: Storable> StorageCircularBuffer<'storage, T> {
         self.count().map(|c| c == 0)
     }
 
-    /// Pushes `value`; returns the evicted oldest element if the buffer was full.
+    /// Pushes `value`. Returns the evicted oldest element if the buffer was full.
     pub fn push(&self, value: T) -> Result<Option<T>> {
         let cap = self.capacity()?;
         if cap == 0 {
@@ -103,7 +103,8 @@ impl<'storage, T: Storable> StorageCircularBuffer<'storage, T> {
         )))
     }
 
-    /// All stored elements (physical slot order; membership-grade, not chronological).
+    /// All stored elements in physical slot order. The order is membership-grade, not
+    /// chronological.
     pub fn read_all(&self) -> Result<Vec<T>> {
         let count = self.count()?;
         let mut result = Vec::with_capacity(count as usize);

@@ -62,8 +62,8 @@ fn heartbeat_sends_fcu_to_last_forkchoice_without_payload_attributes() {
 
 // TC-1 regression: a fatal Err from handle_marshal_update must PROPAGATE out
 // of run_live_loop (via `?`) so run() ends and the supervisor select-arm
-// treats the executor exit as fatal. Without propagation a rejected finalized
-// block would be swallowed and the loop would keep running on diverged state.
+// treats the executor exit as fatal. Without propagation, the loop would swallow
+// a rejected finalized block and keep running on diverged state.
 #[test]
 fn run_live_loop_propagates_fatal_executor_error() {
     commonware_runtime::deterministic::Runner::default().start(|context| async move {

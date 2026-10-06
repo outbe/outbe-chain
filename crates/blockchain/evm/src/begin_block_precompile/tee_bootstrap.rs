@@ -30,10 +30,11 @@ pub(super) fn prepare_tee_bootstrap(
     Ok(())
 }
 
-/// DCAP block-1 bootstrap. The canonical payload already proves bounded shape;
-/// this handler binds it to the exact active committee and epoch-0 snapshot,
-/// verifies every validator through the production enclave-resident QVL path,
-/// and only then finalizes the existing offer-key bootstrap state.
+/// DCAP block-1 bootstrap. The canonical payload already proves bounded shape.
+/// This handler:
+/// 1. binds it to the exact active committee and epoch-0 snapshot.
+/// 2. verifies every validator through the production enclave-resident QVL path.
+/// 3. only then finalizes the existing offer-key bootstrap state.
 pub(crate) fn run_tee_bootstrap_v1(
     ctx: &BlockRuntimeContext,
     payload: &outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2,

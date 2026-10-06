@@ -1,13 +1,16 @@
 //! Building and spending a PayNote against a live chain.
 //!
-//! A Nod's cost is discharged by burning a note rather than by a transfer, so
-//! the settlement scenario has to do off-chain what a wallet would: pick a
-//! spend key, deposit under its serial, rebuild the pool's Merkle tree from the
-//! `NewNote` log, and prove membership.
+//! A Nod's cost is discharged by burning a note rather than by a transfer. So
+//! the settlement scenario has to do off-chain what a wallet would do:
 //!
-//! The tree is rebuilt from logs rather than read from storage because the pool
-//! keeps only the frontier on chain — the auth path exists nowhere but in the
-//! deposit history.
+//! - pick a spend key
+//! - deposit under its serial
+//! - rebuild the pool's Merkle tree from the `NewNote` log
+//! - prove membership
+//!
+//! The scenario rebuilds the tree from logs and does not read it from storage,
+//! because the pool keeps only the frontier on chain. The auth path exists
+//! nowhere but in the deposit history.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -41,10 +44,10 @@ pub(crate) struct Note {
 }
 
 impl Note {
-    /// Derives a note for `amount` of `asset` under its own spend key, counted
-    /// up from a fixed base: the commitment follows from the serial, so one
-    /// shared key would make two notes of equal value identical and the pool
-    /// refuses the second. Counting keeps the evidence reproducible where a
+    /// Derives a note for `amount` of `asset` under its own spend key. The spend
+    /// keys count from a fixed base. The commitment follows from the serial, so
+    /// one shared key would make two notes of equal value identical, and the
+    /// pool refuses the second. Counting keeps the evidence reproducible where a
     /// random draw would not.
     pub(crate) fn new(chain_id: u64, asset: Address, amount: U256) -> Self {
         static NEXT_SPEND_KEY: AtomicU64 = AtomicU64::new(0x005e_771e);
@@ -191,7 +194,7 @@ fn prove_full_spend(note: &Note, context: B256, tree: &PayNoteTree) -> Vec<u8> {
         asset: note.asset.to_field().unwrap(),
         context: field_from_b256(&context).expect("canonical settlement context"),
         spend_amount: u256_limbs_be(&note.amount.to_be_bytes::<32>()),
-        // A full spend leaves no change; the circuit requires the zero
+        // A full spend leaves no change. The circuit requires the zero
         // sentinel rather than a note for nothing.
         change_commitment: Field::from(0_u64),
     };

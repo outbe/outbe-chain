@@ -1,11 +1,11 @@
 //! Test **environment** (from the CLI) vs. scenario **requirements** (from tags).
 //!
-//! The binary's clap flags describe the box we're running on - how many
+//! The binary's clap flags describe the box we're running on: how many
 //! validators to bootstrap, which enclave mode, whether we have `sudo`. Each
 //! Gherkin scenario declares what it *needs* via tags. The runner matches the
 //! two: a scenario the environment can't satisfy is **skipped**, or - with
 //! `--all` - turned into a **failure**. Scenarios pinned to a different explicit
-//! TEE execution profile remain skipped even under `--all`; each profile has
+//! TEE execution profile remain skipped even under `--all`. Each profile has
 //! its own lane.
 //!
 //! Every requirement is a **tag** (matched on merged feature + scenario tags,
@@ -47,13 +47,13 @@ pub enum TeeMode {
     /// Test-only mock enclave binary as a plain host process - no container, no
     /// Gramine, no LibOS, no attestation. For hosts where Gramine cannot run
     /// (the amd64 image has no arm64 build and dies under emulation), which is
-    /// every macOS box. Development only; it proves nothing Gramine proves.
+    /// every macOS box. Development only. It proves nothing Gramine proves.
     MockNative,
 }
 
 /// Co-located hardware enclaves share one physical EPC, so SGX E2E subprocesses
 /// need one wider budget for both individual enclave calls and the complete
-/// block-1 TEE bootstrap. Production/testnet defaults are not changed.
+/// block-1 TEE bootstrap. This budget does not change the production/testnet defaults.
 pub(crate) const CO_LOCATED_HARDWARE_SGX_TIMEOUT_SECS: u64 = 1_800;
 
 impl TeeMode {
@@ -127,10 +127,10 @@ pub struct EnvCli {
     #[arg(long, default_value_t = 4)]
     pub validators: usize,
 
-    /// Don't probe for free ports - take each node's block verbatim.
+    /// Don't probe for free ports. Take each node's block verbatim.
     ///
-    /// By default every node's block of 7 ports (rpc, tee, p2p, discv5, authrpc,
-    /// metrics, consensus) is scanned for: the allocator walks forward past any
+    /// By default the allocator scans every node's block of 7 ports (rpc, tee,
+    /// p2p, discv5, authrpc, metrics, consensus). It walks forward past any
     /// busy port, so a parallel or coexisting run finds a free set. (Each parallel
     /// run still needs its own `--data-dir`.) With this flag the blocks are the
     /// static `18545 + i * 7` layout and a busy port surfaces as a launch failure.
@@ -158,7 +158,7 @@ pub struct EnvCli {
     pub all: bool,
 
     /// Stream localnet setup output (bootstrap / node launch / docker) live.
-    /// Off by default: that output is captured and only surfaced on failure.
+    /// Off by default: the harness captures that output and shows it only on failure.
     #[arg(long)]
     pub debug: bool,
 
@@ -178,8 +178,8 @@ pub struct EnvCli {
     #[arg(long)]
     pub data_dir: Option<PathBuf>,
 
-    /// Persistent JSON evidence directory. Defaults to `<data-dir>/evidence/<run-id>`;
-    /// unlike scenario data, it is retained after successful cleanup.
+    /// Persistent JSON evidence directory. Defaults to `<data-dir>/evidence/<run-id>`.
+    /// Unlike scenario data, the harness keeps it after successful cleanup.
     #[arg(long)]
     pub evidence_dir: Option<PathBuf>,
 
@@ -390,9 +390,9 @@ impl Default for Environment {
 /// harness must not prepend `sudo` and prompt for a password it does not need.
 ///
 /// True for Docker Desktop (macOS) and for any Linux host whose user is in the
-/// `docker` group; false for a rootful daemon, which still gets `sudo`.
-/// Probed once - the daemon does not change
-/// reachability mid-run, and every `base_cmd` would otherwise pay for it.
+/// `docker` group. False for a rootful daemon, which still gets `sudo`.
+/// The probe runs once because the daemon does not change reachability
+/// mid-run. Without this cache, every `base_cmd` would pay for the probe.
 fn docker_reachable_without_sudo() -> bool {
     static REACHABLE: OnceLock<bool> = OnceLock::new();
     *REACHABLE.get_or_init(|| {
@@ -420,8 +420,8 @@ fn default_repo() -> PathBuf {
 }
 
 /// Keep Unix-domain socket paths below the platform `sun_path` limit. In
-/// particular, macOS expands `std::env::temp_dir()` to a long per-user path;
-/// appending run/scenario/validator components makes reth.ipc exceed 104 bytes.
+/// particular, macOS expands `std::env::temp_dir()` to a long per-user path.
+/// Appending run/scenario/validator components makes reth.ipc exceed 104 bytes.
 fn default_data_dir() -> PathBuf {
     #[cfg(unix)]
     {
@@ -444,7 +444,7 @@ pub(crate) fn next_scenario_id() -> usize {
     SCENARIO_SEQ.fetch_add(1, Ordering::Relaxed) + 1
 }
 
-/// Install the resolved environment (called once by `run()` before cucumber
+/// Install the resolved environment (`run()` calls this once before cucumber
 /// constructs any `World`).
 pub fn set_environment(env: Environment) {
     let _ = ENV.set(env);
@@ -464,7 +464,7 @@ pub fn is_todo(feature: &Feature, scenario: &Scenario) -> bool {
 /// Why the environment can't satisfy this scenario, or `None` if it can.
 ///
 /// Every requirement is declared as a tag (`@tee`, validator count, `@sudo`),
-/// so the Given text stays purely descriptive - nothing here reparses step prose.
+/// so the Given text stays purely descriptive. Nothing here reparses step prose.
 pub fn unmet(feature: &Feature, scenario: &Scenario, env: &Environment) -> Option<String> {
     if let Some(n) = exact_validators(feature, scenario) {
         if env.validators != n {
@@ -573,7 +573,7 @@ pub enum Decision {
     Skip(String),
 }
 
-/// Decide run vs skip. `@todo` always skips; an unmet requirement skips unless
+/// Decide run vs skip. `@todo` always skips. An unmet requirement skips unless
 /// `--all` (then it runs so the `before` hook can fail it).
 pub fn decide(feature: &Feature, scenario: &Scenario, env: &Environment) -> Decision {
     if is_todo(feature, scenario) {
@@ -595,7 +595,7 @@ fn decide_requirement(requirement: Option<String>, run_all: bool, force_skip: bo
         None => Decision::Run,
         Some(reason) if force_skip => Decision::Skip(reason),
         Some(reason) if run_all => {
-            // Run it; the `before` hook panics so it counts as a failure.
+            // Run it. The `before` hook panics so it counts as a failure.
             let _ = reason;
             Decision::Run
         }

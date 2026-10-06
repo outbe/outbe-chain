@@ -889,8 +889,8 @@ fn active_generation_decodes_present_record_and_rejects_malformed_bytes() {
         }
     }
 
-    // Discover the one native length slot through the public owner getter;
-    // this fixture does not import or replicate the private Metadosis schema.
+    // Discover the one native length slot through the public owner getter.
+    // This fixture does not import or replicate the private Metadosis schema.
     let observed_slot = Rc::new(Cell::new(None));
     let mut reader = ReadOnlyStorageProvider::new(AbsentGenerationReader(observed_slot.clone()));
     let absent =

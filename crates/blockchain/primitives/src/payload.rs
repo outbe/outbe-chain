@@ -23,7 +23,7 @@ pub struct NonEmptyWithdrawalsError;
 
 /// Accepts an absent or empty EIP-4895 list and rejects every non-empty list.
 ///
-/// The Ethereum wire shape remains intact; callers adapt this protocol verdict
+/// The Ethereum wire shape remains intact. Callers adapt this protocol verdict
 /// into their local Engine, consensus, or execution error domain.
 pub fn validate_outbe_withdrawals(
     withdrawals: Option<&[Withdrawal]>,
@@ -48,7 +48,7 @@ pub struct OutbePayloadAttributes {
     execution_read_budget: Option<ExecutionReadBudget>,
 }
 
-/// Owned inputs for payload construction; RPC serialization belongs to the resulting attributes.
+/// Owned inputs for payload construction. RPC serialization belongs to the resulting attributes.
 #[derive(Debug)]
 pub struct OutbePayloadAttributesInput {
     pub suggested_fee_recipient: Address,
@@ -211,7 +211,7 @@ impl BuiltPayload for OutbeBuiltPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutbeExecutionData {
     pub block: Arc<SealedBlock<OutbeBlock>>,
-    /// Local-only request budget; it is never encoded into block bytes.
+    /// Local-only request budget. It is never encoded into block bytes.
     #[serde(skip)]
     pub execution_read_budget: Option<ExecutionReadBudget>,
 }
@@ -333,7 +333,7 @@ fn outbe_payload_id(parent: &B256, attributes: &OutbePayloadAttributes) -> Paylo
             Err(error) => {
                 // `payload_id` cannot return a fallible result through Reth's
                 // trait. Hash the deterministic error text instead of
-                // panicking; valid consensus-produced metadata always takes
+                // panicking. Valid consensus-produced metadata always takes
                 // the `Ok` branch.
                 let error = error.to_string();
                 hasher.update(&[0xFF]);

@@ -1,8 +1,8 @@
 //! Unit tests for the Hyperlane controller precompile.
 //!
 //! Cross-contract interaction goes through `HashMapStorageProvider`'s
-//! sub-call stubs: `stub_sub_call_at_selector` pins a target's reply per
-//! selector and `enable_sub_call_stub()` makes every other sub-call succeed
+//! sub-call stubs. `stub_sub_call_at_selector` pins a target's reply per
+//! selector. `enable_sub_call_stub()` makes every other sub-call succeed
 //! with empty returndata.
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
@@ -755,7 +755,8 @@ mod liveness {
     }
 
     /// Four validators: the reference is the third-highest settled index, so
-    /// one inflated submission cannot move it and fresh ones are ignored.
+    /// one inflated submission cannot move it, and the verdict ignores fresh
+    /// ones.
     #[test]
     fn reference_index_is_quorum_based_and_grace_gated() {
         let mut p = liveness_provider();
@@ -781,7 +782,7 @@ mod liveness {
             for addr in [FIXTURE_VALIDATOR, v(2), v(4)] {
                 assert_eq!(c.miss_count.read(&addr).unwrap(), 0);
             }
-            // v(3) catches up with a fresh submission: it is not part of the
+            // v(3) closes the gap with a fresh submission. It is not part of the
             // reference yet, but v(3) itself is no longer behind.
             write_submission(&c, v(3), LOCAL, 600, 999);
             assert!(c.check_liveness().unwrap().is_empty());
@@ -844,7 +845,7 @@ mod liveness {
         StorageHandle::enter(&mut p, |storage| {
             let mut c = HyperlaneControllerContract::new(storage);
             // Reference for LOCAL is the third highest: 1. Everyone is at or
-            // above it; SEPOLIA never moved. No misses.
+            // above it. SEPOLIA never moved. No misses.
             assert!(c.check_liveness().unwrap().is_empty());
             for addr in [FIXTURE_VALIDATOR, v(2), v(3), v(4)] {
                 assert_eq!(c.miss_count.read(&addr).unwrap(), 0);

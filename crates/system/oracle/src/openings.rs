@@ -65,11 +65,11 @@ impl OracleOpeningEvaluationV1 {
 /// Round one: the probe whose *values* size and address round two.
 ///
 /// Two kinds of word live here. The four leading counters bound the collections
-/// round two walks. After them comes one `pair_to_index` word per reference ISO:
-/// the day-VWAP column is keyed by the registry index, so round two cannot
-/// address a pair's value slot until that index has been read. The pair hash for
-/// an ISO is derived rather than stored, so these slots need no on-chain count
-/// to enumerate - which is exactly why they can be opened this early.
+/// round two walks. After them comes one `pair_to_index` word per reference ISO.
+/// The day-VWAP column is keyed by the registry index, so round two cannot
+/// address a pair's value slot until it reads that index. The pair hash for an
+/// ISO is derived rather than stored, so these slots need no on-chain count to
+/// enumerate. That is exactly why round one can open them this early.
 pub fn oracle_count_slot_plan_v1(
     worldwide_day: WorldwideDay,
     reference_isos: &[u16],
@@ -114,10 +114,10 @@ fn checked_pair(base_word: U256, quote_word: U256) -> AddressPair {
 
 /// Round two: the full plan, addressed by the values round one returned.
 ///
-/// `pair_indices` is parallel to `reference_isos` - entry `i` is the registry
+/// `pair_indices` is parallel to `reference_isos`. Entry `i` is the registry
 /// index `pair_to_index` holds for `COEN/reference_isos[i]`, as read from the
-/// round-one opening. A zero index means the pair is unregistered; it has no
-/// value slot to open, and `evaluate_oracle_opening_v1` rejects it.
+/// round-one opening. A zero index means the pair is unregistered. That pair has
+/// no value slot to open, and `evaluate_oracle_opening_v1` rejects it.
 pub fn oracle_opening_slot_plan_v1(
     worldwide_day: WorldwideDay,
     reference_isos: &[u16],
@@ -289,8 +289,8 @@ pub fn evaluate_oracle_opening_v1(
             return Err(OracleOcompError::PairNotRegistered { iso });
         }
         // `pair_to_index` is keyed by the sorted pair, so a market registered as
-        // `<iso>/COEN` resolves to the same index and prices identically -
-        // direction-insensitivity now comes from the key, not from a scan.
+        // `<iso>/COEN` resolves to the same index and prices identically.
+        // Direction-insensitivity now comes from the key, not from a scan.
         let vwap = if worldwide_day_exists.is_zero() {
             U256::ZERO
         } else {

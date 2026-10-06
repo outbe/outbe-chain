@@ -51,8 +51,8 @@ impl SharedOcompRetentionSelector {
     /// Returns restart-safe source-generation candidates for discovery handoff.
     ///
     /// A terminal journal may have been reached directly from `Finalized` or
-    /// through `Exported`; both exact predecessor generations are returned so
-    /// the durable discovery spool can select its existing authority.
+    /// through `Exported`. The method returns both exact predecessor generations
+    /// so that the durable discovery spool can select its existing authority.
     pub fn discovery_job_records(
         &self,
         job_id: B256,
@@ -64,8 +64,8 @@ impl SharedOcompRetentionSelector {
     }
 
     /// Binds a finalized request pin to the exact finalized job stored in
-    /// canonical Metadosis state. No finality or response-window height is
-    /// inferred locally.
+    /// canonical Metadosis state. The method infers no finality or
+    /// response-window height locally.
     pub fn bind_canonical_finalized_job(
         &self,
         candidate_block_hash: B256,

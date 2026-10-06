@@ -1,8 +1,8 @@
 //! A local EVM chain the committee can be bridged to.
 //!
-//! Cross-chain scenarios need a second chain to send to; in production that is
-//! a remote venue, here it is a local `anvil`. The process is owned like every
-//! other launched process, so a dropped `World` takes it down.
+//! Cross-chain scenarios need a second chain to send to. In production that is
+//! a remote venue. Here it is a local `anvil`. The process is owned like every
+//! other launched process, so a dropped `World` stops it.
 
 use std::net::TcpListener;
 use std::path::PathBuf;
@@ -30,7 +30,7 @@ pub const TARGET_CHAIN_ID: u64 = 31338;
 const READY_TRIES: u32 = 60;
 
 /// Addresses one target-chain deploy produced.
-/// Native float the router holds to pay dispatch fees, as the deploy tops it up
+/// Native float the router holds to pay dispatch fees, as the deploy funds it
 /// on a real target. A user pays for their own NFT hop, so the bridge needs none.
 const BRIDGE_FLOAT_WEI: u64 = 1_000_000_000_000_000_000;
 
@@ -77,7 +77,7 @@ pub struct TargetChain {
 }
 
 impl TargetChain {
-    /// Idle handle - scenarios that never ask for a target chain pay nothing.
+    /// Idle handle. Scenarios that never ask for a target chain pay nothing.
     pub(crate) fn new(cfg: Config) -> Self {
         Self {
             cfg,
@@ -96,8 +96,8 @@ impl TargetChain {
         std::fs::create_dir_all(&dir)?;
 
         let mut cmd = Command::new("anvil");
-        // The environment is inherited rather than replaced with `Config::path`:
-        // that only appends `~/.foundry/bin`, while foundry is just as often
+        // The environment is inherited rather than replaced with `Config::path`.
+        // That path only appends `~/.foundry/bin`, while foundry is just as often
         // provisioned through mise somewhere else entirely.
         cmd.args([
             "--port".to_owned(),
@@ -275,7 +275,7 @@ impl TargetChain {
         Ok(())
     }
 
-    /// The deploy scripts stop at standing contracts on purpose - wiring is a
+    /// The deploy scripts stop at standing contracts on purpose. Wiring is a
     /// separate step in production too. Without it the router holds no references
     /// and may not mint, so an inbound message would arrive and do nothing.
     pub fn wire(&self, contracts: &TargetContracts) -> Result<()> {
@@ -304,7 +304,7 @@ impl TargetChain {
         // allowed to create series and mint. The bridge needs the same right on the
         // collection to burn an owner's units here and mint them at home.
         // A router pays the bridge fee out of its own native float and reverts
-        // `NotEnoughNative` when it holds none; production tops it up, and so
+        // `NotEnoughNative` when it holds none. Production funds it, and so
         // must a chain that is expected to send anything home.
         crate::internal::eth::send_value(
             &url,

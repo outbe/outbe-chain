@@ -46,7 +46,7 @@ pub struct OcompActivationAuthorityV1 {
 /// Consensus finality authority supplied by the node execution environment.
 ///
 /// The Metadosis activation coordinator owns protocol ordering and state
-/// transitions, while this narrow seam owns canonical-header, historical
+/// transitions. This narrow seam owns canonical-header, historical
 /// consensus-committee and authenticated intent-inclusion verification.
 /// Relay data can never implement or replace this authority.
 pub trait OcompFinalizedIntentAuthority: Send + Sync {
@@ -60,7 +60,7 @@ pub trait OcompFinalizedIntentAuthority: Send + Sync {
 
 /// Separates relayer-controlled invalid evidence from failures of the
 /// node-owned canonical/finalized anchor. The former is a stable transaction
-/// rejection; the latter must stop block execution rather than let local
+/// rejection. The latter must stop block execution rather than let local
 /// readiness silently redefine validity.
 #[derive(Debug, thiserror::Error)]
 pub enum OcompFinalityAuthorityError {
@@ -144,9 +144,9 @@ impl<'a> QuorumResultInput<'a> {
 }
 
 /// Verifies and applies the full result carried by the vote that first reaches
-/// the intent's pinned quorum. The caller owns the outer storage checkpoint
-/// that also contains the q-forming vote slot and quorum, so any verifier/owner
-/// failure rolls the complete transition back.
+/// the intent's pinned quorum. The caller owns the outer storage checkpoint.
+/// That checkpoint also contains the q-forming vote slot and quorum, so any
+/// verifier/owner failure reverts the complete transition.
 pub(crate) fn apply_quorum_result(
     context: QuorumApplyContext<'_, '_>,
     metadosis: &mut MetadosisContract<'_>,
@@ -295,7 +295,8 @@ fn verify_quorum_structure(
     Ok((plan, result_evidence_hash))
 }
 
-/// The Worldwide Day's `scheduled_process_time`; Lysis freezes the UTC day before it as the entry price.
+/// The Worldwide Day's `scheduled_process_time`. Lysis freezes the UTC day before it as the
+/// entry price.
 fn lysis_freeze_instant(storage: &StorageHandle<'_>, wwd: u32) -> PrecompileResult<u64> {
     let instant = MetadosisContract::new(storage.clone())
         .worldwide_days
@@ -463,7 +464,7 @@ fn apply_certified_result(
     };
 
     storage.with_lysis_activation_frame(binding.activation_call_id, |capability| {
-        // C37: Lysis Allocation is frozen; Desis Allocation is not. Fail
+        // C37: Lysis Allocation is frozen. Desis Allocation is not. Fail
         // against the Desis Limit before any owner write, so a Limit that
         // could breach the Tribute nominal never installs Nods or briefs.
         wwd_allocation_ceiling(
@@ -504,9 +505,9 @@ fn apply_certified_result(
         verified_receipts
             .validate_terminal_capability(capability)
             .map_err(|_| crate::errors::business_failure("Lysis terminal permit mismatch"))?;
-        // Tribute retirement is the final compressed-entity mutation. Every
-        // receipt and terminal-capability gate is established before the WWD's
-        // source partition is made terminal.
+        // Tribute retirement is the final compressed-entity mutation. This code
+        // establishes every receipt and terminal-capability gate before it makes
+        // the WWD's source partition terminal.
         retire_prepared_certified_partition(storage, scope, capability, prepared_tribute)
             .map_err(owner_apply_error)?;
         let permit = verified_receipts

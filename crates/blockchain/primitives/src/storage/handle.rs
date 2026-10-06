@@ -17,7 +17,7 @@ use crate::{
 ///
 /// The handle is tied to the lifetime of one precompile, transaction, or block
 /// lifecycle execution scope. It is intentionally single-threaded through
-/// `Rc<RefCell<_>>`; do not store contract/storage facades beyond that scope.
+/// `Rc<RefCell<_>>`. Do not store contract/storage facades beyond that scope.
 ///
 /// `StorageHandle` is invariant in `'storage` because it wraps `&mut` provider
 /// access. It cannot be reborrowed into a shorter independent execution scope.
@@ -109,7 +109,7 @@ impl<'storage> StorageHandle<'storage> {
     }
 
     /// Test fixtures only: advance the provider's reported block timestamp.
-    /// Production providers (EVM) ignore this; see
+    /// Production providers (EVM) ignore this. See
     /// [`PrecompileStorageProvider::set_block_timestamp`].
     pub fn set_block_timestamp(&self, timestamp: U256) -> Result<()> {
         self.with_provider(|provider| {
@@ -129,7 +129,7 @@ impl<'storage> StorageHandle<'storage> {
     /// Returns the canonical block hash for `number`, or `None` if `number`
     /// is outside the chain's canonical-history window.
     ///
-    /// backed by
+    /// Backed by
     /// [`PrecompileStorageProvider::canonical_block_hash`].
     pub fn canonical_block_hash(&self, number: u64) -> Result<Option<B256>> {
         self.with_provider(|provider| provider.canonical_block_hash(number))
@@ -149,8 +149,8 @@ impl<'storage> StorageHandle<'storage> {
     }
 
     pub fn set_balance(&self, address: Address, balance: U256) -> Result<()> {
-        // refuse balance mutation in STATICCALL
-        // context up front so the underlying `balance(..)` read does
+        // Refuse balance mutation in STATICCALL
+        // context up front, so the underlying `balance(..)` read does
         // not run a wasted journal lookup before the inner gate fires.
         self.with_provider(|provider| {
             if provider.is_static() {
@@ -257,7 +257,7 @@ impl<'storage> StorageHandle<'storage> {
 
     /// Runs storage mutations under a journal checkpoint.
     ///
-    /// The checkpoint is committed only when the closure returns `Ok`.
+    /// This function commits the checkpoint only when the closure returns `Ok`.
     /// On `Err` or early return, [`CheckpointGuard`] drops without commit and
     /// reverts all writes made in this scope.
     pub fn with_checkpoint<R>(&self, f: impl FnOnce() -> Result<R>) -> Result<R> {
@@ -325,8 +325,8 @@ impl<'storage> StorageHandle<'storage> {
 
     // === Sub-call API stubs ===
     //
-    // STUB until T4/T6 lands real behavior; returns Ok(empty). Signatures
-    // here are the public contract - T4 (STATICCALL) and T6 (CALL) MUST swap
+    // STUB until T4/T6 lands real behavior. Returns Ok(empty). Signatures
+    // here are the public contract. T4 (STATICCALL) and T6 (CALL) MUST swap
     // bodies only, never types.
 
     /// Invokes a child CALL frame and returns the raw returndata.
@@ -433,11 +433,11 @@ impl<'storage> StorageHandle<'storage> {
     ///
     /// Re-entry into `do_sub_call` during the dispatch closure (i.e. the
     /// callback already holds the inner borrow) returns
-    /// `SubCallError::ProviderBorrowed` rather than panicking. In practice
+    /// `SubCallError::ProviderBorrowed` rather than panicking. In practice,
     /// the production [`crate::storage::evm::EvmStorageProvider`] and
     /// `outbe_evm::storage::CtxStorageProvider` provider impls only release
-    /// the borrow after `sub_call` returns, so a hostile re-entry from
-    /// inside the child frame is observable as a structured error.
+    /// the borrow after `sub_call` returns. As a result, a hostile re-entry
+    /// from inside the child frame is observable as a structured error.
     fn do_sub_call(&self, input: SubCallInput) -> std::result::Result<SubCallOutput, SubCallError> {
         let mut guard = self
             .inner

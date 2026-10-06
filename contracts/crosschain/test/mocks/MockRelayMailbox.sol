@@ -8,7 +8,7 @@ import {IMessageRecipient} from "src/interfaces/IHyperlane.sol";
 /// `MockHyperlaneMailbox` holds its peer as a live contract reference and delivers
 /// inside `dispatch`, which only works when both ends share one EVM. Across two
 /// chains that reference cannot exist, so this one records the message and emits
-/// it; an off-chain relay watches the event and calls `deliver` on the other side.
+/// it. An off-chain relay watches the event and calls `deliver` on the other side.
 contract MockRelayMailbox {
     uint32 public immutable localDomain;
 
@@ -20,7 +20,7 @@ contract MockRelayMailbox {
         bytes32 indexed messageId, uint32 indexed destinationDomain, bytes32 sender, bytes32 recipient, bytes message
     );
 
-    /// @dev Emitted on delivery so a scenario can assert arrival rather than guess.
+    /// @dev The mailbox emits this on delivery so a scenario can assert arrival rather than guess.
     event Delivered(uint32 indexed origin, bytes32 indexed recipient, bytes32 sender);
 
     /// @notice Hook metadata of the most recent metadata-carrying dispatch.
@@ -56,7 +56,7 @@ contract MockRelayMailbox {
         return _record(destinationDomain, recipientAddress, messageBody);
     }
 
-    /// @notice Delivery hook the relay calls on the destination chain; invokes the
+    /// @notice Delivery hook the relay calls on the destination chain. Invokes the
     ///         recipient's `handle` as the local mailbox, as a real one would.
     function deliver(uint32 _origin, bytes32 _sender, bytes32 _recipient, bytes calldata _message) external {
         address target = address(uint160(uint256(_recipient)));

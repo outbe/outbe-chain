@@ -3,8 +3,8 @@
 //! Tests in this file pin the public-API surface of `SystemTxPhase` and
 //! `expected_begin_block_kinds` that drive the begin-zone phase routing.
 //! Some tests assert the *cursor-level* invariant that lays the foundation
-//! for moving Phase 1 commit into pre-execution; tests whose verification
-//! requires the actual commit-timing move are marked `#[ignore]` and point
+//! for moving Phase 1 commit into pre-execution. Tests whose verification
+//! requires the actual commit-timing move are marked `#[ignore]`. They point
 //! to (Phase 1 commit-into-pre-execution + state-root ordering).
 
 use outbe_evm::system_tx::{

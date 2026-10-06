@@ -1,14 +1,14 @@
 //! `calc_subcall_gas` differential
 //! proptest harness.
 //!
-//! Throwaway research file; delete on or after lands the
-//! real production `calc_subcall_gas` invoked from `run_sub_call_impl`.
+//! Throwaway research file. Delete it on or after the real production
+//! `calc_subcall_gas`, invoked from `run_sub_call_impl`, lands.
 //!
 //! ## What this spike proves
 //!
 //! The proptest exercises the *deterministic core* of upstream
 //! `revm-interpreter-35.0.1/src/instructions/contract/call_helpers.rs:55`
-//! `load_acc_and_calc_gas` - namely the EIP-150 forward-cap formula
+//! `load_acc_and_calc_gas`. This core is the EIP-150 forward-cap formula
 //! `min(parent_remaining - parent_remaining / 64, stack_gas_limit)` and
 //! the call stipend addition. Two independent implementations
 //! (`local_calc_subcall_gas_cap` and `reference_calc_subcall_gas_cap`)
@@ -29,8 +29,8 @@
 //!
 //! Upstream `load_acc_and_calc_gas` consumes `&mut InstructionContext<'_,
 //! H, impl InterpreterTypes>`. Outbe's sub-call driver does not own an
-//! `Interpreter` (sub-call enters from precompile dispatch, not the
-//! opcode handler), so the driver must reproduce the gas calculation
+//! `Interpreter`. The sub-call enters from precompile dispatch, not from
+//! the opcode handler. So the driver must reproduce the gas calculation
 //! against `&mut EthEvmContext<DB>` + `SubcallGasMeter` directly. This
 //! proptest gates: byte-equal output for any input the production mirror
 //! sees.
@@ -57,8 +57,8 @@ struct GasCapInput {
 /// `load_acc_and_calc_gas` lines 86-101.
 ///
 /// `stipend_reduction_divisor` defaults to 64 mainnet (per
-/// `revm-context-interface-17.0.1/src/cfg/gas_params.rs:211`); kept as a
-/// parameter so the proptest can vary it.
+/// `revm-context-interface-17.0.1/src/cfg/gas_params.rs:211`). This
+/// function takes it as a parameter so the proptest can vary it.
 fn local_calc_subcall_gas_cap(input: GasCapInput) -> u64 {
     let GasCapInput {
         parent_remaining,
@@ -118,8 +118,8 @@ fn reference_calc_subcall_gas_cap(input: GasCapInput) -> u64 {
 proptest! {
     // differential proptest >= 1000 cases vs upstream
     // load_acc_and_calc_gas. We exercise the deterministic EIP-150
-    // reduction + stipend addition; cold/warm and state_gas paths are
-    // owned by T4 once InstructionContext is available.
+    // reduction + stipend addition. T4 owns the cold/warm and state_gas
+    // paths once InstructionContext is available.
     #![proptest_config(ProptestConfig::with_cases(1000))]
 
     #[test]
@@ -128,7 +128,7 @@ proptest! {
         stack_gas_limit in 0u64..=u64::MAX,
         transfers_value in any::<bool>(),
         tangerine_active in any::<bool>(),
-        // Divisor cannot be 0; upstream gas_params table guarantees 64
+        // Divisor cannot be 0. The upstream gas_params table guarantees 64
         // mainnet. Vary in [1, 256] to catch off-by-one regressions.
         stipend_reduction_divisor in 1u64..=256,
         call_stipend in 0u64..=u64::MAX,

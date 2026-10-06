@@ -11,9 +11,10 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
-/// @dev The ERC-7786 hub as the proceeds leg meets it: wrap the payload, bump the nonce, hash the body the
-///      mailbox would hash. Only the mailbox's own merkle insert, hook and IGP payment are left out - those
-///      need a fork, and `ClearingRelayMailboxGas.t.sol` prices them at ~157k a send.
+/// @dev The ERC-7786 hub as the proceeds leg meets it. It wraps the payload, bumps the nonce and
+///      hashes the body the mailbox would hash. It leaves out only the mailbox's own merkle insert,
+///      hook and IGP payment. Those need a fork, and `ClearingRelayMailboxGas.t.sol` prices them at
+///      ~157k a send.
 contract LocalWcoenGateway {
     event MessageDispatched(bytes32 indexed id, bytes body);
 
@@ -36,8 +37,11 @@ contract LocalWcoenGateway {
     }
 }
 
-/// @dev `ERC7786TokenBridge.sendAndCall` in lock-unlock mode, statement for statement: take the tokens, wrap
-///      (from, to, amount, extraData), carry the destination gas as an ERC-7786 attribute, hand it to the hub.
+/// @dev `ERC7786TokenBridge.sendAndCall` in lock-unlock mode, statement for statement:
+///      1. Take the tokens.
+///      2. Wrap (from, to, amount, extraData).
+///      3. Carry the destination gas as an ERC-7786 attribute.
+///      4. Pass it to the hub.
 contract LocalWcoenTokenBridge {
     bytes4 private constant GAS_LIMIT_ATTR = bytes4(keccak256("executionGasLimit(uint256)"));
 
@@ -79,9 +83,9 @@ contract LocalWcoenTokenBridge {
     }
 }
 
-/// @notice What the refund path costs against the canonical Compact, brought up from the genesis predeploy's
-///         runtime code so it needs no RPC. One measurement per test with state seeded in `setUp`; run with
-///         `--isolate`.
+/// @notice What the refund path costs against the canonical Compact. The Compact comes from the
+///         genesis predeploy's runtime code, so it needs no RPC. Each test takes one measurement,
+///         with state seeded in `setUp`. Run with `--isolate`.
 abstract contract RefundGasBase is CrossChainTest {
     address internal constant COMPACT = 0x00000000000000171ede64904551eeDF3C6C9788;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
@@ -116,7 +120,8 @@ abstract contract RefundGasBase is CrossChainTest {
         }
     }
 
-    /// @dev `held` stays on each bidder's balance after locking, so a refund lands on a balance already in use.
+    /// @dev `held` stays on each bidder's balance after locking, so a refund lands on a balance
+    ///      already in use.
     function _lock(uint256 from, uint256 count, uint32 bidRate, uint128 held) internal {
         uint128 amount = uint128(BridgeMsgCodec.escrowAmount(QUANTITY, BASIS, bidRate));
         for (uint256 i = from; i < from + count; ++i) {
@@ -168,7 +173,8 @@ contract RefundFinalizeGasTest is RefundGasBase {
     }
 }
 
-/// @dev Bids at the clearing rate pay their whole lock, so each lock is deleted instead of kept for a claim.
+/// @dev Bids at the clearing rate pay their whole lock, so each lock is deleted instead of kept for
+///      a claim.
 contract RefundFinalizeWholeLockGasTest is RefundGasBase {
     function setUp() public {
         _setUpEscrow();
@@ -195,7 +201,7 @@ contract RefundClaimUnfinalizedGasTest is RefundGasBase {
     }
 }
 
-/// @dev Bidders 0 and 1 won, bidder 1 already holding the token; bidder 2 lost.
+/// @dev Bidders 0 and 1 won, and bidder 1 already holds the token. Bidder 2 lost.
 contract RefundClaimFinalizedGasTest is RefundGasBase {
     function setUp() public {
         _setUpEscrow();
@@ -226,8 +232,8 @@ contract RefundClaimFinalizedGasTest is RefundGasBase {
     }
 }
 
-/// @notice A day of 200 bidders reaching a target chain in one chunk that carries its winners, closes the day and
-///         routes its proceeds; the last winner is filled in part.
+/// @notice A day of 200 bidders that reaches a target chain in one chunk. The chunk carries its
+///         winners, closes the day and routes its proceeds. The last winner is filled in part.
 contract RefundDayGasTest is RefundGasBase {
     uint256 internal constant BIDDERS = 200;
 
@@ -274,8 +280,8 @@ contract RefundDayGasTest is RefundGasBase {
         emit log_named_uint("day_chunk_40w", _deliverClosingChunk(40));
     }
 
-    /// @dev A chunk that does not close the day pays for its winners, its withdrawal and the day's clearing
-    ///      snapshot, and routes nothing: this is the base every chunk carries.
+    /// @dev A chunk that does not close the day pays for its winners, its withdrawal and the day's
+    ///      clearing snapshot, and routes nothing. This is the base every chunk carries.
     function test_AChunkThatDoesNotCloseTheDay() public {
         emit log_named_uint("day_chunk_40w_open", _deliverChunk(40, 0, 2));
         (, bool finalized,) = escrow.getAuctionStatus(DAY);

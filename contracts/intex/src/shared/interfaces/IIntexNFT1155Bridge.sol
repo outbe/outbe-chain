@@ -28,10 +28,11 @@ struct SendParam {
 
 /// @title IIntexNFT1155Bridge
 /// @author Outbe
-/// @notice Interface for batch cross-chain ERC1155 transfers over the protocol-agnostic ERC-7786 bridge.
-/// @dev Supports single-recipient batch and multi-recipient modes. Sends burn on the source and mint on the
-///      paired adapter registered as the remote messenger for a
-///      chainId. `send*` return the bridge `sendId`; `quote*` return the native fee.
+/// @notice Interface for batch cross-chain ERC1155 transfers over the protocol-agnostic ERC-7786
+///         bridge.
+/// @dev Supports single-recipient batch and multi-recipient modes. Sends burn on the source and
+///      mint on the paired adapter registered as the remote messenger for a chainId. `send*`
+///      return the bridge `sendId`. `quote*` return the native fee.
 interface IIntexNFT1155Bridge {
     // --- Events ---
     /// @notice Emitted when a batch of tokens is sent to one recipient.
@@ -153,24 +154,25 @@ interface IIntexNFT1155Bridge {
     ///      `InvalidPayloadLength`, `ArrayLengthMismatch`) are owned by `IntexNFT1155BridgeCodec`.
     /// @param got The unsupported message-type tag received.
     error UnknownMsgType(uint8 got);
-    /// @notice `crosschainMintOne` was invoked by an external caller; only `address(this)` is allowed.
-    /// @dev `crosschainMintOne` is a self-call shim used by the inbound handler to isolate per-item
-    ///      `token.crosschainMint` reverts. Exposing it externally would let anyone mint tokens for arbitrary
-    ///      recipients.
+    /// @notice An external caller invoked `crosschainMintOne`. Only `address(this)` is allowed.
+    /// @dev `crosschainMintOne` is a self-call shim. The inbound handler uses it to isolate
+    ///      per-item `token.crosschainMint` reverts. Exposing it externally would let anyone mint
+    ///      tokens for arbitrary recipients.
     error NotSelf();
     /// @notice No failed-crosschainMint entry exists for `(receiveId, idx)`.
     /// @param receiveId Inbound bridge message id being retried.
     /// @param idx Position in the original batch with no parked failed-crosschainMint slot.
     error NoSuchFailedCrosschainMint(bytes32 receiveId, uint256 idx);
 
-    /// @notice Register (or clear) the matching adapter on `chainId` as an ERC-7930 interoperable address.
+    /// @notice Register (or clear) the matching adapter on `chainId` as an ERC-7930 interoperable
+    ///         address.
     /// @param chainId Destination/source chainId.
     /// @param interop ERC-7930 interoperable address (empty to clear).
     function setRemoteMessenger(uint32 chainId, bytes calldata interop) external;
 
     /// @notice Sweep residual pre-funded native tokens back to an admin recipient.
     /// @param to Recipient address (must be non-zero).
-    /// @param amount Amount in wei to sweep; must be <= contract balance.
+    /// @param amount Amount in wei to sweep. It must be <= contract balance.
     function sweepNative(address payable to, uint256 amount) external;
 
     // --- Single-recipient batch ---
@@ -181,7 +183,8 @@ interface IIntexNFT1155Bridge {
     /// @return fee Native fee the bridge requires.
     function quoteSend(SendParam calldata _sendParam) external view returns (uint256 fee);
 
-    /// @notice Sends a single token type to one recipient on another chain. Caller funds the fee via `msg.value`.
+    /// @notice Sends a single token type to one recipient on another chain. Caller funds the fee
+    ///         via `msg.value`.
     /// @param _sendParam Single send parameters.
     /// @return sendId Bridge send identifier.
     function send(SendParam calldata _sendParam) external payable returns (bytes32 sendId);
@@ -189,7 +192,8 @@ interface IIntexNFT1155Bridge {
     /// @return fee Native fee the bridge requires.
     function quoteBatchSend(BatchSendParam calldata _sendParam) external view returns (uint256 fee);
 
-    /// @notice Sends multiple token types to one recipient on another chain. Caller funds the fee via `msg.value`.
+    /// @notice Sends multiple token types to one recipient on another chain. Caller funds the fee
+    ///         via `msg.value`.
     /// @param _sendParam Batch send parameters.
     /// @return sendId Bridge send identifier.
     function batchSend(BatchSendParam calldata _sendParam) external payable returns (bytes32 sendId);
@@ -200,7 +204,8 @@ interface IIntexNFT1155Bridge {
     /// @return fee Native fee the bridge requires.
     function quoteMultiSend(MultiRecipientSendParam calldata _sendParam) external view returns (uint256 fee);
 
-    /// @notice Sends tokens to multiple recipients on another chain. Caller funds the fee via `msg.value`.
+    /// @notice Sends tokens to multiple recipients on another chain. Caller funds the fee via
+    ///         `msg.value`.
     /// @param _sendParam Multi-recipient send parameters.
     /// @return sendId Bridge send identifier.
     function multiSend(MultiRecipientSendParam calldata _sendParam) external payable returns (bytes32 sendId);

@@ -103,7 +103,8 @@ impl CeremonyState {
         let max_players = NonZeroU32::new(n)
             .ok_or_else(|| eyre::eyre!("DKG ceremony requires at least one participant"))?;
         // Reconstruct every previously acknowledged dealing before processing new
-        // traffic. The snapshot is ceremony-scoped and replayed in dealer-key order.
+        // traffic. The snapshot is ceremony-scoped. This step replays it in dealer-key
+        // order.
         let (player, player_retry_snapshot) = restore_player(
             info.clone(),
             signing_key.clone(),
@@ -117,7 +118,7 @@ impl CeremonyState {
 
         // Use a BTreeSet for unique ack tracking instead of a counter
         // (BTreeSet, not HashSet - deterministic iteration order on the consensus path).
-        // Start empty - only count self-ack if self-dealing succeeded below.
+        // Start empty. Count the self-ack only if self-dealing succeeded below.
         let acked_players: std::collections::BTreeSet<bls12381::PublicKey> =
             std::collections::BTreeSet::new();
 

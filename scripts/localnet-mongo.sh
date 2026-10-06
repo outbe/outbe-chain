@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Bring up (or tear down) a single-node MongoDB replica set in Docker for the
+# Start (or stop and remove) a single-node MongoDB replica set in Docker for the
 # localnet projection sink.
 #
 # Select this endpoint in each offchain-storage.toml [mongodb] section for a
-# TRANSACTION-CAPABLE deployment (replica set or sharded cluster) - a standalone
-# mongod cannot run the multi-document transactions the projection sink uses. A
-# one-member `rs0` replica set is the smallest such deployment, so that is what
-# we start here.
+# TRANSACTION-CAPABLE deployment (replica set or sharded cluster). A standalone
+# mongod cannot run the multi-document transactions that the projection sink uses.
+# A one-member `rs0` replica set is the smallest such deployment, so this script
+# starts that deployment.
 #
 # Idempotent: `start` reuses an already-running instance (so localnet-restart is
 # instant and does not churn the projection data).
@@ -51,13 +51,13 @@ start() {
 
   if ! docker_cmd inspect "$MONGO_NAME" >/dev/null 2>&1; then
     docker_cmd volume create "$MONGO_VOLUME" >/dev/null
-    # Publish to the host loopback rather than `--network host`: on Docker Desktop
-    # for Mac, host networking joins the Linux VM's netns, so a macOS host process
-    # (the node) cannot reach 127.0.0.1:PORT - it gets connection-refused. A
-    # published port works on both macOS and Linux. `directConnection=true` in the
-    # URI makes the driver ignore the replica-set member's advertised address, so
-    # talking to the forwarded port is fine. --bind_ip_all lets Docker's port
-    # forwarder reach mongod inside the container (loopback-only bind would not).
+    # Publish to the host loopback, not `--network host`. On Docker Desktop for Mac,
+    # host networking joins the Linux VM's netns. Thus a macOS host process (the
+    # node) cannot reach 127.0.0.1:PORT and gets connection-refused. A published
+    # port works on both macOS and Linux. `directConnection=true` in the URI makes
+    # the driver ignore the advertised address of the replica-set member. Thus the
+    # node can talk to the forwarded port. --bind_ip_all lets Docker's port
+    # forwarder reach mongod inside the container (a loopback-only bind would not).
     docker_cmd run -d --name "$MONGO_NAME" \
       -p "127.0.0.1:${MONGO_PORT}:${MONGO_PORT}" \
       --mount "source=${MONGO_VOLUME},target=/data/db" mongo:7.0 \
@@ -80,8 +80,8 @@ start() {
 
   wait_for "primary" 'if (!db.hello().isWritablePrimary) quit(1)'
 
-  # Prove multi-document transactions actually work before handing the URI back -
-  # a mis-provisioned standalone would pass the primary check but fail here.
+  # Prove that multi-document transactions work before the script returns the URI.
+  # A mis-provisioned standalone would pass the primary check but fail here.
   mongosh_eval '
     const s = db.getMongo().startSession();
     s.startTransaction();

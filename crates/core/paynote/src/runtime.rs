@@ -32,12 +32,12 @@ use crate::sol_ext::IERC20;
 use crate::Field;
 
 /// The validated public claim a spend proof carries, returned to the consuming
-/// module. PayNote books the nullifier and any change note; deciding what the
-/// released value buys is the caller's job.
+/// module. PayNote books the nullifier and any change note. The caller decides
+/// what the released value buys.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PayNoteClaim {
     pub asset: Address,
-    /// Opaque settlement statement. The caller recomputes it; PayNote does not.
+    /// Opaque settlement statement. The caller recomputes it. PayNote does not.
     pub context: B256,
     pub spend_amount: U256,
     /// The canonical nullifier this spend booked. It is the only public
@@ -46,15 +46,16 @@ pub struct PayNoteClaim {
     pub nullifier: B256,
 }
 
-/// The circuit capacity fits u32 (currently four); checked to keep ABI and
-/// generated witness changes from silently truncating the published bound.
+/// The circuit capacity fits u32 (currently four). The conversion is checked so
+/// that ABI and generated witness changes cannot silently truncate the
+/// published bound.
 pub(crate) fn max_merge_inputs() -> Result<u32> {
     u32::try_from(MAX_MERGE_INPUTS)
         .map_err(|_| PrecompileError::Fatal("PayNote merge capacity exceeds u32".into()))
 }
 
-/// Proof-authorized consolidation. Shares settlement's canonical nullifiers,
-/// tree and checkpoint; touches no token, Reserve, Oracle or right state.
+/// Proof-authorized consolidation. It shares settlement's canonical nullifiers,
+/// tree and checkpoint. It touches no token, Reserve, Oracle or right state.
 pub(crate) fn merge_pay_notes(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<()> {
     let claim: paynote_merge::alloy::PublicInputs = paynote_merge::decode_public_inputs(proof)
         .and_then(TryInto::try_into)
@@ -118,7 +119,7 @@ pub(crate) fn merge_pay_notes(storage: &StorageHandle<'_>, proof: &[u8]) -> Resu
             .into())
         }
     }
-    // The canonical decoder and circuit prove the confidential U256 sum;
+    // The canonical decoder and circuit prove the confidential U256 sum. The
     // runtime never receives amounts and must not reconstruct them from logs.
     let output = field_from_b256(&claim.output_commitment)
         .map_err(|_| PayNoteError::InvalidInput("merge output is not a canonical field".into()))?;
@@ -159,15 +160,18 @@ fn chain_state(storage: &StorageHandle<'_>) -> Result<(u64, Vec<Field>)> {
     Ok((chain_id, zeros))
 }
 
-/// Appends `leaf` in O(depth) stored state using the Tornado Cash pattern: for
-/// each level, the corresponding `leaf_count` bit decides whether the current
-/// node completes a left subtree (store it in `filled_subtrees` and combine
-/// with the empty subtree) or joins the stored left subtree (combine as the
-/// right node). Finishes with one root/count/root-buffer update and returns
+/// Appends `leaf` in O(depth) stored state with the Tornado Cash pattern. At
+/// each level, the corresponding `leaf_count` bit selects one of two cases:
+/// - The current node completes a left subtree. Store it in `filled_subtrees`
+///   and combine it with the empty subtree.
+/// - The current node joins the stored left subtree. Combine it as the right
+///   node.
+///
+/// The function finishes with one root/count/root-buffer update and returns
 /// `(leaf_index, root_after)`.
 ///
-/// `index` is bounded by [`PAYNOTE_TREE_CAPACITY`] at every call site, so the
-/// `u32` narrowing for the returned leaf index cannot truncate.
+/// Every call site bounds `index` by [`PAYNOTE_TREE_CAPACITY`], so the `u32`
+/// narrowing for the returned leaf index cannot truncate.
 pub(crate) fn append(
     paynote: &PayNoteContract<'_>,
     zeros: &[Field],
@@ -212,7 +216,7 @@ pub(crate) fn deposit(
     if amount.is_zero() {
         return Err(PayNoteError::InvalidInput("deposit amount must be non-zero".into()).into());
     }
-    // `asset != 0` is enforced here such as we do not accept native currency here.
+    // This check enforces `asset != 0` because we do not accept native currency here.
     if asset.is_zero() {
         return Err(PayNoteError::InvalidInput("asset must be non-zero".into()).into());
     }
@@ -229,10 +233,10 @@ pub(crate) fn deposit(
         return Err(PayNoteError::TreeFull.into());
     }
 
-    // The commitment is always derived from the asset and amount this call
-    // actually moves — never caller-supplied — so Merkle membership attests
-    // both. A caller-chosen leaf would let a depositor fund a note in a cheap
-    // token and spend it as an expensive one.
+    // The runtime always derives the commitment from the asset and amount this
+    // call actually moves. The caller never supplies it, so Merkle membership
+    // attests both. A caller-chosen leaf would let a depositor fund a note in a
+    // cheap token and spend it as an expensive one.
     let commitment =
         note_commitment(chain_id, serial, asset, amount).map_err(|_| PayNoteError::Hash)?;
     if commitment.is_zero() {
@@ -245,12 +249,12 @@ pub(crate) fn deposit(
     }
 
     // One rollback unit: token movement, lazy initialization, append,
-    // commitment insert, NewNote. `leaf_count == 0` is the pristine state —
-    // initialization and the first append are atomic, so an active tree never
+    // commitment insert, NewNote. `leaf_count == 0` is the pristine state.
+    // Initialization and the first append are atomic, so an active tree never
     // observes `leaf_count == 0`.
     storage.with_checkpoint(|| {
         let units = amount;
-        // Pull into the pool, then let the router pull from the pool: the
+        // Pull into the pool, then let the router pull from the pool. The
         // router's `deposit` is a `transferFrom(caller, SELF)`, so the pool
         // must both hold the tokens and approve the router.
         let before = token_balance(&storage, asset)?;
@@ -335,15 +339,15 @@ fn token_balance(storage: &StorageHandle<'_>, asset: Address) -> Result<U256> {
 /// claim. Moves no tokens.
 ///
 /// The proof is the single source of truth for the statement it carries.
-/// `context` is an opaque public word; the caller recomputes the settlement
+/// `context` is an opaque public word. The caller recomputes the settlement
 /// statement and compares it. PayNote does not interpret the word.
 ///
-/// Notes are bearer instruments — spend authority is knowledge of the spend
-/// key, not an address — so there is deliberately no caller check. Any address
+/// Notes are bearer instruments: spend authority is knowledge of the spend
+/// key, not an address. Thus there is deliberately no caller check. Any address
 /// may relay a proof. The nullifier does not include `context`, so every
 /// statement for one note shares one use.
 pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNoteClaim> {
-    // Framing must decode before any state is touched.
+    // Framing must decode before the function touches any state.
     let claim: PayNotePublicInputs = decode_paynote_public_inputs(proof)
         .and_then(TryInto::try_into)
         .map_err(|error| PayNoteError::InvalidInput(format!("proof is malformed: {error}")))?;
@@ -354,12 +358,12 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
         return Err(PayNoteError::NotInitialized.into());
     }
 
-    // A proof-supplied chain ID is never trusted.
+    // The runtime never trusts a proof-supplied chain ID.
     if claim.chain_id != runtime_chain_id {
         return Err(PayNoteError::InvalidInput("chain ID does not match runtime".into()).into());
     }
 
-    // `asset != 0` is enforced here such as we do not accept native currency here.
+    // This check enforces `asset != 0` because we do not accept native currency here.
     if claim.asset.is_zero() {
         return Err(PayNoteError::InvalidInput("asset must be non-zero".into()).into());
     }
@@ -401,7 +405,7 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
         }
     }
 
-    // A full spend requires the zero change sentinel; a partial spend appends
+    // A full spend requires the zero change sentinel. A partial spend appends
     // exactly the circuit-derived deterministic change.
     let partial = !change.is_zero();
     let change_word = claim.change_commitment;
@@ -409,9 +413,10 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
         if paynote.leaf_count.read()? >= PAYNOTE_TREE_CAPACITY {
             return Err(PayNoteError::TreeFull.into());
         }
-        // Anyone knowing the current key can pre-create the deterministic
-        // change; the resulting duplicate reverts atomically. Accepted DoS
-        // exposure — never a fallback to spending without recording change.
+        // Anyone who knows the current key can pre-create the deterministic
+        // change. The resulting duplicate reverts atomically. This is an
+        // accepted DoS exposure. There is never a fallback to spending without
+        // recording change.
         if paynote.commitments.read(&change_word)? {
             return Err(PayNoteError::CommitmentExists.into());
         }

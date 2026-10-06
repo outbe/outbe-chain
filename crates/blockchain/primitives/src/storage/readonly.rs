@@ -1,8 +1,8 @@
 //! Read-only storage provider backed by a Reth StateProvider.
 //!
-//! Used by the consensus layer to read precompile state (e.g., the ValidatorSet
+//! The consensus layer uses it to read precompile state (e.g., the ValidatorSet
 //! contract) at a specific block height without going through the EVM.
-//! Only `sload()` is functional; all write operations are no-ops.
+//! Only `sload()` is functional. All write operations are no-ops.
 
 use alloy_primitives::{Address, LogData, B256, U256};
 use revm::{
@@ -24,14 +24,14 @@ pub trait StorageReader {
     /// is outside the chain's canonical-history window (e.g. ahead of the
     /// current head, or pruned past retention).
     ///
-    /// this is read-only access used by RPC views that
-    /// want to expose canonical history. The default returns `Ok(None)`
-    /// because most `StorageReader` users (txpool admission, consensus
-    /// validator-set reads) do not bridge block hashes at all and answering
-    /// "I don't know" through this surface is honest - the canonical
-    /// answer for `submit_invalid_vrf_evidence` lives on
-    /// `PrecompileStorageProvider::canonical_block_hash`, which has no
-    /// default and must be implemented by every production provider.
+    /// This is read-only access for RPC views that want to expose canonical
+    /// history. The default returns `Ok(None)` because most `StorageReader`
+    /// users (txpool admission, consensus validator-set reads) do not bridge
+    /// block hashes at all. For them, the answer "I don't know" through this
+    /// surface is honest. The canonical answer for
+    /// `submit_invalid_vrf_evidence` lives on
+    /// `PrecompileStorageProvider::canonical_block_hash`. That method has no
+    /// default, and every production provider must implement it.
     fn read_canonical_block_hash(&self, _number: u64) -> Result<Option<B256>> {
         Ok(None)
     }
@@ -64,9 +64,10 @@ impl ReadOnlyBlockContext {
     }
 }
 
-/// Only `sload()` works - all write operations are rejected. Context-free
-/// constructors retain zero block fields for pure storage reads; readers whose
-/// answer depends on time or height must require [`ReadOnlyBlockContext`].
+/// Only `sload()` works. This provider rejects all write operations.
+/// Context-free constructors retain zero block fields for pure storage reads.
+/// Readers whose answer depends on time or height must require
+/// [`ReadOnlyBlockContext`].
 pub struct ReadOnlyStorageProvider<R> {
     reader: R,
     chain_id: u64,

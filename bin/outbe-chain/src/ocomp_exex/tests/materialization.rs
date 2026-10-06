@@ -178,7 +178,8 @@ fn all_requests_materialized(
         .all(|intent_id| materialized_requests.contains(&intent_id))
 }
 
-// Reuses the existing native proof fixture shape from snapshot tests; not worker execution.
+// Reuses the existing native proof fixture shape from snapshot tests. This is not worker
+// execution.
 #[cfg(feature = "snapshot-integration")]
 mod copied_public_work {
     use super::super::recovery::copied_native;
@@ -253,7 +254,7 @@ mod copied_public_work {
         result_chunk_refs: Vec<CasObjectRefV1>,
     }
     // Protocol-shaped native CAS/planner fixture. Minimal non-root phase payloads
-    // support structural/proof tests; this is not real worker-pipeline E2E evidence.
+    // support structural/proof tests. This is not real worker-pipeline E2E evidence.
     fn protocol_bundle() -> ProtocolBundleV1 {
         ProtocolBundleV1 {
             protocol_version: 1,
@@ -1952,7 +1953,7 @@ mod copied_public_work {
                     validators.config_owner.write(sender).unwrap();
                     validators.set_config_max_validators(128).unwrap();
                     validators.config_epoch_length_blocks.write(10).unwrap();
-                    // BLS12-381 G1 generator compressed; only fixture admission uses it.
+                    // BLS12-381 G1 generator compressed. Only fixture admission uses it.
                     // No consensus signer/quorum or SGX identity is constructed here.
                     let key: [u8; 48] = hex::decode("97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb").unwrap().try_into().unwrap();
                     validators.register_validator(sender, sender, &key).unwrap();
@@ -2448,7 +2449,7 @@ mod copied_public_work {
                 url: &str,
             ) {
                 // Reuse the existing component fixture. Configure all policy owners
-                // consistently; this does not construct another FullNode adapter.
+                // consistently. This does not construct another FullNode adapter.
                 runtime.domain = EmbeddedOcompDomainV1::open(EmbeddedOcompDomainConfigV1 {
                     domain_root: public.to_path_buf(),
                     registry_generation: 1,
@@ -2576,7 +2577,7 @@ mod copied_public_work {
                 }
                 assert_eq!(quiet.closure_checkpoint.current().unwrap(), h);
                 assert!(quiet.jobs.is_empty() && quiet.requests.is_empty());
-                // The quiet C=H branch in run.rs refreshes jobs; it does not call the
+                // The quiet C=H branch in run.rs refreshes jobs. It does not call the
                 // effect drivers without a new finalized frame. Empty requests model
                 // pruned terminal jobs, not successful Completed verification.
                 quiet.refresh_jobs(H, h.block_hash, true).await.unwrap();
@@ -2652,7 +2653,7 @@ mod copied_public_work {
                     assert!(resumed.materialization_active.is_some() && resumed.payout_active);
                     // Drop the originals: after each result, Disconnected proves the
                     // producer released its channel. The isolated process bounds a
-                    // worker stuck before that point; no worker join API is invented.
+                    // worker stuck before that point. No worker join API is invented.
                     drop(std::mem::replace(
                         &mut resumed.materialization_tx,
                         std::sync::mpsc::channel().0,

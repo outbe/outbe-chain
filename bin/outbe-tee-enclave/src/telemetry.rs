@@ -1,10 +1,10 @@
 //! Enclave-side request telemetry: per-request stderr log lines, process-global
 //! request counters, uptime, and heap accounting via a counting allocator.
 //!
-//! Everything here is observability only - no wire data, no key material, no
-//! consensus input. Counters are relaxed atomics; exact cross-thread ordering
+//! Everything here is observability only: no wire data, no key material, no
+//! consensus input. Counters are relaxed atomics. Exact cross-thread ordering
 //! is not required. Timing uses `SystemTime` (the production-precedent clock
-//! source under Gramine - see `set_remote_read_deadline`); a negative elapsed
+//! source under Gramine, see `set_remote_read_deadline`). A negative elapsed
 //! from clock adjustment clamps to zero.
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -32,8 +32,8 @@ impl RequestOutcome {
 
 /// Request class as counted by [`EnclaveHealthStatusV1`]'s fixed fields.
 /// Mirrors the private `CommandClass` capability matrix in `initialization.rs`
-/// (which stays the single authorization authority - this enum only names the
-/// health-counter buckets).
+/// (which stays the single authorization authority). This enum only names the
+/// health-counter buckets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RequestClassLabel {
     Initialized,
@@ -57,13 +57,13 @@ static CLASS_DEV_RECIPIENT_INGEST: AtomicU64 = AtomicU64::new(0);
 
 static PROCESS_START: OnceLock<SystemTime> = OnceLock::new();
 
-/// Record the process start time. Idempotent; the first call wins.
+/// Record the process start time. Idempotent: the first call wins.
 pub fn mark_process_start() {
     let _ = PROCESS_START.set(SystemTime::now());
 }
 
-/// Whole seconds since [`mark_process_start`]; 0 when never marked or when the
-/// clock stepped backwards.
+/// Whole seconds since [`mark_process_start`]. Returns 0 when never marked or
+/// when the clock stepped backwards.
 pub fn uptime_s() -> u64 {
     PROCESS_START
         .get()
@@ -130,7 +130,7 @@ pub fn now_unix_and_elapsed_ms(started: SystemTime) -> (u64, u64) {
 }
 
 /// One stable, greppable stderr line per dispatched request. The `req=` prefix
-/// is the grep anchor; values never contain spaces. Deliberately free of the
+/// is the grep anchor. Values never contain spaces. Deliberately free of the
 /// words the e2e log audit flags (`fatal`, `panic`).
 pub fn format_request_log(
     ts_s: u64,
@@ -174,7 +174,7 @@ fn heap_add(bytes: usize) {
 
 fn heap_sub(bytes: usize) {
     // Saturating: a dealloc raced against process start can otherwise wrap.
-    // Nightly renames `fetch_update` to `try_update`; the replacement is not
+    // Nightly renames `fetch_update` to `try_update`. The replacement is not
     // on stable 1.96 yet, so silence the nightly-only deprecation until then.
     #[allow(deprecated)]
     let _ = HEAP_CURRENT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
@@ -190,7 +190,7 @@ fn heap_sub(bytes: usize) {
 /// allocator overhead/fragmentation, and direct mmaps.
 pub struct CountingAllocator;
 
-// `GlobalAlloc` is an inherently `unsafe` trait - there is no safe way to
+// `GlobalAlloc` is an inherently `unsafe` trait. There is no safe way to
 // provide a global allocator. This is the crate's documented exception to the
 // no-unsafe rule: the impl delegates every allocation verbatim to `System`
 // (upholding its contract unchanged) and only adds relaxed atomic bookkeeping,
@@ -199,7 +199,7 @@ pub struct CountingAllocator;
 // SAFETY: see above - pure delegation to `System` plus lock-free counters.
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        // SAFETY: caller upholds `GlobalAlloc::alloc`'s contract; forwarded as-is.
+        // SAFETY: caller upholds `GlobalAlloc::alloc`'s contract. Forwarded as-is.
         let ptr = unsafe { System.alloc(layout) };
         if !ptr.is_null() {
             heap_add(layout.size());
@@ -208,13 +208,13 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        // SAFETY: caller upholds `GlobalAlloc::dealloc`'s contract; forwarded as-is.
+        // SAFETY: caller upholds `GlobalAlloc::dealloc`'s contract. Forwarded as-is.
         unsafe { System.dealloc(ptr, layout) };
         heap_sub(layout.size());
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        // SAFETY: caller upholds `GlobalAlloc::realloc`'s contract; forwarded as-is.
+        // SAFETY: caller upholds `GlobalAlloc::realloc`'s contract. Forwarded as-is.
         let new_ptr = unsafe { System.realloc(ptr, layout, new_size) };
         if !new_ptr.is_null() {
             heap_sub(layout.size());
@@ -224,7 +224,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        // SAFETY: caller upholds `GlobalAlloc::alloc_zeroed`'s contract; forwarded as-is.
+        // SAFETY: caller upholds `GlobalAlloc::alloc_zeroed`'s contract. Forwarded as-is.
         let ptr = unsafe { System.alloc_zeroed(layout) };
         if !ptr.is_null() {
             heap_add(layout.size());

@@ -4,7 +4,7 @@
 //!
 //! This is the typed replacement for the `cast`-based RPC readers and the
 //! scenario polling helpers used by the lifecycle and update flows.
-//! Reads return `Option` - `None` is the analogue of the shell
+//! Reads return `Option`. `None` is the analogue of the shell
 //! `2>/dev/null || echo dn`. Only governance (`vote`), tribute, `confirm-ready`,
 //! and `slash config` still go through `outbe-cli` (the product CLI under test).
 

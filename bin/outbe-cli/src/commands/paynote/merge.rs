@@ -1,5 +1,5 @@
 //! Durable bounded merges. Immutable notes and operation files are the recovery
-//! source; spendability is always recomputed from one canonical chain snapshot.
+//! source. Spendability is always recomputed from one canonical chain snapshot.
 use super::*;
 use outbe_paynote::client::merge_witness;
 use outbe_zk_canonical::paynote_merge::{self, PaynoteMerge, MAX_MERGE_INPUTS};
@@ -251,7 +251,7 @@ struct NoteState {
     spent: bool,
 }
 
-// NB: scans saved operation history; add an index only when wallet size warrants it.
+// NB: scans saved operation history. Add an index only when wallet size warrants it.
 async fn reservations(client: &impl Rpc, dir: &Path, snapshot: &Snapshot) -> Result<HashSet<B256>> {
     let mut reserved = HashSet::new();
     let mut states = HashMap::new();

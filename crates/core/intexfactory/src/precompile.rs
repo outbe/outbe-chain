@@ -28,7 +28,7 @@ sol!(
     "../../../contracts/precompiles/src/IIntexFactory.sol"
 );
 
-/// Base gas charged by the registry before invoking [`dispatch`]: `settleIntexWithPayNote`
+/// Base gas the registry charges before it invokes [`dispatch`]: `settleIntexWithPayNote`
 /// verifies a PayNote spend proof, which is real native work every validator
 /// repeats.
 pub fn base_gas(input: &[u8]) -> u64 {
@@ -110,13 +110,13 @@ pub fn dispatch(
     value: U256,
 ) -> Result<Bytes> {
     // IntexFactory is a payable route, so the boundary credits value to this
-    // address; every selector the module has not published refuses it here.
+    // address. Every selector the module has not published refuses it here.
     reject_value_unless_payable(data, PAYABLE_SELECTORS, &value)?;
     #[cfg(feature = "e2e-test")]
     if let Ok(call) = IIntexFactoryTestArming::seedDayVwapsForTestCall::abi_decode(data) {
         // What `set_vwap` does in this module's own tests: the per-day value keyed by
         // the pair's registry index, and the watermark the begin-block hook would move.
-        // Nothing is added to the Oracle crate; only the days it serves are filled in.
+        // This adds nothing to the Oracle crate. It only writes data for the days the crate serves.
         use outbe_oracle::schema::OracleContract;
         use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
@@ -256,7 +256,7 @@ pub fn dispatch(
                 }),
                 // Off-chain the owner brute-forces `nonce` so the work hash
                 // SHA256(owner ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)
-                // has the protocol's leading zero bytes; `seq` is the on-chain
+                // has the protocol's leading zero bytes. `seq` is the on-chain
                 // per-(series, owner) counter.
                 minePromis(c) => mutate(c, caller, |_sender, c| {
                     let auth = outbe_promisfactory::api::ModifyAuth {

@@ -57,7 +57,7 @@ use settlement_abi::{IGemFactory, IIntexFactory, INodFactory};
 
 /// Deposit shielded paynotes and generate spend proofs.
 ///
-/// Assets are ERC20 addresses; amounts are positive integers in token base units.
+/// Assets are ERC20 addresses. Amounts are positive integers in token base units.
 /// Notes and proofs are saved under ./paynotes. Note files contain bearer secrets.
 /// Deposits approve tokens when needed. Partial spends create a change note,
 /// which becomes spendable after the proof is consumed on-chain.
@@ -92,9 +92,9 @@ pub enum PaynoteCmd {
         #[arg(long)]
         resume: Option<PathBuf>,
     },
-    /// Reconcile notes with a canonical snapshot; no arguments checks ./paynotes.
+    /// Reconcile notes with a canonical snapshot. With no arguments, it checks ./paynotes.
     Status { paynotes: Vec<String> },
-    /// Deposit ERC20 base units; save the bearer secret in ./paynotes.
+    /// Deposit ERC20 base units. Save the bearer secret in ./paynotes.
     Deposit {
         asset: Address,
         #[arg(value_parser = parse_amount)]
@@ -683,7 +683,7 @@ async fn read_tree(client: &impl Rpc, chain_id: u64) -> Result<PayNoteTree> {
     let tag = format!("0x{head:x}");
     let mut tree = new_tree(chain_id)?;
     let mut from = 0u64;
-    // NB: scan all history, O(leaves) memory; cache the tree when pool size warrants it.
+    // NB: scan all history with O(leaves) memory. Cache the tree when pool size warrants it.
     loop {
         let to = from.saturating_add(999).min(head);
         let logs = client

@@ -1,10 +1,14 @@
 //! Assembly of one PoC closure from independently verified lane bundles.
 //!
-//! Lane runners publish immutable manifests first. Closure assembly re-verifies
-//! every required execution lane against the checked-out source, copies every
-//! retained member into a new namespace, re-hashes the copied bytes and rewrites
-//! assertion references to the closure namespace. `OCM-VERIFY` is the verifier
-//! invocation over the resulting closure, not a self-attested input lane.
+//! Lane runners publish immutable manifests first. Closure assembly then:
+//!
+//! - re-verifies every required execution lane against the checked-out source
+//! - copies every retained member into a new namespace
+//! - re-hashes the copied bytes
+//! - rewrites assertion references to the closure namespace
+//!
+//! `OCM-VERIFY` is the verifier invocation over the resulting closure, not a
+//! self-attested input lane.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};

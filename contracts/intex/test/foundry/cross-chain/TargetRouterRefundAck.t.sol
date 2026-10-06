@@ -38,8 +38,8 @@ contract ClosableEscrowAdapter {
     }
 }
 
-/// A refund chunk that was already applied, or that lands after the escrow closed the day, is
-/// acknowledged without effect instead of bouncing back to the transport.
+/// The router acknowledges without effect a refund chunk that was already applied, or that lands
+/// after the escrow closed the day. The chunk does not bounce back to the transport.
 contract TargetRouterRefundAckTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant DAY = 20_260_713;

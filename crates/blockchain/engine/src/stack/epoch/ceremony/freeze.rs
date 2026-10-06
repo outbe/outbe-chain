@@ -108,12 +108,14 @@ where
                     &new_participants,
                 );
                 if local_role == LocalDkgRole::NotParticipant {
-                    // A share-less verifier-follower does not run a ceremony,
-                    // but it observes the same finalized dealer logs, reconstructs
-                    // the exact incoming output, publishes/validates the same
-                    // preannounce, and crosses the same outgoing-finalized
-                    // handoff as participants. Reusing the old polynomial at the
-                    // planned height would bypass authentication and cannot follow
+                    // A share-less verifier-follower does not run a ceremony.
+                    // Like participants, it:
+                    // - observes the same finalized dealer logs,
+                    // - reconstructs the exact incoming output,
+                    // - publishes/validates the same preannounce,
+                    // - crosses the same outgoing-finalized handoff.
+                    // Reusing the old polynomial at the planned height would
+                    // bypass authentication and cannot follow
                     // membership-changing rotations safely.
                     if self.state.signing_share.is_none() {
                         let peer_map = build_peer_map(&new_set, &self.bootnode_map);

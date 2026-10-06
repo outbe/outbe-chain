@@ -270,7 +270,7 @@ fn mixed_base_and_pending_pages_count_metadata_in_the_byte_budget() -> Result<()
     let base = Arc::new(MemoryStorage::new());
     let namespace = Namespace::new("records")?;
     let metadata = StorageMetadata::new(BTreeMap::from([("kind".into(), "large".into())]))?;
-    // Two values alone fit exactly; their metadata must force a second page.
+    // Two values alone fit exactly. Their metadata must force a second page.
     let value_len = MAX_SCAN_PAGE_VALUE_BYTES / 2;
     let large = StoredValue::with_metadata(Value::new(vec![1; value_len])?, metadata);
     let first = Key::new(b"a".to_vec())?;

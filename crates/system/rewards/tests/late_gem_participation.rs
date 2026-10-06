@@ -42,7 +42,7 @@ fn seed(ctx: &BlockRuntimeContext) {
         proof_kind: ParentParticipationProof::Finalization,
         missed_proposers: vec![],
     };
-    // This seam consumes already-verified CPA; cryptographic checks live in EVM.
+    // This seam consumes already-verified CPA. Cryptographic checks live in EVM.
     on_finalized_metadata(ctx, &metadata, U256::ZERO, MIDNIGHT - 1, &VOTERS[..3]).unwrap();
     outbe_oracle::api::register_pair(ctx.storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
         .unwrap();

@@ -34,11 +34,14 @@ interface IUpgradeProbe {
     function upgradeProbe() external pure returns (uint256);
 }
 
-/// @dev End-to-end upgrade rehearsal: deploy v1 behind a proxy, populate real state, upgrade the
-///      implementation to a v1.1 stub that adds a new view, then assert that persisted state
-///      survived the upgrade, the implementation pointer moved, and the new view is callable.
-///      Covers one upgrade per impl contract. All four bridge clients (OriginRouter, TargetRouter, both
-///      NFT bridge clients) run against a standalone {MockERC7786Bridge}.
+/// @dev End-to-end upgrade rehearsal. The rehearsal has these steps:
+///      1. Deploy v1 behind a proxy.
+///      2. Populate real state.
+///      3. Upgrade the implementation to a v1.1 stub that adds a new view.
+///      4. Assert that persisted state survived the upgrade, the implementation pointer moved,
+///         and the new view is callable.
+///      Covers one upgrade per impl contract. All four bridge clients (OriginRouter, TargetRouter,
+///      both NFT bridge clients) run against a standalone {MockERC7786Bridge}.
 contract UpgradeDrillTest is CrossChainTest {
     uint32 internal constant A_CHAIN_ID = 1;
     uint32 internal constant B_CHAIN_ID = 2;
@@ -78,12 +81,12 @@ contract UpgradeDrillTest is CrossChainTest {
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexNFT1155V2Reinit")) - 1)) & ~bytes32(uint256(0xff))
-    // Mirrors IntexNFT1155V2Reinit's private storage slot (UpgradeStubs.sol) so the migrated
-    // field can be read via vm.load without a dedicated getter on the stub.
+    // Mirrors IntexNFT1155V2Reinit's private storage slot (UpgradeStubs.sol) so the test can read
+    // the migrated field via vm.load without a dedicated getter on the stub.
     bytes32 private constant _V2_REINIT_SLOT = 0xa6131e184e5aae318840a83507194e5ed64c56b50a1ac526e8c519cdd8bb2200;
 
-    /// @dev Exercises the `upgradeToAndCall` init-data path: upgrade runs a `reinitializer(2)`
-    ///      migration that sets a new v2 field, while pre-upgrade state survives.
+    /// @dev Exercises the `upgradeToAndCall` init-data path. The upgrade runs a `reinitializer(2)`
+    ///      migration that sets a new v2 field. Pre-upgrade state survives.
     function test_Drill_IntexNFT1155_ReinitializerPath() public {
         IntexNFT1155 nft = DeployProxy.intexNFT1155(admin, admin);
         address owner = makeAddr("owner");

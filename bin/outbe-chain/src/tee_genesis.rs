@@ -51,27 +51,27 @@ struct TeeGenesisArgs {
     #[arg(long)]
     output: PathBuf,
 
-    /// Genesis-fixed attestation mode; there is no runtime fallback.
+    /// Genesis-fixed attestation mode. There is no runtime fallback.
     #[arg(long, value_enum)]
     mode: TeeGenesisMode,
 
-    /// Exact release MRENCLAVE (32-byte hex); required only for DcapRequired.
+    /// Exact release MRENCLAVE (32-byte hex). Required only for DcapRequired.
     #[arg(long)]
     mrenclave: Option<String>,
 
-    /// Exact release MRSIGNER (32-byte hex); required only for DcapRequired.
+    /// Exact release MRSIGNER (32-byte hex). Required only for DcapRequired.
     #[arg(long)]
     mrsigner: Option<String>,
 
-    /// Exact release ISV product ID; required only for DcapRequired.
+    /// Exact release ISV product ID. Required only for DcapRequired.
     #[arg(long)]
     isv_prod_id: Option<u16>,
 
-    /// Minimum accepted release ISV SVN; required only for DcapRequired.
+    /// Minimum accepted release ISV SVN. Required only for DcapRequired.
     #[arg(long)]
     minimum_isv_svn: Option<u16>,
 
-    /// Minimum Intel TCB evaluation data number; required only for DcapRequired.
+    /// Minimum Intel TCB evaluation data number. Required only for DcapRequired.
     #[arg(long)]
     minimum_tcb_evaluation_data_number: Option<u32>,
 }

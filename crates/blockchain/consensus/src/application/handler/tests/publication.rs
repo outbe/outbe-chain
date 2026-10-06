@@ -43,7 +43,7 @@ fn staged_publication_releases_the_digest_before_persistence_and_flushes_without
         );
 
         // The original caller may discard its digest response and Simplex may
-        // restart with another application clone; neither owns the staged block.
+        // restart with another application clone. Neither owns the staged block.
         let mut restarted = fixture.app.clone();
         drop(fixture.app);
         assert!(restarted.certify(round, digest).await.await.unwrap());

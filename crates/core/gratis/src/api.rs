@@ -13,7 +13,7 @@ use crate::schema::Gratis;
 
 // --- Reads ---
 
-/// Encrypted balance blob for `account`; decrypt client-side with the view key.
+/// Encrypted balance blob for `account`. Decrypt it client-side with the view key.
 pub fn balance_ct(storage: StorageHandle<'_>, account: Address) -> Result<Vec<u8>> {
     Gratis::new(storage).balance_ct_of(account)
 }
@@ -24,7 +24,8 @@ pub fn op_nonce(storage: StorageHandle<'_>, account: Address) -> Result<u64> {
     Gratis::new(storage).op_nonce_of(account)
 }
 
-/// Public total circulating supply (aggregate; per-account balances hidden).
+/// Public total circulating supply. The value is an aggregate. Per-account balances
+/// stay hidden.
 pub fn total_supply(storage: StorageHandle<'_>) -> Result<U256> {
     Gratis::new(storage).total_supply()
 }

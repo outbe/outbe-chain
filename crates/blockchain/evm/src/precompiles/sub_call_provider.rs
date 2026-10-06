@@ -21,9 +21,9 @@ use std::sync::Arc;
 /// Precompile provider for the borrow-mode sub-call `Evm`
 /// (`CTX = &mut EthEvmContext<DB>`), used by [`crate::sub_call`].
 ///
-/// Mirrors the top-level [`alloy_evm::precompiles::PrecompilesMap`] semantics so a sub-call to any
-/// outbe precompile behaves exactly like a top-level call: outbe stateful
-/// precompiles dispatch through [`outbe_ctx_dispatch`], and everything else
+/// Mirrors the top-level [`alloy_evm::precompiles::PrecompilesMap`] semantics, so a sub-call to
+/// any outbe precompile behaves exactly like a top-level call. Outbe stateful
+/// precompiles dispatch through [`outbe_ctx_dispatch`]. Everything else
 /// (Ethereum precompiles `0x01..0x0a`, ordinary contract calls) falls back to
 /// the standard [`EthPrecompiles`].
 pub(crate) struct OutbeSubCallPrecompiles<DB> {
@@ -113,7 +113,7 @@ where
         )? {
             return Ok(Some(result));
         }
-        // Standard Ethereum precompiles `0x01..0x0a`; `Ok(None)` here lets the
+        // Standard Ethereum precompiles `0x01..0x0a`. `Ok(None)` here lets the
         // caller push a real interpreter frame for ordinary contract targets.
         <EthPrecompiles as PrecompileProvider<&mut EthEvmContext<DB>>>::run(
             &mut self.eth,

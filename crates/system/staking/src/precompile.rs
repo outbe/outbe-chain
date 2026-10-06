@@ -25,7 +25,7 @@ pub fn dispatch(
     value: U256,
 ) -> Result<Bytes> {
     // Staking is a payable route, so the boundary credits value to this
-    // address; every selector the module has not published refuses it here.
+    // address. Every selector the module has not published refuses it here.
     reject_value_unless_payable(data, PAYABLE_SELECTORS, &value)?;
     dispatch_call(data, IStaking::IStakingCalls::abi_decode, |call| {
         let mut staking = Staking::new(storage);

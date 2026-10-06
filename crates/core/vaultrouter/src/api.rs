@@ -12,7 +12,7 @@ sol!("../../../contracts/precompiles/src/IVaultRouter.sol");
 sol!("../../../contracts/precompiles/src/IVaultRouterCrosschainExtention.sol");
 
 /// `deposit`: deposit `amount` of `asset` into its reserve vault via an
-/// EVM sub-call to the vault router, returning the minted shares.
+/// EVM sub-call to the vault router. Returns the minted shares.
 pub fn deposit(storage: &StorageHandle<'_>, asset: Address, amount: U256) -> Result<U256> {
     let ret = storage.call(
         VAULT_ROUTER_ADDRESS,
@@ -55,7 +55,7 @@ pub fn reservation_of(
 }
 
 /// `releaseReservation`: bind `receiver` to the reserved account and pay the recorded
-/// CCA via an EVM sub-call, returning any unused remainder to the origin vault.
+/// CCA via an EVM sub-call. Any unused remainder returns to the origin vault.
 pub fn release_reservation(
     storage: &StorageHandle<'_>,
     id: U256,
@@ -91,7 +91,7 @@ pub fn return_reservation(storage: &StorageHandle<'_>, id: U256) -> Result<U256>
 }
 
 /// `withdraw`: redeem `amount` of `asset` from its reserve vault and transfer
-/// it to `receiver` via an EVM sub-call to the vault router, returning the
+/// it to `receiver` via an EVM sub-call to the vault router. Returns the
 /// burned shares.
 pub fn withdraw(
     storage: &StorageHandle<'_>,

@@ -2,8 +2,8 @@
 //!
 //! Outbe locks WCOEN through the local token bridge and records pending operations.
 //! The fixed BNB adapter owns the real 1:1 vault shares. Outbe receipt shares are
-//! finalized only after an authenticated BNB acknowledgement; withdrawals are
-//! finalized only after returned WCOEN has been credited to this precompile.
+//! finalized only after an authenticated BNB acknowledgement. Withdrawals are
+//! finalized only after the returned WCOEN is credited to this precompile.
 
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolValue};

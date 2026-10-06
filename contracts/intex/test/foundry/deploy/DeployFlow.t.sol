@@ -9,9 +9,12 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 
-/// @dev Verifies the CREATE3 proxy deployment path used by the deploy scripts: deterministic
-///      addresses, correct implementation pointer, initialization, idempotency, and that the proxy
-///      address is independent of the implementation init code.
+/// @dev Verifies the CREATE3 proxy deployment path that the deploy scripts use:
+///      - deterministic addresses
+///      - correct implementation pointer
+///      - initialization
+///      - idempotency
+///      - a proxy address that is independent of the implementation init code
 contract DeployFlowTest is CrossChainTest {
     string internal constant VERSION = "v1.0.0";
     uint32 internal constant B_CHAIN_ID = 2;
@@ -72,7 +75,7 @@ contract DeployFlowTest is CrossChainTest {
         address predicted = Create3Deploy.predictProxy(factory, address(this), "AddrTest", VERSION);
 
         uint256 snap = vm.snapshotState();
-        // OZ 5.6 `ERC1967Proxy` rejects empty init data; pass each impl's initializer. The CREATE3
+        // OZ 5.6 `ERC1967Proxy` rejects empty init data. Pass each impl's initializer. The CREATE3
         // address depends only on salt + deployer, so it stays independent of impl + init data.
         address a = Create3Deploy.deployProxy(
             factory,
@@ -100,12 +103,13 @@ contract DeployFlowTest is CrossChainTest {
     function test_DistinctDeployersGetDistinctAddresses() public {
         address other = makeAddr("otherDeployer");
         // The factory namespaces the CREATE3 salt by deployer, so the same prefix+version yields
-        // disjoint address spaces - one deployer cannot squat another's predicted address.
+        // disjoint address spaces. One deployer cannot squat another's predicted address.
         address predSelf = Create3Deploy.predictProxy(factory, address(this), "NsTest", VERSION);
         address predOther = Create3Deploy.predictProxy(factory, other, "NsTest", VERSION);
         assertTrue(predSelf != predOther, "deployer must namespace the salt");
 
-        // Deploying as this contract occupies only its own namespaced slot; `other`'s stays free.
+        // Deploying as this contract occupies only its own namespaced slot. `other`'s slot stays
+        // free.
         address proxy = Create3Deploy.deployProxy(
             factory,
             address(this),

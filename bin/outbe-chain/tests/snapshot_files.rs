@@ -148,7 +148,7 @@ fn conventional_transfer_preserves_native_files_and_opens_without_donor_or_sidec
     assert_eq!(result.uid(), fs::metadata(&roots.chain).unwrap().uid());
     assert_protected(&protected);
 
-    // Explicit file-check glue must reject partial placement; this is not a restore protocol.
+    // Explicit file-check glue must reject partial placement. This is not a restore protocol.
     let missing = roots.ocomp.join(&materialization_paths[0]);
     fs::remove_file(&missing).unwrap();
     let error = check_files(manifest, &roots).unwrap_err();
@@ -174,7 +174,7 @@ fn conventional_transfer_preserves_native_files_and_opens_without_donor_or_sidec
     );
     check_files(manifest, &roots).unwrap();
 
-    // Requested provenance checks report absent evidence; native openers do not consume it.
+    // Requested provenance checks report absent evidence. Native openers do not consume it.
     fs::remove_file(extracted.join("signature.json")).unwrap();
     assert!(check_sidecars(&extracted, &fixture.public_key)
         .unwrap_err()

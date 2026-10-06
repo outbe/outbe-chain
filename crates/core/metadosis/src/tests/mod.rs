@@ -40,7 +40,7 @@ fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
 }
 
 fn arm_genesis_ocomp(storage: &StorageHandle, chain_id: u64) {
-    // Fidelity leagues are enclave-computed; every test thread that reaches the
+    // Fidelity leagues are enclave-computed. Every test thread that reaches the
     // OCOMP snapshot path needs the in-process dev enclave (thread-local).
     outbe_fidelity::enclave_client::test_enclave::install();
     crate::fixture_kernel::seed_registry_authority(

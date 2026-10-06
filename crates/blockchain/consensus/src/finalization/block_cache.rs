@@ -1,11 +1,11 @@
 //! Process-local block cache shared between the proposer (writer) and the
 //! finalization actor (evicts on finalize).
 //!
-//! This is an availability/performance cache, NOT consensus state: a miss is
-//! always resolvable via marshal, and its contents never feed a deterministic
-//! state transition. It is sealed behind named operations so callers cannot
-//! hold the raw lock or reach the inner `BTreeMap` - the lock-poison recovery
-//! and the size metric live in one place.
+//! This is an availability/performance cache, NOT consensus state. A miss is
+//! always resolvable via marshal. Its contents never feed a deterministic
+//! state transition. Named operations seal it, so callers cannot hold the raw
+//! lock or reach the inner `BTreeMap`. Thus the lock-poison recovery and the
+//! size metric live in one place.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex as StdMutex, MutexGuard};
@@ -16,7 +16,7 @@ use crate::digest::Digest;
 /// Sliding-window depth for the block cache.
 ///
 /// This process-local availability/performance cache is intentionally
-/// independent from exact-parent certificate handoff retention so changes to
+/// independent from exact-parent certificate handoff retention. Thus changes to
 /// `PARENT_CERT_KEEP_DEPTH` do not make block-cache retention unbounded or
 /// semantically tied to settlement transport.
 pub const BLOCK_CACHE_KEEP_DEPTH: u64 = 256;
@@ -28,9 +28,9 @@ pub const BLOCK_CACHE_MAX_ENTRIES: usize = 1024;
 
 /// Shared, process-local block cache between the proposer (writer) and the
 /// finalization actor (evicts on finalize). Cloning shares the same underlying
-/// `Arc<Mutex<..>>`; the inner `BTreeMap` is never exposed, so every access goes
-/// through one of the named operations below, which centralize lock-poison
-/// recovery and the `outbe_block_cache_size` metric.
+/// `Arc<Mutex<..>>`. The inner `BTreeMap` is never exposed, so every access goes
+/// through one of the named operations below. These operations centralize
+/// lock-poison recovery and the `outbe_block_cache_size` metric.
 #[derive(Clone, Default)]
 pub struct BlockCache {
     inner: Arc<StdMutex<BTreeMap<Digest, ConsensusBlock>>>,
@@ -52,7 +52,7 @@ impl BlockCache {
     }
 
     /// Remove and return the block for `digest` (proposer parent take / finalize
-    /// fast-path - the block is consumed once resolved).
+    /// fast-path). The block is consumed once resolved.
     pub fn get_and_remove(&self, digest: &Digest) -> Option<ConsensusBlock> {
         self.lock().remove(digest)
     }
@@ -62,8 +62,8 @@ impl BlockCache {
         self.lock().get(digest).cloned()
     }
 
-    /// Clone-return the first cached block at `number` (ancestry-by-height; the
-    /// cache is digest-keyed, so this is a scan).
+    /// Clone-return the first cached block at `number` (ancestry-by-height). The
+    /// cache is digest-keyed, so this is a scan.
     pub fn get_by_number(&self, number: u64) -> Option<ConsensusBlock> {
         self.lock()
             .values()
@@ -154,7 +154,7 @@ mod tests {
     #[test]
     fn insert_block_cache_bounded_height_progression() {
         // Drive 10_000 inserts with monotonically increasing block
-        // numbers and distinct digests; the height window must keep
+        // numbers and distinct digests. The height window must keep
         // `cache.len()` bounded by `BLOCK_CACHE_KEEP_DEPTH`.
         let mut cache: BTreeMap<Digest, ConsensusBlock> = BTreeMap::new();
         for n in 0..10_000_u64 {
@@ -180,8 +180,8 @@ mod tests {
     #[test]
     fn insert_block_cache_bounded_fork_spam() {
         // Drive 10_000 inserts all at the SAME height with distinct
-        // digests (fork spam). Height window cannot bound this - the
-        // hard entry cap must kick in.
+        // digests (fork spam). The height window cannot bound this. The
+        // hard entry cap must take effect.
         const SAME_HEIGHT: u64 = BLOCK_CACHE_KEEP_DEPTH + 100;
         let mut cache: BTreeMap<Digest, ConsensusBlock> = BTreeMap::new();
         for salt in 0..10_000_u64 {
@@ -200,7 +200,7 @@ mod tests {
     #[test]
     fn insert_block_cache_bounded_below_keep_depth_does_not_drop() {
         // When inserted_number < KEEP_DEPTH the height window is a
-        // no-op; verify that small chains under MAX_ENTRIES retain
+        // no-op. Verify that small chains under MAX_ENTRIES retain
         // every entry.
         let mut cache: BTreeMap<Digest, ConsensusBlock> = BTreeMap::new();
         for n in 0..16_u64 {

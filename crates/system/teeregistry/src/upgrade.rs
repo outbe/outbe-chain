@@ -1,4 +1,4 @@
-//! Explicit opt-in hard retirement; zero anchors retain historical lease semantics.
+//! Explicit opt-in hard retirement. Zero anchors retain historical lease semantics.
 use crate::{NodeEnclaveBindingV1, TeeRegistry};
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_primitives::{
@@ -147,7 +147,8 @@ impl TeeRegistry<'_> {
         })
     }
 
-    /// Used by execution and finalized-state consumers; caller supplies the action height.
+    /// Execution and finalized-state consumers use this function. The caller supplies the
+    /// action height.
     pub fn binding_code_admitted_at_v1(
         &self,
         binding: &NodeEnclaveBindingV1,

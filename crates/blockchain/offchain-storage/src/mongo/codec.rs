@@ -101,8 +101,8 @@ pub(super) fn prefix_filter(request: ScanRequest<'_>) -> Document {
     } else {
         // MongoDB range comparisons are type-bracketed. Explicitly include
         // non-string identifiers so a damaged document remains visible to the
-        // adapter and is classified as corruption instead of disappearing
-        // from a prefix scan.
+        // adapter. The adapter then classifies the document as corruption, and
+        // the document does not disappear from a prefix scan.
         doc! {
             "$or": [
                 range,

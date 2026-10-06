@@ -72,7 +72,7 @@ def load(path: Path) -> dict[str, Any]:
 
 def ensure(path: Path, document: dict[str, Any]) -> dict[str, Any]:
     path.parent.mkdir(parents=True, exist_ok=True)
-    # Publish a complete file with private permissions; never replace a restart's config.
+    # Publish a complete file with private permissions. Never replace a restart's config.
     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent) as stream:
         stream.write(render(document))
         stream.flush()

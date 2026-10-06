@@ -167,7 +167,8 @@ fn submit_vote_reports_a_duplicate_before_an_inactive_vote_target() {
         let rate = fixed18(50);
         let volume = fixed18(1000);
         // A submission that is both untargeted and duplicated reports the
-        // duplicate first - receipt-visible revert text, so the order is pinned.
+        // duplicate first. The revert text is visible in the receipt, so this
+        // test pins the order.
         let err = oracle
             .submit_vote(validator, &[(ETH, USDT, rate, volume); 2])
             .unwrap_err();
@@ -182,9 +183,9 @@ fn submit_vote_reports_a_duplicate_before_an_inactive_vote_target() {
 // View functions
 // -----------------------------------------------------------------------
 
-/// The whole-registry rate table is now built by the caller from `pair_count`,
-/// `require_pair_at` and the per-pair rate read, so what has to hold is that
-/// walking the index in registration order lands each pair on its own rate.
+/// The caller now builds the whole-registry rate table from `pair_count`,
+/// `require_pair_at` and the per-pair rate read. So this must hold: a walk over
+/// the index in registration order lands each pair on its own rate.
 #[test]
 fn walking_the_registry_by_index_pairs_each_market_with_its_own_rate() {
     with_storage(|storage| {

@@ -3,8 +3,8 @@ use super::*;
 /// Crate-private raw fixture kernel.
 ///
 /// Production mutations must never use this trait. It exists only in test or
-/// `test-utils` builds so predecessor state and intentional corruption remain
-/// owned by one private module instead of leaking through `MetadosisContract`.
+/// `test-utils` builds. This way, one private module owns predecessor state and
+/// intentional corruption, and they do not leak through `MetadosisContract`.
 pub(crate) trait FixtureKernelExt {
     #[cfg(test)]
     fn create_worldwide_day(

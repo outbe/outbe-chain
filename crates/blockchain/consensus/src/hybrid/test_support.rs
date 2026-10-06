@@ -1,7 +1,7 @@
 //! Shared test-only fixtures for the hybrid scheme tests (`hybrid.rs`) and the
-//! election tests (`hybrid/election.rs`). Hoisted out of `hybrid.rs`'s inline
-//! `mod tests` so both test modules reach the same definitions instead of
-//! duplicating them.
+//! election tests (`hybrid/election.rs`). These fixtures were extracted from the
+//! inline `mod tests` of `hybrid.rs`. Both test modules now reach the same definitions
+//! and do not duplicate them.
 
 use commonware_cryptography::bls12381::{self, primitives::variant::MinSig};
 use commonware_cryptography::Signer as _;

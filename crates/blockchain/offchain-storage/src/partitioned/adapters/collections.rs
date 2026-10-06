@@ -12,7 +12,7 @@ pub trait ScopeCatalog: Send + Sync {
     fn namespaces(&self, scope: &StorageScope) -> Result<Vec<Namespace>, StorageError>;
 }
 
-/// Reusable for transactional collection/keyspace stores; no backend enum.
+/// Reusable for transactional collection/keyspace stores. It has no backend enum.
 pub struct CollectionDataSource {
     reader: StorageReaderHandle,
     writer: StorageWriterHandle,

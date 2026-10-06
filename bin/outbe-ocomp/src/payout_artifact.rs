@@ -1,7 +1,7 @@
-//! Payout handoff artifact: the day's dense eligible-contributor list, written
-//! at finalization so the payout sender can read the day back without
-//! reopening the audit machinery. The sender re-derives the merkle root from
-//! it, so a torn or stale file fails closed.
+//! Payout handoff artifact: the day's dense eligible-contributor list.
+//! It is written at finalization so the payout sender can read the day back
+//! without reopening the audit machinery. The sender re-derives the merkle root
+//! from it, so a torn or stale file fails closed.
 
 use std::fs;
 use std::io::{BufWriter, Read, Write};
@@ -97,7 +97,7 @@ pub fn verify_contributor_payout_artifact(
         ));
     }
     // NONBLOCK prevents a replaced FIFO/device from blocking before the regular
-    // file check; it does not change regular-file read behavior.
+    // file check. It does not change regular-file read behavior.
     let mut file = fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)

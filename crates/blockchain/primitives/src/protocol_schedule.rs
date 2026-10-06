@@ -3,7 +3,7 @@
 //!
 //! Every field below is part of the V2 on-chain / off-chain operational
 //! contract. Any change is hard-fork-equivalent and must be coordinated. This
-//! struct must remain the only home of these values across the workspace; the
+//! struct must remain the only home of these values across the workspace. The
 //! protocol_schedule_is_shared_by_node_evm_payload_codec_and_verifier test
 //! locks that property.
 //!
@@ -19,7 +19,7 @@ pub const PHASE1_PREFLIGHT_VALIDATOR_COUNT_BUCKETS: [u64; 5] = [10, 33, 64, 100,
 ///
 /// Construction:
 /// * Use [`OutbeProtocolSchedule::default`] to get the canonical pinned values.
-/// * Custom values are only valid in tests; production paths must consume the
+/// * Custom values are only valid in tests. Production paths must consume the
 ///   default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OutbeProtocolSchedule {
@@ -51,23 +51,22 @@ pub struct OutbeProtocolSchedule {
     /// Reject evidence whose epoch is more than this many epochs behind the
     /// current consensus epoch.
     pub invalid_vrf_evidence_max_epoch_lag: u64,
-    /// Heavy per-evidence base gas charged by every `SlashIndicator` BLS-evidence
-    /// submission selector (double-proposal, conflicting-vote/notarize/finalize,
-    /// nullify-finalize, invalid-VRF-proof, seed-partial-equivocation,
-    /// invalid-seed-partial). Each verifier runs ~2+ BLS12-381 pairings plus
-    /// ecrecover/storage reads; on the ZeroFee chain those would be near-free to
-    /// spam, so this charges a heavy base proportional to that work and block gas
-    /// then bounds how many evidence txs fit per block (complementing the
-    /// ACTIVE-validator ACL added in). This struct is the single source of
-    /// truth: `outbe_slashindicator::precompile::base_gas` reads it; do not
-    /// duplicate the literal.
+    /// Heavy base gas per evidence. Every `SlashIndicator` BLS-evidence
+    /// submission selector charges it (double-proposal,
+    /// conflicting-vote/notarize/finalize, nullify-finalize, invalid-VRF-proof,
+    /// seed-partial-equivocation, invalid-seed-partial). Each verifier runs ~2+
+    /// BLS12-381 pairings plus ecrecover/storage reads. On the ZeroFee chain those
+    /// submissions would be near-free to spam. This value therefore charges a heavy
+    /// base proportional to that work. Block gas then bounds how many evidence txs
+    /// fit per block (complementing the ACTIVE-validator ACL added in). This struct
+    /// is the single source of truth: `outbe_slashindicator::precompile::base_gas`
+    /// reads it. Do not duplicate the literal.
     ///
-    /// `200_000` is the-chosen heavy base; it may be refined by measuring
+    /// `200_000` is the chosen heavy base. It may be refined by measuring
     /// the worst-case verifier gas across committee sizes and applying
     /// `ceil_to_next_10_000(measured_worst_case_gas * 125 / 100)`. Any change is
-    /// hard-fork-equivalent and is guarded by the
-    /// [`vrf_evidence_base_gas_is_calibrated`] test (no `u64::MAX` placeholder may
-    /// ship).
+    /// hard-fork-equivalent. The [`vrf_evidence_base_gas_is_calibrated`] test
+    /// guards it (no `u64::MAX` placeholder may ship).
     pub slash_indicator_vrf_evidence_base_gas: u64,
 
     // ----- Performance budgets -----

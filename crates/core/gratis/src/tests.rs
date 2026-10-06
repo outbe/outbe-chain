@@ -1,7 +1,7 @@
-//! Confidential Gratis tests driven by the in-process enclave stand-in
-//! (`enclave_client::test_enclave`), which runs the real enclave engine against a
-//! fixed dev state key. Balances are asserted by decrypting the ciphertext with
-//! the account's view key exactly as a client would.
+//! The in-process enclave stand-in (`enclave_client::test_enclave`) drives these
+//! confidential Gratis tests. It runs the real enclave engine against a fixed dev
+//! state key. The tests check balances: they decrypt the ciphertext with the
+//! account's view key exactly as a client would.
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolInterface};
@@ -105,7 +105,7 @@ fn mine_rejects_replayed_op_nonce() {
         let amount = U256::from(100u64);
         let a = auth(GratisOp::Mint, alice(), amount, 0);
         api::mint(storage.clone(), alice(), amount, a.clone()).unwrap();
-        // Replaying the same (amount, nonce=0, mac) must fail - nonce advanced to 1.
+        // Replaying the same (amount, nonce=0, mac) must fail. The nonce advanced to 1.
         assert!(api::mint(storage.clone(), alice(), amount, a).is_err());
     });
 }
@@ -218,7 +218,7 @@ fn precompile_balance_of_returns_ciphertext() {
         );
         dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap()
     });
-    // The returned bytes are the ciphertext blob; decrypt with the view key.
+    // The returned bytes are the ciphertext blob. Decrypt them with the view key.
     let blob = IGratis::balanceOfCall::abi_decode_returns(&out).unwrap();
     let vk = derive_view_key(&test_enclave::state_key(), alice()).unwrap();
     assert_eq!(
@@ -234,7 +234,7 @@ fn folded_fidelity_section_failure_reverts_the_whole_op() {
         let amount = U256::from(1_000u64);
         // A folded mint whose fidelity section carries an UNDECRYPTABLE cohort
         // blob. The gratis mint half would succeed, but the enclave rejects the
-        // WHOLE op when the section fails - so nothing is committed.
+        // WHOLE op when the section fails. So nothing is committed.
         let bad_section = FidelityOpSection {
             op: FidelityCohortOp::In,
             timestamp: 1_000_000,

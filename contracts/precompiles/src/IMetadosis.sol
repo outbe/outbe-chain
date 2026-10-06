@@ -79,8 +79,8 @@ interface IMetadosis {
         string action
     );
 
-    /// @notice Emitted when a terminal WorldwideDay record is evicted from the
-    /// bounded delete-queue (oldest-first, once terminal records exceed the cap).
+    /// @notice Emitted when a terminal WorldwideDay record leaves the bounded
+    /// delete-queue. Eviction is oldest-first, once terminal records exceed the cap.
     /// `finalStatus` is the day's terminal status (COMPLETED or FAILED).
     event WorldwideDayCleanedUp(uint32 indexed worldwideDay, uint8 finalStatus);
 
@@ -129,7 +129,7 @@ interface IMetadosis {
 
     function getActiveWorldwideDays() external view returns (uint32[] memory wwds);
     /// @notice Returns days for a closed WwdStatus discriminant.
-    /// @dev Unknown status bytes revert; they are never interpreted as empty.
+    /// @dev Unknown status bytes revert. The call never interprets them as empty.
     function getWorldwideDaysByStatus(uint8 status) external view returns (uint32[] memory wwds);
     function getBootstrapEndTime() external view returns (uint64 endTime);
 

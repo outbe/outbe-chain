@@ -43,7 +43,7 @@ contract BridgeableERC20StableTest is Test {
     }
 
     /// @dev The Credis Factory reads `isoCode()` on the disbursed asset to pin the
-    ///      position's issuance currency; the USD token must report ISO 4217 numeric 840.
+    ///      position's issuance currency. The USD token must report ISO 4217 numeric 840.
     function test_IsoCode_ReportsConstructorValue() public view {
         assertEq(IReferenceCurrency(address(token)).isoCode(), USD);
     }

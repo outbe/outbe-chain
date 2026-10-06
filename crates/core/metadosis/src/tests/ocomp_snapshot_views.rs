@@ -307,7 +307,7 @@ fn awaiting_and_voting_jobs_are_canonical_ordered_and_readonly() {
     let expected = vec![awaiting, (fixture.intent_id, voting)];
     let before = fixture.provider.storage.clone();
 
-    // ReadOnlyStorageProvider rejects every write; repeating the public view
+    // ReadOnlyStorageProvider rejects every write. Repeating the public view
     // also verifies deterministic order independent of request insertion order.
     assert_eq!(readonly_jobs(&fixture.provider).unwrap(), expected);
     assert_eq!(readonly_jobs(&fixture.provider).unwrap(), expected);
