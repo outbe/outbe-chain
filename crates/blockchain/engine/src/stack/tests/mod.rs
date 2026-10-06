@@ -66,6 +66,7 @@ mod fixtures;
 mod follower;
 mod genesis_formation;
 mod harness;
+mod local_anchor;
 #[cfg(test)]
 mod muxer_contract;
 mod recovery;

@@ -12,6 +12,9 @@ piolium
 .cursor/
 .grok/
 
+# Local MCP connection configuration.
+/.mcp.json
+
 # Pi project-local packages (if using pi install -l)
 .serena
 /.vscode
