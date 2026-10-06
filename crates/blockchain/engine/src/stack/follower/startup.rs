@@ -479,38 +479,66 @@ impl RecoveryAuthority<'_> {
     }
 }
 impl<E: FollowerRuntime> HistoryBootstrap<'_, E> {
+    async fn restore_committee(
+        &self,
+        archives: &FollowerArchives<E>,
+    ) -> Result<super::local_anchor::RestoredCommittee> {
+        let follower_rotation =
+            DkgRotationParams::from_genesis(self.node, self.epoch_length_blocks);
+        let epoch_length = u64::from(self.epoch_length_blocks);
+        let activation_grace = follower_rotation.activation_grace_blocks;
+        let (floor, _) = certified_follower_replay_suffix_bounds(
+            marshal::store::Certificates::last_index(&archives.finalizations_archive)
+                .map_or(0, Height::get),
+            marshal::store::Blocks::last_index(&archives.blocks_archive).map_or(0, Height::get),
+            self.startup.last_execution_height,
+        );
+        let restored = super::local_anchor::LocalFinalizedHistory {
+            certificates: &archives.finalizations_archive,
+            blocks: &archives.blocks_archive,
+            canonical_hash: |height| self.node.provider.block_hash(height).map_err(Into::into),
+            floor,
+            epoch_length,
+            activation_grace,
+        }
+        .restore()
+        .await?;
+        Ok(match restored {
+            Some(restored) => {
+                let epoch = Epoch::new(restored.chain.anchor_epoch());
+                let activation = restored
+                    .epocher
+                    .activation_height(epoch)
+                    .ok_or_else(|| eyre::eyre!("restored follower boundary is missing"))?;
+                info!(
+                    anchor_epoch = epoch.get(),
+                    anchor_height = activation.get(),
+                    "follower restored committee from local finalized history"
+                );
+                restored
+            }
+            None => super::local_anchor::RestoredCommittee {
+                chain: CommitteeChain::new(Epoch::new(0), self.participants.clone()),
+                epocher: FollowerEpocher::new(epoch_length, activation_grace),
+            },
+        })
+    }
+
     async fn recover(self) -> Result<RecoveredFollowerHistory<E>> {
+        let archives = initialize_archives(self.ctx).await?;
+        let super::local_anchor::RestoredCommittee { chain, epocher } =
+            self.restore_committee(&archives).await?;
         let Self {
             ctx,
             node,
             startup,
             upstream,
-            participants: anchor_participants,
-            epoch_length_blocks,
+            ..
         } = self;
-        // -- 1. Committee chain anchored on the trusted identity --------------
-        // The marshal verifies finalization certs against THIS chain's per-epoch
-        // verifier provider, so the provider clone we hand the marshal must share
-        // state with the chain (HybridSchemeProvider is Arc-backed; `register`
-        // through a clone is visible everywhere).
-        // Genesis anchor: epoch 0, the genesis validator committee.
-        let chain = CommitteeChain::new(Epoch::new(0), anchor_participants);
-        let certificate_scheme_provider: HybridSchemeProvider<MinSig> =
-            chain.scheme_provider().clone();
+        // All follower paths use the same verifier provider and observed boundaries.
+        let certificate_scheme_provider = chain.scheme_provider().clone();
         let anchor_epoch = Epoch::new(chain.anchor_epoch());
         let chain = SharedCommitteeChain::new(chain);
-
-        let archives = initialize_archives(ctx).await?;
-        // The follower marshal uses the boundary-aligned `FollowerEpocher`, whose
-        // epoch boundaries match outbe's on-chain committee epochs (`[E*L+1,
-        // (E+1)*L]`). The validator's `FixedEpocher` disagrees by one block at every
-        // multiple of L, which would stall a resolver-only follower at boundary
-        // blocks (see outbe_consensus::follow::epocher).
-        let follower_rotation = DkgRotationParams::from_genesis(node, epoch_length_blocks);
-        let epocher = outbe_consensus::follow::FollowerEpocher::new(
-            u64::from(epoch_length_blocks),
-            follower_rotation.activation_grace_blocks,
-        );
         let view_retention_timeout = u64::from(config::ACTIVITY_TIMEOUT)
             .checked_mul(config::VIEW_RETENTION_MULTIPLIER)
             .ok_or_else(|| eyre::eyre!("view retention timeout overflow"))?;

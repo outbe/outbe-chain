@@ -316,6 +316,18 @@ impl Localnet {
         index: usize,
         upstream_slot: usize,
     ) -> Result<()> {
+        let upstream = format!("http://127.0.0.1:{}", self.cfg.http_port(upstream_slot));
+        self.launch_full_node_with_upstream_url(name, index, upstream_slot, &upstream)
+    }
+
+    /// Use a transparent request observer while retaining ordinary admission checks.
+    pub(crate) fn launch_full_node_with_upstream_url(
+        &mut self,
+        name: &str,
+        index: usize,
+        upstream_slot: usize,
+        upstream: &str,
+    ) -> Result<()> {
         self.wait_selected_upstream_admission(index, upstream_slot)?;
         let node_dir = self.cfg.validator_dir(index);
         fs::create_dir_all(node_dir.join("logs"))?;
@@ -328,7 +340,7 @@ impl Localnet {
             "--tee-enclave-socket",
             format!("127.0.0.1:{}", self.cfg.tee_port(index)),
             "--upstream",
-            format!("http://127.0.0.1:{}", self.cfg.http_port(upstream_slot)),
+            upstream,
             "--consensus.listen-addr",
             format!("127.0.0.1:{}", self.cfg.consensus_port(index)),
         ]);

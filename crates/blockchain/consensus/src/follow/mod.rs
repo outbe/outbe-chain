@@ -7,9 +7,8 @@
 //! epoch-scoped committee material, which changes on every reshare. A follower
 //! therefore:
 //!
-//! 1. anchors the START epoch's committee on the **genesis validator MinPk
-//!    set**, read from the follower's OWN genesis state - the trust root;
-//!    nothing the operator must provide;
+//! 1. anchors the START epoch on the genesis validator set for a fresh node,
+//!    or an already accepted local finalized boundary on snapshot/restart;
 //! 2. reads each later epoch's committee from a `CommitteePreAnnounce` in the
 //!    previous epoch's last finalized block, verifies that block with the already
 //!    trusted previous committee, and only then installs the next verifier.
@@ -54,21 +53,20 @@ pub use upstream::{
 };
 
 /// Builds and chains per-epoch finalization verifiers from finalized boundary
-/// blocks, anchored on the trusted genesis committee. Verifiers are kept in a
+/// blocks, anchored on genesis or a trusted local finalized boundary. Verifiers are kept in a
 /// [`HybridSchemeProvider`] keyed by epoch - the same provider type the live
 /// stack uses - so cert verification is byte-identical to the validator path.
 ///
 /// **Trust root.** Consensus finality is a multisig over the committee's
 /// individual MinPk keys. The mandatory MinSig VRF proof supplies the finalized
-/// round seed but is not the committee identity authenticator. So the anchor is the **genesis validator
-/// MinPk set**, read from the follower's OWN genesis state - not a VRF group
-/// key, and nothing the operator has to provide. The start epoch's committee
-/// (`output.players()`) must equal this set; each later epoch's committee is
-/// trusted via the finalized-boundary chain.
+/// round seed but is not the committee identity authenticator. A fresh node
+/// trusts its genesis MinPk participant set. A restored node can trust the
+/// committee of an already accepted local finalized boundary. Each later
+/// committee is authenticated through the finalized-boundary chain.
 pub struct CommitteeChain {
     /// The start epoch the anchor is rooted at (genesis = 0).
     anchor_epoch: Epoch,
-    /// The trusted start-epoch committee: the genesis validator MinPk keys.
+    /// The trusted start-epoch committee from genesis or local finalized history.
     anchor_participants: Set<bls12381::PublicKey>,
     scheme_provider: HybridSchemeProvider<MinSig>,
     /// Highest epoch whose committee verifier has been registered.
@@ -92,6 +90,17 @@ impl CommitteeChain {
         }
     }
 
+    /// Restore committee material from a boundary already accepted in the
+    /// local finalized canonical chain. The caller must authenticate the local
+    /// provenance; arbitrary upstream bytes cannot establish this trust anchor.
+    pub fn from_trusted_local_boundary(epoch: Epoch, outcome: &[u8]) -> Result<Self> {
+        let output = crate::dkg_manager::decode_boundary_outcome(outcome)
+            .ok_or_else(|| eyre::eyre!("local boundary is not a decodable full DKG output"))?;
+        let mut chain = Self::new(epoch, output.players().clone());
+        chain.register_epoch_from_outcome(epoch, outcome)?;
+        Ok(chain)
+    }
+
     /// The epoch the anchor is rooted at (the first epoch the follower can verify).
     pub fn anchor_epoch(&self) -> u64 {
         self.anchor_epoch.get()
@@ -111,8 +120,8 @@ impl CommitteeChain {
     /// `outcome` bytes (the ODKO-wrapped DKG output in the boundary block's
     /// `extra_data`).
     ///
-    /// For the anchor epoch the committee MUST equal the trusted genesis
-    /// validator set - this is the trust root. For later epochs the caller must
+    /// For the anchor epoch the committee MUST equal the trusted anchor
+    /// participant set from genesis or accepted local finalized history. For later epochs the caller must
     /// have authenticated the carrier with the prior committee; [`Self::admit`]
     /// is the transition that does so.
     ///
@@ -174,22 +183,22 @@ impl CommitteeChain {
             );
         }
 
-        // Trust root: the anchor epoch's committee MUST be the trusted genesis
-        // validator set. Consensus finality is a multisig over these MinPk keys,
+        // The anchor committee must match the trusted genesis or local finalized
+        // participant set. Consensus finality is a multisig over these MinPk keys,
         // so matching the participant set (NOT the VRF group key) authenticates
         // the committee. Compare as ordered sets (both pubkey-sorted).
         if epoch == self.anchor_epoch && participants != self.anchor_participants {
             bail!(
                 "anchor mismatch: start-epoch {} committee ({} validators) does not match the \
-                 trusted genesis validator set ({} validators)",
+                 trusted anchor validator set ({} validators)",
                 epoch.get(),
                 participants.len(),
                 self.anchor_participants.len(),
             );
         }
 
-        // The follower is anchored at genesis epoch/version 0, and every
-        // successful DKG activation increments both counters exactly once.
+        // Every successful DKG activation increments epoch and material version
+        // exactly once, including after a restored local anchor.
         // Restore the authenticated epoch's material version explicitly:
         // `HybridScheme::verifier` defaults it to zero, which verifies the BLS
         // certificate but produces a non-canonical committee_set_hash_v2 after

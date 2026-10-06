@@ -36,6 +36,13 @@ pub const DEFAULT_VWAP_POLICY: VwapPolicy = VwapPolicy {
 };
 
 /// The policy the protocol constants pin for this network.
+///
+/// This is the only pricing policy the node can price: it is read from the
+/// compiled protocol constants (genesis values are validated and, outside the
+/// `test-protocol-overrides` build, ignored), it has no on-chain record and no
+/// activation height, and every snapshot id names it. Changing it is a binary
+/// rollout that invalidates every outstanding snapshot authorization; there is
+/// no in-protocol activation path.
 pub fn active_vwap_policy() -> VwapPolicy {
     VwapPolicy {
         policy_version: outbe_chain_constants::get_vwap_policy_version(),

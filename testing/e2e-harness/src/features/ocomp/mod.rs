@@ -49,6 +49,7 @@ use crate::world::World;
 mod capacity;
 mod completion;
 mod expiry;
+mod follower_snapshot;
 mod full_node;
 mod logical_time;
 mod membership;

@@ -1,4 +1,5 @@
 mod finalization;
+pub(in crate::stack) mod local_anchor;
 mod startup;
 
 use finalization::finalization_bytes_for_height;
