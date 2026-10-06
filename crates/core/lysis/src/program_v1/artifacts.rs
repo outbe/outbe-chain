@@ -1096,28 +1096,11 @@ fn validate_fidelity_map_output(output: &FidelityMapOutputV1) -> Result<(), Lysi
         ));
     }
 
-    let mut checked_partial_count = 0_u32;
-    let mut checked_partial_nominal = U256::ZERO;
-    let mut previous_league = None;
-    for partial in &output.aggregate.ordered_league_partials {
-        if partial.count == 0
-            || partial.nominal_amount_minor.is_zero()
-            || previous_league.is_some_and(|previous| previous >= partial.league_id)
-        {
-            return Err(LysisArtifactErrorV1::InvalidEncoding(
-                "Fidelity map league partial order",
-            ));
-        }
-        previous_league = Some(partial.league_id);
-        checked_partial_count = checked_partial_count
-            .checked_add(partial.count)
-            .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
-        checked_partial_nominal = checked_partial_nominal
-            .checked_add(partial.nominal_amount_minor)
-            .ok_or(LysisArtifactErrorV1::InvalidEncoding(
-                "Fidelity map partial nominal overflow",
-            ))?;
-    }
+    let (checked_partial_count, checked_partial_nominal) = checked_league_partials(
+        &output.aggregate.ordered_league_partials,
+        "Fidelity map league partial order",
+        "Fidelity map partial nominal overflow",
+    )?;
     if checked_partial_count != observation_count
         || checked_partial_nominal != checked_total_nominal
         || output
@@ -1160,18 +1143,23 @@ fn validate_amount_run(run: &AmountRunV1) -> Result<(), LysisArtifactErrorV1> {
     let mut previous_id = None;
     for (offset, record) in run.ordered_records.iter().enumerate() {
         let offset = u32::try_from(offset).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
-        if record.raw_ordinal
-            != run
-                .start_ordinal
-                .checked_add(offset)
-                .ok_or(LysisArtifactErrorV1::LengthOverflow)?
-            || previous_id.is_some_and(|previous| previous >= record.tribute_id)
-            || record.owner.is_zero()
+        let expected_ordinal = run
+            .start_ordinal
+            .checked_add(offset)
+            .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
+        let has_zero_field = record.owner.is_zero()
             || record.worldwide_day.value() == 0
-            || record.nominal_amount_minor.is_zero()
-            || record.gratis_fraction_fp.is_zero()
-            || record.gratis_load_minor.is_zero()
-            || record.entry_price_minor.is_zero()
+            || [
+                record.nominal_amount_minor,
+                record.gratis_fraction_fp,
+                record.gratis_load_minor,
+                record.entry_price_minor,
+            ]
+            .iter()
+            .any(U256::is_zero);
+        if record.raw_ordinal != expected_ordinal
+            || previous_id.is_some_and(|previous| previous >= record.tribute_id)
+            || has_zero_field
         {
             return Err(LysisArtifactErrorV1::InvalidEncoding(
                 "amount run record order",
@@ -1265,18 +1253,21 @@ fn validate_finalized_output_run(run: &FinalizedOutputRunV1) -> Result<(), Lysis
     for (offset, record) in run.ordered_records.iter().enumerate() {
         let offset = u32::try_from(offset).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
         let nod = &record.nod_action;
-        if record.raw_ordinal
-            != run
-                .start_ordinal
-                .checked_add(offset)
-                .ok_or(LysisArtifactErrorV1::LengthOverflow)?
-            || previous_tribute.is_some_and(|previous| previous >= nod.source_tribute_id)
-            || nod.owner.is_zero()
+        let expected_ordinal = run
+            .start_ordinal
+            .checked_add(offset)
+            .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
+        let out_of_order = record.raw_ordinal != expected_ordinal
+            || previous_tribute.is_some_and(|previous| previous >= nod.source_tribute_id);
+        let has_zero_field = nod.owner.is_zero()
             || nod.worldwide_day.value() == 0
-            || nod.gratis_load_minor.is_zero()
-            || nod.entry_price_minor.is_zero()
+            || nod.gratis_load_minor.is_zero();
+        let has_invalid_price = nod.entry_price_minor.is_zero()
             || !NodContract::is_issuable_entry(nod.entry_price_minor)
-            || nod.reference_currency == 0
+            || nod.reference_currency == 0;
+        if out_of_order
+            || has_zero_field
+            || has_invalid_price
             || derive_poseidon_entity_id(nod.owner, nod.worldwide_day)
                 .map_err(|_| LysisArtifactErrorV1::InvalidEncoding("finalized Nod identity"))?
                 != nod.nod_id
@@ -1331,39 +1322,24 @@ fn validate_fixed_reduce_output(output: &FixedReduceOutputV1) -> Result<(), Lysi
         return Ok(());
     };
 
-    if aggregate.start_ordinal != output.coverage.start_ordinal
-        || aggregate.end_ordinal != output.coverage.end_ordinal
+    let coverage_differs = aggregate.start_ordinal != output.coverage.start_ordinal
+        || aggregate.end_ordinal != output.coverage.end_ordinal;
+    let aggregate_empty =
+        aggregate.checked_total_nominal.is_zero() || aggregate.ordered_league_partials.is_empty();
+    if coverage_differs
         || aggregate.start_ordinal >= aggregate.end_ordinal
         || aggregate.tribute_count != aggregate.end_ordinal - aggregate.start_ordinal
-        || aggregate.checked_total_nominal.is_zero()
-        || aggregate.ordered_league_partials.is_empty()
+        || aggregate_empty
     {
         return Err(LysisArtifactErrorV1::InvalidEncoding(
             "fixed reducer aggregate range",
         ));
     }
-    let mut checked_count = 0_u32;
-    let mut checked_nominal = U256::ZERO;
-    let mut previous_league = None;
-    for partial in &aggregate.ordered_league_partials {
-        if partial.count == 0
-            || partial.nominal_amount_minor.is_zero()
-            || previous_league.is_some_and(|previous| previous >= partial.league_id)
-        {
-            return Err(LysisArtifactErrorV1::InvalidEncoding(
-                "fixed reducer league partial order",
-            ));
-        }
-        previous_league = Some(partial.league_id);
-        checked_count = checked_count
-            .checked_add(partial.count)
-            .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
-        checked_nominal = checked_nominal
-            .checked_add(partial.nominal_amount_minor)
-            .ok_or(LysisArtifactErrorV1::InvalidEncoding(
-                "fixed reducer nominal overflow",
-            ))?;
-    }
+    let (checked_count, checked_nominal) = checked_league_partials(
+        &aggregate.ordered_league_partials,
+        "fixed reducer league partial order",
+        "fixed reducer nominal overflow",
+    )?;
     if checked_count != aggregate.tribute_count
         || checked_nominal != aggregate.checked_total_nominal
         || (!output.ordered_fractions.is_empty()
@@ -1379,6 +1355,32 @@ fn validate_fixed_reduce_output(output: &FixedReduceOutputV1) -> Result<(), Lysi
         ));
     }
     Ok(())
+}
+
+fn checked_league_partials(
+    partials: &[FidelityLeaguePartialV1],
+    order_error: &'static str,
+    overflow_error: &'static str,
+) -> Result<(u32, U256), LysisArtifactErrorV1> {
+    let mut checked_count = 0_u32;
+    let mut checked_nominal = U256::ZERO;
+    let mut previous_league = None;
+    for partial in partials {
+        if partial.count == 0
+            || partial.nominal_amount_minor.is_zero()
+            || previous_league.is_some_and(|previous| previous >= partial.league_id)
+        {
+            return Err(LysisArtifactErrorV1::InvalidEncoding(order_error));
+        }
+        previous_league = Some(partial.league_id);
+        checked_count = checked_count
+            .checked_add(partial.count)
+            .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
+        checked_nominal = checked_nominal
+            .checked_add(partial.nominal_amount_minor)
+            .ok_or(LysisArtifactErrorV1::InvalidEncoding(overflow_error))?;
+    }
+    Ok((checked_count, checked_nominal))
 }
 
 fn raw_coverage_subtree_root(
