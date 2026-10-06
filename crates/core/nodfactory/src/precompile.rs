@@ -103,10 +103,12 @@ pub fn dispatch(
                     &storage,
                     scope,
                     parent,
-                    sender,
-                    WwdEntityId::from(c.nodId),
-                    c.asset,
-                    c.snapshotId,
+                    runtime::SettleNodRequest {
+                        caller: sender,
+                        nod_id: WwdEntityId::from(c.nodId),
+                        asset: c.asset,
+                        snapshot_id: c.snapshotId,
+                    },
                 )?;
                 Ok(INodFactory::settleNodReturn {})
             }),

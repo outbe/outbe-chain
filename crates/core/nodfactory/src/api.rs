@@ -8,7 +8,7 @@ use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::runtime;
 
-pub use crate::runtime::MineGratisRequest;
+pub use crate::runtime::{MineGratisRequest, SettleNodRequest};
 
 pub use crate::certified::{install_certified_generation, CertifiedNodGenerationV1};
 pub use crate::materialization::NodMaterializationOutcomeV1;
@@ -71,10 +71,7 @@ pub fn settle_nod(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    caller: Address,
-    nod_id: WwdEntityId,
-    asset: Address,
-    snapshot_id: U256,
+    request: SettleNodRequest,
 ) -> Result<()> {
-    runtime::settle_nod(storage, scope, parent, caller, nod_id, asset, snapshot_id)
+    runtime::settle_nod(storage, scope, parent, request)
 }

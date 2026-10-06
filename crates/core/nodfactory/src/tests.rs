@@ -181,10 +181,12 @@ impl World {
                 &storage,
                 scope,
                 parent,
-                caller,
-                nod_id,
-                PAYMENT_ASSET,
-                U256::ZERO,
+                api::SettleNodRequest {
+                    caller,
+                    nod_id,
+                    asset: PAYMENT_ASSET,
+                    snapshot_id: U256::ZERO,
+                },
             )
         })
     }
@@ -394,7 +396,17 @@ fn settle_erc20(
             .stub_sub_call_at_selector(asset, selector, Bytes::from(ret));
     }
     world.enter(|storage, scope, parent| {
-        api::settle_nod(&storage, scope, parent, owner, nod_id, asset, snapshot)
+        api::settle_nod(
+            &storage,
+            scope,
+            parent,
+            api::SettleNodRequest {
+                caller: owner,
+                nod_id,
+                asset,
+                snapshot_id: snapshot,
+            },
+        )
     })
 }
 
