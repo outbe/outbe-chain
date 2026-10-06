@@ -308,13 +308,15 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         let finalized = MetadosisContract::new(storage.clone())
             .record_ocomp_finality(
                 intent_id,
-                B256::repeat_byte(0x46),
-                B256::repeat_byte(0x98),
-                finality_recorded_height,
-                authority
-                    .request_profile
-                    .capacity_profile
-                    .result_deadline_blocks,
+                crate::ocomp::FinalityAnchor {
+                    request_block_hash: B256::repeat_byte(0x46),
+                    request_state_root: B256::repeat_byte(0x98),
+                    recorded_height: finality_recorded_height,
+                    response_window_blocks: authority
+                        .request_profile
+                        .capacity_profile
+                        .result_deadline_blocks,
+                },
                 &poc_schema_limits(),
             )
             .unwrap();
@@ -596,20 +598,28 @@ fn two_eligible_days_create_independently_progressing_live_jobs() {
         let finalized = metadosis
             .record_ocomp_finality(
                 first_intent_id,
-                B256::repeat_byte(0x81),
-                B256::repeat_byte(0x82),
-                fixture.block_number + 2,
-                request_profile().capacity_profile.result_deadline_blocks,
+                crate::ocomp::FinalityAnchor {
+                    request_block_hash: B256::repeat_byte(0x81),
+                    request_state_root: B256::repeat_byte(0x82),
+                    recorded_height: fixture.block_number + 2,
+                    response_window_blocks: request_profile()
+                        .capacity_profile
+                        .result_deadline_blocks,
+                },
                 &poc_schema_limits(),
             )
             .unwrap();
         let second_finalized = metadosis
             .record_ocomp_finality(
                 second_intent_id,
-                B256::repeat_byte(0x83),
-                B256::repeat_byte(0x84),
-                fixture.block_number + 3,
-                request_profile().capacity_profile.result_deadline_blocks,
+                crate::ocomp::FinalityAnchor {
+                    request_block_hash: B256::repeat_byte(0x83),
+                    request_state_root: B256::repeat_byte(0x84),
+                    recorded_height: fixture.block_number + 3,
+                    response_window_blocks: request_profile()
+                        .capacity_profile
+                        .result_deadline_blocks,
+                },
                 &poc_schema_limits(),
             )
             .unwrap();
