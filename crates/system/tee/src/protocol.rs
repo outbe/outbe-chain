@@ -796,6 +796,12 @@ pub enum EnclaveRequest {
     ReadTributeAmountsV2 {
         tributes: Vec<outbe_primitives::tribute_encryption::EncryptedTributeV2>,
     },
+    ApplyTributeDayOpV2 {
+        request: Box<crate::tribute_day::TributeDayOpRequestV2>,
+    },
+    ReadTributeDayAmountV2 {
+        record: outbe_primitives::tribute_day_encryption::EncryptedTributeDayAmountV2,
+    },
 }
 
 impl EnclaveRequest {
@@ -803,6 +809,8 @@ impl EnclaveRequest {
     /// both the node client and the enclave server. Never wire data.
     pub const fn label(&self) -> &'static str {
         match self {
+            Self::ApplyTributeDayOpV2 { .. } => "apply_tribute_day_op_v2",
+            Self::ReadTributeDayAmountV2 { .. } => "read_tribute_day_amount_v2",
             Self::ProcessEncryptedTributeOfferBatchV2 { .. } => {
                 "process_encrypted_tribute_offer_batch_v2"
             }
@@ -874,6 +882,8 @@ impl EnclaveRequest {
             Self::GetQuote { .. }
             | Self::ProcessEncryptedTributeOfferBatchV2 { .. }
             | Self::ReadTributeAmountsV2 { .. }
+            | Self::ApplyTributeDayOpV2 { .. }
+            | Self::ReadTributeDayAmountV2 { .. }
             | Self::GetPublicKeys
             | Self::GenerateDcapQuote { .. }
             | Self::SignRegistrationIntentDevV1 { .. }
@@ -1300,6 +1310,16 @@ pub enum EnclaveResponse {
     },
     TributeAmountsReadV2 {
         amounts: Vec<outbe_primitives::tribute_encryption::TributeAmountsV2>,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    TributeDayOpAppliedV2 {
+        record: outbe_primitives::tribute_day_encryption::EncryptedTributeDayAmountV2,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    TributeDayAmountReadV2 {
+        amount: U256,
         inputs_canonical_hash: B256,
         attestation_tag: Vec<u8>,
     },

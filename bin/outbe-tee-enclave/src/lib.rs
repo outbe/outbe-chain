@@ -46,6 +46,7 @@ mod sgx_sealing;
 pub mod sgx_sealing;
 pub mod telemetry;
 pub mod transport;
+pub mod tribute_day;
 pub mod tribute_encryption;
 pub mod zk_claim;
 

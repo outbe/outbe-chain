@@ -134,3 +134,142 @@ fn private_tribute_read_is_denied_to_remote_node_sessions_and_keyless_local_node
         )
         .is_err());
 }
+
+fn day_request() -> outbe_tee::tribute_day::TributeDayOpRequestV2 {
+    outbe_tee::tribute_day::TributeDayOpRequestV2 {
+        chain_id: 54322345,
+        worldwide_day: WorldwideDay::new(20250115),
+        previous: None,
+        public_state_hash: B256::repeat_byte(0x81),
+        operation: outbe_tee::tribute_day::TributeDayOperationV2::AdjustTransient {
+            nominal_amount_minor: alloy_primitives::U256::from(71),
+            add: true,
+        },
+    }
+}
+
+#[test]
+fn private_day_commands_require_ready_local_authority_and_installed_network_key() {
+    let enclave = Enclave::new(0x51);
+    let record = crate::tribute_day::apply_day_operation(&[7; 32], &day_request()).unwrap();
+    for request in [
+        EnclaveRequest::ApplyTributeDayOpV2 {
+            request: Box::new(day_request()),
+        },
+        EnclaveRequest::ReadTributeDayAmountV2 { record },
+    ] {
+        assert!(enclave
+            .initialization
+            .authorize_command(&request, false, SessionAuthorityV1::LocalNodeHost)
+            .is_err());
+        assert!(enclave
+            .initialization
+            .authorize_command(&request, true, SessionAuthorityV1::LocalNodeHost)
+            .is_ok());
+        assert!(enclave
+            .initialization
+            .authorize_command(
+                &request,
+                true,
+                SessionAuthorityV1::RemoteActiveNode { deadline: u64::MAX }
+            )
+            .is_err());
+        let response = dispatch(
+            request,
+            &enclave.keys,
+            &mut DkgSessionStore::new(),
+            &Arc::new(OnceLock::new()),
+            B256::from(testnet_chain_word()),
+        );
+        assert!(
+            matches!(response, EnclaveResponse::Error { message } if message == "no resident network key")
+        );
+    }
+}
+
+#[test]
+fn day_transforms_and_private_reads_are_signed_and_bound_to_the_resident_chain() {
+    let request = day_request();
+    let secret = [7; 32];
+    let mut previous_output = None;
+    for seed in [0x51, 0x61] {
+        let keys = EnclaveKeys::new([seed; 32], Some([seed; 32])).unwrap();
+        let (offer_key, _) = install_tribute_offer_key(secret, vec![0x55; 96]);
+        let command = EnclaveRequest::ApplyTributeDayOpV2 {
+            request: Box::new(request.clone()),
+        };
+        let chain = B256::from(alloy_primitives::U256::from(request.chain_id));
+        let response = dispatch(
+            command.clone(),
+            &keys,
+            &mut DkgSessionStore::new(),
+            &offer_key,
+            chain,
+        );
+        let EnclaveResponse::TributeDayOpAppliedV2 {
+            record,
+            inputs_canonical_hash,
+            attestation_tag,
+        } = response
+        else {
+            panic!("day transform failed")
+        };
+        let expected = outbe_tee::tribute_day::day_operation_inputs_hash(&request).unwrap();
+        assert_eq!(inputs_canonical_hash, expected);
+        let preimage =
+            outbe_tee::tribute_day::day_operation_attestation_preimage(expected, &record).unwrap();
+        outbe_tee::tribute_v2::verify_attestation(
+            &keys.attestation_pub(),
+            &preimage,
+            &attestation_tag,
+        )
+        .unwrap();
+        if let Some(previous) = previous_output {
+            assert_eq!(previous, record);
+        }
+        previous_output = Some(record.clone());
+        let read = EnclaveRequest::ReadTributeDayAmountV2 {
+            record: record.clone(),
+        };
+        let response = dispatch(
+            read.clone(),
+            &keys,
+            &mut DkgSessionStore::new(),
+            &offer_key,
+            chain,
+        );
+        let EnclaveResponse::TributeDayAmountReadV2 {
+            amount,
+            inputs_canonical_hash,
+            attestation_tag,
+        } = response
+        else {
+            panic!("day read failed")
+        };
+        assert_eq!(amount, alloy_primitives::U256::from(71));
+        assert_eq!(
+            inputs_canonical_hash,
+            outbe_tee::tribute_day::day_read_inputs_hash(&record).unwrap()
+        );
+        let preimage =
+            outbe_tee::tribute_day::day_read_attestation_preimage(inputs_canonical_hash, amount);
+        outbe_tee::tribute_v2::verify_attestation(
+            &keys.attestation_pub(),
+            &preimage,
+            &attestation_tag,
+        )
+        .unwrap();
+        for command in [command, read] {
+            assert!(matches!(
+                dispatch(
+                    command,
+                    &keys,
+                    &mut DkgSessionStore::new(),
+                    &offer_key,
+                    B256::from(alloy_primitives::U256::from(request.chain_id + 1))
+                ),
+                EnclaveResponse::Error { .. }
+            ));
+        }
+    }
+}

@@ -48,6 +48,12 @@ pub(in crate::transport) fn dispatch_with_initialization(
         quote_generator,
     } = context;
     match req {
+        EnclaveRequest::ApplyTributeDayOpV2 { request } => {
+            super::tribute_day::apply(keys, offer_key, chain_id, &request)
+        }
+        EnclaveRequest::ReadTributeDayAmountV2 { record } => {
+            super::tribute_day::read(keys, offer_key, chain_id, &record)
+        }
         EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 { offers } => {
             super::tribute::process_offers(keys, offer_key, chain_id, &offers)
         }

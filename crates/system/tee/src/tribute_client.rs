@@ -14,15 +14,11 @@ pub fn read_tribute_amounts(
 ) -> Result<Vec<TributeAmountsV2>, TransportError> {
     let inputs_hash = tribute_v2::tribute_read_inputs_hash(tributes)
         .map_err(|error| TransportError::Codec(error.to_string()))?;
-    let (attestation_pub, response) = crate::try_with_enclave(|session| {
-        let key = session.attestation_pub();
-        let response = session.request(&EnclaveRequest::ReadTributeAmountsV2 {
+    let (attestation_pub, response) =
+        request_local_enclave(EnclaveRequest::ReadTributeAmountsV2 {
             tributes: tributes.to_vec(),
-        });
-        (key, response)
-    })
-    .ok_or_else(|| TransportError::EnclaveError("TEE sidecar unavailable".into()))?;
-    match response? {
+        })?;
+    match response {
         EnclaveResponse::TributeAmountsReadV2 {
             amounts,
             inputs_canonical_hash,
@@ -41,4 +37,13 @@ pub fn read_tribute_amounts(
         EnclaveResponse::Error { message } => Err(TransportError::EnclaveError(message)),
         _ => Err(TransportError::UnexpectedResponse),
     }
+}
+
+pub(crate) fn request_local_enclave(
+    request: EnclaveRequest,
+) -> Result<([u8; 32], EnclaveResponse), TransportError> {
+    let (key, response) =
+        crate::try_with_enclave(|session| (session.attestation_pub(), session.request(&request)))
+            .ok_or_else(|| TransportError::EnclaveError("TEE sidecar unavailable".into()))?;
+    Ok((key, response?))
 }

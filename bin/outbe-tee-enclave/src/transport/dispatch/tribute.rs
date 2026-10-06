@@ -68,7 +68,7 @@ pub(super) fn read_amounts(
     response(result)
 }
 
-fn resident_chain_id(chain: B256) -> Result<u64, &'static str> {
+pub(super) fn resident_chain_id(chain: B256) -> Result<u64, &'static str> {
     let chain = U256::from_be_bytes(chain.0);
     if chain > U256::from(u64::MAX) {
         return Err("resident chain id exceeds u64");
@@ -76,7 +76,7 @@ fn resident_chain_id(chain: B256) -> Result<u64, &'static str> {
     Ok(chain.to())
 }
 
-fn response(result: Result<EnclaveResponse, &'static str>) -> EnclaveResponse {
+pub(super) fn response(result: Result<EnclaveResponse, &'static str>) -> EnclaveResponse {
     result.unwrap_or_else(|message| EnclaveResponse::Error {
         message: message.into(),
     })

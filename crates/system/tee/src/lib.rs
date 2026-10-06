@@ -32,6 +32,8 @@ pub mod remote_session;
 pub mod session;
 pub mod tee_dkg;
 pub mod tribute_client;
+pub mod tribute_day;
+pub mod tribute_day_client;
 pub mod tribute_decrypt;
 pub mod tribute_v2;
 pub mod upgrade_transfer;

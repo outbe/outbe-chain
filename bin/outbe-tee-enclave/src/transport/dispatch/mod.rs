@@ -3,3 +3,4 @@ pub(super) mod dkg;
 pub(super) mod onboarding;
 pub(super) mod requests;
 mod tribute;
+mod tribute_day;
