@@ -1,5 +1,5 @@
 //! Local owner-bound pledge notes. Secrets stay in owner-only files.
-use super::{parse_amount, save_json};
+use super::parse_amount;
 use crate::rpc::Rpc;
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
@@ -13,9 +13,11 @@ use outbe_gratisfactory::precompile::IGratisFactory;
 use outbe_primitives::addresses::{GRATIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_protocol::codec;
 use outbe_vaultrouter::api::IVaultRouter;
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
 };
 use zeroize::Zeroizing;
@@ -250,4 +252,115 @@ async fn read_tree(rpc: &impl Rpc, chain_id: u64) -> Result<outbe_zk_canonical::
         "pledge history does not match chain"
     );
     Ok(tree)
+}
+
+fn private_dir(dir: &Path) -> Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    match builder.create(dir) {
+        Ok(()) => {
+            // Persist the new directory entry as well as the file it will hold.
+            #[cfg(unix)]
+            fs::File::open(
+                dir.parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or(Path::new(".")),
+            )?
+            .sync_all()?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            ensure!(
+                fs::symlink_metadata(dir)?.is_dir(),
+                "{} must be a directory, not a symlink",
+                dir.display()
+            );
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                ensure!(
+                    fs::metadata(dir)?.permissions().mode() & 0o022 == 0,
+                    "{} must not be writable by other users",
+                    dir.display()
+                );
+            }
+        }
+        Err(error) => return Err(error.into()),
+    }
+    Ok(())
+}
+
+/// Immutable, durable publication: interruption leaves either no file or all of it.
+fn save_json(dir: &Path, name: &str, value: &impl Serialize) -> Result<PathBuf> {
+    private_dir(dir)?;
+    let path = dir.join(name);
+    let bytes = Zeroizing::new(serde_json::to_vec_pretty(value)?);
+    let mut temporary = tempfile::NamedTempFile::new_in(dir)?; // owner-only on Unix
+    temporary.write_all(&bytes)?;
+    temporary.as_file().sync_all()?;
+    match temporary.persist_noclobber(&path) {
+        Ok(_) => {}
+        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let metadata = fs::symlink_metadata(&path)?;
+            ensure!(
+                metadata.is_file(),
+                "refusing to overwrite {}",
+                path.display()
+            );
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                ensure!(
+                    metadata.permissions().mode() & 0o077 == 0,
+                    "{} must have owner-only permissions",
+                    path.display()
+                );
+            }
+            let existing = Zeroizing::new(fs::read(&path)?);
+            ensure!(
+                *existing == *bytes,
+                "refusing to overwrite different contents in {}",
+                path.display()
+            );
+        }
+        Err(error) => return Err(error.error.into()),
+    }
+    #[cfg(unix)]
+    fs::File::open(dir)?.sync_all()?;
+    Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saved_json_is_private_and_never_rewritten() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("notes");
+        let note = serde_json::json!({ "amount": 1 });
+        let path = save_json(&dir, "note.json", &note).unwrap();
+        assert_eq!(save_json(&dir, "note.json", &note).unwrap(), path);
+        let original = fs::read(&path).unwrap();
+        assert!(save_json(&dir, "note.json", &serde_json::json!({ "amount": 2 })).is_err());
+        assert_eq!(fs::read(&path).unwrap(), original);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            assert_eq!(
+                fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            let link = temp.path().join("linked");
+            std::os::unix::fs::symlink(&dir, &link).unwrap();
+            assert!(save_json(&link, "other.json", &note).is_err());
+        }
+    }
 }
