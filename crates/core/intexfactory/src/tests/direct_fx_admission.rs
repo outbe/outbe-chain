@@ -34,10 +34,12 @@ fn a_direct_settlement_in_a_currency_the_window_never_priced_is_refused_without_
             &s,
             sid(7),
             owner(),
-            owner(),
             U256::ONE,
-            payment_token(),
-            required,
+            runtime::SettlementPayment {
+                settler: owner(),
+                asset: payment_token(),
+                snapshot_id: required,
+            },
         )
         .unwrap_err()
     });

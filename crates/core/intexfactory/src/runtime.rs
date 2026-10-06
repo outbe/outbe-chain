@@ -13,7 +13,7 @@ use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::units::{PROTOCOL_AMOUNT_DECIMALS, SCALE_1E6_U256};
 
 use outbe_intex::payout::ContributorLeafData;
-use outbe_intex::IntexState;
+use outbe_intex::{IntexState, SeriesRecord};
 use outbe_vaultrouter::api::IVaultRouter;
 
 use crate::config;
@@ -328,6 +328,13 @@ pub(crate) fn owner_balances(
     })
 }
 
+/// Who pays a settlement, in which asset, and against which VWAP snapshot.
+pub struct SettlementPayment {
+    pub settler: Address,
+    pub asset: Address,
+    pub snapshot_id: U256,
+}
+
 /// Settle paying the cost from `settler` in `asset` by ERC20 transfer. The settled
 /// units stay with `owner`. An issuance-currency payment must name the VWAP
 /// snapshot required at this block.
@@ -335,11 +342,14 @@ pub fn settle_intex(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
     owner: Address,
-    settler: Address,
     units: U256,
-    asset: Address,
-    snapshot_id: U256,
+    payment: SettlementPayment,
 ) -> Result<()> {
+    let SettlementPayment {
+        settler,
+        asset,
+        snapshot_id,
+    } = payment;
     if owner.is_zero() || settler.is_zero() {
         return Err(IntexFactoryError::ZeroAddress.into());
     }
@@ -348,19 +358,7 @@ pub fn settle_intex(
     }
 
     let series = outbe_intex::api::read_series(storage, series_id)?;
-    // The call check is one read; the qualification walk goes last.
-    match series.lifecycle_state()? {
-        IntexState::Called => {
-            let now = storage.timestamp()?.to::<u64>();
-            let deadline =
-                u64::from(series.called_at) + u64::from(series.call_notice_period_seconds);
-            if now > deadline {
-                return Err(IntexFactoryError::DeadlineExpired.into());
-            }
-        }
-        IntexState::Issued if is_qualified(storage, &series)? => {}
-        _ => return Err(IntexFactoryError::NotSettleable(series.state).into()),
-    }
+    require_settleable(storage, &series)?;
 
     let balance = nft_balance_of(storage, owner, issued_token_id(series_id))?;
     if balance.is_zero() {
@@ -405,6 +403,23 @@ pub fn settle_intex(
     })
 }
 
+fn require_settleable(storage: &StorageHandle<'_>, series: &SeriesRecord) -> Result<()> {
+    // The call check is one read; the qualification walk goes last.
+    match series.lifecycle_state()? {
+        IntexState::Called => {
+            let now = storage.timestamp()?.to::<u64>();
+            let deadline =
+                u64::from(series.called_at) + u64::from(series.call_notice_period_seconds);
+            if now > deadline {
+                return Err(IntexFactoryError::DeadlineExpired.into());
+            }
+            Ok(())
+        }
+        IntexState::Issued if is_qualified(storage, series)? => Ok(()),
+        _ => Err(IntexFactoryError::NotSettleable(series.state).into()),
+    }
+}
+
 /// Rejects an issuance-rail payment authorized for any snapshot but the required one.
 fn require_snapshot(required: Option<VwapSnapshotId>, authorized: U256) -> Result<()> {
     match required.map(VwapSnapshotId::to_u256) {
@@ -429,6 +444,17 @@ fn deposit_payment(
         return Ok(());
     }
     let before = token_balance(storage, asset)?;
+    pull_exact(storage, payer, asset, cost, before)?;
+    forward_to_reserve(storage, asset, cost, before)
+}
+
+fn pull_exact(
+    storage: &StorageHandle<'_>,
+    payer: Address,
+    asset: Address,
+    cost: U256,
+    before: U256,
+) -> Result<()> {
     checked_token_call(
         storage,
         asset,
@@ -441,6 +467,15 @@ fn deposit_payment(
     if token_balance(storage, asset)?.checked_sub(before) != Some(cost) {
         return Err(IntexFactoryError::SettlementAmountMismatch.into());
     }
+    Ok(())
+}
+
+fn forward_to_reserve(
+    storage: &StorageHandle<'_>,
+    asset: Address,
+    cost: U256,
+    before: U256,
+) -> Result<()> {
     checked_token_call(
         storage,
         asset,

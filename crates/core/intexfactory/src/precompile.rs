@@ -220,10 +220,12 @@ pub fn dispatch(
                         &storage,
                         SeriesId::from(c.seriesId),
                         c.owner,
-                        sender,
                         c.units,
-                        c.asset,
-                        c.snapshotId,
+                        runtime::SettlementPayment {
+                            settler: sender,
+                            asset: c.asset,
+                            snapshot_id: c.snapshotId,
+                        },
                     )
                 }),
                 quoteSettlement(c) => metadata::<IIntexFactory::quoteSettlementCall>(|| {
