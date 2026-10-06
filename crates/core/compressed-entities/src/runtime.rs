@@ -325,6 +325,7 @@ pub(crate) fn list(
 fn prepare_input(input: BodyInput<'_>) -> Result<PreparedBody> {
     match input {
         BodyInput::Tribute(body) => prepare_tribute(body.clone()),
+        BodyInput::EncryptedTribute(body) => prepare_encrypted_tribute(body),
         BodyInput::NodItem(body) => prepare_nod_item(body.clone()),
         BodyInput::NodBucket(body) => prepare_nod_bucket(body.clone()),
     }
@@ -345,6 +346,32 @@ fn prepare_tribute(body: TributeBodyV1) -> Result<PreparedBody> {
         stored_body,
         commitment,
         memberships,
+    })
+}
+
+fn prepare_encrypted_tribute(
+    body: &outbe_primitives::tribute_encryption::EncryptedTributeV2,
+) -> Result<PreparedBody> {
+    let payload = crate::encode_tribute_v2(body).map_err(input_error)?;
+    let stored_body =
+        StoredBody::new(crate::TRIBUTE_BODY_SCHEMA_V2, payload.clone()).map_err(input_error)?;
+    let entity_id = body.context.tribute_id;
+    let commitment = body_commitment(
+        ACTIVE_COMMITMENT_SCHEME,
+        stored_body.schema_version(),
+        entity_id,
+        &payload,
+    )
+    .map_err(|error| fatal(error.to_string()))?;
+    Ok(PreparedBody {
+        collection: Collection::Tribute,
+        entity_id,
+        stored_body,
+        commitment,
+        memberships: vec![
+            IndexRecord::owner(IndexKind::TributeByOwner, body.context.owner, entity_id),
+            IndexRecord::day(body.context.worldwide_day, entity_id),
+        ],
     })
 }
 
@@ -386,7 +413,9 @@ fn verify_stored(
     expected: Commitment,
     origin: BodyOrigin,
 ) -> Result<VerifiedBody> {
-    if stored_body.schema_version() != BODY_SCHEMA_V1 {
+    let encrypted_tribute = matches!(entity, EntityRef::Tribute(_))
+        && stored_body.schema_version() == crate::TRIBUTE_BODY_SCHEMA_V2;
+    if stored_body.schema_version() != BODY_SCHEMA_V1 && !encrypted_tribute {
         return Err(origin.invalid(format!(
             "unsupported stored body schema {}",
             stored_body.schema_version()
@@ -395,6 +424,14 @@ fn verify_stored(
     let payload = stored_body.payload();
     let entity_id = entity.entity_id();
     let (decoded_id, verified_payload) = match entity {
+        EntityRef::Tribute(_) if encrypted_tribute => {
+            let body = crate::decode_tribute_v2(payload)
+                .map_err(|error| origin.invalid(error.to_string()))?;
+            (
+                body.context.tribute_id,
+                crate::api::encrypted_tribute_payload(body),
+            )
+        }
         EntityRef::Tribute(_) => {
             let body =
                 decode_tribute_v1(payload).map_err(|error| origin.invalid(error.to_string()))?;
@@ -416,8 +453,13 @@ fn verify_stored(
             "body identity {decoded_id} does not match requested {entity_id}"
         )));
     }
-    let actual = body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, entity_id, payload)
-        .map_err(|error| origin.invalid(error.to_string()))?;
+    let actual = body_commitment(
+        ACTIVE_COMMITMENT_SCHEME,
+        stored_body.schema_version(),
+        entity_id,
+        payload,
+    )
+    .map_err(|error| origin.invalid(error.to_string()))?;
     if actual != expected {
         // Preserve the exact authenticated input, not a re-encoded replacement.
         // Bodies are canonical on-chain event payloads, never enclave key material.
@@ -487,6 +529,12 @@ fn require_capability_current(
 
 fn memberships_for_verified(body: &VerifiedBody) -> Result<Vec<IndexRecord>> {
     let id = body.entity_id();
+    if let Some(tribute) = body.payload.as_encrypted_tribute() {
+        return Ok(vec![
+            IndexRecord::owner(IndexKind::TributeByOwner, tribute.context.owner, id),
+            IndexRecord::day(tribute.context.worldwide_day, id),
+        ]);
+    }
     if let Some(tribute) = body.payload.as_tribute() {
         return Ok(vec![
             IndexRecord::owner(IndexKind::TributeByOwner, tribute.owner, id),
@@ -518,7 +566,7 @@ fn emit_stored(
         Collection::Tribute => TributeBodyStored {
             tributeId: id,
             commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-            schemaVersion: BODY_SCHEMA_V1,
+            schemaVersion: body.stored_body.schema_version(),
             previousCommitment: previous,
             newCommitment: new_commitment,
             canonicalPayload: canonical_payload,
@@ -527,7 +575,7 @@ fn emit_stored(
         Collection::NodItem => NodBodyStored {
             nodId: id,
             commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-            schemaVersion: BODY_SCHEMA_V1,
+            schemaVersion: body.stored_body.schema_version(),
             previousCommitment: previous,
             newCommitment: new_commitment,
             canonicalPayload: canonical_payload,
@@ -536,7 +584,7 @@ fn emit_stored(
         Collection::NodBucket => NodBucketBodyStored {
             bucketId: id,
             commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-            schemaVersion: BODY_SCHEMA_V1,
+            schemaVersion: body.stored_body.schema_version(),
             previousCommitment: previous,
             newCommitment: new_commitment,
             canonicalPayload: canonical_payload,
@@ -671,6 +719,13 @@ fn record_matches_query(record: &IndexRecord, query: QueryRef) -> bool {
 }
 
 fn verified_matches_query(body: &VerifiedBody, query: QueryRef) -> bool {
+    if let Some(tribute) = body.payload().as_encrypted_tribute() {
+        return match query {
+            QueryRef::TributeByOwner(owner) => tribute.context.owner == owner,
+            QueryRef::TributeByDay(day) => tribute.context.worldwide_day == day,
+            _ => false,
+        };
+    }
     match query {
         QueryRef::TributeByOwner(owner) => body
             .payload()

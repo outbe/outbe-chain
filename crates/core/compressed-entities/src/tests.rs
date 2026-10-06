@@ -350,7 +350,7 @@ fn entity_derivation_and_leaf_commitment_bind_every_declared_input() {
         leaf
     );
     assert!(body_commitment(2, 1, identity, &payload).is_err());
-    assert!(body_commitment(ACTIVE_COMMITMENT_SCHEME, 2, identity, &payload).is_err());
+    assert!(body_commitment(ACTIVE_COMMITMENT_SCHEME, 3, identity, &payload).is_err());
 }
 
 #[test]
@@ -697,13 +697,19 @@ fn commitment_identity_and_body_golden_vectors_are_pinned() {
         schema["scheme_1_schema_1_leaf"],
         schema["scheme_1_schema_2_leaf"]
     );
-    assert!(body_commitment(
-        1,
-        schema["rejected_schema_version"].as_u64().unwrap() as u32,
-        identity,
-        &payload
-    )
-    .is_err());
+    assert_eq!(
+        hex::encode(
+            body_commitment(
+                1,
+                schema["rejected_schema_version"].as_u64().unwrap() as u32,
+                identity,
+                &payload
+            )
+            .unwrap()
+            .as_bytes()
+        ),
+        schema["scheme_1_schema_2_leaf"]
+    );
 
     for dimension in ["identity", "payload"] {
         let vector = &vectors["bit_flips"][dimension];

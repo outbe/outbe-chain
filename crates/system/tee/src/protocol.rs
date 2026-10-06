@@ -790,6 +790,12 @@ pub enum EnclaveRequest {
         anchor_outcome: Vec<u8>,
         export: bool,
     },
+    /// Creator-owned encrypted Tribute records; requires the installed network key.
+    ProcessEncryptedTributeOfferBatchV2 { offers: Vec<EncryptedTributeOffer> },
+    /// Private calculation bridge for authenticated NodeHost consumers.
+    ReadTributeAmountsV2 {
+        tributes: Vec<outbe_primitives::tribute_encryption::EncryptedTributeV2>,
+    },
 }
 
 impl EnclaveRequest {
@@ -797,6 +803,10 @@ impl EnclaveRequest {
     /// both the node client and the enclave server. Never wire data.
     pub const fn label(&self) -> &'static str {
         match self {
+            Self::ProcessEncryptedTributeOfferBatchV2 { .. } => {
+                "process_encrypted_tribute_offer_batch_v2"
+            }
+            Self::ReadTributeAmountsV2 { .. } => "read_tribute_amounts_v2",
             Self::BeginUpgradeKeyTransferV1 { .. } => "begin_upgrade_key_transfer_v1",
             Self::GetQuote { .. } => "get_quote",
             Self::GetInitializationChallenge => "get_initialization_challenge",
@@ -862,6 +872,8 @@ impl EnclaveRequest {
     pub const fn is_idempotent(&self) -> bool {
         match self {
             Self::GetQuote { .. }
+            | Self::ProcessEncryptedTributeOfferBatchV2 { .. }
+            | Self::ReadTributeAmountsV2 { .. }
             | Self::GetPublicKeys
             | Self::GenerateDcapQuote { .. }
             | Self::SignRegistrationIntentDevV1 { .. }
@@ -1280,6 +1292,16 @@ pub enum EnclaveResponse {
     UpgradeKeyExportedV1 {
         request_hash: B256,
         artifact: Vec<u8>,
+    },
+    EncryptedTributeOfferBatchV2 {
+        results: Vec<crate::tribute_v2::EncryptedTributeOfferResultV2>,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    TributeAmountsReadV2 {
+        amounts: Vec<outbe_primitives::tribute_encryption::TributeAmountsV2>,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
     },
 }
 

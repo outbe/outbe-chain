@@ -745,6 +745,8 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
             CommandClass::KeylessOnboardingArtifact
         }
         EnclaveRequest::ProcessTributeOfferBatch { .. }
+        | EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 { .. }
+        | EnclaveRequest::ReadTributeAmountsV2 { .. }
         | EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 { .. }
         | EnclaveRequest::ApplyGratisOp { .. }
         | EnclaveRequest::ApplyPromisOp { .. }

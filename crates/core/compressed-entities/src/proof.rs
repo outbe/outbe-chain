@@ -566,6 +566,11 @@ pub(crate) fn canonical_body_leaf(
     let stored = StoredBody::decode(bytes)
         .map_err(|_| PointReadServiceError::InvalidPackage("stored body envelope"))?;
     let body_id = match domain {
+        CeDomain::Tribute if stored.schema_version() == crate::TRIBUTE_BODY_SCHEMA_V2 => {
+            crate::decode_stored_tribute_v2(bytes)
+                .map(|body| body.context.tribute_id)
+                .map_err(|_| PointReadServiceError::InvalidPackage("encrypted tribute body"))?
+        }
         CeDomain::Tribute => decode_stored_tribute_v1(bytes)
             .map(|b| b.tribute_id)
             .map_err(|_| PointReadServiceError::InvalidPackage("tribute body"))?,

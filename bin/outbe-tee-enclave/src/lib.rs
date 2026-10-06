@@ -24,6 +24,7 @@ pub mod confidential;
 pub mod crypto;
 pub mod dcap_verifier;
 pub mod dkg;
+pub mod encrypted_tribute_offer;
 pub mod errors;
 pub mod fidelity;
 pub mod finalized_admission;

@@ -48,6 +48,12 @@ pub(in crate::transport) fn dispatch_with_initialization(
         quote_generator,
     } = context;
     match req {
+        EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 { offers } => {
+            super::tribute::process_offers(keys, offer_key, chain_id, &offers)
+        }
+        EnclaveRequest::ReadTributeAmountsV2 { tributes } => {
+            super::tribute::read_amounts(keys, offer_key, chain_id, &tributes)
+        }
         EnclaveRequest::GetQuote { .. }
         | EnclaveRequest::GetInitializationChallenge
         | EnclaveRequest::Initialize { .. }

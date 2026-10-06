@@ -31,7 +31,9 @@ pub mod release_dcap_artifacts;
 pub mod remote_session;
 pub mod session;
 pub mod tee_dkg;
+pub mod tribute_client;
 pub mod tribute_decrypt;
+pub mod tribute_v2;
 pub mod upgrade_transfer;
 
 pub use canary::{TeeEnclaveHealthChannel, TeeEnclaveHealthSnapshot, TeeEnclaveHealthState};

@@ -386,6 +386,7 @@ impl EntityRef {
 #[derive(Clone, Copy, Debug)]
 pub enum BodyInput<'a> {
     Tribute(&'a TributeBodyV1),
+    EncryptedTribute(&'a outbe_primitives::tribute_encryption::EncryptedTributeV2),
     NodItem(&'a NodItemBodyV1),
     NodBucket(&'a NodBucketBodyV1),
 }
@@ -468,6 +469,7 @@ impl ParentBodySource for ParentBodySourceRef<'_> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum PayloadInner {
     Tribute(TributeBodyV1),
+    EncryptedTribute(outbe_primitives::tribute_encryption::EncryptedTributeV2),
     NodItem(NodItemBodyV1),
     NodBucket(NodBucketBodyV1),
 }
@@ -477,6 +479,16 @@ enum PayloadInner {
 pub struct VerifiedPayload(PayloadInner);
 
 impl VerifiedPayload {
+    #[must_use]
+    pub fn as_encrypted_tribute(
+        &self,
+    ) -> Option<&outbe_primitives::tribute_encryption::EncryptedTributeV2> {
+        match &self.0 {
+            PayloadInner::EncryptedTribute(body) => Some(body),
+            _ => None,
+        }
+    }
+
     #[must_use]
     pub fn as_tribute(&self) -> Option<&TributeBodyV1> {
         match &self.0 {
@@ -1428,6 +1440,12 @@ pub fn delete(
 
 pub(crate) fn tribute_payload(body: TributeBodyV1) -> VerifiedPayload {
     VerifiedPayload(PayloadInner::Tribute(body))
+}
+
+pub(crate) fn encrypted_tribute_payload(
+    body: outbe_primitives::tribute_encryption::EncryptedTributeV2,
+) -> VerifiedPayload {
+    VerifiedPayload(PayloadInner::EncryptedTribute(body))
 }
 
 pub(crate) fn nod_item_payload(body: NodItemBodyV1) -> VerifiedPayload {

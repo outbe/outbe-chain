@@ -4,6 +4,11 @@ use thiserror::Error;
 
 use crate::WwdEntityId;
 
+mod tribute_v2;
+pub use tribute_v2::{
+    decode_stored_tribute_v2, decode_tribute_v2, encode_tribute_v2, TRIBUTE_BODY_SCHEMA_V2,
+};
+
 /// Fork-supported schema for the first three canonical body messages.
 pub const BODY_SCHEMA_V1: u32 = 1;
 
@@ -543,6 +548,8 @@ pub enum CanonicalBodyError {
     },
     #[error("body worldwide day does not match its WwdEntityId prefix")]
     IdentityDayMismatch,
+    #[error("invalid encrypted Tribute blob or identity/day encoding")]
+    InvalidEncryptedTribute,
     #[error("input is not the canonical Protobuf representation")]
     NonCanonicalEncoding,
     #[error("unsupported body schema version {actual}")]

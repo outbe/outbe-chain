@@ -85,7 +85,7 @@ fn valid_immutable_blob(blob: &[u8], expected_len: usize) -> bool {
 }
 
 /// Transient authorized calculation view, never a canonical storage body.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TributeAmountsV2 {
     pub issuance_amount_minor: U256,
     pub nominal_amount_minor: U256,

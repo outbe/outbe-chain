@@ -62,11 +62,15 @@ pub fn decode_canonical_body_event(
     if emitter == TRIBUTE_ADDRESS && signature == TributeBodyStored::SIGNATURE_HASH {
         let event = TributeBodyStored::decode_log_data(data)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
-        validate_versions(event.commitmentSchemeVersion, event.schemaVersion)?;
+        validate_versions(event.commitmentSchemeVersion, event.schemaVersion, true)?;
         let id = WwdEntityId::from(event.tributeId);
-        let body = decode_tribute_v1(&event.canonicalPayload)
-            .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
-        if body.tribute_id != id {
+        let body_id = if event.schemaVersion == crate::TRIBUTE_BODY_SCHEMA_V2 {
+            crate::decode_tribute_v2(&event.canonicalPayload).map(|body| body.context.tribute_id)
+        } else {
+            decode_tribute_v1(&event.canonicalPayload).map(|body| body.tribute_id)
+        }
+        .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
+        if body_id != id {
             return Err(ReplayEventError::PayloadIdentityMismatch);
         }
         return stored_event(
@@ -74,6 +78,7 @@ pub fn decode_canonical_body_event(
             event.previousCommitment,
             event.newCommitment,
             &event.canonicalPayload,
+            event.schemaVersion,
         )
         .map(Some);
     }
@@ -89,7 +94,7 @@ pub fn decode_canonical_body_event(
     if emitter == NOD_ADDRESS && signature == NodBodyStored::SIGNATURE_HASH {
         let event = NodBodyStored::decode_log_data(data)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
-        validate_versions(event.commitmentSchemeVersion, event.schemaVersion)?;
+        validate_versions(event.commitmentSchemeVersion, event.schemaVersion, false)?;
         let id = WwdEntityId::from(event.nodId);
         let body = decode_nod_item_v1(&event.canonicalPayload)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
@@ -101,6 +106,7 @@ pub fn decode_canonical_body_event(
             event.previousCommitment,
             event.newCommitment,
             &event.canonicalPayload,
+            event.schemaVersion,
         )
         .map(Some);
     }
@@ -116,7 +122,7 @@ pub fn decode_canonical_body_event(
     if emitter == NOD_ADDRESS && signature == NodBucketBodyStored::SIGNATURE_HASH {
         let event = NodBucketBodyStored::decode_log_data(data)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
-        validate_versions(event.commitmentSchemeVersion, event.schemaVersion)?;
+        validate_versions(event.commitmentSchemeVersion, event.schemaVersion, false)?;
         let id = WwdEntityId::from(event.bucketId);
         let body = decode_nod_bucket_v1(&event.canonicalPayload)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
@@ -128,6 +134,7 @@ pub fn decode_canonical_body_event(
             event.previousCommitment,
             event.newCommitment,
             &event.canonicalPayload,
+            event.schemaVersion,
         )
         .map(Some);
     }
@@ -195,10 +202,11 @@ fn stored_event(
     previous: B256,
     advertised: B256,
     payload: &[u8],
+    schema: u32,
 ) -> Result<CanonicalBodyEvent, ReplayEventError> {
     let expected = body_commitment(
         ACTIVE_COMMITMENT_SCHEME,
-        BODY_SCHEMA_V1,
+        schema,
         entity.entity_id(),
         payload,
     )
@@ -224,11 +232,11 @@ fn deleted_event(
     })
 }
 
-fn validate_versions(scheme: u32, schema: u32) -> Result<(), ReplayEventError> {
+fn validate_versions(scheme: u32, schema: u32, tribute: bool) -> Result<(), ReplayEventError> {
     if scheme != ACTIVE_COMMITMENT_SCHEME {
         return Err(ReplayEventError::UnsupportedCommitmentScheme(scheme));
     }
-    if schema != BODY_SCHEMA_V1 {
+    if schema != BODY_SCHEMA_V1 && !(tribute && schema == crate::TRIBUTE_BODY_SCHEMA_V2) {
         return Err(ReplayEventError::UnsupportedBodySchema(schema));
     }
     Ok(())

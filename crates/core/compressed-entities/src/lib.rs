@@ -76,9 +76,10 @@ pub use proof::{
 };
 pub use protobuf::{
     decode_nod_bucket_v1, decode_nod_item_v1, decode_stored_nod_bucket_v1,
-    decode_stored_nod_item_v1, decode_stored_tribute_v1, decode_tribute_v1, encode_nod_bucket_v1,
-    encode_nod_item_v1, encode_tribute_v1, CanonicalBodyError, NodBucketBodyV1, NodItemBodyV1,
-    StoredBody, TributeBodyV1, BODY_SCHEMA_V1,
+    decode_stored_nod_item_v1, decode_stored_tribute_v1, decode_stored_tribute_v2,
+    decode_tribute_v1, decode_tribute_v2, encode_nod_bucket_v1, encode_nod_item_v1,
+    encode_tribute_v1, encode_tribute_v2, CanonicalBodyError, NodBucketBodyV1, NodItemBodyV1,
+    StoredBody, TributeBodyV1, BODY_SCHEMA_V1, TRIBUTE_BODY_SCHEMA_V2,
 };
 pub use replay::{
     decode_canonical_body_event, decode_partition_retirement,

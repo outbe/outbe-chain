@@ -101,6 +101,7 @@ impl EnclaveSessions {
             EnclaveRequest::Health
                 | EnclaveRequest::GetPublicKeys
                 | EnclaveRequest::ProcessTributeOfferBatch { .. }
+                | EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 { .. }
         ) {
             return Err(TransportError::EnclaveError(
                 "request is not permitted on the canary connection".into(),
