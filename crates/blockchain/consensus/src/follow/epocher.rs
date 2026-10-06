@@ -43,8 +43,7 @@ pub enum BoundaryObservationError {
 struct ObservedBoundaries {
     length: u64,
     activation_grace: u64,
-    /// Actual activation carrier by epoch. Epoch zero activates in block 1;
-    /// genesis height zero is mapped to epoch zero as a special trust anchor.
+    /// Actual activation carriers, beginning at genesis or a restored local boundary.
     activations: BTreeMap<u64, u64>,
 }
 
@@ -59,12 +58,24 @@ impl FollowerEpocher {
     /// Create an observed-boundary epocher. Length and grace only bound the next
     /// boundary; they never select an epoch.
     pub fn new(length: u64, activation_grace: u64) -> Self {
+        Self::from_anchor(length, activation_grace, Epoch::new(0), Height::new(1))
+    }
+
+    /// Start from a boundary already present in trusted, finalized local
+    /// history. Earlier heights remain outside the epocher's known range.
+    pub fn from_anchor(
+        length: u64,
+        activation_grace: u64,
+        epoch: Epoch,
+        activation: Height,
+    ) -> Self {
         assert!(length > 0, "follower epoch length must be non-zero");
+        assert!(activation.get() > 0, "follower anchor must be a block");
         Self {
             inner: Arc::new(RwLock::new(ObservedBoundaries {
                 length,
                 activation_grace,
-                activations: BTreeMap::from([(0, 1)]),
+                activations: BTreeMap::from([(epoch.get(), activation.get())]),
             })),
         }
     }
@@ -113,7 +124,7 @@ impl FollowerEpocher {
         let (&current, &previous_height) = inner
             .activations
             .last_key_value()
-            .expect("epoch-zero activation is always present");
+            .expect("anchor activation is always present");
         if epoch != current.saturating_add(1) {
             return Err(BoundaryObservationError::NonSequential {
                 current,
@@ -239,6 +250,32 @@ mod tests {
         assert_eq!(epoch_of(121), 2);
         assert_eq!(epoch_of(180), 2);
         assert_eq!(epoch_of(181), 3);
+    }
+
+    #[test]
+    fn restored_epoch_uses_its_actual_boundary_without_genesis_history() {
+        let restored =
+            FollowerEpocher::from_anchor(1_200, 300, Epoch::new(621), Height::new(745_205));
+        assert!(restored.containing(Height::new(745_204)).is_none());
+        assert_eq!(
+            restored.containing(Height::new(745_205)).unwrap().epoch(),
+            Epoch::new(621)
+        );
+        assert_eq!(
+            restored.next_boundary_window(Epoch::new(621)),
+            Some((Height::new(746_405), Height::new(746_705)))
+        );
+        restored
+            .observe_boundary(Epoch::new(622), Height::new(746_408))
+            .unwrap();
+        assert_eq!(restored.last(Epoch::new(621)), Some(Height::new(746_407)));
+        assert_eq!(
+            restored.containing(Height::new(746_408)).unwrap().epoch(),
+            Epoch::new(622)
+        );
+        assert!(restored
+            .observe_boundary(Epoch::new(624), Height::new(747_608))
+            .is_err());
     }
 
     /// `first(E)` lands on epoch `E`'s boundary-outcome block (1, 61, 121, ...) -

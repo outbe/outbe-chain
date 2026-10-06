@@ -171,7 +171,7 @@ pub fn seed_registry_authority(
     Ok(())
 }
 
-pub(super) fn request_receipt(bundle_hash: B256) -> RequestLimitSplitReceiptV1 {
+pub(super) fn request_receipt(bundle_hash: B256, logical_time: u64) -> RequestLimitSplitReceiptV1 {
     RequestLimitSplitReceiptV1 {
         protocol_bundle_hash: bundle_hash,
         wwd: TEST_WWD.value(),
@@ -182,16 +182,11 @@ pub(super) fn request_receipt(bundle_hash: B256) -> RequestLimitSplitReceiptV1 {
         desis_limit_minor: U256::from(40),
         destination: LimitSplitDestination::DesisAuction,
         desis_brief_hash: Some(
-            desis_request_brief_hash(
-                bundle_hash,
-                TEST_WWD.value(),
-                U256::from(40),
-                TEST_LOGICAL_TIME,
-            )
-            .unwrap(),
+            desis_request_brief_hash(bundle_hash, TEST_WWD.value(), U256::from(40), logical_time)
+                .unwrap(),
         ),
         carry_over_credit: U256::ZERO,
-        logical_anchor: TEST_LOGICAL_TIME,
+        logical_anchor: logical_time,
     }
 }
 
@@ -199,6 +194,7 @@ pub(super) fn intent(
     bundle_hash: B256,
     snapshot: &OcompSnapshotExtensionV1,
     request_receipt_hash: B256,
+    logical_time: u64,
 ) -> JobIntentV1 {
     JobIntentV1 {
         chain_id: 1,
@@ -227,7 +223,7 @@ pub(super) fn intent(
             request_limit_split_receipt_hash: request_receipt_hash,
         },
         logical_evaluation_height: TEST_REQUEST_HEIGHT,
-        logical_evaluation_time: TEST_LOGICAL_TIME,
+        logical_evaluation_time: logical_time,
         activation_preconditions: ActivationPreconditionsV1 {
             tribute: TributeInputBindingV1 {
                 wwd: TEST_WWD.value(),
@@ -268,7 +264,12 @@ pub(super) fn intent(
     }
 }
 
-pub(super) fn result(bundle_hash: B256, job_id: B256, limits: &SchemaLimits) -> LysisResultV1 {
+pub(super) fn result(
+    bundle_hash: B256,
+    job_id: B256,
+    limits: &SchemaLimits,
+    logical_time: u64,
+) -> LysisResultV1 {
     let roots = ResultRootsV1 {
         nod_root: hash(50),
         bucket_root: hash(51),
@@ -337,7 +338,7 @@ pub(super) fn result(bundle_hash: B256, job_id: B256, limits: &SchemaLimits) -> 
             carry_over_credit: U256::from(15),
             status: CompletionStatus::Completed,
             logical_evaluation_height: TEST_REQUEST_HEIGHT,
-            logical_evaluation_time: TEST_LOGICAL_TIME,
+            logical_evaluation_time: logical_time,
         },
         tribute_count: 2,
         tribute_nominal_total: U256::from(1_000),

@@ -349,3 +349,79 @@ fn committee_chain_advances_from_boundary_block_extra_data() {
     // A non-boundary block (empty extra_data) registers nothing.
     assert_eq!(chain.advance_from_block_extra_data(&[]).unwrap(), None);
 }
+
+#[test]
+fn restart_from_local_epoch_621_fetches_no_genesis_epochs() {
+    #[derive(Clone)]
+    struct CountingSource {
+        records: ArchivedFinalizedSource,
+        requests: Arc<std::sync::Mutex<Vec<u64>>>,
+    }
+    impl FinalizedSource for CountingSource {
+        async fn get_finalization(&self, height: Height) -> Option<CertifiedFinalizedBlock> {
+            self.requests.lock().unwrap().push(height.get());
+            self.records.get_finalization(height).await
+        }
+    }
+
+    let current = committee(10);
+    let next = committee(30);
+    let current_epoch = Epoch::new(621);
+    let next_epoch = Epoch::new(622);
+    let activation = Height::new(745_201);
+    let next_activation = Height::new(746_401);
+    let source = CountingSource {
+        records: ArchivedFinalizedSource {
+            by_height: Arc::new(BTreeMap::from([
+                (
+                    activation.get(),
+                    certified_block(
+                        &current,
+                        current_epoch,
+                        activation.get(),
+                        current.boundary_block_extra_data(current_epoch),
+                    ),
+                ),
+                (
+                    next_activation.get() - 1,
+                    certified_block(
+                        &current,
+                        current_epoch,
+                        next_activation.get() - 1,
+                        next.preannounce_block_extra_data(next_epoch),
+                    ),
+                ),
+                (
+                    next_activation.get(),
+                    certified_block(
+                        &next,
+                        next_epoch,
+                        next_activation.get(),
+                        next.boundary_block_extra_data(next_epoch),
+                    ),
+                ),
+            ])),
+        },
+        requests: Arc::new(std::sync::Mutex::new(Vec::new())),
+    };
+    let chain = SharedCommitteeChain::new(
+        CommitteeChain::from_trusted_local_boundary(current_epoch, &current.outcome(current_epoch))
+            .unwrap(),
+    );
+    let epocher = FollowerEpocher::from_anchor(1_200, 300, current_epoch, activation);
+    futures::executor::block_on(engine::prepare_committee_chain(
+        &chain,
+        &source,
+        &epocher,
+        current_epoch,
+        next_activation,
+    ))
+    .expect("next committee must authenticate from a restored local anchor");
+    let requests = source.requests.lock().unwrap();
+    assert!(requests.iter().all(|height| *height >= activation.get()));
+    assert!(
+        requests.len() <= 5,
+        "unexpected historical fetches: {requests:?}"
+    );
+    assert_eq!(chain.lock().highest_registered(), Some(next_epoch));
+}

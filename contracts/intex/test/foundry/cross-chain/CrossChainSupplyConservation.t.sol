@@ -7,6 +7,7 @@ import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {BatchSendParam, IIntexNFT1155Bridge} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
+import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 
 /// @dev Cross-chain conservation invariants for the IntexNFT1155 + IntexNFT1155Bridge pair:
 ///
@@ -157,6 +158,103 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         // A second reclaim reverts - the entry is gone.
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.NoSuchFailedCrosschainMint.selector, receiveId, 0));
         adapterB.reclaimToSource(receiveId, 0);
+    }
+
+    function test_LateReclaimParksOnTheCalledOriginAndConservesSupply() public {
+        uint32 day = 20260602;
+        bytes14 series = "20260602-USD-U";
+        uint256 id = uint256(uint112(series));
+        tokenA.createSeries(CreateSeriesLib.params(day, ISSUED_UNITS, 60));
+        tokenA.issueIntex(user, 100, series);
+        bytes32 receiveId = _send(adapterA, adapterB, A_CHAIN_ID, user, id, 60);
+        (,, uint256 parked, bool exists) = adapterB.failedCrosschainMints(receiveId, 0);
+        assertTrue(exists, "parked on B");
+        assertEq(tokenA.totalSupply(id) + tokenB.totalSupply(id) + parked, 100);
+
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, id));
+        adapterB.retryCrosschainMint(receiveId, 0);
+
+        tokenB.createSeries(CreateSeriesLib.params(day, ISSUED_UNITS, 60));
+        uint32 calledAt = uint32(block.timestamp);
+        tokenA.markCalled(series, calledAt);
+        tokenB.markCalled(series, calledAt);
+        vm.warp(uint256(calledAt) + 61);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, id, calledAt + 60));
+        adapterB.retryCrosschainMint(receiveId, 0);
+
+        // Past the deadline the Called origin refuses the reclaim's mint, so it parks on A.
+        adapterB.reclaimToSource(receiveId, 0);
+        bytes memory reclaim = bridge.lastPayload();
+        bytes32 reclaimId = keccak256(abi.encode(_interop(B_CHAIN_ID, address(adapterB)), reclaim));
+        _deliver(B_CHAIN_ID, address(adapterB), address(adapterA), reclaim);
+        (,,, exists) = adapterB.failedCrosschainMints(receiveId, 0);
+        assertFalse(exists, "entry consumed on reclaim");
+        uint256 parkedOnA;
+        (,, parkedOnA, exists) = adapterA.failedCrosschainMints(reclaimId, 0);
+        assertTrue(exists, "late reclaim parks on A");
+        assertEq(parkedOnA, 60);
+        assertEq(tokenA.totalSupply(id), 40, "A regains no supply past the deadline");
+        assertEq(tokenA.balanceOf(user, id), 40);
+        assertEq(tokenB.totalSupply(id), 0);
+        assertEq(tokenA.totalSupply(id) + tokenB.totalSupply(id) + parkedOnA, 100);
+
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.NoSuchFailedCrosschainMint.selector, receiveId, 0));
+        adapterB.reclaimToSource(receiveId, 0);
+    }
+
+    /// A hop inside the call window carries the units but never the clock: `calledAt` and the
+    /// sealed notice on both mirrors are byte-equal before and after, so the settlement deadline
+    /// (`calledAt + callNoticePeriod`) is unchanged, and one second past it the return hop is refused.
+    function test_CalledHop_KeepsCalledAtAndDeadlineOnBothChains() public {
+        uint32 day = 20260603;
+        bytes14 series = "20260603-USD-U";
+        uint256 id = uint256(uint112(series));
+        tokenA.createSeries(CreateSeriesLib.params(day, ISSUED_UNITS, 60));
+        tokenB.createSeries(CreateSeriesLib.params(day, ISSUED_UNITS, 60));
+        tokenA.issueIntex(user, 100, series);
+
+        uint32 calledAt = uint32(block.timestamp);
+        tokenA.markCalled(series, calledAt);
+        tokenB.markCalled(series, calledAt);
+        IIntexNFT1155.SeriesData memory beforeA = tokenA.readData(series);
+        IIntexNFT1155.SeriesData memory beforeB = tokenB.readData(series);
+        uint256 deadlineA = uint256(beforeA.calledAt) + beforeA.callTrigger.callNoticePeriod;
+        uint256 deadlineB = uint256(beforeB.calledAt) + beforeB.callTrigger.callNoticePeriod;
+        assertEq(deadlineA, uint256(calledAt) + 60);
+        assertEq(deadlineB, deadlineA, "both mirrors share one deadline");
+
+        vm.warp(uint256(calledAt) + 30);
+        _send(adapterA, adapterB, A_CHAIN_ID, user, id, 60);
+
+        IIntexNFT1155.SeriesData memory afterA = tokenA.readData(series);
+        IIntexNFT1155.SeriesData memory afterB = tokenB.readData(series);
+        assertEq(uint8(afterA.state), uint8(IIntexNFT1155.IntexState.Called));
+        assertEq(uint8(afterB.state), uint8(IIntexNFT1155.IntexState.Called));
+        assertEq(afterA.calledAt, beforeA.calledAt, "source calledAt survives the hop");
+        assertEq(afterB.calledAt, beforeB.calledAt, "destination calledAt survives the hop");
+        assertEq(afterA.callTrigger.callNoticePeriod, beforeA.callTrigger.callNoticePeriod);
+        assertEq(afterB.callTrigger.callNoticePeriod, beforeB.callTrigger.callNoticePeriod);
+        assertEq(uint256(afterA.calledAt) + afterA.callTrigger.callNoticePeriod, deadlineA, "source deadline not reset");
+        assertEq(
+            uint256(afterB.calledAt) + afterB.callTrigger.callNoticePeriod, deadlineB, "destination deadline not reset"
+        );
+        assertEq(tokenA.balanceOf(user, id), 40);
+        assertEq(tokenB.balanceOf(user, id), 60);
+        assertEq(tokenA.totalSupply(id) + tokenB.totalSupply(id), 100, "SI-08: sum preserved across the called hop");
+
+        // The hop bought no time: one second past the original deadline the return hop is refused.
+        vm.warp(deadlineB + 1);
+        uint256[] memory tokenIds = new uint256[](1);
+        tokenIds[0] = id;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 60;
+        BatchSendParam memory back = BatchSendParam({
+            dstChainId: A_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenIds: tokenIds, units: amounts
+        });
+        uint256 fee = adapterB.quoteBatchSend(back);
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, id, uint32(deadlineB)));
+        adapterB.batchSend{value: fee}(back);
     }
 
     function testFuzz_Hop_TotalSupplyPreserved(uint256 issuedSeed, uint256 bridgedSeed) public {

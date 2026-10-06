@@ -38,8 +38,10 @@ const GEM_LOAD_MINOR: u128 = 100_003;
 const REFERENCE_BYTE: u8 = b'U';
 /// `GemTypes::Merchant`.
 const MERCHANT_GEM_TYPE: u8 = 5;
-/// `GemState::Issued` / `Called` / `Settled` / `Forfeited`; the last is read-time only.
+/// `getGemStatus` states: Issued, Qualified, Called, Settled, Forfeited; Qualified and
+/// Forfeited are derived on read.
 const ISSUED: u8 = 0;
+const QUALIFIED: u8 = 1;
 const CALLED: u8 = 2;
 const SETTLED: u8 = 3;
 const FORFEITED_STATE: u8 = 4;
@@ -356,7 +358,7 @@ impl Lifecycle for GemLifecycle {
         let url = world_url(world);
         (0..HOLDERS).all(|index| {
             let id = gem(world, index);
-            read_gem(world, id).state == ISSUED && gem_is_qualified(&url, id)
+            read_gem(world, id).state == QUALIFIED && gem_is_qualified(&url, id)
         })
     }
 

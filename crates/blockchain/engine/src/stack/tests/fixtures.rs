@@ -171,6 +171,23 @@ pub(super) fn bootstrap_fixture_signers(
         .collect()
 }
 
+pub(super) fn certify_fixture_proposal(
+    verifier: &HybridScheme<MinSig>,
+    signers: &[HybridScheme<MinSig>],
+    proposal: Proposal<outbe_consensus::digest::Digest>,
+) -> outbe_consensus::marshal_types::Finalization {
+    let finalizes: Vec<_> = signers
+        .iter()
+        .map(|scheme| Finalize::sign(scheme, proposal.clone()).unwrap())
+        .collect();
+    Finalization::from_finalizes(
+        verifier,
+        commonware_utils::iter::NonEmpty::try_new(finalizes.iter()).unwrap(),
+        &Sequential,
+    )
+    .unwrap()
+}
+
 pub(super) fn recovery_finalization_fixture(
     block: &ConsensusBlock,
     round: Round,
@@ -198,16 +215,7 @@ pub(super) fn recovery_finalization_fixture(
         round.view().previous().unwrap_or(View::zero()),
         block.digest(),
     );
-    let finalizes: Vec<_> = signers
-        .iter()
-        .map(|scheme| Finalize::sign(scheme, proposal.clone()).unwrap())
-        .collect();
-    let finalization = Finalization::from_finalizes(
-        &verifier,
-        commonware_utils::iter::NonEmpty::try_new(finalizes.iter()).unwrap(),
-        &Sequential,
-    )
-    .unwrap();
+    let finalization = certify_fixture_proposal(&verifier, &signers, proposal);
     let provider = HybridSchemeProvider::new();
     let _ = provider.register(round.epoch(), verifier);
     (provider, finalization)

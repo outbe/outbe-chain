@@ -46,7 +46,13 @@ pub fn dispatch(
                 let exercised = registry.exercised_units.read(&series_id)?;
                 let gem_factory = registry.gem_factory_units.read(&series_id)?;
                 let now = storage.timestamp()?.to::<u64>();
-                to_abi_data(&record, settled, exercised, gem_factory, now)
+                let mut data = to_abi_data(&record, settled, exercised, gem_factory, now)?;
+                if data.state == crate::schema::IntexState::Issued as u8
+                    && crate::api::is_qualified(&storage, &record)?
+                {
+                    data.state = 1;
+                }
+                Ok(data)
             }),
             seriesExists(c) => view(c, |c| registry.series_exists(SeriesId::from(c.seriesId))),
             totalSeries(_) => metadata::<IIntex::totalSeriesCall>(|| registry.read_total_series()),

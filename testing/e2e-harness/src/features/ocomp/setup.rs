@@ -19,6 +19,31 @@ fn fresh_ocomp_measurement_localnet(world: &mut World) {
     start_ocomp_measurement_localnet(world, None, None, false, None);
 }
 
+#[given("a fresh four-validator snapshot localnet with short epochs")]
+fn fresh_snapshot_localnet(world: &mut World) {
+    let epoch = super::follower_snapshot::EPOCH_LENGTH;
+    bootstrap_localnet(
+        world,
+        6,
+        &[
+            ("TESTNET_EPOCH_LENGTH_BLOCKS", epoch.to_string()),
+            ("TESTNET_DKG_PREPARE_WINDOW_BLOCKS", "15".to_owned()),
+            ("TESTNET_DEV_FELONY_THRESHOLD", (epoch - 1).to_string()),
+        ],
+    );
+    let prepared = world
+        .ocomp
+        .prepare_measurement_fork_install()
+        .expect("install ordinary snapshot-exporter deployment");
+    world
+        .localnet
+        .bind_tee_genesis()
+        .expect("bind canonical TEE genesis");
+    // Native snapshot inspection requires the real exporter closure journal.
+    // No worker or computation request is needed to test consensus recovery.
+    launch_prepared_ocomp(world, &mut StartOpts::default(), &prepared, false);
+}
+
 #[given("a fresh four-validator OCOMP public measurement localnet")]
 fn fresh_ocomp_public_measurement_localnet(world: &mut World) {
     start_ocomp_measurement_localnet(world, Some(0), None, false, None);

@@ -846,7 +846,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "quantity",
+          "name": "units",
           "type": "uint16",
           "internalType": "uint16"
         },
@@ -1181,7 +1181,7 @@
           "internalType": "address"
         },
         {
-          "name": "quantity",
+          "name": "units",
           "type": "uint16",
           "indexed": true,
           "internalType": "uint16"
@@ -1409,7 +1409,7 @@
       "name": "BidAmountOverflow",
       "inputs": [
         {
-          "name": "quantity",
+          "name": "units",
           "type": "uint16",
           "internalType": "uint16"
         },

@@ -8625,21 +8625,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-emit"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "alloy-sol-types",
- "ark-ff 0.6.0",
- "outbe-macros",
- "outbe-primitives",
- "outbe-protocol",
- "outbe-zk-backend",
- "outbe-zk-canonical",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "outbe-engine"
 version = "0.1.0"
 dependencies = [
@@ -8734,7 +8719,6 @@ dependencies = [
  "outbe-credisfactory",
  "outbe-cycle",
  "outbe-desis",
- "outbe-emit",
  "outbe-fidelity",
  "outbe-gem",
  "outbe-gemfactory",
@@ -8985,6 +8969,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-macros",
  "outbe-ocomp-protocol",
+ "outbe-oracle",
  "outbe-primitives",
  "revm",
  "thiserror 2.0.18",

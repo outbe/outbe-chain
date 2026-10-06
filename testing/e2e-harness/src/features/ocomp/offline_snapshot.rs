@@ -82,7 +82,7 @@ pub(crate) fn parse_snapshot_validation_report(
     Ok(report)
 }
 
-fn successful_command(command: &SnapshotCommandObservation) -> eyre::Result<()> {
+pub(super) fn successful_command(command: &SnapshotCommandObservation) -> eyre::Result<()> {
     ensure!(!command.argv.is_empty(), "missing actual argv");
     ensure!(command.started <= command.ended, "invalid command interval");
     ensure!(
@@ -680,6 +680,18 @@ mod tests {
     use super::*;
     use crate::world::state::*;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn snapshot_launch_requires_a_non_genesis_local_committee_anchor() {
+        assert!(assert_local_committee_anchor(
+            "certified follower startup recovery barrier completed",
+            745_250
+        )
+        .is_err());
+        assert!(assert_local_committee_anchor("anchor_epoch=0 anchor_height=1 follower restored committee from local finalized history", 745_250).is_err());
+        assert!(assert_local_committee_anchor("anchor_epoch=621 anchor_height=745205 follower restored committee from local finalized history", 745_250).is_ok());
+        assert!(assert_local_committee_anchor("anchor_epoch=621 anchor_height=745205 follower restored committee from local finalized history", 745_204).is_err());
+    }
 
     fn block(number: u64) -> SnapshotBlock {
         SnapshotBlock {
@@ -1519,7 +1531,7 @@ fn snapshot_now_millis() -> eyre::Result<u64> {
 
 /// Invoke the actual CLI, retaining outputs even when validation exits nonzero.
 /// Timeout kills/reaps this owned child; it cannot leave a CLI writer behind.
-fn run_snapshot_command(
+pub(super) fn run_snapshot_command(
     mut command: std::process::Command,
     evidence_dir: &std::path::Path,
     phase: &str,
@@ -1599,7 +1611,7 @@ mod observation_tests {
     }
 }
 
-fn parse_recovery_record(log: &str) -> eyre::Result<(u64, SnapshotBlock, u64, u64)> {
+pub(super) fn parse_recovery_record(log: &str) -> eyre::Result<(u64, SnapshotBlock, u64, u64)> {
     let mut records = log
         .lines()
         .filter(|line| line.contains("certified follower startup recovery barrier completed"));
@@ -1861,7 +1873,7 @@ fn observe_stopped_native(
     })
 }
 
-fn snapshot_option(argv: &[String], flag: &str) -> eyre::Result<String> {
+pub(super) fn snapshot_option(argv: &[String], flag: &str) -> eyre::Result<String> {
     for (index, arg) in argv.iter().enumerate() {
         if arg == flag {
             return argv
@@ -1876,7 +1888,7 @@ fn snapshot_option(argv: &[String], flag: &str) -> eyre::Result<String> {
     Err(eyre!("ordinary node command has no {flag}"))
 }
 
-fn canonical_snapshot_block(
+pub(super) fn canonical_snapshot_block(
     world: &crate::world::World,
     number: u64,
 ) -> eyre::Result<SnapshotBlock> {
@@ -1916,6 +1928,15 @@ fn create_stopped_snapshot(world: &mut crate::world::World) {
 fn create_stopped_snapshot_result(world: &mut crate::world::World) -> eyre::Result<()> {
     use crate::world::state::*;
     use std::process::Command;
+    // Exercise restart after committee rotation, so genesis reconstruction
+    // cannot satisfy the snapshot acceptance check below.
+    let rotated_height = super::OCOMP_TEST_EPOCH_LENGTH_BLOCKS * 2;
+    ensure!(
+        world
+            .rpc
+            .wait_finalized_at_least(world.validators.primary_port(), rotated_height, 600),
+        "snapshot donor did not finalize beyond committee rotation"
+    );
     let index = 3;
     let node = world
         .validators
@@ -2167,7 +2188,7 @@ fn recipient_identity(
     Ok(values)
 }
 
-fn place_snapshot_payload(
+pub(super) fn place_snapshot_payload(
     world: &crate::world::World,
     archive: &std::path::Path,
     evidence_dir: &std::path::Path,
@@ -2234,6 +2255,29 @@ fn place_snapshot_payload(
     Ok((manifest, signature))
 }
 
+pub(super) fn assert_local_committee_anchor(text: &str, finalized_height: u64) -> eyre::Result<()> {
+    let record = text
+        .lines()
+        .find(|line| line.contains("follower restored committee from local finalized history"))
+        .ok_or_else(|| eyre!("snapshot fullnode rebuilt committee history from genesis"))?;
+    let field = |key: &str| -> eyre::Result<u64> {
+        let prefix = format!("{key}=");
+        record
+            .split_whitespace()
+            .find_map(|word| word.strip_prefix(&prefix))
+            .ok_or_else(|| eyre!("missing {key} in local committee anchor"))?
+            .parse()
+            .map_err(Into::into)
+    };
+    let epoch = field("anchor_epoch")?;
+    let height = field("anchor_height")?;
+    ensure!(
+        epoch > 0 && height > 1 && height <= finalized_height,
+        "snapshot fullnode did not resume from a non-genesis finalized committee anchor"
+    );
+    Ok(())
+}
+
 fn observe_snapshot_launch(
     world: &mut crate::world::World,
     launch: crate::world::localnet::NodeLaunchObservation,
@@ -2259,6 +2303,7 @@ fn observe_snapshot_launch(
         std::thread::sleep(std::time::Duration::from_millis(100));
     };
     let (marshal_processed, anchor, ce_marker_height, last_execution_height) = fields;
+    assert_local_committee_anchor(&text, anchor.number)?;
     let canonical = canonical_snapshot_block(world, anchor.number)?;
     let metadata = std::fs::metadata(&launch.log_path)?;
     let log = SnapshotLogSlice {

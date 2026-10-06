@@ -37,7 +37,7 @@ contract IntexAuction is
     /// @dev EIP-712 type hash for the revealed bid; the currency pair is part of the signed
     ///      struct, so a bidder cannot swap currencies between commit and reveal.
     bytes32 private constant REVEAL_BID_TYPEHASH = keccak256(
-        "RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
+        "RevealBid(uint32 worldwideDay,address bidder,uint16 units,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
     );
 
     /// @custom:storage-location erc7201:outbe.intex.IntexAuction
@@ -314,7 +314,7 @@ contract IntexAuction is
     /// @inheritdoc IIntexAuction
     function revealBid(
         uint32 worldwideDay,
-        uint16 quantity,
+        uint16 units,
         uint32 bidRate,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
@@ -336,8 +336,8 @@ contract IntexAuction is
         // the commit slot is freed on first reveal.
         if ($.revealedBidsByBidder[worldwideDay][msg.sender]) revert BidAlreadyRevealed();
         if (committedHash == bytes32(0)) revert BidNotFound();
-        if (quantity == 0 || bidRate == 0) revert ZeroValue("quantity/bidRate");
-        if (quantity < a.params.minIntexBidQuantity) revert BidBelowMinIntexBidQuantity();
+        if (units == 0 || bidRate == 0) revert ZeroValue("units/bidRate");
+        if (units < a.params.minIntexBidQuantity) revert BidBelowMinIntexBidQuantity();
         if (bidRate < a.params.minIntexBidRate) revert BidBelowMinIntexBidRate();
         if (bidRate > BridgeMsgCodec.SCALE_1E6) revert BidRateAboveMax(bidRate);
         // Issuance is the bidder's own label: only its range is checked, since the network keeps
@@ -348,12 +348,12 @@ contract IntexAuction is
         // Escrow basis and bid rate stay at six decimals. Convert their six-decimal
         // result exactly once into 18-decimal WCOEN before locking funds.
         // 256-bit math so an over-range product reverts typed, not via Panic(0x11).
-        uint256 lockAmount = BridgeMsgCodec.escrowAmount(quantity, a.params.promisLoadMinor, bidRate);
-        if (lockAmount > type(uint128).max) revert BidAmountOverflow(quantity, bidRate);
+        uint256 lockAmount = BridgeMsgCodec.escrowAmount(units, a.params.promisLoadMinor, bidRate);
+        if (lockAmount > type(uint128).max) revert BidAmountOverflow(units, bidRate);
 
         // Verify the signature against the stored commit hash.
         _verifyRevealSignature(
-            worldwideDay, quantity, bidRate, issuanceCurrency, referenceCurrency, signature, committedHash
+            worldwideDay, units, bidRate, issuanceCurrency, referenceCurrency, signature, committedHash
         );
 
         // Effects: record the reveal before the external lockFunds call (CEI).
@@ -367,7 +367,7 @@ contract IntexAuction is
                 bidderAddress: msg.sender,
                 intexBidRate: bidRate,
                 timestamp: uint32(block.timestamp),
-                intexQuantity: quantity,
+                intexQuantity: units,
                 issuanceCurrency: issuanceCurrency,
                 referenceCurrency: referenceCurrency
             })
@@ -375,7 +375,7 @@ contract IntexAuction is
 
         $.auctionRunningCounts[worldwideDay].revealedBidsCount += 1;
 
-        emit BidRevealed(worldwideDay, msg.sender, quantity, bidRate, issuanceCurrency, referenceCurrency);
+        emit BidRevealed(worldwideDay, msg.sender, units, bidRate, issuanceCurrency, referenceCurrency);
 
         // Interactions
         // Return the commit bond first so it can fund the bid escrow in the same transaction.
@@ -384,7 +384,7 @@ contract IntexAuction is
         }
         // A winner's payment is worked out with the same formula, so it never exceeds this lock.
         // forge-lint: disable-next-line(unsafe-typecast) -- bounded by the type(uint128).max check above
-        $.escrowContract.lockFunds(worldwideDay, msg.sender, uint128(lockAmount), bidRate, quantity);
+        $.escrowContract.lockFunds(worldwideDay, msg.sender, uint128(lockAmount), bidRate, units);
     }
 
     /// @inheritdoc IIntexAuction
@@ -419,13 +419,13 @@ contract IntexAuction is
     /// @dev Reverts `RevealHashMismatch` when the recovered signer is not `msg.sender` or when
     ///      `keccak256(signature)` does not equal the stored commit hash.
     /// @param worldwideDay Worldwide day (yyyymmdd, uint32).
-    /// @param quantity Requested Intex quantity.
+    /// @param units Requested Intex units.
     /// @param bidRate Bid rate (`1e6` fixed-point, % of the escrow basis).
     /// @param signature 65-byte ECDSA signature over the EIP-712 typed data.
     /// @param committedHash The `keccak256(signature)` previously stored by `commitBid`.
     function _verifyRevealSignature(
         uint32 worldwideDay,
-        uint16 quantity,
+        uint16 units,
         uint32 bidRate,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
@@ -434,7 +434,7 @@ contract IntexAuction is
     ) internal view {
         bytes32 structHash = keccak256(
             abi.encode(
-                REVEAL_BID_TYPEHASH, worldwideDay, msg.sender, quantity, bidRate, issuanceCurrency, referenceCurrency
+                REVEAL_BID_TYPEHASH, worldwideDay, msg.sender, units, bidRate, issuanceCurrency, referenceCurrency
             )
         );
         bytes32 digest = _hashTypedDataV4(structHash);
