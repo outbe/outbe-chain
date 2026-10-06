@@ -266,8 +266,10 @@ pub fn dispatch(
                         SeriesId::from(c.seriesId),
                         c.owner,
                         c.units,
-                        c.nonce,
-                        auth,
+                        runtime::MiningProof {
+                            nonce: c.nonce,
+                            auth,
+                        },
                     )
                 }),
                 // The only payable selector: credits auction proceeds (msg.value)

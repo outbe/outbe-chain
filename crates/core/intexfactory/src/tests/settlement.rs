@@ -601,14 +601,34 @@ fn no_auth() -> outbe_promisfactory::api::ModifyAuth {
 #[test]
 fn mine_promis_rejects_zero_amount() {
     with_factory(|s| {
-        assert!(runtime::mine_promis(&s, sid(7), owner(), U256::ZERO, 0, no_auth()).is_err());
+        assert!(runtime::mine_promis(
+            &s,
+            sid(7),
+            owner(),
+            U256::ZERO,
+            runtime::MiningProof {
+                nonce: 0,
+                auth: no_auth()
+            }
+        )
+        .is_err());
     });
 }
 
 #[test]
 fn mine_promis_rejects_missing_series() {
     with_factory(|s| {
-        assert!(runtime::mine_promis(&s, sid(7), owner(), U256::from(1), 0, no_auth()).is_err());
+        assert!(runtime::mine_promis(
+            &s,
+            sid(7),
+            owner(),
+            U256::from(1),
+            runtime::MiningProof {
+                nonce: 0,
+                auth: no_auth()
+            }
+        )
+        .is_err());
     });
 }
 
@@ -643,7 +663,16 @@ fn a_mining_that_fails_after_any_write_changes_nothing() {
 
         storage.fail_after_mutation_at(failure_at);
         let mined = StorageHandle::enter(&mut storage, |s| {
-            runtime::mine_promis(&s, sid(7), owner(), U256::ONE, nonce, no_auth())
+            runtime::mine_promis(
+                &s,
+                sid(7),
+                owner(),
+                U256::ONE,
+                runtime::MiningProof {
+                    nonce,
+                    auth: no_auth(),
+                },
+            )
         });
         if mined.is_ok() {
             continue;

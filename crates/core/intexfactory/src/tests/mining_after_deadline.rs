@@ -86,8 +86,10 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
             sid(7),
             owner(),
             U256::ONE,
-            nonce,
-            promis_auth(owner(), promis_minor, 0),
+            runtime::MiningProof {
+                nonce,
+                auth: promis_auth(owner(), promis_minor, 0),
+            },
         )
         .unwrap();
         assert_eq!(minted, promis_minor);

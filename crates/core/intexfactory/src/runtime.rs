@@ -536,10 +536,10 @@ mod mining;
 mod pricing;
 mod proceeds;
 
-pub use mining::mine_promis;
 #[cfg(test)]
 pub(crate) use mining::{compute_pow_hash, validate_pow};
 pub(crate) use mining::{issued_token_id, settled_token_id};
+pub use mining::{mine_promis, MiningProof};
 #[cfg(test)]
 pub(crate) use pricing::settlement_units;
 use pricing::{accept_payment_asset, cost_in_asset};
