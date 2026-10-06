@@ -1,4 +1,5 @@
-//! Withdrawal handling at post-execution: empty withdrawals keep legacy behaviour and a non-empty list is rejected before any write.
+//! Withdrawal handling at post-execution: empty withdrawals keep legacy behaviour. The executor
+//! rejects a non-empty list before any write.
 
 use super::*;
 

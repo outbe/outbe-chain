@@ -45,9 +45,9 @@ fn apply_pre_execution_changes_emits_phase1_slashing_logs_in_system_receipt() {
     ctx.parent_consensus_metadata = Some(metadata.clone());
     let mut executor = config.create_executor(evm, ctx);
 
-    // opt out of Phase 1 `verify_v2_proof` preflight - this
-    // unit test exercises the slashing log emission path, not the
-    // verifier itself, and does not seed a matching committee snapshot.
+    // Disable the Phase 1 `verify_v2_proof` preflight. This unit test checks the path that
+    // emits slashing logs, not the verifier. The test does not seed a matching committee
+    // snapshot.
     super::with_phase1_verify_disabled(|| {
         executor
             .apply_pre_execution_changes()
@@ -77,8 +77,8 @@ fn apply_pre_execution_changes_emits_phase1_slashing_logs_in_system_receipt() {
     let voter_misdemeanor = keccak256("VoterMisdemeanor(address,uint64)");
     let voter_felony = keccak256("VoterFelony(address,uint64,uint64)");
     let proposer_felony = keccak256("ProposerFelony(address,uint64,uint64)");
-    // voter miss / slashing accounting moved OFF Phase 1 (CPA)
-    // to the inclusion-window close at N+K, so CPA emits no voter slashing log.
+    // Voter miss / slashing accounting no longer runs in Phase 1 (CPA). It runs at the
+    // inclusion-window close at N+K. Thus CPA emits no voter slashing log.
     assert!(
         !phase1_logs.iter().any(|log| {
             log.address == SLASH_INDICATOR_ADDRESS
@@ -104,11 +104,11 @@ fn apply_pre_execution_changes_emits_phase1_slashing_logs_in_system_receipt() {
         outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
     StorageHandle::enter(&mut provider, |storage| {
         let si = outbe_slashindicator::contract::SlashIndicator::new(storage.clone());
-        // Voter miss is now counted at the inclusion-window close (N+K), not at
-        // CPA: block 2's CPA leaves voter_miss_count untouched.
+        // The inclusion-window close (N+K) now counts the voter miss, not CPA. Block 2's CPA
+        // leaves voter_miss_count untouched.
         assert_eq!(si.voter_miss_count.read(&absent)?, 0);
-        // Proposer slashing stays at CPA; the missed proposer is JAILED
-        // (felony threshold 1) and its proposer miss recorded.
+        // Proposer slashing stays at CPA. The missed proposer becomes JAILED (felony
+        // threshold 1), and CPA records its proposer miss.
         assert_eq!(si.proposer_miss_count.read(&absent)?, 1);
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
         let record = vs.get_validator(absent)?.expect("absent validator exists");
