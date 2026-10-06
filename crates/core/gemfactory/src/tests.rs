@@ -473,4 +473,6 @@ mod eligibility;
 mod issuance;
 mod merchant;
 mod mining;
+mod mining_after_deadline;
+mod mining_atomicity;
 mod settlement;
