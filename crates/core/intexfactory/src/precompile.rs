@@ -92,6 +92,110 @@ fn requeue_called_group(
     factory.push_called_group(iso_code, worldwide_day, deadline, &members)
 }
 
+/// The e2e-only arming selectors. `None` leaves `data` to the published interface.
+#[cfg(feature = "e2e-test")]
+fn dispatch_test_arming(storage: &StorageHandle<'_>, data: &[u8]) -> Result<Option<Bytes>> {
+    if let Ok(call) = IIntexFactoryTestArming::seedDayVwapsForTestCall::abi_decode(data) {
+        seed_day_vwaps_for_test(storage, call)?;
+        return Ok(Some(Bytes::new()));
+    }
+    if let Ok(call) = IIntexFactoryTestArming::issueForTestCall::abi_decode(data) {
+        issue_for_test(storage, call)?;
+        return Ok(Some(Bytes::new()));
+    }
+    if let Ok(call) = IIntexFactoryTestArming::closeCallNoticeForTestCall::abi_decode(data) {
+        requeue_called_group(storage, call.isoCode, call.worldwideDay, call.deadline)?;
+        return Ok(Some(Bytes::new()));
+    }
+    if let Ok(call) = IIntexFactoryTestArming::armProceedsForTestCall::abi_decode(data) {
+        outbe_intex::api::arm_proceeds(
+            storage,
+            call.worldwideDay.into(),
+            &call.chains,
+            call.deadline,
+        )?;
+        return Ok(Some(Bytes::new()));
+    }
+    Ok(None)
+}
+
+#[cfg(feature = "e2e-test")]
+fn seed_day_vwaps_for_test(
+    storage: &StorageHandle<'_>,
+    call: IIntexFactoryTestArming::seedDayVwapsForTestCall,
+) -> Result<()> {
+    // What `set_vwap` does in this module's own tests: the per-day value keyed by
+    // the pair's registry index, and the watermark the begin-block hook would move.
+    // This adds nothing to the Oracle crate. It only writes data for the days the crate serves.
+    use outbe_oracle::schema::OracleContract;
+    use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
+
+    let oracle = OracleContract::new(storage.clone());
+    let pair = outbe_oracle::api::AddressPair::new_coen_to(call.isoCode);
+    let pair_id = oracle.pair_index_of(pair)?;
+    let mut day = previous_date_key(timestamp_to_date_key(storage.timestamp()?.to::<u64>()));
+    for _ in 0..call.days {
+        oracle.record_utc_day_vwap(day, pair_id, call.value)?;
+        if oracle.utc_day_vwap_last_finalized.read()? < day {
+            oracle.utc_day_vwap_last_finalized.write(day)?;
+        }
+        day = previous_date_key(day);
+    }
+    // The VWAP pusher sends the rewritten days again.
+    let factory = crate::schema::IntexFactoryContract::new(storage.clone());
+    if factory.vwap_sent_day.read()? > day {
+        factory.vwap_sent_day.write(day)?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "e2e-test")]
+fn issue_for_test(
+    storage: &StorageHandle<'_>,
+    call: IIntexFactoryTestArming::issueForTestCall,
+) -> Result<()> {
+    // Mirrors the clearing engine: issue every series first, then send the day's
+    // legs once. Sending per series would declare a one-chunk day twice, and the
+    // second delivery is dropped as a conflicting repeat rather than applied.
+    if call.seriesIds.len() != call.issuanceCurrencies.len() {
+        return Err(outbe_primitives::error::PrecompileError::Revert(
+            "issueForTest: a currency per series".into(),
+        ));
+    }
+    let mut legs = Vec::new();
+    let ids = call.seriesIds.clone();
+    for (series_id, issuance_currency) in call.seriesIds.into_iter().zip(call.issuanceCurrencies) {
+        legs.extend(crate::api::issue(
+            storage,
+            crate::schema::IssuanceParams {
+                series_id: SeriesId::from(series_id),
+                worldwide_day: call.worldwideDay.into(),
+                issued_units: call.issuedUnits,
+                promis_load_minor: call.promisLoadMinor,
+                entry_price_minor: call.entryPriceMinor,
+                issuance_currency,
+                reference_currency: call.referenceCurrency,
+                recipients: call.recipients.clone(),
+                units: call.units.clone(),
+                recipient_chains: call.recipientChains.clone(),
+                snapshot_chains: call.snapshotChains.clone(),
+            },
+        )?);
+    }
+    // The Called sweep counts breach days from `issued_at`, so a scenario that
+    // seeds those days places issuance behind them, on every chain alike. Zero
+    // keeps the stamp the engine wrote.
+    if call.issuedAt != 0 {
+        for series_id in ids {
+            outbe_intex::api::set_issued_at(storage, SeriesId::from(series_id), call.issuedAt)?;
+        }
+        for leg in &mut legs {
+            leg.payload.issuedAt = call.issuedAt;
+        }
+    }
+    crate::api::send_issuance(storage, legs)
+}
+
 pub fn dispatch(
     storage: StorageHandle<'_>,
     data: &[u8],
@@ -102,95 +206,8 @@ pub fn dispatch(
     // address. Every selector the module has not published refuses it here.
     reject_value_unless_payable(data, PAYABLE_SELECTORS, &value)?;
     #[cfg(feature = "e2e-test")]
-    if let Ok(call) = IIntexFactoryTestArming::seedDayVwapsForTestCall::abi_decode(data) {
-        // What `set_vwap` does in this module's own tests: the per-day value keyed by
-        // the pair's registry index, and the watermark the begin-block hook would move.
-        // This adds nothing to the Oracle crate. It only writes data for the days the crate serves.
-        use outbe_oracle::schema::OracleContract;
-        use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
-
-        let oracle = OracleContract::new(storage.clone());
-        let pair = outbe_oracle::api::AddressPair::new_coen_to(call.isoCode);
-        let pair_id = oracle.pair_index_of(pair)?;
-        let mut day = previous_date_key(timestamp_to_date_key(storage.timestamp()?.to::<u64>()));
-        for _ in 0..call.days {
-            oracle.record_utc_day_vwap(day, pair_id, call.value)?;
-            if oracle.utc_day_vwap_last_finalized.read()? < day {
-                oracle.utc_day_vwap_last_finalized.write(day)?;
-            }
-            day = previous_date_key(day);
-        }
-        // The VWAP pusher sends the rewritten days again.
-        let factory = crate::schema::IntexFactoryContract::new(storage.clone());
-        if factory.vwap_sent_day.read()? > day {
-            factory.vwap_sent_day.write(day)?;
-        }
-        return Ok(Bytes::new());
-    }
-    #[cfg(feature = "e2e-test")]
-    if let Ok(call) = IIntexFactoryTestArming::issueForTestCall::abi_decode(data) {
-        // Mirrors the clearing engine: issue every series first, then send the day's
-        // legs once. Sending per series would declare a one-chunk day twice, and the
-        // second delivery is dropped as a conflicting repeat rather than applied.
-        if call.seriesIds.len() != call.issuanceCurrencies.len() {
-            return Err(outbe_primitives::error::PrecompileError::Revert(
-                "issueForTest: a currency per series".into(),
-            ));
-        }
-        let mut legs = Vec::new();
-        let ids = call.seriesIds.clone();
-        for (series_id, issuance_currency) in
-            call.seriesIds.into_iter().zip(call.issuanceCurrencies)
-        {
-            legs.extend(crate::api::issue(
-                &storage,
-                crate::schema::IssuanceParams {
-                    series_id: SeriesId::from(series_id),
-                    worldwide_day: call.worldwideDay.into(),
-                    issued_units: call.issuedUnits,
-                    promis_load_minor: call.promisLoadMinor,
-                    entry_price_minor: call.entryPriceMinor,
-                    issuance_currency,
-                    reference_currency: call.referenceCurrency,
-                    recipients: call.recipients.clone(),
-                    units: call.units.clone(),
-                    recipient_chains: call.recipientChains.clone(),
-                    snapshot_chains: call.snapshotChains.clone(),
-                },
-            )?);
-        }
-        // The Called sweep counts breach days from `issued_at`, so a scenario that
-        // seeds those days places issuance behind them, on every chain alike. Zero
-        // keeps the stamp the engine wrote.
-        if call.issuedAt != 0 {
-            for series_id in ids {
-                outbe_intex::api::set_issued_at(
-                    &storage,
-                    SeriesId::from(series_id),
-                    call.issuedAt,
-                )?;
-            }
-            for leg in &mut legs {
-                leg.payload.issuedAt = call.issuedAt;
-            }
-        }
-        crate::api::send_issuance(&storage, legs)?;
-        return Ok(Bytes::new());
-    }
-    #[cfg(feature = "e2e-test")]
-    if let Ok(call) = IIntexFactoryTestArming::closeCallNoticeForTestCall::abi_decode(data) {
-        requeue_called_group(&storage, call.isoCode, call.worldwideDay, call.deadline)?;
-        return Ok(Bytes::new());
-    }
-    #[cfg(feature = "e2e-test")]
-    if let Ok(call) = IIntexFactoryTestArming::armProceedsForTestCall::abi_decode(data) {
-        outbe_intex::api::arm_proceeds(
-            &storage,
-            call.worldwideDay.into(),
-            &call.chains,
-            call.deadline,
-        )?;
-        return Ok(Bytes::new());
+    if let Some(out) = dispatch_test_arming(&storage, data)? {
+        return Ok(out);
     }
     dispatch_call(
         data,
