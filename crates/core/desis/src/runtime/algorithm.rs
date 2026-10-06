@@ -78,25 +78,9 @@ pub(super) fn calculate_clearing(
     for (i, (chain_id, bid)) in bids.iter().enumerate() {
         all_bidders.push(bid.bidder_address);
         bidder_chains.push(*chain_id);
-
-        // locked = quantity * escrow_basis * rate / 1_000_000 (escrowed at bid time).
-        let locked = rate_lock(
-            u64::from(bid.intex_quantity),
-            escrow_basis,
-            bid.intex_bid_rate,
-        );
-
-        let won = won_by_index[i];
-        if won > 0 {
-            // Uniform clearing: winners pay at the clearing rate. Refund the rest.
-            let paid = rate_lock(u64::from(won), escrow_basis, clearing_rate);
-            let refunded = locked.saturating_sub(paid);
-            paid_amounts.push(paid);
-            refunded_amounts.push(refunded);
-        } else {
-            paid_amounts.push(0);
-            refunded_amounts.push(locked);
-        }
+        let (paid, refunded) = paid_and_refunded(bid, won_by_index[i], escrow_basis, clearing_rate);
+        paid_amounts.push(paid);
+        refunded_amounts.push(refunded);
     }
 
     ClearingResult {
@@ -111,5 +95,27 @@ pub(super) fn calculate_clearing(
         refunded_amounts,
         paid_amounts,
         bidder_chains,
+    }
+}
+
+fn paid_and_refunded(
+    bid: &BidData,
+    won: u32,
+    escrow_basis: u128,
+    clearing_rate: u32,
+) -> (u128, u128) {
+    // locked = quantity * escrow_basis * rate / 1_000_000 (escrowed at bid time).
+    let locked = rate_lock(
+        u64::from(bid.intex_quantity),
+        escrow_basis,
+        bid.intex_bid_rate,
+    );
+    if won > 0 {
+        // Uniform clearing: winners pay at the clearing rate. Refund the rest.
+        let paid = rate_lock(u64::from(won), escrow_basis, clearing_rate);
+        let refunded = locked.saturating_sub(paid);
+        (paid, refunded)
+    } else {
+        (0, locked)
     }
 }
