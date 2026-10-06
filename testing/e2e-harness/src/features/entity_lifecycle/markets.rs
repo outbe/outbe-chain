@@ -33,6 +33,10 @@ const DEPLOY_FUNDING_COEN: u64 = 100;
 /// A pricing window closes on a whole hour. The margin lands the committee inside the next one.
 const WINDOW_CLOSE_MARGIN_SECS: u64 = 60;
 const WINDOW_CLOSE_TIMEOUT: Duration = Duration::from_secs(300);
+/// The trailing span a finalized pricing window averages over.
+const PRICE_WINDOW_SECS: u64 = 8 * 3_600;
+/// Feeder rounds the covered hour holds at least.
+const COVERED_HOUR_MIN_ROUNDS: u64 = 10;
 
 /// Choose the scenario's markets before its genesis is written: a tagged scenario gets a
 /// COEN/MYR pair in genesis and on every feeder.
@@ -190,11 +194,18 @@ pub(crate) fn assert_currency_routes(world: &World, currency: SettlementCurrency
     );
 }
 
-/// Move the committee past the next whole hour, so every quote published so far lies in
-/// a closed pricing window, and wait until that window prices each of `currencies`.
+/// Close a pricing window that only the running feeders voted in, and wait until it
+/// prices each of `currencies`.
+///
+/// A window counts every block it holds against its feeder coverage, and the blocks
+/// before the feeders started carry no vote. The committee first moves to a fresh hour
+/// past the window that still holds them, lets the feeders vote through most of that
+/// hour's rounds, then moves past it.
 pub(crate) fn close_price_window(world: &mut World, currencies: &[u16]) {
     let head = head_time(world);
-    let target = head - head % 3_600 + 3_600 + WINDOW_CLOSE_MARGIN_SECS;
+    let covered_hour = head - head % 3_600 + PRICE_WINDOW_SECS;
+    cover_hour(world, covered_hour + WINDOW_CLOSE_MARGIN_SECS);
+    let target = covered_hour + 3_600 + WINDOW_CLOSE_MARGIN_SECS;
     let (_, _, _, pending) =
         crate::features::ocomp::restart_committee_at_logical_time(world, target);
     let port = world.validators.primary_port();
@@ -219,6 +230,33 @@ pub(crate) fn close_price_window(world: &mut World, currencies: &[u16]) {
                     window_vwap(&url, currency).is_some_and(|vwap| !vwap.is_zero())
                 })
         },
+    );
+}
+
+/// Restart the committee at `timestamp` and wait until the feeders have voted in at
+/// least two thirds of the rounds since then, with margin.
+fn cover_hour(world: &mut World, timestamp: u64) {
+    let (_, _, first_block, pending) =
+        crate::features::ocomp::restart_committee_at_logical_time(world, timestamp);
+    let url = world.rpc.url(world.validators.primary_port());
+    if let Some(pending) = &pending {
+        poll_until(
+            WINDOW_CLOSE_TIMEOUT,
+            || "the feeders never voted again after the committee moved".into(),
+            || crate::features::price_oracle::observe_pending_publication(world, pending),
+        );
+    }
+    let voted = eth::block_number(&url).expect("head after the feeders resumed");
+    let vote_period = eth::read_call(&url, ORACLE_ADDRESS, &eth::IOracle::getParamsCall {})
+        .expect("Oracle vote period")
+        .votePeriod
+        .max(1);
+    let missed = voted.saturating_sub(first_block);
+    let until = voted + (3 * missed).max(COVERED_HOUR_MIN_ROUNDS * vote_period);
+    poll_until(
+        WINDOW_CLOSE_TIMEOUT,
+        || format!("the committee did not reach block {until} inside the covered hour"),
+        || eth::block_number(&url).is_some_and(|block| block >= until),
     );
 }
 
