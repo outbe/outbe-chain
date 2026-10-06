@@ -4,17 +4,16 @@ use super::super::value_policy::{
 use crate::precompile_routes::{self, ValuePolicy};
 use alloy_primitives::{Address, U256};
 use outbe_primitives::addresses::{
-    CCA_REGISTRY_ADDRESS, CREDIS_FACTORY_ADDRESS, DESIS_ADDRESS, EMIT_ADDRESS, GRATIS_ADDRESS,
+    CCA_REGISTRY_ADDRESS, CREDIS_FACTORY_ADDRESS, DESIS_ADDRESS, GRATIS_ADDRESS,
     HYPERLANE_CONTROLLER_ADDRESS, INTEX_FACTORY_ADDRESS, STAKING_ADDRESS, VOTE_ADDRESS,
 };
 use revm::interpreter::CallValue;
 
-const PAYABLE: [Address; 7] = [
+const PAYABLE: [Address; 6] = [
     STAKING_ADDRESS,
     INTEX_FACTORY_ADDRESS,
     VOTE_ADDRESS,
     CREDIS_FACTORY_ADDRESS,
-    EMIT_ADDRESS,
     CCA_REGISTRY_ADDRESS,
     // fund tops up the float that pays Interchain Account dispatch fees.
     HYPERLANE_CONTROLLER_ADDRESS,
