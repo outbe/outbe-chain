@@ -5,23 +5,19 @@
 //! VWAPs before the CycleTick that drives this scan. The Cycle daily trigger drives
 //! this scan.
 
-use std::collections::BTreeMap;
-
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use outbe_intex::SeriesId;
-use outbe_oracle::schema::{OracleContract, PairIndex};
+use outbe_oracle::schema::OracleContract;
 use outbe_primitives::daily_sweep::{Scheduled, SweepDays};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result, SweepFailure},
+    error::{Result, SweepFailure},
     math::{constants::MAX_BIN_ID, tree_math},
     storage::StorageHandle,
-    time::{first_full_day, previous_date_key, timestamp_to_date_key, SECONDS_PER_DAY},
+    time::{previous_date_key, timestamp_to_date_key},
 };
-
-use outbe_intex::IntexState;
 
 use crate::constants::{
     CALL_SWEEP, MAX_GROUP_DECISIONS_PER_BLOCK, MAX_SERIES_ACTIONS_PER_BLOCK, MAX_SERIES_PER_MARK,
@@ -29,7 +25,11 @@ use crate::constants::{
 };
 use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
-use crate::state::{CallBins, Group};
+use crate::state::CallBins;
+
+mod group;
+
+pub(crate) use group::{call_window, try_call_group, CallWindow, DayVwaps, GroupCall};
 
 /// Schedule the day the Oracle just finalized: open a Called sweep over it and
 /// run its first slice, or queue it behind the sweep still in flight.
@@ -120,16 +120,9 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         let finished = if budget.is_spent() {
             false
         } else {
-            // No registered pair is an answer. A failed read is not.
-            match outbe_oracle::api::coen_pair_index_opt(ctx.storage.clone(), iso_code)? {
-                None => true,
-                Some(pair_index) => {
-                    let (calls, finished) =
-                        call_currency(ctx, &oracle, iso_code, pair_index, pinned_day, &mut budget)?;
-                    called = called.saturating_add(calls);
-                    finished
-                }
-            }
+            let (calls, finished) = call_currency(ctx, &oracle, iso_code, pinned_day, &mut budget)?;
+            called = called.saturating_add(calls);
+            finished
         };
         if !finished {
             factory.call_currency_cursor.write(u32::from(iso_code))?;
@@ -153,15 +146,19 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
 
 /// Scans one currency's call-price bins on the shared `budget`. Returns the calls
 /// made and whether its eligible range was walked to the end.
-fn call_currency(
-    ctx: &BlockRuntimeContext,
-    oracle: &OracleContract,
+fn call_currency<'storage>(
+    ctx: &BlockRuntimeContext<'storage>,
+    oracle: &OracleContract<'storage>,
     iso_code: u16,
-    pair_index: PairIndex,
     last_closed_day: u32,
     budget: &mut ScanBudget,
 ) -> Result<(u32, bool)> {
-    let mut factory = IntexFactoryContract::new(ctx.storage.clone());
+    // No registered pair is an answer. A failed read is not.
+    let Some(pair_index) = outbe_oracle::api::coen_pair_index_opt(ctx.storage.clone(), iso_code)?
+    else {
+        return Ok((0, true));
+    };
+    let factory = IntexFactoryContract::new(ctx.storage.clone());
     let params = crate::config::read_from(&factory, ctx.block.chain_id)?;
     // Use the widest terms ever issued here, not the live profile. A series keeps the
     // terms it was issued with, and a narrowed profile must not hide it from the search.
@@ -201,53 +198,104 @@ fn call_currency(
         }
     };
 
-    let mut called: u32 = 0;
-    let mut finished = true;
-    let mut cursor: u32 = factory.call_scan_cursor.read(&iso_code)?;
-    'bins: loop {
-        if budget.is_spent() {
-            // Between bins, so the next slice resumes at a bin it has not opened.
-            factory.call_scan_cursor.write(&iso_code, cursor)?;
-            finished = false;
-            break;
-        }
-        let next =
-            match tree_math::find_first_left_inclusive(&CallBins(&factory, iso_code), cursor)? {
+    BinScan {
+        ctx,
+        factory,
+        oracle,
+        vwaps,
+        window,
+        iso_code,
+        budget,
+    }
+    .walk(p_bin)
+}
+
+/// One currency's walk of its call-price bins, against the window it opened with.
+struct BinScan<'a, 'storage> {
+    ctx: &'a BlockRuntimeContext<'storage>,
+    factory: IntexFactoryContract<'storage>,
+    oracle: &'a OracleContract<'storage>,
+    vwaps: DayVwaps,
+    window: CallWindow,
+    iso_code: u16,
+    budget: &'a mut ScanBudget,
+}
+
+impl BinScan<'_, '_> {
+    fn walk(&mut self, p_bin: u32) -> Result<(u32, bool)> {
+        let iso_code = self.iso_code;
+        let mut called: u32 = 0;
+        let mut finished = true;
+        let mut cursor: u32 = self.factory.call_scan_cursor.read(&iso_code)?;
+        loop {
+            if self.budget.is_spent() {
+                // Between bins, so the next slice resumes at a bin it has not opened.
+                self.factory.call_scan_cursor.write(&iso_code, cursor)?;
+                finished = false;
+                break;
+            }
+            let next = match tree_math::find_first_left_inclusive(
+                &CallBins(&self.factory, iso_code),
+                cursor,
+            )? {
                 Some(b) if b <= p_bin => b,
                 _ => {
                     // End of the eligible range: the next run sweeps this currency afresh.
-                    factory.call_scan_cursor.write(&iso_code, 0)?;
+                    self.factory.call_scan_cursor.write(&iso_code, 0)?;
                     break;
                 }
             };
 
-        // Snapshot the bin before mutating: a called group leaves it.
-        for worldwide_day in factory.call_bin_groups(iso_code, next)? {
-            let group = factory.call_bin_group(iso_code, worldwide_day)?;
-            if !budget.admits_actions(group.members.len() as u32) {
-                // Called groups have left this bin, so resuming on it redoes nothing.
-                factory.call_scan_cursor.write(&iso_code, next)?;
+            let (calls, bin_finished) = self.call_bin(next)?;
+            called = called.saturating_add(calls);
+            if !bin_finished {
                 finished = false;
-                break 'bins;
+                break;
             }
-            budget.spend_decision();
+
+            cursor = match next.checked_add(1) {
+                Some(c) if c <= MAX_BIN_ID => c,
+                _ => {
+                    self.factory.call_scan_cursor.write(&iso_code, 0)?;
+                    break;
+                }
+            };
+        }
+        Ok((called, finished))
+    }
+
+    /// Returns the calls made in `bin` and whether the budget let all of it through.
+    fn call_bin(&mut self, bin: u32) -> Result<(u32, bool)> {
+        let iso_code = self.iso_code;
+        let mut called: u32 = 0;
+        // Snapshot the bin before mutating: a called group leaves it.
+        for worldwide_day in self.factory.call_bin_groups(iso_code, bin)? {
+            let group = self.factory.call_bin_group(iso_code, worldwide_day)?;
+            if !self.budget.admits_actions(group.members.len() as u32) {
+                // Called groups have left this bin, so resuming on it redoes nothing.
+                self.factory.call_scan_cursor.write(&iso_code, bin)?;
+                return Ok((called, false));
+            }
+            self.budget.spend_decision();
             // Isolate per group. A deterministic Err rolls back the group's checkpoint, and the
             // scan logs it and skips the group. A node-local Err, like the structural reads
             // above, fails the block.
-            let res = ctx.storage.with_checkpoint(|| {
+            let res = self.ctx.storage.with_checkpoint(|| {
                 try_call_group(
-                    &ctx.storage,
-                    &mut factory,
-                    oracle,
-                    &mut vwaps,
+                    GroupCall {
+                        storage: &self.ctx.storage,
+                        factory: &mut self.factory,
+                        oracle: self.oracle,
+                        vwaps: &mut self.vwaps,
+                    },
                     &group,
-                    &window,
-                    ctx.block.timestamp,
+                    &self.window,
+                    self.ctx.block.timestamp,
                 )
             });
             match res {
                 Ok(applied) => {
-                    budget.spend_actions(applied);
+                    self.budget.spend_actions(applied);
                     called = called.saturating_add(applied);
                 }
                 Err(e) if e.sweep_failure() == SweepFailure::Propagate => return Err(e),
@@ -256,213 +304,14 @@ fn call_currency(
                 }
             }
         }
-
-        cursor = match next.checked_add(1) {
-            Some(c) if c <= MAX_BIN_ID => c,
-            _ => {
-                factory.call_scan_cursor.write(&iso_code, 0)?;
-                break;
-            }
-        };
+        Ok((called, true))
     }
-    Ok((called, finished))
 }
 
 /// Cycle daily-trigger entry: opens the day's Called sweep, discarding the count.
 pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     scan_and_call(ctx)?;
     Ok(())
-}
-
-/// Finalized per-day VWAPs of one oracle pair, read once per scan.
-pub(crate) struct DayVwaps {
-    pair_index: PairIndex,
-    days: BTreeMap<u32, Option<U256>>,
-}
-
-impl DayVwaps {
-    pub(crate) fn new(pair_index: PairIndex) -> Self {
-        Self {
-            pair_index,
-            days: BTreeMap::new(),
-        }
-    }
-
-    fn get(&mut self, oracle: &OracleContract, day: u32) -> Result<Option<U256>> {
-        if let Some(v) = self.days.get(&day) {
-            return Ok(*v);
-        }
-        let v = oracle.get_utc_day_vwap_for_pair(day, self.pair_index)?;
-        self.days.insert(day, v);
-        Ok(v)
-    }
-}
-
-/// The finalized VWAP window one call scan decides against, and the price that
-/// summarises it.
-pub(crate) struct CallWindow {
-    /// Most recent fully-closed UTC day. The window ends here.
-    pub(crate) last_day: u32,
-    /// Window length and required breach count, both in whole days.
-    pub(crate) days: u32,
-    pub(crate) threshold: u32,
-    /// The `threshold`-th largest VWAP: `trigger < p_star` and "breached on at
-    /// least `threshold` days" are one statement, so a group decides by comparison.
-    pub(crate) p_star: U256,
-    /// The window's first day. A group issued on or before it sees the whole window.
-    pub(crate) first_day: u32,
-}
-
-/// The window's `threshold`-th largest finalized VWAP. `None` when too few days
-/// carry a price for any trigger to be breached often enough.
-pub(crate) fn call_window(
-    oracle: &OracleContract,
-    vwaps: &mut DayVwaps,
-    last_day: u32,
-    days: u32,
-    threshold: u32,
-) -> Result<Option<CallWindow>> {
-    if days == 0 || threshold == 0 {
-        return Ok(None);
-    }
-    let mut priced: Vec<U256> = Vec::with_capacity(days as usize);
-    let mut day = last_day;
-    for _ in 0..days {
-        if let Some(vwap) = vwaps.get(oracle, day)? {
-            priced.push(vwap);
-        }
-        day = previous_date_key(day);
-    }
-    if (priced.len() as u32) < threshold {
-        return Ok(None);
-    }
-    priced.sort_unstable_by(|a, b| b.cmp(a));
-    let mut first_day = last_day;
-    for _ in 1..days {
-        first_day = previous_date_key(first_day);
-    }
-    Ok(Some(CallWindow {
-        last_day,
-        days,
-        threshold,
-        p_star: priced[threshold as usize - 1],
-        first_day,
-    }))
-}
-
-/// Breach-days (VWAP > trigger) inside the window, not before issuance.
-fn count_breaches(
-    oracle: &OracleContract,
-    vwaps: &mut DayVwaps,
-    last_day: u32,
-    days: u32,
-    issued_day: u32,
-    trigger: U256,
-) -> Result<u32> {
-    let mut breaches: u32 = 0;
-    let mut day = last_day;
-    for _ in 0..days {
-        if day < issued_day {
-            break;
-        }
-        if let Some(vwap) = vwaps.get(oracle, day)? {
-            if vwap > trigger {
-                breaches += 1;
-            }
-        }
-        day = previous_date_key(day);
-    }
-    Ok(breaches)
-}
-
-/// Force-call a whole group: its series share trigger, issue time and call
-/// parameters, so one read decides them all. Returns how many were called.
-pub(crate) fn try_call_group(
-    storage: &StorageHandle<'_>,
-    factory: &mut IntexFactoryContract,
-    oracle: &OracleContract,
-    vwaps: &mut DayVwaps,
-    group: &Group,
-    window: &CallWindow,
-    now_ts: u64,
-) -> Result<u32> {
-    let Some(&first) = group.members.first() else {
-        return Ok(0);
-    };
-    let series = outbe_intex::api::read_series(storage, first)?;
-    if series.lifecycle_state()? != IntexState::Issued {
-        return Ok(0);
-    }
-    let trigger = series.call_price_minor;
-    // The scan walks finalized daily VWAPs, so both bounds floor to whole days.
-    let secs_per_day = SECONDS_PER_DAY as u32;
-    let group_days = series.call_window_seconds / secs_per_day;
-    let group_threshold = series.call_threshold_seconds / secs_per_day;
-    if group_days == 0 || group_threshold == 0 {
-        return Ok(0);
-    }
-
-    let issued_day = first_full_day(u64::from(series.issued_at));
-    let breached = if issued_day <= window.first_day
-        && group_days == window.days
-        && group_threshold == window.threshold
-    {
-        trigger < window.p_star
-    } else {
-        // The group has a shorter window than the scan's: it was issued inside it, or it
-        // has different stored parameters. So the scan counts its own days. Wider stored
-        // parameters are only reached under `p_star`. Only a profile change on a live
-        // chain parts them.
-        count_breaches(
-            oracle,
-            vwaps,
-            window.last_day,
-            group_days,
-            issued_day,
-            trigger,
-        )? >= group_threshold
-    };
-    if !breached {
-        return Ok(0);
-    }
-
-    // u32 timestamp. It is bounded until 2106 (matches issued_at).
-    let called_at = u32::try_from(now_ts)
-        .map_err(|_| PrecompileError::Revert("block timestamp exceeds u32".into()))?;
-    for &series_id in &group.members {
-        outbe_intex::api::mark_called(storage, series_id, called_at)?;
-    }
-    let settlement_deadline = u64::from(called_at) + u64::from(series.call_notice_period_seconds);
-    // Park it with its members: the expiry sweep has no other way back to them.
-    factory.remove_call_bin_group(group.iso_code, group.worldwide_day)?;
-    factory.push_called_group(
-        group.iso_code,
-        group.worldwide_day,
-        settlement_deadline,
-        &group.members,
-    )?;
-
-    // A slice of this sweep runs in a block hook, which cannot call contracts. So the notices
-    // leave from the `intex_drain_notices` trigger. Each notice carries its own series: the group
-    // has left the index by then.
-    for &series_id in &group.members {
-        crate::notify::enqueue_notice(
-            factory,
-            crate::notify::pack_called_notice(series_id, called_at),
-        )?;
-    }
-
-    for &series_id in &group.members {
-        crate::runtime::emit_event(
-            storage,
-            crate::precompile::IIntexFactory::SeriesCalled {
-                seriesId: series_id.into(),
-                calledAt: called_at,
-                settlementDeadline: settlement_deadline,
-            },
-        )?;
-    }
-    Ok(group.members.len() as u32)
 }
 
 /// One message per group, split only where the wire's cap forces it. `called_at`
