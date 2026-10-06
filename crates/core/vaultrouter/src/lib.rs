@@ -15,3 +15,5 @@ pub use schema::{LiquidityReservation, VaultRouterContract};
 
 #[cfg(test)]
 mod tests;
+
+mod reservation;

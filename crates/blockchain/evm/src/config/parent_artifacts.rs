@@ -30,7 +30,7 @@ fn cached_accounted_parent_artifact(
 /// bridge-only [`AccountedParentArtifactProvider`]. Returns the
 /// cached `(block_number, block_hash)` entry from the consensus bridge.
 /// Used in proposer/validator modes where the bridge is available but no
-/// Reth provider has been wired (legacy `new_with_bridge` constructor).
+/// Reth provider is wired (legacy `new_with_bridge` constructor).
 #[derive(Clone)]
 pub(super) struct BridgeAccountedParentArtifactProvider {
     summary_cache: ConsensusExecutionBridge,
@@ -124,15 +124,15 @@ where
         // (2) Exact-hash provider lookup. Sees tree-state, so unfinalized
         // side-chain parents are resolvable as long as the import path has
         // already inserted the header. During the FCU-Valid -> MDBX-commit
-        // race the provider may surface `HeaderNotFound`; the trait
-        // contract treats that as a visibility miss (`Ok(None)`), letting
+        // race the provider may surface `HeaderNotFound`. The trait
+        // contract treats that as a visibility miss (`Ok(None)`), which lets
         // the executor fall through to its checked `parent_artifact_hint`.
         match self.provider.sealed_header_by_hash(block_hash) {
             Ok(Some(sealed)) => {
                 // `(block_number, block_hash)` must match the resolved
                 // header. A header whose number diverges from the metadata is
-                // a protocol violation - reject loudly rather than silently
-                // using a wrong block. This is NOT a visibility miss.
+                // a protocol violation. Reject it loudly rather than silently
+                // use a wrong block. This is NOT a visibility miss.
                 if sealed.header().number() != block_number {
                     return Err(reth_evm::execute::ProviderError::HeaderNotFound(
                         block_hash.into(),
@@ -145,11 +145,11 @@ where
             Err(error) => return Err(error),
         }
 
-        // (3) Canonical-by-number fallback - gated by explicit hash equality
-        //. If the canonical entry at `block_number` does not hash to
+        // (3) Canonical-by-number fallback, gated by explicit hash equality.
+        // If the canonical entry at `block_number` does not hash to
         // `block_hash`, return `Ok(None)`. The caller (executor) maps `None`
-        // to a `BlockExecutionError` - never a silent wrong-parent acceptance.
-        // `HeaderNotFound` here is also a visibility miss; other `Err`
+        // to a `BlockExecutionError`. It never silently accepts a wrong parent.
+        // `HeaderNotFound` here is also a visibility miss. Other `Err`
         // variants propagate.
         match self.provider.sealed_header(block_number) {
             Ok(Some(sealed)) => {

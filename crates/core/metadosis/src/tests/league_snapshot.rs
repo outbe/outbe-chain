@@ -7,10 +7,10 @@ use outbe_primitives::addresses::METADOSIS_ADDRESS;
 use crate::fixture_kernel::FixtureKernelExt;
 use crate::tests::with_contract;
 
-/// Pins the hand-derived `METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT`, and the Fidelity
-/// opening codec that names it, against the slot the `#[storage_schema]` macro
-/// actually assigns to the snapshot mapping. If the Metadosis layout ever shifts,
-/// this fails loudly rather than letting the node/worker open the wrong slots.
+/// Pins the hand-derived `METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT` against the slot that
+/// the `#[storage_schema]` macro actually assigns to the snapshot mapping. It also pins
+/// the Fidelity opening codec that names this constant. If the Metadosis layout ever
+/// shifts, this test fails loudly. It does not let the node/worker open the wrong slots.
 #[test]
 fn snapshot_base_slot_matches_the_generated_dsl_layout() {
     with_contract(|metadosis| {
@@ -28,8 +28,8 @@ fn snapshot_base_slot_matches_the_generated_dsl_layout() {
 }
 
 /// The node and worker derive each owner's league slot purely (no storage
-/// handle) via `league_snapshot_slot`. This proves that pure derivation points
-/// at the exact storage word the DSL `Mapping` writes, closing the loop on the
+/// handle) via `league_snapshot_slot`. This test proves that pure derivation points
+/// at the exact storage word that the DSL `Mapping` writes. So it checks the
 /// base-slot and key derivation together.
 #[test]
 fn pure_snapshot_slot_points_at_the_dsl_written_word() {

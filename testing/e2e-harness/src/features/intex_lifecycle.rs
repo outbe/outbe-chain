@@ -1,5 +1,5 @@
-//! What an Intex supplies to the shared lifecycle: four series of one day on two chains;
-//! two are paid in two parts each, one runs out after a partial payment, one untouched.
+//! What an Intex supplies to the shared lifecycle: four series of one day on two chains.
+//! Two are paid in two parts each, one runs out after a partial payment, one is untouched.
 
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -14,7 +14,7 @@ use cucumber::{then, when};
 use crate::features::entity_lifecycle::chain::{
     assert_single_event, finalized_checkpoint, head_time, poll_until,
 };
-use crate::features::entity_lifecycle::entity::{Item, Lifecycle, Phase, Rail, Target, Terms};
+use crate::features::entity_lifecycle::entity::{Item, Lifecycle, Payer, Phase, Target, Terms};
 use crate::features::entity_lifecycle::markets::{EUR_ISO, MYR_ISO};
 use crate::features::entity_lifecycle::payment;
 use crate::features::entity_lifecycle::redeem::{self, mint_authorization, Ledger, Mined};
@@ -39,8 +39,8 @@ sol! {
 /// Shared by every series so one sweep pass calls them together, and low enough that the
 /// committee's close clears the call price.
 const ENTRY_PRICE_MINOR: u64 = 800_000;
-/// PROMIS-units per Intex unit, on the wire scale; not a whole unit, so a cost leaves a
-/// remainder to floor.
+/// PROMIS-units per Intex unit, on the wire scale. It is not a whole unit, so a cost leaves
+/// a remainder to floor.
 const PROMIS_LOAD_MINOR: u128 = 100_003;
 /// Issuance currencies of the two series left to run out.
 const GBP_ISO: u16 = 826;
@@ -49,7 +49,7 @@ const JPY_ISO: u16 = 392;
 /// is a real step rather than a formality.
 const COMMITTEE_UNITS: u32 = 4;
 const TARGET_UNITS: u32 = 6;
-/// Brought home while the series are still tradable; the rest travels under Called,
+/// Brought home while the series are still tradable. The rest travels under Called,
 /// where the bridge admits a move only to the owner's own address.
 const TRADABLE_HOP_UNITS: u32 = 2;
 const UNITS: u32 = COMMITTEE_UNITS + TARGET_UNITS;
@@ -62,10 +62,11 @@ const REFERENCE_BYTE: u8 = b'U';
 const CATCH_UP_TIMEOUT_SECS: u64 = 900;
 /// The sender fires every minute in e2e, then the relay carries the day over.
 const VWAP_PUSH_TIMEOUT_SECS: u64 = 600;
-/// `IntexState::Issued` / `Called`.
+/// `IntexState::Issued` / `Qualified` / `Called`.
 const ISSUED: u8 = 0;
+const QUALIFIED: u8 = 1;
 const CALLED: u8 = 2;
-/// Derived against the clock on both chains; never written by anything.
+/// Derived against the clock on both chains. Nothing ever writes it.
 const EXPIRED: u8 = 3;
 /// Slack past the deadline so the sweep has a block to run in.
 const EXPIRY_MARGIN_SECS: u64 = 30;
@@ -77,7 +78,7 @@ const EXPIRING_SETTLED_UNITS: u32 = 2;
 const FORFEIT_TIMEOUT: Duration = Duration::from_secs(180);
 /// How far back the series are issued so closed days exist after their issuance.
 const CALL_LOOKBACK_DAYS: u32 = 3;
-/// A relayed message is asynchronous; scenarios wait for arrival rather than assume it.
+/// A relayed message is asynchronous. Scenarios wait for arrival rather than assume it.
 const DELIVERY_TIMEOUT_SECS: u64 = 180;
 
 pub(crate) struct IntexLifecycle;
@@ -101,9 +102,9 @@ fn issue_four_series(world: &mut World) {
         .expect("the Intex engine was deployed")
         .origin_router;
 
-    // The router addresses an issuance leg only to a chain the day was started on,
-    // so the day has to be opened before anything can be issued into it.
-    // Issued into a day already behind us: the call sweep counts breach days only
+    // The router addresses an issuance leg only to a chain the day was started on.
+    // The day therefore has to be opened before anything can be issued into it.
+    // Issued into a day already behind us. The call sweep counts breach days only
     // from the issuance day forward, and only closed days exist to count.
     let day = chain_worldwide_day_offset(world, port, -(i64::from(CALL_LOOKBACK_DAYS) * 86_400));
     let now = u32::try_from(head_time(world)).expect("timestamp fits a uint32");
@@ -153,8 +154,8 @@ fn issue_four_series(world: &mut World) {
                 issuance: *b"GBP",
                 issuance_currency: GBP_ISO,
             },
-            // Nobody touches this one at all, so the sweep forfeits its whole tirage
-            // and the two together prove the subtraction rather than one case of it.
+            // Nobody touches this one at all, so the sweep forfeits its whole tirage.
+            // The two together prove the subtraction rather than one case of it.
             SeriesSpec {
                 issuance: *b"JPY",
                 issuance_currency: JPY_ISO,
@@ -230,8 +231,8 @@ fn owner_holds_issued_units(world: &mut World) {
                 "series {series} did not reach its exact target-chain balance before the delivery deadline"
             );
             // The committee runs on a logical clock days ahead of real time, and the
-            // issuance carries its stamps: the target rejects them as its own future
-            // until its clock is carried over, and the relay retries in silence.
+            // issuance carries its stamps. The target rejects them as its own future
+            // until its clock is carried over. Until then, the relay retries in silence.
             carry_target_clock(world);
             sleep(Duration::from_secs(2));
         }
@@ -239,8 +240,8 @@ fn owner_holds_issued_units(world: &mut World) {
 }
 
 /// Carry the committee's logical clock over to the target chain. Nothing on a
-/// localnet plays the operator who keeps a second chain in step, and a stamp that
-/// sits in the target's future is refused rather than queued.
+/// localnet plays the operator who keeps a second chain in step. The target refuses
+/// a stamp that sits in its future rather than queuing it.
 fn carry_target_clock(world: &World) {
     let Some(now) = world
         .rpc
@@ -251,7 +252,8 @@ fn carry_target_clock(world: &World) {
     let _ = world.target_chain.sync_clock_to(now);
 }
 
-/// The origin's collection reads the IntexFactory; the target's reads the registry the origin pushes to.
+/// The origin's collection reads the IntexFactory. The target's collection reads the
+/// registry the origin pushes to.
 #[then("every series card reads Qualified on both chains")]
 fn cards_read_qualified(world: &mut World) {
     let chains = [
@@ -315,7 +317,7 @@ fn card_state(url: &str, nft: alloy_primitives::Address, series: FixedBytes<14>)
         .map(str::to_owned)
 }
 
-/// Wait for the chain to reach `target` in its own time; it closes the gap per block.
+/// Wait for the chain to reach `target` in its own time. It closes the gap per block.
 ///
 /// Reports where it actually got to, and whether it was still moving: a ratchet that
 /// stalled and one that is merely slow need different answers.
@@ -443,7 +445,7 @@ impl Lifecycle for IntexLifecycle {
         let url = world.rpc.url(world.validators.primary_port());
         all_series(world)
             .into_iter()
-            .all(|series| is_qualified(&url, series))
+            .all(|series| is_qualified(&url, series) && public_state(&url, series) == QUALIFIED)
     }
 
     /// Each paid series is paid in two parts: what is home once it qualifies, and the
@@ -494,7 +496,7 @@ impl Lifecycle for IntexLifecycle {
         }
     }
 
-    /// Waiting past the notice is the only way to reach expiry: the deadline is
+    /// Waiting past the notice is the only way to reach expiry. The deadline is
     /// derived against the clock, and neither side writes anything when it passes.
     fn lapse_notice(&self, world: &mut World) {
         let port = world.validators.primary_port();
@@ -514,8 +516,8 @@ impl Lifecycle for IntexLifecycle {
 
         let deadline = venue_probes::series_call_deadline(&url, nft, series)
             .expect("the expiring series carries a call deadline");
-        // A notice measured in days means the DEV profile never took, and the wait below
-        // would sit out the whole run for no reason anyone could see.
+        // A notice measured in days means the DEV profile never took. The wait below
+        // would then sit out the whole run for no reason anyone could see.
         let notice = deadline.saturating_sub(u64::from(
             venue_probes::series_called_at(&url, nft, series).expect("the series was Called"),
         ));
@@ -545,8 +547,8 @@ impl Lifecycle for IntexLifecycle {
         .expect("close the expiry bucket the group sits in");
     }
 
-    /// One series was settled in part and one was never touched, so the credit owed
-    /// is the sum of what each still carries unrealized - never either tirage alone.
+    /// One series was settled in part and one was never touched. The credit owed is
+    /// therefore the sum of what each still carries unrealized, never either tirage alone.
     fn assert_forfeited(&self, world: &World) {
         let port = world.validators.primary_port();
         let url = world.rpc.url(port);
@@ -623,7 +625,7 @@ impl Lifecycle for IntexLifecycle {
                 eth::IIntexFactory::SeriesExpired {
                     seriesId: series,
                     forfeitedUnits: unrealized,
-                    returnedPromis: returned,
+                    returnedPromisMinor: returned,
                 },
             );
         }
@@ -688,8 +690,8 @@ impl Lifecycle for IntexLifecycle {
     }
 }
 
-/// Part settled and part not, so the sweep has to return the load of the unrealized
-/// units alone rather than the tirage the series was issued with.
+/// Part settled and part not. The sweep therefore has to return the load of the
+/// unrealized units alone, rather than the tirage the series was issued with.
 #[when("the owner settles part of one series they let run out")]
 fn settle_part_of_expiring(world: &mut World) {
     let [series, _] = expiring_series(world);
@@ -717,7 +719,7 @@ fn settle_part_of_expiring(world: &mut World) {
             owner_key: DEPLOYER_KEY.to_owned(),
             issuance_currency: GBP_ISO,
         },
-        Rail::PayNote,
+        Payer::Owner,
         USD_ISO,
         terms,
     );
@@ -753,7 +755,7 @@ fn start_relay(world: &mut World) {
             .expect("target chain id fits a uint32"),
     };
 
-    // The NFT bridges have to know each other before either can quote a hop; nothing
+    // The NFT bridges have to know each other before either can quote a hop. Nothing
     // in the deploy scripts pairs them, so the scenario that uses both does it.
     let committee_bridge = world
         .state
@@ -823,8 +825,8 @@ fn bridge_rest_home(world: &mut World) {
         .expect("fits a uint32");
     let amount = TARGET_UNITS - TRADABLE_HOP_UNITS;
 
-    // An owner with more than one series moves them together, so this hop takes the
-    // batch route the first one did not: one burn set here, one mint set at home.
+    // An owner with more than one series moves them together. This hop therefore takes
+    // the batch route the first one did not: one burn set here, one mint set at home.
     let tokens: Vec<(alloy_primitives::U256, u32)> = world
         .state
         .lifecycle_series
@@ -953,7 +955,7 @@ fn unsettled_series_expired(world: &mut World) {
 
     for series in expiring_series(world) {
         // A mark whose calledAt sits ahead of this chain's clock is parked, not
-        // applied, and nothing in a localnet plays the operator who retries it.
+        // applied. Nothing in a localnet plays the operator who retries it.
         let parked = eth::read_call(
             &target_url,
             target_router,
@@ -1062,6 +1064,16 @@ fn prices(world: &World, series: FixedBytes<14>) -> (u64, u64, u64) {
         series,
     )
     .expect("series prices")
+}
+
+fn public_state(url: &str, series: FixedBytes<14>) -> u8 {
+    eth::read_call(
+        url,
+        addresses::INTEX_ADDR,
+        &eth::IIntex::seriesDataCall { seriesId: series },
+    )
+    .unwrap_or_else(|| panic!("series {series} does not read back"))
+    .state
 }
 
 fn is_qualified(url: &str, series: FixedBytes<14>) -> bool {

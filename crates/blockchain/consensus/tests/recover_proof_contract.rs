@@ -1,7 +1,7 @@
 //! - HybridScheme::recover_proof contract tests.
 //!
-//! when `recover_proof` returns `None` while the quorum threshold is
-//! met, the chain must NOT stall and the proposer MUST forfeit the slot.
+//! When `recover_proof` returns `None` while the quorum threshold is
+//! met, the chain must NOT stall, and the proposer MUST forfeit the slot.
 //! The metric `outbe_proposer_forfeit_total{reason="vrf_recover_failed_under_quorum"}`
 //! is incremented to surface the event. This invariant is verified at the
 //! source level (metric wiring is present in `hybrid.rs::assemble`) and
@@ -20,18 +20,21 @@ fn proposer_forfeit_reason_vrf_recover_label_is_pinned() {
 }
 
 /// runtime test: when `record_vrf_recover_failed_under_quorum`
-/// is invoked (the exact path triggered by `hybrid.rs::assemble` on the
-/// `recover_proof == None` under quorum branch), the
+/// is invoked, the
 /// `outbe_proposer_forfeit_total{reason="vrf_recover_failed_under_quorum"}`
-/// counter increments by exactly 1. Uses a `metrics-util` thread-local
-/// recorder so the assertion is independent of the global recorder.
+/// counter increments by exactly 1. That invocation is the exact path that
+/// `hybrid.rs::assemble` triggers on the `recover_proof == None` under quorum
+/// branch. The test uses a
+/// `metrics-util` thread-local recorder so the assertion is independent of the
+/// global recorder.
 ///
-/// Full DKG-share-corruption fixture that would actually drive
-/// `recover_proof` to return None under quorum is deferred - it requires
+/// A full DKG-share-corruption fixture that would actually drive
+/// `recover_proof` to return None under quorum is deferred. It requires
 /// cracking BLS share material internals and is out's
 /// reasonable test scope. The combination of this runtime metric test +
 /// the source-level pin (`recover_proof_failure_under_quorum_does_not_halt_chain`)
-/// ensures both halves of (a) the metric pathway works at runtime,
+/// ensures both halves:
+/// (a) the metric pathway works at runtime,
 /// (b) the call site exists in the production hybrid.rs body.
 #[test]
 fn record_vrf_recover_failed_under_quorum_increments_proposer_forfeit_counter() {

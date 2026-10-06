@@ -23,21 +23,21 @@ use crate::schema::Rewards;
 /// `IdenticalReplay` is returned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MetadataFingerprintOutcome {
-    /// First time seeing this `fb_hash`; fingerprint persisted. Caller
+    /// First time seeing this `fb_hash`. Fingerprint persisted. Caller
     /// must proceed with all module hooks.
     Fresh,
-    /// Same `fb_hash` + same fingerprint already processed; full no-op.
+    /// Same `fb_hash` + same fingerprint already processed. Full no-op.
     /// Caller MUST skip per-block module hooks (participation, slashing,
-    /// fees) - they would all short-circuit anyway via per-module guards,
+    /// fees). They would all short-circuit anyway via per-module guards,
     /// but skipping early avoids redundant SLOAD/SSTORE work.
     IdenticalReplay,
 }
 
 // V3 fingerprint binds the V2-Certified-Parent participation
 // proof identity end-to-end. Locally-observed late votes cannot alter
-// the base certificate or its participation bitmap. Authenticated late
-// participation is accounted separately by `LateFinalizeCredits`, including
-// daily GEM participation; it does not relax this fingerprint. The canonical
+// the base certificate or its participation bitmap. `LateFinalizeCredits`
+// accounts for authenticated late participation separately, including
+// daily GEM participation. It does not relax this fingerprint. The canonical
 // signer set is therefore part of the
 // fingerprint via [`outbe_consensus::proof::canonical_signer_set_hash`].
 //
@@ -62,17 +62,17 @@ const FINGERPRINT_DOMAIN: &[u8] = b"OUTBE_METADATA_FINGERPRINT_V3";
 /// (which must be block 0). Returns the locked-in day on every
 /// subsequent call.
 ///
-/// This function is called as the very first step of
-/// `RewardsLifecycle::begin_block`, before any other lifecycle work.
-/// After block 0 the slot is immutable; on a healthy chain the lazy
-/// init branch fires exactly once in the chain's lifetime.
+/// `RewardsLifecycle::begin_block` calls this function as its very first
+/// step, before any other lifecycle work. After block 0 the slot is
+/// immutable. On a healthy chain the lazy init branch fires exactly once in
+/// the chain's lifetime.
 ///
 /// Tamper-resistance: a node booting with a different `genesis.json`
-/// timestamp will lock in a different value here. Subsequent
-/// `day_emission_limit` calculations (in
-/// `outbe_emissionlimit::day_emission`) diverge from quorum, the
-/// post-exec state root mismatches at the first day-settle, and the
-/// node falls out of consensus.
+/// timestamp will record a different value here. Then:
+/// - Subsequent `day_emission_limit` calculations (in
+///   `outbe_emissionlimit::day_emission`) diverge from quorum.
+/// - The post-exec state root mismatches at the first day-settle.
+/// - The node leaves consensus.
 pub fn ensure_genesis_anchor(ctx: &BlockRuntimeContext) -> Result<u32> {
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
     let day = rewards.genesis_utc_day.read()?;
@@ -101,10 +101,11 @@ pub fn genesis_utc_day(ctx: &BlockRuntimeContext) -> Result<u32> {
 }
 
 /// Computes the integer day number of `utc_day` relative to the chain's
-/// genesis day. Returns `Ok(0)` for the genesis day itself, `Ok(n)` for
-/// `n` days after genesis, and `Fatal` for a `utc_day` strictly before
-/// genesis (a finalized block predating genesis is a protocol
-/// violation).
+/// genesis day. Returns:
+/// - `Ok(0)` for the genesis day itself.
+/// - `Ok(n)` for `n` days after genesis.
+/// - `Fatal` for a `utc_day` strictly before genesis (a finalized block
+///   predating genesis is a protocol violation).
 pub fn day_number_since_genesis(ctx: &BlockRuntimeContext, utc_day: u32) -> Result<u32> {
     let genesis = genesis_utc_day(ctx)?;
     day_number_between(genesis, utc_day).map_err(|e| match e {
@@ -115,25 +116,26 @@ pub fn day_number_since_genesis(ctx: &BlockRuntimeContext, utc_day: u32) -> Resu
             "finalized block predates genesis: utc_day={utc_day}, \
              genesis_utc_day={genesis_utc_day}"
         )),
-        // TimeError is #[non_exhaustive]; unknown variants surface as a
+        // TimeError is #[non_exhaustive]. Unknown variants surface as a
         // generic fatal so future additions don't silently degrade.
         _ => PrecompileError::Revert(format!("time helper error: {e}")),
     })
 }
 
 /// V3 fingerprint guard. Computes the canonical V3 metadata
-/// fingerprint and either persists it on first sight (returns `Fresh`),
-/// short-circuits on identical replay (returns `IdenticalReplay`), or
-/// rejects contradictory metadata for the same `fb_hash` as `Fatal`.
+/// fingerprint and then does one of these:
+/// - On first sight, persists it (returns `Fresh`).
+/// - On identical replay, short-circuits (returns `IdenticalReplay`).
+/// - On contradictory metadata for the same `fb_hash`, rejects it as `Fatal`.
 ///
 /// The fingerprint is the **single source of truth** for "same
 /// participation proof identity" under V2 Certified-Parent Accounting.
 /// Two metadata-txes for the same `fb_hash` with different proof_kind,
 /// committee, signer bitmap, VRF binding, or fee sum produce different
-/// fingerprints and trigger the contradictory-metadata fatal.
+/// fingerprints. These trigger the contradictory-metadata fatal.
 ///
 /// `canonical_vrf_proof_hash` is the executor-derived
-/// `keccak256(VrfProof::encode())` from the verified certificate; the
+/// `keccak256(VrfProof::encode())` from the verified certificate. The
 /// caller obtains it from `outbe_consensus::proof::VerifiedProof::vrf_proof_hash`
 /// (already validated by `verify_v2_proof` before this function runs).
 ///
@@ -158,8 +160,8 @@ pub fn day_number_since_genesis(ctx: &BlockRuntimeContext, utc_day: u32) -> Resu
 /// )
 /// ```
 ///
-/// Per every bound field is asserted independently by
-/// the `v2_rewards_fingerprint_changes_on_*` tests.
+/// The `v2_rewards_fingerprint_changes_on_*` tests assert every bound
+/// field independently.
 pub fn check_and_record_metadata_fingerprint(
     ctx: &BlockRuntimeContext,
     metadata: &CertifiedParentAccountingMetadata,
@@ -181,7 +183,7 @@ pub fn check_and_record_metadata_fingerprint(
         return Ok(MetadataFingerprintOutcome::IdenticalReplay);
     }
     // Same fb_hash, different fingerprint: contradictory metadata for
-    // the same finalized block. Protocol violation - fatal so post-exec
+    // the same finalized block. Protocol violation. It is fatal so post-exec
     // module hooks never observe contradictory inputs.
     Err(PrecompileError::Revert(format!(
         "contradictory consensus metadata for fb_hash={fb_hash}: \
@@ -226,8 +228,8 @@ pub fn compute_metadata_fingerprint(
     buf.extend_from_slice(canonical_vrf_proof_hash.as_slice());
     buf.push(metadata.proof_kind.tag());
     // `missed_proposers` is always empty under
-    // V2 per `verify_v2_proof`, but the length-prefixed
-    // encoding is preserved so the helper remains injective if a future
+    // V2 per `verify_v2_proof`. This code still keeps the length-prefixed
+    // encoding, so the helper remains injective if a future
     // hard fork relaxes the V2 emptiness rule.
     buf.extend_from_slice(&(metadata.missed_proposers.len() as u64).to_be_bytes());
     for ev in &metadata.missed_proposers {
@@ -250,10 +252,10 @@ fn write_addr_list(buf: &mut Vec<u8>, list: &[Address]) {
 /// `Finalization <-> CertifiedNotarization` changes the fingerprint.
 pub use outbe_primitives::consensus_metadata::ParentParticipationProof as ProofKind;
 
-/// Validator emission percentage (kept for documentation/compat; the
+/// Validator emission percentage (kept for documentation/compat). The
 /// closed-form `day_emission_limit` in
 /// `outbe_emissionlimit::day_emission` is the authoritative source
-/// for the validator daily reward, allocated through the Cycle handler).
+/// for the validator daily reward, allocated through the Cycle handler.
 pub const VALIDATOR_REWARD_PERCENT: u64 = 4;
 
 #[cfg(test)]
@@ -292,7 +294,7 @@ mod tests {
                 BlockRuntimeContext::new(block_ctx(0, GENESIS_TS_2024_01_01), handle.clone());
             let _ = ensure_genesis_anchor(&ctx0).unwrap();
 
-            // Re-call with a later-block context (same storage); anchor stays.
+            // Re-call with a later-block context (same storage). Anchor stays.
             let ctx_later = BlockRuntimeContext::new(
                 block_ctx(100, GENESIS_TS_2024_01_01 + 86_400 * 30),
                 handle,
@@ -491,9 +493,9 @@ mod tests {
 
     // The legacy `settle_eligible_days` / `settle_day` helpers and their
     // tests were dropped (Phase 6). Daily emission
-    // orchestration lives in `outbe_cycle::handler::run_emission_limit_daily`;
-    // the contract is now covered by the Cycle crate tests and by the
-    // public api tests in `crate::api::tests`.
+    // orchestration lives in `outbe_cycle::handler::run_emission_limit_daily`.
+    // The Cycle crate tests and the public api tests in `crate::api::tests`
+    // now cover the contract.
 
     #[test]
     fn fingerprint_canonical_encoding_is_length_prefix_safe() {

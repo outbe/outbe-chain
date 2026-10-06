@@ -8,7 +8,6 @@ interface IVaultRouter {
         IntexCostAmount,
         CredisCostAmount,
         GemCostAmount,
-        PayNoteDeposit,
         NodCostAmount
     }
 
@@ -24,6 +23,15 @@ interface IVaultRouter {
         address cca;
         address vault;
         uint64 expiresAt;
+        uint256 gratisMinor;
+        uint256 snapshotId;
+        uint256 entryPriceMinor;
+        uint256 valuationPriceMinor;
+        uint256 policyRate;
+        uint16 issuanceCurrency;
+        uint8 assetDecimals;
+        uint16 referenceCurrency;
+        uint256 callAnchorPriceMinor;
     }
 
     error TokenOperationFailed();
@@ -176,9 +184,9 @@ interface IVaultRouter {
 
     /// @notice Moves `assetsAmount` of liquidity from `vaultFrom` to `vaultTo`. The caller
     ///         supplies the destination asset at the oracle cross rate and receives the source
-    ///         asset in exchange; it must have approved this router for at least the required
-    ///         amount. `maxAmountTo` bounds what the router may pull if the rate moved since
-    ///         the caller quoted it. Caller must be an active CCA.
+    ///         asset in exchange. The caller must have approved this router for at least the
+    ///         required amount. `maxAmountTo` bounds what the router may pull if the rate
+    ///         moved since the caller quoted it. Caller must be an active CCA.
     function rebalance(address vaultFrom, address vaultTo, uint256 assetsAmount, uint256 maxAmountTo)
         external
         returns (uint256 amountTo);
@@ -191,14 +199,14 @@ interface IVaultRouter {
         returns (address assetFrom, address assetTo, uint256 amountTo);
 
     /// @notice Whether the asset's reserve vault can currently fund a withdrawal of
-    ///         `amount` of `asset` — the same predicate `withdraw` and `reserveStables`
-    ///         enforce. Returns false rather than reverting when `asset` has no vault.
+    ///         `amount` of `asset`. `withdraw` and `reserveStables` enforce the same
+    ///         predicate. Returns false rather than reverting when `asset` has no vault.
     function hasLiquidity(address asset, uint256 amount) external view returns (bool sufficient);
 
     /// @notice Redeems `amount` of `asset` from its origin vault and holds it in this
     ///         router's custody for `smartAccount`, guaranteeing it can later be
     ///         delivered for 15 minutes. Caller must be an active CCA.
-    function reserveStables(address smartAccount, address asset, uint256 amount)
+    function reserveStables(address smartAccount, address asset, uint256 amount, uint16 referenceCurrency)
         external
         returns (uint256 reservationId);
 
@@ -207,12 +215,13 @@ interface IVaultRouter {
     ///         returns any unused remainder to the origin vault. Caller must be a
     ///         registered liquidity target. `receiver` must be the reserved smart
     ///         account. Reverts if the reservation is missing, expired, or too small.
-    /// @dev Only CredisFactory may call. `receiver` binds the account; it cannot redirect the payout.
+    /// @dev Only CredisFactory may call. `receiver` binds the account.
+    ///      `receiver` cannot redirect the payout.
     function releaseReservation(uint256 id, address receiver, uint256 amount) external returns (uint256 delivered);
 
     /// @notice Deposits an unused reservation back into its origin vault and deletes it.
-    ///         The originating CCA may call at any time; after expiry anyone may.
-    ///         Idempotent — an `id` holding nothing returns 0 instead of reverting.
+    ///         The originating CCA may call at any time. After expiry, anyone may call.
+    ///         Idempotent. An `id` that holds nothing returns 0 instead of reverting.
     function returnReservation(uint256 id) external returns (uint256 mintedShares);
 
     /// @notice The reservation held under `id`, or a zeroed struct if none.

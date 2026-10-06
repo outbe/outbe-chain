@@ -10,14 +10,16 @@ import {ERC7786Bridge} from "src/ERC7786Bridge.sol";
 import {LayerZeroGatewayAdapter} from "src/adapters/LayerZeroGatewayAdapter.sol";
 import {HyperlaneGatewayAdapter} from "src/adapters/HyperlaneGatewayAdapter.sol";
 
-/// @dev Wires the local hub to its counterparts on other chains. Bridge and adapters share one CREATE3 address across
-///      chains, so remote addresses equal the local ones (computed here) - env only lists `(chainId, eid)`.
-///      Each adapter is wired only if its endpoint env is present (LZ_ENDPOINT / HYPERLANE_MAILBOX). For Hyperlane the
-///      remote domain is assumed equal to the chain id. When `WIRE_LOOPBACK` is true, the local chain itself is wired
-///      as a destination through the loopback adapter.
+/// @dev Wires the local hub to its counterparts on other chains. Bridge and adapters share one
+///      CREATE3 address across chains, so remote addresses equal the local ones (computed here).
+///      The env only lists `(chainId, eid)`. The script wires each adapter only if its endpoint env
+///      is present (LZ_ENDPOINT / HYPERLANE_MAILBOX). For Hyperlane, the script assumes that the
+///      remote domain is equal to the chain id. When `WIRE_LOOPBACK` is true, the script wires the
+///      local chain itself as a destination through the loopback adapter.
 ///
-/// Required env (DEPLOYER_PK must be BRIDGE_OWNER): `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATE3_FACTORY_ADDRESS`,
-/// `REMOTE_CHAIN_IDS` (csv); `REMOTE_EIDS` (csv, parallel) when wiring LayerZero.
+/// Required env (DEPLOYER_PK must be BRIDGE_OWNER): `DEPLOYER_PK`, `CONTRACT_SALT`,
+/// `CREATE3_FACTORY_ADDRESS`, `REMOTE_CHAIN_IDS` (csv). When the script wires LayerZero, it also
+/// requires `REMOTE_EIDS` (csv, parallel).
 contract ConfigureBridge is Script {
     function run() public virtual {
         uint256 deployerPk = vm.envUint("DEPLOYER_PK");
@@ -41,17 +43,19 @@ contract ConfigureBridge is Script {
         console2.log("=== Configure bridge complete ===");
     }
 
-    /// @dev Routes the local chain through the loopback adapter: the hub becomes its own remote and the adapter the
-    ///      local chain's gateway. Requires an active broadcast whose sender owns the bridge.
+    /// @dev Routes the local chain through the loopback adapter. The hub becomes its own remote,
+    ///      and the adapter becomes the local chain's gateway. Requires an active broadcast whose
+    ///      sender owns the bridge.
     function configureLoopback(address bridgeAddr, address loopbackAdapter) public {
         ERC7786Bridge(bridgeAddr).registerRemoteBridge(InteroperableAddress.formatEvmV1(block.chainid, bridgeAddr));
         ERC7786Bridge(bridgeAddr).setGateway(block.chainid, loopbackAdapter);
         console2.log("wired loopback for local chainId:", block.chainid);
     }
 
-    /// @dev Wires the local hub to its counterparts on each `REMOTE_CHAIN_IDS`. Requires an active broadcast whose
-    ///      sender owns the bridge/adapters. An adapter is wired only when its address is non-zero. Remote
-    ///      bridge/adapter addresses equal the local ones (shared CREATE3 address across chains).
+    /// @dev Wires the local hub to its counterparts on each `REMOTE_CHAIN_IDS`. Requires an active
+    ///      broadcast whose sender owns the bridge/adapters. The function wires an adapter only
+    ///      when its address is non-zero. Remote bridge/adapter addresses equal the local ones
+    ///      (shared CREATE3 address across chains).
     function configureBridge(address bridgeAddr, address lzAdapter, address hlAdapter) public {
         uint256[] memory remoteChainIds = vm.envOr("REMOTE_CHAIN_IDS", ",", new uint256[](0));
         bool hasLz = lzAdapter != address(0);

@@ -43,7 +43,7 @@ pub struct HashMapStorageProvider {
     pub events: HashMap<Address, Vec<LogData>>,
     ordered_events: Vec<Log>,
     /// canonical-history fixture used by `canonical_block_hash`.
-    /// Tests seed this directly via `set_canonical_block_hash`; an unset
+    /// Tests seed this directly via `set_canonical_block_hash`. An unset
     /// entry yields `Ok(None)` (block outside retention / unknown).
     canonical_block_hashes: BTreeMap<u64, B256>,
     chain_id: u64,
@@ -63,9 +63,10 @@ pub struct HashMapStorageProvider {
     mutation_operations: usize,
     snapshots: Vec<Snapshot>,
     /// When true, `sub_call` returns `SubCallOutput::default_success()`
-    /// instead of the trait default `Err(SubCallError::NotAvailable)`. Tests
-    /// that exercise runtime paths which issue Rust -> Solidity sub-calls but
-    /// don't assert child-frame state opt in via [`Self::enable_sub_call_stub`].
+    /// instead of the trait default `Err(SubCallError::NotAvailable)`. Some
+    /// tests exercise runtime paths that issue Rust -> Solidity sub-calls but
+    /// do not assert child-frame state. These tests enable it via
+    /// [`Self::enable_sub_call_stub`].
     sub_call_stub: bool,
     /// Per-address return data stubs. Entries registered via
     /// [`Self::stub_sub_call_at`] take priority over `sub_call_stub`.
@@ -339,9 +340,9 @@ impl HashMapStorageProvider {
         self.mutation_operations = 0;
     }
 
-    /// Injects a deterministic failure immediately after the zero-based
-    /// persistent-write/event operation selected by `operation` has been
-    /// applied. The caller's journal checkpoint must restore that write.
+    /// Injects a deterministic failure immediately after the provider applies
+    /// the zero-based persistent-write/event operation selected by `operation`.
+    /// The caller's journal checkpoint must restore that write.
     pub fn fail_after_mutation_at(&mut self, operation: usize) {
         self.mutation_failure_at = Some(operation);
         self.mutation_failure_address = None;

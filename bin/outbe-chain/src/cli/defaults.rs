@@ -1,5 +1,5 @@
-/// Ceiling for advised gas price: one COEN per gas, already far above anything
-/// this chain charges, so a fee spike can never advise an unpayable number.
+/// Ceiling for advised gas price: one COEN per gas. This is already far above
+/// anything this chain charges, so a fee spike can never advise an unpayable number.
 const OUTBE_MAX_SUGGESTED_GAS_PRICE: u64 = 1_000_000_000_000_000_000;
 
 /// Reth suggests a one gwei tip while its oracle has no sampled block to learn

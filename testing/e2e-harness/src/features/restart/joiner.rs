@@ -452,7 +452,7 @@ fn pending_dkg_recovers_and_activates(world: &mut World) {
         enclave_log.contains("unsealed offer key + group signature"),
         "replacement enclave did not unseal the same sealed state"
     );
-    // Promotion/retirement was observed before waiting for slow peers. A later
+    // The test observed promotion/retirement before it waited for slow peers. A later
     // legitimate DKG cycle may now write its own pending files.
     let target = world
         .rpc
@@ -582,8 +582,8 @@ fn restart_joiner_during_dkg(world: &mut World) {
         .expect("restart exact in-flight joiner and enclave with preserved keys");
 }
 
-/// An interrupted ceremony may retry, but it must never partially activate;
-/// the 4-node committee remains live until one finalized DKG outcome activates.
+/// An interrupted ceremony may retry, but it must never partially activate.
+/// The 4-node committee remains live until one finalized DKG outcome activates.
 #[then("the old committee stays live and a later DKG activates the joiner once")]
 fn interrupted_dkg_retries_without_partial_activation(world: &mut World) {
     let idx = world.validators.joiner_index();

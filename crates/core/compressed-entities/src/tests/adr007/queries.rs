@@ -69,7 +69,6 @@ fn untouched_reads_use_parent_once_and_classify_missing_committed_body() {
         settled_nods: 0,
         bucket_key: bucket_key_for(stale_bucket_id),
         worldwide_day: stale_bucket_id.worldwide_day(),
-        floor_price_minor: U256::from(4),
         entry_price_minor: U256::from(5),
         reference_currency: 840,
     };
@@ -78,7 +77,6 @@ fn untouched_reads_use_parent_once_and_classify_missing_committed_body() {
         settled_nods: 0,
         bucket_key: bucket_key_for(missing_bucket_id),
         worldwide_day: missing_bucket_id.worldwide_day(),
-        floor_price_minor: U256::from(6),
         entry_price_minor: U256::from(7),
         reference_currency: 840,
     };

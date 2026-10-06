@@ -1,15 +1,13 @@
-//! verifies that the `is_static` flag from the
-//! provider constructor is honored by [`PrecompileStorageProvider`]
-//! implementations.
+//! Verifies that [`PrecompileStorageProvider`] implementations honor the
+//! `is_static` flag from the provider constructor.
 //!
-//! The production wiring (`outbe-evm/src/precompiles.rs:51` calling
+//! `staticcall_static_write_halt` covers the production wiring end-to-end:
+//! `outbe-evm/src/precompiles.rs:51` calls
 //! `EvmStorageProvider::new_with_is_static(internals, gas,
-//! input.is_static_call())`) is covered end-to-end by the
-//! `staticcall_static_write_halt`. This file
-//! verifies the trait contract via `HashMapStorageProvider`, which
-//! implements the same trait with the same `is_static` semantics, and
-//! includes a compile-time witness that the `EvmStorageProvider`
-//! constructor signatures exist as designed.
+//! input.is_static_call())`. This file verifies the trait contract through
+//! `HashMapStorageProvider`, which implements the same trait with the same
+//! `is_static` semantics. This file also includes a compile-time witness that
+//! the `EvmStorageProvider` constructor signatures exist as designed.
 
 use alloy_evm::EvmInternals;
 use outbe_primitives::storage::{
@@ -18,11 +16,12 @@ use outbe_primitives::storage::{
 
 /// Compile-time witness: the three `EvmStorageProvider` constructors
 /// keep the documented signatures. Constructing real `EvmInternals`
-/// out-of-band is heavy; this test asserts that the constructors are
-/// addressable as function pointers with the right shape, so any
+/// out-of-band is heavy. This test asserts that the constructors are
+/// addressable as function pointers with the right shape. Thus any
 /// future refactor that drops or renames them breaks the test.
-// The `'a` lifetime is used only inside the body's fn-pointer type assertions, not
-// in the signature, so clippy flags it; keep it - the body needs a named lifetime.
+// The body uses the `'a` lifetime only inside its fn-pointer type assertions, not
+// in the signature. For this reason clippy flags it. Keep it: the body needs a
+// named lifetime.
 #[allow(dead_code, clippy::extra_unused_lifetimes)]
 fn _assert_evm_provider_ctors_exist<'a>() {
     let _: fn(EvmInternals<'a>) -> EvmStorageProvider<'a> = EvmStorageProvider::new;

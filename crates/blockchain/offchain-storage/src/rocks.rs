@@ -1,4 +1,5 @@
 //! Durable primary and immutable-per-session secondary RocksDB capabilities.
+pub(crate) mod lifecycle;
 
 use std::{
     fs::{File, OpenOptions},
@@ -20,7 +21,8 @@ const FORMAT_KEY: &[u8] = b"\0outbe-offchain-format";
 const FORMAT_VALUE: &[u8] = b"outbe-offchain-rocksdb-v1";
 const PROBE_KEY: &[u8] = b"\0outbe-write-probe";
 
-/// Sole process-owned durable projection writer. Its DB lifetime owns the primary lock.
+/// The sole durable projection writer that the process owns. Its DB lifetime owns the primary
+/// lock.
 pub struct RocksDbStorage {
     db: DB,
     // Rust drops fields in declaration order. Notify only after DB::drop returns.
@@ -52,7 +54,7 @@ impl Drop for RocksDbCloseSignal {
 pub struct RocksDbCloseWaiter(Arc<RocksDbCloseState>);
 
 impl RocksDbCloseWaiter {
-    /// Returns false on timeout; callers must keep waiting before process exit.
+    /// Returns false on timeout. Callers must keep waiting before process exit.
     pub fn wait_timeout(&self, timeout: Duration) -> bool {
         let closed = self
             .0
@@ -123,7 +125,7 @@ impl RocksDbStorage {
 }
 
 impl RocksDbReader {
-    /// Open and catch up before publishing the view; subsequent reads never refresh it.
+    /// Open and catch up before publishing the view. Subsequent reads never refresh it.
     pub fn open(primary: &Path, secondary: &Path) -> Result<Self, StorageError> {
         // In particular, a reader never initializes an empty primary database.
         std::fs::metadata(primary.join("CURRENT")).map_err(StorageError::unavailable)?;
@@ -170,7 +172,7 @@ impl RocksDbReader {
 
 // Resolve symlinked parents before creating a missing secondary directory. A rejected
 // reader configuration must not first create a directory inside the primary.
-fn resolve_existing_ancestor(path: &Path) -> Result<PathBuf, StorageError> {
+pub(crate) fn resolve_existing_ancestor(path: &Path) -> Result<PathBuf, StorageError> {
     let absolute = std::path::absolute(path).map_err(StorageError::unavailable)?;
     let mut ancestor = absolute.as_path();
     let mut missing = Vec::new();
@@ -331,6 +333,11 @@ impl StorageWriter for RocksDbStorage {
 
     fn apply_atomic(&self, batch: &AtomicWriteBatch) -> Result<(), StorageError> {
         batch.validate()?;
+        if !batch.retired_scopes().is_empty() {
+            return Err(StorageError::InvalidArgument(
+                "raw RocksDB requires a partition adapter for scope retirement".into(),
+            ));
+        }
         if batch.is_empty() {
             return Ok(());
         }

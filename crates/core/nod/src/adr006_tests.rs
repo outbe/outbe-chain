@@ -1,3 +1,4 @@
+use outbe_compressed_entities::test_support::seed_compressed_entities_genesis;
 use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, U256};
@@ -10,28 +11,10 @@ use outbe_primitives::time::{
     WorldwideDay,
 };
 use outbe_primitives::{
-    addresses::COMPRESSED_ENTITIES_ADDRESS,
     error::{PrecompileError, Result},
     math::constants::REAL_ID_SHIFT,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
-
-fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
-    storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-        .unwrap();
-    storage
-        .sstore(
-            COMPRESSED_ENTITIES_ADDRESS,
-            U256::from(1),
-            U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(B256::ZERO)
-                    .unwrap()
-                    .as_slice(),
-            ),
-        )
-        .unwrap();
-}
 
 use outbe_oracle::api::AddressPair;
 
@@ -52,8 +35,7 @@ fn item(owner: Address) -> NodItemState {
         gratis_load_minor: U256::from(11),
         worldwide_day,
         league_id: 4,
-        floor_price_minor: U256::from(13),
-        bucket_key: NodContract::bucket_key(worldwide_day, U256::from(13), 978),
+        bucket_key: NodContract::bucket_key(worldwide_day, U256::from(5), 978),
         issuance_currency: 840,
         reference_currency: 978,
         // Midnight of the last UTC day closed at `NOW`, so a bucket issued in
@@ -77,7 +59,7 @@ fn reverted_issuance_rolls_back_overlay_compact_state_and_events() {
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), &scope).unwrap();
         let outcome: Result<()> = storage.with_checkpoint(|| {
             api::add_nod(&storage, &scope, &parent, &body, U256::from(5))?;
@@ -100,8 +82,8 @@ fn nod_identity_and_abi_boundary_preserve_exact_32_bytes() {
     assert!(NodContract::parse_nod_id(&encoded[..62]).is_err());
 
     // The ABI carries the identity as one word, so a wrong-width id is no
-    // longer representable: the round trip through `uint256` is total, and the
-    // old "invalid bytes length" revert has no input that can reach it.
+    // longer representable. The round trip through `uint256` is total. The old
+    // "invalid bytes length" revert has no input that can reach it.
     let word = body.nod_id.to_u256();
     assert_eq!(WwdEntityId::from(word), body.nod_id);
     assert_eq!(word.to_be_bytes::<32>(), body.nod_id.0 .0);
@@ -116,7 +98,7 @@ fn membership_changes_preserve_bucket_body_and_commitment_until_last_removal() {
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), &scope).unwrap();
         api::add_nod(&storage, &scope, &parent, &first, U256::from(5)).unwrap();
         let original = NodContract::new(storage.clone())
@@ -205,7 +187,7 @@ fn entry_price_openings_follow_the_schema() {
     StorageHandle::enter(&mut provider, |storage| {
         let nod = NodContract::new(storage);
         let frozen = nod.entry_prices_frozen.base_slot();
-        let price = nod.entry_price_value.base_slot();
+        let price = nod.entry_price_minor.base_slot();
         let day = WorldwideDay::new(20_260_726);
         assert_eq!(
             crate::openings::entry_price_slots(day, &[840]).unwrap(),
@@ -231,7 +213,7 @@ fn member_count_overflow_and_underflow_roll_back_nod_mutations() {
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), &scope).unwrap();
         api::add_nod(&storage, &scope, &parent, &first, U256::from(5)).unwrap();
         let nod = NodContract::new(storage.clone());
@@ -264,7 +246,7 @@ fn member_count_overflow_and_underflow_roll_back_nod_mutations() {
             .unwrap();
         let error = api::remove_nod(&storage, &scope, loaded, bucket).unwrap_err();
         assert!(
-            matches!(error, PrecompileError::BodyReadCorruption(message) if message.contains("member count underflow"))
+            matches!(error, PrecompileError::Revert(message) if message.contains("member count underflow"))
         );
         assert_eq!(nod.total_supply().unwrap(), 1);
         assert!(api::get_item(&storage, &scope, &parent, first.nod_id)
@@ -279,9 +261,9 @@ fn member_count_overflow_and_underflow_roll_back_nod_mutations() {
     });
 }
 
-/// Slot assignment is dense in `order` sequence, so inserting a field rather
-/// than appending one silently reassigns the meaning of every slot after it -
-/// including the two the genesis alloc seeds. New fields must append.
+/// Slot assignment is dense in `order` sequence. Inserting a field rather than
+/// appending one silently reassigns the meaning of every slot after it,
+/// including the two slots that the genesis alloc seeds. New fields must append.
 #[test]
 fn nod_contract_slot_layout_is_pinned() {
     let mut provider = HashMapStorageProvider::new(1);
@@ -297,7 +279,10 @@ fn nod_contract_slot_layout_is_pinned() {
         assert_eq!(nod.bucket_nod_count.base_slot(), U256::from(18));
         assert_eq!(nod.bucket_nods.base_slot(), U256::from(19));
         assert_eq!(nod.bucket_nod_index.base_slot(), U256::from(20));
-        assert_eq!(nod.callable_bucket_call_price.base_slot(), U256::from(21));
+        assert_eq!(
+            nod.callable_bucket_call_price_minor.base_slot(),
+            U256::from(21)
+        );
         assert_eq!(nod.callable_bucket_currency.base_slot(), U256::from(22));
         assert_eq!(nod.bucket_called_at.base_slot(), U256::from(23));
         assert_eq!(
@@ -305,20 +290,23 @@ fn nod_contract_slot_layout_is_pinned() {
             U256::from(24)
         );
         assert_eq!(nod.callable_bucket_call_rate.base_slot(), U256::from(25));
-        assert_eq!(nod.callable_bucket_call_window.base_slot(), U256::from(26));
         assert_eq!(
-            nod.callable_bucket_call_threshold.base_slot(),
+            nod.callable_bucket_call_window_seconds.base_slot(),
+            U256::from(26)
+        );
+        assert_eq!(
+            nod.callable_bucket_call_threshold_seconds.base_slot(),
             U256::from(27)
         );
         assert_eq!(
-            nod.callable_bucket_call_notice_period.base_slot(),
+            nod.callable_bucket_call_notice_period_seconds.base_slot(),
             U256::from(28)
         );
-        assert_eq!(nod.max_call_window.base_slot(), U256::from(29));
+        assert_eq!(nod.max_call_window_seconds.base_slot(), U256::from(29));
         assert_eq!(nod.entry_prices_frozen.base_slot(), U256::from(30));
         assert_eq!(nod.entry_price_currency_count.base_slot(), U256::from(31));
         assert_eq!(nod.entry_price_currency.base_slot(), U256::from(32));
-        assert_eq!(nod.entry_price_value.base_slot(), U256::from(33));
+        assert_eq!(nod.entry_price_minor.base_slot(), U256::from(33));
         assert_eq!(nod.callable_bucket_issued_at.base_slot(), U256::from(34));
         assert_eq!(nod.call_sweep_day.slot(), U256::from(35));
         assert_eq!(nod.call_pending_day.slot(), U256::from(36));
@@ -426,7 +414,7 @@ fn certified_generation_is_available_through_the_public_nod_abi() {
         assert_eq!(actual.tributeCount, generation.tribute_count);
         assert_eq!(actual.nodCount, generation.nod_count);
         assert_eq!(actual.bucketCount, generation.bucket_count);
-        assert_eq!(actual.nodAmountTotal, generation.nod_amount_total);
+        assert_eq!(actual.totalSettlementCostMinor, generation.nod_amount_total);
         assert_eq!(
             actual.lysisAllocationMinor,
             generation.lysis_allocation_minor
@@ -462,7 +450,7 @@ fn absent_certified_generation_has_an_explicit_public_abi_result() {
         assert_eq!(actual.tributeCount, 0);
         assert_eq!(actual.nodCount, 0);
         assert_eq!(actual.bucketCount, 0);
-        assert_eq!(actual.nodAmountTotal, U256::ZERO);
+        assert_eq!(actual.totalSettlementCostMinor, U256::ZERO);
         assert_eq!(actual.lysisAllocationMinor, U256::ZERO);
         assert_eq!(actual.issuedAt, 0);
     });
@@ -476,22 +464,37 @@ fn seed_bucket(
     owner: Address,
     iso: u16,
 ) -> WwdEntityId {
-    seed_bucket_issued(storage, scope, parent, owner, iso, item(owner).issued_at)
+    seed_bucket_issued(
+        storage,
+        scope,
+        parent,
+        BucketIssuance {
+            owner,
+            reference_currency: iso,
+            issued_at: item(owner).issued_at,
+        },
+    )
+}
+
+struct BucketIssuance {
+    owner: Address,
+    reference_currency: u16,
+    issued_at: u64,
 }
 
 fn seed_bucket_issued(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &NodRepositoryReader,
-    owner: Address,
-    iso: u16,
-    issued_at: u64,
+    issuance: BucketIssuance,
 ) -> WwdEntityId {
-    let mut body = item(owner);
-    body.reference_currency = iso;
-    body.issued_at = issued_at;
-    body.bucket_key = NodContract::bucket_key(body.worldwide_day, body.floor_price_minor, iso);
-    api::add_nod(storage, scope, parent, &body, U256::from(5)).unwrap();
+    let entry = U256::from(5);
+    let mut body = item(issuance.owner);
+    body.reference_currency = issuance.reference_currency;
+    body.issued_at = issuance.issued_at;
+    body.bucket_key =
+        NodContract::bucket_key(body.worldwide_day, entry, issuance.reference_currency);
+    api::add_nod(storage, scope, parent, &body, entry).unwrap();
     WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key)
 }
 
@@ -527,7 +530,7 @@ fn an_unregistered_reference_pair_qualifies_nothing() {
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), &scope).unwrap();
         let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         oracle.reference_currencies.push(978).unwrap();
@@ -545,7 +548,7 @@ fn a_registered_reference_pair_with_no_daily_vwap_qualifies_nothing() {
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), &scope).unwrap();
         let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         oracle.reference_currencies.push(978).unwrap();
@@ -568,7 +571,7 @@ fn a_priced_currency_still_qualifies_when_a_sibling_currency_is_unpriced() {
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), &scope).unwrap();
         let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         // 978 comes first and is never priced; 840 follows and is.
@@ -591,17 +594,17 @@ fn a_priced_currency_still_qualifies_when_a_sibling_currency_is_unpriced() {
 #[test]
 fn qualification_requires_a_finalized_day_above_the_floor_and_stays() {
     for (daily_rate, finalized, live_rate, qualifies) in [
-        (0, true, 14, false),   // Missing day; no fallback to a live price.
-        (12, true, 14, false),  // A live crossing cannot qualify.
-        (13, true, 14, false),  // Equality is not enough.
-        (14, false, 14, false), // Wait for Oracle finalization.
-        (14, true, 1, true),    // A low live rate cannot prevent qualification.
+        (0, true, 14, false),  // Missing day. No fallback to a live price.
+        (4, true, 14, false),  // A live crossing cannot qualify.
+        (5, true, 14, false),  // Equality is not enough.
+        (6, false, 14, false), // Wait for Oracle finalization.
+        (6, true, 1, true),    // A low live rate cannot prevent qualification.
     ] {
         let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
         let mut provider = HashMapStorageProvider::new(1);
         let scope = ExecutionScope::new();
         StorageHandle::enter(&mut provider, |storage| {
-            seed_compressed_entities_genesis(&storage);
+            seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
             begin_block(storage.clone(), &scope).unwrap();
             let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
             oracle
@@ -651,7 +654,7 @@ fn qualification_requires_a_finalized_day_above_the_floor_and_stays() {
                 .unwrap();
             assert_eq!(
                 is_qualified(&storage, &scope, &parent, bucket_id),
-                daily_rate > 13
+                daily_rate > 5
             );
         });
     }
@@ -669,7 +672,7 @@ fn the_issue_day_qualifies_only_for_a_nod_issued_at_midnight() {
         let mut provider = HashMapStorageProvider::new(1);
         let scope = ExecutionScope::new();
         StorageHandle::enter(&mut provider, |storage| {
-            seed_compressed_entities_genesis(&storage);
+            seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
             begin_block(storage.clone(), &scope).unwrap();
             let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
             oracle.reference_currencies.push(978).unwrap();
@@ -682,9 +685,11 @@ fn the_issue_day_qualifies_only_for_a_nod_issued_at_midnight() {
                 &storage,
                 &scope,
                 &parent,
-                Address::repeat_byte(0x66),
-                978,
-                issued_at,
+                BucketIssuance {
+                    owner: Address::repeat_byte(0x66),
+                    reference_currency: 978,
+                    issued_at,
+                },
             );
             assert_eq!(
                 is_qualified(&storage, &scope, &parent, bucket_id),
@@ -710,7 +715,7 @@ fn a_delayed_issuance_does_not_qualify_on_pre_issuance_days() {
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), &scope).unwrap();
         let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         oracle.reference_currencies.push(978).unwrap();
@@ -723,9 +728,11 @@ fn a_delayed_issuance_does_not_qualify_on_pre_issuance_days() {
             &storage,
             &scope,
             &parent,
-            Address::repeat_byte(0x66),
-            978,
-            issued_at,
+            BucketIssuance {
+                owner: Address::repeat_byte(0x66),
+                reference_currency: 978,
+                issued_at,
+            },
         );
         assert!(!is_qualified(&storage, &scope, &parent, bucket_id));
     });
@@ -741,7 +748,7 @@ fn a_bucket_qualifies_on_its_first_full_day_after_skipping_earlier_closes() {
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), &scope).unwrap();
         let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         oracle.reference_currencies.push(978).unwrap();
@@ -754,9 +761,11 @@ fn a_bucket_qualifies_on_its_first_full_day_after_skipping_earlier_closes() {
             &storage,
             &scope,
             &parent,
-            Address::repeat_byte(0x66),
-            978,
-            issued_at,
+            BucketIssuance {
+                owner: Address::repeat_byte(0x66),
+                reference_currency: 978,
+                issued_at,
+            },
         );
         assert!(!is_qualified(&storage, &scope, &parent, bucket_id));
 
@@ -772,7 +781,7 @@ fn a_bucket_in_an_unlisted_currency_stays_unqualified_and_intact() {
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
+        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), &scope).unwrap();
         let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         oracle.reference_currencies.push(840).unwrap();

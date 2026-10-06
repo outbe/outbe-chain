@@ -5,7 +5,7 @@
 //! and registers a per-epoch sub-channel on each of three Muxers
 //! (vote, cert, resolver). Without pre-registration, sub-channel
 //! registration on the *receiver side* happens only when the new
-//! epoch's `'epoch_loop` iteration starts - which can lag a faster
+//! epoch's `'epoch_loop` iteration starts. That start can lag a faster
 //! peer's broadcast for the same epoch. Because production uses
 //! `Muxer::new(...)` (no `.with_backup()`), any vote/cert message
 //! arriving on an unregistered sub-channel is **dropped silently**
@@ -25,9 +25,9 @@
 //! exercise the same registration code path that production runs.
 //!
 //! Error path: any failure in this module is fail-fast through
-//! `eyre::Result`. There is no silent fallback to lazy registration -
-//! a Mux that cannot register a sub-channel is in a state we cannot
-//! safely paper over from a consensus runtime path.
+//! `eyre::Result`. There is no silent fallback to lazy registration.
+//! A Mux that cannot register a sub-channel is in a state we cannot
+//! safely hide from a consensus runtime path.
 
 use commonware_consensus::types::Epoch;
 use commonware_p2p::{
@@ -64,8 +64,8 @@ where
 ///
 /// Returns the three `(SubSender, SubReceiver)` tuples bundled into
 /// an `EpochSubchannels`. Any underlying Mux error
-/// (`AlreadyRegistered`, closed Mux) is wrapped in an `eyre` error
-/// and propagated.
+/// (`AlreadyRegistered`, closed Mux) becomes a wrapped `eyre` error
+/// that the function propagates.
 pub async fn register_epoch_subchannels<S, R>(
     epoch: Epoch,
     vote_mux: &mut MuxHandle<S, R>,
@@ -83,6 +83,20 @@ where
         })
 }
 
+/// Timeout and cadence for waiting for the prior epoch receivers to deregister.
+#[derive(Clone, Copy, Debug)]
+pub struct SubchannelRetryPolicy {
+    pub timeout: Duration,
+    pub retry_interval: Duration,
+}
+
+/// Exclusive borrowed routes for one vote/cert/res registration attempt.
+pub struct EpochMuxHandles<'a, S: P2pSender, R: P2pReceiver<PublicKey = S::PublicKey>> {
+    pub vote: &'a mut MuxHandle<S, R>,
+    pub cert: &'a mut MuxHandle<S, R>,
+    pub res: &'a mut MuxHandle<S, R>,
+}
+
 /// Reacquire the three routes for an engine replacement in the same epoch.
 ///
 /// Aborting the old Simplex root recursively aborts its actor descendants, but
@@ -95,17 +109,23 @@ where
 pub async fn reacquire_epoch_subchannels<S, R, C>(
     epoch: Epoch,
     clock: &C,
-    timeout: Duration,
-    retry_interval: Duration,
-    vote_mux: &mut MuxHandle<S, R>,
-    cert_mux: &mut MuxHandle<S, R>,
-    res_mux: &mut MuxHandle<S, R>,
+    policy: SubchannelRetryPolicy,
+    muxes: EpochMuxHandles<'_, S, R>,
 ) -> Result<EpochSubchannels<S, R>>
 where
     S: P2pSender,
     R: P2pReceiver<PublicKey = S::PublicKey>,
     C: Clock,
 {
+    let SubchannelRetryPolicy {
+        timeout,
+        retry_interval,
+    } = policy;
+    let EpochMuxHandles {
+        vote: vote_mux,
+        cert: cert_mux,
+        res: res_mux,
+    } = muxes;
     let deadline = clock
         .current()
         .checked_add(timeout)
@@ -179,7 +199,7 @@ where
 /// iteration. Three branches:
 ///
 /// * `Some(stash)` with `stash.epoch == epoch`: the expected case
-///   under the production fix - DKG completion pre-registered for
+///   under the production fix. DKG completion pre-registered for
 ///   this epoch and the activation handler advanced into it.
 ///   Consume the stash.
 /// * `Some(stash)` with `stash.epoch != epoch`: a state-machine
@@ -188,7 +208,7 @@ where
 ///   re-registering would mask the bug. Drop the stash (its
 ///   `SubReceiver`s' `Drop` deregisters the wrong-epoch routes from
 ///   the Muxes) and surface the error.
-/// * `None`: genesis bootstrap or restart - there was no prior DKG
+/// * `None`: genesis bootstrap or restart. There was no prior DKG
 ///   completion to pre-register from. Register fresh.
 pub async fn take_or_register_current<S, R>(
     epoch: Epoch,

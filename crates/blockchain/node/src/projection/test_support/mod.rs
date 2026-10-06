@@ -11,7 +11,8 @@ impl FinalizedProjectionSink {
 mod runtime;
 pub(super) use runtime::{
     project_through_target, run_projection_loop, spawn_detached_projection_work,
-    supervise_projection_future, HistoricalProjectionDataError,
+    supervise_projection_future, HistoricalProjectionDataError, ProjectionLoopInputs,
+    ProjectionProgressSenders,
 };
 
 mod status;

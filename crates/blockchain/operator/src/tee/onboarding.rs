@@ -100,10 +100,11 @@ pub async fn await_finalized_onboarding_v1(
             .selector
             .decode_binding(&binding_bytes)
             .wrap_err("decode finalized enclave binding")?;
+        let identity_matches = binding.nodeIdHash == expected.node_id_hash
+            && binding.enclaveId == expected.enclave_id
+            && binding.intentHash == expected.intent_hash;
         if !binding.exists
-            || binding.nodeIdHash != expected.node_id_hash
-            || binding.enclaveId != expected.enclave_id
-            || binding.intentHash != expected.intent_hash
+            || !identity_matches
             || binding.recipientX25519 != B256::from(expected.recipient_x25519)
         {
             eyre::bail!("finalized Registry binding does not match the submitted registration");
@@ -184,16 +185,16 @@ fn exact_artifact(
         let artifact = DcapOnboardingArtifactV1::decode_canonical(&bytes)
             .map_err(|code| eyre::eyre!("invalid onboarding artifact: {:#06x}", code.code()))?;
         let context = artifact.context;
-        if context.chain_id != expected.chain_id
-            || context.genesis_hash != expected.genesis_hash
-            || context.intent_hash != expected.intent_hash
-            || context.node_id_hash != expected.node_id_hash
-            || context.enclave_id != expected.enclave_id
-            || context.recipient_x25519 != expected.recipient_x25519
-            || context.tribute_offer_public != expected.tribute_offer_public
-            || context.key_epoch != expected.key_epoch
-            || context.tribute_offer_epoch != expected.tribute_offer_epoch
-        {
+        let chain_matches =
+            context.chain_id == expected.chain_id && context.genesis_hash == expected.genesis_hash;
+        let registration_matches = context.intent_hash == expected.intent_hash
+            && context.node_id_hash == expected.node_id_hash
+            && context.enclave_id == expected.enclave_id
+            && context.recipient_x25519 == expected.recipient_x25519;
+        let offer_key_matches = context.tribute_offer_public == expected.tribute_offer_public
+            && context.key_epoch == expected.key_epoch
+            && context.tribute_offer_epoch == expected.tribute_offer_epoch;
+        if !chain_matches || !registration_matches || !offer_key_matches {
             eyre::bail!("onboarding artifact context does not match the exact registration");
         }
         if exact.replace(artifact).is_some() {
@@ -249,7 +250,7 @@ mod tests {
     use outbe_primitives::tee_registry_abi_v1::NodeEnclaveBindingV1View;
 
     use crate::{
-        rpc::FinalityRpc,
+        rpc::{FinalizedStateRpc, TransactionReceiptRpc},
         tee::registry::{ExpectedOnboardingBindingV1, NodeBindingSelectorV1},
     };
 
@@ -262,14 +263,16 @@ mod tests {
         binding_call_block_tags: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     }
 
-    impl FinalityRpc for MockRpc {
+    impl TransactionReceiptRpc for MockRpc {
         async fn transaction_receipt(
             &self,
             _transaction_hash: &str,
         ) -> Result<Option<serde_json::Value>> {
             Ok(Some(self.receipt.clone()))
         }
+    }
 
+    impl FinalityRpc for MockRpc {
         async fn logs(
             &self,
             _address: Address,
@@ -283,7 +286,9 @@ mod tests {
         async fn block_by_number(&self, _block: u64) -> Result<serde_json::Value> {
             Ok(self.canonical_block.clone())
         }
+    }
 
+    impl FinalizedStateRpc for MockRpc {
         async fn finalized_block(&self) -> Result<serde_json::Value> {
             Ok(self.finalized_block.clone())
         }

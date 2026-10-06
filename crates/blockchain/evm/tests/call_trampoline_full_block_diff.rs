@@ -5,24 +5,24 @@
 //! ## Lifecycle
 //!
 //! land the test file with `#[ignore]`
-//! markers. T(-0.5) stubs return `Ok(empty)` and produce no real CALL,
-//! so the two tx-sets diverge by design at this point - the assertion
-//! shape is locked but the harness is dormant.
+//! markers. T(-0.5) stubs return `Ok(empty)` and produce no real CALL.
+//! Thus the two tx-sets diverge by design at this point. The assertion
+//! shape is locked, but the harness is dormant.
 //!
 //! acceptance: remove `#[ignore]` and plug in the real
 //! block-construction + execution harness. Becomes the canonical
 //! `call_trampoline_full_block_diff::byte_equal_state_root_receipts_root`
 //! test referenced from.
 //!
-//! wires up CI to run this test alongside Det-1.
+//! configures CI to run this test alongside Det-1.
 //!
 //! ## Why land the skeleton at T0 and not just write a memo
 //!
 //! keeping a single test file means
-//! - the assertion shape is reviewed once;
-//! - T6 cannot accidentally diverge from the spec;
-//! - removing `#[ignore]` is a single-line diff visible in code review;
-//! - the test compiles continuously from T0 onwards, catching API drift
+//! - the assertion shape is reviewed once.
+//! - T6 cannot accidentally diverge from the spec.
+//! - removing `#[ignore]` is a single-line diff visible in code review.
+//! - the test compiles continuously from T0 onwards and catches API drift
 //!   in `storage.call` / `OutbePrecompileProvider::run` early.
 //!
 //! ## Expected scenarios (T6 will materialize)
@@ -36,7 +36,7 @@
 //!    `Trampoline.subcallTest(token, calldata, 100_000)`.
 //! 2. **Value transfer** - outbe Rust `storage.call(recipient, U256::from(100),
 //!    Bytes::new())` vs Solidity Trampoline forwarding 100 wei.
-//! 3. **Sub-call reverts** - target reverts with payload; both paths
+//! 3. **Sub-call reverts** - target reverts with payload. Both paths
 //!    must surface identical revert bytes and identical post-state.
 
 use alloy_primitives::B256;
@@ -92,7 +92,7 @@ fn byte_equal_state_root_receipts_root() {
 
 /// Constructs and executes a block where the user-tx invokes an outbe
 /// Rust precompile that performs `storage.call(...)`. Returns the
-/// post-state snapshot.replaces the placeholder body
+/// post-state snapshot. The placeholder body is to be replaced
 /// with the real block-execution harness.
 #[allow(dead_code)]
 fn build_block_via_outbe_rust_subcall(_scenario: Scenario) -> PostState {
@@ -118,8 +118,8 @@ fn build_block_via_outbe_rust_subcall(_scenario: Scenario) -> PostState {
 /// the post-state snapshot for byte-equal comparison.
 #[allow(dead_code)]
 fn build_block_via_solidity_trampoline(_scenario: Scenario) -> PostState {
-    // T6: deploy `localnet/fixtures/Trampoline.{sol,bytecode}` and execute the wrapped CALL on identical
-    // pre-state. Capture post-state from the executor result.
+    // T6: deploy `localnet/fixtures/Trampoline.{sol,bytecode}` and execute the wrapped
+    // CALL on identical pre-state. Capture post-state from the executor result.
     PostState {
         state_root: B256::ZERO,
         receipts_root: B256::ZERO,

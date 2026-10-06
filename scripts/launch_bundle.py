@@ -1,9 +1,10 @@
 """Render the per-machine launch bundle that goes with a generated genesis.
 
-`create_genesis.py` calls this once the genesis is written. For each founding
-validator it emits one directory of runnable scripts - storage setup, TEE enclave,
-Radicle sidecar, the node itself, and the price feeder - plus the reth bootnode
-list and a DEPLOY.md that walks an operator through bringing the network up.
+`create_genesis.py` calls this after it writes the genesis. For each founding
+validator, it emits one directory of runnable scripts: storage setup, TEE
+enclave, Radicle sidecar, the node itself, and the price feeder. It also emits
+the reth bootnode list and a DEPLOY.md that guides an operator through the
+network start.
 
 Nothing here invents protocol values: ports, hosts and addresses come from the
 same network.yaml, and the identities come from the key directory.
@@ -50,8 +51,9 @@ SECP256K1_G = (
 MONGO_IMAGE = "mongo:7"
 
 # Protocol ceiling on the validator set, mirroring the ValidatorSet precompile
-# default. Used to size the Radicle sidecar's connection limits so validators
-# joining later do not require a restart of everyone already running.
+# default. The bundle uses it to size the connection limits of the Radicle
+# sidecar. Thus validators that join later do not require a restart of every
+# validator that already runs.
 DEFAULT_MAX_VALIDATORS = 128
 OCOMP_BUNDLE_LANE_STRIDE = 6
 
@@ -226,9 +228,9 @@ def enclave_script(*, config: dict[str, Any], index: int, base_dir: str) -> str:
 
     if mode == "dcap-required":
         # Production runs the enclave natively under gramine-sgx, the way the
-        # live network does: the SGX driver, the AESM socket and the sealed
-        # state all live on the host, and a container only adds a layer between
-        # the enclave and the hardware it must attest against.
+        # live network does. The SGX driver, the AESM socket and the sealed
+        # state all live on the host. A container only adds a layer between the
+        # enclave and the hardware that it must attest against.
         return f"""
 # TEE enclave under gramine-sgx, on the host. Requires the SGX driver
 # (/dev/sgx_enclave, /dev/sgx_provision) and a running aesmd.service.
@@ -247,9 +249,9 @@ exec {quote(enclave_runner)} \\
   --tee-dir {quote(validator_dir + "/tee")} \\
   --chain-id {chain_id_hex}
 """
-    # The dev lane still runs the real enclave: on a host with SGX it goes
-    # through gramine-sgx with remote attestation switched off, which is the
-    # `GramineDirectDev` profile - real hardware, no Intel collateral. The
+    # The dev lane still runs the real enclave. On a host with SGX, it goes
+    # through gramine-sgx with remote attestation disabled. That is the
+    # `GramineDirectDev` profile: real hardware, no Intel collateral. The
     # container image is the fallback for a host without SGX.
     manifest = f"{enclave_dir}/outbe-tee-enclave.manifest.sgx"
     return f"""
@@ -354,11 +356,11 @@ def node_script(
     binary = str(config.get("node_binary", "outbe-chain"))
     # Which TEE transport the node must speak. `dcap-required` always uses the
     # authenticated sealed session. `gramine-direct-dev` is ambiguous on its
-    # own: the genesis says "no Intel collateral", but the enclave may still be
-    # a real gramine-sgx one - that is the SGX-without-DCAP profile - and a
-    # real enclave speaks the production session, not the mock transport. The
-    # policy default would pick the mock one and the node would fail with
-    # "development enclave connection failed", so state it explicitly.
+    # own. The genesis says "no Intel collateral", but the enclave may still be
+    # a real gramine-sgx one. That is the SGX-without-DCAP profile. A real
+    # enclave speaks the production session, not the mock transport. The
+    # policy default would pick the mock one, and the node would fail with
+    # "development enclave connection failed". Thus state the mode explicitly.
     session_mode = (
         "  --tee-session-mode production-node-host \\\n"
         if config["tee"]["mode"] == "dcap-required"
@@ -605,12 +607,13 @@ def ocomp_identity(genesis_path: Path, keys_dir: Path) -> dict[str, Any]:
     """Read the identity the OCOMP roles must be started with.
 
     chain id, genesis hash and install hash are plain fields of the genesis.
-    The protocol bundle hash is not: it sits inside the canonical install
-    bytes, right after the genesis hash and the fork id, both of which are
-    known here - so it is located by anchoring on the genesis hash rather than
-    by a bare offset. Every role validates the value against the bundle file it
-    loads and exits with `HashMismatch` if it disagrees, so a wrong read fails
-    immediately and loudly instead of producing a subtly wrong network.
+    The protocol bundle hash is not. It sits inside the canonical install
+    bytes, right after the genesis hash and the fork id. This function knows
+    both of them, so it locates the bundle hash by anchoring on the genesis
+    hash rather than by a bare offset. Every role validates the value against
+    the bundle file that it loads, and exits with `HashMismatch` if the value
+    disagrees. Thus a wrong read fails immediately and loudly instead of
+    producing a subtly wrong network.
     """
     genesis = json.loads(genesis_path.read_text())
     config = genesis.get("config", {})
@@ -697,8 +700,9 @@ def ocomp_worker_script(
     ordinal: int = 0,
 ) -> str:
     binary = str(config.get("ocomp_binary", "outbe-ocomp"))
-    # Same shape the harness uses: first byte identifies the host, the last
-    # four the worker ordinal, so every worker process gets a distinct nonce.
+    # Same shape as the harness uses. The first byte identifies the host, and
+    # the last four bytes identify the worker ordinal. Thus every worker
+    # process gets a distinct nonce.
     nonce = f"{index + 1:02x}" + "00" * 27 + f"{ordinal:08x}"
     return f"""
 # OCOMP Worker {ordinal}: runs the active-bundle computation and signs its result.
@@ -763,9 +767,10 @@ exec {quote(binary)} worker \
 # ---------------------------------------------------------------------------
 #
 # The enclave is signed ONCE, where the signing key lives, and the signed
-# artifacts travel in the bundle. Signing per machine instead gives every host
-# its own mr_signer - four different enclave identities on one network, which
-# a `dcap-required` genesis (it pins a single mrsigner) would reject outright.
+# artifacts travel in the bundle. If each machine signs instead, every host gets
+# its own mr_signer. That gives four different enclave identities on one
+# network. A `dcap-required` genesis pins a single mrsigner, so it would reject
+# them outright.
 # The private key never enters the bundle.
 
 SIGNED_ENCLAVE_FILES = (
@@ -779,10 +784,11 @@ SIGNED_ENCLAVE_FILES = (
 def stage_signed_enclave(*, config: dict[str, Any], output_dir: Path) -> dict[str, str] | None:
     """Copy the signed enclave into the bundle and report its identity.
 
-    `signed_enclave_dir` points at the directory holding the artifacts produced
-    by `gramine-sgx-sign` on the build host. Without it the bundle carries no
-    enclave and each machine has to sign its own - allowed, but it is the very
-    thing that produces mismatched identities, so say so out loud.
+    `signed_enclave_dir` points at the directory that holds the artifacts that
+    `gramine-sgx-sign` produced on the build host. Without it, the bundle
+    carries no enclave, and each machine has to sign its own. That is allowed,
+    but it is the very thing that produces mismatched identities, so say so out
+    loud.
     """
     source = config.get("signed_enclave_dir")
     if not source:
@@ -799,7 +805,7 @@ def stage_signed_enclave(*, config: dict[str, Any], output_dir: Path) -> dict[st
                 f"this at the directory holding the result."
             )
         shutil.copy2(origin, staged / name)
-    # A private key in the bundle would be handed to every machine; refuse.
+    # A private key in the bundle would go to every machine. Refuse it.
     for stray in source_dir.glob("*.pem"):
         if (staged / stray.name).exists():
             (staged / stray.name).unlink()
@@ -811,7 +817,7 @@ def stage_signed_enclave(*, config: dict[str, Any], output_dir: Path) -> dict[st
 # ---------------------------------------------------------------------------
 #
 # The node binds RPC to loopback on purpose, so something has to publish it.
-# caddy terminates the public listener and reverse-proxies to 127.0.0.1, which
+# caddy terminates the public listener and reverse-proxies to 127.0.0.1. That
 # keeps the node itself unreachable from the internet and gives one place to
 # add CORS, TLS or auth later. This mirrors how the live testnet is fronted.
 
@@ -820,7 +826,7 @@ def caddyfile(*, config: dict[str, Any], host: str) -> str:
     """Caddy site for one validator: RPC and the Radicle status endpoint.
 
     Radicle's replication port is raw p2p, not HTTP, so it stays a plain port
-    (already opened between the machines) and is not proxied here.
+    (already opened between the machines), and this site does not proxy it.
     """
     rpc_port = port_of(config, "rpc_port")
     status_port = port_of(config, "radicle_status_port")
@@ -903,9 +909,11 @@ echo "  Radicle status http://$(curl -s -m 5 ifconfig.me || echo '<this-host>'):
 #
 # The run-*.sh scripts each exec one process in the foreground, which is
 # exactly what a systemd service wants. Units give us what a shell-launched
-# background process cannot: the processes survive the session that started
-# them, restart on failure, order themselves by dependency, and are inspected
-# with journalctl instead of scattered log files.
+# background process cannot. With units, the processes:
+#   - survive the session that started them,
+#   - restart on failure,
+#   - order themselves by dependency,
+#   - are inspected with journalctl instead of scattered log files.
 
 
 UNIT_ROLES = (
@@ -920,7 +928,7 @@ UNIT_ROLES = (
 
 
 def systemd_unit(*, role: str, description: str, after: str | None, base_dir: str) -> str:
-    """One templated unit per role; %i is the validator index."""
+    """One templated unit per role. %i is the validator index."""
     ordering = ""
     if after:
         ordering = f"After={after}\nRequires={after}\n"
@@ -1030,10 +1038,11 @@ exit "$fail"
 # Per-machine distribution
 # ---------------------------------------------------------------------------
 #
-# The point of the bundle is that nothing is assembled by hand afterwards.
-# Each machine gets one archive holding everything it needs and nothing that
-# belongs to another validator, plus a checksum manifest so a half-finished
-# copy is caught before the network is started rather than after.
+# The point of the bundle is that nobody assembles anything by hand afterwards.
+# Each machine gets one archive that holds everything it needs and nothing that
+# belongs to another validator. Each machine also gets a checksum manifest.
+# Thus the manifest catches a half-finished copy before the network starts,
+# not after.
 
 
 def build_distribution(
@@ -1087,7 +1096,7 @@ def build_distribution(
         shutil.rmtree(staging)
         names.append(archive.name)
 
-    # One manifest over the archives: a truncated copy or a stale archive from
+    # One manifest over the archives. A truncated copy or a stale archive from
     # an earlier run is then a checksum mismatch, not a mystery at boot.
     lines = []
     for name in names:

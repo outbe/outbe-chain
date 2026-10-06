@@ -56,7 +56,7 @@ impl Rpc {
             tribute_count: nod.tributeCount,
             nod_count: nod.nodCount,
             bucket_count: nod.bucketCount,
-            nod_amount_total: nod.nodAmountTotal,
+            nod_amount_total: nod.totalSettlementCostMinor,
             lysis_allocation_minor: nod.lysisAllocationMinor,
             issued_at: nod.issuedAt,
             next_nod_ordinal: 0,
@@ -110,7 +110,7 @@ impl Rpc {
 
 /// Finalized, cross-owner authority for one proof-backed Nod generation.
 ///
-/// Both owner projections are read at `block_number`; off-chain storage never supplies
+/// Both owner projections are read at `block_number`. Off-chain storage never supplies
 /// any field in this record.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct OcompCertifiedGenerationV1 {

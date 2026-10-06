@@ -88,7 +88,7 @@ fn cast_yes_votes_on_proposal(world: &mut World, names: String, id: u64) {
                 );
             }
             Err(err) => {
-                // Proposer double-vote (or similar) may revert; tally is authoritative.
+                // Proposer double-vote (or similar) may revert. The tally is authoritative.
                 eprintln!("cast vote on proposal {id} by {name} failed (ignored): {err}");
             }
         }

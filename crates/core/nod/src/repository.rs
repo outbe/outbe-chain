@@ -1,6 +1,7 @@
 //! Typed off-chain persistence boundary for Nod item and bucket bodies.
 
 mod day_store;
+mod partition_audit;
 
 use std::sync::Arc;
 
@@ -528,8 +529,8 @@ fn validate_audit_page(
     Ok(())
 }
 
-/// At most one native bounded page is retained. Only an absent continuation
-/// ends scanning; adapters may return a short page because of byte limits.
+/// The iterator retains at most one native bounded page. Only an absent continuation
+/// ends scanning. Adapters may return a short page because of byte limits.
 struct NodAuditEntries<'a> {
     storage: &'a StorageReaderHandle,
     namespace: Namespace,
@@ -629,7 +630,7 @@ pub struct NodRepositoryWriter {
 impl NodRepositoryWriter {
     /// Creates a writer. Both handles must address the same adapter instance.
     ///
-    /// The read handle is required for replacement and deletion.
+    /// Replacement and deletion require the read handle.
     #[must_use]
     pub fn new(reader: StorageReaderHandle, writer: StorageWriterHandle) -> Self {
         Self {
@@ -895,7 +896,6 @@ pub fn canonical_item(body: &NodItemState) -> NodItemBodyV1 {
         gratis_load_minor: body.gratis_load_minor,
         worldwide_day: body.worldwide_day,
         league_id: body.league_id,
-        floor_price_minor: body.floor_price_minor,
         bucket_key: body.bucket_key,
         issuance_currency: body.issuance_currency,
         reference_currency: body.reference_currency,
@@ -909,7 +909,6 @@ pub fn canonical_bucket(body: &NodBucketState) -> NodBucketBodyV1 {
         settled_nods: body.settled_nods,
         bucket_key: body.bucket_key,
         worldwide_day: body.worldwide_day,
-        floor_price_minor: body.floor_price_minor,
         entry_price_minor: body.entry_price_minor,
         reference_currency: body.reference_currency,
     }
@@ -929,7 +928,6 @@ pub fn from_canonical_item(body: NodItemBodyV1) -> NodItemState {
         gratis_load_minor: body.gratis_load_minor,
         worldwide_day: body.worldwide_day,
         league_id: body.league_id,
-        floor_price_minor: body.floor_price_minor,
         bucket_key: body.bucket_key,
         issuance_currency: body.issuance_currency,
         reference_currency: body.reference_currency,
@@ -943,7 +941,6 @@ pub fn from_canonical_bucket(body: NodBucketBodyV1) -> NodBucketState {
         settled_nods: body.settled_nods,
         bucket_key: body.bucket_key,
         worldwide_day: body.worldwide_day,
-        floor_price_minor: body.floor_price_minor,
         entry_price_minor: body.entry_price_minor,
         reference_currency: body.reference_currency,
     }

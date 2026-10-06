@@ -194,8 +194,9 @@ impl WorkerInbox {
     }
 
     /// Adopts one deterministic execution result. A byte-identical retry is an
-    /// idempotent cache hit; different bytes for the same UnitId are a
-    /// consensus-safety conflict and are never allowed to replace the original.
+    /// idempotent cache hit. Different bytes for the same UnitId are a
+    /// consensus-safety conflict, and the inbox never lets them replace the
+    /// original.
     pub fn adopt(
         &self,
         unit_id: B256,
@@ -254,8 +255,8 @@ impl WorkerInbox {
     }
 
     /// Stages one bounded Lysis shuffle descendant by its transport digest.
-    /// Byte-identical retries are idempotent; no caller-selected path or
-    /// population-sized descriptor list is accepted.
+    /// Byte-identical retries are idempotent. This method accepts no
+    /// caller-selected path and no population-sized descriptor list.
     pub fn stage_shuffle_object(
         &self,
         bytes: &[u8],

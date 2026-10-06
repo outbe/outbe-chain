@@ -25,6 +25,7 @@ pub struct ActivationFixtureV1 {
     pub payload: ActivationPayloadV1,
     pub result: LysisResultV1,
     pub request_receipt: RequestLimitSplitReceiptV1,
+    pub nod_issued_at: u64,
 }
 
 pub fn hash(byte: u8) -> B256 {
@@ -48,6 +49,7 @@ pub fn activation_fixture(day_type: DayType) -> ActivationFixtureV1 {
         payload,
         result,
         request_receipt,
+        nod_issued_at: 900,
     }
 }
 

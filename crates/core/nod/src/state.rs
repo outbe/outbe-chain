@@ -35,18 +35,18 @@ pub(crate) fn derived_call_terms(
         return Ok(None);
     }
     let call_price = entry_price_minor
-        .checked_mul(U256::from(100 + params.call_rate))
+        .checked_mul(U256::from(100 + u32::from(params.call_rate)))
         .ok_or_else(|| {
             outbe_primitives::error::PrecompileError::Fatal("Nod call price overflow".into())
         })?
         / U256::from(100u64);
     Ok(Some(CallTerms {
-        call_price,
+        call_price_minor: call_price,
         reference_currency,
         call_rate: params.call_rate,
-        call_window: params.call_window,
-        call_threshold: params.call_threshold,
-        call_notice_period: params.call_notice_period,
+        call_window_seconds: params.call_window_seconds,
+        call_threshold_seconds: params.call_threshold_seconds,
+        call_notice_period_seconds: params.call_notice_period_seconds,
     }))
 }
 
@@ -73,7 +73,7 @@ impl NodContract<'_> {
             return Err(NodError::InvalidEntryPriceSnapshot.into());
         }
         let currencies = self.entry_price_currency.get_nested(&day);
-        let values = self.entry_price_value.get_nested(&day);
+        let values = self.entry_price_minor.get_nested(&day);
         let mut prices = BTreeMap::new();
         let mut previous = 0;
         for index in 0..count {
@@ -116,7 +116,7 @@ impl NodContract<'_> {
                 return Err(NodError::EntryPricesAlreadyFrozen.into());
             }
             let currencies = self.entry_price_currency.get_nested(&day);
-            let values = self.entry_price_value.get_nested(&day);
+            let values = self.entry_price_minor.get_nested(&day);
             for (index, (iso, price)) in (0..count).zip(prices) {
                 currencies.write(&index, *iso)?;
                 values.write(iso, *price)?;
@@ -229,9 +229,9 @@ impl NodContract<'_> {
                 "cannot issue a settled Nod".into(),
             ));
         }
-        // ISO 0 is not a currency, and its bin namespace aliases the
-        // un-namespaced key while never appearing in the oracle's
-        // reference-currency registry — a bucket parked there would be
+        // ISO 0 is not a currency. Its bin namespace aliases the
+        // un-namespaced key. ISO 0 also never appears in the oracle's
+        // reference-currency registry. A bucket parked there would be
         // invisible to the call scan forever.
         if item.reference_currency == 0 {
             return Err(NodError::ZeroReferenceCurrency.into());
@@ -239,7 +239,7 @@ impl NodContract<'_> {
 
         let canonical_bucket_key = Self::bucket_key(
             item.worldwide_day,
-            item.floor_price_minor,
+            entry_price_minor,
             item.reference_currency,
         );
         if item.bucket_key != canonical_bucket_key {
@@ -266,11 +266,9 @@ impl NodContract<'_> {
             .transpose()?
             .map_or(0, |bucket| bucket.settled_nods);
         if current_bucket.is_some() != (member_count > 0 || settled_count > 0) {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "Nod bucket {bucket_id} existence disagrees with member count {member_count}"
-                )),
-            );
+            return Err(outbe_primitives::error::PrecompileError::Revert(format!(
+                "Nod bucket {bucket_id} existence disagrees with member count {member_count}"
+            )));
         }
         let new_bucket = match current_bucket {
             Some(_) => None,
@@ -279,7 +277,6 @@ impl NodContract<'_> {
                     settled_nods: 0,
                     bucket_key: item.bucket_key,
                     worldwide_day: item.worldwide_day,
-                    floor_price_minor: item.floor_price_minor,
                     entry_price_minor,
                     reference_currency: item.reference_currency,
                 };
@@ -299,7 +296,7 @@ impl NodContract<'_> {
         };
 
         let supply = self.total_supply.read()?.checked_add(1).ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(
+            outbe_primitives::error::PrecompileError::Revert(
                 "Nod total supply overflow during issuance".into(),
             )
         })?;
@@ -338,14 +335,14 @@ impl NodContract<'_> {
         self.check_loaded_bucket(&item, &current_bucket)?;
         let bucket_id = current_bucket.entity_id();
         let supply = self.total_supply.read()?.checked_sub(1).ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(
+            outbe_primitives::error::PrecompileError::Revert(
                 "Nod total supply underflow during removal".into(),
             )
         })?;
         self.total_supply.write(supply)?;
         let remaining = if item.is_settled {
             bucket.settled_nods = bucket.settled_nods.checked_sub(1).ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                outbe_primitives::error::PrecompileError::Revert(format!(
                     "Nod bucket {bucket_id} settled count underflow"
                 ))
             })?;
@@ -391,9 +388,7 @@ impl NodContract<'_> {
             ));
         }
         bucket.settled_nods = bucket.settled_nods.checked_add(1).ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                "Nod settled count overflow".into(),
-            )
+            outbe_primitives::error::PrecompileError::Revert("Nod settled count overflow".into())
         })?;
         self.remove_bucket_member(item.bucket_key, item.nod_id)?;
         item.is_settled = true;
@@ -426,21 +421,19 @@ impl NodContract<'_> {
     fn check_loaded_bucket(&self, item: &NodItemState, current: &VerifiedBody) -> Result<()> {
         let expected = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
         if current.entity_id() != expected {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "loaded Nod bucket {} does not match item bucket {expected}",
-                    current.entity_id()
-                )),
-            );
+            return Err(outbe_primitives::error::PrecompileError::Revert(format!(
+                "loaded Nod bucket {} does not match item bucket {expected}",
+                current.entity_id()
+            )));
         }
         Ok(())
     }
 
     // --- Bin index helpers (PancakeSwap LB-style ladder) -------------------
 
-    /// Maps a six-decimal `floor_price_minor` (or oracle rate) to a 24-bit
-    /// bin id on the LB log-spaced ladder. Saturates to `[0, MAX_BIN_ID]` -
-    /// see `lb_math::get_id_from_price` for the deviation from LB's revert.
+    /// Maps a six-decimal call price (or oracle rate) to a 24-bit
+    /// bin id on the LB log-spaced ladder. Saturates to `[0, MAX_BIN_ID]`.
+    /// See `lb_math::get_id_from_price` for the deviation from LB's revert.
     pub fn price_to_bin(price_minor: U256) -> Result<u32> {
         if price_minor.is_zero() {
             return Ok(0);
@@ -449,7 +442,7 @@ impl NodContract<'_> {
     }
 
     /// Inverse of `price_to_bin`: returns the lower edge of bin `bin_id` in
-    /// six-decimal minor units. Diagnostic-only - `bin_to_price_floor` may
+    /// six-decimal minor units. Diagnostic-only. `bin_to_price_floor` may
     /// fail at extreme bin ids whose LB-pow exponent exceeds `2^20`.
     pub fn bin_to_price_floor(bin_id: u32) -> Result<U256> {
         reference_price::bin_id_to_coen_iso_price(bin_id, BIN_STEP_BP)
@@ -458,10 +451,10 @@ impl NodContract<'_> {
     /// Namespaces a bin-column key by the bucket's reference currency.
     ///
     /// Mapping keys are left-padded to 32 bytes before hashing, so a wider
-    /// integer type alone namespaces nothing - the ISO has to occupy real
+    /// integer type alone namespaces nothing. The ISO has to occupy real
     /// high bits. Bin ids are 24-bit and the trie's mid/leaf keys are 16-bit,
     /// so the low 32 bits always hold `key` unambiguously. ISO `0` is the one
-    /// value that would alias the un-namespaced key; `record_nod_issued`
+    /// value that would alias the un-namespaced key. `record_nod_issued`
     /// rejects it at the funnel so it can never be written.
     pub(crate) const fn scoped(reference_currency: u16, key: u32) -> u64 {
         ((reference_currency as u64) << 32) | key as u64
@@ -481,7 +474,7 @@ impl NodContract<'_> {
     /// Parks a new bucket in the bin of its sealed call price.
     pub(crate) fn insert_call_bin(&mut self, bucket_key: B256) -> Result<()> {
         let iso = self.callable_bucket_currency.read(&bucket_key)?;
-        let bin_id = Self::price_to_bin(self.callable_bucket_call_price.read(&bucket_key)?)?;
+        let bin_id = Self::price_to_bin(self.callable_bucket_call_price_minor.read(&bucket_key)?)?;
         let scoped = Self::scoped(iso, bin_id);
         let count = self.call_bin_count.read(&scoped)?;
         let next_count = count.checked_add(1).ok_or_else(|| {
@@ -511,11 +504,9 @@ impl NodContract<'_> {
             .read(&Self::bin_index_key(iso, bin_id, index))?
             != bucket_key
         {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "Nod call bin {iso}:{bin_id} does not hold bucket {bucket_key} at {index}"
-                )),
-            );
+            return Err(outbe_primitives::error::PrecompileError::Revert(format!(
+                "Nod call bin {iso}:{bin_id} does not hold bucket {bucket_key} at {index}"
+            )));
         }
         let scoped = Self::scoped(iso, bin_id);
         let last = self
@@ -524,7 +515,7 @@ impl NodContract<'_> {
             .checked_sub(1)
             .filter(|last| index <= *last)
             .ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                outbe_primitives::error::PrecompileError::Revert(format!(
                     "Nod call bin {iso}:{bin_id} does not hold bucket {bucket_key} at {index}"
                 ))
             })?;
@@ -591,7 +582,7 @@ impl NodContract<'_> {
             .read(&bucket_key)?
             .checked_sub(1)
             .ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                outbe_primitives::error::PrecompileError::Revert(format!(
                     "Nod bucket {bucket_key} member count underflow during removal"
                 ))
             })?;
@@ -601,21 +592,17 @@ impl NodContract<'_> {
                 .read(&Self::bucket_nod_key(bucket_key, index))?
                 != nod_id
         {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "Nod {nod_id} is not indexed in bucket {bucket_key}"
-                )),
-            );
+            return Err(outbe_primitives::error::PrecompileError::Revert(format!(
+                "Nod {nod_id} is not indexed in bucket {bucket_key}"
+            )));
         }
         let last_key = Self::bucket_nod_key(bucket_key, last);
         if index != last {
             let moved = self.bucket_nods.read(&last_key)?;
             if moved.is_zero() {
-                return Err(
-                    outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                        "Nod bucket {bucket_key} member slot {last} is empty during removal"
-                    )),
-                );
+                return Err(outbe_primitives::error::PrecompileError::Revert(format!(
+                    "Nod bucket {bucket_key} member slot {last} is empty during removal"
+                )));
             }
             self.bucket_nods
                 .write(&Self::bucket_nod_key(bucket_key, index), moved)?;
@@ -630,25 +617,25 @@ impl NodContract<'_> {
     // --- Callable-bucket index ----------------------------------------------
 
     /// Writes the call terms a new bucket sealed at issuance. Later Nods that
-    /// join the same bucket inherit this copy; nothing reads the constants again.
+    /// join the same bucket inherit this copy. Nothing reads the constants again.
     pub(crate) fn seal_bucket_call_terms(
         &mut self,
         bucket_key: B256,
         terms: CallTerms,
     ) -> Result<()> {
-        self.callable_bucket_call_price
-            .write(&bucket_key, terms.call_price)?;
+        self.callable_bucket_call_price_minor
+            .write(&bucket_key, terms.call_price_minor)?;
         self.callable_bucket_currency
             .write(&bucket_key, terms.reference_currency)?;
         self.callable_bucket_call_rate
             .write(&bucket_key, terms.call_rate)?;
-        self.callable_bucket_call_window
-            .write(&bucket_key, terms.call_window)?;
-        self.callable_bucket_call_threshold
-            .write(&bucket_key, terms.call_threshold)?;
-        self.callable_bucket_call_notice_period
-            .write(&bucket_key, terms.call_notice_period)?;
-        self.widen_max_call_window(terms.reference_currency, terms.call_window)
+        self.callable_bucket_call_window_seconds
+            .write(&bucket_key, terms.call_window_seconds)?;
+        self.callable_bucket_call_threshold_seconds
+            .write(&bucket_key, terms.call_threshold_seconds)?;
+        self.callable_bucket_call_notice_period_seconds
+            .write(&bucket_key, terms.call_notice_period_seconds)?;
+        self.widen_max_call_window(terms.reference_currency, terms.call_window_seconds)
     }
 
     /// Puts a called bucket on the list the forfeit arm walks.
@@ -661,23 +648,31 @@ impl NodContract<'_> {
     /// Reads back the terms [`Self::seal_bucket_call_terms`] sealed at issuance.
     pub(crate) fn read_call_terms(&self, bucket_key: B256) -> Result<CallTerms> {
         Ok(CallTerms {
-            call_price: self.callable_bucket_call_price.read(&bucket_key)?,
+            call_price_minor: self.callable_bucket_call_price_minor.read(&bucket_key)?,
             reference_currency: self.callable_bucket_currency.read(&bucket_key)?,
             call_rate: self.callable_bucket_call_rate.read(&bucket_key)?,
-            call_window: self.callable_bucket_call_window.read(&bucket_key)?,
-            call_threshold: self.callable_bucket_call_threshold.read(&bucket_key)?,
-            call_notice_period: self.callable_bucket_call_notice_period.read(&bucket_key)?,
+            call_window_seconds: self.callable_bucket_call_window_seconds.read(&bucket_key)?,
+            call_threshold_seconds: self
+                .callable_bucket_call_threshold_seconds
+                .read(&bucket_key)?,
+            call_notice_period_seconds: self
+                .callable_bucket_call_notice_period_seconds
+                .read(&bucket_key)?,
         })
     }
 
     /// Raises the currency's widest-window high-water mark if this bucket
     /// outruns it. Monotonic, so the daily scan can size one shared VWAP window
     /// per currency and still cover every bucket denominated in it. Mirrors
-    /// `outbe_gem`'s `max_call_window`.
-    fn widen_max_call_window(&mut self, reference_currency: u16, call_window: u32) -> Result<()> {
-        if call_window > self.max_call_window.read(&reference_currency)? {
-            self.max_call_window
-                .write(&reference_currency, call_window)?;
+    /// `outbe_gem`'s `max_call_window_seconds`.
+    fn widen_max_call_window(
+        &mut self,
+        reference_currency: u16,
+        call_window_seconds: u32,
+    ) -> Result<()> {
+        if call_window_seconds > self.max_call_window_seconds.read(&reference_currency)? {
+            self.max_call_window_seconds
+                .write(&reference_currency, call_window_seconds)?;
         }
         Ok(())
     }
@@ -693,13 +688,13 @@ impl NodContract<'_> {
                 .is_some_and(|listed| listed == bucket_key);
         if listed {
             let last = len.checked_sub(1).ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                outbe_primitives::error::PrecompileError::Revert(format!(
                     "Nod called list underflow removing bucket {bucket_key}"
                 ))
             })?;
             if index != last {
                 let moved = self.called_buckets.get(last)?.ok_or_else(|| {
-                    outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                    outbe_primitives::error::PrecompileError::Revert(format!(
                         "Nod called list slot {last} is empty during removal"
                     ))
                 })?;
@@ -711,16 +706,20 @@ impl NodContract<'_> {
         self.called_bucket_index.clear(&bucket_key)
     }
 
-    /// No-op for a bucket the call index never held, so the removal funnel can call it unconditionally.
+    /// No-op for a bucket the call index never held, so the removal funnel can call it
+    /// unconditionally.
     pub(crate) fn remove_callable_bucket(&mut self, bucket_key: B256) -> Result<()> {
         self.remove_call_bin(bucket_key)?;
         self.remove_called_bucket(bucket_key)?;
-        self.callable_bucket_call_price.clear(&bucket_key)?;
+        self.callable_bucket_call_price_minor.clear(&bucket_key)?;
         self.callable_bucket_currency.get(&bucket_key).delete()?;
         self.callable_bucket_call_rate.get(&bucket_key).delete()?;
-        self.callable_bucket_call_window.clear(&bucket_key)?;
-        self.callable_bucket_call_threshold.clear(&bucket_key)?;
-        self.callable_bucket_call_notice_period.clear(&bucket_key)?;
+        self.callable_bucket_call_window_seconds
+            .clear(&bucket_key)?;
+        self.callable_bucket_call_threshold_seconds
+            .clear(&bucket_key)?;
+        self.callable_bucket_call_notice_period_seconds
+            .clear(&bucket_key)?;
         self.callable_bucket_issued_at.clear(&bucket_key)?;
         self.bucket_called_at.clear(&bucket_key)?;
         Ok(())

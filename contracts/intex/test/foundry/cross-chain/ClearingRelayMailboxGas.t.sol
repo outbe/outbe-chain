@@ -27,9 +27,10 @@ interface IMailbox {
 }
 
 /// @notice What the hub and its Hyperlane adapter do on the way out, wired to the real mailbox.
-/// @dev Reproduced here rather than imported from `contracts/crosschain`: compiling that into this project
-///      puts it in its own solc unit, which the upgrades-core layout validator cannot dereference. Both
-///      wraps are byte-identical to production, so the mailbox hashes and logs a production-sized message.
+/// @dev This file reproduces them rather than importing them from `contracts/crosschain`. Compiling
+///      that into this project puts it in its own solc unit, and the upgrades-core layout validator
+///      cannot dereference that unit. Both wraps are byte-identical to production, so the mailbox
+///      hashes and logs a production-sized message.
 contract LocalHyperlaneGateway is IERC7786GatewaySource, IGatewayQuote {
     using InteroperableAddress for bytes;
 
@@ -68,7 +69,7 @@ contract LocalHyperlaneGateway is IERC7786GatewaySource, IGatewayQuote {
     /// @dev The adapter's `handle` and the hub's `receiveMessage` back to back: peer check, dedup write and
     ///      both unwraps, statement for statement as production runs them. The two live in separate
     ///      contracts there, so a real delivery pays one more call frame and one more 63/64 step than this
-    ///      does - the caller pays for both by capping its gas below the budget it is testing.
+    ///      does. The caller pays for both: it caps its gas below the budget it is testing.
     function deliver(uint32 origin, bytes32 sender, bytes calldata message) external {
         require(_remoteRouter != bytes32(0) && sender == _remoteRouter, UnauthorizedSender());
         emit MessageReceived(origin, sender, message);
@@ -139,7 +140,7 @@ contract LocalHyperlaneGateway is IERC7786GatewaySource, IGatewayQuote {
     }
 }
 
-/// @dev Bids live in storage and are seeded in `setUp`, so the relay reads them cold as in production;
+/// @dev Bids live in storage and `setUp` seeds them, so the relay reads them cold as in production.
 ///      `GasBudget.t.sol`'s stub fabricates them in memory and misses two slots per bid.
 contract StoredBidStub {
     IIntexAuction.SubmittedBidData[] private _bids;
@@ -203,12 +204,13 @@ contract StoredBidStub {
 }
 
 /// @notice What one bids relay costs on a target chain, per bid count. Run with `--isolate`.
-/// @dev The round budgets are cut from the fixed part, the step 64 -> 65 (one chunk) and the step 1 -> 64
-///      (per bid). `_measure` drives `relayBidsToOutbe` as the router itself - the same entry the inbound
-///      clearing handler uses - so only the relay is in the reading: ~157k a send and ~8.7k a bid, on top
-///      of which the budgets carry ~40k a send for the hub's frame and nonce write. The fixed part reads
-///      490k-565k depending on the fork block, because what the mailbox's merkle insert touches moves with
-///      the tree's state; the budgets' 1.5x covers that drift.
+/// @dev The round budgets are cut from the fixed part, the step 64 -> 65 (one chunk) and the step
+///      1 -> 64 (per bid). `_measure` drives `relayBidsToOutbe` as the router itself, so only the
+///      relay is in the reading: ~157k a send and ~8.7k a bid. The inbound clearing handler uses
+///      the same entry. On top of that, the budgets carry ~40k a send for the hub's frame and nonce
+///      write. The fixed part reads 490k-565k depending on the fork block, because what the
+///      mailbox's merkle insert touches moves with the tree's state. The budgets' 1.5x covers that
+///      drift.
 abstract contract RelayGasBase is Test {
     /// @dev The canonical IGP prices this domain, which `quoteDispatch` needs.
     uint32 internal constant DST_CHAIN_ID = 56;
@@ -269,8 +271,8 @@ abstract contract RelayGasBase is Test {
 }
 
 /// @notice The relay against the canonical Hyperlane mailbox, over a mainnet fork.
-/// @dev A real `dispatch` inserts into the live merkle tree, runs the default hook and pays the IGP; the
-///      mock does none of it. Skips without an endpoint, so CI stays offline.
+/// @dev A real `dispatch` inserts into the live merkle tree, runs the default hook and pays the
+///      IGP. The mock does none of it. The test skips without an endpoint, so CI stays offline.
 contract ClearingRelayRealMailboxTest is RelayGasBase {
     address internal constant MAILBOX = 0xc005dc82818d67AF737725bD4bf75435d065D239;
 
@@ -293,13 +295,14 @@ contract ClearingRelayRealMailboxTest is RelayGasBase {
         _wireRouter(address(gateway));
     }
 
-    /// @notice `AUCTION_STAGE_CLEARING` is the budget a chain with no history gets, so it has to be worth
-    ///         sending: the round must place at least one chunk and report the rest, or the day stalls
-    ///         waiting for a hand.
-    /// @dev Driven through the inbound path a real delivery takes - peer check, hub dedup, both unwraps,
-    ///      the stage flip at its measured price - with the outbound sends against the canonical mailbox.
-    ///      The cap is the budget less two 63/64 steps, paying for the call frames production has between
-    ///      the mailbox and the router that this stand collapses.
+    /// @notice `AUCTION_STAGE_CLEARING` is the budget that a chain with no history gets, so it has
+    ///         to be worth sending. The round must place at least one chunk and report the rest.
+    ///         Otherwise the day stalls waiting for a hand.
+    /// @dev The test drives the inbound path that a real delivery takes: peer check, hub dedup,
+    ///      both unwraps, and the stage flip at its measured price. The outbound sends go against
+    ///      the canonical mailbox. The cap is the budget less two 63/64 steps. These steps pay for
+    ///      the call frames that production has between the mailbox and the router, which this
+    ///      stand collapses.
     function test_TheClearingFloorPlacesAChunkAndReportsTheRest() public {
         bytes memory bridgeInterop = _interop(DST_CHAIN_ID, originBridge);
         bytes32 bridgePeer = bytes32(uint256(uint160(originBridge)));
@@ -351,8 +354,8 @@ contract ClearingRelayRealMailboxTest is RelayGasBase {
 }
 
 /// @notice The same relay through the mock, to size the stand's distortion.
-/// @dev The mock stores the message body in `lastPayload` - 22 100 per fresh word - which dominates the
-///      first chunk and inflates `GasBudget.t.sol`'s clearing curve.
+/// @dev The mock stores the message body in `lastPayload` at 22 100 per fresh word. This cost
+///      dominates the first chunk and inflates `GasBudget.t.sol`'s clearing curve.
 contract ClearingRelayMockBridgeTest is RelayGasBase {
     function setUp() public {
         MockERC7786Bridge bridge = new MockERC7786Bridge();

@@ -20,7 +20,7 @@ pub(crate) struct HeaderAudit {
     /// Maximal contiguous intervals actually present in the native stores.
     pub intervals: Vec<RangeInclusive<u64>>,
     pub verified_headers: u64,
-    /// Requested anchors outside retained intervals; no identity is fabricated.
+    /// Requested anchors outside retained intervals. No identity is fabricated.
     pub required_missing: Vec<u64>,
 }
 
@@ -94,8 +94,8 @@ fn retained_segments(view: &RethReadOnlyView) -> eyre::Result<Vec<HeaderSegment>
 }
 
 /// Merge the native static intervals and both MDBX tables with at most one row
-/// from each source in memory. A row missing inside a static interval is corrupt;
-/// a gap in the union is retention, and is never scanned from genesis onwards.
+/// from each source in memory. A row missing inside a static interval is corrupt.
+/// A gap in the union is retention, and the merge never scans it from genesis onwards.
 pub(crate) fn verify_retained_headers(
     view: &RethReadOnlyView,
     required: &[u64],

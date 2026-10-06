@@ -17,9 +17,9 @@ import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Re
 ///      mid-`receiveMessage` (via `token.crosschainMint` -> `_mint`), re-enters the adapter's
 ///      `multiSend` entrypoint. With both `receiveMessage` and `multiSend` carrying
 ///      `nonReentrant`, the inner call reverts with `ReentrancyGuardReentrantCall`
-///      at the modifier check (before the empty-batch validation), and we capture
+///      at the modifier check (before the empty-batch validation). We capture
 ///      the selector. Without the guards, the inner call would revert with
-///      `EmptyBatch` instead - distinguishing the two cases.
+///      `EmptyBatch` instead. This difference distinguishes the two cases.
 contract ReentrantBatchProbe is IERC1155Receiver {
     address public immutable adapter;
     bool public attempted;
@@ -33,7 +33,7 @@ contract ReentrantBatchProbe is IERC1155Receiver {
         attempted = true;
 
         MultiRecipientSendParam memory param = MultiRecipientSendParam({
-            dstChainId: 0, recipients: new bytes32[](0), tokenIds: new uint256[](0), amounts: new uint256[](0)
+            dstChainId: 0, recipients: new bytes32[](0), tokenIds: new uint256[](0), units: new uint256[](0)
         });
 
         try IIntexNFT1155Bridge(adapter).multiSend{value: 0}(param) {
@@ -71,7 +71,7 @@ contract ReentrantBatchProbe is IERC1155Receiver {
 ///      on the destination chain (B). On B, `receiveMessage` -> `_handleBatchReceive` -> `token.crosschainMint`
 ///      -> `_mint` invokes the probe's `onERC1155Received`, which attempts to re-enter
 ///      `adapterB.multiSend`. Expected: the inner call reverts with
-///      `ReentrancyGuardReentrantCall` - proving the guard is held by `receiveMessage` AND that
+///      `ReentrancyGuardReentrantCall`. This proves that `receiveMessage` holds the guard AND that
 ///      `multiSend` carries the modifier.
 contract IntexNFT1155BridgeReentrancyTest is CrossChainTest {
     uint32 private aChainId = 1;
@@ -109,7 +109,7 @@ contract IntexNFT1155BridgeReentrancyTest is CrossChainTest {
         tokenA.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
         tokenB.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
 
-        tokenA.issue(user, AMOUNT, SERIES_ID);
+        tokenA.issueIntex(user, AMOUNT, SERIES_ID);
     }
 
     function test_receiveMessage_blocks_reentry_to_multiSend() public {
@@ -121,7 +121,7 @@ contract IntexNFT1155BridgeReentrancyTest is CrossChainTest {
         amts[0] = AMOUNT;
 
         BatchSendParam memory sendParam = BatchSendParam({
-            dstChainId: bChainId, to: bytes32(uint256(uint160(address(probe)))), tokenIds: ids, amounts: amts
+            dstChainId: bChainId, to: bytes32(uint256(uint160(address(probe)))), tokenIds: ids, units: amts
         });
 
         uint256 fee = adapterA.quoteBatchSend(sendParam);

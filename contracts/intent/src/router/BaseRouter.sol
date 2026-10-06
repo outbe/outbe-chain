@@ -13,7 +13,7 @@ import {ITheCompact} from "the-compact/src/interfaces/ITheCompact.sol";
  * @notice Shared base for all messaging-layer routers (LayerZero, Hyperlane, etc.)
  * @dev Contains Compact, Auction and SolverEscrow config.
  *      Messaging-specific logic (_dispatchSettleCrossChain, _dispatchRefundCrossChain, _localDomain)
- *      is left abstract for concrete implementations.
+ *      stays abstract. Concrete implementations supply it.
  */
 abstract contract BaseRouter is OriginSettler, DestinationSettler, Ownable2Step {
     // ============ Immutables ============
@@ -27,9 +27,9 @@ abstract contract BaseRouter is OriginSettler, DestinationSettler, Ownable2Step 
     /// @notice The SolverEscrow contract - solver collateral management (address(0) if disabled)
     ISolverEscrow public immutable SOLVER_ESCROW;
 
-    /// @notice The Auction contract - competitive solver selection. Immutable: replacing it would
-    ///         strand in-flight orders' quotes in the old contract, so it is fixed at deploy and
-    ///         swapped only by redeploying the router.
+    /// @notice The Auction contract - competitive solver selection. It is immutable. Replacing it
+    ///         would strand the quotes of in-flight orders in the old contract. Thus it is fixed at
+    ///         deploy, and only a router redeploy can swap it.
     IAuction public immutable AUCTION;
 
     // ============ Errors ============
@@ -43,8 +43,8 @@ abstract contract BaseRouter is OriginSettler, DestinationSettler, Ownable2Step 
     /// @notice Thrown when the resource lock tag is zero
     error InvalidLockTag();
 
-    /// @notice Thrown when native value is attached to a same-chain settle/refund, which forwards no
-    ///         bridge fee and would otherwise trap the ETH in the router.
+    /// @notice Thrown when the caller attaches native value to a same-chain settle/refund. That path
+    ///         forwards no bridge fee, so without this check the ETH would be trapped in the router.
     error UnexpectedNativeValue();
 
     // ============ Constructor ============
@@ -85,7 +85,7 @@ abstract contract BaseRouter is OriginSettler, DestinationSettler, Ownable2Step 
 
     // ============ Same-Chain Dispatch ============
 
-    /// @dev Routes settlement: same-chain calls _handleSettleOrder directly, cross-chain delegates.
+    /// @dev Routes settlement. Same-chain calls _handleSettleOrder directly. Cross-chain delegates.
     function _dispatchSettle(uint32 _originDomain, bytes32[] memory _orderIds, bytes[] memory _ordersFillerData)
         internal
         override
@@ -102,7 +102,7 @@ abstract contract BaseRouter is OriginSettler, DestinationSettler, Ownable2Step 
         _dispatchSettleCrossChain(_originDomain, _orderIds, _ordersFillerData);
     }
 
-    /// @dev Routes refund: same-chain calls _handleRefundOrder directly, cross-chain delegates.
+    /// @dev Routes refund. Same-chain calls _handleRefundOrder directly. Cross-chain delegates.
     function _dispatchRefund(uint32 _originDomain, bytes32[] memory _orderIds) internal override {
         if (_originDomain == _localDomain()) {
             bytes32 self = bytes32(uint256(uint160(address(this))));

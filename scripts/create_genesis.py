@@ -2,9 +2,10 @@
 """Create a complete Outbe genesis.json from one network.yaml.
 
 The yaml carries the minimum: which machines run the founding validators and
-where their key material lives. Everything else - public keys, Radicle node
-ids, OCOMP registrations, precompile storage, the OCOMP and TEE manifests -
-is derived from the key directory and written into the genesis in one run.
+where their key material lives. This script derives everything else from the
+key directory and writes it into the genesis in one run: public keys, Radicle
+node ids, OCOMP registrations, precompile storage, and the OCOMP and TEE
+manifests.
 
     python3 scripts/create_genesis.py network.yaml
 
@@ -20,14 +21,15 @@ is derived from the key directory and written into the genesis in one run.
 
 Each keys_dir/validator-N/ is what `outbe-keygen validator` produces:
 signing-key.hex (BLS), evm-key.hex, radicle/keys/radicle.pub, and optionally
-ocomp-registration-v1.ocb1. A missing OCOMP registration is generated here:
-its proof of possession signs the seeded genesis hash, which exists only
-after seeding, so it cannot be produced before this run.
+ocomp-registration-v1.ocb1. This script generates a missing OCOMP
+registration. Its proof of possession signs the seeded genesis hash. That hash
+exists only after seeding, so nothing can produce the registration before this
+run.
 
 See scripts/network.example.yaml for every optional parameter and its
 default. The yaml dialect is a strict subset (nested mappings, lists of
 scalars, lists of flat mappings, ints, booleans, quoted/plain strings, `#`
-comments); anything else is a hard error naming the line.
+comments). Anything else is a hard error that names the line.
 """
 
 from __future__ import annotations
@@ -55,9 +57,9 @@ REPO_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import launch_bundle  # noqa: E402  (sibling module, path set just above)
 
-# Canonical production baseline: every protocol parameter a network.yaml does not set comes
-# from this file, so the defaults have exactly one home - and it is the same
-# yaml format, readable and runnable on its own.
+# Canonical production baseline: every protocol parameter that a network.yaml does not set
+# comes from this file. Thus the defaults have exactly one home. That home uses the same
+# yaml format, and it is readable and runnable on its own.
 BASE_PROFILE_PATH = SCRIPT_DIR / "testnet.yaml"
 
 DEFAULT_CHAIN_ID = 424242
@@ -89,10 +91,10 @@ SECP256K1_G = (
 
 # Protocol sections forwarded to the seeder, deep-merged over the baseline.
 SEED_SECTIONS = (
-    # Protocol timings. seed_genesis copies these into config.outbeProtocol,
-    # where the runtime reads the Metadosis day windows and the OCOMP vote
-    # window from; leaving them out means the chain runs on its built-in
-    # defaults, which is rarely what a devnet or a test network wants.
+    # Protocol timings. seed_genesis copies these into config.outbeProtocol.
+    # The runtime reads the Metadosis day windows and the OCOMP vote window
+    # from there. If they are absent, the chain runs on its built-in defaults.
+    # A devnet or a test network rarely wants those defaults.
     "protocol_constants",
     "balance",
     "staking",
@@ -105,6 +107,7 @@ SEED_SECTIONS = (
     "tributes",
     "intex_factory",
     "gem_profile",
+    "nod_profile",
     "vault_router",
     "contracts",
     "tee_policy",
@@ -169,10 +172,10 @@ TEE_KEYS = {
 #
 # Supported: nested mappings, lists of scalars, lists of flat mappings, ints,
 # booleans, quoted and plain strings, `#` comments, and the empty literals `[]`
-# and `{}`. Everything else is a hard error naming the line, so a config never
-# parses into something other than what it looks like. PyYAML is deliberately
-# not required: these scripts run on operator machines and in offline genesis
-# ceremonies where installing a package is friction.
+# and `{}`. Everything else is a hard error that names the line. Thus a config
+# never parses into something other than what it looks like. These scripts
+# deliberately do not require PyYAML. They run on operator machines and in
+# offline genesis ceremonies, where installing a package is friction.
 
 
 class YamlError(ValueError):
@@ -542,8 +545,8 @@ def radicle_node_id_from_public_key(path: Path) -> str:
 
 
 def bls_public_key(keygen_binary: str, signing_key: Path) -> str:
-    """Ask outbe-keygen for the MinPk public key; the BLS curve maths lives in
-    the binary and is not reimplemented here."""
+    """Ask outbe-keygen for the MinPk public key. The BLS curve maths lives in
+    the binary, and this script does not reimplement it."""
     result = subprocess.run(
         [keygen_binary, "show-pubkey", "--key", str(signing_key)],
         check=True,
@@ -602,10 +605,10 @@ def discover_validators(
 # ---------------------------------------------------------------------------
 
 
-# A genesis carries a TEE lease that starts counting at its own timestamp. Boot
-# a chain from a genesis stamped far in the past and block 1 dies on
-# `requested lease is already expired` - a runtime revert that says nothing
-# about the real cause. Refuse to build one instead.
+# A genesis carries a TEE lease that starts counting at its own timestamp. If a
+# chain boots from a genesis stamped far in the past, block 1 dies on
+# `requested lease is already expired`. That runtime revert says nothing about
+# the real cause. Refuse to build such a genesis instead.
 MAX_GENESIS_AGE_SECONDS = 6 * 60 * 60
 
 
@@ -619,9 +622,9 @@ def build_base_genesis(config: dict[str, Any]) -> dict[str, Any]:
             f"'requested lease is already expired'. Drop the key to stamp now, or "
             f"set `allow_stale_timestamp: true` to reproduce an existing genesis."
         )
-    # An explicit genesisTime pins the ValidatorSet epoch start; without it the
-    # seeder falls back to the wall clock and the genesis hash - which the
-    # OCOMP registrations sign - changes on every run.
+    # An explicit genesisTime pins the ValidatorSet epoch start. Without it, the
+    # seeder uses the wall clock instead. Then the genesis hash, which the OCOMP
+    # registrations sign, changes on every run.
     genesis_time = datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
@@ -719,13 +722,13 @@ def run_seed_stage(
 
     The calculation itself lives in seed_genesis.apply_seed: storage slot
     layout, keccak-derived mapping keys, and the active WorldwideDay resolved
-    against the genesis timestamp. It is called directly with in-memory values,
-    so nothing round-trips through an intermediate seed file.
+    against the genesis timestamp. This function calls it directly with
+    in-memory values, so nothing round-trips through an intermediate seed file.
     """
     # The seeded OFFERING worldwide-day must track the genesis date, or the
     # runtime derives a different active day and metadosis wedges. An explicit
-    # value always wins, including alongside fresh_metadosis: the two do
-    # different things - the day retargets the S-curve peak and NOD references,
+    # value always wins, including alongside fresh_metadosis. The two do
+    # different things. The day retargets the S-curve peak and NOD references.
     # fresh_metadosis drops the pre-seeded OFFERING day itself.
     if "worldwide_day" in config:
         # Present-but-None means the caller decided there is no retarget, which
@@ -774,17 +777,17 @@ def seed_genesis_from_config(
 ) -> dict[str, Any]:
     """Seed one genesis from an explicit profile, without the OCOMP/TEE stages.
 
-    This is the entry point `seed_genesis.py` uses so its CLI - the one the e2e
-    harness and the localnet scripts call - creates its genesis through exactly
-    the same code path as a yaml-driven deployment. The profile is used as
-    given: callers that want the baseline merged do that themselves, so a
-    partial profile never silently gains sections it did not ask for.
+    `seed_genesis.py` uses this entry point. Thus its CLI, which the e2e harness
+    and the localnet scripts call, creates its genesis through exactly the same
+    code path as a yaml-driven deployment. This function uses the profile as
+    given. Callers that want the baseline merged do the merge themselves. Thus a
+    partial profile never silently gains sections that it did not ask for.
     """
     module = load_seed_genesis_module()
-    # `worldwide_day` is set unconditionally, including to None: this caller
-    # states the day explicitly rather than letting it be derived from the
-    # genesis timestamp, so `--worldwide-day`-less runs keep the profile's own
-    # authored day exactly as they did before.
+    # This caller sets `worldwide_day` unconditionally, including to None. It
+    # states the day explicitly rather than letting the genesis timestamp
+    # derive it. Thus `--worldwide-day`-less runs keep the profile's own authored
+    # day exactly as they did before.
     settings: dict[str, Any] = {
         "contracts_dir": contracts_dir,
         "worldwide_day": worldwide_day,
@@ -831,9 +834,9 @@ def ensure_ocomp_registrations(
     validators: list[dict[str, Any]],
     allow_generation: bool = True,
 ) -> Path:
-    """Collect one registration per founder into a staging directory, minting
-    the missing ones. The proof of possession signs the seeded genesis hash, so
-    a registration can only be produced once that hash exists."""
+    """Collect one registration per founder into a staging directory, and mint
+    the missing ones. The proof of possession signs the seeded genesis hash.
+    Thus this function can produce a registration only after that hash exists."""
     validate_ocomp_registration_inventory(
         keys_dir=keys_dir,
         validator_count=len(validators),
@@ -864,7 +867,7 @@ def ensure_ocomp_registrations(
         registration = source_dir / "ocomp-registration-v1.ocb1"
         # Marker recording which genesis hash a registration minted here signs.
         # A registration carried in from a validator's own machine has no
-        # marker; the node binary validates that one when it installs it.
+        # marker. The node binary validates that registration when it installs it.
         marker = source_dir / "ocomp-registration-v1.genesis-hash"
         if registration.is_file():
             if marker.is_file() and marker.read_text().strip() != str(genesis_hash):
@@ -1114,9 +1117,9 @@ def main() -> None:
                 config=config,
             )
         except BaseException:
-            # A later stage failing must not leave the protocol bundle behind:
-            # the next run refuses to overwrite it and the operator is stuck
-            # with a half-written directory and no way forward.
+            # If a later stage fails, the protocol bundle must not stay behind.
+            # The next run refuses to overwrite the bundle, and the operator is
+            # stuck with a half-written directory and no way forward.
             protocol_bundle_output.unlink(missing_ok=True)
             raise
 

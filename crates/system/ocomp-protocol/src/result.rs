@@ -33,14 +33,11 @@ wire_struct! {
         pub owner: Address,
         pub wwd: u32,
         pub league_id: u16,
-        pub floor_price_minor: U256,
         pub gratis_load_minor: U256,
         pub entry_price_minor: U256,
         pub settlement_cost_minor: U256,
         pub issuance_currency: u16,
         pub reference_currency: u16,
-        pub issued_at: u64,
-        pub bucket_key: B256,
     }
 }
 
@@ -49,7 +46,7 @@ wire_struct! {
 ///
 /// This value is deliberately not a self-authenticating wire object. A caller
 /// must derive it from finalized `ActiveGenerationV1` and the matching Nod
-/// owner generation projection; the proof cannot supply its own trusted root.
+/// owner generation projection. The proof cannot supply its own trusted root.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ActiveNodSetV1 {
     pub job_id: B256,
@@ -113,8 +110,8 @@ wire_struct! {
 
 wire_struct! {
     /// One bounded, independently retrievable chunk of the complete Lysis
-    /// effect set. The full result commits an ordered list root of these chunks;
-    /// it never embeds all actions in one consensus object.
+    /// effect set. The full result commits an ordered list root of these chunks.
+    /// It never embeds all actions in one consensus object.
     pub struct ResultChunkV1 {
         pub protocol_bundle_hash: B256,
         pub job_id: B256,
@@ -152,8 +149,8 @@ wire_struct! {
 
 wire_struct! {
     /// Capacity totals use protocol units (1,000,000 per whole COEN).
-    /// Lysis allocation is the sum of issued Nod loads; adding its unused limit
-    /// reconciles to the frozen Lysis limit. The Desis limit is an auction ceiling,
+    /// Lysis allocation is the sum of issued Nod loads. Lysis allocation plus its
+    /// unused limit reconciles to the frozen Lysis limit. The Desis limit is an auction ceiling,
     /// not the allocation into live Intex issuance. C37 still binds the Desis
     /// Limit here: later issuance must stay inside it, so
     /// `lysis_allocation + desis_limit` is the largest outcome the auction may
@@ -249,7 +246,7 @@ pub fn lysis_v1_empty_semantic_event_root() -> Result<B256, ProtocolError> {
 }
 
 /// Sealed WWD Lysis + Desis amounts cannot exceed that day's Tribute
-/// nominal. Pass Desis Allocation once the auction has frozen it. Before then
+/// nominal. Pass Desis Allocation once the auction freezes it. Before then
 /// pass the Desis Limit, the maximum later issuance may allocate, so a Limit
 /// that could breach the ceiling fails before economic writes.
 pub fn wwd_allocation_ceiling(

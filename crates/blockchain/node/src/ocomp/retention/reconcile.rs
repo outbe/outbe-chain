@@ -334,7 +334,7 @@ impl OcompRetentionCoordinator {
     }
 
     /// Finalizes one retained request exclusively from its canonical typed
-    /// Metadosis record. The request event remains a locator; the chain record
+    /// Metadosis record. The request event remains a locator. The chain record
     /// is the authority for JobId and every response-window height.
     pub fn bind_canonical_finalized_job(
         &self,
@@ -401,7 +401,7 @@ impl OcompRetentionCoordinator {
 
     /// A crash may persist the spool ACK before retaining its export authority.
     /// Completing that metadata write never reactivates a retired lease. Expired
-    /// jobs cannot adopt a late ACK; every ACK requires canonical job authority.
+    /// jobs cannot adopt a late ACK. Every ACK requires canonical job authority.
     pub fn confirm_canonical_export_ack(
         &self,
         canonical: &OcompJobRecordV1,
@@ -444,8 +444,17 @@ impl OcompRetentionCoordinator {
                 "late export ACK requires exact terminal authority",
             ));
         }
+        self.confirm_terminal_export_ack(canonical, finalized.job_id, export)
+    }
+
+    fn confirm_terminal_export_ack(
+        &self,
+        canonical: &OcompJobRecordV1,
+        job_id: B256,
+        export: ExportAuthorityV1,
+    ) -> Result<DurablePinAck, RetentionError> {
         let mut inner = self.lock()?;
-        let (key, record) = record_for_job(&inner, finalized.job_id)?;
+        let (key, record) = record_for_job(&inner, job_id)?;
         canonical_finalized_pin(record_candidate(record), canonical)?;
         let mut state = record.state;
         let slot = match &mut state {
@@ -541,7 +550,7 @@ impl OcompRetentionCoordinator {
     }
 
     /// Confirm a durable spool ACK across restart windows. A live finalized
-    /// record performs the Exported transition; later states accept only the
+    /// record performs the Exported transition. Later states accept only the
     /// exact source generation that must have preceded them.
     pub fn confirm_export_ack(
         &self,
@@ -788,17 +797,15 @@ impl OcompRetentionCoordinator {
                     },
                 )
             }
-            PinStateV1::Finalized {
-                candidate,
-                job_id,
-                finality_recorded_height,
-                open_height,
-                deadline_height,
-            } if candidate == finalized.candidate
-                && job_id == finalized.job_id
-                && finality_recorded_height == finalized.finality_recorded_height
-                && open_height == finalized.open_height
-                && deadline_height == finalized.deadline_height =>
+            state @ PinStateV1::Finalized { .. }
+                if state
+                    == (PinStateV1::Finalized {
+                        candidate: finalized.candidate,
+                        job_id: finalized.job_id,
+                        finality_recorded_height: finalized.finality_recorded_height,
+                        open_height: finalized.open_height,
+                        deadline_height: finalized.deadline_height,
+                    }) =>
             {
                 Ok(ack_for(record))
             }

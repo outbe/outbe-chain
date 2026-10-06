@@ -221,8 +221,8 @@ where
 }
 
 /// Persist exact canonical replacement transaction material. An exact retry is
-/// idempotent; any conflict is rejected so restart never silently changes the
-/// quote, collateral or proof-of-possession signatures.
+/// idempotent. The function rejects any conflict, so restart never silently
+/// changes the quote, collateral or proof-of-possession signatures.
 pub fn persist_replacement_candidate_submission(
     node_data_dir: &Path,
     evidence: &AttestationEvidenceV1,

@@ -1,4 +1,4 @@
-//! Shared stopped native fixture and process helpers; no registered tests.
+//! Shared stopped native fixture and process helpers. This file has no registered tests.
 
 use std::{
     collections::BTreeMap,
@@ -17,7 +17,10 @@ use outbe_compressed_entities::{
     CeMdbx, EnvironmentIdentity, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME,
 };
 use outbe_ocomp::discovery_spool::ContiguousCheckpointStoreV1;
-use outbe_offchain_storage::{Key, Namespace, RocksDbStorage, StorageWriter, Value};
+use outbe_offchain_storage::{
+    partitioned::adapters::RocksPartitionDataSource, Key, Namespace, PartitionedStorage,
+    StorageWriter, Value,
+};
 use outbe_primitives::{projection::ProjectionCheckpoint, OutbeHeader};
 use reth_ethereum::provider::db::{
     database::Database,
@@ -38,7 +41,7 @@ pub(crate) fn binary() -> Command {
 
 pub(crate) fn run(command: &mut Command) -> Output {
     // These real MDBX fixtures contain a 4 GiB CE file. Debug hashing may exceed
-    // the small CLI fixture timeout; this watchdog is test-only, not a node limit.
+    // the small CLI fixture timeout. This watchdog is test-only. It is not a node limit.
     // File-backed output avoids blocking a child while waiting for a large report.
     let mut stdout = tempfile::tempfile().unwrap();
     let mut stderr = tempfile::tempfile().unwrap();
@@ -96,6 +99,12 @@ pub(crate) struct StoppedFixture {
     pub(crate) execution_hash: B256,
     pub(crate) genesis_hash: B256,
     pub(crate) pending_result: String,
+}
+
+/// Native snapshot guards reject symlinked ancestors. macOS's default /var
+/// temporary directory aliases /private/var, so fixtures need a physical root.
+pub(crate) fn physical_tempdir() -> tempfile::TempDir {
+    tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap()
 }
 
 pub(crate) fn stopped_fixture(donor: &Path) -> StoppedFixture {
@@ -165,7 +174,7 @@ pub(crate) fn stopped_fixture(donor: &Path) -> StoppedFixture {
         parent_root: B256::ZERO,
         new_root: empty_root,
     };
-    // Small test geometry; the normal CE owner still initializes its native schema.
+    // Small test geometry. The normal CE owner still initializes its native schema.
     drop(
         reth_ethereum::provider::db::create_db(
             chain.join("compressed_entities/smt"),
@@ -198,7 +207,11 @@ pub(crate) fn stopped_fixture(donor: &Path) -> StoppedFixture {
 
     let projection_config = donor.join("configuration/offchain.toml");
     fs::write(&projection_config, "version = 1\nbackend = 'rocksdb'\nstart_block = 17\n[rocksdb]\npath = '../projection'\nsecondary_path = '../secondary'\n").unwrap();
-    let projection = RocksDbStorage::open(donor.join("projection")).unwrap();
+    // Use the same entity-owned schema-3 layout as the stopped-store reader.
+    let projection = PartitionedStorage::new(
+        std::sync::Arc::new(RocksPartitionDataSource::open(&donor.join("projection")).unwrap()),
+        outbe_offchain_data::entity_partition_routing().unwrap(),
+    );
     let state = outbe_offchain_data::ProjectionState {
         chain_id: chain_spec.chain().id(),
         genesis_hash,
@@ -278,7 +291,7 @@ pub(crate) fn stopped_fixture(donor: &Path) -> StoppedFixture {
     }
 }
 
-// Preserve directory/file membership too; only existing MDBX reader-slot bytes may change.
+// Preserve directory/file membership too. Only existing MDBX reader-slot bytes may change.
 pub(crate) fn fingerprint(root: &Path) -> BTreeMap<PathBuf, Option<u64>> {
     fn visit(root: &Path, at: &Path, found: &mut BTreeMap<PathBuf, Option<u64>>) {
         for entry in fs::read_dir(at).unwrap() {

@@ -23,7 +23,8 @@ pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 pub const BIN_STEP_BP: u16 = 25;
 
 /// Work one lifecycle scan may do: a decision reads a group, an action writes one
-/// series with its index move and notice. Budgeted apart because they differ in cost.
+/// series with its index move and notice. The two budgets are separate because they differ
+/// in cost.
 pub(crate) const MAX_GROUP_DECISIONS_PER_BLOCK: u32 = 256;
 pub(crate) const MAX_SERIES_ACTIONS_PER_BLOCK: u32 = 256;
 
@@ -34,6 +35,13 @@ pub const CALL_SWEEP: u8 = 1;
 /// spends one. Sized to clear a day of calls inside [`CALL_NOTICE_PERIOD`] while
 /// leaving CycleTick its block headroom.
 pub const MAX_ROUTER_CALLS_PER_FIRING: u32 = 64;
+
+/// Router calls a Called notice gets before it is dropped, one per drain firing that reaches it.
+pub const MAX_CALLED_NOTICE_ATTEMPTS: u8 = 12;
+
+/// Consecutive wholly refused runs that end a drain firing: a router that refuses every send
+/// would otherwise spend the whole budget on calls that cannot land.
+pub const MAX_REFUSED_RUNS_PER_FIRING: u32 = 3;
 
 /// Router calls one `intex_drain_parked` firing may make; each is a view read plus a cross-chain send.
 pub const MAX_PARKED_CALLS_PER_FIRING: u32 = 16;
@@ -80,10 +88,10 @@ pub const MAX_RECIPIENTS_PER_ISSUANCE: usize = 24;
 pub const MAX_RECIPIENTS_PER_MESSAGE: usize = 64;
 
 /// Series one MARK_CALLED message may carry. Mirrors the
-/// codec's `MAX_SERIES_PER_MARK`; a wider group is sent in several messages.
+/// codec's `MAX_SERIES_PER_MARK`. A wider group is sent in several messages.
 pub const MAX_SERIES_PER_MARK: usize = 8;
 
 /// Bit that marks a Settled NFT token id. A series id is 14 bytes, so the issued id space ends at
-/// 2**112 and this bit sits directly above it: the classes cannot collide, and clearing it recovers
-/// the series. Mirrors `IntexNFT1155._SETTLED_TAG`.
+/// 2**112 and this bit sits directly above it. The classes cannot collide, and clearing the bit
+/// recovers the series. Mirrors `IntexNFT1155._SETTLED_TAG`.
 pub const SETTLED_TAG: U256 = U256::from_limbs([0, 1 << 48, 0, 0]);

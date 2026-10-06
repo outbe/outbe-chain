@@ -304,9 +304,9 @@ pub fn full_exit_jailed_retained(state: JailRetained, stake: StakeProjection) ->
 }
 
 /// Returns an already-excluded jailed validator to the unconfirmed readiness
-/// state after the cooldown and minimum-stake checks. Missed counters are reset
-/// again because historical finalized-parent accounting may have populated them
-/// after the exclusion boundary.
+/// state after the cooldown and minimum-stake checks. This function resets the
+/// missed counters again because historical finalized-parent accounting may
+/// have populated them after the exclusion boundary.
 pub fn unjail(
     state: Jail,
     current_height: u64,

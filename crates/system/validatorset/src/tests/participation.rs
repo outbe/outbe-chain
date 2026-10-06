@@ -183,8 +183,8 @@ fn finalized_participation_guard_prune_ring_bounds_growth() {
         for h in &hashes {
             crate::hooks::record_finalized_participation(storage.clone(), *h, &[v], &[]).unwrap();
         }
-        // The oldest (total - retain) guard flags are evicted (slots reclaimed);
-        // the last `retain` finalized blocks are still guarded against replay.
+        // The oldest (total - retain) guard flags are evicted (slots reclaimed).
+        // The last `retain` finalized blocks are still guarded against replay.
         for i in 0..(total - retain) {
             assert!(
                 !vs.finalized_participation_recorded

@@ -1,20 +1,18 @@
 use super::*;
 
 pub(crate) fn run() {
-    let VotingOpenScenario {
-        chain_spec,
-        prepared,
-        signer,
-        runtime_body_readers,
-        fork_install,
-        dkg,
-        snapshot,
-        proposer,
-        open_height,
-        intent_id,
-        finalized_record,
-        voting_open,
-    } = super::request::open_voting();
+    let (
+        environment,
+        VotingOpenState {
+            prepared,
+            proposer,
+            open_height,
+            intent_id,
+            finalized_record,
+            voting_open,
+        },
+    ) = super::request::open_voting().into_successor_parts();
+    let fixture = environment.fixture(&prepared.tree_service);
     let voting = ResultVotingScenario::for_intent(
         &voting_open.record.intent,
         finalized_record.finalized.as_ref().unwrap().job_id,
@@ -60,20 +58,16 @@ pub(crate) fn run() {
     // OutbeTransactionOrdering must still select every OCOMP carrier ahead of it.
     saturated_transactions.extend(vote_transactions);
     let q_forming = build_canonical_ocomp_successor(
-        &chain_spec,
-        &prepared.tree_service,
-        &signer,
-        &runtime_body_readers,
-        &fork_install,
-        &dkg,
-        &snapshot,
-        proposer,
-        voting_open.header,
-        &voting_open.storage,
-        open_height + 1,
-        prepared.request_time + (open_height + 1 - REQUEST_HEIGHT),
-        intent_id,
-        saturated_transactions,
+        fixture,
+        OcompSuccessorBlock {
+            proposer,
+            parent: voting_open.header,
+            parent_storage: &voting_open.storage,
+            height: open_height + 1,
+            timestamp: prepared.request_time + (open_height + 1 - REQUEST_HEIGHT),
+            intent_id,
+            user_transactions: saturated_transactions,
+        },
     );
     assert!(
         q_forming.user_transaction_count > vote_hashes.len(),

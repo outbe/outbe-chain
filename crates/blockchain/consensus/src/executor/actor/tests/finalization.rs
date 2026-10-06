@@ -45,9 +45,11 @@ fn finalized_syncing_delivery_acks_and_heartbeat_repeats_fcu() {
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
-            genesis,
-            0,
-            genesis,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: 0,
+                last_finalized_hash: genesis,
+            },
             projection_readiness,
             None,
         );
@@ -93,10 +95,8 @@ fn finalized_syncing_delivery_acks_and_heartbeat_repeats_fcu() {
                     assert_eq!(state.head_block_hash, finalized_hash);
                     assert_eq!(state.finalized_block_hash, finalized_hash);
                     assert!(payload_attrs.is_none());
-                    tx.send(Ok(OnForkChoiceUpdated::valid(PayloadStatus::from_status(
-                        PayloadStatusEnum::Valid,
-                    ))))
-                    .expect("heartbeat FCU response receiver must be alive");
+                    tx.send(Ok(valid_forkchoice_response()))
+                        .expect("heartbeat FCU response receiver must be alive");
                 }
                 other => panic!("unexpected third engine message: {other:?}"),
             }
@@ -135,9 +135,11 @@ fn canonical_genesis_anchor_is_acknowledged_without_execution() {
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
-            genesis,
-            0,
-            genesis,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: 0,
+                last_finalized_hash: genesis,
+            },
             projection_readiness,
             None,
         );
@@ -168,7 +170,7 @@ fn recovered_canonical_block_is_acknowledged_without_reexecution() {
         let recovered_hash = block.block_hash();
         let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
         let engine = ConsensusEngineHandle::new(engine_tx);
-        // The durable projection has already consumed the recovered EL head.
+        // The durable projection already consumed the recovered EL head.
         // Re-executing the same marshal delivery would ask it to regress to
         // parent 27 and fail with ProjectionAhead.
         let (_projection_publisher, projection_readiness) = ready_projection(
@@ -181,9 +183,11 @@ fn recovered_canonical_block_is_acknowledged_without_reexecution() {
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
-            genesis,
-            28,
-            recovered_hash,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: 28,
+                last_finalized_hash: recovered_hash,
+            },
             projection_readiness,
             None,
         );
@@ -224,9 +228,11 @@ fn recovered_height_with_conflicting_hash_still_fails_closed() {
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
-            genesis,
-            28,
-            canonical.block_hash(),
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: 28,
+                last_finalized_hash: canonical.block_hash(),
+            },
             projection_readiness,
             None,
         );
@@ -266,9 +272,11 @@ fn conflicting_genesis_anchor_fails_without_acknowledging_marshal() {
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
-            canonical_genesis,
-            0,
-            canonical_genesis,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: canonical_genesis,
+                last_finalized_height: 0,
+                last_finalized_hash: canonical_genesis,
+            },
             projection_readiness,
             None,
         );
@@ -320,9 +328,11 @@ fn marshal_ack_waits_for_compressed_storage_commit_barrier() {
         let (actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
-            genesis,
-            0,
-            genesis,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: 0,
+                last_finalized_hash: genesis,
+            },
             projection_readiness,
             None,
         );
@@ -371,10 +381,10 @@ fn marshal_ack_waits_for_compressed_storage_commit_barrier() {
 }
 
 // bp-2 regression: a *finalized* block the execution layer rejects must fail
-// fast - `handle_marshal_update` returns a structured `Err` (the supervisor
-// shuts the node down) and the marshal `Exact` ack is left UNACKNOWLEDGED
-// (cancels), never silently dropped after a `warn!`. Deleting the fail-fast
-// and going back to acking/ignoring makes this test fail.
+// fast. `handle_marshal_update` returns a structured `Err` (the supervisor
+// shuts the node down) and leaves the marshal `Exact` ack UNACKNOWLEDGED
+// (cancels). It never silently drops the ack after a `warn!`. If you delete the
+// fail-fast and go back to acking/ignoring, this test fails.
 #[test]
 fn rejected_finalized_block_fails_fast_without_acknowledging_marshal() {
     commonware_runtime::deterministic::Runner::default().start(|context| async move {
@@ -387,9 +397,11 @@ fn rejected_finalized_block_fails_fast_without_acknowledging_marshal() {
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
-            genesis,
-            0,
-            genesis,
+            crate::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: 0,
+                last_finalized_hash: genesis,
+            },
             projection_readiness,
             None,
         );
@@ -420,8 +432,9 @@ fn rejected_finalized_block_fails_fast_without_acknowledging_marshal() {
             "an unprocessable finalized block must return a fatal error, \
                  not silently continue"
         );
-        // The block was not applied, so the marshal ack must NOT be acknowledged:
-        // it cancels. Acking here would lie to marshal progress tracking.
+        // The executor did not apply the block, so it must NOT acknowledge the
+        // marshal ack: the ack cancels. Acking here would lie to marshal progress
+        // tracking.
         assert!(
             waiter.await.is_err(),
             "rejected finalized block must leave the marshal ack canceled, \

@@ -1,10 +1,10 @@
 //! V2 verifier error taxonomy.
 //!
 //! Each variant maps to a specific A4 validation-rule failure. Operators
-//! depend on the variant names + Display strings for alerting; the `Debug`
-//! form is also exposed via the verifier's structured logs.
+//! depend on the variant names + Display strings for alerting. The verifier's
+//! structured logs also expose the `Debug` form.
 //!
-//! `#[non_exhaustive]` - callers must always include a wildcard arm so a
+//! `#[non_exhaustive]`: callers must always include a wildcard arm. Thus a
 //! future + variant addition does not require synchronized
 //! downstream edits.
 
@@ -14,8 +14,7 @@ use alloy_primitives::B256;
 ///
 /// Each variant corresponds to a specific validation rule. The set
 /// is intentionally narrow so reviewers and downstream evidence wrappers
-/// can branch
-/// on the exact failure class.
+/// can branch on the exact failure class.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum V2VerifyError {
@@ -70,9 +69,9 @@ pub enum V2VerifyError {
     #[error("VRF group public key hash mismatch: expected {expected}, got {actual}")]
     WrongVrfGroupKeyHash { expected: B256, actual: B256 },
     /// VRF verification was attempted under a namespace other than
-    /// [`crate::hybrid_seed_namespace`] (defence-in-depth - the
+    /// [`crate::hybrid_seed_namespace`]. This is defence-in-depth: the
     /// verifier hard-codes the namespace, so this only triggers if an
-    /// upstream caller smuggled a different one).
+    /// upstream caller smuggled a different one.
     #[error("VRF namespace differs from hybrid_seed_namespace")]
     WrongVrfNamespace,
     /// VRF seed round (`Round(epoch, view).encode()`) differs from the

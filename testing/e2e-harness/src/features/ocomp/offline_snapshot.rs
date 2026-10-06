@@ -78,11 +78,11 @@ pub(crate) fn parse_snapshot_validation_report(
             .ok_or_else(|| eyre!("passed bodies without P"))?;
         ensure!(q == p, "body equality claimed for different Q/P identities");
     }
-    // Incomplete is intentionally preserved; parsing is not validation success.
+    // Incomplete is intentionally preserved. Parsing is not validation success.
     Ok(report)
 }
 
-fn successful_command(command: &SnapshotCommandObservation) -> eyre::Result<()> {
+pub(super) fn successful_command(command: &SnapshotCommandObservation) -> eyre::Result<()> {
     ensure!(!command.argv.is_empty(), "missing actual argv");
     ensure!(command.started <= command.ended, "invalid command interval");
     ensure!(
@@ -289,7 +289,7 @@ fn worker_counters(body: &[u8]) -> eyre::Result<(u64, u64)> {
                 .parse::<u64>()?,
         );
     }
-    // Counters are created lazily; an absent pre-work series is an observed zero.
+    // Counters are created lazily. An absent pre-work series is an observed zero.
     Ok((started.unwrap_or(0), success.unwrap_or(0)))
 }
 
@@ -579,7 +579,7 @@ pub(crate) fn assert_snapshot_workflow(e: &OfflineSnapshotEvidence) -> eyre::Res
                 "nonpassing report disguised as CLI success"
             );
         }
-        // A nonpassing optional audit remains nonpassing; it is not a startup gate.
+        // A nonpassing optional audit remains nonpassing. It is not a startup gate.
     }
     let new = e.new_job.as_ref().ok_or_else(|| eyre!("missing new job"))?;
     ensure!(
@@ -680,6 +680,18 @@ mod tests {
     use super::*;
     use crate::world::state::*;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn snapshot_launch_requires_a_non_genesis_local_committee_anchor() {
+        assert!(assert_local_committee_anchor(
+            "certified follower startup recovery barrier completed",
+            745_250
+        )
+        .is_err());
+        assert!(assert_local_committee_anchor("anchor_epoch=0 anchor_height=1 follower restored committee from local finalized history", 745_250).is_err());
+        assert!(assert_local_committee_anchor("anchor_epoch=621 anchor_height=745205 follower restored committee from local finalized history", 745_250).is_ok());
+        assert!(assert_local_committee_anchor("anchor_epoch=621 anchor_height=745205 follower restored committee from local finalized history", 745_204).is_err());
+    }
 
     fn block(number: u64) -> SnapshotBlock {
         SnapshotBlock {
@@ -1518,8 +1530,8 @@ fn snapshot_now_millis() -> eyre::Result<u64> {
 }
 
 /// Invoke the actual CLI, retaining outputs even when validation exits nonzero.
-/// Timeout kills/reaps this owned child; it cannot leave a CLI writer behind.
-fn run_snapshot_command(
+/// Timeout kills/reaps this owned child. It cannot leave a CLI writer behind.
+pub(super) fn run_snapshot_command(
     mut command: std::process::Command,
     evidence_dir: &std::path::Path,
     phase: &str,
@@ -1599,7 +1611,7 @@ mod observation_tests {
     }
 }
 
-fn parse_recovery_record(log: &str) -> eyre::Result<(u64, SnapshotBlock, u64, u64)> {
+pub(super) fn parse_recovery_record(log: &str) -> eyre::Result<(u64, SnapshotBlock, u64, u64)> {
     let mut records = log
         .lines()
         .filter(|line| line.contains("certified follower startup recovery barrier completed"));
@@ -1861,7 +1873,7 @@ fn observe_stopped_native(
     })
 }
 
-fn snapshot_option(argv: &[String], flag: &str) -> eyre::Result<String> {
+pub(super) fn snapshot_option(argv: &[String], flag: &str) -> eyre::Result<String> {
     for (index, arg) in argv.iter().enumerate() {
         if arg == flag {
             return argv
@@ -1876,7 +1888,7 @@ fn snapshot_option(argv: &[String], flag: &str) -> eyre::Result<String> {
     Err(eyre!("ordinary node command has no {flag}"))
 }
 
-fn canonical_snapshot_block(
+pub(super) fn canonical_snapshot_block(
     world: &crate::world::World,
     number: u64,
 ) -> eyre::Result<SnapshotBlock> {
@@ -1916,6 +1928,15 @@ fn create_stopped_snapshot(world: &mut crate::world::World) {
 fn create_stopped_snapshot_result(world: &mut crate::world::World) -> eyre::Result<()> {
     use crate::world::state::*;
     use std::process::Command;
+    // Exercise restart after committee rotation, so genesis reconstruction
+    // cannot satisfy the snapshot acceptance check below.
+    let rotated_height = super::OCOMP_TEST_EPOCH_LENGTH_BLOCKS * 2;
+    ensure!(
+        world
+            .rpc
+            .wait_finalized_at_least(world.validators.primary_port(), rotated_height, 600),
+        "snapshot donor did not finalize beyond committee rotation"
+    );
     let index = 3;
     let node = world
         .validators
@@ -2167,7 +2188,7 @@ fn recipient_identity(
     Ok(values)
 }
 
-fn place_snapshot_payload(
+pub(super) fn place_snapshot_payload(
     world: &crate::world::World,
     archive: &std::path::Path,
     evidence_dir: &std::path::Path,
@@ -2234,6 +2255,29 @@ fn place_snapshot_payload(
     Ok((manifest, signature))
 }
 
+pub(super) fn assert_local_committee_anchor(text: &str, finalized_height: u64) -> eyre::Result<()> {
+    let record = text
+        .lines()
+        .find(|line| line.contains("follower restored committee from local finalized history"))
+        .ok_or_else(|| eyre!("snapshot fullnode rebuilt committee history from genesis"))?;
+    let field = |key: &str| -> eyre::Result<u64> {
+        let prefix = format!("{key}=");
+        record
+            .split_whitespace()
+            .find_map(|word| word.strip_prefix(&prefix))
+            .ok_or_else(|| eyre!("missing {key} in local committee anchor"))?
+            .parse()
+            .map_err(Into::into)
+    };
+    let epoch = field("anchor_epoch")?;
+    let height = field("anchor_height")?;
+    ensure!(
+        epoch > 0 && height > 1 && height <= finalized_height,
+        "snapshot fullnode did not resume from a non-genesis finalized committee anchor"
+    );
+    Ok(())
+}
+
 fn observe_snapshot_launch(
     world: &mut crate::world::World,
     launch: crate::world::localnet::NodeLaunchObservation,
@@ -2259,6 +2303,7 @@ fn observe_snapshot_launch(
         std::thread::sleep(std::time::Duration::from_millis(100));
     };
     let (marshal_processed, anchor, ce_marker_height, last_execution_height) = fields;
+    assert_local_committee_anchor(&text, anchor.number)?;
     let canonical = canonical_snapshot_block(world, anchor.number)?;
     let metadata = std::fs::metadata(&launch.log_path)?;
     let log = SnapshotLogSlice {
@@ -2356,7 +2401,7 @@ fn place_and_start_snapshot_recipient_result(world: &mut crate::world::World) ->
         .collect::<std::io::Result<std::collections::BTreeSet<_>>>()?;
     let tee_root = data.join("tee-node-host-v1");
     let tee_before = fingerprint_snapshot_tree(&tee_root)?;
-    // The source paths will be absent during startup; this is filesystem-path
+    // The source paths will be absent during startup. This is filesystem-path
     // independence, not OS isolation between processes using the same test UID.
     let price_publication = crate::features::price_oracle::stop_before_clock_restart(world);
     let clients = world.ocomp.stop_node_facing_roles_for_snapshot(3)?;
@@ -2735,7 +2780,7 @@ mod worker_collector_tests {
             body,
         ]
         .concat();
-        // The exact body is 15 bytes; changing a byte must not change framing.
+        // The exact body is 15 bytes. Changing a byte must not change framing.
         assert_eq!(snapshot_http_body(&raw).unwrap(), body);
         assert!(snapshot_http_body(b"HTTP/1.0 503 unavailable\r\n\r\nno").is_err());
         assert!(snapshot_http_body(b"HTTP/1.0 200 OK\r\nContent-Length: 4\r\n\r\na").is_err());
@@ -2882,7 +2927,7 @@ fn snapshot_worker_before(
 }
 
 /// Call after the existing root-owned public/local completion wait, before stop.
-/// Select a new inbox artifact by its raw job identity; the later independent
+/// Select a new inbox artifact by its raw job identity. The later independent
 /// admission/plan/CAS check authenticates it. The inbox is never the spec source.
 fn snapshot_worker_after(
     topology: &mut crate::world::ocomp::OcompTopology,
@@ -3819,7 +3864,7 @@ fn snapshot_forward_ce_mismatch(error: &str, before: u64, after: u64) -> bool {
     parsed.is_some()
 }
 
-// None requests a fresh complete observation; it never means an absent owner.
+// None requests a fresh complete observation. It never means an absent owner.
 fn snapshot_owner_decision<T>(sample: SnapshotOwnerSample<T>) -> Result<Option<T>, String> {
     match sample.observation {
         Err(error) => {
@@ -4162,7 +4207,7 @@ fn snapshot_public_effects(
         nod_count: generation.nod_count,
     };
     let mut proofs = Vec::new();
-    // One observer budget across all owners and both nodes; retries never extend it.
+    // One observer budget covers all owners and both nodes. Retries never extend it.
     let owner_deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
     for (ordinal, action) in actions.iter().enumerate() {
         let proof = NodMembershipProofV1 {
@@ -4457,7 +4502,7 @@ fn snapshot_rejects_damaged_artifact(
     std::fs::remove_file(changed)?;
 
     // Retain only the two complete metadata members of the actual archive.
-    // No payload bytes have arrived; valid metadata must not imply file success.
+    // No payload bytes have arrived. Valid metadata must not imply file success.
     let signature_len = std::fs::metadata(signature)?.len();
     let prefix_len =
         1024 + (original.len() as u64).div_ceil(512) * 512 + signature_len.div_ceil(512) * 512;

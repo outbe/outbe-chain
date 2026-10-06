@@ -24,14 +24,11 @@ fn action(ordinal: u32) -> NodActionV1 {
         owner: address!("1000000000000000000000000000000000000001"),
         wwd: WWD,
         league_id: 7,
-        floor_price_minor: U256::from(1_000 + ordinal),
         gratis_load_minor: U256::from(100 + ordinal),
         entry_price_minor: U256::from(20 + ordinal),
         settlement_cost_minor: U256::from(120 + ordinal),
         issuance_currency: 840,
         reference_currency: 978,
-        issued_at: 1_785_024_000,
-        bucket_key: B256::with_last_byte(ordinal as u8 + 1),
     }
 }
 

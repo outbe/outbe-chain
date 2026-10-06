@@ -10,15 +10,15 @@ import {GasLimitAttribute} from "../libs/GasLimitAttribute.sol";
 /**
  * @dev ERC-7786 gateway adapter for same-chain delivery.
  *
- * When the destination chain is the local chain no external transport is needed: {sendMessage} hands the wrapped
- * package straight back to the hub's {IERC7786Recipient-receiveMessage} in the same transaction, for zero fee.
- * Delivery is bounded by the executionGasLimit attribute and isolated with try/catch, mirroring a real transport:
- * a revert on the receiving side parks the delivery for a permissionless {retryDelivery} instead of rolling back
- * the send.
+ * When the destination chain is the local chain, no external transport is needed. {sendMessage}
+ * hands the wrapped package straight back to the hub's {IERC7786Recipient-receiveMessage} in the
+ * same transaction, for zero fee. The executionGasLimit attribute bounds the delivery, and a
+ * try/catch isolates it, mirroring a real transport. A revert on the receiving side parks the
+ * delivery for a permissionless {retryDelivery} instead of rolling back the send.
  *
- * Wiring: the hub registers itself as the remote bridge for the local chain and sets this adapter as the local
- * chain's gateway. Rotating the local gateway strands parked deliveries (the hub stops trusting this adapter), so
- * parked entries must be drained first.
+ * Wiring: the hub registers itself as the remote bridge for the local chain and sets this adapter
+ * as the local chain's gateway. Rotating the local gateway strands parked deliveries (the hub stops
+ * trusting this adapter), so parked entries must be drained first.
  */
 contract LoopbackGatewayAdapter is Ownable, IERC7786GatewaySource, IGatewayQuote {
     using InteroperableAddress for bytes;
@@ -40,7 +40,8 @@ contract LoopbackGatewayAdapter is Ownable, IERC7786GatewaySource, IGatewayQuote
     mapping(uint256 idx => ParkedDelivery delivery) public parked;
     uint256 public nextParkedIdx;
 
-    /// @dev Distinguishes receive ids of otherwise identical messages (the hub deduplicates on its own nonce).
+    /// @dev Distinguishes receive ids of otherwise identical messages (the hub deduplicates on its
+    ///      own nonce).
     uint256 private _nonce;
 
     event DefaultGasLimitUpdated(uint128 gasLimit);
@@ -75,8 +76,9 @@ contract LoopbackGatewayAdapter is Ownable, IERC7786GatewaySource, IGatewayQuote
     }
 
     /// @inheritdoc IERC7786GatewaySource
-    /// @dev Delivers immediately with the attribute-resolved gas; on a delivery revert the message is parked and the
-    /// send still succeeds (failure isolation, like an asynchronous transport).
+    /// @dev Delivers immediately with the attribute-resolved gas. On a delivery revert, the adapter
+    /// parks the message, and the send still succeeds (failure isolation, like an asynchronous
+    /// transport).
     function sendMessage(bytes calldata recipient, bytes calldata payload, bytes[] calldata attributes)
         public
         payable
@@ -95,12 +97,13 @@ contract LoopbackGatewayAdapter is Ownable, IERC7786GatewaySource, IGatewayQuote
 
         uint256 gasBefore = gasleft();
         try IERC7786Recipient(target).receiveMessage{gas: gasLimit}(receiveId, sender, payload) returns (bytes4 magic) {
-            // The target is the hub, which returns the magic value or reverts; never park a non-reverting call.
+            // The target is the hub, which returns the magic value or reverts. Never park a
+            // non-reverting call.
             require(magic == IERC7786Recipient.receiveMessage.selector, RecipientExecutionFailed());
         } catch (bytes memory reason) {
-            // Park only a delivery that provably received the full gas limit - EIP-150 headroom plus the call's
-            // argument encoding, which scales with the payload. An under-gassed send reverts outright so a delivery
-            // can never be falsely parked.
+            // Park only a delivery that provably received the full gas limit. The check covers
+            // EIP-150 headroom plus the call's argument encoding, which scales with the payload.
+            // An under-gassed send reverts outright, so a delivery can never be falsely parked.
             require(
                 gasBefore >= uint256(gasLimit) + uint256(gasLimit) / 63 + 5_000 + payload.length / 4,
                 InsufficientForwardGas(gasLimit)
@@ -128,8 +131,8 @@ contract LoopbackGatewayAdapter is Ownable, IERC7786GatewaySource, IGatewayQuote
 
     // ================================================== Retry ======================================================
 
-    /// @dev Re-attempts a parked delivery with the transaction's full gas. Permissionless; a revert rolls the whole
-    /// call back, leaving the delivery parked and retryable.
+    /// @dev Re-attempts a parked delivery with the transaction's full gas. Permissionless. A revert
+    /// rolls the whole call back, and the delivery stays parked and retryable.
     function retryDelivery(uint256 idx) public virtual {
         ParkedDelivery storage delivery = parked[idx];
         require(delivery.target != address(0), NoParkedDelivery(idx));

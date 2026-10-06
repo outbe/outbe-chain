@@ -183,7 +183,7 @@ impl Rpc {
 
     /// Submit an adversarial or replayed canonical inner vote through a normal
     /// public validator transaction. The caller supplies only bytes previously
-    /// observed from the public chain (possibly deliberately mutated); it
+    /// observed from the public chain (possibly deliberately mutated). It
     /// cannot insert protocol state directly.
     #[cfg(feature = "ocomp-integration")]
     pub fn submit_ocomp_result_vote_bytes(
@@ -208,7 +208,7 @@ impl Rpc {
 
 /// One public `submitLysisResult(bytes)` transaction observed in a canonical
 /// finalized block. The harness derives this only from public RPC block and
-/// receipt data; Supervisor journals and chain storage are not test inputs.
+/// receipt data. Supervisor journals and chain storage are not test inputs.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct OcompPublicResultVoteTransactionV1 {
     pub transaction_hash: B256,

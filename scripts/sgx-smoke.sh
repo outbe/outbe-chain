@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Hardware SGX smoke for outbe-tee-enclave - the ">=1 hw SGX smoke" acceptance
-# check, runnable on any gramine-sgx box. It builds + signs the enclave, runs it
+# Hardware SGX smoke for outbe-tee-enclave. This is the ">=1 hw SGX smoke" acceptance
+# check, and it runs on any gramine-sgx box. It builds + signs the enclave, runs it
 # under gramine-sgx, and asserts:
 #   - the enclave loads under gramine-sgx (real SGX, not gramine-direct),
 #   - /dev/attestation/keys exposes the EGETKEY MRSIGNER/MRENCLAVE sealing keys,
 #   - sealing keys derive on hardware (WS-1 seal/unseal uses these).
-# It additionally probes whether a real DCAP quote can be generated; quote
-# generation needs a provisioned PCK (PCCS / Intel PCS), which a fresh box lacks -
-# the smoke reports that as a platform-provisioning note, not a failure.
+# It also probes whether it can generate a real DCAP quote. Quote generation
+# needs a provisioned PCK (PCCS / Intel PCS), which a fresh box does not have.
+# The smoke reports that as a platform-provisioning note, not a failure.
 #
 # Requires: gramine (gramine-manifest/-sgx/-sgx-sign), a built enclave binary,
 # and access to /dev/sgx_enclave (sgx group, or run via sudo). Prereqs:

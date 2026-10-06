@@ -1,13 +1,15 @@
 //! L2Registry operator key rotation through real EVM frames.
 //!
 //! The registry authorizes the *immediate caller* of the precompile frame, so an
-//! L2 operator may be a contract: an EOA sends the transaction, the operator
-//! contract forwards the calldata with an ordinary `CALL`, and the registry sees
+//! L2 operator may be a contract. An EOA sends the transaction. The operator
+//! contract forwards the calldata with an ordinary `CALL`. The registry sees
 //! the operator as `msg.sender`. These tests drive that shape through
-//! `OutbeEvmFactory`, plus the shapes that must be refused - an unregistered
-//! forwarder carrying a registered owner as `tx.origin`, a direct unrelated
-//! caller, a write-protected `STATICCALL`, and a calling frame that reverts
-//! after the registry frame already succeeded.
+//! `OutbeEvmFactory`. They also drive the shapes that must be refused:
+//!
+//! - an unregistered forwarder carrying a registered owner as `tx.origin`
+//! - a direct unrelated caller
+//! - a write-protected `STATICCALL`
+//! - a calling frame that reverts after the registry frame already succeeded.
 //!
 //! The forwarding bytecode here is test-only helper code, not a production
 //! operator contract.
@@ -128,7 +130,7 @@ fn forward_code(mode: Forward) -> Bytes {
 
     match mode {
         Forward::Call | Forward::StaticCall => {
-            // JUMPI to the return stub when the inner frame succeeded; the
+            // JUMPI to the return stub when the inner frame succeeded. The
             // fallthrough reverts with the callee's returndata.
             let success = u8::try_from(code.len() + 7).expect("jump target fits PUSH1");
             code.extend_from_slice(&[0x60, success, 0x57]); // PUSH1 success, JUMPI
@@ -269,9 +271,9 @@ fn rotate_calldata(public_key: &[u8]) -> Vec<u8> {
     .abi_encode()
 }
 
-/// An L2 operator may be a contract. The outer EOA never touches the registry:
-/// it calls the operator contract, which forwards the calldata with an ordinary
-/// `CALL`, and the registry authorizes that contract as its caller.
+/// An L2 operator may be a contract. The outer EOA never touches the registry.
+/// It calls the operator contract, which forwards the calldata with an ordinary
+/// `CALL`. The registry authorizes that contract as its caller.
 #[test]
 fn operator_contract_rotates_key_through_nested_call() {
     let old = bls_key(1);
@@ -300,9 +302,9 @@ fn operator_contract_rotates_key_through_nested_call() {
     );
 }
 
-/// Authority follows the immediate caller, not `tx.origin`: the registered owner
-/// rotates its own key by calling the registry directly, while a transaction the
-/// same owner sends through an unregistered forwarding contract cannot.
+/// Authority follows the immediate caller, not `tx.origin`. The registered owner
+/// rotates its own key by calling the registry directly. A transaction that the
+/// same owner sends through an unregistered forwarding contract cannot rotate the key.
 #[test]
 fn forwarding_contract_cannot_reuse_the_registered_origin_authority() {
     let old = bls_key(3);
@@ -383,8 +385,8 @@ fn static_call_cannot_rotate_key() {
 }
 
 /// Rotation writes three key words and an event, so it has to roll back with the
-/// frame that called it: the registry frame succeeds, the contract then reverts,
-/// and the previously stored key is what consumers still read.
+/// frame that called it. Here the registry frame succeeds and the contract then
+/// reverts. Consumers still read the previously stored key.
 #[test]
 fn key_rotation_rolls_back_with_the_calling_frame() {
     let old = bls_key(10);

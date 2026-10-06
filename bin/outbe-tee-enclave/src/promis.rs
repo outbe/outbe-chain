@@ -1,7 +1,7 @@
 //! Enclave-side Promis confidential balance engine (secret-bearing).
 //!
 //! The Promis analogue of [`crate::gratis`], restricted to Mint/Burn over an
-//! encrypted per-account balance - Promis has no pledge/credis machinery. All key
+//! encrypted per-account balance. Promis has no pledge/credis machinery. All key
 //! derivation, amount AEAD, and modify-auth verification is the shared
 //! [`crate::confidential`] core under the [`crate::confidential::PROMIS`] domain,
 //! so Promis keys are cryptographically independent from Gratis's. Every function
@@ -27,7 +27,7 @@ pub fn derive_view_key(state_key: &[u8; 32], account: Address) -> Result<[u8; 32
     PROMIS.derive_view_key(state_key, account)
 }
 
-/// Per-account modify key: authorizes writes (via HMAC); never decrypts state.
+/// Per-account modify key: authorizes writes (via HMAC). It never decrypts state.
 /// See [`crate::confidential::Domain::derive_modify_key`].
 pub fn derive_modify_key(state_key: &[u8; 32], account: Address) -> Result<[u8; 32]> {
     PROMIS.derive_modify_key(state_key, account)
@@ -75,7 +75,7 @@ fn reject(reason: impl Into<String>) -> PromisOpResult {
 }
 
 /// Apply a Promis op over encrypted state. Pure and deterministic given
-/// `state_key` + `req`. Sets `inputs_canonical_hash`; the caller (dispatch) signs
+/// `state_key` + `req`. Sets `inputs_canonical_hash`. The caller (dispatch) signs
 /// and fills `attestation_tag`. Business rejections come back as
 /// `PromisOpStatus::Rejected` (-> precompile revert), never a panic.
 pub fn apply_op(state_key: &[u8; 32], req: &PromisOpRequest) -> PromisOpResult {
@@ -245,5 +245,146 @@ mod tests {
             decrypt_balance(&vk, alice(), &burned.new_balance).unwrap(),
             U256::from(700u64)
         );
+    }
+
+    #[test]
+    fn modify_mac_binds_every_input_and_is_separated_from_the_gratis_domain() {
+        use crate::confidential::GRATIS;
+        let sk = state_key();
+        let mk = PROMIS.derive_modify_key(&sk, alice()).unwrap();
+        let base = PROMIS.modify_mac(
+            &mk,
+            alice(),
+            PromisOp::Mint as u8,
+            U256::from(10u64),
+            3,
+            CHAIN,
+        );
+        let variants = [
+            PROMIS.modify_mac(
+                &mk,
+                Address::repeat_byte(0x22),
+                PromisOp::Mint as u8,
+                U256::from(10u64),
+                3,
+                CHAIN,
+            ),
+            PROMIS.modify_mac(
+                &mk,
+                alice(),
+                PromisOp::Burn as u8,
+                U256::from(10u64),
+                3,
+                CHAIN,
+            ),
+            PROMIS.modify_mac(
+                &mk,
+                alice(),
+                PromisOp::Mint as u8,
+                U256::from(11u64),
+                3,
+                CHAIN,
+            ),
+            PROMIS.modify_mac(
+                &mk,
+                alice(),
+                PromisOp::Mint as u8,
+                U256::from(10u64),
+                4,
+                CHAIN,
+            ),
+            PROMIS.modify_mac(
+                &mk,
+                alice(),
+                PromisOp::Mint as u8,
+                U256::from(10u64),
+                3,
+                B256::repeat_byte(0xC3),
+            ),
+            // Same key bytes and inputs under the Gratis tag must not authorize a Promis write.
+            GRATIS.modify_mac(
+                &mk,
+                alice(),
+                PromisOp::Mint as u8,
+                U256::from(10u64),
+                3,
+                CHAIN,
+            ),
+        ];
+        for (i, other) in variants.iter().enumerate() {
+            assert_ne!(base, *other, "variant {i} must change the authorization");
+            assert!(!PROMIS.verify_modify_auth(
+                &mk,
+                alice(),
+                PromisOp::Mint as u8,
+                U256::from(10u64),
+                3,
+                CHAIN,
+                other
+            ));
+        }
+        assert!(PROMIS.verify_modify_auth(
+            &mk,
+            alice(),
+            PromisOp::Mint as u8,
+            U256::from(10u64),
+            3,
+            CHAIN,
+            &base
+        ));
+    }
+
+    /// Known-answer modify authorizations for wallets, computed outside this implementation.
+    #[test]
+    fn modify_mac_matches_the_known_answer_vectors() {
+        use crate::confidential::GRATIS;
+        use alloy_primitives::{address, b256};
+        use outbe_tee::protocol::GratisOp;
+
+        let key = [0x5a; 32];
+        let chain_one = B256::from(U256::from(1u64));
+        let vectors = [
+            (
+                &GRATIS,
+                alice(),
+                GratisOp::Mint as u8,
+                U256::from(1_000u64),
+                0,
+                chain_one,
+                b256!("0xec11651be45952198f63a0c982bbe045c3f3a31131c8afe655f76b243dc50aa1"),
+            ),
+            (
+                &GRATIS,
+                alice(),
+                GratisOp::Pledge as u8,
+                U256::from(10_000_000u64),
+                3,
+                chain_one,
+                b256!("0xf7d19e989e00dc99df7168cbca111ac11c7328fa0e12c4b0e7873b3ce4e84046"),
+            ),
+            (
+                &PROMIS,
+                alice(),
+                PromisOp::Mint as u8,
+                U256::from(1_000u64),
+                0,
+                chain_one,
+                b256!("0x3d33ac4e239f595c5d87e9db9bd4e180ff4f080811f22150cfc0b7b7eba2467b"),
+            ),
+            (
+                &PROMIS,
+                address!("0xabcdef0123456789abcdef0123456789abcdef01"),
+                PromisOp::Burn as u8,
+                U256::from(123_456_789_012_345_678_901_234_567_890u128),
+                7,
+                CHAIN,
+                b256!("0x94bbfa7708394cf45466594357d2dc942f65e92ef0aa2509e03dfec5a5861f84"),
+            ),
+        ];
+        for (ledger, account, op, amount, op_nonce, chain_id, expected) in vectors {
+            let mac = ledger.modify_mac(&key, account, op, amount, op_nonce, chain_id);
+            assert_eq!(B256::from(mac), expected);
+            assert!(ledger.verify_modify_auth(&key, account, op, amount, op_nonce, chain_id, &mac));
+        }
     }
 }

@@ -34,8 +34,8 @@ pub enum NodProofBuildError {
 /// Builds one proof from cold-reloaded, content-addressed result chunks.
 ///
 /// Memory is bounded by one result chunk plus the Merkle frontier. This PoC
-/// implementation scans the exact action population once per requested proof;
-/// an indexed proof cache is intentionally outside the PoC scope.
+/// implementation scans the exact action population once per requested proof.
+/// An indexed proof cache is intentionally outside the PoC scope.
 pub fn build_certified_nod_proof<'audit>(
     audit: &'audit LocalLysisPlanAuditV1<'audit>,
     authority: &ActiveNodSetV1,

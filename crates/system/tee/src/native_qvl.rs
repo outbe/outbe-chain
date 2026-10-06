@@ -1,8 +1,8 @@
 //! Exact-pinned Intel native QVL adapter for the V1 consensus verifier.
 //!
 //! This module is compiled into the Outbe Gramine enclave. Its public boundary
-//! accepts only quote/collateral bytes plus an explicit consensus timestamp;
-//! there is deliberately no host-verdict input. Intel QvE/TVL are unnecessary
+//! accepts only quote/collateral bytes plus an explicit consensus timestamp.
+//! It deliberately has no host-verdict input. Intel QvE/TVL are unnecessary
 //! because QVL and its output execute within the same attestation enclave.
 
 use std::ffi::c_int;
@@ -87,7 +87,7 @@ pub struct NativeQvlSupplemental {
     pub smt_enabled: i32,
     pub advisory_ids: Vec<String>,
     pub qe_status: NativeQvlStatus,
-    /// Intel `qe_iden_tcb_eval_ref_num`; pinned QVL 1.26 may report zero.
+    /// Intel `qe_iden_tcb_eval_ref_num`. Pinned QVL 1.26 may report zero.
     pub qe_tcb_evaluation_data_number: u32,
 }
 

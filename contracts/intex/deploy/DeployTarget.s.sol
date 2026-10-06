@@ -14,14 +14,15 @@ import {VwapRegistry} from "@contracts/target/VwapRegistry.sol";
 
 /// @title DeployTarget
 /// @author Outbe
-/// @notice Deploy the auction target stack on one chain: the NFT collection + bridge, EscrowAdapter,
-///         IntexAuction and TargetRouter. Uniform for every target - including the origin chain as a
-///         loopback target (origin==target): the shared NFT/bridge fall out of idempotent CREATE3
-///         deploy, and the bridge meshes only with OTHER targets, so it never self-peers.
+/// @notice Deploy the auction target stack on one chain: the NFT collection + bridge,
+///         EscrowAdapter, IntexAuction and TargetRouter. The deploy is uniform for every target,
+///         including the origin chain as a loopback target (origin==target). There, the shared
+///         NFT/bridge result from the idempotent CREATE3 deploy. The bridge meshes only with OTHER
+///         targets, so it never self-peers.
 /// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS, ORIGIN_CHAIN_ID (where OriginRouter lives),
-///      TARGET_CHAIN_IDS (comma-separated, for the NFT-bridge mesh), optional WCOEN_BRIDGE (proceeds
-///      route). The deployer is admin + delegate; app wiring (escrow/compact, roles) is a
-///      separate step. Peers are CREATE3-deterministic across chains.
+///      TARGET_CHAIN_IDS (comma-separated, for the NFT-bridge mesh), optional WCOEN_BRIDGE
+///      (proceeds route). The deployer is admin + delegate. App wiring (escrow/compact, roles) is
+///      a separate step. Peers are CREATE3-deterministic across chains.
 contract DeployTarget is BaseScript {
     /// @dev The IntexFactory precompile: the origin chain's own daily VWAP source.
     address internal constant INTEX_FACTORY = address(0x1015);
@@ -40,8 +41,9 @@ contract DeployTarget is BaseScript {
 
         Create3Factory factory = create3Factory();
 
-        // Shared NFT collection + bridge: on a remote target these deploy here; on the origin loopback
-        // target they already exist on this chain, so idempotent deployProxy returns the existing ones.
+        // Shared NFT collection + bridge: on a remote target, these deploy here. On the origin
+        // loopback target, they already exist on this chain, so idempotent deployProxy returns the
+        // existing ones.
         address nft = deployProxy(
             factory,
             deployer,
@@ -112,7 +114,8 @@ contract DeployTarget is BaseScript {
         }
 
         // Proceeds route (creator-reward): the escrow hands finalized proceeds to the router, which
-        // bridges them to the OriginRouter for creator payout. Skipped when WCOEN_BRIDGE is unset.
+        // bridges them to the OriginRouter for creator payout. The script skips this step when
+        // WCOEN_BRIDGE is unset.
         address wcoenBridge = vm.envOr("WCOEN_BRIDGE", address(0));
         if (wcoenBridge != address(0)) {
             EscrowAdapter(payable(escrow)).setProceedsRecipient(router);

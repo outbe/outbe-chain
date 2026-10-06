@@ -49,7 +49,8 @@ contract EndpointV2Mock {
     address public oapp;
     address public delegate;
 
-    /// @dev Records the `options` bytes of the most recent send, so tests can inspect per-message gas.
+    /// @dev Records the `options` bytes of the most recent send, so tests can inspect per-message
+    /// gas.
     bytes public lastOptions;
 
     error NotOApp();

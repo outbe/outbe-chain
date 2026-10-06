@@ -427,7 +427,7 @@ async fn volume_window_retries_restart_and_finalized_history_changes() {
     server.fixture.fail_logs.store(true, Ordering::Relaxed);
     assert!(worker.refresh().await.is_err());
     server.fixture.fail_logs.store(false, Ordering::Relaxed);
-    // Block 3 is now outside (head_time - window, head_time]; block 5 is new.
+    // Block 3 is now outside (head_time - window, head_time]. Block 5 is new.
     assert_eq!(worker.refresh().await.unwrap().1.volume, fp("600"));
     server.fixture.reorg.store(true, Ordering::Relaxed);
     assert!(worker.refresh().await.is_err());
@@ -534,7 +534,7 @@ fn configuration_rejects_ambiguous_or_incompatible_markets() {
 #[test]
 fn manager_pool_ids_match_independent_solidity_abi_vectors() {
     // Generated with Foundry cast abi-encode + cast keccak, using upstream
-    // PoolKey field order. V4 encodes (address,address,uint24,int24,address);
+    // PoolKey field order. V4 encodes (address,address,uint24,int24,address).
     // Infinity encodes (address,address,address,address,uint24,bytes32).
     let expected = [
         "0x8787d5970950be1209ff037d65ee13414c3cc2482b2b4d04d6a6e4363427ed39",

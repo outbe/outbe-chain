@@ -2,21 +2,21 @@
 //!
 //! The Fidelity cohort ledger (the Gratis movement history) lives on-chain as
 //! one AEAD blob per account under the [`crate::confidential::FIDELITY`]
-//! domain, so its keys are cryptographically independent from Gratis's and
+//! domain. Thus its keys are cryptographically independent from Gratis's and
 //! Promis's. This module is the only place cohorts exist in plaintext:
 //!
-//! - cohort mutations ride inside the co-located Gratis op
-//!   ([`apply_cohort_section`], from the `ApplyGratisOp` dispatch);
-//! - the once-per-WWD metadosis league snapshot batch-decrypts the day's
-//!   owners ([`snapshot_leagues`]);
-//! - owner-authorized `eth_call` queries evaluate RCFI in place
-//!   ([`query_index`], gated by a signed, expiring authorization - never a raw
-//!   view key).
+//! - Cohort mutations ride inside the co-located Gratis op
+//!   ([`apply_cohort_section`], from the `ApplyGratisOp` dispatch).
+//! - The once-per-WWD metadosis league snapshot batch-decrypts the day's
+//!   owners ([`snapshot_leagues`]).
+//! - Owner-authorized `eth_call` queries evaluate RCFI in place
+//!   ([`query_index`], gated by a signed, expiring authorization, never by a
+//!   raw view key).
 //!
-//! The RCFI arithmetic is `outbe_fidelity_math` - the exact accumulator the
-//! chain historically ran over plaintext cohorts - so the two evaluation paths
-//! cannot drift. Every function is a pure transform of its inputs + the
-//! resident state key (consensus determinism); business failures return
+//! The RCFI arithmetic is `outbe_fidelity_math`. This is the exact accumulator
+//! that the chain historically ran over plaintext cohorts, so the two evaluation
+//! paths cannot drift. Every function is a pure transform of its inputs + the
+//! resident state key (consensus determinism). Business failures return
 //! structured errors, never panics.
 
 use alloy_primitives::{Address, B256, U256};
@@ -58,7 +58,7 @@ fn err(msg: impl Into<String>) -> TeeError {
 
 /// Plaintext cohort ledger of one account - the decrypted blob interior.
 ///
-/// `active` is a LIFO stack of acquisitions `(size, acquired_at)`; `sold` an
+/// `active` is a LIFO stack of acquisitions `(size, acquired_at)`. `sold` is an
 /// append-only log `(size, acquired_at, sold_at)`. Semantics are a 1:1 port of
 /// the historical on-chain `FidelityContract::cohort_in/cohort_out`.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -167,9 +167,9 @@ impl CohortState {
         initialized
     }
 
-    /// SALE: consume active cohorts LIFO (youngest first). The boundary cohort
-    /// is split proportionally - the sold slice keeps the ORIGINAL
-    /// `acquired_at`, the remainder stays active. Clamps when the stack runs
+    /// SALE: consume active cohorts LIFO (youngest first). This function splits
+    /// the boundary cohort proportionally. The sold slice keeps the ORIGINAL
+    /// `acquired_at`, and the remainder stays active. Clamps when the stack runs
     /// out (mirrors the on-chain defensive clamp).
     fn cohort_out(&mut self, amount: U256, timestamp: u64) {
         let mut remaining = amount;
@@ -228,8 +228,13 @@ fn read_state(view_key: &[u8; 32], account: Address, blob: &[u8]) -> Result<(u64
     Ok((version, CohortState::decode(&interior)?))
 }
 
-/// Apply the Fidelity section of a Gratis op: decrypt the account's cohort
-/// blob, mutate (or just probe), re-encrypt, and report the plaintext receipt.
+/// Apply the Fidelity section of a Gratis op:
+///
+/// 1. Decrypt the account's cohort blob.
+/// 2. Mutate it (or only probe it).
+/// 3. Re-encrypt it.
+/// 4. Report the plaintext receipt.
+///
 /// `amount` is the Gratis op's own amount. Errors reject the whole combined op.
 pub fn apply_cohort_section(
     state_key: &[u8; 32],
@@ -250,7 +255,7 @@ pub fn apply_cohort_section(
     }
 
     // If this very op qualified the account first on the whole chain, the host
-    // will set the global scalar to the section timestamp - evaluate the league
+    // will set the global scalar to the section timestamp. Evaluate the league
     // against that same anchor.
     let effective_first = if section.first_qualified_start != 0 {
         section.first_qualified_start
@@ -260,7 +265,7 @@ pub fn apply_cohort_section(
     let (_, _, league) = state.evaluate(section.timestamp, effective_first)?;
 
     let new_blob = match section.op {
-        // Probe never rewrites the ledger - empty means "nothing to write".
+        // Probe never rewrites the ledger. An empty blob means "nothing to write".
         FidelityCohortOp::Probe => Vec::new(),
         FidelityCohortOp::In | FidelityCohortOp::Out => FIDELITY.write_blob(
             &view_key,
@@ -278,7 +283,7 @@ pub fn apply_cohort_section(
 }
 
 /// Apply a STANDALONE cohort op (its own round-trip). Thin wrapper over
-/// [`apply_cohort_section`] that sets the canonical inputs hash; the caller
+/// [`apply_cohort_section`] that sets the canonical inputs hash. The caller
 /// (dispatch) signs `attestation_tag`. Errors surface as an enclave error ->
 /// host `Fatal`.
 pub fn apply_cohort_op(
@@ -294,7 +299,7 @@ pub fn apply_cohort_op(
 }
 
 /// Batch-decrypt the day's owners and return one plaintext league per owner, in
-/// request order - metadosis's once-per-WWD snapshot. A single undecryptable
+/// request order. This is metadosis's once-per-WWD snapshot. A single undecryptable
 /// blob fails the whole batch (state corruption must be loud and deterministic,
 /// not silently skipped).
 pub fn snapshot_leagues(
@@ -315,25 +320,25 @@ pub fn snapshot_leagues(
 }
 
 /// Owner-authorized RCFI/league read. Verifies the signed authorization INSIDE
-/// the enclave (the trust boundary - a compromised host reaches this transport
-/// directly), then decrypts and evaluates. `resident_chain_id` is the enclave's
-/// own boot-bound chain id, passed by the dispatch - NOT taken from the
-/// host-controlled request.
+/// the enclave, then decrypts and evaluates. The enclave is the trust boundary:
+/// a compromised host reaches this transport directly. The dispatch passes
+/// `resident_chain_id`, the enclave's own boot-bound chain id. This function does
+/// NOT take it from the host-controlled request.
 ///
 /// Chain binding: the auth message embeds a chain id, but the state key is
-/// derived from `resident_chain_id`, so a signature made for a different chain
+/// derived from `resident_chain_id`. Thus a signature made for a different chain
 /// (same reused EOA on devnet/testnet) must not authorize a read here. We reject
-/// unless `req.chain_id == resident_chain_id` and only then hash the signed
-/// message - otherwise the host could set `req.chain_id` to whatever the
+/// unless `req.chain_id == resident_chain_id`, and only then hash the signed
+/// message. Otherwise the host could set `req.chain_id` to whatever the
 /// captured signature covered and defeat the scoping.
 ///
-/// Freshness caveat: `expiry` is checked against the host-supplied
+/// Freshness caveat: this function checks `expiry` against the host-supplied
 /// `block_timestamp`. The enclave has no trusted clock on this non-consensus
-/// `eth_call` path, so expiry only bounds a leaked signature for requests
-/// forwarded by an HONEST host; a fully compromised host can pass
+/// `eth_call` path. Thus expiry only bounds a leaked signature for requests
+/// that an HONEST host forwards. A fully compromised host can pass
 /// `block_timestamp = 0` and reuse a stale (but genuine) signature indefinitely.
-/// It can still never forge a signature or decrypt raw cohorts - only re-read
-/// the derived index/league the owner already exposed by signing.
+/// Such a host can still never forge a signature or decrypt raw cohorts. It can
+/// only re-read the derived index/league that the owner already exposed by signing.
 pub fn query_index(
     state_key: &[u8; 32],
     resident_chain_id: B256,
@@ -401,11 +406,15 @@ mod tests {
     }
 
     /// Known-answer vectors pinning the FIDELITY domain byte layout: the state
-    /// key derivation, one cohort blob, and the query-auth preimage hash. Any
-    /// change to an HKDF label, the interior/padding layout, or the auth
-    /// message would make persisted on-chain cohort ciphertext undecryptable or
-    /// split query auth between host and enclave. Regenerate only on an
-    /// intentional, reviewed format change.
+    /// key derivation, one cohort blob, and the query-auth preimage hash. Each of
+    /// these changes would make persisted on-chain cohort ciphertext undecryptable
+    /// or split query auth between host and enclave:
+    ///
+    /// - any change to an HKDF label
+    /// - any change to the interior/padding layout
+    /// - any change to the auth message
+    ///
+    /// Regenerate only on an intentional, reviewed format change.
     #[test]
     fn fidelity_known_answer_vectors() {
         let sk = state_key();
@@ -492,7 +501,7 @@ mod tests {
         state.cohort_in(U256::from(1_000u64), 100);
         state.cohort_in(U256::from(500u64), 200);
         // Consume 700: full-consume the youngest (500 @200), split 200 off the
-        // older (1000 @100) - sold slice keeps acquired_at 100.
+        // older (1000 @100). The sold slice keeps acquired_at 100.
         state.cohort_out(U256::from(700u64), 300);
         assert_eq!(state.active, vec![(U256::from(800u64), 100)]);
         assert_eq!(
@@ -597,7 +606,7 @@ mod tests {
                     owner: alice(),
                     cohort_blob: minted.new_blob,
                 },
-                // Bob has no cohort state - league floor, not an error.
+                // Bob has no cohort state. He gets the league floor, not an error.
                 outbe_tee::protocol::FidelitySnapshotEntry {
                     owner: bob,
                     cohort_blob: Vec::new(),
@@ -626,10 +635,10 @@ mod tests {
     }
 
     /// Golden replay of the PDF `reference/decay.py` scenario through the enclave
-    /// `CohortState` port - the on-chain math moved here, so this is where the
-    /// float-model agreement is pinned (+/-1 decayed day, +/-1e-3 efficiency). The
-    /// fixture lives in the fidelity crate (regenerated from `decay.py`); we read
-    /// it across the workspace rather than duplicate the generated artifact.
+    /// `CohortState` port. The on-chain math moved here, so this test pins the
+    /// float-model agreement (+/-1 decayed day, +/-1e-3 efficiency). The fixture
+    /// lives in the fidelity crate (regenerated from `decay.py`). We read it
+    /// across the workspace rather than duplicate the generated artifact.
     #[test]
     fn golden_matches_decay_py_reference() {
         let raw = include_str!("../../../crates/core/fidelity/tests/fixtures/rcfi_golden.json");
@@ -747,7 +756,7 @@ mod tests {
         let sig = query_sig(&signer, CHAIN, account, 2_000_000);
         let req = query_req(CHAIN, account, minted.new_blob, 2_000_000, 1_500_000, sig);
         let out = query_index(&sk, CHAIN, &req).unwrap();
-        // Sole holder, no sales -> top league; rcfi > 0.
+        // Sole holder, no sales -> top league, and rcfi > 0.
         assert_eq!(out.league, MAX_LEAGUE);
         assert!(out.rcfi > U256::ZERO);
     }
@@ -755,8 +764,8 @@ mod tests {
     #[test]
     fn query_rejects_foreign_chain_signature() {
         // The core regression: a signature made for a DIFFERENT chain (same
-        // reused EOA) must not authorize a read on this enclave's chain, even
-        // though the host sets req.chain_id to the foreign value.
+        // reused EOA) must not authorize a read on this enclave's chain. This
+        // holds even though the host sets req.chain_id to the foreign value.
         let sk = state_key();
         let (signer, account) = evm_signer(0x44);
         let minted = apply_cohort_section(

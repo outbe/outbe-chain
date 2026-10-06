@@ -19,7 +19,7 @@ where
     output
 }
 
-// Manager and endpoint each have a five-second drain budget; leave time for
+// Manager and endpoint each have a five-second drain budget. Leave time for
 // acknowledgement and task reaping before shutting down their transport.
 pub(crate) const RADICLE_DRAIN_DEADLINE: Duration = Duration::from_secs(12);
 
@@ -103,7 +103,7 @@ pub(crate) enum LauncherExitCause {
 ///
 /// Reth owns the process signal handler and may cancel the complete node launcher
 /// future. This guard therefore performs the same cancellation and synchronous
-/// join from `Drop` as the ordinary completion path, preventing Reth's ExEx and
+/// join from `Drop` as the ordinary completion path. This prevents Reth's ExEx and
 /// Engine resources from disappearing while consensus still holds an exact
 /// application acknowledgement.
 pub(crate) struct ConsensusThreadGuard {

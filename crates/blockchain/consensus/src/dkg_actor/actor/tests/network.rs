@@ -188,24 +188,15 @@ pub(super) fn run_direct_initial_round(
         .map(|key| Player::new(info.clone(), key.clone()).unwrap())
         .collect();
 
-    for (dealer_idx, (pub_msg, priv_msgs)) in pub_msgs.iter().zip(all_priv_msgs.iter()).enumerate()
-    {
-        let dealer_pk = keys[dealer_idx].public_key();
-        for (player_pk, priv_msg) in priv_msgs {
-            let player_idx = keys
-                .iter()
-                .position(|key| key.public_key() == *player_pk)
-                .unwrap();
-            if let Some(ack) = players[player_idx]
-                .dealer_message::<N3f1>(dealer_pk.clone(), pub_msg.clone(), priv_msg.clone())
-                .expect("fixture dealing must be valid")
-            {
-                dealers[dealer_idx]
-                    .receive_player_ack(player_pk.clone(), ack)
-                    .unwrap();
-            }
-        }
-    }
+    crate::test_harness::acknowledge_fixture_dealings(
+        keys,
+        crate::test_harness::FixtureDealings {
+            public_messages: &pub_msgs,
+            private_messages: &all_priv_msgs,
+        },
+        &mut dealers,
+        &mut players,
+    );
 
     let mut logs = BTreeMap::new();
     for dealer in dealers {
@@ -269,8 +260,8 @@ fn should_drop_message_once(
 // -----------------------------------------------------------------------
 
 /// Helper: run DKG with `n` total keys but only spawn tasks for the first
-/// `online` nodes. Offline nodes' receivers are dropped so they never
-/// participate. Returns results from online nodes only.
+/// `online` nodes. The helper drops the receivers of offline nodes, so they
+/// never participate. Returns results from online nodes only.
 pub(super) async fn run_partial_dkg(
     clock: &commonware_runtime::deterministic::Context,
     n: usize,
@@ -298,7 +289,7 @@ pub(super) async fn run_partial_dkg(
     let (senders, receivers) = build_mock_network(&keys);
 
     // Only spawn DKG tasks for the first `online` nodes.
-    // The remaining nodes' receivers are dropped (simulating offline).
+    // This drops the receivers of the remaining nodes (simulates offline nodes).
     let mut handles = Vec::new();
     for (key, sender, receiver) in keys
         .iter()
@@ -310,12 +301,19 @@ pub(super) async fn run_partial_dkg(
     {
         let p = participants.clone();
         handles.push(clock.child("dkg_ceremony").spawn(move |clock| async move {
-            run_initial_dkg(&clock, key, p, None, None, 0, None, None, sender, receiver).await
+            run_initial_dkg(
+                &clock,
+                InitialDkgFixture::bootstrap(key, p),
+                None,
+                None,
+                (sender, receiver),
+            )
+            .await
         }));
     }
     // Drop remaining receivers explicitly (offline nodes).
-    // (They're already dropped by the `take(online)` iterators above,
-    // but this documents intent.)
+    // (The `take(online)` iterators above already drop them. This comment
+    // documents intent.)
 
     let mut results = Vec::new();
     for handle in handles {

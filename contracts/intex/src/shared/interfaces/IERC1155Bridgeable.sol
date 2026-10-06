@@ -9,9 +9,9 @@ pragma solidity 0.8.30;
  */
 interface IERC1155Bridgeable {
     /**
-     * @notice Burns tokens from an address. Called by adapter on source chain.
-     * @dev `to` is the address the paired adapter will mint to; it travels so the token can hold
-     *      lifecycle rules that constrain who may end up holding the balance.
+     * @notice Burns tokens from an address. The adapter calls this on the source chain.
+     * @dev `to` is the address the paired adapter will mint to. It travels so the token can
+     *      hold lifecycle rules that constrain who may end up holding the balance.
      * @param from Address to burn from
      * @param to Address the destination chain will mint to
      * @param tokenId Token ID to burn
@@ -20,7 +20,7 @@ interface IERC1155Bridgeable {
     function crosschainBurn(address from, address to, uint256 tokenId, uint256 amount) external;
 
     /**
-     * @notice Mints tokens to an address. Called by adapter on destination chain.
+     * @notice Mints tokens to an address. The adapter calls this on the destination chain.
      * @param to Address to mint to
      * @param tokenId Token ID to mint
      * @param amount Amount to mint

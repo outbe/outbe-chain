@@ -1,5 +1,5 @@
 //! Binds EVM command identity to existing domain mutation capabilities.
-//! Economic transitions remain owned by Cycle and Metadosis.
+//! Cycle and Metadosis continue to own economic transitions.
 use alloy_primitives::{Address, U256};
 use outbe_metadosis::config::OcompForkInstallV1;
 use outbe_primitives::{
@@ -14,7 +14,7 @@ use outbe_primitives::{
 };
 
 /// Admission for the public result-vote command. The same decision must drive
-/// dispatch and capabilities; selector-only routing could open an unauthorized
+/// dispatch and capabilities. Selector-only routing could open an unauthorized
 /// mutation frame before the command gets a chance to reject its call mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ResultVoteCall {
@@ -77,9 +77,8 @@ pub(super) fn metadosis_mutation_entitlements(
         chain_id,
         block_number,
         timestamp,
-        cycle_active_utc_day,
         preloaded_certified_state_root,
-        ocomp_fork_install,
+        ..
     } = call;
     use MetadosisMutationPurposeTag as Purpose;
 
@@ -122,62 +121,12 @@ pub(super) fn metadosis_mutation_entitlements(
             )
         }
         // Exact command identities cover genesis, one contiguous daily
-        // allocation when due, and the single hourly Metadosis pass. The cursor
-        // is read from Cycle storage by the provider; it is never accepted from
+        // allocation when due, and the single hourly Metadosis pass. The provider
+        // reads the cursor from Cycle storage. The cursor is never accepted from
         // calldata. Multi-day gaps grant no missed-day economic authority.
-        crate::system_tx::SystemTxInputV2::CycleTick => {
-            let genesis_activation_height =
-                ocomp_fork_install.map_or(1, |install| install.activation_height);
-            let mut entitlements = MetadosisMutationEntitlements::NONE;
-            if block_number == genesis_activation_height {
-                entitlements = entitlements.union(MetadosisMutationEntitlements::exact(
-                    Purpose::CycleLifecycle,
-                    metadosis_init_genesis_binding(chain_id, block_number, timestamp),
-                ));
-            }
-            let Some(active_utc_day) = cycle_active_utc_day else {
-                return entitlements;
-            };
-            let block_utc_day = outbe_primitives::time::timestamp_to_date_key(timestamp);
-            let Ok(day_action) =
-                outbe_cycle::handler::protocol_day_action(active_utc_day, block_utc_day)
-            else {
-                return entitlements;
-            };
-            if let outbe_cycle::handler::ProtocolDayAction::SettlePrevious { day } = day_action {
-                entitlements = entitlements.union(MetadosisMutationEntitlements::exact(
-                    Purpose::CycleLifecycle,
-                    metadosis_cycle_allocation_binding(
-                        chain_id,
-                        block_number,
-                        outbe_primitives::time::date_key_to_utc_timestamp(day),
-                    ),
-                ));
-            }
-            entitlements.union(MetadosisMutationEntitlements::exact(
-                Purpose::CycleLifecycle,
-                metadosis_process_ready_binding(chain_id, block_number, timestamp),
-            ))
-        }
+        crate::system_tx::SystemTxInputV2::CycleTick => cycle_tick_entitlements(&call),
         crate::system_tx::SystemTxInputV2::OcompLifecycleBegin if ocomp_lifecycle_active => {
-            let lifecycle = MetadosisMutationEntitlements::exact(
-                Purpose::OcompLifecycle,
-                metadosis_ocomp_lifecycle_begin_binding(chain_id, block_number, timestamp),
-            );
-            let Some(install) =
-                ocomp_fork_install.filter(|install| install.activation_height == block_number)
-            else {
-                return lifecycle;
-            };
-            let Ok(install_hash) =
-                install.install_hash(&outbe_metadosis::config::poc_schema_limits())
-            else {
-                return lifecycle;
-            };
-            lifecycle.union(MetadosisMutationEntitlements::exact(
-                Purpose::ForkProfile,
-                install_hash,
-            ))
+            ocomp_lifecycle_entitlements(&call)
         }
         crate::system_tx::SystemTxInputV2::OcompTerminalRequest if ocomp_lifecycle_active => {
             MetadosisMutationEntitlements::exact(
@@ -187,6 +136,71 @@ pub(super) fn metadosis_mutation_entitlements(
         }
         _ => MetadosisMutationEntitlements::NONE,
     }
+}
+
+fn cycle_tick_entitlements(call: &MetadosisMutationCall<'_>) -> MetadosisMutationEntitlements {
+    use MetadosisMutationPurposeTag as Purpose;
+    let chain_id = call.chain_id;
+    let block_number = call.block_number;
+    let timestamp = call.timestamp;
+    let cycle_active_utc_day = call.cycle_active_utc_day;
+    let ocomp_fork_install = call.ocomp_fork_install;
+    let genesis_activation_height =
+        ocomp_fork_install.map_or(1, |install| install.activation_height);
+    let mut entitlements = MetadosisMutationEntitlements::NONE;
+    if block_number == genesis_activation_height {
+        entitlements = entitlements.union(MetadosisMutationEntitlements::exact(
+            Purpose::CycleLifecycle,
+            metadosis_init_genesis_binding(chain_id, block_number, timestamp),
+        ));
+    }
+    let Some(active_utc_day) = cycle_active_utc_day else {
+        return entitlements;
+    };
+    let block_utc_day = outbe_primitives::time::timestamp_to_date_key(timestamp);
+    let Ok(day_action) = outbe_cycle::handler::protocol_day_action(active_utc_day, block_utc_day)
+    else {
+        return entitlements;
+    };
+    if let outbe_cycle::handler::ProtocolDayAction::SettlePrevious { day } = day_action {
+        entitlements = entitlements.union(MetadosisMutationEntitlements::exact(
+            Purpose::CycleLifecycle,
+            metadosis_cycle_allocation_binding(
+                chain_id,
+                block_number,
+                outbe_primitives::time::date_key_to_utc_timestamp(day),
+            ),
+        ));
+    }
+    entitlements.union(MetadosisMutationEntitlements::exact(
+        Purpose::CycleLifecycle,
+        metadosis_process_ready_binding(chain_id, block_number, timestamp),
+    ))
+}
+
+fn ocomp_lifecycle_entitlements(call: &MetadosisMutationCall<'_>) -> MetadosisMutationEntitlements {
+    use MetadosisMutationPurposeTag as Purpose;
+    let chain_id = call.chain_id;
+    let block_number = call.block_number;
+    let timestamp = call.timestamp;
+    let ocomp_fork_install = call.ocomp_fork_install;
+    let lifecycle = MetadosisMutationEntitlements::exact(
+        Purpose::OcompLifecycle,
+        metadosis_ocomp_lifecycle_begin_binding(chain_id, block_number, timestamp),
+    );
+    let Some(install) =
+        ocomp_fork_install.filter(|install| install.activation_height == block_number)
+    else {
+        return lifecycle;
+    };
+    let Ok(install_hash) = install.install_hash(&outbe_metadosis::config::poc_schema_limits())
+    else {
+        return lifecycle;
+    };
+    lifecycle.union(MetadosisMutationEntitlements::exact(
+        Purpose::ForkProfile,
+        install_hash,
+    ))
 }
 
 /// The Cycle cursor prepares capabilities for a protocol command, not for any

@@ -20,7 +20,7 @@ pub struct FeederConfig {
     pub deviation_thresholds: Vec<DeviationThreshold>,
     #[serde(default)]
     pub provider_endpoints: Vec<ProviderEndpointConfig>,
-    /// Finalized EVM pool readers; independent of the destination Outbe RPC.
+    /// Finalized EVM pool readers. They are independent of the destination Outbe RPC.
     #[serde(default)]
     pub dex_providers: Vec<crate::provider::dex::DexProviderConfig>,
     /// `AggregatorV3Interface` feed readers (Chainlink, RedStone push); each
@@ -576,7 +576,7 @@ mod tests {
         // Canonical localnet chain id (scripts/prepare_network.py DEFAULT_CHAIN_ID).
         assert_eq!(cfg.chain.chain_id, 54322345);
         assert_eq!(cfg.oracle.vote_period, 8);
-        // COEN/840 is the only pair the chain registers; the decorative
+        // COEN/840 is the only pair the chain registers. The decorative
         // XAU/BTC/ETH/stablecoin entries were dropped because no code read them
         // and they name assets with no on-chain address.
         assert_eq!(cfg.currency_pairs.len(), 1);

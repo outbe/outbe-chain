@@ -125,7 +125,7 @@ fn certificate_wire_has_no_optional_vrf_discriminator() {
 #[test]
 fn empty_signers_decode_rejected() {
     // Build an empty-signers certificate by manually encoding a zero-count
-    // signers bitmap of size 8 followed by zero bytes; the decoder rejects this.
+    // signers bitmap of size 8 followed by zero bytes. The decoder rejects this.
     let zero_signers = Signers::new(8, std::iter::empty::<Participant>()).unwrap();
     let mut cert = sample_certificate(8, &[0, 1]);
     cert.signers = zero_signers;

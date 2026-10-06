@@ -15,16 +15,16 @@ pub(crate) struct PreloadedSystemTxContext {
     pub proposer: Address,
     pub finalized_summary: Option<AccountedParentArtifact>,
     /// True only for a block carrying a validator-set-changing BoundaryOutcome
-    /// whose target set includes `proposer`. This lets the activation block be
-    /// produced by a next-epoch leader before BoundaryOutcome updates parent-state
-    /// consensus membership.
+    /// whose target set includes `proposer`. This lets a next-epoch leader produce
+    /// the activation block before BoundaryOutcome updates parent-state consensus
+    /// membership.
     pub allow_boundary_proposer: bool,
     /// canonical hash of the VRF proof carried in the verified
-    /// parent certificate (`keccak256(VrfProof::encode())`). Derived by
-    /// the executor's Phase 1 preflight from
-    /// `outbe_consensus::proof::VerifiedProof::vrf_proof_hash` and fed
-    /// into the V3 Rewards fingerprint so that two parent certificates
-    /// with different VRF proofs cannot collide. `B256::ZERO` when the
+    /// parent certificate (`keccak256(VrfProof::encode())`). The executor's
+    /// Phase 1 preflight derives it from
+    /// `outbe_consensus::proof::VerifiedProof::vrf_proof_hash` and feeds it
+    /// into the V3 Rewards fingerprint. Thus two parent certificates with
+    /// different VRF proofs cannot collide. The value is `B256::ZERO` when the
     /// preflight was skipped (genesis bootstrap / test-only opt-out).
     pub canonical_vrf_proof_hash: B256,
 }
@@ -37,8 +37,8 @@ thread_local! {
 /// Runs `f` with explicit non-calldata context visible to the system
 /// precompile on the current thread.
 ///
-/// This keeps CertifiedParentAccounting money fields out of signed calldata while
-/// still giving the precompile an explicit deterministic data path for the
+/// This keeps CertifiedParentAccounting money fields out of signed calldata. It
+/// still gives the precompile an explicit deterministic data path for the
 /// parent block's committed execution summary. The executor sets this only
 /// around a single `transact_system_call`, and the guard restores the previous
 /// value on exit.
@@ -103,14 +103,14 @@ pub(super) fn block_runtime_context_from_storage(
     };
 
     Ok(BlockRuntimeContext::new(
-        BlockContext::new_with_genesis_hash(
+        BlockContext::new_with_genesis_hash(outbe_primitives::block::BlockContextInput {
             block_number,
             timestamp,
             chain_id,
             genesis_hash,
             proposer,
             validators,
-        ),
+        }),
         storage,
     ))
 }

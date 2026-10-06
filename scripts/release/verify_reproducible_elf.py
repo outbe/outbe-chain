@@ -24,8 +24,8 @@ EXPECTED_ARTIFACTS = (
     "outbe-ocomp",
 )
 FORBIDDEN_PATHS = (b"/workspace", b"/usr/local/cargo", b"/usr/local/rustup")
-# Deliberately independent of the manifest generator's copy: the second-builder
-# verifier must still reject a marker if generation was bypassed or regressed.
+# This list is deliberately independent of the manifest generator's copy. The
+# second-builder verifier must still reject a marker if generation was bypassed or regressed.
 PRODUCTION_TEE_FORBIDDEN_MARKERS = (
     b"outbe-tee-enclave-mock: MOCK ENCLAVE",
     b"outbe-dcap-capture-enclave",
@@ -191,7 +191,7 @@ def verify_outputs(
     *,
     check_git_identity: bool = False,
 ) -> dict[str, Any]:
-    """Return evidence with every mismatch; never stop after the first one."""
+    """Return evidence with every mismatch. Never stop after the first one."""
 
     first = first.resolve()
     second = second.resolve()

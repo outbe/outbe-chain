@@ -46,7 +46,7 @@ pub fn dispatch(
             totalSupply(c) => view(c, |_| Ok(U256::from(contract.total_positions()?))),
             getPosition(c) => view(c, |c| {
                 let position = contract.get_position(c.positionId)?;
-                Ok(abi_position(&position))
+                abi_position(&position, contract.storage.timestamp()?.to::<u64>())
             }),
             ownerOf(c) => view(c, |c| {
                 let position = contract.get_position(c.positionId)?;
@@ -61,7 +61,8 @@ pub fn dispatch(
             isApprovedForAll(c) => view(c, |_| Ok(false)),
             positionByIndex(c) => view(c, |c| {
                 let index = u64::try_from(c.index).map_err(|_| CredisError::IndexOutOfBounds)?;
-                Ok(abi_position(&contract.position_at(index)?))
+                let position = contract.position_at(index)?;
+                abi_position(&position, contract.storage.timestamp()?.to::<u64>())
             }),
             balanceOf(c) => view(c, |c| {
                 Ok(U256::from(contract.position_count_of(c.smartAccount)?))
@@ -69,7 +70,7 @@ pub fn dispatch(
             positionOfAddressByIndex(c) => view(c, |c| {
                 let index = u32::try_from(c.index).map_err(|_| CredisError::IndexOutOfBounds)?;
                 let position = contract.position_of_address_at(c.smartAccount, index)?;
-                Ok(abi_position(&position))
+                abi_position(&position, contract.storage.timestamp()?.to::<u64>())
             }),
             hasCalledPosition(c) => view(c, |c| contract.has_called_position(c.smartAccount)),
             interestAccruedMinor(c) => view(c, |c| {
@@ -78,14 +79,14 @@ pub fn dispatch(
                 CredisContract::accrued_interest(&position, timestamp)
             }),
             interestPaidMinor(c) => view(c, |c| {
-                Ok(contract.get_position(c.positionId)?.interest_paid)
+                Ok(contract.get_position(c.positionId)?.interest_paid_minor)
             }),
             credisPrincipalAndOutstandingOf(c) => view(c, |c| {
                 let (principal, outstanding) =
                     contract.principal_and_outstanding_of(c.smartAccount)?;
                 Ok(ICredis::credisPrincipalAndOutstandingOfReturn {
-                    _0: principal,
-                    _1: outstanding,
+                    principalMinor: principal,
+                    outstandingPrincipalMinor: outstanding,
                 })
             }),
             supportsInterface(c) => {
@@ -95,27 +96,35 @@ pub fn dispatch(
     })
 }
 
-fn abi_position(p: &crate::schema::Position) -> ICredis::Position {
-    ICredis::Position {
+fn abi_position(p: &crate::schema::Position, now: u64) -> Result<ICredis::Position> {
+    Ok(ICredis::Position {
         positionId: p.position_id,
         smartAccount: p.smart_account,
         cca: p.cca,
         asset: p.asset,
         issuanceCurrency: p.issuance_currency,
         referenceCurrency: p.reference_currency,
-        eoaCiphertext: p.eoa_ct.clone().into(),
-        principal: p.principal,
-        outstanding: p.outstanding,
-        collateral: p.collateral,
-        collateralLocked: p.collateral_locked,
+        returnNoteSerial: p.return_note_serial,
+        principalMinor: p.principal_minor,
+        outstandingPrincipalMinor: p.outstanding_principal_minor,
+        gratisMinor: p.gratis_minor,
+        outstandingGratisMinor: p.outstanding_gratis_minor,
         policyRate: p.policy_rate,
-        entryPrice: p.entry_price,
-        callPrice: p.call_price,
+        entryPriceMinor: p.entry_price_minor,
+        callPriceMinor: p.call_price_minor,
         issuedAt: p.issued_at,
         lastSettledAt: p.last_settled_at,
         calledAt: p.called_at,
-        state: p.state,
-        callAnchorPrice: p.call_anchor_price,
-        interestPaidMinor: p.interest_paid,
-    }
+        state: crate::runtime::effective_state(p, now)? as u8,
+        callAnchorPriceMinor: p.call_anchor_price_minor,
+        interestPaidMinor: p.interest_paid_minor,
+        settlementDeadline: if p.called_at == 0 {
+            0
+        } else {
+            crate::runtime::settlement_deadline(p)
+        },
+        callNoticePeriod: p.call_notice_period_seconds,
+        callWindow: p.call_window_seconds,
+        callThreshold: p.call_threshold_seconds,
+    })
 }

@@ -510,7 +510,7 @@ fn claim_gem_and_assert_gas_only_cost(
             "Gem body parity"
         );
         // Window, threshold and bucket are not on the gem view.
-        let issued = super::paynote::capacity::single_event::<eth::IGemFactory::GemIssued>(
+        let issued = eth::receipt_event::<eth::IGemFactory::GemIssued>(
             &receipt,
             addresses::GEM_FACTORY_ADDR,
         );
@@ -522,13 +522,13 @@ fn claim_gem_and_assert_gas_only_cost(
                 gemId: added[0],
                 gemType: gem.gemType,
                 owner: beneficiary,
-                promisLoad: expected_load,
-                entryPrice: terms.0,
-                floorPrice: terms.1,
+                promisLoadMinor: expected_load,
+                entryPriceMinor: terms.0,
+                floorPriceMinor: terms.1,
                 issuanceCurrency: 840,
                 referenceCurrency: 840,
                 issuedAt: timestamp,
-                callPrice: gem.callPrice,
+                callPriceMinor: gem.callPriceMinor,
                 callWindow: issued.callWindow,
                 callThreshold: issued.callThreshold,
                 callNoticePeriod: gem.callNoticePeriod,
@@ -602,7 +602,7 @@ fn claim_gem_terms_at(url: &str, height: u64) -> (U256, U256) {
         )
         .expect("input slot quantity")
     };
-    // Oracle schema slots 58/59 are UTC-day VWAP values/watermark;
+    // Oracle schema slots 58/59 are UTC-day VWAP values/watermark.
     // Gem profile is slot 34 (the preceding record spans multiple slots).
     let day: u32 = word(outbe_primitives::addresses::ORACLE_ADDRESS, 59)
         .try_into()
@@ -662,9 +662,9 @@ fn assert_claimed_gem(
     assert_eq!(gem.owner, owner);
     assert_eq!(gem.gemType, kind);
     assert_eq!(gem.state, 0, "agent reward Gem must be born Issued");
-    assert_eq!(gem.promisLoad, load);
-    assert_eq!(gem.entryPrice, price);
-    assert_eq!(gem.floorPrice, floor);
+    assert_eq!(gem.promisLoadMinor, load);
+    assert_eq!(gem.entryPriceMinor, price);
+    assert_eq!(gem.floorPriceMinor, floor);
     assert_eq!(gem.issuanceCurrency, 840);
     assert_eq!(gem.referenceCurrency, 840);
     assert_eq!(gem.issuedAt, timestamp);
@@ -800,15 +800,18 @@ mod claim_tests {
             owner: Address::repeat_byte(1),
             gemType: 3,
             state: 0,
-            promisLoad: U256::from(123),
-            entryPrice: U256::from(1_000_001),
-            floorPrice: U256::from(1_050_001),
+            promisLoadMinor: U256::from(123),
+            entryPriceMinor: U256::from(1_000_001),
+            floorPriceMinor: U256::from(1_050_001),
             issuanceCurrency: 840,
             referenceCurrency: 840,
             issuedAt: 100,
-            callPrice: U256::from(1_100_001),
+            callPriceMinor: U256::from(1_100_001),
             calledAt: 0,
             callNoticePeriod: 0,
+            callWindow: 0,
+            callThreshold: 0,
+            settlementDeadline: 0,
         }
     }
 
@@ -830,10 +833,10 @@ mod claim_tests {
             let mut gem = wallet_gem();
             match mutation {
                 0 => gem.owner = Address::repeat_byte(2),
-                1 => gem.promisLoad += U256::ONE,
+                1 => gem.promisLoadMinor += U256::ONE,
                 2 => gem.gemType = 2,
-                3 => gem.entryPrice += U256::ONE,
-                4 => gem.floorPrice += U256::ONE,
+                3 => gem.entryPriceMinor += U256::ONE,
+                4 => gem.floorPriceMinor += U256::ONE,
                 5 => gem.state = 1,
                 _ => gem.referenceCurrency = 978,
             }

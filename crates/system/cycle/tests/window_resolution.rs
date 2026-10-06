@@ -1,20 +1,20 @@
-//! - accounting-window resolution + Phase 2 gating tests.
+//! Accounting-window resolution and Phase 2 gating tests.
 //!
-//! These integration tests pin
+//! These integration tests pin these properties:
 //!
-//!: period window resolves bitwise-deterministically from headers
+//! - The period window resolves bitwise-deterministically from headers
 //!   (proptest at the bottom).
-//!: `last_accounted_block_number` is the single gate signal.
-//!: no wall-clock reads in Cycle handler decisions.
+//! - `last_accounted_block_number` is the single gate signal.
+//! - Cycle handler decisions make no wall-clock reads.
 //!
 //! Each `<period>_boundary_cycle_runs_after_parent_accounted` test
-//! covers for a different period (hour, day, week, month) by
-//! constructing a synthetic gated `TriggerSpec` and asserting that
-//! `accounting_gate_blocks` returns `false` once the parent block has
-//! been accounted via `outbe_accounting::record_phase1_progress`.
+//! covers a different period (hour, day, week, month). The test constructs
+//! a synthetic gated `TriggerSpec`. It asserts that `accounting_gate_blocks`
+//! returns `false` after `outbe_accounting::record_phase1_progress`
+//! accounts the parent block.
 //!
 //! `phase1_accounts_parent_before_cycle_tick` is a structural check on
-//! `crates/blockchain/evm/src/executor.rs` confirming the V2 reorder
+//! `crates/blockchain/evm/src/executor.rs`. It confirms the V2 reorder
 //! invariant that this gate depends on.
 
 use alloy_primitives::Address;
@@ -65,8 +65,8 @@ fn block_ctx(block_number: u64, timestamp: u64) -> BlockContext {
     BlockContext::new(block_number, timestamp, CHAIN_ID, Address::ZERO, Vec::new())
 }
 
-/// Stub `AccountingProgressView` for tests that don't need EVM storage -
-/// the proptest and gate-arithmetic checks consume this directly.
+/// Stub `AccountingProgressView` for tests that don't need EVM storage.
+/// The proptest and gate-arithmetic checks consume this directly.
 struct StubProgress(u64);
 
 impl AccountingProgressView for StubProgress {
@@ -78,26 +78,27 @@ impl AccountingProgressView for StubProgress {
 // ---------------------------------------------------------------------------
 // Phase 1 accounting precedes Phase 2 CycleTick.
 //
-// The "Phase 1 commit happens before the Cycle dispatcher" invariant is covered
-// REALLY (no source-text scanning) by two complementary sets of tests:
+// Two complementary sets of tests cover the "Phase 1 commit happens before the
+// Cycle dispatcher" invariant REALLY (no source-text scanning):
 //
 //   * Phase ORDER - `crates/blockchain/evm/tests/phase1_reorder.rs`
 //     (`phase1_receipt_index_0_before_cycle_tick`,
-//     `phase1_reordering_preserves_body_receipt_order`) asserts, via the real
+//     `phase1_reordering_preserves_body_receipt_order`) asserts that Phase 1
+//     owns body_index 0 and CycleTick owns body_index 1. It uses the real
 //     `expected_begin_block_kinds` / `SystemTxPhase` routing API that drives the
-//     executor, that Phase 1 owns body_index 0 and CycleTick owns body_index 1.
-//   * Gate DEPENDENCY - the behavioral tests below
-//     (`*_boundary_cycle_runs_after_parent_accounted` for the committed case and
-//     `cycle_job_blocks_when_window_end_not_accounted` for the stale case) prove
-//     the Cycle gate reads `last_accounted_block_number` and only runs once the
-//     parent is accounted.
+//     executor.
+//   * Gate DEPENDENCY - the behavioral tests below prove that the Cycle gate
+//     reads `last_accounted_block_number` and runs only after the parent is
+//     accounted. `*_boundary_cycle_runs_after_parent_accounted` covers the
+//     committed case. `cycle_job_blocks_when_window_end_not_accounted` covers
+//     the stale case.
 //
-// Together these make the ordering observable through real APIs/behavior, so no
-// source-text scan of the executor is needed.
+// Together these make the ordering observable through real APIs/behavior. Thus
+// the tests need no source-text scan of the executor.
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-//.5: boundary tests across hour / day / week / month periods.
+// Boundary tests across hour / day / week / month periods.
 // Each builds a synthetic gated trigger, seeds `last_accounted == B - 1`,
 // and asserts the gate does NOT block.
 // ---------------------------------------------------------------------------
@@ -155,7 +156,7 @@ fn month_boundary_cycle_runs_after_parent_accounted() {
 }
 
 // ---------------------------------------------------------------------------
-// gated trigger must NOT fire when `last_accounted <
+// A gated trigger must NOT fire when `last_accounted <
 // window.end_inclusive`.
 // ---------------------------------------------------------------------------
 
@@ -198,12 +199,12 @@ fn cycle_job_without_accounting_window_runs_on_schedule() {
     let block = block_ctx(100, DAY * 7);
 
     // Resolver returns `None` for ungated specs even on a deeply
-    // accounted chain - the gate never consults the progress view.
+    // accounted chain. The gate never consults the progress view.
     let window = resolve_accounting_window(&spec, &block);
     assert!(window.is_none(), "ungated spec must resolve to no window");
 
     // The gate must return `false` (i.e., "do not block") for ungated
-    // triggers regardless of progress, including a deliberately-stale
+    // triggers regardless of progress. This includes a deliberately-stale
     // `last_accounted = 0` reader that would block any gated trigger.
     let progress = StubProgress(0);
     let blocked = accounting_gate_blocks(&spec, &progress, &block).unwrap();
@@ -239,7 +240,7 @@ fn genesis_bootstrap_resolves_to_no_window_for_gated_trigger() {
 }
 
 // ---------------------------------------------------------------------------
-// determinism property - same inputs -> same
+// Determinism property: the same inputs give the same
 // `AccountingWindow`. The resolver must be a pure function over
 // `(period, offset, block_number, timestamp)` with no wall-clock or
 // RNG dependency.

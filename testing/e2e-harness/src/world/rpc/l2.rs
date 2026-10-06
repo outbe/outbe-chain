@@ -4,7 +4,7 @@ impl Rpc {
     /// Chain id L2Registry holds for `l1_address` (`0` when unregistered).
     ///
     /// This identifies the registry administrator. Tribute admission selects
-    /// the network by its explicit chain id; the offer caller may be unrelated.
+    /// the network by its explicit chain id. The offer caller may be unrelated.
     pub fn l2_chain_by_l1_address(&self, l1_address: Address) -> Option<u64> {
         eth::read_call(
             &self.cfg.rpc0,

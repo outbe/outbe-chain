@@ -14,9 +14,9 @@
 //!
 //! 2. **EIP-7702 paymaster precompile** (`schema.rs`, `state.rs`,
 //!    `runtime.rs`, `precompile.rs`): a stateful precompile at
-//!    [`outbe_primitives::addresses::ZEROFEE_ADDRESS`] that grants every EOA
-//!    that has delegated to it (via an EIP-7702 set-code authorization) up to
-//!    `FREE_TX_DAILY_LIMIT` free transactions per UTC day. The executor's
+//!    [`outbe_primitives::addresses::ZEROFEE_ADDRESS`]. It grants up to
+//!    `FREE_TX_DAILY_LIMIT` free transactions per UTC day to every EOA that
+//!    has delegated to it (via an EIP-7702 set-code authorization). The executor's
 //!    pre-fee path detects the delegation designator and routes the
 //!    transaction through the same `disable_balance_check`,
 //!    `disable_base_fee`, and `disable_fee_charge` machinery that already
@@ -31,6 +31,7 @@ pub mod precompile;
 pub mod runtime;
 pub mod schema;
 pub mod state;
+mod transaction;
 
 pub use constants::{
     FREE_TX_BOOTSTRAP_GAS_LIMIT, FREE_TX_DAILY_CALLDATA_BYTES, FREE_TX_DAILY_GAS_LIMIT,

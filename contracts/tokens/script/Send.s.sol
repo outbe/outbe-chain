@@ -9,9 +9,10 @@ import {RouteSpec} from "./routes/BaseRoute.sol";
 import {ERC7786TokenBridge} from "../src/ERC7786TokenBridge.sol";
 import {Routes} from "./routes/Routes.sol";
 
-/// @dev Sends tokens across one route, in either direction. The bridge address is derived from CREATE3 and the token
-///      is read off the bridge, so no address can drift out of sync with the deployment. Whether an approval is
-///      needed follows from the bridge's own mode: lock/unlock pulls the token, burn/mint does not.
+/// @dev Sends tokens across one route, in either direction. The script derives the bridge address
+///      from CREATE3 and reads the token from the bridge. Thus no address can drift out of sync
+///      with the deployment. The bridge's own mode decides whether an approval is necessary:
+///      lock/unlock pulls the token, burn/mint does not.
 ///
 /// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATE3_FACTORY_ADDRESS`, `ROUTE` ("usdt" | "wcoen"),
 ///   `DEST_CHAIN_ID`, `RECIPIENT`, `SEND_AMOUNT_LD` (in the token's own decimals).
@@ -40,7 +41,8 @@ contract Send is Routes {
         if (signer.balance < nativeFee) revert InsufficientNativeBalance(signer, signer.balance, nativeFee);
 
         vm.startBroadcast(_pk());
-        // Lock/unlock pulls the token into bridge custody; burn/mint calls ERC-7802 and needs no allowance.
+        // Lock/unlock pulls the token into bridge custody.
+        // Burn/mint calls ERC-7802 and needs no allowance.
         if (bridge.mode() == ERC7786TokenBridge.TokenBridgeMode.LockUnlock) token.approve(address(bridge), amount);
         sendId = bridge.send{value: nativeFee}(destinationDomain, recipient, amount);
         vm.stopBroadcast();

@@ -172,7 +172,7 @@ fn prepare(world: &mut World) {
         addresses::PROMIS_FACTORY_ADDR,
         DEPLOYER_KEY,
         &eth::IPromisFactory::mineGratisCall {
-            amount: INITIAL_GRATIS,
+            promisMinor: INITIAL_GRATIS,
             promisMac: outbe_tee_enclave::promis::modify_mac(
                 &promis_keys.modify,
                 user,
@@ -205,7 +205,9 @@ fn prepare(world: &mut World) {
         keys,
         reservation: U256::ZERO,
         pledge: B256::ZERO,
-        collateral: U256::ZERO,
+        pledge_nonce: 0,
+        issue_context: B256::ZERO,
+        gratis_minor: U256::ZERO,
         position_id: U256::ZERO,
         initial_native: U256::ZERO,
         interest_paid: U256::ZERO,
@@ -249,6 +251,7 @@ fn reserve(world: &mut World) {
         VAULT_ROUTER_ADDRESS,
         &f.cca_key,
         &eth::IVaultRouter::reserveStablesCall {
+            referenceCurrency: USD,
             smartAccount: f.account,
             asset: f.currency.asset,
             amount: PRINCIPAL,
@@ -317,47 +320,68 @@ fn pledge(world: &mut World) {
         addresses::GRATIS_FACTORY_ADDR,
         DEPLOYER_KEY,
         &eth::IGratisFactory::pledgeGratisCall {
-            amountStables: PRINCIPAL,
-            asset: f.currency.asset,
-            maxGratis: INITIAL_GRATIS,
-            mac: mac.into(),
-            opNonce: nonce,
+            gratisMinor: PRINCIPAL,
+            auth: eth::IGratisFactory::ModifyAuth {
+                mac: mac.into(),
+                opNonce: nonce,
+            },
         },
         None,
     );
     let pledged =
-        event::<eth::IGratisFactory::GratisPledged>(&receipt, addresses::GRATIS_FACTORY_ADDR);
-    assert_eq!(pledged.account, f.user);
-    assert_eq!(pledged.asset, f.currency.asset);
-    assert_eq!(pledged.amountStables, PRINCIPAL);
-    // Both the stablecoin and the live 1 USD/COEN quote use six decimals.
-    assert_eq!(pledged.gratisAmount, PRINCIPAL);
+        event::<eth::IGratisFactory::PledgeNote>(&receipt, addresses::GRATIS_FACTORY_ADDR);
+    assert_eq!(pledged.gratisMinor, PRINCIPAL);
+    let chain_id = U256::from_be_bytes(chain_id_b256(world).0).to::<u64>();
+    let note =
+        outbe_gratis::client::Note::initial(chain_id, f.user, &f.keys.modify, PRINCIPAL, nonce)
+            .unwrap();
+    assert_eq!(pledged.commitment, note.commitment().unwrap());
     let f = world.state.credis.as_mut().expect("fixture");
-    f.pledge = pledged.pledgeNote;
-    f.collateral = pledged.gratisAmount;
+    f.pledge = pledged.commitment;
+    f.pledge_nonce = nonce;
+    f.gratis_minor = pledged.gratisMinor;
     let state = snapshot(world);
-    assert_eq!(state.liquid, INITIAL_GRATIS - pledged.gratisAmount);
-    // The pending ticket enters the pledged ledger only when consumed at issuance.
-    assert_eq!(state.pledged, U256::ZERO);
+    assert_eq!(state.liquid, INITIAL_GRATIS - pledged.gratisMinor);
+    assert_eq!(state.pledged, pledged.gratisMinor);
 }
 
 #[when("the CCA issues Credis against the pledge and reservation")]
 fn issue(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     let f = world.state.credis.as_ref().expect("fixture");
-    let secret = outbe_tee_enclave::gratis::pledge_secret(&f.keys.modify, f.pledge);
-    let spend = outbe_tee_enclave::gratis::spend_auth_mac(&secret, f.account);
-    let stake = outbe_primitives::units::checked_protocol_to_native(f.collateral)
+    let chain_id = U256::from_be_bytes(chain_id_b256(world).0).to::<u64>();
+    let note = outbe_gratis::client::Note::initial(
+        chain_id,
+        f.user,
+        &f.keys.modify,
+        f.gratis_minor,
+        f.pledge_nonce,
+    )
+    .unwrap();
+    let reservation = eth::read_call(
+        &url,
+        VAULT_ROUTER_ADDRESS,
+        &outbe_vaultrouter::api::IVaultRouter::reservationOfCall { id: f.reservation },
+    )
+    .unwrap();
+    let context =
+        outbe_credisfactory::runtime::reservation_context(chain_id, f.reservation, &reservation)
+            .unwrap();
+    let proof = outbe_gratis::client::prove_issue(
+        &note,
+        &credis::pledge_tree(&url, chain_id),
+        f.gratis_minor,
+        context,
+    )
+    .unwrap();
+    let stake = outbe_primitives::units::checked_protocol_to_native(f.gratis_minor)
         .expect("fixture stake fits native units");
     let receipt = send(
         &url,
         CREDIS_FACTORY_ADDRESS,
         &f.cca_key,
         &ICredisFactory::issueCredisCall {
-            smartAccount: f.account,
-            pledgeNote: f.pledge,
-            spendAuth: spend.into(),
-            referenceCurrency: USD,
+            proof: proof.into(),
             reservationId: f.reservation,
         },
         Some(stake),
@@ -379,8 +403,8 @@ fn issue(world: &mut World) {
             positionId: id,
             smartAccount: f.account,
             cca: f.cca,
-            principal: PRINCIPAL,
-            collateral: f.collateral,
+            principalMinor: PRINCIPAL,
+            gratisMinor: f.gratis_minor,
         },
     );
     assert_receipt_event(
@@ -389,10 +413,11 @@ fn issue(world: &mut World) {
         &ICredisFactory::CredisIssued {
             smartAccount: f.account,
             cca: f.cca,
-            amount: PRINCIPAL,
+            principalMinor: PRINCIPAL,
         },
     );
     world.state.credis.as_mut().expect("fixture").position_id = id;
+    world.state.credis.as_mut().expect("fixture").issue_context = context;
 }
 
 #[then("the smart account owns the open Credis position")]
@@ -406,20 +431,23 @@ fn issued(world: &mut World) {
         (f.account, f.cca, f.currency.asset)
     );
     assert_eq!((p.issuanceCurrency, p.referenceCurrency), (USD, USD));
-    assert_eq!((p.principal, p.outstanding), (PRINCIPAL, PRINCIPAL));
     assert_eq!(
-        (p.collateral, p.collateralLocked),
-        (f.collateral, f.collateral)
+        (p.principalMinor, p.outstandingPrincipalMinor),
+        (PRINCIPAL, PRINCIPAL)
+    );
+    assert_eq!(
+        (p.gratisMinor, p.outstandingGratisMinor),
+        (f.gratis_minor, f.gratis_minor)
     );
     assert_eq!(p.state, 0);
     assert_eq!(p.lastSettledAt, p.issuedAt);
-    assert_eq!(p.entryPrice, U256::from(1_000_000));
-    assert_eq!(p.callAnchorPrice, U256::from(1_000_000));
-    assert_eq!(p.callPrice, U256::from(1_640_000));
+    assert_eq!(p.entryPriceMinor, U256::from(1_000_000));
+    assert_eq!(p.callAnchorPriceMinor, U256::from(1_000_000));
+    assert_eq!(p.callPriceMinor, U256::from(1_640_000));
     assert!(p.policyRate > U256::ZERO);
     // Credis currently pins the issuance currency's official rate with a 1x multiplier.
     assert_eq!(p.policyRate, state.policy_rate);
-    assert!(!p.eoaCiphertext.is_empty());
+    assert!(!p.returnNoteSerial.is_zero());
     assert_eq!(
         state.reservation,
         (
@@ -436,13 +464,13 @@ fn issued(world: &mut World) {
     assert_eq!(
         state.native,
         f.initial_native
-            + outbe_primitives::units::checked_protocol_to_native(f.collateral).expect("stake")
+            + outbe_primitives::units::checked_protocol_to_native(f.gratis_minor).expect("stake")
     );
     assert_eq!(state.vault_stables, LIQUIDITY - PRINCIPAL);
     assert_eq!(state.shares, LIQUIDITY - PRINCIPAL);
     assert_eq!(state.router_stables, U256::ZERO);
-    assert_eq!(state.liquid, INITIAL_GRATIS - f.collateral);
-    assert_eq!(state.pledged, f.collateral);
+    assert_eq!(state.liquid, INITIAL_GRATIS - f.gratis_minor);
+    assert_eq!(state.pledged, f.gratis_minor);
 }
 
 #[when("the user makes three daily payments through the smart account")]
@@ -493,7 +521,7 @@ fn repay(world: &mut World) {
             Some(interest)
         );
         let principal = if payment_index == 2 {
-            p.outstanding
+            p.outstandingPrincipalMinor
         } else {
             U256::from(100_000_000)
         };
@@ -513,9 +541,9 @@ fn repay(world: &mut World) {
             f.account,
             DEPLOYER_KEY,
             CREDIS_FACTORY_ADDRESS,
-            &ICredisFactory::settleCall {
+            &ICredisFactory::settleCredisCall {
                 positionId: f.position_id,
-                amount,
+                amountMinor: amount,
             },
         );
         let paid_at = receipt_timestamp(&url, &receipt);
@@ -524,22 +552,22 @@ fn repay(world: &mut World) {
             interest,
             "interest changed before inclusion"
         );
-        let released = if principal == p.outstanding {
-            p.collateralLocked
+        let released = if principal == p.outstandingPrincipalMinor {
+            p.outstandingGratisMinor
         } else {
-            (p.collateral * principal)
-                .div_ceil(p.principal)
-                .min(p.collateralLocked)
+            (p.gratisMinor * principal)
+                .div_ceil(p.principalMinor)
+                .min(p.outstandingGratisMinor)
         };
         assert_receipt_event(
             &receipt,
             CREDIS_ADDRESS,
             &ICredis::SettlementApplied {
                 positionId: f.position_id,
-                interestPaid: interest,
-                principalPaid: principal,
-                gratisReleased: released,
-                outstanding: p.outstanding - principal,
+                interestMinor: interest,
+                principalPaidMinor: principal,
+                gratisReturnedMinor: released,
+                outstandingPrincipalMinor: p.outstandingPrincipalMinor - principal,
             },
         );
         if payment_index == 2 {
@@ -551,15 +579,64 @@ fn repay(world: &mut World) {
                 },
             );
         }
+        let chain_id = U256::from_be_bytes(chain_id_b256(world).0).to::<u64>();
+        let note = outbe_gratis::client::Note::initial(
+            chain_id,
+            f.user,
+            &f.keys.modify,
+            f.gratis_minor,
+            f.pledge_nonce,
+        )
+        .unwrap();
+        let returned = note
+            .returned(
+                f.issue_context,
+                f.position_id,
+                released,
+                p.gratisMinor - p.outstandingGratisMinor + released,
+            )
+            .unwrap();
+        let proof = outbe_gratis::client::prove_unpledge(
+            &returned,
+            &credis::pledge_tree(&url, chain_id),
+            released,
+            outbe_gratis::api::unpledge_context(chain_id, f.user, released).unwrap(),
+        )
+        .unwrap();
+        send(
+            &url,
+            addresses::GRATIS_FACTORY_ADDR,
+            DEPLOYER_KEY,
+            &eth::IGratisFactory::unpledgeGratisCall {
+                proof: proof.into(),
+            },
+            None,
+        );
         let after = snapshot(world);
         let a = after.position.as_ref().expect("position after payment");
-        assert_eq!(a.outstanding, p.outstanding - principal);
-        assert_eq!(a.collateralLocked, p.collateralLocked - released);
+        assert_eq!(
+            a.outstandingPrincipalMinor,
+            p.outstandingPrincipalMinor - principal
+        );
+        assert_eq!(
+            a.outstandingGratisMinor,
+            p.outstandingGratisMinor - released
+        );
         assert_eq!(a.lastSettledAt, p.lastSettledAt + DAY);
         assert_eq!(a.state, if payment_index == 2 { 2 } else { 0 });
         assert_eq!(
-            (a.principal, a.policyRate, a.entryPrice, a.callAnchorPrice),
-            (p.principal, p.policyRate, p.entryPrice, p.callAnchorPrice)
+            (
+                a.principalMinor,
+                a.policyRate,
+                a.entryPriceMinor,
+                a.callAnchorPriceMinor
+            ),
+            (
+                p.principalMinor,
+                p.policyRate,
+                p.entryPriceMinor,
+                p.callAnchorPriceMinor
+            )
         );
         assert_eq!(after.account_stables, before.account_stables - amount);
         assert_eq!(after.vault_stables, before.vault_stables + amount);
@@ -580,7 +657,10 @@ fn fully_repaid(world: &mut World) {
     let f = world.state.credis.as_ref().expect("fixture");
     let position = state.position.expect("retained settled position");
     assert_eq!(
-        (position.outstanding, position.collateralLocked),
+        (
+            position.outstandingPrincipalMinor,
+            position.outstandingGratisMinor
+        ),
         (U256::ZERO, U256::ZERO)
     );
     assert_eq!(position.state, 2);
@@ -599,7 +679,8 @@ fn fully_repaid(world: &mut World) {
 
 fn expected_interest(position: &ICredis::Position, timestamp: u64) -> U256 {
     let days = (timestamp - position.lastSettledAt) / DAY;
-    position.outstanding * position.policyRate * U256::from(days) / U256::from(365_000_000)
+    position.outstandingPrincipalMinor * position.policyRate * U256::from(days)
+        / U256::from(365_000_000)
 }
 
 fn receipt_timestamp(url: &str, receipt: &serde_json::Value) -> u64 {

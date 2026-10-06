@@ -20,27 +20,13 @@ impl RecoverableDurabilityOutage {
     fn restore(&self) {
         self.unavailable.store(false, Ordering::SeqCst);
     }
-
-    fn should_fail(&self, point: FailSync) -> bool {
-        self.point == point && self.unavailable.load(Ordering::SeqCst)
-    }
 }
 
-impl JournalDurability for RecoverableDurabilityOutage {
-    fn sync_file(&self, file: &File) -> io::Result<()> {
-        if self.should_fail(FailSync::File) {
-            return Err(io::Error::other("injected recoverable file fsync outage"));
-        }
-        file.sync_all()
-    }
-
-    fn sync_directory(&self, directory: &File) -> io::Result<()> {
-        if self.should_fail(FailSync::Directory) {
-            return Err(io::Error::other(
-                "injected recoverable directory fsync outage",
-            ));
-        }
-        directory.sync_all()
+impl FsyncFailurePolicy for RecoverableDurabilityOutage {
+    const FILE_ERROR: &'static str = "injected recoverable file fsync outage";
+    const DIRECTORY_ERROR: &'static str = "injected recoverable directory fsync outage";
+    fn should_fail(&self, point: FailSync) -> bool {
+        self.point == point && self.unavailable.load(Ordering::SeqCst)
     }
 }
 

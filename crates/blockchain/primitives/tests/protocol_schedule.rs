@@ -61,9 +61,9 @@ fn protocol_schedule_is_shared_by_node_evm_payload_codec_and_verifier() {
 }
 
 /// Merge-to-main gate: no `u64::MAX` reject-everything placeholder may
-/// ship for the evidence base gas. The value was calibrated to the heavy
-/// base (`200_000`) and wired into `outbe_slashindicator::precompile::base_gas`,
-/// so this is now a live guard rather than an `#[ignore]`-tagged tripwire.
+/// ship for the evidence base gas. The value is calibrated to the heavy
+/// base (`200_000`) and wired into `outbe_slashindicator::precompile::base_gas`.
+/// Thus this test is now a live guard rather than an `#[ignore]`-tagged tripwire.
 #[test]
 fn vrf_evidence_base_gas_is_calibrated() {
     let s = OutbeProtocolSchedule::default();

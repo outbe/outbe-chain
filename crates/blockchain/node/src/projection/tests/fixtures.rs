@@ -21,7 +21,8 @@ pub(super) fn add_empty_block(provider: &MockEthProvider, number: u64) -> B256 {
 pub(super) fn initialized_runtime(start_block: u64) -> Mutex<ProjectionRuntime> {
     let storage = Arc::new(MemoryStorage::new());
     let reader: StorageReaderHandle = storage.clone();
-    let writer: StorageWriterHandle = storage;
+    let writer: StorageWriterHandle = storage.clone();
+    let overlay = Arc::new(PendingOverlayStorage::new(storage.clone(), storage));
     let projection_config = ProjectionConfig {
         chain_id: 1,
         genesis_hash: B256::repeat_byte(0x11),
@@ -37,17 +38,12 @@ pub(super) fn initialized_runtime(start_block: u64) -> Mutex<ProjectionRuntime> 
         outbe_offchain_data::ProjectionStatus::Starting,
     );
     let (runtime_failure_tx, runtime_failure_rx) = tokio::sync::watch::channel(None);
-    Mutex::new(ProjectionRuntime {
+    Mutex::new(projection_runtime(
         projector,
-        readiness_publisher,
         projection_config,
-        _reader: reader,
-        overlay: None,
-        writer,
-        _writer_lease: None,
-        runtime_failure_sender: Some(runtime_failure_tx),
-        runtime_failure_receiver: Some(runtime_failure_rx),
-    })
+        (reader, overlay, writer),
+        (readiness_publisher, runtime_failure_tx, runtime_failure_rx),
+    ))
 }
 
 pub(super) struct BlockingWriteStorage {
@@ -83,31 +79,7 @@ impl BlockingWriteStorage {
     }
 }
 
-impl StorageReader for BlockingWriteStorage {
-    fn get_record(
-        &self,
-        namespace: Namespace,
-        key: &Key,
-    ) -> Result<Option<StoredValue>, StorageError> {
-        self.inner.get_record(namespace, key)
-    }
-
-    fn get_records(
-        &self,
-        namespace: Namespace,
-        keys: &[Key],
-    ) -> Result<Vec<Option<StoredValue>>, StorageError> {
-        self.inner.get_records(namespace, keys)
-    }
-
-    fn scan_prefix(
-        &self,
-        namespace: Namespace,
-        request: ScanRequest<'_>,
-    ) -> Result<ScanPage, StorageError> {
-        self.inner.scan_prefix(namespace, request)
-    }
-}
+outbe_offchain_storage::impl_test_storage_reader!(BlockingWriteStorage, inner);
 
 impl StorageWriter for BlockingWriteStorage {
     fn apply_atomic(&self, batch: &AtomicWriteBatch) -> Result<(), StorageError> {
@@ -227,5 +199,37 @@ impl StorageWriter for FailAfterStartupStorage {
             ));
         }
         self.inner.apply_atomic(batch)
+    }
+}
+
+type ProjectionFixtureStorage = (
+    StorageReaderHandle,
+    Arc<PendingOverlayStorage>,
+    StorageWriterHandle,
+);
+type ProjectionFixtureSignals = (
+    outbe_offchain_data::ProjectionReadinessPublisher,
+    tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>,
+    tokio::sync::watch::Receiver<Option<RuntimeBodyFailure>>,
+);
+
+pub(super) fn projection_runtime(
+    projector: OffchainDataProjection,
+    projection_config: ProjectionConfig,
+    storage: ProjectionFixtureStorage,
+    signals: ProjectionFixtureSignals,
+) -> ProjectionRuntime {
+    let (reader, overlay, writer) = storage;
+    let (readiness_publisher, runtime_failure_tx, runtime_failure_rx) = signals;
+    ProjectionRuntime {
+        projector,
+        readiness_publisher,
+        projection_config,
+        _reader: reader,
+        overlay: Some(overlay),
+        writer,
+        _writer_lease: None,
+        runtime_failure_sender: Some(runtime_failure_tx),
+        runtime_failure_receiver: Some(runtime_failure_rx),
     }
 }

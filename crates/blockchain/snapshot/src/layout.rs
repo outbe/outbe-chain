@@ -19,8 +19,8 @@ pub struct ProtectedPaths(pub Vec<PathBuf>);
 
 /// Reject aliases and overlapping source/protected/output paths without writes.
 ///
-/// Native sources must exist. Protected and output paths may be absent; their
-/// existing ancestors are resolved so an alias cannot hide a nested path.
+/// Native sources must exist. Protected and output paths may be absent. This
+/// function resolves their existing ancestors, so an alias cannot hide a nested path.
 /// This checks a stopped layout, not concurrent filesystem replacement. The
 /// archive reader/writer must separately enforce contained, no-follow access.
 pub fn validate_layout(
@@ -47,19 +47,7 @@ pub fn validate_layout(
         .collect::<io::Result<Vec<_>>>()?;
 
     for (index, root) in roots.iter().enumerate() {
-        if roots[..index].iter().any(|other| overlap(root, other)) {
-            return Err(invalid("native source domains overlap"));
-        }
-        if protected.iter().any(|path| overlap(root, path)) {
-            return Err(invalid(
-                "native source overlaps protected identity or configuration",
-            ));
-        }
-        if outputs.iter().any(|path| overlap(root, path)) {
-            return Err(invalid(
-                "snapshot output or scratch overlaps a native source",
-            ));
-        }
+        validate_source_separation(root, &roots[..index], &protected, &outputs)?;
     }
     for (index, output) in outputs.iter().enumerate() {
         if protected.iter().any(|path| overlap(output, path)) {
@@ -70,6 +58,28 @@ pub fn validate_layout(
         if outputs[..index].iter().any(|other| overlap(output, other)) {
             return Err(invalid("snapshot output and scratch paths overlap"));
         }
+    }
+    Ok(())
+}
+
+fn validate_source_separation(
+    root: &Path,
+    previous_roots: &[PathBuf],
+    protected: &[PathBuf],
+    outputs: &[PathBuf],
+) -> io::Result<()> {
+    if previous_roots.iter().any(|other| overlap(root, other)) {
+        return Err(invalid("native source domains overlap"));
+    }
+    if protected.iter().any(|path| overlap(root, path)) {
+        return Err(invalid(
+            "native source overlaps protected identity or configuration",
+        ));
+    }
+    if outputs.iter().any(|path| overlap(root, path)) {
+        return Err(invalid(
+            "snapshot output or scratch overlaps a native source",
+        ));
     }
     Ok(())
 }

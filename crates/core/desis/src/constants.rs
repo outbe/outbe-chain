@@ -21,8 +21,8 @@ pub const PROMIS_LOAD_OVERRIDE: Option<u128> = Some(1);
 
 /// Bid fan-in deadline: clearing proceeds without chains that have not reported
 /// BIDS_DONE within this window after the clearing stage starts. A repair window
-/// for parked legs; must stay under 24h so the deadline clear lands the same UTC
-/// day as the dispatch.
+/// for parked legs. It must stay under 24h so the deadline clear lands on the
+/// same UTC day as the dispatch.
 pub const BIDS_FANIN_TIMEOUT_SECS: u64 = 12 * 3600;
 
 /// Midnight-anchored schedule: the commit, reveal and settlement windows each span one day.
@@ -53,8 +53,9 @@ pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 300;
 pub const DAY_STATE_GREEN: u8 = 1;
 pub const DAY_STATE_RED: u8 = 2;
 
-/// Winners per REFUND_INSTRUCTIONS message: the codec's `MAX_PAYLOAD_ARRAY_LEN`. Issuance uses its own,
-/// narrower cap - a recipient costs a mint, a winner costs a status flip.
+/// Winners per REFUND_INSTRUCTIONS message: the codec's `MAX_PAYLOAD_ARRAY_LEN`.
+/// Issuance uses its own, narrower cap. A recipient costs a mint, and a winner
+/// costs a status flip.
 pub use outbe_intexfactory::constants::MAX_RECIPIENTS_PER_MESSAGE as REFUND_CHUNK_LEN;
 
 /// Chunks one chain-day's refunds may span; mirrors the codec's `MAX_CHUNKS`.
@@ -66,8 +67,8 @@ pub const MAX_BIDS_PER_BATCH: usize = 64;
 /// Batches one chain-day may send: the arrival bitmap is one 256-bit word.
 pub const MAX_BID_BATCHES: u16 = 256;
 
-// Everything the intake admits from one chain must still fit its refund fan-out;
-// otherwise clearing fails on bids the intake already took.
+// Everything the intake admits from one chain must still fit its refund fan-out.
+// Otherwise, clearing fails on bids the intake already took.
 const _: () =
     assert!(MAX_BIDS_PER_BATCH * MAX_BID_BATCHES as usize <= REFUND_CHUNK_LEN * MAX_REFUND_CHUNKS);
 

@@ -18,6 +18,7 @@ pub(crate) struct MarshalUpdateReporter {
     executor: Mailbox,
     tip_consumers: Vec<watch::Sender<Option<ConsensusTip>>>,
     block_consumers: Vec<PeerManagerMailbox>,
+    publication: Option<outbe_consensus::application::publication::ProposalPublication>,
 }
 
 impl MarshalUpdateReporter {
@@ -26,6 +27,7 @@ impl MarshalUpdateReporter {
             executor,
             tip_consumers: Vec::new(),
             block_consumers: Vec::new(),
+            publication: None,
         }
     }
 
@@ -41,20 +43,30 @@ impl MarshalUpdateReporter {
         self.block_consumers.push(consumer);
         self
     }
+
+    pub(crate) fn with_publication(
+        mut self,
+        publication: outbe_consensus::application::publication::ProposalPublication,
+    ) -> Self {
+        self.publication = Some(publication);
+        self
+    }
 }
 
 impl Reporter for MarshalUpdateReporter {
     type Activity = MarshalUpdate;
 
-    /// As of commonware 2026.5.0 `Reporter::report` is synchronous and returns
-    /// [`commonware_actor::Feedback`]. This reporter fans the marshal update out
-    /// to its tip/block consumers and the executor, all of which now enqueue
-    /// onto their own unbounded mailboxes synchronously (no `.await`). We report
-    /// [`Feedback::Closed`] only when the executor mailbox - the
-    /// recovery-critical sink - is gone; downstream consumer mailboxes are
-    /// best-effort wakeups and their closure must not stall the voter task.
+    /// As of commonware 2026.5.0, `Reporter::report` is synchronous and returns
+    /// [`commonware_actor::Feedback`]. This reporter sends the marshal update to its tip/block
+    /// consumers and to the executor. Each of them now enqueues onto its own unbounded mailbox
+    /// synchronously (no `.await`). We report [`Feedback::Closed`] only when the executor
+    /// mailbox is gone. The executor mailbox is the recovery-critical sink. Downstream consumer
+    /// mailboxes are best-effort wakeups, and their closure must not stall the voter task.
     fn report(&mut self, activity: Self::Activity) -> commonware_actor::Feedback {
         if let commonware_consensus::marshal::Update::Tip(round, height, digest) = &activity {
+            if let Some(publication) = &self.publication {
+                publication.retire_through(*round);
+            }
             let tip = Some(ConsensusTip {
                 round: *round,
                 height: *height,
@@ -80,14 +92,13 @@ mod tests {
     //! Regression coverage for SEC-2: the dual-ack fan-out in
     //! [`MarshalUpdateReporter::report`] for `Update::Block`.
     //!
-    //! `report` clones the marshal `Update` for every block consumer (each clone
-    //! of [`Exact`] increments the acknowledgement's `remaining` count) and moves
-    //! the original into the executor. The marshal's `Exact` waiter therefore
-    //! resolves to `Ok` only when *every* copy - executor plus each block
-    //! consumer - is acknowledged. If any copy is dropped unacknowledged,
-    //! `Exact::drop` cancels the aggregate and the waiter resolves to
-    //! `Err(Canceled)`, which upstream marshal treats as fatal. These tests pin
-    //! both halves of that contract.
+    //! `report` clones the marshal `Update` for every block consumer. Each clone of [`Exact`]
+    //! increments the acknowledgement's `remaining` count. `report` then moves the original
+    //! into the executor. The marshal's `Exact` waiter therefore resolves to `Ok` only when
+    //! *every* copy is acknowledged: the executor copy plus the copy of each block consumer.
+    //! If any copy is dropped unacknowledged, `Exact::drop` cancels the aggregate. The waiter
+    //! then resolves to `Err(Canceled)`, which upstream marshal treats as fatal. These tests
+    //! pin both halves of that contract.
 
     use super::*;
     use alloy_primitives::Bytes;
@@ -165,9 +176,9 @@ mod tests {
     /// acknowledged, the marshal `Exact` waiter resolves to `Ok(())`.
     ///
     /// Guard sanity: if either copy were left unacknowledged here, its
-    /// `Exact::drop` would `cancel()` the shared state and the waiter would
-    /// instead resolve to `Err(Canceled)` - so this passing proves the
-    /// per-clone `remaining` increment is satisfied only when all copies ack.
+    /// `Exact::drop` would `cancel()` the shared state. The waiter would then
+    /// resolve to `Err(Canceled)`. So a pass here proves that the per-clone
+    /// `remaining` increment is satisfied only when all copies ack.
     #[test]
     fn all_acks_resolve_waiter_ok() {
         commonware_runtime::deterministic::Runner::default().start(|context| async move {
@@ -188,7 +199,7 @@ mod tests {
             block_ack.acknowledge();
 
             // The waiter borrows nothing, but mirror the deterministic-runtime
-            // pattern in `dkg_actor::sim_tests`: race the resolved waiter against
+            // pattern in `dkg_actor::sim_tests`. Race the resolved waiter against
             // a runtime `Clock` sleep instead of a wall-clock async timeout. The
             // safety bound never fires because the waiter resolves once every
             // copy is acknowledged.
@@ -205,13 +216,13 @@ mod tests {
         });
     }
 
-    /// SEC-2: if a single fan-out copy is dropped without being acknowledged,
-    /// the marshal `Exact` waiter resolves to `Err(Canceled)` - the upstream
+    /// SEC-2: if a single fan-out copy is dropped without an acknowledgement,
+    /// the marshal `Exact` waiter resolves to `Err(Canceled)`. This is the upstream
     /// fatal-panic hazard for a stalled/non-acking consumer.
     ///
     /// Guard sanity: if `Exact::drop` did NOT cancel on an unacknowledged drop,
-    /// the executor's ack would leave `remaining == 0` and the waiter would
-    /// wrongly resolve to `Ok(())`; this asserting `Err` proves the cancel path.
+    /// the executor's ack would leave `remaining == 0`. The waiter would then
+    /// wrongly resolve to `Ok(())`. This `Err` assertion proves the cancel path.
     #[test]
     fn dropped_block_consumer_copy_cancels_waiter() {
         commonware_runtime::deterministic::Runner::default().start(|context| async move {
@@ -224,16 +235,16 @@ mod tests {
                 "report must succeed when both mailboxes are open"
             );
 
-            // Acknowledge only the executor's copy; drop the block consumer's copy
-            // without acknowledging it (simulates a stalled/non-acking consumer).
+            // Acknowledge only the executor's copy. Drop the block consumer's copy
+            // without an acknowledgement (simulates a stalled/non-acking consumer).
             let exec_ack = take_executor_ack(&mut exec_rx).await;
             let block_ack = take_block_consumer_ack(&mut pm_rx).await;
             exec_ack.acknowledge();
             drop(block_ack);
 
             // Race the cancelled waiter against a runtime `Clock` sleep (mirrors
-            // `dkg_actor::sim_tests`). `Exact::drop` cancels the aggregate so the
-            // waiter resolves immediately; the safety bound never fires.
+            // `dkg_actor::sim_tests`). `Exact::drop` cancels the aggregate, so the
+            // waiter resolves immediately. The safety bound never fires.
             let mut waiter = std::pin::pin!(waiter);
             let mut timeout = std::pin::pin!(context.sleep(Duration::from_secs(1)));
             let result = commonware_macros::select! {

@@ -26,7 +26,6 @@ use outbe_ocomp::worker::{run_worker, WorkerConfig};
 use outbe_ocomp::worker_observability::SnapshotExporterObservabilityServerV1;
 use outbe_ocomp::worker_transport::MAX_REGISTERED_WORKERS;
 use outbe_offchain_storage::StorageConfig;
-use outbe_primitives::signer::OutbeEvmSigner;
 
 #[derive(Debug, Parser)]
 #[command(name = "outbe-ocomp")]
@@ -63,7 +62,7 @@ struct WorkerArgs {
 
 #[derive(Clone, Debug, Args)]
 struct RuntimeArgs {
-    /// Unprivileged OCM measurement namespace; accepted only by debug builds.
+    /// Unprivileged OCM measurement namespace. Only debug builds accept it.
     #[arg(long, hide = true, value_name = "PATH")]
     development_root: Option<PathBuf>,
     /// Loopback Supervisor endpoint where OCOMP workers register for work.
@@ -245,8 +244,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 cas_root: runtime.cas_root,
                 cas_limits: CasLimits {
                     max_object_bytes: CAS_MAX_OBJECT_BYTES,
-                    // CAS is disk-backed and chunked. Capacity is governed by the
-                    // filesystem/operator, never by a product-level total-job cap.
+                    // CAS is disk-backed and chunked. The filesystem/operator
+                    // governs capacity, never a product-level total-job cap.
                     max_total_bytes: u64::MAX,
                 },
                 inbox_root: runtime
@@ -313,7 +312,10 @@ fn snapshot_exporter_observability_address(
 
 fn print_signer_address(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = RuntimeProfile::resolve(args)?;
-    let signer = OutbeEvmSigner::from_strict_file(runtime.ocomp_evm_key_path, runtime.owner_uid)?;
+    let signer = outbe_primitives::signer::load::from_strict_file(
+        runtime.ocomp_evm_key_path,
+        runtime.owner_uid,
+    )?;
     println!("{}", signer.address());
     Ok(())
 }
@@ -352,8 +354,8 @@ fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::E
             cas_root: runtime.cas_root.clone(),
             cas_limits: CasLimits {
                 max_object_bytes: CAS_MAX_OBJECT_BYTES,
-                // CAS is disk-backed and chunked. Capacity is governed by the
-                // filesystem/operator, never by a product-level total-job cap.
+                // CAS is disk-backed and chunked. The filesystem/operator
+                // governs capacity, never a product-level total-job cap.
                 max_total_bytes: u64::MAX,
             },
             input_ref_root: runtime.snapshot_exporter_input_ref_root.clone(),

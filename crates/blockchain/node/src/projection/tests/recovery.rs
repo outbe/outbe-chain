@@ -110,11 +110,13 @@ async fn control_loop_drains_notifications_and_emits_finished_heights_in_order()
     let (exit_tx, _exit_rx) = tokio::sync::mpsc::unbounded_channel();
     let task = tokio::spawn(run_projection_loop(
         provider,
-        notification_rx,
-        finality_rx,
-        events_tx,
+        ProjectionLoopInputs {
+            notifications: notification_rx,
+            finalized_blocks: finality_rx,
+            events: events_tx,
+            projection_exit: exit_tx,
+        },
         runtime,
-        exit_tx,
     ));
 
     notification_tx.send(Ok(())).await.unwrap();
@@ -159,6 +161,7 @@ async fn deterministic_projection_failure_reports_exit_while_exex_keeps_draining
     };
     let projector =
         OffchainDataProjection::open(projection_config, reader.clone(), writer.clone()).unwrap();
+    let overlay = Arc::new(PendingOverlayStorage::new(storage.clone(), storage.clone()));
     storage.fail_writes.store(true, Ordering::SeqCst);
 
     let (mut notification_tx, notification_rx) = mpsc::channel(1);
@@ -175,21 +178,18 @@ async fn deterministic_projection_failure_reports_exit_while_exex_keeps_draining
     let (runtime_failure_tx, runtime_failure_rx) = tokio::sync::watch::channel(None);
     let task = tokio::spawn(run_projection_loop(
         provider,
-        notification_rx,
-        finality_rx,
-        events_tx,
-        ProjectionRuntime {
-            projector,
-            readiness_publisher,
-            projection_config,
-            _reader: reader,
-            overlay: None,
-            writer,
-            _writer_lease: None,
-            runtime_failure_sender: Some(runtime_failure_tx),
-            runtime_failure_receiver: Some(runtime_failure_rx),
+        ProjectionLoopInputs {
+            notifications: notification_rx,
+            finalized_blocks: finality_rx,
+            events: events_tx,
+            projection_exit: exit_tx,
         },
-        exit_tx,
+        projection_runtime(
+            projector,
+            projection_config,
+            (reader, overlay, writer),
+            (readiness_publisher, runtime_failure_tx, runtime_failure_rx),
+        ),
     ));
     finality_tx
         .unbounded_send(FinalizedTarget::new(1, block_hash))
@@ -239,6 +239,7 @@ async fn runtime_body_corruption_reports_exit_while_exex_keeps_draining() {
     };
     let projector =
         OffchainDataProjection::open(projection_config, reader.clone(), writer.clone()).unwrap();
+    let overlay = Arc::new(PendingOverlayStorage::new(reader.clone(), writer.clone()));
     let (readiness_publisher, _readiness) = outbe_offchain_data::projection_readiness(
         outbe_offchain_data::ProjectionCheckpoint {
             block_number: 0,
@@ -253,21 +254,22 @@ async fn runtime_body_corruption_reports_exit_while_exex_keeps_draining() {
     let (exit_tx, mut exit_rx) = tokio::sync::mpsc::unbounded_channel();
     let task = tokio::spawn(run_projection_loop(
         provider,
-        notification_rx,
-        finality_rx,
-        events_tx,
-        ProjectionRuntime {
-            projector,
-            readiness_publisher,
-            projection_config,
-            _reader: reader,
-            overlay: None,
-            writer,
-            _writer_lease: None,
-            runtime_failure_sender: Some(runtime_failure_tx.clone()),
-            runtime_failure_receiver: Some(runtime_failure_rx),
+        ProjectionLoopInputs {
+            notifications: notification_rx,
+            finalized_blocks: finality_rx,
+            events: events_tx,
+            projection_exit: exit_tx,
         },
-        exit_tx,
+        projection_runtime(
+            projector,
+            projection_config,
+            (reader, overlay, writer),
+            (
+                readiness_publisher,
+                runtime_failure_tx.clone(),
+                runtime_failure_rx,
+            ),
+        ),
     ));
 
     runtime_failure_tx.send_replace(Some(outbe_offchain_data::RuntimeBodyFailure::Fatal(
@@ -342,6 +344,7 @@ async fn runtime_body_unavailability_uses_the_projection_recovery_session() {
     };
     let projector =
         OffchainDataProjection::open(projection_config, reader.clone(), writer.clone()).unwrap();
+    let overlay = Arc::new(PendingOverlayStorage::new(reader.clone(), writer.clone()));
     let (readiness_publisher, readiness) = outbe_offchain_data::projection_readiness(
         outbe_offchain_data::ProjectionCheckpoint {
             block_number: 0,
@@ -361,21 +364,22 @@ async fn runtime_body_unavailability_uses_the_projection_recovery_session() {
     let (exit_tx, mut exit_rx) = tokio::sync::mpsc::unbounded_channel();
     let task = tokio::spawn(run_projection_loop(
         provider,
-        notification_rx,
-        finality_rx,
-        events_tx,
-        ProjectionRuntime {
-            projector,
-            readiness_publisher,
-            projection_config,
-            _reader: reader,
-            overlay: None,
-            writer,
-            _writer_lease: None,
-            runtime_failure_sender: Some(runtime_failure_tx.clone()),
-            runtime_failure_receiver: Some(runtime_failure_rx),
+        ProjectionLoopInputs {
+            notifications: notification_rx,
+            finalized_blocks: finality_rx,
+            events: events_tx,
+            projection_exit: exit_tx,
         },
-        exit_tx,
+        projection_runtime(
+            projector,
+            projection_config,
+            (reader, overlay, writer),
+            (
+                readiness_publisher,
+                runtime_failure_tx.clone(),
+                runtime_failure_rx,
+            ),
+        ),
     ));
 
     storage.fail_reads.store(true, Ordering::SeqCst);
@@ -442,9 +446,11 @@ fn runtime_outage_requires_a_successful_probe_before_recovery_acknowledgement() 
             MockEthProvider::<reth_ethereum::EthPrimitives>::new(),
             &runtime,
             FinalizedTarget::new(0, B256::repeat_byte(0x11)),
-            &logical_tx,
-            &write_tx,
-            &recovery_tx,
+            ProjectionProgressSenders {
+                logical_checkpoint: &logical_tx,
+                durable_write: &write_tx,
+                recovery_ack: &recovery_tx,
+            },
         )
     };
 
@@ -474,7 +480,7 @@ async fn unavailable_mongo_write_retries_without_changing_logical_readiness() {
         start_block: 1,
     };
     OffchainDataProjection::open(projection_config, storage.clone(), storage.clone()).unwrap();
-    let overlay = Arc::new(PendingOverlayStorage::new(storage.clone()));
+    let overlay = Arc::new(PendingOverlayStorage::new(storage.clone(), storage.clone()));
     let reader: StorageReaderHandle = overlay.clone();
     let logical_writer: StorageWriterHandle = overlay.clone();
     let durable_writer: StorageWriterHandle = storage.clone();
@@ -499,21 +505,18 @@ async fn unavailable_mongo_write_retries_without_changing_logical_readiness() {
     let (exit_tx, mut exit_rx) = tokio::sync::mpsc::unbounded_channel();
     let task = tokio::spawn(run_projection_loop(
         provider,
-        notification_rx,
-        finality_rx,
-        events_tx,
-        ProjectionRuntime {
-            projector,
-            readiness_publisher,
-            projection_config,
-            _reader: reader,
-            overlay: Some(overlay.clone()),
-            writer: durable_writer,
-            _writer_lease: None,
-            runtime_failure_sender: Some(runtime_failure_tx),
-            runtime_failure_receiver: Some(runtime_failure_rx),
+        ProjectionLoopInputs {
+            notifications: notification_rx,
+            finalized_blocks: finality_rx,
+            events: events_tx,
+            projection_exit: exit_tx,
         },
-        exit_tx,
+        projection_runtime(
+            projector,
+            projection_config,
+            (reader, overlay.clone(), durable_writer),
+            (readiness_publisher, runtime_failure_tx, runtime_failure_rx),
+        ),
     ));
 
     storage
@@ -571,7 +574,7 @@ async fn blocked_mongo_write_does_not_block_logical_projection_readiness() {
         start_block: 1,
     };
     OffchainDataProjection::open(projection_config, durable.clone(), durable.clone()).unwrap();
-    let overlay = Arc::new(PendingOverlayStorage::new(durable.clone()));
+    let overlay = Arc::new(PendingOverlayStorage::new(durable.clone(), durable.clone()));
     let logical_reader: StorageReaderHandle = overlay.clone();
     let logical_writer: StorageWriterHandle = overlay.clone();
     let durable_writer: StorageWriterHandle = durable.clone();
@@ -592,21 +595,18 @@ async fn blocked_mongo_write_does_not_block_logical_projection_readiness() {
     durable.block_next_write.store(true, Ordering::Release);
     let task = tokio::spawn(run_projection_loop(
         provider,
-        notification_rx,
-        finality_rx,
-        events_tx,
-        ProjectionRuntime {
-            projector,
-            readiness_publisher,
-            projection_config,
-            _reader: logical_reader,
-            overlay: Some(overlay.clone()),
-            writer: durable_writer,
-            _writer_lease: None,
-            runtime_failure_sender: Some(runtime_failure_tx),
-            runtime_failure_receiver: Some(runtime_failure_rx),
+        ProjectionLoopInputs {
+            notifications: notification_rx,
+            finalized_blocks: finality_rx,
+            events: events_tx,
+            projection_exit: exit_tx,
         },
-        exit_tx,
+        projection_runtime(
+            projector,
+            projection_config,
+            (logical_reader, overlay.clone(), durable_writer),
+            (readiness_publisher, runtime_failure_tx, runtime_failure_rx),
+        ),
     ));
 
     finality_tx
@@ -707,7 +707,7 @@ async fn restart_replays_after_the_durable_checkpoint_before_mongo_catches_up() 
         .unwrap();
     drop(durable_projection);
 
-    let overlay = Arc::new(PendingOverlayStorage::new(durable.clone()));
+    let overlay = Arc::new(PendingOverlayStorage::new(durable.clone(), durable.clone()));
     let logical_reader: StorageReaderHandle = overlay.clone();
     let logical_writer: StorageWriterHandle = overlay.clone();
     let projector =
@@ -734,21 +734,18 @@ async fn restart_replays_after_the_durable_checkpoint_before_mongo_catches_up() 
     durable.block_next_write.store(true, Ordering::Release);
     let task = tokio::spawn(run_projection_loop(
         provider,
-        notification_rx,
-        finality_rx,
-        events_tx,
-        ProjectionRuntime {
-            projector,
-            readiness_publisher,
-            projection_config,
-            _reader: logical_reader,
-            overlay: Some(overlay.clone()),
-            writer: durable.clone(),
-            _writer_lease: None,
-            runtime_failure_sender: Some(runtime_failure_tx),
-            runtime_failure_receiver: Some(runtime_failure_rx),
+        ProjectionLoopInputs {
+            notifications: notification_rx,
+            finalized_blocks: finality_rx,
+            events: events_tx,
+            projection_exit: exit_tx,
         },
-        exit_tx,
+        projection_runtime(
+            projector,
+            projection_config,
+            (logical_reader, overlay.clone(), durable.clone()),
+            (readiness_publisher, runtime_failure_tx, runtime_failure_rx),
+        ),
     ));
 
     finality_tx
@@ -810,6 +807,7 @@ async fn fatal_status_stays_sticky_when_detached_worker_finishes_late() {
     };
     let projector =
         OffchainDataProjection::open(projection_config, reader.clone(), writer.clone()).unwrap();
+    let overlay = Arc::new(PendingOverlayStorage::new(storage.clone(), storage.clone()));
     let checkpoint = ProjectionCheckpoint {
         block_number: 0,
         block_hash: projection_config.genesis_hash,
@@ -826,21 +824,22 @@ async fn fatal_status_stays_sticky_when_detached_worker_finishes_late() {
     storage.block_next_write.store(true, Ordering::Release);
     let task = tokio::spawn(run_projection_loop(
         provider,
-        notification_rx,
-        finality_rx,
-        events_tx,
-        ProjectionRuntime {
-            projector,
-            readiness_publisher,
-            projection_config,
-            _reader: reader,
-            overlay: None,
-            writer,
-            _writer_lease: None,
-            runtime_failure_sender: Some(runtime_failure_tx.clone()),
-            runtime_failure_receiver: Some(runtime_failure_rx),
+        ProjectionLoopInputs {
+            notifications: notification_rx,
+            finalized_blocks: finality_rx,
+            events: events_tx,
+            projection_exit: exit_tx,
         },
-        exit_tx,
+        projection_runtime(
+            projector,
+            projection_config,
+            (reader, overlay, writer),
+            (
+                readiness_publisher,
+                runtime_failure_tx.clone(),
+                runtime_failure_rx,
+            ),
+        ),
     ));
 
     finality_tx

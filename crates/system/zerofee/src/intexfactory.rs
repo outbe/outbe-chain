@@ -16,7 +16,7 @@ pub const MAX_ZERO_FEE_CONTRIBUTOR_BATCH_CALLDATA_BYTES: usize =
     4 + 4 * 32 + (32 + 256 * 4 * 32) + (32 + 24 * 32);
 
 /// Only explicit storage ops are metered inside precompiles (reads 100,
-/// writes 5000); transfers and events are journal ops outside metering, so a
+/// writes 5000). Transfers and events are journal ops outside metering, so a
 /// full batch executes in tens of thousands of gas.
 pub const MAX_ZERO_FEE_CONTRIBUTOR_BATCH_GAS_LIMIT: u64 =
     21_000 + 16 * MAX_ZERO_FEE_CONTRIBUTOR_BATCH_CALLDATA_BYTES as u64 + 500_000;

@@ -229,7 +229,7 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
             U256::from(10) * six_decimal_unit(),
             840,
             840,
-            // The reward path resolves the price for the gem's own day; the
+            // The reward path resolves the price for the gem's own day. The
             // benchmark measures the mint, so the seeded rate stands in for it.
             U256::from(2) * six_decimal_unit(),
         )
@@ -308,7 +308,7 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
                     .positions
                     .get(position_id)
                     .map_err(|error| error.to_string())?
-                    .map(|position| position.remaining_capacity);
+                    .map(|position| position.remaining_capacity_minor);
                 Ok::<_, String>((gem, remaining))
             })?;
             let gem = gem.ok_or_else(|| "created Merchant Gem is not readable".to_owned())?;

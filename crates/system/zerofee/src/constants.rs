@@ -1,9 +1,9 @@
 //! Constants for the zero-fee paymaster sponsorship policy.
 //!
-//! These are part of the protocol contract - changing them is a hard-fork
+//! These are part of the protocol contract. A change to them is a hard-fork
 //! event. Fee shape errors share the generic `FeeCapTooLow` (code 105)
-//! with the oracle hook because both paths require `priority_fee == 0`
-//! and `max_fee >= MIN_PROTOCOL_BASE_FEE`. All other free-tx-specific
+//! with the oracle hook. They share it because both paths require
+//! `priority_fee == 0` and `max_fee >= MIN_PROTOCOL_BASE_FEE`. All other free-tx-specific
 //! reasons occupy dedicated codes 110..=116:
 //!
 //! - 110 `FreeTxDailyExhausted` - daily quota burned
@@ -39,9 +39,9 @@ pub const FREE_TX_BOOTSTRAP_GAS_LIMIT: u64 = 100_000;
 
 /// Maximum sponsored gas limit for calls to the TributeFactory.
 ///
-/// This matches the explicit transaction limit used by `outbe-cli tribute
-/// offer` and leaves headroom above the verifier's 300,000 base gas without
-/// broadening the limit for every sponsored target.
+/// This matches the explicit transaction limit that `outbe-cli tribute
+/// offer` uses. It leaves headroom above the verifier's 300,000 base gas. It
+/// does not broaden the limit for every sponsored target.
 pub const FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT: u64 = 8_000_000;
 
 /// Maximum calldata size accepted for a sponsored free transaction.

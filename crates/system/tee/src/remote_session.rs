@@ -47,8 +47,8 @@ pub struct RemoteSessionAdmissionV1 {
 }
 
 /// Structurally checked Registry data accepted only because the caller
-/// explicitly trusts its RPC provider. This deliberately cannot be passed as a
-/// [`RemoteSessionAdmissionV1`]; enclave/server admission requires the local or
+/// explicitly trusts its RPC provider. By design, a caller cannot pass this type as a
+/// [`RemoteSessionAdmissionV1`]. Enclave/server admission requires the local or
 /// anchored finalized-state paths instead.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RpcTrustedRemoteSessionV1 {
@@ -71,7 +71,7 @@ impl RpcTrustedRemoteSessionV1 {
         self.admission.deadline()
     }
 
-    /// View claimed by the trusted RPC provider; unlike an anchored admission,
+    /// View claimed by the trusted RPC provider. Unlike an anchored admission,
     /// this method name makes the trust downgrade visible at every call site.
     #[must_use]
     pub const fn rpc_claimed_view(&self) -> FinalizedRegistryViewV1 {
@@ -140,8 +140,8 @@ pub enum RemoteSessionAdmissionError {
 
 /// Applies the common binding/lease checks after the caller has authenticated
 /// both Registry bindings as one exact finalized view. Production server code
-/// uses the node-local or anchored adapters rather than passing RPC values here;
-/// this pre-authenticated inspection seam does not prove how the supplied view
+/// uses the node-local or anchored adapters rather than passing RPC values here.
+/// This pre-authenticated inspection seam does not prove how the supplied view
 /// obtained finality.
 #[doc(hidden)]
 pub fn admit_remote_session_v1(

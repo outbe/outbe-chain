@@ -12,9 +12,9 @@ use outbe_primitives::time::WorldwideDay;
 /// (signer-of-record) participant pools. A reward day is the calendar day when
 /// an offer executes, not the Tribute's target WorldwideDay.
 ///
-/// Naming history: `wallet_*` was renamed to `waa_*` and `sfa_*` to
-/// `sra_*` as part (Phase 2 of the Cycle epic) so the on-chain
-/// identifiers match the README and external documentation.
+/// Naming history: Phase 2 of the Cycle epic renamed `wallet_*` to `waa_*`
+/// and `sfa_*` to `sra_*`, so the on-chain identifiers match the README and
+/// external documentation.
 #[storage_schema]
 #[contract(addr = AGENT_REWARD_ADDRESS)]
 pub struct AgentRewardContract {
@@ -56,7 +56,7 @@ pub struct AgentRewardContract {
 }
 
 /// Pool a claimable balance belongs to. The pool decides the Gem class a
-/// claim issues, so WAA, SRA and CCA balances are kept apart.
+/// claim issues, so the contract keeps WAA, SRA and CCA balances apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum RewardPool {

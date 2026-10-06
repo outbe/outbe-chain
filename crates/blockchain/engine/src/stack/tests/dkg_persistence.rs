@@ -253,12 +253,13 @@ fn test_completed_dkg_is_durable_before_activation_boundary() {
     let backend = bls::KeyBackend::Plaintext;
 
     let completed_boundary = persist_completed_dkg_before_activation(
-        dir.path(),
-        &backend,
-        Epoch::new(3),
-        3,
-        &participants,
-        &target,
+        DkgStateStore::new(dir.path(), &backend),
+        DkgBoundaryContext {
+            current_epoch: Epoch::new(3),
+            vrf_material_version: 3,
+            current_participants: &participants,
+            target: &target,
+        },
         &complete,
         104,
     )
@@ -322,9 +323,17 @@ fn test_pending_dkg_material_alone_does_not_restore_boundary() {
 
     // Crash cut point: pending DKG triplet reached disk, but the boundary
     // snapshot did not. Restart must not infer/activate a boundary from material
-    // alone; the pending-boundary file remains absent and DkgManager has no
+    // alone. The pending-boundary file remains absent and DkgManager has no
     // pending artifact to verify/drain.
-    save_pending_dkg_state(dir.path(), &share, &polynomial, &output, &backend).unwrap();
+    save_pending_dkg_state(
+        DkgStateStore::new(dir.path(), &backend),
+        DkgStateMaterial {
+            share: &share,
+            polynomial: &polynomial,
+            output: &output,
+        },
+    )
+    .unwrap();
     assert!(load_pending_dkg_state(dir.path(), &backend)
         .unwrap()
         .is_some());
@@ -369,10 +378,18 @@ fn test_pending_boundary_snapshot_restores_manager_before_commit() {
     };
 
     // Crash cut point: pending material + pending boundary snapshot exist, but
-    // process memory was lost before/around note_ceremony_completed. Restart can
+    // the process lost its memory before/around note_ceremony_completed. Restart can
     // load both durable pieces and restore the boundary into DkgManager without
     // creating a committed marker.
-    save_pending_dkg_state(dir.path(), &share, &polynomial, &output, &backend).unwrap();
+    save_pending_dkg_state(
+        DkgStateStore::new(dir.path(), &backend),
+        DkgStateMaterial {
+            share: &share,
+            polynomial: &polynomial,
+            output: &output,
+        },
+    )
+    .unwrap();
     save_pending_dkg_boundary(dir.path(), &snapshot).unwrap();
     let loaded_state = load_pending_dkg_state(dir.path(), &backend)
         .unwrap()
@@ -506,7 +523,15 @@ fn test_save_and_load_dkg_state_preserves_output() {
     let dir = tempfile::tempdir().unwrap();
     let backend = bls::KeyBackend::Plaintext;
 
-    save_dkg_state(dir.path(), &share, &polynomial, &output, &backend).unwrap();
+    save_dkg_state(
+        DkgStateStore::new(dir.path(), &backend),
+        DkgStateMaterial {
+            share: &share,
+            polynomial: &polynomial,
+            output: &output,
+        },
+    )
+    .unwrap();
 
     let (loaded_share, loaded_polynomial, loaded_output) =
         load_saved_dkg_state(dir.path(), &backend).unwrap().unwrap();
@@ -530,11 +555,12 @@ fn test_load_saved_dkg_state_rejects_incomplete_files() {
     assert!(error.to_string().contains("saved DKG state is incomplete"));
 }
 
-/// A node that has already finalized (`Some(N>0)`) - or whose execution layer
-/// recovered after a crash with consensus still durable - must classify as an
-/// existing-chain join: it must NOT re-run the initial genesis DKG and the
-/// genesis-formation gate must NOT (re)form genesis. An inverted height check
-/// would compile clean but re-run genesis DKG on a restarted validator.
+/// A node that has already finalized (`Some(N>0)`) must classify as an
+/// existing-chain join. The same applies to a node whose execution layer
+/// recovered after a crash with consensus still durable. Such a node must NOT
+/// re-run the initial genesis DKG, and the genesis-formation gate must NOT
+/// (re)form genesis. An inverted height check would compile clean but re-run
+/// genesis DKG on a restarted validator.
 #[test]
 fn restarted_finalized_node_does_not_refresh_genesis_dkg() {
     let fresh = StartupDkgContext {

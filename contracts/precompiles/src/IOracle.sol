@@ -19,13 +19,14 @@ interface IOracle {
     event ScurvePeakDetected(address indexed base, address indexed quote, uint256 peakPrice, uint64 peakDay);
     /// @notice Emitted once per pair when a closed UTC calendar day's VWAP is
     /// finalized into state. `utcDay` is a yyyymmdd UTC date key (e.g. 20260625).
-    /// @dev Uses all three indexable topics; no further field can be indexed.
+    /// @dev Uses all three indexable topics. No further field can be indexed.
     event VwapCalculated(uint32 indexed utcDay, address indexed base, address indexed quote, uint256 vwap);
 
     /// @notice One quoted rate in an aggregate vote.
     /// @dev `base` and `quote` must match the direction the pair was registered
     ///      in. The storage key is order-independent, so a flipped quote would
-    ///      otherwise submit an uninverted rate for the same pair; it reverts.
+    ///      otherwise submit an uninverted rate for the same pair. A flipped quote
+    ///      reverts.
     ///      COEN/ISO rates and COEN volumes use six decimals. Generic pairs keep
     ///      their existing decimal18 contract.
     struct ExchangeRateTuple {
@@ -37,12 +38,12 @@ interface IOracle {
 
     /// @notice Returns the current exchange rate for a market, quoted in the
     ///         caller's direction.
-    /// @dev Generic pairs preserve their registered orientation; COEN/ISO uses
+    /// @dev Generic pairs preserve their registered orientation. COEN/ISO uses
     ///      COEN as base. Quoting a market backwards returns `scale^2 / rate`:
     ///      `1e12 / rate` for COEN/ISO and `1e36 / rate` for generic pairs. An
     ///      unpublished rate is `0` from either side. Reverts
     ///      if the market is not registered. Unlike the other pair-scoped reads,
-    ///      this one accepts either direction - a spot rate is the only value
+    ///      this one accepts either direction, because a spot rate is the only value
     ///      here that has a well-defined inverse.
     function getExchangeRate(address base, address quote) external view returns (uint256 rate);
 
@@ -160,7 +161,8 @@ interface IOracle {
         view
         returns (uint64[] memory timestamps, uint256[] memory rates, uint256[] memory volumes);
 
-    /// @notice Returns flattened price snapshot history across all pairs (most recent snapshots first).
+    /// @notice Returns flattened price snapshot history across all pairs
+    ///         (most recent snapshots first).
     function getAllPriceSnapshotHistory(uint32 count)
         external
         view
@@ -177,7 +179,7 @@ interface IOracle {
     function getTwap(address base, address quote, uint64 lookbackSeconds) external view returns (uint256 twap);
 
     /// @notice Returns TWAPs for all active vote-target pairs. The input
-    /// `lookback` is the requested lookback window in seconds; the returned
+    /// `lookback` is the requested lookback window in seconds. The returned
     /// `lookbackSeconds` array reports the lookback actually used per pair.
     function getTwaps(uint64 lookback)
         external
@@ -208,10 +210,16 @@ interface IOracle {
 
     /// @notice Returns the finalized COEN/`currency` VWAP over a trailing snapshot
     ///         window, at six decimals.
-    /// @dev Any well-formed closed snapshot is readable; compare `snapshotId` with
-    ///      `getVwapSnapshotId()` to price against the current one. Reverts for an
-    ///      unregistered currency, a malformed or open snapshot and a window without
-    ///      a positive price.
+    /// @dev Any well-formed closed snapshot is readable. Compare `snapshotId` with
+    ///      `getVwapSnapshotId()` to price against the current one. Reverts for:
+    ///      - an unregistered currency
+    ///      - a malformed or open snapshot
+    ///      - a window without a positive price
+    ///      - a window with too little coverage
+    ///      An hour counts only when its snapshots cover two thirds of the tally
+    ///      rounds its blocks allowed. Hours that do not count are left out of the
+    ///      VWAP. The hours that count must together cover two thirds of the whole
+    ///      window's rounds.
     function getFinalizedWindowVwap(uint16 currency, uint256 snapshotId) external view returns (uint256 vwap);
 
     /// @notice Returns the finalized VWAP for a full UTC calendar day.
@@ -220,7 +228,8 @@ interface IOracle {
     ///        in-progress current day use `getVwapForTimeRange` instead.
     function getUtcDayVwap(address base, address quote, uint32 utcDay) external view returns (uint256 vwap);
 
-    /// @notice Returns VWAPs for all active vote-target pairs over an explicit WorldwideDay-style window.
+    /// @notice Returns VWAPs for all active vote-target pairs over an explicit
+    ///         WorldwideDay-style window.
     function getWorldwideDayVwap(uint64 startTime, uint64 endTime)
         external
         view

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+mod sub_call_support;
 
 use alloy_evm::{Evm as _, EvmFactory as _};
 use alloy_primitives::{Address, Bytes, U256};
@@ -173,11 +173,7 @@ fn nested_staticcall_uses_the_same_authenticated_dynamic_route() {
 
     let result = sub_call::run(
         &mut ctx,
-        CALLER,
-        false,
-        SpecId::PRAGUE,
-        None,
-        Arc::new(outbe_compressed_entities::ExecutionScope::new()),
+        sub_call_support::fresh_environment(CALLER, SpecId::PRAGUE),
         SubCallInput {
             target: token,
             value: U256::ZERO,
@@ -209,11 +205,7 @@ fn nested_static_mutation_halts_without_committing_an_event() {
 
     let result = sub_call::run(
         &mut ctx,
-        CALLER,
-        false,
-        SpecId::PRAGUE,
-        None,
-        Arc::new(outbe_compressed_entities::ExecutionScope::new()),
+        sub_call_support::fresh_environment(CALLER, SpecId::PRAGUE),
         SubCallInput {
             target: token,
             value: U256::ZERO,
@@ -228,11 +220,7 @@ fn nested_static_mutation_halts_without_committing_an_event() {
 
     let allowance = sub_call::run(
         &mut ctx,
-        CALLER,
-        false,
-        SpecId::PRAGUE,
-        None,
-        Arc::new(outbe_compressed_entities::ExecutionScope::new()),
+        sub_call_support::fresh_environment(CALLER, SpecId::PRAGUE),
         SubCallInput {
             target: token,
             value: U256::ZERO,
@@ -262,11 +250,7 @@ fn nested_call_with_insufficient_gas_halts_out_of_gas() {
 
     let result = sub_call::run(
         &mut ctx,
-        CALLER,
-        false,
-        SpecId::PRAGUE,
-        None,
-        Arc::new(outbe_compressed_entities::ExecutionScope::new()),
+        sub_call_support::fresh_environment(CALLER, SpecId::PRAGUE),
         SubCallInput {
             target: token,
             value: U256::ZERO,

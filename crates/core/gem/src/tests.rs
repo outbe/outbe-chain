@@ -13,6 +13,9 @@ use crate::config::GemParams;
 use crate::precompile::{dispatch, IGem};
 use crate::schema::{GemAddParams, GemContract, GemState};
 
+#[path = "hooks_tests.rs"]
+mod hooks;
+
 const T_NOW: u64 = 1_700_000_000;
 const ALICE: Address = address!("0x1111111111111111111111111111111111111111");
 const BOB: Address = address!("0x2222222222222222222222222222222222222222");
@@ -304,7 +307,7 @@ fn the_last_gem_out_closes_its_bucket() {
 
         api::set_state(storage, gem_id, GemState::Settled).unwrap();
         assert_eq!(gem.bucket_gem_count.read(&bucket).unwrap(), 0);
-        assert!(gem.bucket_call_price.read(&bucket).unwrap().is_zero());
+        assert!(gem.bucket_call_price_minor.read(&bucket).unwrap().is_zero());
         assert_eq!(gem.bucket_bin_index.read(&bucket).unwrap(), 0);
         assert!(!tree_math::contains(&crate::state::BucketBins(&gem, 840), bin).unwrap());
     });
@@ -374,7 +377,7 @@ fn is_qualified_dispatch() {
     });
 }
 
-/// A zero floor still needs one finalized day; any positive price then clears it.
+/// A zero floor still needs one finalized day. Any positive price then clears it.
 #[test]
 fn a_gem_without_a_floor_qualifies_on_its_first_closed_day() {
     with_storage(|storage| {
@@ -583,6 +586,32 @@ fn precompile_transfer_paths_revert() {
 }
 
 #[test]
+fn gem_status_reports_call_terms_and_settlement_deadline() {
+    with_storage(|storage| {
+        let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
+        let status = |storage: &StorageHandle| {
+            let data = IGem::getGemStatusCall { gemId: gem_id }.abi_encode();
+            let bytes = dispatch(storage.clone(), &data, Address::ZERO, U256::ZERO).unwrap();
+            IGem::getGemStatusCall::abi_decode_returns(&bytes).unwrap()
+        };
+        let item = api::get_gem(storage, gem_id).unwrap().unwrap();
+
+        let open = status(storage);
+        assert_eq!(open.callWindow, item.call_window_seconds);
+        assert_eq!(open.callThreshold, item.call_threshold_seconds);
+        assert_eq!(open.settlementDeadline, 0);
+
+        call_gem(storage, gem_id, T_NOW + 10);
+        let called = status(storage);
+        assert_eq!(called.calledAt, T_NOW + 10);
+        assert_eq!(
+            called.settlementDeadline,
+            T_NOW + 10 + u64::from(item.call_notice_period_seconds)
+        );
+    });
+}
+
+#[test]
 fn precompile_balance_and_owner_views() {
     with_storage(|storage| {
         let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
@@ -607,7 +636,7 @@ fn precompile_balance_and_owner_views() {
 /// Pins the flat `GemContract` storage layout that `scripts/seed_genesis.py`
 /// (`seed_gems`) depends on to genesis-seed a Settled gem. If the schema field
 /// order or `GemData` field count changes, these slots shift and the Python
-/// seeder must be updated in lockstep - this test is the tripwire.
+/// seeder must be updated in lockstep. This test is the tripwire.
 #[test]
 fn gem_storage_layout_matches_genesis_seeder() {
     use outbe_primitives::storage::dsl::StorageRecord;
@@ -645,7 +674,7 @@ fn breach_window(now: u64, breach: U256, breach_days: usize) -> Vec<(u32, Option
 }
 
 fn mature_gem(storage: &StorageHandle) -> U256 {
-    // These cases reason in the PROD call terms; the test chain id resolves to DEV.
+    // These cases reason in the PROD call terms. The test chain id resolves to DEV.
     GemContract::new(storage.clone())
         .config_profile
         .write(crate::config::PROFILE_PROD)
@@ -730,8 +759,8 @@ fn the_call_pass_resumes_from_its_bin_cursor() {
     });
 }
 
-/// The daily trigger opens a sweep and closes it once nothing is left to walk;
-/// with none open, a block costs nothing and calls nobody.
+/// The daily trigger opens a sweep and closes it once nothing is left to walk.
+/// With no sweep open, a block costs nothing and calls nobody.
 #[test]
 fn a_finished_sweep_closes_itself_and_idle_blocks_do_nothing() {
     with_storage(|storage| {
@@ -827,8 +856,8 @@ fn a_bin_wider_than_the_budget_resumes_inside_it() {
     });
 }
 
-/// An entry the sweep cannot retire credits nothing - the burn and the credit
-/// share a checkpoint - and leaves its bucket, so the gems behind it still drain.
+/// An entry that the sweep cannot retire credits nothing and leaves its bucket, so
+/// the gems behind it still drain. The burn and the credit share a checkpoint.
 #[test]
 fn an_entry_the_sweep_cannot_retire_does_not_hold_up_its_bucket() {
     with_storage(|storage| {
@@ -993,7 +1022,7 @@ fn an_unindexable_price_skips_its_currency_for_the_day_and_says_so() {
     provider.set_timestamp(U256::from(T_NOW));
     let pinned_day = StorageHandle::enter(&mut provider, |storage| {
         let gem_id = mature_gem(&storage);
-        // A price no bin can hold; a begin-block error would fail the whole block.
+        // A price no bin can hold. A begin-block error would fail the whole block.
         let pair = seed_currency(&storage, 840, Some(U256::from(600_000u64)));
         let oracle = OracleContract::new(storage.clone());
         let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
@@ -1157,7 +1186,7 @@ fn a_wider_window_than_the_live_profile_widens_the_span_the_scan_collects() {
 #[test]
 fn config_unset_resolves_by_chain_id() {
     with_storage(|storage| {
-        // No genesis profile selected -> resolved by network; the test chain is not mainnet.
+        // No genesis profile selected -> resolved by network. The test chain is not mainnet.
         assert_eq!(crate::config::read(storage).unwrap(), GemParams::DEV);
         // An explicit selector still wins over the network default.
         GemContract::new(storage.clone())
@@ -1267,9 +1296,9 @@ fn forfeit_fails_once(call: fn(&StorageHandle, U256, u64)) -> (HashMapStoragePro
         call(&storage, gem_id, T_NOW);
         let hour = GemContract::deadline_hour(T_NOW + 7 * 86_400);
         // The credit overflows, so the forfeit reverts as a whole.
-        outbe_promislimit::PromisLimitContract::new(storage.clone())
-            .set_total_unallocated(U256::MAX)
-            .unwrap();
+        let mut limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
+        limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
+        limit.checked_add_carry_over(U256::MAX).unwrap();
 
         let now = GemContract::hour_end(hour);
         let ctx = block_ctx_at(&storage, now);
@@ -1289,7 +1318,7 @@ fn forfeit_fails_once(call: fn(&StorageHandle, U256, u64)) -> (HashMapStoragePro
 
     StorageHandle::enter(&mut provider, |storage| {
         outbe_promislimit::PromisLimitContract::new(storage.clone())
-            .set_total_unallocated(U256::ZERO)
+            .checked_take_carry_over_up_to(U256::MAX)
             .unwrap();
         let ctx = block_ctx_at(&storage, GemContract::hour_end(retry));
         <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
@@ -1336,7 +1365,7 @@ fn begin_block_at(storage: &StorageHandle, ts: u64) {
     .unwrap();
 }
 
-/// One member that cannot burn leaves its bucket; the others burn on time.
+/// One member that cannot burn leaves its bucket. The others burn on time.
 #[test]
 fn a_member_that_cannot_burn_does_not_hold_back_its_bucket() {
     with_storage(|storage| {
@@ -1345,8 +1374,9 @@ fn a_member_that_cannot_burn_does_not_hold_back_its_bucket() {
         let now = first_due_block(storage, gems[0]);
         // Room for the small load's credit only.
         let mut limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
+        limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
         limit
-            .set_total_unallocated(U256::MAX - U256::from(500u64))
+            .checked_add_carry_over(U256::MAX - U256::from(500u64))
             .unwrap();
 
         // The failing member sits on top, where the sweep starts.
@@ -1355,7 +1385,7 @@ fn a_member_that_cannot_burn_does_not_hold_back_its_bucket() {
         assert_eq!(gem_state(storage, gems[1]), GemState::Called as u8);
         assert!(bucket_of(storage, gems[1]).is_zero(), "queued on its own");
 
-        limit.set_total_unallocated(U256::ZERO).unwrap();
+        limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
         begin_block_at(
             storage,
             GemContract::hour_end(GemContract::deadline_hour(now) + 1),
@@ -1572,7 +1602,7 @@ fn config_dev_profile_terms_a_new_gem() {
         let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
 
         // A gem snapshots its call terms at issuance, so the dev bundle has to
-        // reach the record; the prod one must not.
+        // reach the record. The prod one must not.
         let item = api::get_gem(storage, gem_id).unwrap().unwrap();
         assert_eq!(item.call_window_seconds, GemParams::DEV.call_window_seconds);
         assert_eq!(
@@ -1712,9 +1742,9 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
     assert_eq!(events[0].inFlightDay, in_flight);
 }
 
-/// Each currency is walked once a sweep. Were the ones closed behind the cursor
-/// walked again, two currencies each holding more undecided gems than a slice may
-/// visit would keep the sweep open for good.
+/// A sweep walks each currency once. Take two currencies that each hold more
+/// undecided gems than a slice may visit. If the sweep walked the ones closed
+/// behind the cursor again, these two would keep the sweep open for good.
 #[test]
 fn a_call_sweep_over_several_currencies_always_ends() {
     with_storage(|storage| {
@@ -2046,8 +2076,16 @@ fn an_issued_card_leads_with_the_load_and_shows_the_floor_price() {
     });
 }
 
+fn status_state(storage: &StorageHandle, gem_id: U256) -> u8 {
+    let data = IGem::getGemStatusCall { gemId: gem_id }.abi_encode();
+    let out = dispatch(storage.clone(), &data, Address::ZERO, U256::ZERO).unwrap();
+    IGem::getGemStatusCall::abi_decode_returns(&out)
+        .unwrap()
+        .state
+}
+
 #[test]
-fn token_uri_stays_called_past_the_call_deadline() {
+fn a_gem_reads_forfeited_past_the_call_deadline() {
     let mut provider = HashMapStorageProvider::new(1);
     provider.set_timestamp(U256::from(T_NOW));
     let (gem_id, deadline) = StorageHandle::enter(&mut provider, |storage| {
@@ -2065,12 +2103,16 @@ fn token_uri_stays_called_past_the_call_deadline() {
         assert_eq!(trait_value(&json, "Call Deadline").unwrap(), deadline);
         assert!(svg.contains(">CALLED</text>"));
         assert!(svg.contains(&outbe_common::nft_card::timestamp_utc(deadline)));
+        assert_eq!(status_state(&storage, gem_id), GemState::Called as u8);
     });
 
     provider.set_timestamp(U256::from(deadline + 1));
     StorageHandle::enter(&mut provider, |storage| {
         let (json, svg) = token_uri_parts(&storage, gem_id);
-        assert_eq!(trait_value(&json, "State").unwrap(), "Called");
-        assert!(svg.contains(">CALLED</text>"));
+        assert_eq!(trait_value(&json, "State").unwrap(), "Forfeited");
+        assert_eq!(trait_value(&json, "Call Deadline").unwrap(), deadline);
+        assert!(svg.contains(">FORFEITED</text>"));
+        assert_eq!(status_state(&storage, gem_id), GemState::Forfeited as u8);
+        assert_eq!(gem_state(&storage, gem_id), GemState::Called as u8);
     });
 }

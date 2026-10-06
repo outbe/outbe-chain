@@ -27,8 +27,7 @@ fn item(owner: Address, day: WorldwideDay) -> NodItemState {
         gratis_load_minor: U256::from(11),
         worldwide_day: day,
         league_id: 4,
-        floor_price_minor: U256::from(13),
-        bucket_key: NodContract::bucket_key(day, U256::from(13), 978),
+        bucket_key: NodContract::bucket_key(day, U256::from(5), 978),
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 1_752_534_000,
@@ -166,15 +165,15 @@ fn qualification_reads_the_finalized_day_and_writes_nothing() {
 fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
     let (mut provider, scope, parent) = active_world();
     let day = WorldwideDay::new(20_260_716);
-    // (owner byte, reference currency, floor price).
+    // (owner byte, reference currency, entry price) for floors 1000, 1200, 1250, 1300, 1300, 1299.
     let specs = [
-        (0x51u8, 840u16, 1000u64),
-        (0x52, 978, 1200),
-        (0x53, 840, 1250),
-        (0x54, 840, 1300),
-        (0x55, 978, 1300),
+        (0x51u8, 840u16, 926u64),
+        (0x52, 978, 1112),
+        (0x53, 840, 1158),
+        (0x54, 840, 1204),
+        (0x55, 978, 1204),
         // Shares the rate's bin, so it exercises the tail-bin exact compare.
-        (0x56, 840, 1299),
+        (0x56, 840, 1203),
     ];
     // Only the 840 buckets strictly below 1299 qualify: 1299/1300 are at or
     // above the day price and the 978 buckets are priced in another currency.
@@ -183,18 +182,17 @@ fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
     StorageHandle::enter(&mut provider, |storage| {
         let bucket_ids: Vec<WwdEntityId> = specs
             .iter()
-            .map(|&(owner_byte, currency, floor)| {
-                let floor = U256::from(floor);
+            .map(|&(owner_byte, currency, entry)| {
+                let entry = U256::from(entry);
                 let mut body = item(Address::repeat_byte(owner_byte), day);
-                body.floor_price_minor = floor;
                 body.reference_currency = currency;
-                body.bucket_key = NodContract::bucket_key(day, floor, currency);
-                api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap();
+                body.bucket_key = NodContract::bucket_key(day, entry, currency);
+                api::add_nod(&storage, &scope, &parent, &body, entry).unwrap();
                 WwdEntityId::from_day_and_digest(day, body.bucket_key.0)
             })
             .collect();
 
-        // COEN/840 closes the first full day at 1299; COEN/978 has no pair at all.
+        // COEN/840 closes the first full day at 1299. COEN/978 has no pair at all.
         let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         let pair = outbe_oracle::api::AddressPair::new_coen_to(840);
         let index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
@@ -276,12 +274,11 @@ fn idle_daily_scans_do_not_write_storage() {
             .record_utc_day_vwap(20260715, index, U256::from(13))
             .unwrap();
         oracle.utc_day_vwap_last_finalized.write(20260715).unwrap();
-        for (owner, floor) in [(0x51, 12), (0x52, 13)] {
+        for (owner, entry) in [(0x51, 12u64), (0x52, 13)] {
+            let entry = U256::from(entry);
             let mut body = item(Address::repeat_byte(owner), WorldwideDay::new(20260715));
-            body.floor_price_minor = U256::from(floor);
-            body.bucket_key =
-                NodContract::bucket_key(body.worldwide_day, body.floor_price_minor, 978);
-            api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap();
+            body.bucket_key = NodContract::bucket_key(body.worldwide_day, entry, 978);
+            api::add_nod(&storage, &scope, &parent, &body, entry).unwrap();
         }
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(1, midnight, 1),

@@ -5,11 +5,14 @@
 //! This would provide light-client-grade trust: verify that 2/3+1 validators
 //! signed each block using the group public key from the ValidatorSet contract.
 
+mod point_reads;
+mod tee;
+
+use point_reads::PointReadRuntime;
+
 use alloy_primitives::{Address, Bytes, B256, U256};
 use jsonrpsee::core::RpcResult;
-use outbe_compressed_entities::{
-    CeDomain, CompressedTreeService, PointReadRequestV1, PointReadResultV1, SelectedHeaderV1,
-};
+use outbe_compressed_entities::{CompressedTreeService, PointReadRequestV1, PointReadResultV1};
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::header::OutbeHeader;
 use outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1;
@@ -17,7 +20,7 @@ use outbe_primitives::{
     consensus::ConsensusExecutionBridge,
     projection::{ProjectionReadinessHandle, ProjectionStatus},
     storage::{
-        readonly::{ReadOnlyBlockContext, ReadOnlyStorageProvider, StorageReader},
+        readonly::{ReadOnlyStorageProvider, StorageReader},
         StorageHandle,
     },
 };
@@ -77,9 +80,10 @@ pub struct OutbeApiHandler<P> {
     chain_identity: Option<(u64, B256)>,
     bridge: Option<ConsensusExecutionBridge>,
     /// Whether this node runs consensus as a VALIDATOR. A `--upstream` follower
-    /// also holds a bridge (to serve `outbe_getFinalization` to downstream
-    /// followers) but must report itself as a non-validator / TrustedFinality
-    /// node. This flag, NOT `bridge.is_some()`, drives validator-status fields.
+    /// also holds a bridge, to serve `outbe_getFinalization` to downstream
+    /// followers. But the follower must report itself as a non-validator /
+    /// TrustedFinality node. This flag, NOT `bridge.is_some()`, drives
+    /// validator-status fields.
     is_validator: bool,
     projection_readiness: ProjectionReadinessHandle,
     point_reads: Option<PointReadRuntime>,
@@ -114,22 +118,6 @@ struct TeeRenewalScheduleConfigV1 {
     minimum_block_time_millis: u64,
 }
 
-#[derive(Clone)]
-struct PointReadRuntime {
-    tree: Arc<CompressedTreeService>,
-    bodies: RuntimeBodyReaders,
-    chain_id: u64,
-}
-
-impl std::fmt::Debug for PointReadRuntime {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("PointReadRuntime")
-            .field("chain_id", &self.chain_id)
-            .finish_non_exhaustive()
-    }
-}
-
 impl<P> std::fmt::Debug for OutbeApiHandler<P> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -142,7 +130,7 @@ impl<P> std::fmt::Debug for OutbeApiHandler<P> {
 
 impl<P> OutbeApiHandler<P> {
     /// Create a new handler backed by the given state provider factory (no
-    /// bridge; plain EL full node).
+    /// bridge, plain EL full node).
     pub fn new(provider: Arc<P>, projection_readiness: ProjectionReadinessHandle) -> Self {
         Self {
             provider,
@@ -164,40 +152,24 @@ impl<P> OutbeApiHandler<P> {
         bridge: ConsensusExecutionBridge,
         projection_readiness: ProjectionReadinessHandle,
     ) -> Self {
-        Self {
-            provider,
-            chain_identity: None,
-            bridge: Some(bridge),
-            is_validator: true,
-            projection_readiness,
-            point_reads: None,
-            tee_renewal_schedule: None,
-            ocomp_lysis_openings: None,
-            radicle_status: outbe_radicle::integration::RadicleStatusChannel::disabled(),
-            tee_enclave_health: outbe_tee::TeeEnclaveHealthChannel::disabled(),
-        }
+        let mut handler = Self::new(provider, projection_readiness);
+        handler.bridge = Some(bridge);
+        handler.is_validator = true;
+        handler
     }
 
-    /// Create a `--upstream` follower handler: it holds the bridge so it can
-    /// serve `outbe_getFinalization` (chaining followers), but reports itself as
-    /// a non-validator (TrustedFinality) node, not a validator.
+    /// Create a `--upstream` follower handler. It holds the bridge so it can
+    /// serve `outbe_getFinalization` (chaining followers). But it reports itself
+    /// as a non-validator (TrustedFinality) node, not a validator.
     pub fn with_follower_bridge(
         provider: Arc<P>,
         bridge: ConsensusExecutionBridge,
         projection_readiness: ProjectionReadinessHandle,
     ) -> Self {
-        Self {
-            provider,
-            chain_identity: None,
-            bridge: Some(bridge),
-            is_validator: false,
-            projection_readiness,
-            point_reads: None,
-            tee_renewal_schedule: None,
-            ocomp_lysis_openings: None,
-            radicle_status: outbe_radicle::integration::RadicleStatusChannel::disabled(),
-            tee_enclave_health: outbe_tee::TeeEnclaveHealthChannel::disabled(),
-        }
+        let mut handler = Self::new(provider, projection_readiness);
+        handler.bridge = Some(bridge);
+        handler.is_validator = false;
+        handler
     }
 
     #[must_use]
@@ -253,8 +225,9 @@ impl<P> OutbeApiHandler<P> {
     }
 }
 
-/// Map the canary snapshot into the RPC shape. Pure so it is unit-testable;
-/// `now_unix_ms` is passed in to keep assertions wall-clock-free.
+/// Map the canary snapshot into the RPC shape. The function is pure so that unit
+/// tests can test it. The caller supplies `now_unix_ms` to keep assertions
+/// wall-clock-free.
 pub(crate) fn enclave_health_info(
     snapshot: &outbe_tee::TeeEnclaveHealthSnapshot,
     now_unix_ms: u64,
@@ -405,64 +378,6 @@ impl<P> OutbeApiHandler<P>
 where
     P: StateProviderFactory + HeaderProvider<Header = OutbeHeader> + Send + Sync + 'static,
 {
-    async fn serve_compressed_entity(
-        &self,
-        request: PointReadRequestV1,
-    ) -> RpcResult<PointReadResultV1> {
-        let Some(runtime) = self.point_reads.clone() else {
-            return Ok(PointReadResultV1::Unavailable);
-        };
-        let provider = Arc::clone(&self.provider);
-        tokio::task::spawn_blocking(move || {
-            runtime.tree.serve_point_read_v1(
-                runtime.chain_id,
-                request,
-                |height, expected_hash| {
-                    let finalized = provider.finalized_block_num_hash().ok().flatten()?;
-                    if finalized.number < height {
-                        return None;
-                    }
-                    provider
-                        .sealed_header(height)
-                        .ok()
-                        .flatten()
-                        .filter(|header| header.hash() == expected_hash)
-                        .map(|header| SelectedHeaderV1 {
-                            block_number: height,
-                            block_hash: expected_hash,
-                            extra_data: header.header().inner.extra_data.to_vec(),
-                        })
-                },
-                |domain, raw_id| match domain {
-                    CeDomain::Tribute => match runtime.bodies.tribute().get_stored_body(raw_id) {
-                        Ok(Some(body)) => Some(body.encode()),
-                        Ok(None) | Err(_) => {
-                            runtime.bodies.report_unavailable();
-                            None
-                        }
-                    },
-                    CeDomain::NodItem => match runtime.bodies.nod().get_stored_item(raw_id) {
-                        Ok(Some(body)) => Some(body.encode()),
-                        Ok(None) | Err(_) => {
-                            runtime.bodies.report_unavailable();
-                            None
-                        }
-                    },
-                    CeDomain::NodBucket => match runtime.bodies.nod().get_stored_bucket(raw_id) {
-                        Ok(Some(body)) => Some(body.encode()),
-                        Ok(None) | Err(_) => {
-                            runtime.bodies.report_unavailable();
-                            None
-                        }
-                    },
-                },
-            )
-        })
-        .await
-        .map_err(|error| internal_err(format!("point-read worker failed: {error}")))?
-        .map_err(|error| invalid_params(error.to_string()))
-    }
-
     /// Read precompile state at the latest block using a closure.
     fn with_latest_state<R>(
         &self,
@@ -496,7 +411,7 @@ where
         &self,
         request: PointReadRequestV1,
     ) -> RpcResult<PointReadResultV1> {
-        self.serve_compressed_entity(request).await
+        point_reads::serve(&self.provider, self.point_reads.clone(), request).await
     }
 
     async fn get_ocomp_lysis_openings_v1(
@@ -523,20 +438,21 @@ where
     ) -> RpcResult<GratisKeysSealed> {
         use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 
-        // Prove the caller controls `account` before the enclave derives its
-        // (secret) modify key: recover the EIP-191 personal_sign signer over
-        // `"outbe/<ledger>/derive-keys/v1" || account || ephemeralPubkey` and require
-        // it to equal `account`.
+        // Prove that the caller controls `account` before the enclave derives its
+        // (secret) modify key. Recover the EIP-191 personal_sign signer over
+        // `"outbe/<ledger>/derive-keys/v1" || account || ephemeralPubkey`. Require
+        // the signer to equal `account`.
         let sig65: [u8; 65] = signature.as_ref().try_into().map_err(|_| {
             invalid_params_err(format!(
                 "signature must be 65 bytes (r||s||v), got {}",
                 signature.len()
             ))
         })?;
-        // Fast reject: recover the signer here so an unauthorized request is dropped
-        // before the enclave round-trip. This is defense-in-depth only - the enclave
-        // re-verifies the same signature, because a compromised host could bypass this
-        // check and reach the enclave transport directly (see DeriveAccountKeys arm).
+        // Fast reject: recover the signer here so that this handler drops an
+        // unauthorized request before the enclave round-trip. This is defense-in-depth
+        // only. The enclave re-verifies the same signature, because a compromised host
+        // could bypass this check and reach the enclave transport directly (see
+        // DeriveAccountKeys arm).
         let prehash = outbe_tee::protocol::eip191_hash(
             &outbe_tee::protocol::derive_account_keys_message(ledger, account, ephemeral_pubkey),
         );
@@ -548,9 +464,9 @@ where
             )));
         }
 
-        // Off-chain key delivery via the process-global enclave client (no state).
-        // Thread `owner_sig` through so the enclave enforces ownership in its own
-        // trust domain, not ours.
+        // Off-chain key delivery through the process-global enclave client (no state).
+        // Pass `owner_sig` to the enclave so that the enclave enforces ownership in its
+        // own trust domain, not ours.
         let response = outbe_tee::try_with_enclave(|client| {
             client.request(&EnclaveRequest::DeriveAccountKeys {
                 ledger,
@@ -587,7 +503,7 @@ where
         ephemeral_pubkey: B256,
         signature: alloy_primitives::Bytes,
     ) -> RpcResult<GratisKeysSealed> {
-        // Deprecated alias - the Gratis ledger of the unified `deriveKeys`.
+        // Deprecated alias for the Gratis ledger of the unified `deriveKeys`.
         self.derive_keys(
             outbe_tee::protocol::Ledger::Gratis,
             account,
@@ -682,153 +598,14 @@ where
         proof: outbe_tee::upgrade_transfer::UpgradeKeyProofV1,
         legacy_direct_dev_source: bool,
     ) -> RpcResult<Bytes> {
-        // Bound concurrent expensive verification on this process; never queue
-        // it on the consensus enclave connection.
-        static GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
-        let permit = GATE
-            .try_acquire()
-            .map_err(|_| internal_err("upgrade key source is busy; retry".into()))?;
-        proof.validate().map_err(|e| internal_err(e.to_string()))?;
-        let context = outbe_tee::dcap_protocol::DcapOnboardingContextV1::decode_canonical(&context)
-            .map_err(|_| internal_err("invalid upgrade context".into()))?;
-        let finalized = self
-            .provider
-            .finalized_block_num_hash()
-            .map_err(|e| internal_err(e.to_string()))?
-            .ok_or_else(|| internal_err("finalized state unavailable".into()))?;
-        let header = self
-            .provider
-            .sealed_header(finalized.number)
-            .map_err(|e| internal_err(e.to_string()))?
-            .ok_or_else(|| internal_err("finalized header unavailable".into()))?;
-        if header.hash() != finalized.hash {
-            return Err(internal_err("finalized header mismatch".into()));
-        }
-        {
-            let state = self
-                .provider
-                .state_by_block_hash(finalized.hash)
-                .map_err(|e| internal_err(e.to_string()))?;
-            let reader = RethStateReader { state: &state };
-            let (chain_id, genesis_hash) = self
-                .chain_identity
-                .filter(|(id, hash)| *id != 0 && !hash.is_zero())
-                .ok_or_else(|| internal_err("immutable chain identity is not configured".into()))?;
-            let mut provider = ReadOnlyStorageProvider::new_with_block_context(
-                reader,
-                ReadOnlyBlockContext {
-                    chain_id,
-                    genesis_hash,
-                    block_number: finalized.number,
-                    timestamp: header.timestamp(),
-                },
-            );
-            let registry = outbe_teeregistry::TeeRegistry::new(StorageHandle::new(&mut provider));
-            let check = (|| -> outbe_primitives::error::Result<bool> {
-                let node = context.node_id_hash;
-                let policy = registry.active_policy_v1()?;
-                Ok(registry.upgrade_candidate_context.read(&node)? == context.context_hash()
-                    && registry.upgrade_candidate_expiry.read(&node)? > header.timestamp()
-                    && registry.upgrade_candidate_source.read(&node)? == registry.v1_node_binding_id.read(&node)?
-                    && !registry.v1_node_binding_id.read(&node)?.is_zero()
-                    && registry.strict_upgrade_successor.read()? == context.policy_hash
-                    && registry.offer_public_key()?.0 == context.tribute_offer_public
-                    && registry.key_epoch()? == context.key_epoch
-                    && registry.tribute_offer_epoch()? == context.tribute_offer_epoch
-                    && context.chain_id == policy.chain_id && context.genesis_hash == policy.genesis_hash
-                    && (!legacy_direct_dev_source || policy.attestation_mode == outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev))
-            })().map_err(|e| internal_err(e.to_string()))?;
-            if !check {
-                return Err(internal_err(
-                    "recipient is not a live finalized upgrade candidate".into(),
-                ));
-            }
-        }
-        let result = tokio::task::spawn_blocking(move || {
-            let _permit = permit;
-            outbe_tee::upgrade_transfer::export_from_network_source(
-                context,
-                &proof,
-                legacy_direct_dev_source,
-            )
-        })
-        .await
-        .map_err(|e| internal_err(format!("upgrade export task: {e}")))?
-        .map_err(|e| internal_err(e.to_string()))?;
-        Ok(result.into())
+        tee::TeeRpc::new(&*self.provider, self.chain_identity)
+            .upgrade_key(context, proof, legacy_direct_dev_source)
+            .await
     }
 
     async fn tee_renewal_schedule_v1(&self) -> RpcResult<TeeRenewalScheduleV1> {
-        let config = self
-            .tee_renewal_schedule
-            .ok_or_else(|| internal_err("TEE renewal schedule is not configured".to_owned()))?;
-        if config.minimum_block_time_millis == 0 {
-            return Err(internal_err(
-                "TEE renewal schedule has zero minimum block time".to_owned(),
-            ));
-        }
-        let finalized = self
-            .provider
-            .finalized_block_num_hash()
-            .map_err(|error| internal_err(format!("failed to read finalized block: {error}")))?
-            .ok_or_else(|| internal_err("finalized block is unavailable".to_owned()))?;
-        let header = self
-            .provider
-            .sealed_header(finalized.number)
-            .map_err(|error| {
-                internal_err(format!(
-                    "failed to read finalized header {}: {error}",
-                    finalized.number
-                ))
-            })?
-            .ok_or_else(|| internal_err("finalized header is unavailable".to_owned()))?;
-        if header.hash() != finalized.hash {
-            return Err(internal_err(
-                "finalized block marker and canonical header disagree".to_owned(),
-            ));
-        }
-        let state = self
-            .provider
-            .state_by_block_hash(finalized.hash)
-            .map_err(|error| internal_err(format!("failed to read finalized state: {error}")))?;
-        let reader = RethStateReader { state: &state };
-        let mut provider = ReadOnlyStorageProvider::new(reader);
-        let storage = StorageHandle::new(&mut provider);
-        let validators = outbe_validatorset::contract::ValidatorSet::new(storage);
-        let epoch = validators
-            .epoch_snapshot()
-            .map_err(|error| internal_err(error.to_string()))?;
-        let epoch_number = epoch.number;
-        if epoch_number > U256::from(u64::MAX) {
-            return Err(internal_err(
-                "finalized epoch number exceeds u64".to_owned(),
-            ));
-        }
-        let epoch_start_height = epoch.start_block;
-        let epoch_length_blocks = epoch.length_blocks;
-        if epoch_length_blocks == 0 {
-            return Err(internal_err("finalized epoch length is zero".to_owned()));
-        }
-        let planned_activation_height = epoch_start_height
-            .checked_add(u64::from(epoch_length_blocks))
-            .ok_or_else(|| internal_err("planned activation height overflow".to_owned()))?;
-        let prepare = config
-            .dkg_prepare_window_blocks
-            .min(u64::from(epoch_length_blocks));
-        TeeRenewalScheduleV1 {
-            finalized_height: finalized.number,
-            finalized_hash: finalized.hash,
-            finalized_timestamp: header.timestamp(),
-            epoch_number: epoch_number.to::<u64>(),
-            epoch_start_height,
-            epoch_length_blocks,
-            next_freeze_height: planned_activation_height.saturating_sub(prepare),
-            planned_activation_height,
-            dkg_prepare_window_blocks: prepare,
-            minimum_block_time_millis: config.minimum_block_time_millis,
-        }
-        .validate()
-        .map_err(|error| internal_err(error.to_owned()))
+        tee::TeeRpc::new(&*self.provider, self.chain_identity)
+            .renewal_schedule(self.tee_renewal_schedule)
     }
 
     async fn get_stake(&self, address: Address) -> RpcResult<U256> {
@@ -895,13 +672,13 @@ where
     }
 
     async fn get_vrf_seed(&self, block_number: Option<u64>) -> RpcResult<Option<B256>> {
-        // read the committed VRF seed from the target block header's
-        // `mixHash` (prev_randao) via the provider, honoring `block_number`.
-        // This is the authoritative, per-node-consistent committed value - not
-        // the process-local in-memory consensus seed (which a full node never
-        // has and which can diverge between nodes). `None` resolves to the
-        // latest canonical block, which under Outbe's fast finality is the
-        // latest finalized block.
+        // Read the committed VRF seed from the target block header's `mixHash`
+        // (prev_randao) through the provider. Honor `block_number`. This is the
+        // authoritative committed value, and it is consistent across nodes. It is not
+        // the process-local in-memory consensus seed. A full node never has that
+        // seed, and that seed can diverge between nodes. `None` resolves to the
+        // latest canonical block. Under Outbe's fast finality, that is the latest
+        // finalized block.
         let target = match block_number {
             Some(n) => n,
             None => self
@@ -913,7 +690,7 @@ where
             .provider
             .header_by_number(target)
             .map_err(|e| internal_err(format!("failed to read header for block {target}: {e}")))?;
-        // `mix_hash()` is itself `Option<B256>`; a missing block also yields None.
+        // `mix_hash()` is itself `Option<B256>`. A missing block also yields None.
         Ok(header.and_then(|h| h.mix_hash()))
     }
 
@@ -954,8 +731,8 @@ where
                 })
             }
             None => {
-                // Full-node mode: sync is handled by DevP2P (eth_syncing).
-                // Report not syncing since we have no consensus bridge.
+                // Full-node mode: DevP2P handles sync (eth_syncing).
+                // Report not syncing because this node has no consensus bridge.
                 Ok(SyncStatusInfo {
                     is_syncing: false,
                     current_block: 0,
@@ -999,7 +776,7 @@ where
 
     async fn get_finalization(&self, height: u64) -> RpcResult<FinalizationProof> {
         // Only nodes running consensus (or a follower that has itself synced the
-        // height) can serve this - both install a finalization fetcher on the
+        // height) can serve this. Both install a finalization fetcher on the
         // bridge at marshal-start. A node without a bridge (pure EL full node)
         // has no marshal and cannot answer.
         let bridge = self.bridge.as_ref().ok_or_else(|| {
@@ -1162,6 +939,34 @@ mod tests {
         OcompLysisOpeningsRuntimeV1,
     };
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+
+    #[test]
+    fn a_follower_bridge_does_not_make_the_handler_a_validator() {
+        use outbe_primitives::{
+            consensus::ConsensusExecutionBridge,
+            projection::{projection_readiness, ProjectionCheckpoint, ProjectionStatus},
+        };
+        let checkpoint = ProjectionCheckpoint {
+            block_number: 0,
+            block_hash: B256::ZERO,
+        };
+        let (_publisher, readiness) = projection_readiness(checkpoint, ProjectionStatus::Starting);
+        let provider = std::sync::Arc::new(());
+        let plain = super::OutbeApiHandler::new(provider.clone(), readiness.clone());
+        let validator = super::OutbeApiHandler::with_bridge(
+            provider.clone(),
+            ConsensusExecutionBridge::new(),
+            readiness.clone(),
+        );
+        let follower = super::OutbeApiHandler::with_follower_bridge(
+            provider,
+            ConsensusExecutionBridge::new(),
+            readiness,
+        );
+        assert!(!plain.is_validator && plain.bridge.is_none());
+        assert!(validator.is_validator && validator.bridge.is_some());
+        assert!(!follower.is_validator && follower.bridge.is_some());
+    }
 
     #[test]
     fn slash_config_rpc_reports_runtime_defaults_for_zero_storage() {

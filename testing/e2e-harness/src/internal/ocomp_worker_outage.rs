@@ -65,7 +65,7 @@ mod observation {
     ) -> Result<Option<VerifiedExportReceipt>> {
         let limits = poc_schema_limits();
         // A live publisher fsyncs its temporary locator before renaming it.
-        // The caller's deadline bounds this pending observation; only a later
+        // The caller's deadline bounds this pending observation. Only a later
         // complete load_exact can count as a successful export.
         let reader = match ExportReceiptReader::try_open(
             root.join("exporter-v1/receipts"),

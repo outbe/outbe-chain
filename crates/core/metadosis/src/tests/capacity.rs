@@ -127,7 +127,7 @@ fn seed_empty_waiting_candidate(
             worldwide_day: wwd,
             initialized: true,
             tribute_count: 0,
-            tribute_nominal_amount: U256::ZERO,
+            tribute_nominal_total_minor: U256::ZERO,
             is_sealed: true,
         })
         .unwrap();
@@ -146,37 +146,39 @@ fn wwd_words(
         U256::from(record.lookback_end),
         U256::from(record.offering_end),
         U256::from(record.scheduled_process_time),
-        record.metadosis_limit_amount,
+        record.metadosis_limit_minor,
         record.previous_vwap,
         record.current_vwap,
     ]
 }
 
-fn seed_capacity_fixture(
-    provider: &mut HashMapStorageProvider,
-    retained_count: usize,
-    tribute_count: u32,
-    tribute_nominal: U256,
-    initial_carry: U256,
-) -> (outbe_primitives::time::WorldwideDay, u64) {
-    seed_capacity_fixture_with_victim_state(
-        provider,
-        retained_count,
-        tribute_count,
-        tribute_nominal,
-        initial_carry,
-        status::WAITING,
-    )
-}
-
-fn seed_capacity_fixture_with_victim_state(
-    provider: &mut HashMapStorageProvider,
+#[derive(Clone, Copy)]
+struct CapacityCase {
     retained_count: usize,
     tribute_count: u32,
     tribute_nominal: U256,
     initial_carry: U256,
     victim_state: u8,
+}
+
+fn seed_capacity_fixture(
+    provider: &mut HashMapStorageProvider,
+    case: CapacityCase,
 ) -> (outbe_primitives::time::WorldwideDay, u64) {
+    seed_capacity_fixture_with_victim_state(provider, case)
+}
+
+fn seed_capacity_fixture_with_victim_state(
+    provider: &mut HashMapStorageProvider,
+    case: CapacityCase,
+) -> (outbe_primitives::time::WorldwideDay, u64) {
+    let CapacityCase {
+        retained_count,
+        tribute_count,
+        tribute_nominal,
+        initial_carry,
+        victim_state,
+    } = case;
     StorageHandle::enter(provider, |storage| {
         arm_genesis_ocomp(&storage, CHAIN_ID);
         let mut tribute = TributeContract::new(storage.clone());
@@ -197,7 +199,7 @@ fn seed_capacity_fixture_with_victim_state(
                 worldwide_day: victim,
                 initialized: true,
                 tribute_count,
-                tribute_nominal_amount: tribute_nominal,
+                tribute_nominal_total_minor: tribute_nominal,
                 is_sealed: victim_state != status::OFFERING,
             })
             .unwrap();
@@ -396,8 +398,16 @@ fn active_protocol_order_matches_btreeset_across_insert_remove_and_requeue_histo
 #[test]
 fn retained_cap_minus_one_admits_cap_forfeits_and_cap_plus_one_is_corruption() {
     let mut below = HashMapStorageProvider::new(CHAIN_ID);
-    let (victim, scheduled) =
-        seed_capacity_fixture(&mut below, MAX_RETAINED_WWDS - 1, 0, U256::ZERO, U256::ZERO);
+    let (victim, scheduled) = seed_capacity_fixture(
+        &mut below,
+        CapacityCase {
+            retained_count: MAX_RETAINED_WWDS - 1,
+            tribute_count: 0,
+            tribute_nominal: U256::ZERO,
+            initial_carry: U256::ZERO,
+            victim_state: status::WAITING,
+        },
+    );
     let scope = begin_empty_scope(&mut below);
     run_advance(&mut below, &scope, 2, scheduled).unwrap();
     StorageHandle::enter(&mut below, |storage| {
@@ -410,8 +420,16 @@ fn retained_cap_minus_one_admits_cap_forfeits_and_cap_plus_one_is_corruption() {
     });
 
     let mut at = HashMapStorageProvider::new(CHAIN_ID);
-    let (victim, scheduled) =
-        seed_capacity_fixture(&mut at, MAX_RETAINED_WWDS, 0, U256::ZERO, U256::from(7));
+    let (victim, scheduled) = seed_capacity_fixture(
+        &mut at,
+        CapacityCase {
+            retained_count: MAX_RETAINED_WWDS,
+            tribute_count: 0,
+            tribute_nominal: U256::ZERO,
+            initial_carry: U256::from(7),
+            victim_state: status::WAITING,
+        },
+    );
     let scope = begin_empty_scope(&mut at);
     run_advance(&mut at, &scope, 2, scheduled).unwrap();
     StorageHandle::enter(&mut at, |storage| {
@@ -430,10 +448,13 @@ fn retained_cap_minus_one_admits_cap_forfeits_and_cap_plus_one_is_corruption() {
     let mut above = HashMapStorageProvider::new(CHAIN_ID);
     let (victim, scheduled) = seed_capacity_fixture(
         &mut above,
-        MAX_RETAINED_WWDS + 1,
-        0,
-        U256::ZERO,
-        U256::from(7),
+        CapacityCase {
+            retained_count: MAX_RETAINED_WWDS + 1,
+            tribute_count: 0,
+            tribute_nominal: U256::ZERO,
+            initial_carry: U256::from(7),
+            victim_state: status::WAITING,
+        },
     );
     let scope = begin_empty_scope(&mut above);
     let before_storage = above.storage.clone();
@@ -478,7 +499,7 @@ fn multiple_due_candidates_advance_exactly_one_per_tick_in_protocol_order() {
                     worldwide_day: candidate,
                     initialized: true,
                     tribute_count: 0,
-                    tribute_nominal_amount: U256::ZERO,
+                    tribute_nominal_total_minor: U256::ZERO,
                     is_sealed: true,
                 })
                 .unwrap();
@@ -660,10 +681,13 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
     let initial_carry = U256::from(7);
     let (victim, scheduled) = seed_capacity_fixture(
         &mut provider,
-        MAX_RETAINED_WWDS,
-        0,
-        U256::ZERO,
-        initial_carry,
+        CapacityCase {
+            retained_count: MAX_RETAINED_WWDS,
+            tribute_count: 0,
+            tribute_nominal: U256::ZERO,
+            initial_carry,
+            victim_state: status::WAITING,
+        },
     );
     let retained_before = StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage);
@@ -678,7 +702,7 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
     run_advance(&mut provider, &scope, 20, scheduled).unwrap();
 
     StorageHandle::enter(&mut provider, |storage| {
-        let metadosis = MetadosisContract::new(storage.clone());
+        let mut metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(victim).unwrap(), status::FAILED);
         assert!(!metadosis.active_wwd.read_all().unwrap().contains(&victim));
         assert!(metadosis.closed_wwd.read_all().unwrap().contains(&victim));
@@ -728,6 +752,18 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
         assert_eq!(receipt.source_generation, 0);
         assert_eq!(receipt.retired_generation, 1);
         assert_eq!(receipt.retirement, RetirementOutcome::NotPresent);
+        let error = metadosis
+            .write_capacity_forfeiture_receipt(receipt)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            PrecompileError::Fatal(message)
+                if message == "Metadosis capacity-forfeiture receipt is immutable"
+        ));
+        assert_eq!(
+            metadosis.read_capacity_forfeiture_receipt(victim).unwrap(),
+            Some(receipt)
+        );
 
         let call = IMetadosis::getCapacityForfeitureReceiptCall {
             wwd: victim.value(),
@@ -745,7 +781,7 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
             decoded.outcome,
             crate::schema::terminal_outcome::CAPACITY_FORFEITURE
         );
-        assert_eq!(decoded.valueRouted, U256::from(100));
+        assert_eq!(decoded.promisLimitReturnedMinor, U256::from(100));
         assert_eq!(
             decoded.retirementOutcome,
             crate::schema::terminal_retirement::NOT_PRESENT
@@ -762,7 +798,7 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
             decoded.outcome,
             crate::schema::terminal_outcome::CAPACITY_FORFEITURE
         );
-        assert_eq!(decoded.valueRouted, U256::from(100));
+        assert_eq!(decoded.promisLimitReturnedMinor, U256::from(100));
     });
 
     assert_eq!(
@@ -799,7 +835,7 @@ fn additional_ready_day_preserves_real_pending_ocomp_job_and_indexes_byte_for_by
                 worldwide_day: victim,
                 initialized: true,
                 tribute_count: 0,
-                tribute_nominal_amount: U256::ZERO,
+                tribute_nominal_total_minor: U256::ZERO,
                 is_sealed: true,
             })
             .unwrap();
@@ -899,25 +935,30 @@ fn malformed_capacity_detail_is_fatal() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let (victim, scheduled) = seed_capacity_fixture(
         &mut provider,
-        MAX_RETAINED_WWDS,
-        0,
-        U256::ZERO,
-        U256::from(7),
+        CapacityCase {
+            retained_count: MAX_RETAINED_WWDS,
+            tribute_count: 0,
+            tribute_nominal: U256::ZERO,
+            initial_carry: U256::from(7),
+            victim_state: status::WAITING,
+        },
     );
     let scope = begin_empty_scope(&mut provider);
     run_advance(&mut provider, &scope, 20, scheduled).unwrap();
 
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage);
-        let mut detail = metadosis
-            .capacity_forfeiture_receipts
-            .get(victim)
-            .unwrap()
-            .unwrap();
-        detail.block_number += 1;
+        let mut receipt = metadosis.read_terminal_receipt(victim).unwrap().unwrap();
+        let crate::terminal::model::WwdTerminalReceipt::CapacityForfeiture { detail, .. } =
+            &mut receipt
+        else {
+            panic!("capacity receipt expected");
+        };
+        detail.retired_generation += 1;
         metadosis
-            .capacity_forfeiture_receipts
-            .update(&detail)
+            .worldwide_day_terminal_receipts
+            .get_bytes(&victim)
+            .write(&crate::terminal::codec::encode(&receipt))
             .unwrap();
 
         assert!(matches!(
@@ -928,24 +969,27 @@ fn malformed_capacity_detail_is_fatal() {
 }
 
 #[test]
-fn capacity_generic_without_detail_is_fatal_in_reader_and_aggregate() {
+fn capacity_receipt_without_detail_is_fatal_in_reader_and_aggregate() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let (victim, scheduled) = seed_capacity_fixture(
         &mut provider,
-        MAX_RETAINED_WWDS,
-        0,
-        U256::ZERO,
-        U256::from(7),
+        CapacityCase {
+            retained_count: MAX_RETAINED_WWDS,
+            tribute_count: 0,
+            tribute_nominal: U256::ZERO,
+            initial_carry: U256::from(7),
+            victim_state: status::WAITING,
+        },
     );
     let scope = begin_empty_scope(&mut provider);
     run_advance(&mut provider, &scope, 20, scheduled).unwrap();
 
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
-        metadosis
-            .capacity_forfeiture_receipts
-            .delete(victim)
-            .unwrap();
+        let bytes = metadosis.worldwide_day_terminal_receipts.get_bytes(&victim);
+        let mut malformed = bytes.read().unwrap();
+        malformed.truncate(crate::terminal::codec::COMMON_LEN);
+        bytes.write(&malformed).unwrap();
 
         assert!(matches!(
             metadosis.read_capacity_forfeiture_receipt(victim),
@@ -964,10 +1008,13 @@ fn populated_and_max_shape_forfeiture_is_constant_size_and_emits_one_canonical_r
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         let (victim, scheduled) = seed_capacity_fixture(
             &mut provider,
-            MAX_RETAINED_WWDS,
-            count,
-            nominal,
-            U256::from(7),
+            CapacityCase {
+                retained_count: MAX_RETAINED_WWDS,
+                tribute_count: count,
+                tribute_nominal: nominal,
+                initial_carry: U256::from(7),
+                victim_state: status::WAITING,
+            },
         );
         let (scope, tree) = begin_fixed_partition_scope(&mut provider);
         run_advance(&mut provider, &scope, 30, scheduled).unwrap();
@@ -986,7 +1033,7 @@ fn populated_and_max_shape_forfeiture_is_constant_size_and_emits_one_canonical_r
             assert_eq!(tribute.total_supply.read().unwrap(), 0);
             let totals = tribute.get_day_totals(victim).unwrap();
             assert_eq!(totals.tribute_count, 0);
-            assert_eq!(totals.tribute_nominal_amount, U256::ZERO);
+            assert_eq!(totals.tribute_nominal_total_minor, U256::ZERO);
             let admission = tribute.pre_admission_projection(victim).unwrap();
             assert_eq!(admission.sealed_collection_root, tree.partition_root);
             assert_eq!(admission.source_generation, 1);
@@ -1013,11 +1060,13 @@ fn every_capacity_forfeiture_mutation_failure_restores_state_events_and_ce_work_
     let mut probe = HashMapStorageProvider::new(CHAIN_ID);
     let (probe_victim, scheduled) = seed_capacity_fixture_with_victim_state(
         &mut probe,
-        MAX_RETAINED_WWDS,
-        1,
-        U256::from(55),
-        U256::from(7),
-        status::OFFERING,
+        CapacityCase {
+            retained_count: MAX_RETAINED_WWDS,
+            tribute_count: 1,
+            tribute_nominal: U256::from(55),
+            initial_carry: U256::from(7),
+            victim_state: status::OFFERING,
+        },
     );
     let (probe_scope, _) = begin_fixed_partition_scope(&mut probe);
     probe.fail_after_mutation_at(usize::MAX);
@@ -1088,11 +1137,13 @@ fn every_capacity_forfeiture_mutation_failure_restores_state_events_and_ce_work_
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         let (victim, scheduled) = seed_capacity_fixture_with_victim_state(
             &mut provider,
-            MAX_RETAINED_WWDS,
-            1,
-            U256::from(55),
-            U256::from(7),
-            status::OFFERING,
+            CapacityCase {
+                retained_count: MAX_RETAINED_WWDS,
+                tribute_count: 1,
+                tribute_nominal: U256::from(55),
+                initial_carry: U256::from(7),
+                victim_state: status::OFFERING,
+            },
         );
         let (scope, _) = begin_fixed_partition_scope(&mut provider);
         let storage_before = provider.storage.clone();

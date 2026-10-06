@@ -1,5 +1,6 @@
 mod carrier_admission;
 mod size_budget;
+mod stages;
 
 use std::{
     collections::BTreeMap,
@@ -8,13 +9,12 @@ use std::{
 };
 
 use super::*;
-use alloy_consensus::{SignableTransaction as _, TxEip1559};
+use alloy_consensus::{SignableTransaction as _, Transaction as _, TxEip1559};
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{address, keccak256, Bytes, Signature, TxKind};
+use alloy_primitives::{address, keccak256, Bytes, Signature, TxKind, U256};
 use alloy_rpc_types_engine::PayloadId;
 use outbe_compressed_entities::{
-    CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity, ExactParentIdentity,
-    FinalizedMarker, ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
+    CandidateCacheLimits, CompressedTreeService, ExactParentIdentity, ACTIVE_COMMITMENT_SCHEME,
 };
 use outbe_primitives::runtime_audit_v1::{
     BODY_READ_REQUEST_DEADLINE, OTHER_PAYLOAD_EXECUTION_FAILURE,
@@ -38,13 +38,15 @@ use outbe_primitives::{
     storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag, StorageHandle},
     tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID,
     units::SCALE_1E6_U256,
+    OutbePrimitives,
 };
 use reth_chainspec::{ChainSpecBuilder, EthereumHardfork, ForkCondition};
-use reth_evm::execute::Executor as _;
+use reth_evm::{execute::Executor as _, RecoveredTx};
 use reth_payload_primitives::BuiltPayload as _;
 use reth_primitives_traits::{SealedHeader, SignedTransaction as _};
 use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
 use reth_transaction_pool::{
+    error::InvalidPoolTransactionError,
     identifier::{SenderId, TransactionId},
     noop::NoopTransactionPool,
     EthPooledTransaction, TransactionOrigin,
@@ -423,15 +425,15 @@ fn build_active_payload_case(
         evm_config.clone(),
         EthereumBuilderConfig::new().with_gas_limit(ACTIVE_PAYLOAD_BLOCK_GAS_LIMIT),
     );
-    let attributes = OutbePayloadAttributes::new(
-        REWARDS_ADDRESS,
-        ACTIVE_PAYLOAD_BLOCK_TIMESTAMP * 1000,
-        B256::repeat_byte(0x44),
-        None,
-        prefinal_extra_data,
-        None,
-        Some(proposer),
-    )
+    let attributes = OutbePayloadAttributes::new(outbe_primitives::OutbePayloadAttributesInput {
+        suggested_fee_recipient: REWARDS_ADDRESS,
+        timestamp_millis: ACTIVE_PAYLOAD_BLOCK_TIMESTAMP * 1000,
+        prev_randao: B256::repeat_byte(0x44),
+        parent_beacon_block_root: None,
+        extra_data: prefinal_extra_data,
+        parent_consensus_metadata: None,
+        proposer_evm_address: Some(proposer),
+    })
     .with_execution_read_budget(ExecutionReadBudget::new());
     let payload_config = PayloadConfig::new(parent, attributes, PayloadId::new([0x07; 8]));
     let rejected = Arc::new(AtomicUsize::new(0));
@@ -564,25 +566,9 @@ fn bootstrap_payload_survives_repeated_block_one_proposal_attempts() {
 fn tree_service() -> (tempfile::TempDir, Arc<CompressedTreeService>) {
     let directory = tempfile::tempdir().unwrap();
     let genesis_hash = B256::repeat_byte(0x11);
-    let db = CeMdbx::open(
+    let db = outbe_compressed_entities::test_support::open_empty_ce_database(
         directory.path(),
-        EnvironmentIdentity {
-            local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
-            chain_id: 1,
-            genesis_hash,
-            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            topology: outbe_compressed_entities::CeTopologyV1.encode(),
-            tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
-            vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
-        },
-        FinalizedMarker {
-            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            height: 0,
-            block_hash: genesis_hash,
-            parent_block_hash: B256::ZERO,
-            parent_root: B256::ZERO,
-            new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
-        },
+        genesis_hash,
     )
     .unwrap();
     let service = CompressedTreeService::new(

@@ -75,9 +75,9 @@ contract FactorySettlement {
         return units[account][id];
     }
 
-    function settleIntex(bytes14 seriesId, address from, address to, uint256 amount) external {
+    function settleIntex(bytes14 seriesId, address owner, uint256 amount) external {
         uint256 id = uint256(uint112(seriesId));
-        units[from][id] -= amount;
-        units[to][id | (1 << 112)] += amount;
+        units[owner][id] -= amount;
+        units[owner][id | (1 << 112)] += amount;
     }
 }

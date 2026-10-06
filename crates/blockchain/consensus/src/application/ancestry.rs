@@ -1,12 +1,12 @@
 //! Marshal-backed [`AncestryReader`] adapter.
 //!
 //! `dkg_manager` (the consumer) declares the [`AncestryReader`] interface it
-//! needs to walk a certified ancestry chain when resolving the DKG boundary;
-//! this module supplies the production adapter that satisfies it. Keeping the
-//! adapter here - beside the propose/verify call sites that own the marshal
-//! mailbox, block cache, readiness gate, and runtime clock - instead of inline
-//! in `handler.rs` keeps the 2000-line handler free of block-walk/timeout
-//! policy and gives the adapter its own test surface.
+//! needs to walk a certified ancestry chain when it resolves the DKG boundary.
+//! This module supplies the production adapter that satisfies it. The adapter
+//! lives here, not inline in `handler.rs`. Here it sits beside the
+//! propose/verify call sites that own the marshal mailbox, block cache,
+//! readiness gate, and runtime clock. This keeps the 2000-line handler free of
+//! block-walk/timeout policy and gives the adapter its own test surface.
 //!
 //! The seam has two adapters: this `MarshalAncestryReader` (production) and the
 //! `TestAncestryReader` fake in `crate::test_fixtures` (consumer tests in
@@ -27,22 +27,23 @@ use crate::marshal_types::MarshalMailbox;
 /// Production [`AncestryReader`]: block cache first, marshal on miss, bounded by
 /// the runtime clock.
 ///
-/// `marshal` is an `Option` purely as a testability affordance - mirroring
+/// `marshal` is an `Option` only to make tests possible. This mirrors
 /// `finalization::actor`'s `Option<MarshalMailbox>`. Production always wires it
-/// `Some(..)` via [`marshal_ancestry_reader`]; the `None` arm lets cache-hit /
-/// `is_ready` unit tests construct the adapter without standing up a marshal
-/// actor (whose `Mailbox::new` is `pub(crate)` upstream and so cannot be built
-/// from a bare channel here). On a cache miss with `marshal: None` the lookup
-/// resolves deterministically to `None` (unresolvable), never blocking.
+/// `Some(..)` via [`marshal_ancestry_reader`]. The `None` arm lets cache-hit /
+/// `is_ready` unit tests construct the adapter without a running marshal
+/// actor. Upstream makes the marshal `Mailbox::new` `pub(crate)`, so this code
+/// cannot build it from a bare channel. On a cache miss with `marshal: None`
+/// the lookup resolves deterministically to `None` (unresolvable), never blocking.
 struct MarshalAncestryReader<C: commonware_runtime::Clock> {
     marshal: Option<MarshalMailbox>,
     block_cache: BlockCache,
     readiness: AncestryReadiness,
     round: Option<Round>,
     timeout: Duration,
-    // Owned runtime clock used to bound the marshal lookups. Cloned cheaply from
-    // the spawn's context so the trait methods (which carry no context) can apply
-    // a runtime-agnostic timeout without pulling in the tokio reactor.
+    // Owned runtime clock that bounds the marshal lookups. The caller clones it
+    // cheaply from the spawn's context. The trait methods carry no context, so
+    // they use this clock to apply a runtime-agnostic timeout without pulling in
+    // the tokio reactor.
     clock: C,
 }
 
@@ -57,9 +58,9 @@ impl<C: commonware_runtime::Clock> AncestryReader for MarshalAncestryReader<C> {
             // unresolvable. Resolve deterministically to `None` rather than block.
             return Box::pin(async move { None });
         };
-        // `Clock::sleep` returns an owned `'static` future, so we build it from the
-        // borrowed clock here and move it into the lookup future - no clone of the
-        // (non-`Clone`) runtime context needed.
+        // `Clock::sleep` returns an owned `'static` future. We build it from the
+        // borrowed clock here and move it into the lookup future. No clone of the
+        // (non-`Clone`) runtime context is necessary.
         let sleep = self.clock.sleep(self.timeout);
         Box::pin(async move {
             // `marshal.get_block(..)` borrows `marshal`, so it is not `'static` and
@@ -113,19 +114,26 @@ impl<C: commonware_runtime::Clock> AncestryReader for MarshalAncestryReader<C> {
     }
 }
 
+/// Round fallback and timeout for one ancestry lookup.
+#[derive(Clone, Copy)]
+pub(crate) struct AncestryLookupPolicy {
+    pub(crate) round: Option<Round>,
+    pub(crate) timeout: Duration,
+}
+
 /// Build the production [`AncestryReader`] adapter backed by the marshal mailbox.
 ///
-/// The returned reader is short-lived - one propose/verify boundary resolution.
-/// The concrete type is hidden behind `impl AncestryReader`, so callers (and
+/// The returned reader is short-lived. It serves one propose/verify boundary
+/// resolution. `impl AncestryReader` hides the concrete type, so callers (and
 /// `resolve_boundary`) learn one function instead of a six-field constructor.
 pub(crate) fn marshal_ancestry_reader<C: commonware_runtime::Clock>(
     marshal: MarshalMailbox,
     block_cache: BlockCache,
     readiness: AncestryReadiness,
-    round: Option<Round>,
-    timeout: Duration,
+    policy: AncestryLookupPolicy,
     clock: C,
 ) -> impl AncestryReader {
+    let AncestryLookupPolicy { round, timeout } = policy;
     MarshalAncestryReader {
         marshal: Some(marshal),
         block_cache,

@@ -1,11 +1,11 @@
 use super::*;
 
 /// Phase 7b glue: `run_late_finalize_credits` at block `N+K` closes the
-/// matured window - pays the escrowed voters, marks `fee_settled`, and routes
+/// matured window. It pays the escrowed voters, marks `fee_settled`, and routes
 /// the unpaid residue through the active-profile carry-over sink.
-/// Uses an empty credit artifact so the assertion isolates the
-/// `settle_matured` + residue-recycle wiring (the BLS batch path is covered
-/// by the verifier and `late_settlement` unit tests).
+/// The test uses an empty credit artifact so the assertion isolates the
+/// `settle_matured` + residue-recycle wiring. The verifier and `late_settlement`
+/// unit tests cover the BLS batch path.
 #[test]
 fn late_finalize_window_close_settles_and_recycles_residue() {
     use outbe_primitives::addresses::REWARDS_ADDRESS;
@@ -28,7 +28,7 @@ fn late_finalize_window_close_settles_and_recycles_residue() {
         let committee_size = 4u32;
         let pool = U256::from(4_000u64) * outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
         ctx.storage.increase_balance(REWARDS_ADDRESS, pool).unwrap();
-        // Escrow block 10; only 3 of 4 voters credited at k=0 (one absent).
+        // Escrow block 10. Only 3 of 4 voters credited at k=0 (one absent).
         outbe_rewards::late_settlement::escrow_block_fee(
             &ctx,
             10,
@@ -55,7 +55,7 @@ fn late_finalize_window_close_settles_and_recycles_residue() {
             U256::ZERO,
             "absent voter earns nothing"
         );
-        // distributed (3*each) left REWARDS; residue (each) burned for parity.
+        // distributed (3*each) left REWARDS. Residue (each) burned for parity.
         assert_eq!(
             ctx.storage.balance(REWARDS_ADDRESS).unwrap(),
             U256::ZERO,
@@ -82,7 +82,7 @@ fn late_finalize_window_close_settles_and_recycles_residue() {
 
 /// at the inclusion-window close, a registered committee member
 /// that never voted within `K` (`committee \ credited`) gets a voter miss
-/// recorded in BOTH counters; a credited member does not. Proves the relocated,
+/// recorded in BOTH counters. A credited member does not. Proves the relocated,
 /// now-punitive miss accounting runs against the FINAL credited set.
 #[test]
 fn window_close_records_miss_for_absent_committee_voter_only() {
@@ -111,7 +111,7 @@ fn window_close_records_miss_for_absent_committee_voter_only() {
             vs.activate_validator_via_boundary_for_test(V1).unwrap();
         }
 
-        // Committee snapshot [V0, V1] under (epoch, csh); escrow must bind csh.
+        // Committee snapshot [V0, V1] under (epoch, csh). Escrow must bind csh.
         let snapshot = CommitteeSnapshot {
             committee: vec![
                 CommitteeEntry {
@@ -131,7 +131,7 @@ fn window_close_records_miss_for_absent_committee_voter_only() {
         outbe_validatorset::write_committee_snapshot(storage.clone(), epoch, &snapshot).unwrap();
 
         let ctx = runtime_ctx(storage);
-        // Escrow block 10: committee of 2; only V0 credited at k=0 (V1 absent).
+        // Escrow block 10: committee of 2. Only V0 credited at k=0 (V1 absent).
         ctx.storage
             .increase_balance(
                 outbe_primitives::addresses::REWARDS_ADDRESS,
@@ -184,7 +184,7 @@ fn window_close_records_miss_for_absent_committee_voter_only() {
 
 /// Determinism: the window-close absentee pass is computed purely from committed
 /// chain state (committee snapshot + `late_voter_*`) in committee order, with no
-/// proposer-chosen input - so two independent executions of the same closed
+/// proposer-chosen input. So two independent executions of the same closed
 /// window reach byte-identical slashing state (the proposer/validator guarantee).
 /// Multiple absentees exercise ordering.
 #[test]
@@ -238,7 +238,7 @@ fn window_close_absentee_pass_is_deterministic_and_correct() {
                     U256::from(4_000u64),
                 )
                 .unwrap();
-            // Credit C0 and C2 at k=0; C1 and C3 absent.
+            // Credit C0 and C2 at k=0. C1 and C3 absent.
             outbe_rewards::late_settlement::escrow_block_fee(
                 &ctx,
                 10,
@@ -412,7 +412,7 @@ fn late_finalize_out_of_window_credit_is_fatal() {
 
 /// bad/unverifiable proof: an in-window, escrow-authenticated credit whose
 /// committee snapshot does not exist is FATAL (the block aborts - never a soft
-/// receipt). distance = 13 - 11 = 2 (in window); the escrow binding matches so
+/// receipt). distance = 13 - 11 = 2 (in window). The escrow binding matches, so
 /// authentication passes and the snapshot lookup is reached and fails.
 #[test]
 fn late_finalize_unverifiable_credit_is_fatal() {
@@ -539,9 +539,10 @@ fn wrong_committee_set_hash_rejected() {
 }
 
 /// Review #1b (full binding): a credit with correct fb_number/fb_hash/epoch/
-/// committee_set_hash but a non-canonical `view` is rejected at body auth -
-/// closing the cross-view equivocation credit the pre-exec BLS verify (which
-/// only ties the credit's view to its signatures) would otherwise let through.
+/// committee_set_hash but a non-canonical `view` is rejected at body auth.
+/// This closes the cross-view equivocation credit that the pre-exec BLS verify
+/// would otherwise let through. That verify only ties the credit's view to its
+/// signatures.
 #[test]
 fn wrong_view_rejected() {
     assert_auth_mismatch_fatal(|c| c.view = 99, "view mismatch");

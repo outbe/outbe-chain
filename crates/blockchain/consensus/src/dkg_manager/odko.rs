@@ -82,25 +82,11 @@ impl OdkoOutcome {
 
     /// Decode a canonical ODKO record. Deterministic and panic-free.
     pub fn decode(bytes: &[u8]) -> Result<Self, OdkoDecodeError> {
-        if bytes.len() < HEADER_LEN {
-            return Err(OdkoDecodeError::TooShort(bytes.len()));
-        }
-        if &bytes[0..4] != MAGIC {
-            return Err(OdkoDecodeError::InvalidMagic);
-        }
-        if bytes[4] != VERSION {
-            return Err(OdkoDecodeError::UnsupportedVersion(bytes[4]));
-        }
-        let mut epoch = [0u8; 8];
-        epoch.copy_from_slice(&bytes[5..13]);
-        let is_full_dkg = match bytes[13] {
-            0 => false,
-            1 => true,
-            flag => return Err(OdkoDecodeError::InvalidFullDkgFlag(flag)),
-        };
-        let mut len = [0u8; 4];
-        len.copy_from_slice(&bytes[14..HEADER_LEN]);
-        let declared = u64::from(u32::from_be_bytes(len));
+        let OdkoHeader {
+            epoch,
+            is_full_dkg,
+            declared,
+        } = decode_header(bytes)?;
         let mut reader = &bytes[HEADER_LEN..];
         let actual = reader.len() as u64;
         if declared != actual {
@@ -120,4 +106,37 @@ impl OdkoOutcome {
             output,
         })
     }
+}
+
+struct OdkoHeader {
+    epoch: [u8; 8],
+    is_full_dkg: bool,
+    declared: u64,
+}
+
+fn decode_header(bytes: &[u8]) -> Result<OdkoHeader, OdkoDecodeError> {
+    if bytes.len() < HEADER_LEN {
+        return Err(OdkoDecodeError::TooShort(bytes.len()));
+    }
+    if &bytes[0..4] != MAGIC {
+        return Err(OdkoDecodeError::InvalidMagic);
+    }
+    if bytes[4] != VERSION {
+        return Err(OdkoDecodeError::UnsupportedVersion(bytes[4]));
+    }
+    let mut epoch = [0u8; 8];
+    epoch.copy_from_slice(&bytes[5..13]);
+    let is_full_dkg = match bytes[13] {
+        0 => false,
+        1 => true,
+        flag => return Err(OdkoDecodeError::InvalidFullDkgFlag(flag)),
+    };
+    let mut len = [0u8; 4];
+    len.copy_from_slice(&bytes[14..HEADER_LEN]);
+    let declared = u64::from(u32::from_be_bytes(len));
+    Ok(OdkoHeader {
+        epoch,
+        is_full_dkg,
+        declared,
+    })
 }

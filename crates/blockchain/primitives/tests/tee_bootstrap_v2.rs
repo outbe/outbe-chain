@@ -4,6 +4,7 @@ use alloy_consensus::SignableTransaction as _;
 use alloy_eips::eip2718::Encodable2718 as _;
 use alloy_primitives::{Address, Bytes, Signature, B256};
 use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+use outbe_primitives::tee_bootstrap_v2::{assembly, codec};
 use outbe_primitives::{
     consensus::{DkgBoundaryArtifact, ReshareResult},
     system_tx::{
@@ -165,14 +166,16 @@ fn fixture() -> TeeBootstrapV2 {
         .collect();
 
     TeeBootstrapV2 {
-        policy,
-        committee_snapshot_hash: B256::repeat_byte(0x21),
-        committee_snapshot_block: 1,
-        key_epoch: 1,
-        tribute_offer_epoch: 1,
-        dkg_transcript_hash: B256::repeat_byte(0x22),
-        tribute_offer_public_key: B256::repeat_byte(0x23),
-        tribute_offer_group_public_key: Bytes::from(vec![0x24; 96]),
+        authority: TeeBootstrapAuthorityV2 {
+            policy,
+            committee_snapshot_hash: B256::repeat_byte(0x21),
+            committee_snapshot_block: 1,
+            key_epoch: 1,
+            tribute_offer_epoch: 1,
+            dkg_transcript_hash: B256::repeat_byte(0x22),
+            tribute_offer_public_key: B256::repeat_byte(0x23),
+            tribute_offer_group_public_key: Bytes::from(vec![0x24; 96]),
+        },
         collateral_pool,
         participants,
         committee_signatures,
@@ -181,7 +184,7 @@ fn fixture() -> TeeBootstrapV2 {
 
 fn fixture_with_participant_count(count: u8) -> TeeBootstrapV2 {
     let mut payload = fixture();
-    let policy_hash = payload.policy.policy_hash().unwrap();
+    let policy_hash = payload.authority.policy.policy_hash().unwrap();
     payload.participants = (1..=count)
         .map(|seed| participant(seed, policy_hash))
         .collect();
@@ -201,7 +204,7 @@ fn fixture_with_participant_count(count: u8) -> TeeBootstrapV2 {
 
 fn production_shaped_payload(count: u8) -> TeeBootstrapV2 {
     let mut payload = fixture_with_participant_count(count);
-    payload.policy.measurement_rules = (1_u8..=64)
+    payload.authority.policy.measurement_rules = (1_u8..=64)
         .map(|measurement| TeeMeasurementRuleV1 {
             mrenclave: B256::repeat_byte(measurement),
             mrsigner: B256::repeat_byte(0x82),
@@ -211,7 +214,7 @@ fn production_shaped_payload(count: u8) -> TeeBootstrapV2 {
             admit_until_height_exclusive: 1_000,
         })
         .collect();
-    let policy_hash = payload.policy.policy_hash().unwrap();
+    let policy_hash = payload.authority.policy.policy_hash().unwrap();
     for participant in &mut payload.participants {
         participant.intent.policy_hash = policy_hash;
     }
@@ -225,16 +228,7 @@ fn production_shaped_payload(count: u8) -> TeeBootstrapV2 {
 }
 
 fn authority(payload: &TeeBootstrapV2) -> TeeBootstrapAuthorityV2 {
-    TeeBootstrapAuthorityV2 {
-        policy: payload.policy.clone(),
-        committee_snapshot_hash: payload.committee_snapshot_hash,
-        committee_snapshot_block: payload.committee_snapshot_block,
-        key_epoch: payload.key_epoch,
-        tribute_offer_epoch: payload.tribute_offer_epoch,
-        dkg_transcript_hash: payload.dkg_transcript_hash,
-        tribute_offer_public_key: payload.tribute_offer_public_key,
-        tribute_offer_group_public_key: payload.tribute_offer_group_public_key.clone(),
-    }
+    payload.authority.clone()
 }
 
 fn submissions(payload: &TeeBootstrapV2) -> Vec<TeeBootstrapParticipantSubmissionV2> {
@@ -256,8 +250,8 @@ fn submissions(payload: &TeeBootstrapV2) -> Vec<TeeBootstrapParticipantSubmissio
 #[test]
 fn roundtrip_reconstructs_each_logical_evidence_from_deduplicated_collateral() {
     let payload = fixture();
-    let encoded = payload.encode_canonical().unwrap();
-    let decoded = TeeBootstrapV2::decode_canonical(&encoded).unwrap();
+    let encoded = codec::encode_canonical(&payload).unwrap();
+    let decoded = codec::decode_canonical(&encoded).unwrap();
     assert_eq!(decoded, payload);
     assert_eq!(decoded.collateral_pool.len(), 8);
     assert_eq!(decoded.participants.len(), 2);
@@ -295,7 +289,7 @@ fn signing_hash_binds_the_complete_body_but_not_committee_signature_bytes() {
 #[test]
 fn gas_charges_each_logical_evidence_despite_collateral_deduplication() {
     let payload = fixture();
-    let encoded = payload.encode_canonical().unwrap();
+    let encoded = codec::encode_canonical(&payload).unwrap();
     let full_calldata_len = encoded.len() + 5;
     let registry = TeeRegistryGasScheduleV1::normative();
     let evidence_lengths = (0..payload.participants.len())
@@ -391,7 +385,7 @@ fn canonical_bootstrap_rejects_noncanonical_pool_and_authority_shapes() {
     let mut reversed = fixture();
     reversed.collateral_pool.swap(0, 1);
     assert!(matches!(
-        reversed.encode_canonical(),
+        codec::encode_canonical(&reversed),
         Err(CodecError::NonCanonical(
             "TEE bootstrap collateral pool is not strictly sorted and unique"
         ))
@@ -403,7 +397,7 @@ fn canonical_bootstrap_rejects_noncanonical_pool_and_authority_shapes() {
         bytes: vec![8, 1],
     });
     assert!(matches!(
-        unused.encode_canonical(),
+        codec::encode_canonical(&unused),
         Err(CodecError::NonCanonical(
             "TEE bootstrap collateral pool contains an unused component"
         ))
@@ -412,7 +406,7 @@ fn canonical_bootstrap_rejects_noncanonical_pool_and_authority_shapes() {
     let mut missing_signature = fixture();
     missing_signature.committee_signatures.pop();
     assert!(matches!(
-        missing_signature.encode_canonical(),
+        codec::encode_canonical(&missing_signature),
         Err(CodecError::NonCanonical(
             "TEE bootstrap signatures do not cover every participant"
         ))
@@ -421,7 +415,7 @@ fn canonical_bootstrap_rejects_noncanonical_pool_and_authority_shapes() {
     let mut mismatched_signature = fixture();
     mismatched_signature.committee_signatures[0].validator = Address::repeat_byte(0x30);
     assert!(matches!(
-        mismatched_signature.encode_canonical(),
+        codec::encode_canonical(&mismatched_signature),
         Err(CodecError::NonCanonical(
             "TEE bootstrap committee signatures do not match participants"
         ))
@@ -432,7 +426,7 @@ fn canonical_bootstrap_rejects_noncanonical_pool_and_authority_shapes() {
 fn decoder_rejects_full_calldata_cap_plus_one_before_parsing() {
     let oversized_body = vec![0_u8; MAX_TEE_BOOTSTRAP_BYTES - 4];
     assert!(matches!(
-        TeeBootstrapV2::decode_canonical(&oversized_body),
+        codec::decode_canonical(&oversized_body),
         Err(CodecError::LimitExceeded {
             field: "TeeBootstrapV2 full calldata",
             limit: MAX_TEE_BOOTSTRAP_BYTES,
@@ -462,7 +456,7 @@ fn thirty_two_validator_near_cap_bootstrap_fits_five_transaction_block() {
         vrf_material_version: 0,
         vrf_group_public_key: B256::repeat_byte(0x32),
         vrf_group_public_key_bytes: Bytes::from(vec![0x33; 96]),
-        committee_set_hash: payload.committee_snapshot_hash,
+        committee_set_hash: payload.authority.committee_snapshot_hash,
         is_validator_set_change: true,
         outcome: Bytes::new(),
         is_full_dkg: true,
@@ -497,12 +491,14 @@ fn thirty_two_validator_near_cap_bootstrap_fits_five_transaction_block() {
         .enumerate()
         .map(|(ordinal, (kind, calldata))| {
             build_unsigned_system_tx_with_gas_limit(
-                kind,
-                u8::try_from(ordinal).unwrap(),
-                1,
-                1,
-                calldata,
-                gas_plan.gas_limit(ordinal).unwrap(),
+                outbe_primitives::system_tx::SystemTxEnvelopeInput {
+                    kind,
+                    ordinal: u8::try_from(ordinal).unwrap(),
+                    block_number: 1,
+                    chain_id: 1,
+                    calldata,
+                    gas_limit: gas_plan.gas_limit(ordinal).unwrap(),
+                },
             )
             .unwrap()
             .into_signed(Signature::test_signature())
@@ -530,9 +526,9 @@ fn thirty_two_validator_near_cap_bootstrap_fits_five_transaction_block() {
 #[test]
 fn assembly_reuses_existing_authority_and_deduplicates_complete_submissions() {
     let mut expected = fixture();
-    expected.key_epoch = 0;
-    expected.tribute_offer_epoch = 0;
-    expected.dkg_transcript_hash = B256::ZERO;
+    expected.authority.key_epoch = 0;
+    expected.authority.tribute_offer_epoch = 0;
+    expected.authority.dkg_transcript_hash = B256::ZERO;
     let submissions = expected
         .participants
         .iter()
@@ -547,7 +543,7 @@ fn assembly_reuses_existing_authority_and_deduplicates_complete_submissions() {
             enclave_signature: participant.enclave_signature,
         })
         .collect();
-    let assembled = TeeBootstrapV2::assemble_unsigned(authority(&expected), submissions).unwrap();
+    let assembled = assembly::assemble_unsigned(authority(&expected), submissions).unwrap();
 
     assert_eq!(assembled.collateral_pool, expected.collateral_pool);
     assert_eq!(assembled.participants, expected.participants);
@@ -564,7 +560,7 @@ fn assembly_reuses_existing_authority_and_deduplicates_complete_submissions() {
 #[test]
 fn assembly_rejects_aggregate_calldata_over_cap_before_signing() {
     let template = fixture_with_participant_count(2);
-    let policy_hash = template.policy.policy_hash().unwrap();
+    let policy_hash = template.authority.policy.policy_hash().unwrap();
     let submissions = (1_u8..=2)
         .map(|address| {
             let participant_intent = intent(address, policy_hash);
@@ -592,7 +588,7 @@ fn assembly_rejects_aggregate_calldata_over_cap_before_signing() {
         })
         .collect();
 
-    let error = TeeBootstrapV2::assemble_unsigned(authority(&template), submissions)
+    let error = assembly::assemble_unsigned(authority(&template), submissions)
         .expect_err("aggregate calldata over the OST3 cap must fail before signing");
     assert!(matches!(
         error,
@@ -607,7 +603,7 @@ fn assembly_rejects_aggregate_calldata_over_cap_before_signing() {
 #[test]
 fn assembly_rejects_logical_work_over_bootstrap_gas_cap() {
     let payload = production_shaped_payload(56);
-    let error = TeeBootstrapV2::assemble_unsigned(authority(&payload), submissions(&payload))
+    let error = assembly::assemble_unsigned(authority(&payload), submissions(&payload))
         .expect_err("logical QVL work over 500M must fail before signing");
     assert!(matches!(
         error,
@@ -617,4 +613,43 @@ fn assembly_rejects_logical_work_over_bootstrap_gas_cap() {
             actual,
         } if limit == usize::try_from(BOOTSTRAP_BLOCK_GAS_LIMIT).unwrap() && actual > limit
     ));
+}
+
+#[test]
+fn canonical_bootstrap_protocol_fingerprint_is_stable() {
+    let payload = fixture();
+    let encoded = codec::encode_canonical(&payload).unwrap();
+    let calldata = SystemTxInputV2::TeeBootstrap {
+        payload: payload.clone(),
+    }
+    .encode()
+    .unwrap();
+    let gas = payload
+        .protocol_precharge(
+            &SystemGasScheduleV1::normative(),
+            &TeeRegistryGasScheduleV1::normative(),
+        )
+        .unwrap();
+    assert_eq!(encoded.len(), 2443);
+    assert_eq!(
+        alloy_primitives::keccak256(&encoded),
+        alloy_primitives::b256!(
+            "0x7200be3b5a0ccd931cb54cc53dd1b135cac6a9262d860b91653efce970629306"
+        ),
+    );
+    assert_eq!(
+        payload.signing_hash().unwrap(),
+        alloy_primitives::b256!(
+            "0x285a3f37d15df50b520d9955f3b476893b8b790381fdb13408a43148ad07edd0"
+        ),
+    );
+    assert_eq!(calldata.len(), 2448);
+    assert_eq!(
+        alloy_primitives::keccak256(&calldata),
+        alloy_primitives::b256!(
+            "0x8fc64b5af09cc866703a677f290a7f87232b85e3f27f6e8f43b34144b28cb4bc"
+        ),
+    );
+    assert_eq!(gas, 7308436);
+    assert_eq!(&encoded[..4], b"TTB2");
 }

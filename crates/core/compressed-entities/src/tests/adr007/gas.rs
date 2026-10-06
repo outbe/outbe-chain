@@ -55,8 +55,8 @@ fn gas_reserve_is_first_touch_only_and_oog_rolls_back_before_overlay_write() {
     });
     assert!(body_oog.get_ordered_events().is_empty());
 
-    // The second index reserve fails after temporary body/first-index writes;
-    // the mutation's local checkpoint must still restore every component.
+    // The second index reserve fails after temporary body/first-index writes.
+    // The mutation's local checkpoint must still restore every component.
     let mut index_oog = HashMapStorageProvider::new(1);
     index_oog.set_gas_limit(
         FIRST_BODY_TOUCH_CLEANUP_GAS

@@ -2,18 +2,20 @@
 //! consensus path (`ProcessTributeOfferBatch`) plus the `Health` telemetry
 //! probe, published to [`TeeEnclaveHealthChannel`] and Prometheus.
 //!
-//! Signal only - a failing canary never gates consensus participation; it
+//! Signal only. A failing canary never gates consensus participation. It
 //! surfaces through `outbe_consensusStatus.enclave`, `outbe-cli monitor
 //! readiness` and the `outbe_tee_canary_*` / `outbe_tee_heap_*` metric series.
 //!
-//! The probe uses a separate connection to the same pinned enclave identity;
-//! it never holds the execution session's mutex. The blocking round-trip runs
-//! on `spawn_blocking`; an `in_flight`
+//! The probe uses a separate connection to the same pinned enclave identity.
+//! It never holds the execution session's mutex. The blocking round-trip runs
+//! on `spawn_blocking`. An `in_flight`
 //! latch guarantees at most one outstanding probe, so a wedged enclave wedges
 //! one canary task, never a growing pile of mutex waiters.
 //! Shutdown stops observing the read-only probe without waiting for enclave I/O.
-//! An already running socket operation retains its transport deadline; it cannot
+//! An already running socket operation retains its transport deadline. It cannot
 //! start another request after cancellation or publish a late health result.
+
+mod probe;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -31,7 +33,7 @@ use tokio_util::sync::CancellationToken;
 
 /// Fixed canary identity: a marker owner address and a fixed worldwide day so
 /// the payload (and its Poseidon `token_id`) is identical on every tick and
-/// every validator. The offer is never submitted as a transaction - it exists
+/// every validator. The offer is never submitted as a transaction. It exists
 /// only inside the probe request.
 const CANARY_OWNER: Address = Address::repeat_byte(0xCA);
 const CANARY_DAY: u32 = 20250115;
@@ -55,7 +57,7 @@ pub struct TeeCanaryConfig {
 /// against a scripted fake instead of the global.
 pub trait EnclaveRequester: Send + Sync + 'static {
     fn request(&self, req: &EnclaveRequest) -> Result<EnclaveResponse, TransportError>;
-    /// The pinned enclave attestation key; `None` when no session is installed.
+    /// The pinned enclave attestation key. It is `None` when no session is installed.
     fn attestation_pub(&self) -> Option<[u8; 32]>;
 }
 
@@ -108,9 +110,10 @@ pub enum CanaryTickOutcome {
     Failure { unreachable: bool, reason: String },
 }
 
-/// Pure state decision (ExecutionWatchdogDecision style): failures below the
-/// threshold keep the previous state (grace); reaching it is `Degraded`;
-/// transport-unreachable is `Unavailable` immediately.
+/// Pure state decision (ExecutionWatchdogDecision style):
+/// - Failures below the threshold keep the previous state (grace).
+/// - Reaching the threshold is `Degraded`.
+/// - Transport-unreachable is `Unavailable` immediately.
 pub fn canary_state(
     previous: TeeEnclaveHealthState,
     outcome: &CanaryTickOutcome,
@@ -147,178 +150,7 @@ pub fn run_canary_probe(
     Option<bool>,
     Option<EnclaveHealthStatusV1>,
 ) {
-    // 1. Health telemetry, unless feature detection already ruled it out. An
-    //    old enclave binary kills the connection on the unknown variant, so a
-    //    Health error alone is ambiguous - GetPublicKeys below disambiguates.
-    let mut health_supported = health_supported;
-    let mut health_payload = None;
-    if health_supported != Some(false) {
-        match requester.request(&EnclaveRequest::Health) {
-            Ok(EnclaveResponse::HealthStatus { status }) => {
-                health_supported = Some(true);
-                health_payload = Some(*status);
-            }
-            Ok(_) | Err(_) if health_supported.is_none() => {
-                // First attempt failed: decide via GetPublicKeys whether the
-                // enclave is alive-but-old (=> unsupported, never retried) or
-                // simply down (=> keep detecting next tick).
-                if requester.request(&EnclaveRequest::GetPublicKeys).is_ok() {
-                    health_supported = Some(false);
-                }
-            }
-            Ok(_) | Err(_) => {}
-        }
-    }
-
-    // 2. Offer-key state (fresh each tick, so key epochs are followed).
-    let offer_pub = match requester.request(&EnclaveRequest::GetPublicKeys) {
-        Ok(EnclaveResponse::PublicKeys {
-            offer_key_ready,
-            recipient_x25519_pub,
-            ..
-        }) => {
-            if !offer_key_ready {
-                return (
-                    CanaryTickOutcome::OfferKeyNotReady,
-                    health_supported,
-                    health_payload,
-                );
-            }
-            recipient_x25519_pub
-        }
-        Ok(other) => {
-            return (
-                CanaryTickOutcome::Failure {
-                    unreachable: false,
-                    reason: format!("unexpected GetPublicKeys response: {other:?}"),
-                },
-                health_supported,
-                health_payload,
-            );
-        }
-        Err(error) => {
-            return (
-                CanaryTickOutcome::Failure {
-                    unreachable: error.is_connection_fault()
-                        || matches!(
-                            error,
-                            TransportError::SessionRevoked(_) | TransportError::EnclaveError(_)
-                        ),
-                    reason: format!("GetPublicKeys failed: {}", error.metric_class()),
-                },
-                health_supported,
-                health_payload,
-            );
-        }
-    };
-
-    // 3. Known-plaintext canary decrypt through the real consensus request.
-    let plaintext = outbe_tee::offer_encrypt::canary_offer_json(CANARY_DAY);
-    let cipher_text = match outbe_tee::offer_encrypt::encrypt_tribute_offer_with(
-        &offer_pub,
-        CANARY_EPH_SK,
-        CANARY_NONCE,
-        plaintext.as_bytes(),
-    ) {
-        Ok(cipher_text) => cipher_text,
-        Err(reason) => {
-            return (
-                CanaryTickOutcome::Failure {
-                    unreachable: false,
-                    reason: format!("canary encryption failed: {reason}"),
-                },
-                health_supported,
-                health_payload,
-            );
-        }
-    };
-    let eph_pub =
-        x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(CANARY_EPH_SK)).to_bytes();
-    let offers = vec![EncryptedTributeOffer {
-        owner: CANARY_OWNER,
-        cipher_text,
-        nonce: CANARY_NONCE.to_vec(),
-        ephemeral_pubkey: U256::from_be_bytes(eph_pub),
-        worldwide_day: WorldwideDay::new(CANARY_DAY),
-        tribute_currency: 840,
-        reference_currency: 840,
-        exclude_from_intex_issuance: false,
-        issuance_wwd_vwap_minor: U256::from(CANARY_PRICE_MINOR),
-        reference_wwd_vwap_minor: U256::from(CANARY_PRICE_MINOR),
-        reference_scurve_minor: U256::ZERO,
-        zk_context: None,
-    }];
-    let started = SystemTime::now();
-    let response = requester.request(&EnclaveRequest::ProcessTributeOfferBatch {
-        offers: offers.clone(),
-    });
-    let latency_ms = SystemTime::now()
-        .duration_since(started)
-        .map(|d| d.as_millis().min(u128::from(u64::MAX)) as u64)
-        .unwrap_or(0);
-    let outcome = match response {
-        Ok(EnclaveResponse::TributeOfferBatch {
-            results,
-            inputs_canonical_hash: reported_hash,
-            attestation_tag,
-        }) => validate_canary_batch(
-            requester,
-            &offers,
-            &results,
-            reported_hash,
-            &attestation_tag,
-            latency_ms,
-        ),
-        Ok(other) => CanaryTickOutcome::Failure {
-            unreachable: false,
-            reason: format!("unexpected canary response: {other:?}"),
-        },
-        Err(error) => CanaryTickOutcome::Failure {
-            unreachable: error.is_connection_fault()
-                || matches!(error, TransportError::SessionRevoked(_)),
-            reason: format!("canary decrypt failed: {}", error.metric_class()),
-        },
-    };
-    (outcome, health_supported, health_payload)
-}
-
-fn validate_canary_batch(
-    requester: &dyn EnclaveRequester,
-    offers: &[EncryptedTributeOffer],
-    results: &[outbe_tee::protocol::TributeOfferResult],
-    reported_hash: alloy_primitives::B256,
-    attestation_tag: &[u8],
-    latency_ms: u64,
-) -> CanaryTickOutcome {
-    let fail = |reason: String| CanaryTickOutcome::Failure {
-        unreachable: false,
-        reason,
-    };
-    if results.len() != 1 {
-        return fail(format!("canary expected 1 result, got {}", results.len()));
-    }
-    let result = &results[0];
-    if let TributeOfferStatus::Rejected { reason } = &result.status {
-        return fail(format!("canary offer rejected: {reason}"));
-    }
-    if result.owner != CANARY_OWNER {
-        return fail("canary result echoes a different owner".to_string());
-    }
-    if reported_hash != inputs_canonical_hash(offers) {
-        return fail("canary inputs_canonical_hash mismatch (non-determinism)".to_string());
-    }
-    let Some(attestation_pub) = requester.attestation_pub() else {
-        return fail("no pinned attestation key".to_string());
-    };
-    if let Err(error) = outbe_tee::verify_tribute_offer_attestation(
-        &attestation_pub,
-        reported_hash,
-        results,
-        attestation_tag,
-    ) {
-        return fail(format!("canary attestation tag invalid: {error}"));
-    }
-    CanaryTickOutcome::Success { latency_ms }
+    probe::run(requester, health_supported)
 }
 
 /// Fold one tick outcome into the published snapshot + metrics.
@@ -371,7 +203,67 @@ fn unix_now_ms() -> Option<u64> {
         .map(|d| d.as_millis().min(u128::from(u64::MAX)) as u64)
 }
 
-/// Long-running canary loop; spawn with `tokio::spawn`, stop via `shutdown`.
+struct CanaryWorkerState<'a> {
+    snapshot: &'a mut TeeEnclaveHealthSnapshot,
+    status: &'a TeeEnclaveHealthChannel,
+    in_flight: &'a AtomicBool,
+    skipped: &'a mut u64,
+}
+impl CanaryWorkerState<'_> {
+    fn skip_in_flight(&mut self) -> bool {
+        if self.in_flight.load(Ordering::Acquire) {
+            // A previous probe is still blocked (wedged enclave holding the
+            // session mutex). Never stack a second one. Degrade by staleness.
+            *self.skipped = self.skipped.saturating_add(1);
+            if *self.skipped >= STUCK_SKIPPED_TICKS {
+                self.snapshot.state = TeeEnclaveHealthState::Unavailable;
+                self.snapshot.last_failure =
+                    Some("canary probe stuck (enclave not answering)".into());
+                self.status.publish(self.snapshot.clone());
+            }
+            return true;
+        }
+        *self.skipped = 0;
+        false
+    }
+    fn apply_result(
+        &mut self,
+        result: Result<
+            (
+                CanaryTickOutcome,
+                Option<bool>,
+                Option<EnclaveHealthStatusV1>,
+            ),
+            tokio::task::JoinError,
+        >,
+        failure_threshold: u64,
+    ) {
+        match result {
+            Ok((outcome, health_supported, health_payload)) => {
+                self.snapshot.health_probe_supported = health_supported;
+                if let Some(payload) = health_payload {
+                    publish_health_gauges(&payload);
+                    self.snapshot.enclave = Some(payload);
+                }
+                apply_tick(self.snapshot, outcome, failure_threshold);
+                self.status.publish(self.snapshot.clone());
+            }
+            Err(join_error) => {
+                // The blocking probe panicked or was cancelled. The in_flight
+                // latch may still be set. Clear it so the canary keeps going.
+                self.in_flight.store(false, Ordering::Release);
+                self.snapshot.last_failure =
+                    Some(format!("canary probe task failed: {join_error}"));
+                self.snapshot.consecutive_failures =
+                    self.snapshot.consecutive_failures.saturating_add(1);
+                counter!("outbe_tee_canary_failures_total").increment(1);
+                self.status.publish(self.snapshot.clone());
+            }
+        }
+    }
+}
+
+/// Long-running canary loop. Spawn it with `tokio::spawn` and stop it via `shutdown`.
 pub async fn run_tee_canary_worker(
     requester: impl EnclaveRequester,
     config: TeeCanaryConfig,
@@ -391,6 +283,12 @@ pub async fn run_tee_canary_worker(
     };
     status.publish(snapshot.clone());
     let mut skipped_while_in_flight: u64 = 0;
+    let mut worker_state = CanaryWorkerState {
+        snapshot: &mut snapshot,
+        status: &status,
+        in_flight: &in_flight,
+        skipped: &mut skipped_while_in_flight,
+    };
 
     loop {
         tokio::select! {
@@ -398,22 +296,13 @@ pub async fn run_tee_canary_worker(
             _ = shutdown.cancelled() => break,
             _ = interval.tick() => {}
         }
-        if in_flight.load(Ordering::Acquire) {
-            // A previous probe is still blocked (wedged enclave holding the
-            // session mutex). Never stack a second one; degrade by staleness.
-            skipped_while_in_flight = skipped_while_in_flight.saturating_add(1);
-            if skipped_while_in_flight >= STUCK_SKIPPED_TICKS {
-                snapshot.state = TeeEnclaveHealthState::Unavailable;
-                snapshot.last_failure = Some("canary probe stuck (enclave not answering)".into());
-                status.publish(snapshot.clone());
-            }
+        if worker_state.skip_in_flight() {
             continue;
         }
-        skipped_while_in_flight = 0;
         let requester_for_probe = Arc::clone(&requester);
         let in_flight_guard = Arc::clone(&in_flight);
         in_flight.store(true, Ordering::Release);
-        let health_supported = snapshot.health_probe_supported;
+        let health_supported = worker_state.snapshot.health_probe_supported;
         let mut probe = tokio::task::spawn_blocking(move || {
             let result = run_canary_probe(requester_for_probe.as_ref(), health_supported);
             in_flight_guard.store(false, Ordering::Release);
@@ -431,26 +320,7 @@ pub async fn run_tee_canary_worker(
                 break;
             }
         };
-        match result {
-            Ok((outcome, health_supported, health_payload)) => {
-                snapshot.health_probe_supported = health_supported;
-                if let Some(payload) = health_payload {
-                    publish_health_gauges(&payload);
-                    snapshot.enclave = Some(payload);
-                }
-                apply_tick(&mut snapshot, outcome, config.failure_threshold);
-                status.publish(snapshot.clone());
-            }
-            Err(join_error) => {
-                // The blocking probe panicked or was cancelled; the in_flight
-                // latch may still be set - clear it so the canary keeps going.
-                in_flight.store(false, Ordering::Release);
-                snapshot.last_failure = Some(format!("canary probe task failed: {join_error}"));
-                snapshot.consecutive_failures = snapshot.consecutive_failures.saturating_add(1);
-                counter!("outbe_tee_canary_failures_total").increment(1);
-                status.publish(snapshot.clone());
-            }
-        }
+        worker_state.apply_result(result, config.failure_threshold);
     }
 }
 
@@ -763,5 +633,60 @@ mod tests {
             }
             other => panic!("expected failure, got {other:?}"),
         }
+    }
+    #[test]
+    fn known_health_support_failure_does_not_add_a_detection_request() {
+        let fake = FakeRequester::new(vec![
+            ("health", Err(codec_error())),
+            ("get_public_keys", Ok(public_keys_response(false))),
+        ]);
+        let (outcome, supported, payload) = run_canary_probe(&fake, Some(true));
+        assert_eq!(outcome, CanaryTickOutcome::OfferKeyNotReady);
+        assert_eq!(supported, Some(true));
+        assert!(payload.is_none());
+        assert_eq!(fake.seen(), ["health", "get_public_keys"]);
+    }
+
+    #[test]
+    fn ambiguous_health_fallback_does_not_reuse_key_readiness() {
+        let fake = FakeRequester::new(vec![
+            ("health", Err(codec_error())),
+            ("get_public_keys", Ok(public_keys_response(true))),
+            ("get_public_keys", Ok(public_keys_response(false))),
+        ]);
+        let (outcome, supported, _) = run_canary_probe(&fake, None);
+        assert_eq!(outcome, CanaryTickOutcome::OfferKeyNotReady);
+        assert_eq!(supported, Some(false));
+        assert_eq!(
+            fake.seen(),
+            ["health", "get_public_keys", "get_public_keys"]
+        );
+    }
+
+    #[test]
+    fn enclave_error_classification_depends_on_the_probe_stage() {
+        let key_failure = FakeRequester::new(vec![(
+            "get_public_keys",
+            Err(TransportError::EnclaveError("denied".into())),
+        )]);
+        let (outcome, _, _) = run_canary_probe(&key_failure, Some(false));
+        assert!(
+            matches!(outcome, CanaryTickOutcome::Failure { unreachable: true, reason } if reason.starts_with("GetPublicKeys failed:"))
+        );
+        let decrypt_failure = FakeRequester::new(vec![
+            ("get_public_keys", Ok(public_keys_response(true))),
+            (
+                "process_tribute_offer_batch",
+                Err(TransportError::EnclaveError("denied".into())),
+            ),
+        ]);
+        let (outcome, _, _) = run_canary_probe(&decrypt_failure, Some(false));
+        assert!(
+            matches!(outcome, CanaryTickOutcome::Failure { unreachable: false, reason } if reason.starts_with("canary decrypt failed:"))
+        );
+        assert_eq!(
+            decrypt_failure.seen(),
+            ["get_public_keys", "process_tribute_offer_batch"]
+        );
     }
 }

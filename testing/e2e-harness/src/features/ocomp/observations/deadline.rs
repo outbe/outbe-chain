@@ -261,7 +261,7 @@ pub(in crate::features::ocomp) fn dynamic_deadline_decode_events(
             validator: event.validator,
             job_id: event.jobId,
             miss_count: event.missCount,
-            slashed_bonded: event.slashedBonded,
+            slashed_bonded: event.slashedBondedMinor,
             recovery_deadline: event.recoveryDeadline,
             first_in_window: event.firstInWindow,
             height: quantity(&row["blockNumber"])?,
@@ -310,7 +310,7 @@ pub(in crate::features::ocomp) fn dynamic_deadline_validate_receipt(
         validator: event.validator,
         jobId: event.job_id,
         missCount: event.miss_count,
-        slashedBonded: event.slashed_bonded,
+        slashedBondedMinor: event.slashed_bonded,
         recoveryDeadline: event.recovery_deadline,
         firstInWindow: event.first_in_window,
     }

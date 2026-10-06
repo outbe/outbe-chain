@@ -1,3 +1,5 @@
+mod sub_call_support;
+
 use std::sync::Arc;
 
 use alloy_consensus::Header;
@@ -148,11 +150,7 @@ fn nested_call_currently_executes_push0_under_both_parent_spec_ids() {
 
     let pre_shanghai = sub_call::run(
         &mut context_with_push0(),
-        CALLER,
-        false,
-        SpecId::LONDON,
-        None,
-        std::sync::Arc::new(outbe_compressed_entities::ExecutionScope::new()),
+        sub_call_support::fresh_environment(CALLER, SpecId::LONDON),
         input.clone(),
     )
     .unwrap();
@@ -163,11 +161,7 @@ fn nested_call_currently_executes_push0_under_both_parent_spec_ids() {
 
     let shanghai = sub_call::run(
         &mut context_with_push0(),
-        CALLER,
-        false,
-        SpecId::SHANGHAI,
-        None,
-        std::sync::Arc::new(outbe_compressed_entities::ExecutionScope::new()),
+        sub_call_support::fresh_environment(CALLER, SpecId::SHANGHAI),
         input,
     )
     .unwrap();

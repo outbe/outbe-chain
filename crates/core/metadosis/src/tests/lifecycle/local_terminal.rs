@@ -1,3 +1,4 @@
+use super::fixtures::begin_scope_with_persisted_parent;
 use super::*;
 use crate::tests::capacity::begin_fixed_partition_scope;
 use outbe_compressed_entities::RetirementOutcome;
@@ -9,14 +10,23 @@ enum ReadyOutcome {
     FailedForfeited,
 }
 
-fn seed_local_terminal_fixture(
-    provider: &mut HashMapStorageProvider,
+#[derive(Clone, Copy)]
+struct LocalDay {
     wwd: outbe_primitives::time::WorldwideDay,
     day_type: u8,
     day_limit: U256,
     tribute_count: u32,
     tribute_nominal: U256,
-) -> u64 {
+}
+
+fn seed_local_terminal_fixture(provider: &mut HashMapStorageProvider, day: LocalDay) -> u64 {
+    let LocalDay {
+        wwd,
+        day_type,
+        day_limit,
+        tribute_count,
+        tribute_nominal,
+    } = day;
     StorageHandle::enter(provider, |storage| {
         arm_genesis_ocomp(&storage, CHAIN_ID);
         let scheduled = create_waiting_day(&storage, wwd, day_type, day_limit);
@@ -33,7 +43,7 @@ fn seed_local_terminal_fixture(
                 worldwide_day: wwd,
                 initialized: true,
                 tribute_count,
-                tribute_nominal_amount: tribute_nominal,
+                tribute_nominal_total_minor: tribute_nominal,
                 is_sealed: true,
             })
             .unwrap();
@@ -44,7 +54,7 @@ fn seed_local_terminal_fixture(
             "local terminal classification precedes OCOMP pre-admission sealing"
         );
         assert_eq!(admission.tribute_count, tribute_count);
-        assert_eq!(admission.tribute_nominal_amount, tribute_nominal);
+        assert_eq!(admission.tribute_nominal_total_minor, tribute_nominal);
         scheduled
     })
 }
@@ -122,7 +132,7 @@ fn assert_tribute_partition_forfeited(
         assert_eq!(tribute.total_supply().unwrap(), 0);
         let totals = tribute.get_day_totals(wwd).unwrap();
         assert_eq!(totals.tribute_count, 0);
-        assert_eq!(totals.tribute_nominal_amount, U256::ZERO);
+        assert_eq!(totals.tribute_nominal_total_minor, U256::ZERO);
         assert_eq!(
             tribute
                 .pre_admission_projection(wwd)
@@ -162,24 +172,29 @@ fn assert_local_terminal_outcome(
 }
 
 fn exercise_local_terminal_fault_matrix(
-    wwd: outbe_primitives::time::WorldwideDay,
-    day_type: u8,
-    day_limit: U256,
-    tribute_count: u32,
-    tribute_nominal: U256,
+    day: LocalDay,
     outcome: ReadyOutcome,
     expected_promis: U256,
 ) {
-    let block_number = 2;
-
-    let mut probe = HashMapStorageProvider::new(CHAIN_ID);
-    let scheduled = seed_local_terminal_fixture(
-        &mut probe,
+    let LocalDay {
         wwd,
         day_type,
         day_limit,
         tribute_count,
         tribute_nominal,
+    } = day;
+    let block_number = 2;
+
+    let mut probe = HashMapStorageProvider::new(CHAIN_ID);
+    let scheduled = seed_local_terminal_fixture(
+        &mut probe,
+        LocalDay {
+            wwd,
+            day_type,
+            day_limit,
+            tribute_count,
+            tribute_nominal,
+        },
     );
     let (probe_scope, probe_parent) = begin_ready_scope(&mut probe, outcome);
     let ce_before_probe = probe_scope.ce_work_checkpoint().unwrap();
@@ -211,11 +226,13 @@ fn exercise_local_terminal_fault_matrix(
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         let scheduled = seed_local_terminal_fixture(
             &mut provider,
-            wwd,
-            day_type,
-            day_limit,
-            tribute_count,
-            tribute_nominal,
+            LocalDay {
+                wwd,
+                day_type,
+                day_limit,
+                tribute_count,
+                tribute_nominal,
+            },
         );
         let (scope, parent) = begin_ready_scope(&mut provider, outcome);
         let storage_before = provider.storage.clone();
@@ -269,11 +286,13 @@ fn exercise_local_terminal_fault_matrix(
 #[test]
 fn empty_tribute_day_command_rolls_back_every_mutation_and_ce_work_then_retries() {
     exercise_local_terminal_fault_matrix(
-        outbe_primitives::time::WorldwideDay::new(2026_0812),
-        day_type::RED,
-        U256::from(777),
-        0,
-        U256::ZERO,
+        LocalDay {
+            wwd: outbe_primitives::time::WorldwideDay::new(2026_0812),
+            day_type: day_type::RED,
+            day_limit: U256::from(777),
+            tribute_count: 0,
+            tribute_nominal: U256::ZERO,
+        },
         ReadyOutcome::Completed,
         U256::from(777),
     );
@@ -282,11 +301,13 @@ fn empty_tribute_day_command_rolls_back_every_mutation_and_ce_work_then_retries(
 #[test]
 fn zero_gratis_command_rolls_back_every_mutation_and_ce_work_then_retries() {
     exercise_local_terminal_fault_matrix(
-        outbe_primitives::time::WorldwideDay::new(2026_0813),
-        day_type::RED,
-        U256::from(2),
-        1,
-        U256::from(1_000),
+        LocalDay {
+            wwd: outbe_primitives::time::WorldwideDay::new(2026_0813),
+            day_type: day_type::RED,
+            day_limit: U256::from(2),
+            tribute_count: 1,
+            tribute_nominal: U256::from(1_000),
+        },
         ReadyOutcome::CompletedForfeited,
         U256::from(2),
     );
@@ -295,11 +316,13 @@ fn zero_gratis_command_rolls_back_every_mutation_and_ce_work_then_retries() {
 #[test]
 fn zero_day_limit_rolls_back_every_mutation_and_retries_exactly() {
     exercise_local_terminal_fault_matrix(
-        outbe_primitives::time::WorldwideDay::new(2026_0820),
-        day_type::GREEN,
-        U256::ZERO,
-        1,
-        U256::from(1_000),
+        LocalDay {
+            wwd: outbe_primitives::time::WorldwideDay::new(2026_0820),
+            day_type: day_type::GREEN,
+            day_limit: U256::ZERO,
+            tribute_count: 1,
+            tribute_nominal: U256::from(1_000),
+        },
         ReadyOutcome::FailedForfeited,
         U256::ZERO,
     );
@@ -308,11 +331,13 @@ fn zero_day_limit_rolls_back_every_mutation_and_retries_exactly() {
 #[test]
 fn unknown_day_type_rolls_back_every_mutation_and_retries_exactly() {
     exercise_local_terminal_fault_matrix(
-        outbe_primitives::time::WorldwideDay::new(2026_0821),
-        day_type::UNKNOWN,
-        U256::from(777),
-        1,
-        U256::from(1_000),
+        LocalDay {
+            wwd: outbe_primitives::time::WorldwideDay::new(2026_0821),
+            day_type: day_type::UNKNOWN,
+            day_limit: U256::from(777),
+            tribute_count: 1,
+            tribute_nominal: U256::from(1_000),
+        },
         ReadyOutcome::FailedForfeited,
         U256::from(777),
     );
@@ -321,11 +346,13 @@ fn unknown_day_type_rolls_back_every_mutation_and_retries_exactly() {
 #[test]
 fn green_empty_tribute_day_rolls_back_every_mutation_and_retries_exactly() {
     exercise_local_terminal_fault_matrix(
-        outbe_primitives::time::WorldwideDay::new(2026_0822),
-        day_type::GREEN,
-        U256::from(777),
-        0,
-        U256::ZERO,
+        LocalDay {
+            wwd: outbe_primitives::time::WorldwideDay::new(2026_0822),
+            day_type: day_type::GREEN,
+            day_limit: U256::from(777),
+            tribute_count: 0,
+            tribute_nominal: U256::ZERO,
+        },
         ReadyOutcome::Completed,
         U256::from(777),
     );
@@ -334,11 +361,13 @@ fn green_empty_tribute_day_rolls_back_every_mutation_and_retries_exactly() {
 #[test]
 fn green_zero_gratis_rolls_back_every_mutation_and_retries_exactly() {
     exercise_local_terminal_fault_matrix(
-        outbe_primitives::time::WorldwideDay::new(2026_0823),
-        day_type::GREEN,
-        U256::from(2),
-        1,
-        U256::ONE,
+        LocalDay {
+            wwd: outbe_primitives::time::WorldwideDay::new(2026_0823),
+            day_type: day_type::GREEN,
+            day_limit: U256::from(2),
+            tribute_count: 1,
+            tribute_nominal: U256::ONE,
+        },
         ReadyOutcome::CompletedForfeited,
         U256::ONE,
     );
@@ -350,8 +379,16 @@ fn zero_gratis_completes_and_forfeits_its_present_parent_partition() {
     let day_limit = U256::from(2);
     let nominal = U256::from(1_000);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let scheduled =
-        seed_local_terminal_fixture(&mut provider, wwd, day_type::RED, day_limit, 1, nominal);
+    let scheduled = seed_local_terminal_fixture(
+        &mut provider,
+        LocalDay {
+            wwd,
+            day_type: day_type::RED,
+            day_limit,
+            tribute_count: 1,
+            tribute_nominal: nominal,
+        },
+    );
     let (scope, tree) = begin_fixed_partition_scope(&mut provider);
 
     run_start_command(&mut provider, &scope, &TestParent::empty(), 2, scheduled).unwrap();
@@ -387,8 +424,16 @@ fn empty_tribute_day_restores_outer_ce_checkpoint_after_late_parent_failure_then
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0814);
     let day_limit = U256::from(777);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let scheduled =
-        seed_local_terminal_fixture(&mut provider, wwd, day_type::RED, day_limit, 0, U256::ZERO);
+    let scheduled = seed_local_terminal_fixture(
+        &mut provider,
+        LocalDay {
+            wwd,
+            day_type: day_type::RED,
+            day_limit,
+            tribute_count: 0,
+            tribute_nominal: U256::ZERO,
+        },
+    );
     let parent_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
     let tree = Arc::new(FailOncePartitionLookup {
         parent_root,
@@ -399,23 +444,7 @@ fn empty_tribute_day_restores_outer_ce_checkpoint_after_late_parent_failure_then
         outbe_compressed_entities::CeWorkConfig::new(0, 0, u64::MAX),
     );
     let parent = TestParent::empty();
-    StorageHandle::enter(&mut provider, |storage| {
-        storage
-            .sstore(
-                outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-                U256::ZERO,
-                U256::from(4),
-            )
-            .unwrap();
-        storage
-            .sstore(
-                outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-                U256::from(1),
-                U256::from_be_slice(parent_root.as_slice()),
-            )
-            .unwrap();
-        begin_block(storage, &scope).unwrap();
-    });
+    begin_scope_with_persisted_parent(&mut provider, &scope, parent_root);
     let storage_before = provider.storage.clone();
     let events_before = provider.events.clone();
     let ordered_before = provider.get_ordered_events().to_vec();
@@ -594,8 +623,8 @@ fn test_ready_processing_no_tributes_returns_the_limit_to_promis() {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::COMPLETED);
 
-        // A red day is recorded as a brief with no limit; a day with no tributes issues nothing,
-        // so its whole limit goes back to the warehouse.
+        // A red day is recorded as a brief with no limit. A day with no tributes issues nothing,
+        // so its whole limit returns to the warehouse.
         let series = wwd;
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
@@ -699,7 +728,16 @@ fn assert_populated_ready_day_fails_and_forfeits(
 ) {
     let nominal = U256::from(1_000);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let scheduled = seed_local_terminal_fixture(&mut provider, wwd, dtype, day_limit, 1, nominal);
+    let scheduled = seed_local_terminal_fixture(
+        &mut provider,
+        LocalDay {
+            wwd,
+            day_type: dtype,
+            day_limit,
+            tribute_count: 1,
+            tribute_nominal: nominal,
+        },
+    );
     let (scope, tree) = begin_fixed_partition_scope(&mut provider);
 
     run_start_command(&mut provider, &scope, &TestParent::empty(), 2, scheduled).unwrap();
@@ -729,8 +767,8 @@ fn assert_populated_ready_day_fails_and_forfeits(
         .collect::<Vec<_>>();
     assert_eq!(executed.len(), 1);
     assert_eq!(executed[0].status, "FAILED");
-    assert_eq!(executed[0].tributeTotals, nominal);
-    assert_eq!(executed[0].dayMetadosisLimitRemainder, day_limit);
+    assert_eq!(executed[0].tributeNominalTotalMinor, nominal);
+    assert_eq!(executed[0].promisLimitReturnedMinor, day_limit);
 }
 
 #[test]
@@ -750,8 +788,16 @@ fn active_ocomp_profile_completes_the_populated_zero_lysis_limit_day_and_forfeit
     // non-zero day limit therefore produces an exact zero Lysis Limit.
     let day_limit = U256::from(2);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let scheduled =
-        seed_local_terminal_fixture(&mut provider, wwd, day_type::RED, day_limit, 1, nominal);
+    let scheduled = seed_local_terminal_fixture(
+        &mut provider,
+        LocalDay {
+            wwd,
+            day_type: day_type::RED,
+            day_limit,
+            tribute_count: 1,
+            tribute_nominal: nominal,
+        },
+    );
     let (scope, _) = begin_fixed_partition_scope(&mut provider);
 
     run_start_command(&mut provider, &scope, &TestParent::empty(), 2, scheduled).unwrap();
@@ -998,9 +1044,11 @@ fn settle_minted_ready_day_through_the_seal(
             &storage,
             &mint_scope,
             &parent,
-            address!("7400000000000000000000000000000000000074"),
-            wwd,
-            nominal,
+            FixtureTribute {
+                owner: address!("7400000000000000000000000000000000000074"),
+                wwd,
+                nominal,
+            },
         );
         (scheduled, end_block(storage, &mint_scope).unwrap())
     });

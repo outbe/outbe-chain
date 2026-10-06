@@ -1802,8 +1802,8 @@ fn split_budget_and_carry_over_invariants_fail_closed() {
     ));
 }
 
-/// C37/A39: a one-unit mutation of Lysis Allocation or Desis Limit past the
-/// sealed Tribute nominal is detected, including checked-add overflow.
+/// C37/A39: the ceiling check detects a one-unit mutation of Lysis Allocation or Desis Limit
+/// past the sealed Tribute nominal, including checked-add overflow.
 #[test]
 fn wwd_allocation_ceiling_holds_at_equality_and_rejects_a_one_unit_mutation() {
     assert!(wwd_allocation_ceiling(U256::from(6), U256::from(4), U256::from(10)).is_ok());

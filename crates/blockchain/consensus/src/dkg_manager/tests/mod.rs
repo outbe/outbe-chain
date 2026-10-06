@@ -1,13 +1,14 @@
 //! Unit tests for `dkg_manager`.
 //!
 //! `boundary` holds the DKG boundary-resolution tests that exercise
-//! `Mailbox::resolve_boundary` and its process-local boundary-status cache;
-//! they moved here with the production logic. The rest are the ceremony /
+//! `Mailbox::resolve_boundary` and its process-local boundary-status cache.
+//! They moved here with the production logic. The rest are the ceremony /
 //! boundary-artifact / dealer-log tests.
 
 mod admission;
 mod boundary;
 mod dealer_log;
+mod finalized;
 mod odko;
 
 use alloy_primitives::{address, B256, U256};
@@ -27,9 +28,10 @@ use super::*;
 
 /// PHASE 0 de-risk spike: a node that NEVER ran DKG can rebuild an epoch's
 /// finalization verifier from the boundary outcome carried in the block
-/// (`extra_data`) - using only public data - and verify a real finalization
-/// certificate signed by that epoch's committee. This is the load-bearing
-/// assumption of the `--upstream` follower (committee-chaining trust model).
+/// (`extra_data`). It uses only public data. With that verifier, the node can
+/// verify a real finalization certificate signed by that epoch's committee.
+/// This is the load-bearing assumption of the `--upstream` follower
+/// (committee-chaining trust model).
 #[test]
 fn phase0_spike_follower_rebuilds_verifier_from_boundary_and_verifies_finalization() {
     use crate::digest::Digest as OutbeDigest;
@@ -180,24 +182,15 @@ fn run_test_dkg_complete() -> (
         .map(|k| Player::new(info.clone(), k.clone()).unwrap())
         .collect();
 
-    for (dealer_idx, (pub_msg, priv_msgs)) in pub_msgs.iter().zip(all_priv_msgs.iter()).enumerate()
-    {
-        let dealer_pk = keys[dealer_idx].public_key();
-        for (player_pk, priv_msg) in priv_msgs {
-            let player_idx = keys
-                .iter()
-                .position(|k| &k.public_key() == player_pk)
-                .unwrap();
-            if let Some(ack) = players[player_idx]
-                .dealer_message::<N3f1>(dealer_pk.clone(), pub_msg.clone(), priv_msg.clone())
-                .expect("fixture dealing must be valid")
-            {
-                dealers[dealer_idx]
-                    .receive_player_ack(player_pk.clone(), ack)
-                    .unwrap();
-            }
-        }
-    }
+    crate::test_harness::acknowledge_fixture_dealings(
+        &keys,
+        crate::test_harness::FixtureDealings {
+            public_messages: &pub_msgs,
+            private_messages: &all_priv_msgs,
+        },
+        &mut dealers,
+        &mut players,
+    );
 
     let mut logs = std::collections::BTreeMap::new();
     let mut first_log = None;
@@ -276,24 +269,15 @@ fn run_round(
         .map(|k| Player::new(info.clone(), k.clone()).unwrap())
         .collect();
 
-    for (dealer_idx, (pub_msg, priv_msgs)) in pub_msgs.iter().zip(all_priv_msgs.iter()).enumerate()
-    {
-        let dealer_pk = keys[dealer_idx].public_key();
-        for (player_pk, priv_msg) in priv_msgs {
-            let player_idx = keys
-                .iter()
-                .position(|k| &k.public_key() == player_pk)
-                .unwrap();
-            if let Some(ack) = players[player_idx]
-                .dealer_message::<N3f1>(dealer_pk.clone(), pub_msg.clone(), priv_msg.clone())
-                .expect("fixture dealing must be valid")
-            {
-                dealers[dealer_idx]
-                    .receive_player_ack(player_pk.clone(), ack)
-                    .unwrap();
-            }
-        }
-    }
+    crate::test_harness::acknowledge_fixture_dealings(
+        keys,
+        crate::test_harness::FixtureDealings {
+            public_messages: &pub_msgs,
+            private_messages: &all_priv_msgs,
+        },
+        &mut dealers,
+        &mut players,
+    );
 
     let mut logs = BTreeMap::new();
     let mut signed_logs = BTreeMap::new();

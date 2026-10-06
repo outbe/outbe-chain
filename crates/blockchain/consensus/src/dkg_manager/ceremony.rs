@@ -1,26 +1,26 @@
 //! Explicit, deterministic DKG ceremony state machine, plus the separate
 //! non-consensus dealer-log gossip buffer.
 //!
-//! Two concerns that used to be tangled inside `dkg_manager`'s `CeremonyState`
-//! are split here by trust level:
+//! Two concerns were tangled inside `dkg_manager`'s `CeremonyState` before.
+//! This module splits them by trust level:
 //!
-//! - [`DkgCeremony`] - the **canonical** state. It is driven *only* by
-//!   chain-finalized dealer logs (deterministic, consensus-ordered) and is a
-//!   pure fold: the recovered group [`Output`] is a function of the *set* of
-//!   finalized dealer logs, independent of arrival order and of the `OsRng`
-//!   used for batch verification (RNG only gates accept/reject of a signature,
-//!   never the recovered value). After a crash the canonical state is rebuilt
-//!   by replaying the same on-chain logs. The state machine has two phases:
-//!   `Collecting` -> `Reconstructed(output)`; the transition is one-way and
-//!   happens once (the output is frozen on first successful reconstruction).
+//! - [`DkgCeremony`] - the **canonical** state. *Only* chain-finalized dealer
+//!   logs (deterministic, consensus-ordered) drive it. It is a pure fold: the
+//!   recovered group [`Output`] is a function of the *set* of finalized dealer
+//!   logs. The output does not depend on arrival order or on the `OsRng` that
+//!   batch verification uses. The RNG only gates accept/reject of a signature,
+//!   never the recovered value. After a crash, replay of the same on-chain logs
+//!   rebuilds the canonical state. The state machine has two phases:
+//!   `Collecting` -> `Reconstructed(output)`. The transition is one-way and
+//!   happens once (the first successful reconstruction freezes the output).
 //!
 //! - [`DealerLogGossip`] - the **non-consensus** emit buffer (this node's own
 //!   dealer log plus P2P-received candidates). It is an abuse/prod-influenced
-//!   mempool of "what to gossip/emit next" and never feeds canonical state; a
+//!   mempool of "what to gossip/emit next" and never feeds canonical state. A
 //!   chain-finalized log only prunes the corresponding gossip entry.
 //!
-//! Neither type performs I/O, takes a lock, or logs: the methods return plain
-//! values/outcomes and the imperative shell in `dkg_manager.rs` performs the
+//! Neither type performs I/O, takes a lock, or logs. The methods return plain
+//! values/outcomes, and the imperative shell in `dkg_manager.rs` performs the
 //! effects (channel send, tracing) from those outcomes.
 
 use std::collections::{btree_map::Entry, BTreeMap};
@@ -51,10 +51,10 @@ pub(crate) struct VerifiedDealerLog {
 
 /// Explicit phase of the canonical DKG ceremony state machine.
 ///
-/// `Collecting` accumulates chain-finalized dealer logs; `Reconstructed` holds
+/// `Collecting` accumulates chain-finalized dealer logs. `Reconstructed` holds
 /// the frozen canonical group output. The finalized-log set lives as a sibling
 /// field of [`DkgCeremony`] (not inside this enum) because it keeps growing in
-/// both phases - only the *reconstruction* is one-shot.
+/// both phases. Only the *reconstruction* is one-shot.
 #[derive(Debug)]
 pub(crate) enum DkgCeremonyPhase {
     Collecting,
@@ -63,22 +63,22 @@ pub(crate) enum DkgCeremonyPhase {
 
 /// Outcome of recording a chain-finalized dealer log into the canonical set.
 pub(crate) enum FinalizedLogOutcome {
-    /// Newly recorded; the dealer was not previously present.
+    /// Newly recorded. The dealer was not previously present.
     Recorded {
         dealer: bls12381::PublicKey,
         logs_len: usize,
     },
-    /// The dealer already had a finalized log; ignored (idempotent).
+    /// The dealer already had a finalized log. The call ignores the new log (idempotent).
     DuplicateFinalized { dealer: bls12381::PublicKey },
 }
 
 /// Outcome of attempting canonical reconstruction after a new finalized log.
 pub(crate) enum ReconstructOutcome {
-    /// Already reconstructed earlier; the output is frozen and not recomputed.
+    /// Already reconstructed earlier. The output is frozen and not recomputed.
     AlreadyReconstructed,
-    /// First successful reconstruction; carries the newly frozen output.
+    /// First successful reconstruction. Carries the newly frozen output.
     Reconstructed(Output<MinSig, bls12381::PublicKey>),
-    /// Not enough usable logs yet; carries the reason for diagnostics.
+    /// Not enough usable logs yet. Carries the reason for diagnostics.
     Pending(String),
 }
 
@@ -137,7 +137,7 @@ impl DkgCeremony {
     }
 
     /// Record a verified chain-finalized dealer log. Idempotent per dealer.
-    /// Pure: only the finalized-log set is mutated; reconstruction is a
+    /// Pure: it mutates only the finalized-log set. Reconstruction is a
     /// separate step ([`Self::try_reconstruct_if_needed`]).
     pub fn apply_finalized_dealer_log(
         &mut self,
@@ -208,7 +208,7 @@ impl DkgCeremony {
 
 /// Deterministic reconstruction of the canonical group output from the set of
 /// finalized dealer logs. The recovered value depends only on `info` and the
-/// log set; `OsRng` is used solely for Commonware's batch-verification weights
+/// log set. `OsRng` supplies only Commonware's batch-verification weights
 /// (it gates accept/reject of signatures, never the recovered output value).
 fn try_reconstruct(
     info: &Info<MinSig, bls12381::PublicKey>,
@@ -233,7 +233,7 @@ pub(crate) enum PendingDealerLogOutcome {
     DuplicateDifferent {
         dealer: bls12381::PublicKey,
     },
-    /// The dealer already has a chain-finalized log; the candidate is dropped.
+    /// The dealer already has a chain-finalized log. The buffer drops the candidate.
     IgnoredFinalized,
     /// No active ceremony for the candidate's epoch (shell-only verdict).
     IgnoredNoActiveCeremony,
@@ -289,9 +289,9 @@ impl DealerLogGossip {
             .or_else(|| self.pending.values().next().cloned())
     }
 
-    /// Drop the gossip entry for a dealer whose log just chain-finalized
-    /// (`bytes` is the finalized log, used to clear the local slot if it
-    /// matches). Stops re-gossiping what is now on-chain.
+    /// Drop the gossip entry for a dealer whose log just chain-finalized.
+    /// `bytes` is the finalized log. If it matches, the call clears the local
+    /// slot too. Stops re-gossiping what is now on-chain.
     pub fn prune_finalized(&mut self, dealer: &bls12381::PublicKey, bytes: &Bytes) {
         if self.local.as_ref() == Some(bytes) {
             self.local = None;

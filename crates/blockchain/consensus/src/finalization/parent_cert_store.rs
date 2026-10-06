@@ -13,22 +13,21 @@
 //!    consumer. The slot is keyed exactly like the finalization slot and is
 //!    available to resolver-side local-witness checks.
 //!
-//! The store is keyed by `(epoch, view, finalized_or_notarized_block_hash)` and
-//! only the Simplex context parent is eligible for Phase 1. There is no backlog
-//! scan, no oldest-first selection, and no unrelated-parent substitution.
+//! The store key is `(epoch, view, finalized_or_notarized_block_hash)`. Only the
+//! Simplex context parent is eligible for Phase 1. There is no backlog scan, no
+//! oldest-first selection, and no unrelated-parent substitution.
 //!
 //! Durable backend: MDBX (via `reth_db`) plus an in-memory read cache. Writes
-//! commit synchronously before returning, so a crash between `put_*` and the
+//! commit synchronously before they return, so a crash between `put_*` and the
 //! Phase 1 system-tx build cannot lose the proof.
 //!
-//! This store is **not** an EVM `StorageHandle` consumer - it is node-local
+//! This store is **not** an EVM `StorageHandle` consumer. It is node-local
 //! proposer-side state, parallel to (not a replacement for) the canonical
-//! chain. it is out of scope for the
-//! storage-handle survey.
+//! chain. It is out of scope for the storage-handle survey.
 //!
 //! Record schema discriminant: every record carries
-//! [`CertifiedParentProofRecord::format_version`] == 3. Records with any other
-//! version are rejected on read (`Err(UnknownFormatVersion)`).
+//! [`CertifiedParentProofRecord::format_version`] == 3. Reads reject records with
+//! any other version (`Err(UnknownFormatVersion)`).
 
 use std::{
     collections::BTreeMap,
@@ -55,14 +54,13 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
 /// On-disk record schema version. Encoded into every persisted
-/// [`CertifiedParentProofRecord`]; reads reject any other value
-///.
+/// [`CertifiedParentProofRecord`]. Reads reject any other value.
 pub const CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION: u8 = 3;
 
 /// Exact lookup key for a certified-parent proof.
 ///
-/// The block hash alone is not enough at epoch/view boundaries: the same hash
-/// can be observed through different Simplex contexts during recovery or
+/// The block hash alone is not enough at epoch/view boundaries: a node can
+/// observe the same hash through different Simplex contexts during recovery or
 /// tests. Phase 1 selection must therefore name the exact consensus parent
 /// `(epoch, view, hash)`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -145,7 +143,7 @@ mod tables {
     }
 
     /// Legacy pre-V2 finalization table. Startup probes this name and fails
-    /// fast if it exists; there is intentionally no silent migration path.
+    /// fast if it exists. There is intentionally no silent migration path.
     #[derive(Debug)]
     pub struct OutbeCertifiedParentFinalizationRecordsV1;
 
@@ -311,13 +309,13 @@ pub enum ProofKind {
     CertifiedNotarization,
 }
 
-/// V2 per-parent proof record. One schema for both proof kinds; the
+/// V2 per-parent proof record. One schema serves both proof kinds. The
 /// variant-specific data (height for `Finalization`, none for
 /// `CertifiedNotarization`) plus the former `proof_type` and
 /// `local_certification_witness` discriminants now live in [`ProofKind`]. The
-/// canonical `encoded_proof` blob is authoritative; the other V2 fields
-/// (`committee_set_hash`, `vrf_material_version`, `vrf_group_public_key_hash`)
-/// are materialised by the writer so the proposer builds Phase 1 metadata
+/// canonical `encoded_proof` blob is authoritative. The writer materialises the
+/// other V2 fields (`committee_set_hash`, `vrf_material_version`,
+/// `vrf_group_public_key_hash`), so the proposer builds Phase 1 metadata
 /// without a snapshot lookup.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CertifiedParentProofRecord {
@@ -333,7 +331,7 @@ pub struct CertifiedParentProofRecord {
     pub committee_set_hash: B256,
     pub vrf_material_version: u64,
     /// keccak256 of the encoded VRF group public key for the active epoch's DKG
-    /// material. Populated by the writer so the proposer-side V2 selector can
+    /// material. The writer populates it so the proposer-side V2 selector can
     /// build [`outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata`]
     /// without a separate snapshot lookup. The verifier checks the same hash via
     /// `outbe_consensus::proof::verify_v2_proof` rule 6.
@@ -405,11 +403,11 @@ impl CertifiedParentProofRecord {
     }
 
     /// Build the V2 [`CertifiedParentAccountingMetadata`] from the stored record.
-    /// `finalized_block_number` is supplied by the selector (the validated parent
-    /// height): it equals the record's own height for `Finalization` and the
-    /// resolved `parent_block_number` for a promoted `CertifiedNotarization`
-    /// witness. Every other V2 field comes from the record, so no snapshot lookup
-    /// is needed at read time.
+    /// The selector supplies `finalized_block_number` (the validated parent
+    /// height). For `Finalization`, it equals the record's own height. For a
+    /// promoted `CertifiedNotarization` witness, it equals the resolved
+    /// `parent_block_number`. Every other V2 field comes from the record, so the
+    /// read path needs no snapshot lookup.
     pub fn to_v2_metadata(&self, finalized_block_number: u64) -> CertifiedParentAccountingMetadata {
         CertifiedParentAccountingMetadata {
             finalized_block_number,
@@ -429,10 +427,10 @@ impl CertifiedParentProofRecord {
     }
 }
 
-/// Public trait surface for the consensus-owned exact-parent proof store
-///. Two proof kinds, one record schema; the trait keeps
-/// finalization and certified-notarization slots logically distinct so writers
-/// cannot confuse the two paths.
+/// Public trait surface for the consensus-owned exact-parent proof store.
+/// Two proof kinds share one record schema. The trait keeps the finalization
+/// and certified-notarization slots logically distinct, so writers cannot
+/// confuse the two paths.
 ///
 /// **Invariants:**
 /// - `get_certified_notarization` only answers for the exact
@@ -462,8 +460,8 @@ pub trait CertifiedParentProofStore: Clone + Send + Sync + 'static {
         key: &CertifiedParentProofKey,
     ) -> Option<CertifiedParentProofRecord>;
 
-    /// returns the finalization record if present; otherwise falls back
-    /// to the certified-notarization record for the same exact key.
+    /// Returns the finalization record if present. Otherwise, falls back to the
+    /// certified-notarization record for the same exact key.
     fn get_best_parent_proof(
         &self,
         key: &CertifiedParentProofKey,
@@ -500,9 +498,9 @@ pub enum ParentProofSelection {
     CertifiedNotarization(CertifiedParentProofRecord),
 }
 
-/// Hash-keyed parent proof store. Cheap to clone - internally
+/// Hash-keyed parent proof store. It is cheap to clone because it is internally
 /// `Arc<RwLock<...>>`. All public methods are non-blocking other than the brief
-/// lock acquire; lock window is microseconds.
+/// lock acquire. The lock window is microseconds.
 #[derive(Clone)]
 pub struct FinalizedParentCertStore {
     inner: Arc<RwLock<ParentProofStoreState>>,
@@ -535,9 +533,9 @@ impl FinalizedParentCertStore {
         Self::default()
     }
 
-    /// Open a durable write-ahead store at `dir`. Existing rows in both
-    /// finalization and certified-notarization tables are loaded into the
-    /// in-memory cache before the handle is returned. A row whose decoded
+    /// Open a durable write-ahead store at `dir`. Before it returns the handle,
+    /// this function loads the existing rows of both the finalization and the
+    /// certified-notarization tables into the in-memory cache. A row whose decoded
     /// payload reports an unexpected `format_version` is a startup error
     /// rather than silent data loss.
     pub fn open(dir: impl AsRef<Path>) -> Result<Self, ParentProofStoreError> {
@@ -657,7 +655,7 @@ impl FinalizedParentCertStore {
     /// Retention restart reconciliation uses this complete set to distinguish
     /// an exact finalized candidate from a proven competing canonical block.
     /// The caller must treat an empty or internally ambiguous set as
-    /// unavailable; this store never guesses a winner.
+    /// unavailable. This store never guesses a winner.
     pub fn finalizations_at_height(&self, block_number: u64) -> Vec<CertifiedParentProofRecord> {
         self.lock_read()
             .finalization
@@ -685,7 +683,7 @@ impl FinalizedParentCertStore {
     /// Atomic-read selector snapshot for a known parent block number.
     ///
     /// Acquires the store read lock once, reads both slots, and returns owned
-    /// clones. Finalization always wins. No mutation is performed here; CN
+    /// clones. Finalization always wins. This method performs no mutation. CN
     /// witness promotion is a caller-side substitution on the returned clone.
     pub fn get_best_for_parent(
         &self,
@@ -693,13 +691,16 @@ impl FinalizedParentCertStore {
         _parent_block_number: u64,
     ) -> Option<ParentProofSelection> {
         let state = self.lock_read();
-        if let Some(record) = state.finalization.get(&key) {
-            return Some(ParentProofSelection::Finalization(record.clone()));
-        }
         state
-            .certified_notarization
+            .finalization
             .get(&key)
-            .map(|record| ParentProofSelection::CertifiedNotarization(record.clone()))
+            .map(|record| ParentProofSelection::Finalization(record.clone()))
+            .or_else(|| {
+                state
+                    .certified_notarization
+                    .get(&key)
+                    .map(|record| ParentProofSelection::CertifiedNotarization(record.clone()))
+            })
     }
 
     /// Subscribe to proof-store writes. The payload is a monotonic revision
@@ -722,16 +723,17 @@ impl FinalizedParentCertStore {
     ///
     /// `process_finalization` durably writes the height-N parent record before it
     /// advances the finalization view, so a crash in that window can leave an
-    /// ahead-of-recovered-view record on disk. Called once at startup with the
-    /// recovered finalized height, this restores the invariant
-    /// `stored_at_height <= recovered_last_finalized`. Selection already drains
-    /// any height-mismatched record at read time (`validate_parent_record`), so
-    /// this is defensive on-disk hygiene, not a divergence fix.
+    /// ahead-of-recovered-view record on disk. The node calls this method once at
+    /// startup with the recovered finalized height. The call restores the
+    /// invariant `stored_at_height <= recovered_last_finalized`. Selection already
+    /// drains any height-mismatched record at read time (`validate_parent_record`),
+    /// so this is defensive on-disk hygiene, not a divergence fix.
     ///
-    /// Only the `Finalization` slot is touched: its `stored_at_height` is the real
-    /// block height. `CertifiedNotarization` records key `stored_at_height` to the
-    /// notarization view (a retention proxy, not a height), so they are not
-    /// comparable to a block-height ceiling and are left untouched.
+    /// This method touches only the `Finalization` slot, because its
+    /// `stored_at_height` is the real block height. `CertifiedNotarization`
+    /// records key `stored_at_height` to the notarization view (a retention proxy,
+    /// not a height). A block-height ceiling cannot compare to that value, so this
+    /// method leaves those records untouched.
     pub fn prune_above_height(&self, ceiling: u64) -> Result<usize, ParentProofStoreError> {
         let fin_drop: Vec<CertifiedParentProofKey> = {
             let state = self.lock_read();
@@ -766,16 +768,16 @@ impl FinalizedParentCertStore {
 }
 
 /// Narrow, write-only capability to record a local `Activity::Certification`
-/// observation. This is the *only* surface the consensus voter side
-/// (`OutbeReporter`) is given onto the store, so the reporter structurally
-/// cannot reach the durable-write methods (`put_*` / `remove` / `prune`). Durable
-/// writes stay the `FinalizationActor`'s responsibility (single durable writer) -
-/// the capability narrowing makes that invariant type-enforced instead of
-/// convention, preventing a future reporter edit from regressing the off-thread
+/// observation. This is the *only* surface onto the store that the consensus
+/// voter side (`OutbeReporter`) gets. Thus the reporter structurally cannot reach
+/// the durable-write methods (`put_*` / `remove` / `prune`). Durable writes stay
+/// the `FinalizationActor`'s responsibility (single durable writer). The
+/// capability narrowing makes that invariant type-enforced instead of a
+/// convention. It prevents a future reporter edit from regressing the off-thread
 /// persistence boundary established for the certified-notarization path.
 pub trait CertificationWitnessSink: Send + Sync {
     /// Record that this node locally observed certification for `key`
-    /// (in-memory; cheap locked insert into `seen_certification_keys`).
+    /// (in-memory, cheap locked insert into `seen_certification_keys`).
     fn mark_local_certification_witness(&self, key: CertifiedParentProofKey);
 }
 
@@ -982,10 +984,14 @@ fn is_missing_table_error(error: &DatabaseError) -> bool {
         DatabaseError::Open(info) => {
             let message = info.message.to_ascii_lowercase();
             info.code == -30798
-                || message.contains("notfound")
-                || message.contains("not found")
-                || message.contains("mdbx_notfound")
-                || message.contains("no matching key/data")
+                || [
+                    "notfound",
+                    "not found",
+                    "mdbx_notfound",
+                    "no matching key/data",
+                ]
+                .iter()
+                .any(|fragment| message.contains(fragment))
         }
         _ => false,
     }
@@ -1070,7 +1076,7 @@ impl MdbxParentProofBackend {
         key: &CertifiedParentProofKey,
     ) -> Result<(), ParentProofStoreError> {
         let tx = self.db.tx_mut().map_err(|s| self.db_error(s))?;
-        // `delete` returns Ok(false) when the key is absent; that is not an
+        // `delete` returns Ok(false) when the key is absent. That is not an
         // error condition here.
         tx.delete::<T>(key.storage_key(), None)
             .map_err(|s| self.db_error(s))?;
@@ -1115,6 +1121,8 @@ impl MdbxParentProofBackend {
 
 #[cfg(test)]
 mod tests {
+    mod rejections;
+
     use super::*;
     use alloy_primitives::address;
 
@@ -1154,12 +1162,14 @@ mod tests {
         CertifiedParentProofKey::new(1, 100, B256::with_last_byte(hash_byte))
     }
 
-    /// Pins the dual-semantic invariants retired by the per-proof-type `kind`
-    /// split: a `Finalization` record carries its own height; a
-    /// `CertifiedNotarization` witness carries none (the selector resolves it to
-    /// the parent height passed to `to_v2_metadata`, replacing the former
-    /// sentinel-0-then-mutate promotion). `is_certification_witness` and
-    /// `proof_kind` are now derived from the variant, not stored bools/fields.
+    /// Pins the dual-semantic invariants that the per-proof-type `kind` split
+    /// retired:
+    /// - A `Finalization` record carries its own height.
+    /// - A `CertifiedNotarization` witness carries none. The selector resolves it
+    ///   to the parent height passed to `to_v2_metadata`. This replaces the former
+    ///   sentinel-0-then-mutate promotion.
+    /// - `is_certification_witness` and `proof_kind` now derive from the variant,
+    ///   not from stored bools/fields.
     #[test]
     fn proof_kind_retires_dual_semantic_fields() {
         let fin = finalization_record(0xAA, 41);
@@ -1203,7 +1213,7 @@ mod tests {
             .unwrap();
 
         // Recovered finalized height = 60: the height-100 finalization record is
-        // ahead of the view and is dropped; the height-50 record stays.
+        // ahead of the view, so the prune drops it. The height-50 record stays.
         let dropped = store.prune_above_height(60).unwrap();
         assert_eq!(dropped, 1);
         assert!(store.get_finalization(key(0xAA)).is_some());
@@ -1292,44 +1302,12 @@ mod tests {
     }
 
     #[test]
-    fn proof_store_record_format_version_is_two_and_rejects_unknown() {
-        // format_version != 2 must be rejected on read.
-        let temp = tempfile::tempdir().unwrap();
-        let dir = temp.path().join("records");
-        let mut bad = finalization_record(0xCA, 100);
-        bad.format_version = 42;
-        {
-            // Bypass the put-side guard to simulate a corrupt on-disk row.
-            let backend = MdbxParentProofBackend::open(&dir).unwrap();
-            let bytes = backend.encode_record(&bad).unwrap();
-            let tx = backend.db.tx_mut().unwrap();
-            tx.put::<tables::OutbeCertifiedParentFinalizationRecords>(
-                B256::with_last_byte(0xCA),
-                bytes,
-            )
-            .unwrap();
-            tx.commit().unwrap();
-        }
-        let err = match FinalizedParentCertStore::open(&dir) {
-            Ok(_) => panic!("unknown format_version must be rejected on read"),
-            Err(e) => e,
-        };
-        assert!(
-            matches!(
-                err,
-                ParentProofStoreError::UnknownFormatVersion { version: 42, .. }
-            ),
-            "expected UnknownFormatVersion(42), got {err}"
-        );
-    }
-
-    #[test]
     fn put_with_wrong_format_version_returns_unknown_format_version() {
-        // Write-side guard rejects records with the wrong version even
+        // The write-side guard rejects records with the wrong version even
         // before they reach disk.
         let store = FinalizedParentCertStore::new();
         let mut bad = finalization_record(0xCC, 1);
-        // 2 is the retired pre-V3 version; the write-side guard must reject it.
+        // 2 is the retired pre-V3 version. The write-side guard must reject it.
         bad.format_version = 2;
         let err = store.put_finalization(bad).expect_err("must reject");
         assert!(matches!(
@@ -1354,7 +1332,7 @@ mod tests {
             .put_certified_notarization(notarization_record(0x04, 100))
             .unwrap();
         let dropped = store.prune_below_height(50).unwrap();
-        // height=10 fin + height=20 cn drop; 50 fin and 100 cn stay.
+        // height=10 fin + height=20 cn drop. 50 fin and 100 cn stay.
         assert_eq!(dropped, 2);
         assert_eq!(store.len(), 2);
         assert!(store.get_finalization(key(0x01)).is_none());
@@ -1401,56 +1379,6 @@ mod tests {
         assert_eq!(reopened.get_finalization(key(0xCA)), Some(f));
         assert_eq!(reopened.get_certified_notarization(key(0xCB)), Some(n));
         assert!(reopened.get_finalization(key(0xCC)).is_none());
-    }
-
-    #[test]
-    fn durable_store_rejects_corrupt_key_payload_mismatch_on_reopen() {
-        let temp = tempfile::tempdir().unwrap();
-        let dir = temp.path().join("records");
-        let payload = finalization_record(0xAA, 77);
-        {
-            let backend = MdbxParentProofBackend::open(&dir).unwrap();
-            let bytes = backend.encode_record(&payload).unwrap();
-            let tx = backend.db.tx_mut().unwrap();
-            tx.put::<tables::OutbeCertifiedParentFinalizationRecords>(
-                B256::with_last_byte(0xBB),
-                bytes,
-            )
-            .unwrap();
-            tx.commit().unwrap();
-        }
-        let err = match FinalizedParentCertStore::open(&dir) {
-            Ok(_) => panic!("mismatched key/payload must fail closed"),
-            Err(e) => e,
-        };
-        assert!(matches!(err, ParentProofStoreError::Corrupt { .. }));
-    }
-
-    #[test]
-    fn durable_store_rejects_legacy_v1_tables_on_open() {
-        let temp = tempfile::tempdir().unwrap();
-        let dir = temp.path().join("records");
-        let legacy_db = reth_db::mdbx::init_db_for::<
-            _,
-            tables::OutbeCertifiedParentProofLegacyTables,
-        >(&dir, DatabaseArguments::new(ClientVersion::default()))
-        .unwrap();
-        drop(legacy_db);
-
-        let err = match FinalizedParentCertStore::open(&dir) {
-            Ok(_) => panic!("legacy V1 tables must fail startup"),
-            Err(e) => e,
-        };
-        assert!(
-            matches!(
-                err,
-                ParentProofStoreError::LegacyTableFound {
-                    table: "OutbeCertifiedParentFinalizationRecords",
-                    ..
-                }
-            ),
-            "expected legacy V1 table error, got {err}"
-        );
     }
 
     #[test]
@@ -1511,11 +1439,11 @@ mod proptests {
     //!    iteration order in the schema).
     //! 3. Cross-version pin: a hand-crafted JSON payload representative of
     //!    the v1 on-disk format decodes to the expected logical record.
-    //!    This is the cross-version compatibility check required by the
-    //!    skill's "Safety verification" rule for consensus-carrying paths.
+    //!    The skill's "Safety verification" rule requires this cross-version
+    //!    compatibility check for consensus-carrying paths.
     //!
-    //! Note: the on-disk encoding is `serde_json` (see `encode_record`),
-    //! deliberately chosen for `parent_cert_store.rs:381-385` precedent.
+    //! Note: the on-disk encoding is `serde_json` (see `encode_record`). It was
+    //! chosen deliberately, following the `parent_cert_store.rs:381-385` precedent.
     //! Switching encoding is a schema migration, not a refactor.
     use super::*;
     use proptest::collection::vec;
@@ -1533,7 +1461,7 @@ mod proptests {
     }
 
     /// Strategy: arbitrary `CertifiedParentProofRecord` with the current
-    /// `format_version`. Numeric ranges are kept under realistic protocol
+    /// `format_version`. The numeric ranges stay under realistic protocol
     /// bounds (epoch < 2^24, view < 2^32, etc.) to keep shrinking fast without
     /// sacrificing coverage of the encoded layout.
     fn arb_record() -> impl Strategy<Value = CertifiedParentProofRecord> {
@@ -1606,7 +1534,7 @@ mod proptests {
         }
 
         /// Property: encoding the same logical record N times yields
-        /// byte-identical output. Determinism guard against any future use
+        /// byte-identical output. This guards determinism against any future use
         /// of HashMap/HashSet or per-call randomness in the schema.
         #[test]
         fn proptest_record_encode_is_deterministic(rec in arb_record()) {
@@ -1617,8 +1545,8 @@ mod proptests {
             }
         }
 
-        /// Property: non-current format_version is rejected by the backend decoder
-        ///, regardless of the rest of the record.
+        /// Property: the backend decoder rejects a non-current format_version,
+        /// regardless of the rest of the record.
         #[test]
         fn proptest_unknown_format_version_is_rejected(
             mut rec in arb_record(),
@@ -1630,7 +1558,7 @@ mod proptests {
             let temp = tempfile::tempdir().expect("tempdir");
             let backend = MdbxParentProofBackend::open(temp.path()).expect("open backend");
             let decoded = backend.decode_record(bytes);
-            // Extract the predicate first - `prop_assert!` treats commas in
+            // Extract the predicate first. `prop_assert!` treats commas in
             // its arg list as format-string separators, so embedding the
             // `matches! ... if ...` guard inline confuses the macro parser.
             let rejected_with_bad_version = matches!(
@@ -1641,14 +1569,14 @@ mod proptests {
         }
     }
 
-    /// Current-format (V3) serde-shape pin: a hand-crafted JSON payload that
-    /// matches the on-disk shape decodes to the expected logical record, and
-    /// the decoded record re-encodes + re-decodes byte-equal. A proptest
-    /// round-trip cannot catch a serde field/variant rename (encode and decode
-    /// rename symmetrically), so this pin forces an explicit migration decision
-    /// if the schema's JSON shape changes. The externally-tagged `ProofKind`
-    /// serializes as `{"Finalization":{"finalized_block_number":N}}`, the kind
-    /// of detail the pin exists to catch.
+    /// Current-format (V3) serde-shape pin. A hand-crafted JSON payload that
+    /// matches the on-disk shape decodes to the expected logical record. The
+    /// decoded record re-encodes + re-decodes byte-equal. A proptest round-trip
+    /// cannot catch a serde field/variant rename (encode and decode rename
+    /// symmetrically). Thus this pin forces an explicit migration decision if the
+    /// schema's JSON shape changes. The externally-tagged `ProofKind` serializes
+    /// as `{"Finalization":{"finalized_block_number":N}}`. The pin exists to catch
+    /// this kind of detail.
     #[test]
     fn current_format_payload_decodes_to_record() {
         let payload = r#"{

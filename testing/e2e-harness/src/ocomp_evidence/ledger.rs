@@ -18,7 +18,7 @@ pub struct PlanningLedger {
     pub schema_version: u32,
     /// Stable ledger discriminator.
     pub kind: String,
-    /// Planning status; runtime evidence must not reinterpret it as PASS.
+    /// Planning status. Runtime evidence must not reinterpret it as PASS.
     pub status: String,
     /// Stable test IDs removed from executable acceptance without becoming reusable.
     pub retired_tests: BTreeMap<String, RetiredTest>,

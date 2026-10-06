@@ -48,7 +48,7 @@ contract StubAuctionWithBids {
                 referenceCurrency: 840
             });
         }
-        // `data` left default - TM's `_doSendBidsToOutbe` drops the first tuple component.
+        // `data` stays default. TM's `_doSendBidsToOutbe` drops the first tuple component.
         data;
     }
 
@@ -90,15 +90,16 @@ contract StubAuctionWithBids {
 }
 
 /// @title PatternADeferTest
-/// @notice Behavioural coverage of Pattern A on `TargetRouter`: the inbound clearing/mark-called handlers fire an
-///         outbound relay (bids batch / owners bridge) that parks on failure and is retried permissionlessly via
-///         `flushPending*`. Failure is forced by starving the relay float - a positive bridge fee with a zero native
-///         balance makes `_send` revert `NotEnoughNative`; topping the float up lets the flush land.
+/// @notice Behavioural coverage of Pattern A on `TargetRouter`. The inbound clearing/mark-called
+///         handlers fire an outbound relay (bids batch / owners bridge). The relay parks on
+///         failure, and anyone can retry it via `flushPending*`. The tests force failure by
+///         starving the relay float. A positive bridge fee with a zero native balance makes
+///         `_send` revert `NotEnoughNative`. A top-up of the float lets the flush land.
 contract PatternADeferTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
 
-    /// @dev Fee the loopback bridge charges; the relay must have this in native float to send.
+    /// @dev Fee the loopback bridge charges. The relay must have this in native float to send.
     uint256 internal constant BRIDGE_FEE = 0.001 ether;
 
     TargetRouter internal bnbRouter;
@@ -109,7 +110,8 @@ contract PatternADeferTest is CrossChainTest {
     StubAuctionWithBids internal stubAuction;
 
     address internal admin = address(this);
-    // Registered peer standing in for the Outbe-side router; delivery is authenticated against this address.
+    // Registered peer standing in for the Outbe-side router. The router authenticates delivery
+    // against this address.
     address internal outbePeer = makeAddr("outbePeer");
     uint32 internal constant SERIES_ID_DAY = 20260301;
     bytes14 internal constant SERIES_ID = "20260301-USD-U";
@@ -183,8 +185,8 @@ contract PatternADeferTest is CrossChainTest {
         bnbRouter.relayBids(SERIES_ID_DAY);
     }
 
-    /// @dev A day the auction has not moved past its reveal is nobody's to relay: that stage is set by the
-    ///      inbound CLEARING alone.
+    /// @dev A day the auction has not moved past its reveal is nobody's to relay. Only the inbound
+    ///      CLEARING sets that stage.
     function test_TM_RelayBidsBeforeClearingReverts() public {
         stubAuction.setStage(IIntexAuction.AuctionStage.RevealingBids);
 
@@ -192,8 +194,8 @@ contract PatternADeferTest is CrossChainTest {
         bnbRouter.relayBids(SERIES_ID_DAY);
     }
 
-    /// @dev A round that moved but could not finish reports the remainder home, and the origin answers that
-    ///      with another round - so a heavy day needs no hand at all.
+    /// @dev A round that moved but could not finish reports the remainder home. The origin
+    ///      answers that with another round. Thus a heavy day needs no hand at all.
     function test_TM_AStoppedRoundReportsWhatIsLeft() public {
         stubAuction.setBidCount(130); // three chunks
         vm.deal(address(bnbRouter), 10 ether);
@@ -217,8 +219,8 @@ contract PatternADeferTest is CrossChainTest {
         assertEq(uint8(reported[1]), BridgeMsgCodec.MSG_BIDS_REMAINING, "the last thing sent is the report");
     }
 
-    /// @dev A round that sent nothing must not report: the origin would answer with the same budget for the
-    ///      same outcome, and that is a loop rather than a recovery.
+    /// @dev A round that sent nothing must not report. The origin would answer with the same
+    ///      budget for the same outcome. That is a loop rather than a recovery.
     function test_TM_ARoundThatSentNothingDoesNotReport() public {
         // Zero float, so the round reverts whole before any chunk leaves.
         assertEq(address(bnbRouter).balance, 0);
@@ -247,7 +249,7 @@ contract PatternADeferTest is CrossChainTest {
         assertEq(sizes[0], 0, "the batch is empty");
     }
 
-    // a reveal set larger than MAX_PAYLOAD_ARRAY_LEN is split into multiple batches; the
+    // the relay splits a reveal set larger than MAX_PAYLOAD_ARRAY_LEN into multiple batches. The
     // final chunk carries the remainder. (130 bids -> 64 + 64 + 2.)
     function test_TM_BidsRelay_ChunksAboveCap() public {
         stubAuction.setBidCount(130);

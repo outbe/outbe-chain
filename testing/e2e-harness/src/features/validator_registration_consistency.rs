@@ -1,10 +1,10 @@
 //! Registration, public ABI, and P2P-consistency steps for
 //! `features/validator_lifecycle_consistency.feature`.
 //!
-//! Every negative path is submitted as a real transaction to a public
-//! precompile. The snapshots intentionally omit participation counters: those
-//! counters may legitimately advance while a rejected transaction is mined and
-//! are not part of the registry identity/membership transaction under test.
+//! These steps submit every negative path as a real transaction to a public
+//! precompile. The snapshots intentionally omit participation counters. Those
+//! counters may legitimately advance while a rejected transaction is mined.
+//! They are not part of the registry identity/membership transaction under test.
 
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::thread::sleep;
@@ -30,7 +30,7 @@ const P2P_V1: u8 = 1;
 
 /// Stable public fields of one ValidatorSet record.
 ///
-/// Miss/proposal counters are deliberately excluded because a block produced
+/// This record deliberately excludes miss/proposal counters because a block produced
 /// while a negative transaction is mined may update them independently.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct StableValidatorRecord {

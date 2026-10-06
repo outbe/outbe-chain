@@ -81,12 +81,13 @@ fn seed_single_validator_genesis(signer: &OutbeEvmSigner) -> eyre::Result<Genesi
             }}"#
         ),
     )?;
-    // Seed the COEN/840 oracle pair + a 1.0 rate (scale 1e6) so the begin-block
-    // NOD/GEM/INTEX floor-price promotion reads a registered pair instead of
-    // reverting "pair not registered" (which would abort pre-execution and leave
-    // every payload empty). Production genesis always seeds oracle pairs; the
-    // oracle itself is left uninitialized so its own begin-block tally/s-curve
-    // stays inert - the same minimal state the executor tests use.
+    // Seed the COEN/840 oracle pair + a 1.0 rate (scale 1e6). The begin-block
+    // NOD/GEM/INTEX floor-price promotion then reads a registered pair instead of
+    // reverting "pair not registered". That revert would abort pre-execution and
+    // leave every payload empty. Production genesis always seeds oracle pairs.
+    // The oracle itself is left uninitialized so its own begin-block
+    // tally/s-curve stays inert. This is the same minimal state the executor
+    // tests use.
     std::fs::write(
         &seed_path,
         r#"{
@@ -204,15 +205,15 @@ fn payload_attributes(timestamp: u64, proposer: Address) -> OutbePayloadAttribut
         compressed_entities_root: None,
     })
     .expect("Outbe boundary artifacts should encode");
-    OutbePayloadAttributes::new(
-        REWARDS_ADDRESS,
-        timestamp.saturating_mul(1000),
-        B256::ZERO,
-        Some(B256::ZERO),
+    OutbePayloadAttributes::new(outbe_primitives::OutbePayloadAttributesInput {
+        suggested_fee_recipient: REWARDS_ADDRESS,
+        timestamp_millis: timestamp.saturating_mul(1000),
+        prev_randao: B256::ZERO,
+        parent_beacon_block_root: Some(B256::ZERO),
         extra_data,
-        None,
-        Some(proposer),
-    )
+        parent_consensus_metadata: None,
+        proposer_evm_address: Some(proposer),
+    })
 }
 
 #[tokio::test]
@@ -224,8 +225,8 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
 
     // Block 1 now mandates the canonical OST3 TEE-bootstrap system tx. The genesis
     // config must carry the GramineDirectDev `teeAttestationV1` activation manifest
-    // (the ChainSpec authority the executor checks the payload's policy against),
-    // and the proposer must inject the bootstrap payload via the consensus bridge.
+    // (the ChainSpec authority the executor checks the payload's policy against).
+    // The proposer must inject the bootstrap payload via the consensus bridge.
     // Adding the config field does not change the genesis block hash, so the policy
     // can bind the hash computed from the seeded genesis alloc.
     let mut genesis = seed_single_validator_genesis(&signer)?;
@@ -241,8 +242,8 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
     let ce_directory = tempfile::tempdir()?;
 
     // The OST3 payload binds the epoch-0 committee snapshot that the block-1
-    // BoundaryOutcome writes before TeeBootstrap runs - the same hash the boundary
-    // artifact carries - and is signed by the single genesis validator.
+    // BoundaryOutcome writes before TeeBootstrap runs. The boundary artifact
+    // carries the same hash. The single genesis validator signs the payload.
     let bridge = ConsensusExecutionBridge::new();
     bridge.set_pending_tee_bootstrap(
         gramine_direct_bootstrap_v2(

@@ -24,7 +24,7 @@ use outbe_primitives::{
 use crate::precompile::INodFactory;
 
 /// Closed, constant-size Nod owner input derived from a verified Lysis apply
-/// plan. The raw values carry no authority; installation additionally requires
+/// plan. The raw values carry no authority. Installation additionally requires
 /// the runtime-only [`CertifiedLysisActivation`] capability.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CertifiedNodGenerationV1 {
@@ -172,7 +172,7 @@ pub fn install_certified_generation(
             .write(&tail_sequence, worldwide_day)?;
         nod.ocomp_materialization_tail_sequence.write(next_tail)?;
         // The generation is the active-state selector and therefore switches
-        // only after every root and scalar has been written successfully.
+        // only after every root and scalar write succeeds.
         nod.ocomp_target_generation
             .write(&worldwide_day, installed.generation)?;
         storage.emit_event(
@@ -188,7 +188,7 @@ pub fn install_certified_generation(
                 nodRoot: input.roots.nod_root,
                 bucketRoot: input.roots.bucket_root,
                 outputManifestRoot: input.roots.output_manifest_root,
-                nodAmountTotal: input.nod_amount_total,
+                totalSettlementCostMinor: input.nod_amount_total,
                 lysisAllocationMinor: input.lysis_allocation_minor,
                 issuedAt: input.issued_at,
                 stateEventDigest: state_event_digest,
@@ -196,7 +196,7 @@ pub fn install_certified_generation(
             .encode_log_data(),
         )?;
         // The capability cursor is not journaled storage. Advance it only
-        // after every owner write and event has succeeded, so a caught
+        // after every owner write and event succeeds, so a caught
         // mutation failure cannot skip the Nod owner step.
         capability.authorize_nod_installation()?;
         Ok(())
@@ -626,7 +626,7 @@ mod tests {
             event.data.outputManifestRoot,
             input.roots.output_manifest_root
         );
-        assert_eq!(event.data.nodAmountTotal, input.nod_amount_total);
+        assert_eq!(event.data.totalSettlementCostMinor, input.nod_amount_total);
         assert_eq!(
             event.data.lysisAllocationMinor,
             input.lysis_allocation_minor

@@ -1,4 +1,8 @@
 //! Real NOD/router execution with stateful ERC20 and reserve-vault counterparties.
+#[path = "common/nod_qualification.rs"]
+mod qualify_fixture;
+use qualify_fixture::qualify;
+
 use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, B256, U256};
@@ -49,27 +53,6 @@ const ASSET: Address = Address::new([0x33; 20]);
 const VAULT: Address = Address::new([0x55; 20]);
 const GRATIS_LOAD: u64 = 1_000;
 const TIMESTAMP: u64 = 1_700_000_000;
-
-/// Closes the bucket's first full day above its floor, which qualifies it.
-fn qualify(storage: &StorageHandle<'_>, bucket_key: B256, floor: U256, iso: u16) {
-    let issued_at = NodContract::new(storage.clone())
-        .callable_bucket_issued_at
-        .read(&bucket_key)
-        .unwrap();
-    let pair = outbe_oracle::api::AddressPair::new_coen_to(iso);
-    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-    let mut index = oracle.pair_index_of(pair).unwrap();
-    if index == 0 {
-        index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
-    }
-    let day = outbe_primitives::time::first_full_day(issued_at);
-    oracle
-        .record_utc_day_vwap(day, index, floor + U256::ONE)
-        .unwrap();
-    if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
-        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
-    }
-}
 
 type EvmCtx = revm::Context<
     revm::context::BlockEnv,
@@ -163,8 +146,9 @@ impl World {
             let nod = outbe_nodfactory::api::issue_nod(&storage, &scope, &parent, &params).unwrap();
             let floor_price_minor =
                 NodContract::floor_price_minor(params.entry_price_minor).unwrap();
-            let bucket = NodContract::bucket_key(params.worldwide_day, floor_price_minor, 840);
-            qualify(&storage, bucket, floor_price_minor, 840);
+            let bucket =
+                NodContract::bucket_key(params.worldwide_day, params.entry_price_minor, 840);
+            qualify(&storage, bucket, floor_price_minor, 840).expect("bucket qualifies");
             nod
         });
         provider.flush().unwrap();
@@ -188,7 +172,7 @@ impl World {
             },
         );
         assert_eq!(quote.settlementCurrency, 840);
-        assert_eq!(quote.payableUnits, cost);
+        assert_eq!(quote.paymentMinor, cost);
         assert_eq!(quote.snapshotId, U256::ZERO);
         world.ok(
             owner,
@@ -235,11 +219,13 @@ impl World {
     ) -> SubCallOutput {
         sub_call::run(
             &mut self.ctx,
-            caller,
-            false,
-            SpecId::PRAGUE,
-            Some(self.readers.clone()),
-            self.scope.clone(),
+            sub_call::SubCallEnvironment {
+                self_address: caller,
+                outer_is_static: false,
+                spec: SpecId::PRAGUE,
+                runtime_body_readers: Some(self.readers.clone()),
+                execution_scope: self.scope.clone(),
+            },
             SubCallInput {
                 target,
                 value: U256::ZERO,
@@ -348,8 +334,7 @@ fn erc20_settlement_moves_exact_full_width_cost_and_preserves_mining() {
     assert_eq!(paid.len(), 1);
     assert_eq!(paid[0].owner, OWNER);
     assert_eq!(paid[0].asset, ASSET);
-    assert_eq!(paid[0].nullifier, B256::ZERO);
-    assert_eq!(paid[0].amountCovered, cost);
+    assert_eq!(paid[0].paymentMinor, cost);
     let balances = world.balances();
     assert!(!matches!(world.settle().status, SubCallStatus::Success));
     assert_eq!(world.balances(), balances);
@@ -377,6 +362,68 @@ fn erc20_settlement_moves_exact_full_width_cost_and_preserves_mining() {
         },
     );
     assert_eq!(minted, U256::from(GRATIS_LOAD));
+}
+
+#[test]
+fn a_third_party_pays_and_the_nod_stays_with_the_owner() {
+    let payer = Address::new([0x77; 20]);
+    let mut world = World::new(OWNER, U256::from(500), true);
+    let cost = world.cost;
+    world.ok(
+        OWNER,
+        ASSET,
+        IFixture::mintCall {
+            account: payer,
+            amount: cost,
+        },
+    );
+    world.ok(
+        payer,
+        ASSET,
+        IFixture::approveCall {
+            spender: NOD_FACTORY_ADDRESS,
+            amount: cost,
+        },
+    );
+    let paid = world.call(
+        payer,
+        NOD_FACTORY_ADDRESS,
+        INodFactory::settleNodCall {
+            nodId: world.nod.to_u256(),
+            asset: ASSET,
+            snapshotId: U256::ZERO,
+        },
+        false,
+    );
+    assert!(matches!(paid.status, SubCallStatus::Success));
+
+    assert_eq!(
+        world.view(ASSET, IFixture::balanceOfCall { account: payer }),
+        U256::ZERO
+    );
+    assert_eq!(
+        world.balances(),
+        [cost * U256::from(2), U256::from(17), U256::ZERO, cost, cost],
+        "the owner's own funds are untouched"
+    );
+    let data = world.view(
+        NOD_ADDRESS,
+        INod::nodDataCall {
+            nodId: world.nod.to_u256(),
+        },
+    );
+    assert!(data.isSettled);
+    assert_eq!(data.owner, OWNER);
+    let events: Vec<_> = world
+        .ctx
+        .journaled_state
+        .logs()
+        .iter()
+        .filter_map(|log| INodFactory::NodPaid::decode_log_data(&log.data).ok())
+        .collect();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].owner, OWNER);
+    assert_eq!(events[0].paymentMinor, cost);
 }
 
 #[test]

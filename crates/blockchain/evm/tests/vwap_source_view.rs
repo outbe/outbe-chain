@@ -1,4 +1,5 @@
-//! A Solidity view reads the IntexFactory precompile as its daily VWAP source, as the origin's IntexNFT1155 does.
+//! A Solidity view reads the IntexFactory precompile as its daily VWAP source,
+//! as the origin's IntexNFT1155 does.
 use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, U256};
@@ -76,11 +77,13 @@ fn a_solidity_view_reads_the_factory_as_its_vwap_source() {
     let mut read = |iso_code: u16, from_utc_day: u32| {
         let out = sub_call::run(
             &mut ctx,
-            CALLER,
-            false,
-            SpecId::PRAGUE,
-            Some(readers.clone()),
-            scope.clone(),
+            sub_call::SubCallEnvironment {
+                self_address: CALLER,
+                outer_is_static: false,
+                spec: SpecId::PRAGUE,
+                runtime_body_readers: Some(readers.clone()),
+                execution_scope: scope.clone(),
+            },
             SubCallInput {
                 target: READER,
                 value: U256::ZERO,

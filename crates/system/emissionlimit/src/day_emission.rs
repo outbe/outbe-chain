@@ -23,7 +23,7 @@ pub const FLOOR_DAY_THRESHOLD: u32 = 3_072;
 const UNITS_PER_COEN: U256 = uint!(1_000_000_U256);
 
 // Every reachable exponential has |x| <= 4. With terms 0..=64, the real
-// Taylor remainder is below 9.1e-51; the 1e30 fixed-point scale still leaves
+// Taylor remainder is below 9.1e-51. The 1e30 fixed-point scale still leaves
 // more than fourteen decimal guard digits beyond the protocol's 1e-6 unit.
 // The largest amount-domain multiplication is below 6e74, over 190 times
 // below U256::MAX. Any formula/scale change must re-establish both bounds and
@@ -96,9 +96,9 @@ fn fixed_div(value: U256, divisor: U256) -> U256 {
 }
 
 /// Returns the day emission cap for `day_number` days since the chain's
-/// genesis UTC day. Closed-form, no storage I/O, pure function. The result is
-/// rounded down to the protocol's six-decimal unit and floor-clamped forever
-/// once `day_number >= FLOOR_DAY_THRESHOLD`.
+/// genesis UTC day. It is a closed-form pure function with no storage I/O. It
+/// rounds the result down to the protocol's six-decimal unit. It clamps the
+/// result to the floor forever once `day_number >= FLOOR_DAY_THRESHOLD`.
 pub fn day_emission_limit(day_number: u32) -> U256 {
     if day_number >= FLOOR_DAY_THRESHOLD {
         return FLOOR_DAY_EMISSION;

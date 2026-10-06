@@ -189,9 +189,22 @@ struct LiveAttempt {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JobFsmState {
     worldwide_day: WorldwideDay,
-    ready: Option<ReadyAttempt>,
-    live: Option<LiveAttempt>,
-    terminal: Vec<TerminalAttempt>,
+    attempt: Attempt,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Attempt {
+    Ready(ReadyAttempt),
+    Pending(LiveAttempt),
+    Terminal(TerminalAttempt),
+}
+
+struct PendingRequest {
+    at_height: u64,
+    deadline_height: u64,
+    intent_id: B256,
+    lysis_limit_minor: U256,
+    receipt_hash: B256,
 }
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
@@ -249,34 +262,35 @@ impl JobFsmState {
     pub fn initial_ready(worldwide_day: WorldwideDay, first_check_height: u64) -> Self {
         Self {
             worldwide_day,
-            ready: Some(ReadyAttempt {
+            attempt: Attempt::Ready(ReadyAttempt {
                 pending_nonce: 0,
                 next_check_height: first_check_height,
                 retained_effect: None,
             }),
-            live: None,
-            terminal: Vec::new(),
         }
     }
 
-    /// Restores persisted lifecycle state and fails closed on any
-    /// status/index/limit inconsistency.
+    /// Restores persisted state, checking cardinality before its evidence.
     pub fn restore(snapshot: JobFsmSnapshot) -> Result<Self, JobFsmError> {
-        let state = Self {
-            worldwide_day: snapshot.worldwide_day,
-            ready: snapshot.ready.map(|ready| ReadyAttempt {
+        let attempt = match (snapshot.ready, snapshot.live, snapshot.terminal.as_slice()) {
+            (Some(ready), None, []) => Attempt::Ready(ReadyAttempt {
                 pending_nonce: ready.pending_nonce,
                 next_check_height: ready.next_check_height,
                 retained_effect: ready.retained_effect.map(RetainedRequestEffect::from),
             }),
-            live: snapshot.live.map(|live| LiveAttempt {
+            (None, Some(live), []) => Attempt::Pending(LiveAttempt {
                 intent_id: live.intent_id,
                 pending_nonce: live.pending_nonce,
                 requested_height: live.requested_height,
                 deadline_height: live.deadline_height,
                 retained_effect: RetainedRequestEffect::from(live.retained_effect),
             }),
-            terminal: snapshot.terminal,
+            (None, None, [terminal]) => Attempt::Terminal(*terminal),
+            _ => return Err(JobFsmError::InvalidPhaseCardinality),
+        };
+        let state = Self {
+            worldwide_day: snapshot.worldwide_day,
+            attempt,
         };
         state.validate()?;
         Ok(state)
@@ -284,46 +298,47 @@ impl JobFsmState {
 
     #[must_use]
     pub fn snapshot(&self) -> JobFsmSnapshot {
-        JobFsmSnapshot {
+        let mut snapshot = JobFsmSnapshot {
             worldwide_day: self.worldwide_day,
-            ready: self.ready.map(|ready| ReadyAttemptSnapshot {
-                pending_nonce: ready.pending_nonce,
-                next_check_height: ready.next_check_height,
-                retained_effect: ready
-                    .retained_effect
-                    .map(RetainedRequestEffectSnapshot::from),
-            }),
-            live: self.live.map(|live| LiveAttemptSnapshot {
-                intent_id: live.intent_id,
-                pending_nonce: live.pending_nonce,
-                requested_height: live.requested_height,
-                deadline_height: live.deadline_height,
-                retained_effect: RetainedRequestEffectSnapshot::from(live.retained_effect),
-            }),
-            terminal: self.terminal.clone(),
-        }
-    }
-
-    /// Returns whether the exact request-phase economic effect is fresh or an
-    /// immutable replay. This decision is derived from lifecycle state rather
-    /// than supplied by a caller.
-    pub fn request_effect_mode(&self) -> Result<RequestEffectMode, JobFsmError> {
-        let ready = self.ready.ok_or(JobFsmError::RequestRequiresReady)?;
-        match ready.retained_effect {
-            None => {
-                if ready.pending_nonce != 0 {
-                    return Err(JobFsmError::InvalidRequestEffect);
-                }
-                Ok(RequestEffectMode::Fresh {
-                    effect_nonce: ready.pending_nonce,
+            ready: None,
+            live: None,
+            terminal: Vec::new(),
+        };
+        match self.attempt {
+            Attempt::Ready(ready) => {
+                snapshot.ready = Some(ReadyAttemptSnapshot {
+                    pending_nonce: ready.pending_nonce,
+                    next_check_height: ready.next_check_height,
+                    retained_effect: ready
+                        .retained_effect
+                        .map(RetainedRequestEffectSnapshot::from),
                 })
             }
-            Some(_) => Err(JobFsmError::InvalidRequestEffect),
+            Attempt::Pending(live) => {
+                snapshot.live = Some(LiveAttemptSnapshot {
+                    intent_id: live.intent_id,
+                    pending_nonce: live.pending_nonce,
+                    requested_height: live.requested_height,
+                    deadline_height: live.deadline_height,
+                    retained_effect: RetainedRequestEffectSnapshot::from(live.retained_effect),
+                })
+            }
+            Attempt::Terminal(terminal) => snapshot.terminal.push(terminal),
         }
+        snapshot
     }
 
-    /// Applies one transition atomically in memory. The receiver changes only
-    /// after both the transition and the complete invariant checker succeed.
+    pub fn request_effect_mode(&self) -> Result<RequestEffectMode, JobFsmError> {
+        let ready = self.ready()?;
+        if ready.retained_effect.is_some() || ready.pending_nonce != 0 {
+            return Err(JobFsmError::InvalidRequestEffect);
+        }
+        Ok(RequestEffectMode::Fresh {
+            effect_nonce: ready.pending_nonce,
+        })
+    }
+
+    /// A rejected command never mutates the receiver.
     pub fn apply(&mut self, command: JobFsmCommand) -> Result<JobFsmProjection, JobFsmError> {
         let mut candidate = self.clone();
         candidate.apply_inner(command)?;
@@ -333,14 +348,25 @@ impl JobFsmState {
     }
 
     fn apply_inner(&mut self, command: JobFsmCommand) -> Result<(), JobFsmError> {
-        let transition_kind = command.transition_kind();
-        let transition_rule = transition_rules()
+        let rule = self.transition_rule(command.transition_kind())?;
+        self.apply_command(command)?;
+        if self.phase() != rule.to {
+            return Err(JobFsmError::InvalidTransitionRule);
+        }
+        Ok(())
+    }
+
+    fn transition_rule(
+        &self,
+        kind: JobFsmTransitionKind,
+    ) -> Result<JobFsmTransitionRule, JobFsmError> {
+        let rule = transition_rules()
             .iter()
             .copied()
-            .find(|rule| rule.kind == transition_kind)
+            .find(|rule| rule.kind == kind)
             .ok_or(JobFsmError::InvalidTransitionRule)?;
-        if self.phase()? != transition_rule.from {
-            return Err(match transition_kind {
+        if self.phase() != rule.from {
+            return Err(match kind {
                 JobFsmTransitionKind::Expire => JobFsmError::ExpiryRequiresPending,
                 JobFsmTransitionKind::OpenVoting => JobFsmError::OpenVotingRequiresPending,
                 JobFsmTransitionKind::Defer | JobFsmTransitionKind::Request => {
@@ -348,235 +374,246 @@ impl JobFsmState {
                 }
             });
         }
+        Ok(rule)
+    }
 
+    fn apply_command(&mut self, command: JobFsmCommand) -> Result<(), JobFsmError> {
         match command {
             JobFsmCommand::Defer {
                 at_height,
                 next_check_height,
-            } => {
-                let mut ready = self.ready.ok_or(JobFsmError::RequestRequiresReady)?;
-                if at_height < ready.next_check_height {
-                    return Err(JobFsmError::RequestNotDue {
-                        due_height: ready.next_check_height,
-                    });
-                }
-                if next_check_height <= at_height {
-                    return Err(JobFsmError::InvalidDeferredHeight {
-                        at_height,
-                        next_check_height,
-                    });
-                }
-                ready.next_check_height = next_check_height;
-                self.ready = Some(ready);
-                Ok(())
-            }
+            } => self.defer(at_height, next_check_height),
             JobFsmCommand::Request {
                 at_height,
                 deadline_height,
                 intent_id,
                 lysis_limit_minor,
                 request_limit_receipt_hash,
-            } => {
-                let ready = self.ready.ok_or(JobFsmError::RequestRequiresReady)?;
-                if at_height < ready.next_check_height {
-                    return Err(JobFsmError::RequestNotDue {
-                        due_height: ready.next_check_height,
-                    });
-                }
-                if intent_id.is_zero() {
-                    return Err(JobFsmError::ZeroIntentId);
-                }
-                if request_limit_receipt_hash.is_zero() {
-                    return Err(JobFsmError::ZeroRequestLimitReceiptHash);
-                }
-                if deadline_height <= at_height {
-                    return Err(JobFsmError::InvalidDeadline {
-                        request_height: at_height,
-                        deadline_height,
-                    });
-                }
-                let retained_effect = match ready.retained_effect {
-                    None => RetainedRequestEffect {
-                        effect_nonce: ready.pending_nonce,
-                        lysis_limit_minor,
-                        receipt_hash: request_limit_receipt_hash,
-                    },
-                    Some(_) => return Err(JobFsmError::InvalidRequestEffect),
-                };
-                self.live = Some(LiveAttempt {
-                    intent_id,
-                    pending_nonce: ready.pending_nonce,
-                    requested_height: at_height,
-                    deadline_height: Some(deadline_height),
-                    retained_effect,
-                });
-                self.ready = None;
-                Ok(())
-            }
+            } => self.request(PendingRequest {
+                at_height,
+                deadline_height,
+                intent_id,
+                lysis_limit_minor,
+                receipt_hash: request_limit_receipt_hash,
+            }),
             JobFsmCommand::OpenVoting {
                 at_height,
                 deadline_height,
-            } => {
-                let mut live = self.live.ok_or(JobFsmError::OpenVotingRequiresPending)?;
-                if at_height <= live.requested_height {
-                    return Err(JobFsmError::VotingOpenTooEarly {
-                        open_height: live
-                            .requested_height
-                            .checked_add(1)
-                            .ok_or(JobFsmError::HeightOverflow)?,
-                    });
-                }
-                if deadline_height <= at_height {
-                    return Err(JobFsmError::InvalidDeadline {
-                        request_height: at_height,
-                        deadline_height,
-                    });
-                }
-                live.deadline_height = Some(deadline_height);
-                self.live = Some(live);
-                Ok(())
-            }
-            JobFsmCommand::Expire { at_height, at_time } => {
-                let live = self.live.ok_or(JobFsmError::ExpiryRequiresPending)?;
-                let deadline_height = live
-                    .deadline_height
-                    .ok_or(JobFsmError::ExpiryRequiresDeadline)?;
-                if at_height < deadline_height {
-                    return Err(JobFsmError::DeadlineNotReached {
-                        at_height,
-                        deadline_height,
-                    });
-                }
-                self.expire(live, at_height, at_time)
-            }
-        }?;
-
-        if self.phase()? != transition_rule.to {
-            return Err(JobFsmError::InvalidTransitionRule);
+            } => self.open_voting(at_height, deadline_height),
+            JobFsmCommand::Expire { at_height, at_time } => self.expire(at_height, at_time),
         }
+    }
+
+    fn ready(&self) -> Result<ReadyAttempt, JobFsmError> {
+        match self.attempt {
+            Attempt::Ready(ready) => Ok(ready),
+            _ => Err(JobFsmError::RequestRequiresReady),
+        }
+    }
+
+    fn pending(&self, error: JobFsmError) -> Result<LiveAttempt, JobFsmError> {
+        match self.attempt {
+            Attempt::Pending(live) => Ok(live),
+            _ => Err(error),
+        }
+    }
+
+    fn defer(&mut self, at_height: u64, next_check_height: u64) -> Result<(), JobFsmError> {
+        let mut ready = self.ready()?;
+        ready.ensure_due(at_height)?;
+        if next_check_height <= at_height {
+            return Err(JobFsmError::InvalidDeferredHeight {
+                at_height,
+                next_check_height,
+            });
+        }
+        ready.next_check_height = next_check_height;
+        self.attempt = Attempt::Ready(ready);
         Ok(())
     }
 
-    fn expire(
-        &mut self,
-        live: LiveAttempt,
-        at_height: u64,
-        at_time: u64,
-    ) -> Result<(), JobFsmError> {
-        self.terminal.push(TerminalAttempt {
+    fn request(&mut self, input: PendingRequest) -> Result<(), JobFsmError> {
+        let ready = self.ready()?;
+        ready.ensure_due(input.at_height)?;
+        if input.intent_id.is_zero() {
+            return Err(JobFsmError::ZeroIntentId);
+        }
+        if input.receipt_hash.is_zero() {
+            return Err(JobFsmError::ZeroRequestLimitReceiptHash);
+        }
+        ensure_deadline(input.at_height, input.deadline_height)?;
+        if ready.retained_effect.is_some() {
+            return Err(JobFsmError::InvalidRequestEffect);
+        }
+        self.attempt = Attempt::Pending(LiveAttempt {
+            intent_id: input.intent_id,
+            pending_nonce: ready.pending_nonce,
+            requested_height: input.at_height,
+            deadline_height: Some(input.deadline_height),
+            retained_effect: RetainedRequestEffect {
+                effect_nonce: ready.pending_nonce,
+                lysis_limit_minor: input.lysis_limit_minor,
+                receipt_hash: input.receipt_hash,
+            },
+        });
+        Ok(())
+    }
+
+    fn open_voting(&mut self, at_height: u64, deadline_height: u64) -> Result<(), JobFsmError> {
+        let mut live = self.pending(JobFsmError::OpenVotingRequiresPending)?;
+        if at_height <= live.requested_height {
+            return Err(JobFsmError::VotingOpenTooEarly {
+                open_height: live
+                    .requested_height
+                    .checked_add(1)
+                    .ok_or(JobFsmError::HeightOverflow)?,
+            });
+        }
+        ensure_deadline(at_height, deadline_height)?;
+        live.deadline_height = Some(deadline_height);
+        self.attempt = Attempt::Pending(live);
+        Ok(())
+    }
+
+    fn expire(&mut self, at_height: u64, at_time: u64) -> Result<(), JobFsmError> {
+        let live = self.pending(JobFsmError::ExpiryRequiresPending)?;
+        let deadline_height = live
+            .deadline_height
+            .ok_or(JobFsmError::ExpiryRequiresDeadline)?;
+        if at_height < deadline_height {
+            return Err(JobFsmError::DeadlineNotReached {
+                at_height,
+                deadline_height,
+            });
+        }
+        self.attempt = Attempt::Terminal(TerminalAttempt {
             intent_id: live.intent_id,
             pending_nonce: live.pending_nonce,
             terminal_height: at_height,
             terminal_time: at_time,
             retained_lysis_limit_minor: live.retained_effect.lysis_limit_minor,
         });
-        self.live = None;
         Ok(())
     }
 
-    fn phase(&self) -> Result<DayPhase, JobFsmError> {
-        match (
-            self.ready.is_some(),
-            self.live.is_some(),
-            self.terminal.len(),
-        ) {
-            (true, false, 0) => Ok(DayPhase::Ready),
-            (false, true, 0) => Ok(DayPhase::OffchainPending),
-            (false, false, 1) => Ok(DayPhase::Terminal),
-            _ => Err(JobFsmError::InvalidPhaseCardinality),
+    fn phase(&self) -> DayPhase {
+        match self.attempt {
+            Attempt::Ready(_) => DayPhase::Ready,
+            Attempt::Pending(_) => DayPhase::OffchainPending,
+            Attempt::Terminal(_) => DayPhase::Terminal,
         }
     }
 
-    /// Runs the production invariant checker over every status/index/limit
-    /// equivalence represented by this bounded state.
     pub fn validate(&self) -> Result<(), JobFsmError> {
-        let phase = self.phase()?;
-        for terminal in &self.terminal {
-            if terminal.pending_nonce != 0 || terminal.intent_id.is_zero() {
-                return Err(JobFsmError::InvalidTerminalEvidence);
+        match self.attempt {
+            Attempt::Ready(ready) => ready.validate(),
+            Attempt::Pending(live) => live.validate(),
+            Attempt::Terminal(terminal) => {
+                if terminal.pending_nonce != 0 || terminal.intent_id.is_zero() {
+                    return Err(JobFsmError::InvalidTerminalEvidence);
+                }
+                Ok(())
             }
         }
-
-        if phase == DayPhase::Terminal {
-            return Ok(());
-        }
-
-        let (pending_nonce, retained_effect) = if let Some(ready) = self.ready {
-            if ready.pending_nonce == 0 && ready.retained_effect.is_some()
-                || ready.pending_nonce > 0 && ready.retained_effect.is_none()
-            {
-                return Err(JobFsmError::InvalidRequestEffect);
-            }
-            (ready.pending_nonce, ready.retained_effect)
-        } else {
-            let live = self.live.ok_or(JobFsmError::InvalidPhaseCardinality)?;
-            if live.intent_id.is_zero()
-                || live
-                    .deadline_height
-                    .is_some_and(|deadline| deadline <= live.requested_height)
-                || live.retained_effect.receipt_hash.is_zero()
-            {
-                return Err(JobFsmError::InvalidRequestEffect);
-            }
-            (live.pending_nonce, Some(live.retained_effect))
-        };
-        if pending_nonce != 0 {
-            return Err(JobFsmError::InvalidInitialNonce);
-        }
-        if let Some(effect) = retained_effect {
-            if effect.effect_nonce != 0 || effect.effect_nonce > pending_nonce {
-                return Err(JobFsmError::InvalidRequestEffect);
-            }
-        }
-        Ok(())
     }
 
     #[must_use]
     pub fn projection(&self) -> JobFsmProjection {
-        let terminal_records = u16::try_from(self.terminal.len()).unwrap_or(u16::MAX);
-        match (self.ready, self.live) {
-            (Some(ready), None) => JobFsmProjection {
-                worldwide_day: self.worldwide_day,
-                phase: DayPhase::Ready,
-                pending_nonce: ready.pending_nonce,
-                next_check_height: Some(ready.next_check_height),
-                live_intent_id: None,
-                deadline_height: None,
-                terminal_records,
-                retained_lysis_limit_minor: ready
-                    .retained_effect
-                    .map(|effect| effect.lysis_limit_minor),
-            },
-            (None, Some(live)) => JobFsmProjection {
-                worldwide_day: self.worldwide_day,
-                phase: DayPhase::OffchainPending,
-                pending_nonce: live.pending_nonce,
-                next_check_height: None,
-                live_intent_id: Some(live.intent_id),
-                deadline_height: live.deadline_height,
-                terminal_records,
-                retained_lysis_limit_minor: Some(live.retained_effect.lysis_limit_minor),
-            },
-            (None, None) if self.terminal.len() == 1 => {
-                let terminal = self.terminal[0];
-                JobFsmProjection {
-                    worldwide_day: self.worldwide_day,
-                    phase: DayPhase::Terminal,
-                    pending_nonce: terminal.pending_nonce,
-                    next_check_height: None,
-                    live_intent_id: None,
-                    deadline_height: None,
-                    terminal_records,
-                    retained_lysis_limit_minor: Some(terminal.retained_lysis_limit_minor),
-                }
+        let mut projection = JobFsmProjection {
+            worldwide_day: self.worldwide_day,
+            phase: self.phase(),
+            pending_nonce: 0,
+            next_check_height: None,
+            live_intent_id: None,
+            deadline_height: None,
+            terminal_records: 0,
+            retained_lysis_limit_minor: None,
+        };
+        match self.attempt {
+            Attempt::Ready(ready) => {
+                projection.pending_nonce = ready.pending_nonce;
+                projection.next_check_height = Some(ready.next_check_height);
+                projection.retained_lysis_limit_minor =
+                    ready.retained_effect.map(|effect| effect.lysis_limit_minor);
             }
-            _ => unreachable!("validated OCOMP FSM phase cardinality"),
+            Attempt::Pending(live) => {
+                projection.pending_nonce = live.pending_nonce;
+                projection.live_intent_id = Some(live.intent_id);
+                projection.deadline_height = live.deadline_height;
+                projection.retained_lysis_limit_minor =
+                    Some(live.retained_effect.lysis_limit_minor);
+            }
+            Attempt::Terminal(terminal) => {
+                projection.pending_nonce = terminal.pending_nonce;
+                projection.terminal_records = 1;
+                projection.retained_lysis_limit_minor = Some(terminal.retained_lysis_limit_minor);
+            }
         }
+        projection
     }
 
     #[must_use]
     pub fn terminal_attempts(&self) -> &[TerminalAttempt] {
-        &self.terminal
+        match &self.attempt {
+            Attempt::Terminal(terminal) => std::slice::from_ref(terminal),
+            _ => &[],
+        }
+    }
+}
+
+fn ensure_deadline(request_height: u64, deadline_height: u64) -> Result<(), JobFsmError> {
+    if deadline_height <= request_height {
+        return Err(JobFsmError::InvalidDeadline {
+            request_height,
+            deadline_height,
+        });
+    }
+    Ok(())
+}
+
+fn validate_initial_effect(
+    pending_nonce: u64,
+    effect: Option<RetainedRequestEffect>,
+) -> Result<(), JobFsmError> {
+    if pending_nonce != 0 {
+        return Err(JobFsmError::InvalidInitialNonce);
+    }
+    if effect.is_some_and(|effect| effect.effect_nonce != 0 || effect.effect_nonce > pending_nonce)
+    {
+        return Err(JobFsmError::InvalidRequestEffect);
+    }
+    Ok(())
+}
+
+impl ReadyAttempt {
+    fn ensure_due(self, at_height: u64) -> Result<(), JobFsmError> {
+        if at_height < self.next_check_height {
+            return Err(JobFsmError::RequestNotDue {
+                due_height: self.next_check_height,
+            });
+        }
+        Ok(())
+    }
+    fn validate(self) -> Result<(), JobFsmError> {
+        if self.retained_effect.is_some() != (self.pending_nonce != 0) {
+            return Err(JobFsmError::InvalidRequestEffect);
+        }
+        validate_initial_effect(self.pending_nonce, self.retained_effect)
+    }
+}
+
+impl LiveAttempt {
+    fn validate(self) -> Result<(), JobFsmError> {
+        let invalid_deadline = self
+            .deadline_height
+            .is_some_and(|deadline| deadline <= self.requested_height);
+        if self.intent_id.is_zero()
+            || invalid_deadline
+            || self.retained_effect.receipt_hash.is_zero()
+        {
+            return Err(JobFsmError::InvalidRequestEffect);
+        }
+        validate_initial_effect(self.pending_nonce, Some(self.retained_effect))
     }
 }
 

@@ -1,10 +1,9 @@
 //! V3 Rewards fingerprint sensitivity tests.
 //!
-//! Each test pins one field of the V3 fingerprint contract: changing a
-//! single bound field must change the computed fingerprint, so two
-//! metadata-txes that differ in that field for the same `fb_hash` are
-//! treated as contradictory by the dedup guard in
-//! `check_and_record_metadata_fingerprint`.
+//! Each test pins one field of the V3 fingerprint contract. A change to a
+//! single bound field must change the computed fingerprint. Thus the dedup
+//! guard in `check_and_record_metadata_fingerprint` treats two metadata-txes
+//! that differ in that field for the same `fb_hash` as contradictory.
 //!
 
 use alloy_primitives::{address, b256, Bytes, B256, U256};
@@ -63,8 +62,8 @@ const VRF_PROOF_HASH_A: B256 =
     b256!("0x1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa");
 
 // ---------------------------------------------------------------------------
-// flipping a single bit in `signer_bitmap` changes the
-// fingerprint; consequently a second metadata-tx with the perturbed
+// Flipping a single bit in `signer_bitmap` changes the
+// fingerprint. Consequently, a second metadata-tx with the perturbed
 // bitmap for the same `fb_hash` is contradictory (no double-credit).
 // ---------------------------------------------------------------------------
 
@@ -102,7 +101,7 @@ fn v2_rewards_fingerprint_changes_on_signer_bitmap_change() {
 }
 
 // ---------------------------------------------------------------------------
-// switching `proof_kind` (Finalization <->
+// Switching `proof_kind` (Finalization <->
 // CertifiedNotarization) changes the fingerprint.
 // ---------------------------------------------------------------------------
 
@@ -122,7 +121,7 @@ fn v2_rewards_fingerprint_changes_on_proof_type_change() {
 }
 
 // ---------------------------------------------------------------------------
-// changing `vrf_material_version` OR
+// Changing `vrf_material_version` OR
 // `vrf_group_public_key_hash` (the "seed hash") changes the fingerprint.
 // ---------------------------------------------------------------------------
 
@@ -154,10 +153,10 @@ fn v2_rewards_fingerprint_changes_on_vrf_material_or_seed_hash_change() {
 }
 
 // ---------------------------------------------------------------------------
-// the fingerprint includes the canonical VRF proof hash
+// The fingerprint includes the canonical VRF proof hash
 // (`outbe_consensus::proof::canonical_vrf_proof_hash_v2(VrfProof)`).
 // Changing the proof hash argument while keeping the metadata identical
-// must change the fingerprint - proves the proof hash is bound.
+// must change the fingerprint. This proves that the proof hash is bound.
 // ---------------------------------------------------------------------------
 
 #[test]

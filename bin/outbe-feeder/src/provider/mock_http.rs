@@ -5,8 +5,8 @@
 //! - `GET /api/tickers?symbols=COEN840,ETHUSDC`
 //! - `GET /api/candles?symbols=COEN840,ETHUSDC`
 //!
-//! Responses are expected to use `{ "data": [...] }` with string or numeric
-//! price/volume fields.
+//! The provider expects responses to use `{ "data": [...] }` with string or
+//! numeric price/volume fields.
 
 use async_trait::async_trait;
 use eyre::{eyre, Context, Result};

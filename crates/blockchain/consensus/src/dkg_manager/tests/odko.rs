@@ -62,8 +62,11 @@ mod properties {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(64))]
 
-        /// Any epoch/flag round-trips; a single-byte header corruption is either
-        /// rejected or still canonical; any truncation is rejected; no panics.
+        /// Checks these properties, with no panics:
+        ///
+        /// - any epoch/flag round-trips.
+        /// - a single-byte header corruption is either rejected or still canonical.
+        /// - any truncation is rejected.
         #[test]
         fn round_trips_and_corrupted_headers_are_rejected_or_canonical(
             epoch in any::<u64>(),

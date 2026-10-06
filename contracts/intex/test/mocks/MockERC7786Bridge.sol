@@ -6,23 +6,30 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 import {IGatewayQuote} from "@contracts/shared/interfaces/IGatewayQuote.sol";
 
 /// @title MockERC7786Bridge
-/// @notice In-process loopback stand-in for the `crosschain` hub's ERC7786Bridge, for intex protocol tests.
-/// @dev {sendMessage} records the message and (by default) delivers it to the recipient's {receiveMessage} in the
-///      same call, standing in for the transport. Delivery can be turned off ({setAutoDeliver}) to drive inbound
-///      timing/redelivery manually, replayed ({deliverLast}), or spoofed from an arbitrary source ({deliverAs}) to
-///      exercise the recipient's peer authentication. {quote} returns a settable fee.
+/// @notice In-process loopback stand-in for the `crosschain` hub's ERC7786Bridge, for intex
+///         protocol tests.
+/// @dev {sendMessage} records the message. By default it also delivers the message to the
+///      recipient's {receiveMessage} in the same call, as a stand-in for the transport. A test can:
+///      - disable delivery ({setAutoDeliver}) to drive inbound timing/redelivery manually.
+///      - replay delivery ({deliverLast}).
+///      - spoof delivery from an arbitrary source ({deliverAs}) to exercise the recipient's peer
+///        authentication.
+///      {quote} returns a settable fee.
 contract MockERC7786Bridge is IERC7786GatewaySource, IGatewayQuote {
     using InteroperableAddress for bytes;
 
     /// @dev ERC-7786 attribute selector for the per-message destination gas limit.
     bytes4 private constant _GAS_LIMIT_SELECTOR = bytes4(keccak256("executionGasLimit(uint256)"));
 
-    /// @dev Fee returned by {quote} (and thus required as msg.value on {sendMessage} when relay-funding is off).
+    /// @dev Fee that {quote} returns. {sendMessage} thus requires it as msg.value when
+    ///      relay-funding is off.
     uint256 public fee;
-    /// @dev When true, {sendMessage} delivers immediately; when false, delivery is manual via {deliverLast}.
+    /// @dev When true, {sendMessage} delivers immediately. When false, delivery is manual via
+    ///      {deliverLast}.
     bool public autoDeliver = true;
-    /// @dev When true, auto-delivery forwards exactly the executionGasLimit attribute as the call gas, so a
-    ///      handler that needs more than its IntexGas budget out-of-gases instead of borrowing test gas.
+    /// @dev When true, auto-delivery forwards exactly the executionGasLimit attribute as the call
+    ///      gas. A handler that needs more than its IntexGas budget then fails with out-of-gas
+    ///      instead of borrowing test gas.
     bool public enforceGasAttribute;
 
     // --- last-send capture (for assertions) ---
@@ -107,31 +114,36 @@ contract MockERC7786Bridge is IERC7786GatewaySource, IGatewayQuote {
         return 0;
     }
 
-    /// @dev Re-delivers the most recent message (as the same source), simulating a transport redelivery.
+    /// @dev Re-delivers the most recent message (as the same source) to simulate a transport
+    ///      redelivery.
     function deliverLast() external {
         _deliver(lastSender, lastRecipient, lastPayload);
     }
 
-    /// @dev Delivers `payload` to `recipient` as if it came from `sender` - for peer-auth negative tests.
+    /// @dev Delivers `payload` to `recipient` as if it came from `sender`. For peer-auth negative
+    ///      tests.
     function deliverAs(bytes calldata sender, bytes calldata recipient, bytes calldata payload) external {
         _deliver(sender, recipient, payload);
     }
 
     function _deliver(bytes memory sender, bytes memory recipient, bytes memory payload) internal {
         (, address target) = recipient.parseEvmV1();
-        // Mirror the hub's receiveId (binds source + payload) so recipients that key per-message work off it (e.g. the
-        // NFT bridge clients' failed-mint parking) see a stable, unique id; a `deliverLast` replay reuses the same id.
+        // Mirror the hub's receiveId (binds source + payload). Recipients that use it as the key for
+        // per-message work (e.g. the NFT bridge clients' failed-mint parking) then see a stable,
+        // unique id.
+        // A `deliverLast` replay reuses the same id.
         bytes32 receiveId = keccak256(abi.encode(sender, payload));
         _chargeHubDedup(receiveId);
         bytes4 result = IERC7786Recipient(target).receiveMessage(receiveId, sender, payload);
         if (result != IERC7786Recipient.receiveMessage.selector) revert DeliveryReturnedInvalidValue(result);
     }
 
-    /// @dev The hub marks every delivery in its `_executed` set before handing the message to the recipient, so a
-    ///      measurement taken through this stand-in has to carry that cold read and cold write or it understates
-    ///      every inbound message. Unlike the hub this does not reject a repeat: a real wrapped payload carries the
-    ///      sending hub's nonce, so production ids are unique and replay protection is the client's business -
-    ///      which is what the idempotency suites exercise through {deliverLast}.
+    /// @dev The hub marks every delivery in its `_executed` set before it hands the message to the
+    ///      recipient. A measurement taken through this stand-in has to carry that cold read and
+    ///      cold write, or it understates every inbound message. Unlike the hub, this stand-in does
+    ///      not reject a repeat. A real wrapped payload carries the sending hub's nonce, so
+    ///      production ids are unique and replay protection is the client's business. The
+    ///      idempotency suites exercise that client replay protection through {deliverLast}.
     function _chargeHubDedup(bytes32 receiveId) private {
         if (_hubExecuted[receiveId]) return;
         _hubExecuted[receiveId] = true;

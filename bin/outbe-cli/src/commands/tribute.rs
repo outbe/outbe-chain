@@ -69,7 +69,7 @@ pub enum TributeCmd {
     },
     /// Submit an encrypted tribute offer (decrypted inside the SGX enclave).
     /// Encrypts to the DKG-derived offer key registered in the TeeRegistry and
-    /// sends `offerTribute`; requires `--private-key` and the ZK offer inputs
+    /// sends `offerTribute`. Requires `--private-key` and the ZK offer inputs
     /// (`--zk-proof`, `--zk-merkle-root`, `--signature`).
     Offer {
         /// WorldwideDay (must be in OFFERING status), e.g. 20241220
@@ -240,7 +240,7 @@ async fn day_totals(client: &(impl Rpc + Sync), worldwide_day: WorldwideDay) -> 
 
     println!("WorldwideDay:           {}", worldwide_day);
     println!("Tribute Count:          {}", ret.tributeCount);
-    println!("Nominal Amount Minor:   {}", ret.tributeNominalAmount);
+    println!("Nominal Amount Minor:   {}", ret.tributeNominalTotalMinor);
     println!("Sealed:                 {}", ret.isSealed);
     Ok(())
 }
@@ -280,11 +280,14 @@ async fn owner(client: &(impl Rpc + Sync), token_id: U256) -> Result<()> {
     Ok(())
 }
 
-/// Submit an encrypted tribute offer. Reads the DKG-derived offer key from the
-/// TeeRegistry, encrypts the payload to it (X25519 ECDHE + HKDF-SHA256 +
-/// ChaCha20Poly1305, byte-identical to the enclave decrypt path), and sends
-/// `offerTribute`. The enclave decrypts it inside SGX during execution and the
-/// `TributeFactory` issues the canonical Tribute.
+/// Submit an encrypted tribute offer. This function:
+/// 1. Reads the DKG-derived offer key from the TeeRegistry.
+/// 2. Encrypts the payload to it (X25519 ECDHE + HKDF-SHA256 + ChaCha20Poly1305,
+///    byte-identical to the enclave decrypt path).
+/// 3. Sends `offerTribute`.
+///
+/// The enclave decrypts the payload inside SGX during execution. The `TributeFactory`
+/// issues the canonical Tribute.
 #[allow(clippy::too_many_arguments)]
 async fn offer(
     client: &(impl Rpc + Sync),
@@ -339,7 +342,7 @@ async fn offer(
     // 2. Build the plaintext payload matching the proof's private inputs.
     let wwd: u32 = worldwide_day.into();
     // worldwide_day + currency are cleartext ABI args (below) so the node can
-    // admit and price the offer without decrypting; the ciphertext carries only
+    // admit and price the offer without decrypting. The ciphertext carries only
     // what must stay confidential. `referenceCurrency` is a separate axis again
     // (it drives gem/intex qualification), not the pricing key.
     let payload = serde_json::json!({
@@ -544,7 +547,7 @@ mod tests {
 
         let result = fetch_day_totals(&mock, 20241220u32.into()).await.unwrap();
         assert_eq!(result.tributeCount, 2);
-        assert_eq!(result.tributeNominalAmount, U256::from(500u64));
+        assert_eq!(result.tributeNominalTotalMinor, U256::from(500u64));
         assert!(result.isSealed);
     }
 
@@ -578,7 +581,7 @@ mod tests {
         assert_eq!(offer_hex32(&value, "--su-hash").unwrap(), value);
     }
 
-    /// Required proof inputs, in `flag, value` pairs; the L2 is selected below.
+    /// Required proof inputs, in `flag, value` pairs. The L2 is selected below.
     const REQUIRED_OFFER_FLAGS: [&str; 10] = [
         "--zk-proof",
         "0x01",

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{Address, B256, U256};
+use alloy_sol_types::SolCall;
 use outbe_compressed_entities::{
     begin_block, end_block, preview_end_block, AuthenticatedParentTree,
     AuthenticatedParentTreeFactory, Commitment, EntityRef, ExactParentIdentity, ExecutionScope,
@@ -8,7 +9,7 @@ use outbe_compressed_entities::{
 };
 use outbe_ocomp_protocol::state::{OcompJobRecordV1, OcompJobStatus, OcompTerminalOutcome};
 use outbe_primitives::{
-    addresses::COMPRESSED_ENTITIES_ADDRESS,
+    addresses::{COMPRESSED_ENTITIES_ADDRESS, PROMIS_LIMIT_ADDRESS},
     block::{BlockContext, BlockRuntimeContext},
     chain,
     error::{PrecompileError, Result},
@@ -18,7 +19,7 @@ use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
 
 use super::{poc_schema_limits, prepare_request_fixture};
-use crate::{api, schema::MetadosisContract, WwdMembership, WwdStatus};
+use crate::{api, precompile::IMetadosis, schema::MetadosisContract, WwdMembership, WwdStatus};
 
 mod commands {
     pub(crate) use crate::commands::{
@@ -117,6 +118,13 @@ fn run_terminal_request(
     provider: &mut HashMapStorageProvider,
     fixture: &super::PreparedRequestFixture,
 ) {
+    try_terminal_request(provider, fixture).expect("production terminal request");
+}
+
+fn try_terminal_request(
+    provider: &mut HashMapStorageProvider,
+    fixture: &super::PreparedRequestFixture,
+) -> Result<()> {
     provider.set_block_number(fixture.block_number);
     provider.set_timestamp(U256::from(fixture.block_time));
     provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::OcompLifecycle);
@@ -131,7 +139,6 @@ fn run_terminal_request(
         );
         commands::run_ocomp_terminal_request(&ctx, &fixture.scope)
     })
-    .expect("production terminal request");
 }
 
 fn live_intent(
@@ -294,7 +301,7 @@ fn assert_failed_day_recovery(
         let tribute = TributeContract::new(storage.clone());
         let totals = tribute.get_day_totals(fixture.wwd).unwrap();
         assert_eq!(totals.tribute_count, 0);
-        assert_eq!(totals.tribute_nominal_amount, U256::ZERO);
+        assert_eq!(totals.tribute_nominal_total_minor, U256::ZERO);
         assert_eq!(tribute.total_supply().unwrap(), 0);
         assert_eq!(
             tribute
@@ -757,4 +764,449 @@ fn malformed_persisted_request_receipt_remains_fatal_and_atomic() {
 
     assert!(matches!(error, PrecompileError::Fatal(_)));
     assert_eq!(fixture.rollback_snapshot(), before);
+}
+
+#[test]
+fn a_carry_over_that_misses_the_request_limit_is_a_business_failure() {
+    use crate::ocomp::activation::conserved_lysis_limit;
+
+    assert_eq!(
+        conserved_lysis_limit(U256::from(30), U256::from(10), U256::from(40)).unwrap(),
+        U256::from(40)
+    );
+    for (allocation, unused) in [
+        (U256::from(30), U256::from(9)),
+        (U256::from(30), U256::from(11)),
+        (U256::MAX, U256::ONE),
+    ] {
+        let error = conserved_lysis_limit(allocation, unused, U256::from(40)).unwrap_err();
+        assert!(crate::errors::is_business_failure(&error), "{error}");
+    }
+}
+
+fn seed_carry_over(provider: &mut HashMapStorageProvider, amount: U256) {
+    StorageHandle::enter(provider, |storage| {
+        PromisLimitContract::new(storage)
+            .checked_add_carry_over(amount)
+            .unwrap();
+    });
+}
+
+fn promis_total(provider: &mut HashMapStorageProvider) -> U256 {
+    StorageHandle::enter(provider, |storage| {
+        PromisLimitContract::new(storage)
+            .get_total_unallocated()
+            .unwrap()
+    })
+}
+
+fn request_receipt(
+    provider: &mut HashMapStorageProvider,
+    wwd: outbe_primitives::time::WorldwideDay,
+) -> outbe_ocomp_protocol::receipts::RequestLimitSplitReceiptV1 {
+    StorageHandle::enter(provider, |storage| {
+        MetadosisContract::new(storage)
+            .request_limit_receipt(wwd, &poc_schema_limits())
+            .unwrap()
+            .expect("requested day keeps its receipt")
+    })
+}
+
+/// The failure receipt as the public view reports it, read after the aggregate validates it.
+fn failure_view(
+    provider: &mut HashMapStorageProvider,
+    wwd: outbe_primitives::time::WorldwideDay,
+) -> (U256, U256, U256) {
+    StorageHandle::enter(provider, |storage| {
+        api::worldwide_days(storage.clone()).expect("the aggregate accepts the failure receipt");
+        let call = IMetadosis::getWorldwideDayTerminalReceiptCall { wwd: wwd.value() };
+        let output =
+            crate::precompile::dispatch(storage, &call.abi_encode(), Address::ZERO, U256::ZERO)
+                .unwrap();
+        let receipt =
+            IMetadosis::getWorldwideDayTerminalReceiptCall::abi_decode_returns(&output).unwrap();
+        assert_eq!(
+            receipt.outcome,
+            crate::schema::terminal_outcome::METADOSIS_FAILURE
+        );
+        (
+            receipt.promisLimitReturnedMinor,
+            receipt.promisLimitBeforeMinor,
+            receipt.promisLimitAfterMinor,
+        )
+    })
+}
+
+#[test]
+fn an_expired_green_day_returns_its_lysis_and_desis_limits_once() {
+    let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    let fixture = prepare_request_fixture(&mut provider, true);
+    let carried = U256::from(500);
+    seed_carry_over(&mut provider, carried);
+    run_terminal_request(&mut provider, &fixture);
+    let receipt = request_receipt(&mut provider, fixture.wwd);
+    assert!(!receipt.desis_limit_minor.is_zero());
+    let reserved = carried + receipt.carry_over_credit - receipt.desis_limit_minor;
+    assert_eq!(
+        promis_total(&mut provider),
+        reserved,
+        "the request takes the Desis Limit out of the accumulator"
+    );
+
+    let recovery_height = fixture.block_number + 65;
+    let scope = begin_recovery_scope(&mut provider, &fixture, recovery_height);
+    run_lifecycle_begin(
+        &mut provider,
+        &scope,
+        recovery_height,
+        fixture.block_time + 65,
+    )
+    .expect("missed finality deadline expires the day");
+
+    let retained = receipt.lysis_limit_minor + receipt.desis_limit_minor;
+    assert_failed_day_recovery(&mut provider, &fixture, carried + U256::from(100));
+    assert_eq!(
+        failure_view(&mut provider, fixture.wwd),
+        (retained, reserved, reserved + retained)
+    );
+
+    run_lifecycle_begin(
+        &mut provider,
+        &scope,
+        recovery_height + 1,
+        fixture.block_time + 66,
+    )
+    .expect("closed failed WWD replay is a no-op");
+    run_direct_failed_day_recovery(
+        &mut provider,
+        &scope,
+        fixture.wwd,
+        recovery_height + 2,
+        fixture.block_time + 67,
+    )
+    .expect("failing a FAILED day again is a no-op");
+    let request_height = recovery_height + 3;
+    provider.set_block_number(request_height);
+    provider.set_timestamp(U256::from(fixture.block_time + 68));
+    provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::OcompLifecycle);
+    StorageHandle::enter(&mut provider, |storage| {
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(request_height, fixture.block_time + 68, chain::CHAIN_ID),
+            storage,
+        );
+        commands::run_ocomp_terminal_request(&ctx, &scope)
+    })
+    .expect("a FAILED day is not requested again");
+
+    assert_failed_day_recovery(&mut provider, &fixture, carried + U256::from(100));
+    assert_eq!(request_receipt(&mut provider, fixture.wwd), receipt);
+    StorageHandle::enter(&mut provider, |storage| {
+        assert_eq!(
+            MetadosisContract::new(storage)
+                .terminal_intent_count(fixture.wwd)
+                .unwrap(),
+            1
+        );
+    });
+}
+
+#[test]
+fn a_red_day_reserves_nothing_and_its_expiry_returns_only_lysis() {
+    let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    let fixture =
+        super::prepare_request_fixture_with_day_type(&mut provider, true, crate::WwdDayType::Red);
+    let carried = U256::from(500);
+    seed_carry_over(&mut provider, carried);
+    run_terminal_request(&mut provider, &fixture);
+    let receipt = request_receipt(&mut provider, fixture.wwd);
+    assert_eq!(receipt.desis_limit_minor, U256::ZERO);
+    let credited = carried + receipt.carry_over_credit;
+    assert_eq!(promis_total(&mut provider), credited);
+
+    let recovery_height = fixture.block_number + 65;
+    let scope = begin_recovery_scope(&mut provider, &fixture, recovery_height);
+    run_lifecycle_begin(
+        &mut provider,
+        &scope,
+        recovery_height,
+        fixture.block_time + 65,
+    )
+    .expect("missed finality deadline expires the day");
+
+    assert_failed_day_recovery(&mut provider, &fixture, carried + U256::from(100));
+    assert_eq!(
+        failure_view(&mut provider, fixture.wwd),
+        (
+            receipt.lysis_limit_minor,
+            credited,
+            credited + receipt.lysis_limit_minor
+        )
+    );
+}
+
+#[test]
+fn overlapping_requests_size_desis_from_what_earlier_requests_reserved() {
+    let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    let fixture = super::prepare_ready_days_fixture(&mut provider, true);
+    let carried = U256::from(500);
+    seed_carry_over(&mut provider, carried);
+    for (block_number, block_time) in [
+        (fixture.block_number, fixture.block_time),
+        (fixture.block_number + 1, fixture.block_time + 1),
+    ] {
+        provider.set_block_number(block_number);
+        provider.set_timestamp(U256::from(block_time));
+        provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::OcompLifecycle);
+        StorageHandle::enter(&mut provider, |storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(block_number, block_time, chain::CHAIN_ID),
+                storage,
+            );
+            commands::run_ocomp_terminal_request(&ctx, &fixture.scope)
+        })
+        .expect("overlapping request");
+    }
+
+    let first = request_receipt(&mut provider, fixture.first_wwd);
+    let second = request_receipt(&mut provider, fixture.later_wwd);
+    assert_eq!(
+        first.desis_limit_minor,
+        carried + first.carry_over_credit,
+        "the first day reserves everything the accumulator offers"
+    );
+    assert_eq!(
+        second.desis_limit_minor, second.carry_over_credit,
+        "the second day finds only its own remainder"
+    );
+    assert_eq!(promis_total(&mut provider), U256::ZERO);
+
+    let recovery_height = fixture.block_number + 65;
+    let scope = begin_recovery_scope_for_wwd(
+        &mut provider,
+        &fixture.scope,
+        fixture.first_wwd,
+        recovery_height,
+    );
+    run_lifecycle_begin(
+        &mut provider,
+        &scope,
+        recovery_height,
+        fixture.block_time + 65,
+    )
+    .expect("only the first missed WWD fails");
+
+    let returned = first.lysis_limit_minor + first.desis_limit_minor;
+    assert_eq!(
+        promis_total(&mut provider),
+        returned,
+        "the expired day returns its reservation while the live one keeps its own"
+    );
+    assert_eq!(
+        failure_view(&mut provider, fixture.first_wwd),
+        (returned, U256::ZERO, returned)
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        assert_eq!(
+            api::worldwide_day(storage, fixture.later_wwd)
+                .unwrap()
+                .unwrap()
+                .status,
+            WwdStatus::OffchainPending
+        );
+    });
+}
+
+/// A day whose limit exceeds its Lysis share, so its request both credits and reserves.
+fn prepare_carried_request(
+    carried: U256,
+) -> (HashMapStorageProvider, super::PreparedRequestFixture) {
+    use crate::fixture_kernel::FixtureKernelExt;
+
+    let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    let fixture = prepare_request_fixture(&mut provider, true);
+    StorageHandle::enter(&mut provider, |storage| {
+        MetadosisContract::new(storage)
+            .set_metadosis_limit(fixture.wwd, U256::from(2_000))
+            .unwrap();
+    });
+    seed_carry_over(&mut provider, carried);
+    (provider, fixture)
+}
+
+#[test]
+fn a_failure_after_the_carry_over_credit_rolls_back_the_credit_and_the_desis_reservation() {
+    let carried = U256::from(500);
+    let (mut probe, fixture) = prepare_carried_request(carried);
+    probe.fail_mutation_at_address(PROMIS_LIMIT_ADDRESS);
+    assert!(matches!(
+        try_terminal_request(&mut probe, &fixture),
+        Err(PrecompileError::Storage(_))
+    ));
+    let credit_write = probe.clear_mutation_failure();
+
+    let (mut clean, fixture) = prepare_carried_request(carried);
+    run_terminal_request(&mut clean, &fixture);
+    let receipt = request_receipt(&mut clean, fixture.wwd);
+    assert!(!receipt.carry_over_credit.is_zero());
+    assert!(!receipt.desis_limit_minor.is_zero());
+    assert_eq!(
+        promis_total(&mut clean),
+        carried + receipt.carry_over_credit - receipt.desis_limit_minor
+    );
+
+    // The credit is the first Promis Limit write; the reservation is the very next mutation.
+    for operation in [credit_write, credit_write + 1] {
+        let (mut provider, fixture) = prepare_carried_request(carried);
+        let storage_before = provider.storage.clone();
+        let events_before = provider.get_ordered_events().to_vec();
+        let ce_before = fixture.scope.ce_work_checkpoint().unwrap();
+        provider.fail_after_mutation_at(operation);
+
+        let error = try_terminal_request(&mut provider, &fixture)
+            .expect_err("the injected failure fails the request");
+        assert!(matches!(error, PrecompileError::Storage(_)), "{error}");
+        assert_eq!(provider.clear_mutation_failure(), operation + 1);
+        assert_eq!(provider.storage, storage_before, "storage at {operation}");
+        assert_eq!(
+            provider.get_ordered_events(),
+            events_before.as_slice(),
+            "events at {operation}"
+        );
+        assert_eq!(fixture.scope.ce_work_checkpoint().unwrap(), ce_before);
+        assert_eq!(promis_total(&mut provider), carried);
+
+        run_terminal_request(&mut provider, &fixture);
+        assert_eq!(provider.storage, clean.storage, "retry at {operation}");
+        assert_eq!(request_receipt(&mut provider, fixture.wwd), receipt);
+    }
+}
+
+fn replay_closed_day(
+    provider: &mut HashMapStorageProvider,
+    fixture: &super::PreparedRequestFixture,
+    scope: &ExecutionScope,
+    height: u64,
+    time: u64,
+) {
+    run_lifecycle_begin(provider, scope, height, time).expect("a closed day replays as a no-op");
+    run_direct_failed_day_recovery(provider, scope, fixture.wwd, height + 1, time + 1)
+        .expect("failing a FAILED day again is a no-op");
+    provider.set_block_number(height + 2);
+    provider.set_timestamp(U256::from(time + 2));
+    provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::OcompLifecycle);
+    StorageHandle::enter(provider, |storage| {
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(height + 2, time + 2, chain::CHAIN_ID),
+            storage,
+        );
+        commands::run_ocomp_terminal_request(&ctx, scope)
+    })
+    .expect("a FAILED day is not requested again");
+}
+
+#[test]
+fn an_unresolved_day_fails_before_its_request_and_returns_its_whole_limit_once() {
+    let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    let fixture = super::prepare_request_fixture_with_day_type(
+        &mut provider,
+        true,
+        crate::WwdDayType::Unknown,
+    );
+    let carried = U256::from(500);
+    let day_limit = U256::from(100);
+    seed_carry_over(&mut provider, carried);
+    let height = fixture.block_number + 1;
+    let scope = begin_recovery_scope(&mut provider, &fixture, height);
+    StorageHandle::enter(&mut provider, |storage| {
+        preview_end_block(storage, &scope).unwrap()
+    });
+    provider.set_block_number(height);
+    provider.set_timestamp(U256::from(fixture.block_time + 1));
+    provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::OcompLifecycle);
+    StorageHandle::enter(&mut provider, |storage| {
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(height, fixture.block_time + 1, chain::CHAIN_ID),
+            storage,
+        );
+        crate::commands::run_ocomp_terminal_request(&ctx, &scope)
+    })
+    .expect("the business failure fails the day");
+
+    let routed = (day_limit, carried, carried + day_limit);
+    assert_failed_day_recovery(&mut provider, &fixture, carried + day_limit);
+    assert_eq!(failure_view(&mut provider, fixture.wwd), routed);
+
+    replay_closed_day(
+        &mut provider,
+        &fixture,
+        &scope,
+        height + 1,
+        fixture.block_time + 2,
+    );
+
+    assert_failed_day_recovery(&mut provider, &fixture, carried + day_limit);
+    assert_eq!(failure_view(&mut provider, fixture.wwd), routed);
+    StorageHandle::enter(&mut provider, |storage| {
+        let metadosis = MetadosisContract::new(storage);
+        assert!(metadosis
+            .request_limit_receipt(fixture.wwd, &poc_schema_limits())
+            .unwrap()
+            .is_none());
+        assert_eq!(metadosis.terminal_intent_count(fixture.wwd).unwrap(), 0);
+    });
+}
+
+#[test]
+fn an_overflowed_day_is_requested_red_and_returns_its_whole_limit_once() {
+    let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    let fixture =
+        super::prepare_request_fixture_with_day_type(&mut provider, true, crate::WwdDayType::Red);
+    // An overflowed day VWAP is never stored, so the day resolves red at a zero VWAP.
+    StorageHandle::enter(&mut provider, |storage| {
+        use crate::schema::WorldwideDayEntryExt;
+        MetadosisContract::new(storage)
+            .worldwide_days
+            .entry(fixture.wwd)
+            .current_vwap()
+            .write(U256::ZERO)
+            .unwrap();
+    });
+    let carried = U256::from(500);
+    let day_limit = U256::from(100);
+    seed_carry_over(&mut provider, carried);
+    run_terminal_request(&mut provider, &fixture);
+    let receipt = request_receipt(&mut provider, fixture.wwd);
+    assert_eq!(receipt.desis_limit_minor, U256::ZERO);
+    let credited = carried + receipt.carry_over_credit;
+    assert_eq!(promis_total(&mut provider), credited);
+
+    let recovery_height = fixture.block_number + 65;
+    let scope = begin_recovery_scope(&mut provider, &fixture, recovery_height);
+    run_lifecycle_begin(
+        &mut provider,
+        &scope,
+        recovery_height,
+        fixture.block_time + 65,
+    )
+    .expect("missed finality deadline expires the day");
+
+    let routed = (
+        receipt.lysis_limit_minor,
+        credited,
+        credited + receipt.lysis_limit_minor,
+    );
+    assert_failed_day_recovery(&mut provider, &fixture, carried + day_limit);
+    assert_eq!(failure_view(&mut provider, fixture.wwd), routed);
+
+    replay_closed_day(
+        &mut provider,
+        &fixture,
+        &scope,
+        recovery_height + 1,
+        fixture.block_time + 66,
+    );
+
+    assert_failed_day_recovery(&mut provider, &fixture, carried + day_limit);
+    assert_eq!(failure_view(&mut provider, fixture.wwd), routed);
+    assert_eq!(request_receipt(&mut provider, fixture.wwd), receipt);
 }

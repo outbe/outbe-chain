@@ -1,27 +1,25 @@
 //! `CtxStorageProvider` - sub-call-driver-aware `PrecompileStorageProvider`.
 //!
-//! Holds `&'a mut EthEvmContext<DB>` directly so the `sub_call` body can hand
-//! the full `&mut Context` to `revm_handler::EthFrame::make_call_frame` (via
-//! the [`crate::sub_call`] driver) without losing access to journaled state
-//! between storage ops.
+//! The provider holds `&'a mut EthEvmContext<DB>` directly. Thus the `sub_call` body can hand
+//! the full `&mut Context` to `revm_handler::EthFrame::make_call_frame` (through
+//! the [`crate::sub_call`] driver) and keep access to journaled state between storage ops.
 //!
-//! For non-sub-call storage operations (sload/sstore/balance/log/...) the
+//! For non-sub-call storage operations (sload/sstore/balance/log/...), the
 //! provider constructs an `alloy_evm::EvmInternals` from `self.ctx` on each
-//! call. The construction is cheap (one `Box<dyn EvmInternalsTr>` allocation
-//! per op) and is the standard cost of going through the `EvmInternals`
-//! facade that revm's `PrecompileInput.internals` exposes.
+//! call. The construction is cheap: one `Box<dyn EvmInternalsTr>` allocation
+//! per op. It is the standard cost of the `EvmInternals` facade that revm's
+//! `PrecompileInput.internals` exposes.
 //!
 //! Sub-call hands `self.ctx` to the driver in [`crate::sub_call`].
 //!
 //! ## Coexistence with `EvmStorageProvider`
 //!
-//! The legacy [`outbe_primitives::storage::evm::EvmStorageProvider`] which
-//! holds `EvmInternals<'a>` is still used by the read-only / non-sub-call
-//! dispatch path inside [`crate::precompiles::extend_outbe_precompiles`].
-//! `CtxStorageProvider` is constructed by the ctx-dispatch hook
-//! whenever the dispatch needs sub-call. Both providers must agree
-//! byte-for-byte on non-sub-call semantics - they share the same upstream
-//! `EvmInternals` primitives.
+//! The read-only / non-sub-call dispatch path inside
+//! [`crate::precompiles::extend_outbe_precompiles`] still uses the legacy
+//! [`outbe_primitives::storage::evm::EvmStorageProvider`], which holds `EvmInternals<'a>`.
+//! The ctx-dispatch hook constructs `CtxStorageProvider` when the dispatch needs sub-call.
+//! Both providers must agree byte-for-byte on non-sub-call semantics. They share the same
+//! upstream `EvmInternals` primitives.
 
 use alloy_evm::{eth::EthEvmContext, EvmInternals};
 use alloy_primitives::{Address, Log, LogData, B256, U256};
@@ -51,17 +49,17 @@ use outbe_metadosis::api::OcompFinalizedIntentAuthority;
 use outbe_offchain_data::RuntimeBodyReaders;
 
 thread_local! {
-    /// Per-thread reentrancy stack tracking which outbe precompile addresses
-    /// are currently dispatched on this call chain. revm processes one
-    /// transaction synchronously per thread, so a thread-local stack is the
-    /// natural scope: it lives exactly as long as the active tx execution
-    /// and is reset (empty) at the end of every dispatch chain by RAII Drop
-    /// on [`ReentrancyGuard`].
+    /// Per-thread reentrancy stack. It records the outbe precompile addresses
+    /// that are currently dispatched on this call chain. revm processes one
+    /// transaction synchronously per thread. Thus a thread-local stack is the
+    /// natural scope: it lives exactly as long as the active tx execution.
+    /// RAII Drop on [`ReentrancyGuard`] resets it (empty) at the end of every
+    /// dispatch chain.
     static REENTRANCY_STACK: RefCell<Vec<Address>> = const { RefCell::new(Vec::new()) };
 }
 
-/// Zero-sized marker preserved as a [`CtxStorageProvider`] field so the
-/// struct layout from is not disturbed. The actual stack lives
+/// Zero-sized marker that stays a [`CtxStorageProvider`] field, so the
+/// struct layout does not change. The actual stack lives
 /// in the thread-local [`struct@REENTRANCY_STACK`].
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ReentrancyStack;
@@ -69,8 +67,8 @@ pub struct ReentrancyStack;
 impl ReentrancyStack {
     /// Attempts to push `addr` onto the active reentrancy stack.
     ///
-    /// Returns `Some(ReentrancyGuard)` on first entry; `None` if `addr` is
-    /// already on the stack (caller must reject the dispatch).
+    /// Returns `Some(ReentrancyGuard)` on first entry. Returns `None` if `addr`
+    /// is already on the stack (the caller must reject the dispatch).
     pub fn try_enter(addr: Address) -> Option<ReentrancyGuard> {
         REENTRANCY_STACK.with(|stack| {
             let mut stack = stack.borrow_mut();
@@ -122,7 +120,7 @@ impl Drop for ReentrancyGuard {
 /// has a `Journal: Debug` bound (Journal<DB> Debug-derives over DB).
 pub struct CtxStorageProvider<'a, DB: Database + Debug> {
     /// Borrowed EVM context. Sub-call hands this to
-    /// [`crate::sub_call::run`]; non-sub-call ops derive an
+    /// [`crate::sub_call::run`]. Non-sub-call ops derive an
     /// [`alloy_evm::EvmInternals`] facade on-the-fly per call.
     pub ctx: &'a mut EthEvmContext<DB>,
     /// Per-call gas meter (mirrors `revm::Gas`).
@@ -289,10 +287,10 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
         }
     }
 
-    /// Installs the exact route inventory after a provider-backed read has
-    /// resolved consensus state needed to derive it. This is used by
-    /// ProtocolCycle, whose daily allocation decision depends on Cycle's
-    /// persisted UTC cursor rather than on untrusted calldata.
+    /// Installs the exact route inventory after a provider-backed read
+    /// resolved the consensus state needed to derive it. ProtocolCycle uses
+    /// this. Its daily allocation decision depends on Cycle's persisted UTC
+    /// cursor rather than on untrusted calldata.
     pub(crate) fn replace_metadosis_mutation_entitlements(
         &mut self,
         entitlements: MetadosisMutationEntitlements,
@@ -301,7 +299,7 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
     }
 
     /// Constructs a fresh `EvmInternals` view of `self.ctx` for one
-    /// storage operation. Reborrows `self.ctx`; the returned facade is
+    /// storage operation. Reborrows `self.ctx`. The returned facade is
     /// valid only within the calling method scope.
     #[inline]
     fn internals(&mut self) -> EvmInternals<'_> {
@@ -531,15 +529,21 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     ) -> std::result::Result<SubCallOutput, SubCallError> {
         sub_call::run_with_ocomp_context(
             self.ctx,
-            self.self_address,
-            self.is_static,
-            self.spec,
-            self.genesis_hash,
-            self.runtime_body_readers.clone(),
-            self.execution_scope.clone(),
-            self.ocomp_finality_authority.clone(),
-            self.ocomp_activation_block_meter.clone(),
-            self.ocomp_lifecycle_active,
+            sub_call::SubCallContext {
+                self_address: self.self_address,
+                outer_is_static: self.is_static,
+                execution: crate::precompiles::OutbePrecompileExecutionContext::new(
+                    self.spec,
+                    self.genesis_hash,
+                ),
+                runtime: crate::precompiles::OutbePrecompileRuntime::new(
+                    self.runtime_body_readers.clone(),
+                    self.execution_scope.clone(),
+                    self.ocomp_finality_authority.clone(),
+                    self.ocomp_lifecycle_active,
+                ),
+                activation_meter: self.ocomp_activation_block_meter.clone(),
+            },
             input,
         )
     }

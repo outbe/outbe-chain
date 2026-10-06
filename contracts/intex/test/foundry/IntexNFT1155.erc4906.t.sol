@@ -20,7 +20,6 @@ contract IntexNFT1155Erc4906Test is Test {
     address internal admin = makeAddr("admin");
     address internal bridger = makeAddr("bridger");
     address internal user = makeAddr("user");
-    address internal user2 = makeAddr("user2");
     address internal user3 = makeAddr("user3");
 
     IntexNFT1155 internal nft;
@@ -64,7 +63,7 @@ contract IntexNFT1155Erc4906Test is Test {
         assertEq(count, 1, "createSeries emits once");
         assertEq(tokenId, iTok);
 
-        nft.issue(user, 10, SERIES_ID);
+        nft.issueIntex(user, 10, SERIES_ID);
         (count,) = _metadataUpdates();
         assertEq(count, 0, "mint is supply-only");
 
@@ -77,11 +76,11 @@ contract IntexNFT1155Erc4906Test is Test {
         assertEq(count, 1, "markCalled changes the document");
         assertEq(tokenId, iTok);
 
-        nft.settleIntex(SERIES_ID, user, user2, 2);
+        nft.settleIntex(SERIES_ID, user, 2);
         (count,) = _metadataUpdates();
         assertEq(count, 0, "settle is supply-only");
 
-        nft.burnSettled(user2, SERIES_ID, 1);
+        nft.burnSettled(user, SERIES_ID, 1);
         (count,) = _metadataUpdates();
         assertEq(count, 0, "burnSettled is supply-only");
 

@@ -3,7 +3,7 @@
 //! Capacity is measured first. This module then binds that exact profile to
 //! implementation semantic digests, a fresh base genesis and one public OCOMP
 //! registration for every ordered genesis validator. Registrations bootstrap
-//! keys only; runtime voting membership comes exclusively from ValidatorSet
+//! keys only. Runtime voting membership comes exclusively from ValidatorSet
 //! snapshots. Deterministic keys generated without `--registrations-dir` are
 //! reference-E2E fixture material, never production secrets.
 

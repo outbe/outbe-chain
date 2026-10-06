@@ -43,7 +43,7 @@ impl FinalizedTarget {
 ///
 /// Projection holds the shared side from pin selection through the durable
 /// offchain storage commit. The retention worker briefly takes the exclusive side only
-/// while it durably claims a lease for collection; physical deletion happens
+/// while it durably claims a lease for collection. Physical deletion happens
 /// after the exclusive guard is released.
 #[derive(Default)]
 pub struct ProjectionRetentionFence {
@@ -64,13 +64,13 @@ impl ProjectionRetentionFence {
     }
 }
 
-/// Deep sink for projecting an already-read finalized frame into durable Mongo state.
+/// Deep sink for projecting an already-read finalized frame into durable offchain state.
 ///
 /// The sink owns the logical overlay and the single-writer lease inherited from
 /// [`ReadyOffchainDataProjection`]. [`Self::project_frame`] does not return a new checkpoint until
-/// the exact atomic batch has committed through the durable writer. Frames below the durable
-/// checkpoint are accepted as restart replay; a replay at the checkpoint height must have the
-/// exact durable hash.
+/// the exact atomic batch has committed through the durable writer. The sink accepts frames below
+/// the durable checkpoint as restart replay. A replay at the checkpoint height must have the exact
+/// durable hash.
 pub struct FinalizedProjectionSink {
     runtime: ProjectionRuntime,
     durable_checkpoint: Option<ProjectionCheckpoint>,
@@ -191,7 +191,7 @@ impl FinalizedProjectionSink {
     /// Reth can temporarily expose no finalized marker, or an older marker, while restoring its
     /// forkchoice state after restart. That state is recoverable only when the durable checkpoint
     /// still has the exact canonical hash validated at startup. Readiness remains closed until the
-    /// provider reaches the floor again; a same-height identity conflict remains fatal.
+    /// provider reaches the floor again. A same-height identity conflict remains fatal.
     pub fn reconcile_finalized_target(
         &mut self,
         target: Option<ProjectionCheckpoint>,
@@ -307,17 +307,17 @@ impl FinalizedProjectionSink {
             frame.block(),
             frame.receipts(),
         )?;
-        let overlay = self.runtime.overlay.clone();
+        let overlay = self.runtime.overlay.clone().ok_or_else(|| {
+            eyre::eyre!("offchain projection overlay is required before a durable write")
+        })?;
         let prepared = self
             .runtime
             .projector
             .prepare_block(&normalized)
             .wrap_err_with(|| format!("project finalized frame {}", identity.number))?;
-        let (projected, durable_batch) = self
-            .runtime
-            .projector
-            .apply_prepared_with_batch(prepared)
-            .wrap_err_with(|| format!("apply logical finalized frame {}", identity.number))?;
+        let (projected, durable_write) =
+            DurableProjectionWrite::prepare(&mut self.runtime.projector, prepared, &overlay)
+                .wrap_err_with(|| format!("apply logical finalized frame {}", identity.number))?;
         let projected = match projected {
             ProjectionOutcome::Applied { checkpoint, .. } => checkpoint,
             ProjectionOutcome::AlreadyApplied(checkpoint) => {
@@ -337,18 +337,7 @@ impl FinalizedProjectionSink {
                 identity.hash
             );
         }
-        let overlay_ack = overlay
-            .as_ref()
-            .map(|overlay| (Arc::clone(overlay), overlay.current_generation()));
-        apply_durable_projection_write_before(
-            &self.runtime.writer,
-            &DurableProjectionWrite {
-                checkpoint: FinalizedTarget::new(projected.block_number, projected.block_hash),
-                batch: durable_batch,
-                overlay_ack,
-            },
-            deadline,
-        )?;
+        apply_durable_projection_write_before(&self.runtime.writer, &durable_write, deadline)?;
         self.durable_checkpoint = Some(projected);
         Ok(projected)
     }

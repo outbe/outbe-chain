@@ -9,10 +9,10 @@
 //!
 //! The `FinalizationActor` is the full-state writer (it replaces every
 //! field on finalization) and owns the struct directly. The application
-//! handler does not reach into the fields or the lock: it goes through the
+//! handler does not access the fields or the lock directly. It uses the
 //! [`FinalizationViewAccess`] seam, which exposes the narrow set of reads it
 //! needs plus the monotonic `advance_timestamp_floor` write. The handle uses
-//! `parking_lot::RwLock`, which has no poison semantics, so the critical
+//! `parking_lot::RwLock`, which has no poison semantics. Thus the critical
 //! sections never surface a `PoisonError` and callers never `unwrap` a guard.
 //!
 //! Critical-section invariant: code holding a write guard must stay
@@ -26,8 +26,8 @@ use parking_lot::RwLock;
 use std::sync::Arc;
 
 /// Canonical finalization-side state shared between the `FinalizationActor`
-/// (full-state writer) and the application handler, which reads it and
-/// advances only the monotonic `last_timestamp_millis` floor - both through
+/// (full-state writer) and the application handler. The handler reads it and
+/// advances only the monotonic `last_timestamp_millis` floor. It does both through
 /// the [`FinalizationViewAccess`] seam.
 #[derive(Clone, Debug)]
 pub struct FinalizationView {
@@ -41,7 +41,7 @@ pub struct FinalizationView {
     pub last_finalized_round: Option<Round>,
 
     /// VRF seed from the last finalized block's BLS threshold
-    /// signature. Read by the application's `build_block` to set
+    /// signature. The application's `build_block` reads it to set
     /// `header.prev_randao`.
     pub prev_randao: B256,
 
@@ -54,8 +54,8 @@ pub struct FinalizationView {
 
 impl FinalizationView {
     /// Construct an initial view from the recovered finalized block at
-    /// startup. The application handler will see this as soon as it is
-    /// constructed.
+    /// startup. The application handler sees this view immediately after its
+    /// construction.
     pub fn from_recovered(
         recovered_finalized_hash: B256,
         recovered_finalized_number: u64,
@@ -85,10 +85,10 @@ impl FinalizationView {
 }
 
 /// Shared, thread-safe handle to the [`FinalizationView`]. The
-/// finalization actor takes a write guard while updating; readers take a
+/// finalization actor takes a write guard while it updates. Readers take a
 /// short-lived read guard so concurrent finalization processing does not
 /// block proposal building beyond the lock window. The application handler
-/// never touches this handle directly - it uses [`FinalizationViewAccess`].
+/// never touches this handle directly. It uses [`FinalizationViewAccess`].
 pub type FinalizationViewHandle = Arc<RwLock<FinalizationView>>;
 
 /// Constructs a fresh `FinalizationViewHandle` from recovered state.
@@ -115,10 +115,10 @@ pub struct FinalizedAnchor {
 }
 
 /// Narrow read+write seam over [`FinalizationViewHandle`] for the application
-/// handler. It hides the lock and the struct fields: the handler asks for the
-/// snapshots it needs and advances the monotonic timestamp floor, without ever
-/// taking a raw guard. The `FinalizationActor` (full-state writer) and tests
-/// keep direct field access - this trait is the consumer-defined interface for
+/// handler. It hides the lock and the struct fields. The handler asks for the
+/// snapshots it needs and advances the monotonic timestamp floor, without a
+/// raw guard. The `FinalizationActor` (full-state writer) and tests
+/// keep direct field access. This trait is the consumer-defined interface for
 /// the handler only.
 pub trait FinalizationViewAccess {
     /// Consistent snapshot of the last finalized block (number, finalized head
@@ -199,7 +199,7 @@ mod tests {
         drop(r1);
         drop(r2);
 
-        // Writer takes exclusive lock, mutation visible after release.
+        // Writer takes exclusive lock. The mutation is visible after release.
         {
             let mut w = h.write();
             w.last_finalized_number = 8;

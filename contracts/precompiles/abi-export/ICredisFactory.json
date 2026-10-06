@@ -4,29 +4,14 @@
     "name": "issueCredis",
     "inputs": [
       {
-        "name": "smartAccount",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "pledgeNote",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "spendAuth",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "referenceCurrency",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
         "name": "reservationId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "proof",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [
@@ -36,7 +21,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "amountStables",
+        "name": "principalMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -45,7 +30,7 @@
   },
   {
     "type": "function",
-    "name": "settle",
+    "name": "settleCredis",
     "inputs": [
       {
         "name": "positionId",
@@ -53,19 +38,19 @@
         "internalType": "uint256"
       },
       {
-        "name": "amount",
+        "name": "amountMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
     "outputs": [
       {
-        "name": "principal",
+        "name": "principalPaidMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "interest",
+        "name": "interestMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -108,7 +93,7 @@
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "principalMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

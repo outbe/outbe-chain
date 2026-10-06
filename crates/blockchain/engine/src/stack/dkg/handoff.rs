@@ -233,14 +233,25 @@ pub(in crate::stack) fn pending_dkg_handoff_decision(
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(in crate::stack) struct StartupPendingDkgHandoff {
+    pub(in crate::stack) finalized_height: u64,
+    pub(in crate::stack) planned_activation_height: u64,
+    pub(in crate::stack) activation_grace_blocks: u64,
+    pub(in crate::stack) exact_carrier_height: Option<u64>,
+}
+
 pub(in crate::stack) fn startup_pending_dkg_epoch_plan(
     current_epoch: Epoch,
     pending_epoch: Epoch,
-    finalized_height: u64,
-    planned_activation_height: u64,
-    activation_grace_blocks: u64,
-    exact_carrier_height: Option<u64>,
+    handoff: StartupPendingDkgHandoff,
 ) -> Result<StartupPendingDkgEpochPlan> {
+    let StartupPendingDkgHandoff {
+        finalized_height,
+        planned_activation_height,
+        activation_grace_blocks,
+        exact_carrier_height,
+    } = handoff;
     let expected_epoch = next_consensus_epoch_after_dkg_activation(current_epoch);
     ensure!(
         pending_epoch == expected_epoch,
@@ -409,18 +420,21 @@ pub(in crate::stack) fn active_set_hash_from_addresses(addresses: &[EthAddress])
     alloy_primitives::keccak256(bytes)
 }
 
-/// A share-less node (verifier-join TEE full-node) that is about to participate in
-/// a DKG reshare as a player must present the COMMITTEE's current output as the
-/// ceremony `prev_output` - the DKG ceremony id binds the full previous output, so
-/// a divergent prev_output yields a divergent `info_hash`, every dealer bundle is
-/// dropped ("received DKG message for a different ceremony"), the ceremony times
-/// out, and the joiner goes ACTIVE-but-voteless. Its in-memory `last_dkg_output`
-/// may be the stale CLI `--consensus.dkg-output` bootstrap value (on a TEE chain
-/// the runtime-derived genesis consensus output differs from the bootstrap file)
-/// when it joins WITHOUT first following a reshare or restarting. Refresh it from
-/// the chain's latest finalized DKG boundary (scanning back from `scan_height`)
-/// before the ceremony. Signers already hold the correct output from their prior
-/// ceremony, so this only runs for the share-less case. Best-effort: on any
+/// This applies to a share-less node (verifier-join TEE full-node) that is about to
+/// participate in a DKG reshare as a player. That node must present the COMMITTEE's
+/// current output as the ceremony `prev_output`. The DKG ceremony id binds the full
+/// previous output. A divergent prev_output therefore yields a divergent `info_hash`.
+/// Then:
+/// - every dealer bundle is dropped ("received DKG message for a different ceremony"),
+/// - the ceremony times out,
+/// - the joiner goes ACTIVE-but-voteless.
+///
+/// The node's in-memory `last_dkg_output` may be the stale CLI `--consensus.dkg-output`
+/// bootstrap value when it joins WITHOUT first following a reshare or restarting. On a
+/// TEE chain, the runtime-derived genesis consensus output differs from the bootstrap
+/// file. Refresh the value from the chain's latest finalized DKG boundary (scanning back
+/// from `scan_height`) before the ceremony. Signers already hold the correct output from
+/// their prior ceremony, so this only runs for the share-less case. Best-effort: on any
 /// recovery/decode failure it keeps the local value and warns.
 pub(in crate::stack) fn refresh_verifier_join_prev_output(
     provider: &(impl HeaderProvider<Header = OutbeHeader> + BlockHashReader),
@@ -478,6 +492,7 @@ pub(in crate::stack) fn startup_live_join_scan_height(
 }
 
 pub(in crate::stack) struct DkgCeremonyReplaySpec {
+    pub(in crate::stack) freeze_height: u64,
     pub(in crate::stack) epoch: Epoch,
     pub(in crate::stack) round: u64,
     pub(in crate::stack) previous_output: Option<Output<MinSig, bls12381::PublicKey>>,
@@ -488,13 +503,10 @@ pub(in crate::stack) struct DkgCeremonyReplaySpec {
 /// Recreate the manager's ceremony and replay the finalized DealerLog prefix
 /// before a frozen-target DKG retry starts.
 ///
-#[allow(clippy::too_many_arguments)]
 pub(in crate::stack) fn restart_dkg_manager_from_finalized_history(
     provider: &(impl HeaderProvider<Header = OutbeHeader> + BlockHashReader),
     dkg_manager: &DkgManagerMailbox,
     spec: DkgCeremonyReplaySpec,
-    freeze_height: u64,
-    _scheduling_height: u64,
     verified_consensus_tip: impl FnOnce() -> crate::marshal_update_reporter::ConsensusTip,
 ) -> Result<()> {
     let replay_guard = dkg_manager.lock_finalized_replay();
@@ -510,16 +522,18 @@ pub(in crate::stack) fn restart_dkg_manager_from_finalized_history(
     );
     let finalized_logs = collect_finalized_dealer_logs(
         provider,
-        freeze_height,
+        spec.freeze_height,
         verified_consensus_tip.height.get(),
     )?;
     replay_guard.restart_ceremony_with_finalized_logs(
-        spec.epoch,
-        spec.round,
-        spec.previous_output,
-        spec.participants,
-        spec.finalized_dealer_log_tx,
-        finalized_logs,
+        outbe_consensus::dkg_manager::CeremonyReplayRequest {
+            epoch: spec.epoch,
+            round: spec.round,
+            previous_output: spec.previous_output,
+            participants: spec.participants,
+            finalized_dealer_log_tx: spec.finalized_dealer_log_tx,
+            finalized_logs,
+        },
     )
 }
 
@@ -586,7 +600,7 @@ pub(in crate::stack) fn refresh_validator_set_at_height(
         .map_err(|e| eyre::eyre!("failed to get state at freeze height {freeze_height}: {e}"))?;
     // CycleTick has already moved every overdue ACTIVE validator into the jailed
     // lifecycle before this exact freeze state. The ordinary reshare target is
-    // therefore authoritative; legacy boundary expiry fields remain empty.
+    // therefore authoritative. Legacy boundary expiry fields remain empty.
     let filtered = validators::read_reshare_target_with_empty_tee_exclusions_from_state(&state)
         .wrap_err("failed to read frozen reshare target after TEE deadline enforcement")?;
     let new_set = filtered.validator_set;

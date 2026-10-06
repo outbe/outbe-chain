@@ -16,11 +16,12 @@ use crate::{
 };
 
 use super::{
-    codec::{decode_live_scheduler_index, LIVE_INDEX_HEADER_LEN, SCHEDULER_ENCODED_LEN},
+    codec::SCHEDULER_ENCODED_LEN,
     index::{
         READY_INDEX_HEADER_LEN, READY_INDEX_KEY_LEN, RESPONSE_INDEX_HEADER_LEN,
         RESPONSE_INDEX_KEY_LEN,
     },
+    live_index::{decode_live_scheduler_index, LIVE_INDEX_HEADER_LEN, LIVE_INDEX_KEY_LEN},
     schema::poc_schema_limits,
 };
 
@@ -82,11 +83,28 @@ fn preflight_live_job_view(contract: &MetadosisContract<'_>) -> Result<()> {
             "Metadosis indexed WWD length exceeds native capacity",
         ));
     }
+    preflight_native_index_bytes(contract)?;
+    let active: BTreeSet<_> = contract.active_wwd.read_all()?.into_iter().collect();
+    let closed = contract.closed_wwd.read_all()?;
+    validate_indexed_fsm_lengths(contract, &active, &closed)?;
+    // The native live reader follows scheduler keys. Reject foreign keys here
+    // so they cannot lead it to an FSM whose length was never checked above.
+    for snapshot in decode_live_scheduler_index(&contract.ocomp_scheduler.read()?)? {
+        if !active.contains(&snapshot.worldwide_day) {
+            return Err(storage_corruption_message(
+                "OCOMP live scheduler points outside active WWD index",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn preflight_native_index_bytes(contract: &MetadosisContract<'_>) -> Result<()> {
     for (bytes, header_len, item_len, max_count, label) in [
         (
             &contract.ocomp_scheduler,
             LIVE_INDEX_HEADER_LEN,
-            SCHEDULER_ENCODED_LEN,
+            LIVE_INDEX_KEY_LEN,
             usize::from(u16::MAX),
             "OCOMP live scheduler",
         ),
@@ -116,22 +134,19 @@ fn preflight_live_job_view(contract: &MetadosisContract<'_>) -> Result<()> {
         }
     }
 
-    let active: BTreeSet<_> = contract.active_wwd.read_all()?.into_iter().collect();
-    let closed = contract.closed_wwd.read_all()?;
+    Ok(())
+}
+
+fn validate_indexed_fsm_lengths(
+    contract: &MetadosisContract<'_>,
+    active: &BTreeSet<WorldwideDay>,
+    closed: &[WorldwideDay],
+) -> Result<()> {
     for day in active.iter().chain(closed.iter()) {
         let length = contract.ocomp_fsm_states.get_bytes(day).len()?;
         if length != 0 && length != SCHEDULER_ENCODED_LEN {
             return Err(storage_corruption_message(
                 "OCOMP indexed FSM has an invalid native byte length",
-            ));
-        }
-    }
-    // The native live reader follows scheduler keys. Reject foreign keys here
-    // so they cannot lead it to an FSM whose length was never checked above.
-    for snapshot in decode_live_scheduler_index(&contract.ocomp_scheduler.read()?)? {
-        if !active.contains(&snapshot.worldwide_day) {
-            return Err(storage_corruption_message(
-                "OCOMP live scheduler points outside active WWD index",
             ));
         }
     }

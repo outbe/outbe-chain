@@ -1,3 +1,6 @@
+mod journal_snapshot;
+mod journal_storage;
+
 pub mod onboarding;
 pub mod registry;
 pub mod renewal;
@@ -5,6 +8,7 @@ pub mod renewal_journal;
 pub mod status;
 pub mod upgrade;
 
+pub use journal_snapshot::JournalSnapshotV1;
 pub use onboarding::{await_finalized_onboarding_v1, FinalizedOnboardingV1};
 pub use registry::{
     read_finalized_bound_renewal_view_v1, read_finalized_registry_view_v1,
@@ -14,7 +18,7 @@ pub use registry::{
 };
 pub use renewal::{
     run_renewal_once_v1, RenewalEnclaveV1, RenewalNodeSignerV1, RenewalOutcomeV1,
-    RenewalServiceConfigV1,
+    RenewalServiceConfigV1, RenewalServicesV1,
 };
 pub use renewal_journal::{RenewalJournalSnapshotV1, RenewalJournalStateV1};
 pub use status::{read_renewal_status_v1, RenewalAlertLevelV1, RenewalStatusV1};
@@ -26,5 +30,6 @@ pub use upgrade::{
     record_upgrade_submission_prepared_v1, record_upgrade_submitted_v1, run_upgrade_submission_v1,
     transition_intent_v1, NetworkUpgradeSubmissionV1, PreparedUpgradeSubmissionV1,
     UpgradeContextV1, UpgradeJournalGuardV1, UpgradeJournalSnapshotV1, UpgradeJournalStateV1,
-    UpgradeNodeSignerV1, UpgradeSubmissionOutcomeV1,
+    UpgradeNodeSignerV1, UpgradeSecurityMaterialV1, UpgradeSubmissionOutcomeV1,
+    UpgradeSubmissionRequestV1, UpgradeSubmissionServicesV1,
 };

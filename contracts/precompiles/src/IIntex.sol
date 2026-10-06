@@ -4,9 +4,9 @@ pragma solidity ^0.8.30;
 /// @title IIntex
 /// @notice Read-only view surface for the Intex runtime module: the
 ///         canonical, cross-chain Intex series ledger (identity + lifecycle).
-/// @dev Writes are Rust-to-Rust only (IntexFactory); this interface exposes
+/// @dev Writes are Rust-to-Rust only (IntexFactory). This interface exposes
 ///      reads for off-chain observability. `promisLoadMinor` is returned as uint256
-///      (its storage representation); it is bounded by the Origin `uint128`.
+///      (its storage representation). The Origin `uint128` bounds it.
 interface IIntex {
     /// @notice Constant-size owner event for one certified contributor root.
     ///         There is deliberately no matching public installation selector.
@@ -30,6 +30,8 @@ interface IIntex {
         uint32 callWindow;
         uint32 callThreshold;
         uint256 callPriceMinor;
+        /// @notice Read-time state: 0 Issued, 1 Qualified (derived, never stored), 2 Called,
+        ///         3 Expired (a Called series past its notice period).
         uint8 state;
         uint32 issuedAt;
         uint32 calledAt;
@@ -37,12 +39,14 @@ interface IIntex {
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint32 worldwideDay;
-        /// @notice Units paid for and not yet exercised; their load belongs to the settler.
+        /// @notice Units paid for and not yet exercised. Their load belongs to the settler.
         uint32 settledUnits;
-        /// @notice Units already burned into Promis; they leave `settledUnits` for good.
+        /// @notice Units already burned into Promis. They leave `settledUnits` for good.
         uint32 exercisedUnits;
-        /// @notice Units sent to the Gem Factory; their load moved with them.
+        /// @notice Units sent to the Gem Factory. Their load moved with them.
         uint32 gemFactoryUnits;
+        /// @notice Inclusive deadline: 0 when uncalled.
+        uint64 settlementDeadline;
     }
 
     /// @notice Full identity + lifecycle record for a series. Reverts if the

@@ -4,6 +4,7 @@ use super::compressed_public_key;
 use super::development_identity_v1;
 use super::load_secp256k1_key_file;
 use super::parse_nonzero_b256;
+use outbe_operator::tx::UnsignedRelayTransactionV1;
 
 use super::sign_node_hash;
 use super::CliFinalityRpc;
@@ -300,7 +301,7 @@ pub(super) async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> R
         .encode_canonical()
         .map_err(|error| eyre::eyre!("encode address-to-NodeHost binding: {error}"))?;
     // Read the permanent chain key before generating a fresh quote. Its exact
-    // value is later authenticated again inside the recipient enclave.
+    // value is later authenticated again by the recipient enclave.
     let expected_offer_pub: [u8; 32] = finalized.tribute_offer_public.into();
     let key_epoch = call_u256(client, ITeeRegistry::keyEpochCall {}.abi_encode())
         .await?
@@ -435,9 +436,9 @@ pub(super) async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> R
     };
 
     // A permanent offer key is write-once enclave state. Classify it before
-    // producing or relaying a fresh registration so a mismatched resident key
-    // cannot mutate Registry and a matching same-enclave rejoin never repeats
-    // the onboarding ingest.
+    // producing or relaying a fresh registration. This order makes sure that a
+    // mismatched resident key cannot mutate Registry, and that a matching
+    // same-enclave rejoin never repeats the onboarding ingest.
     let offer_key_state = classify_join_offer_key_state(
         enclave.request(&EnclaveRequest::GetPublicKeys)?,
         expected_offer_pub,
@@ -628,14 +629,14 @@ pub(super) async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> R
                     evm_signer.address()
                 );
             }
-            let raw = relay_signer.sign_renewal(
-                rpc_chain_id,
+            let raw = relay_signer.sign_renewal(UnsignedRelayTransactionV1 {
+                chain_id: rpc_chain_id,
                 account_nonce,
                 gas_price,
                 gas_limit,
-                abi::TEE_REGISTRY_ADDR,
-                &call,
-            )?;
+                to: abi::TEE_REGISTRY_ADDR,
+                calldata: &call,
+            })?;
             persist_replacement_candidate_relay(node_data_dir, calldata_hash, &raw.raw_transaction)
                 .map_err(|error| eyre::eyre!("persist exact candidate transaction: {error}"))?
         };
@@ -711,14 +712,14 @@ pub(super) async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> R
                 );
             }
             let from_block = client.eth_block_number().await?;
-            let raw = relay_signer.sign_renewal(
-                rpc_chain_id,
+            let raw = relay_signer.sign_renewal(UnsignedRelayTransactionV1 {
+                chain_id: rpc_chain_id,
                 account_nonce,
                 gas_price,
                 gas_limit,
-                abi::TEE_REGISTRY_ADDR,
-                &call,
-            )?;
+                to: abi::TEE_REGISTRY_ADDR,
+                calldata: &call,
+            })?;
             persist_committed_join_relay(
                 node_data_dir,
                 calldata_hash,
@@ -753,7 +754,7 @@ pub(super) async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> R
 
     // The NodeHost admission checkpoint must be durable before the recipient
     // enclave can activate the permanent key. A crash after this write can
-    // safely resume; a write failure leaves the enclave keyless.
+    // safely resume. A write failure leaves the enclave keyless.
     let authorized_node_data_dir = if join_transport == JoinTransport::AuthorizedNodeHost {
         let node_data_dir = node_data_dir.ok_or_else(|| {
             eyre::eyre!("authenticated onboarding lost its required node data directory")

@@ -14,12 +14,12 @@ use crate::triggers::{active_triggers, last_fire_at, next_fire_at};
 use crate::ICycle;
 
 /// Dispatches every active trigger whose `next_fire_at` is `<=
-/// ctx.block.timestamp`. Each fired trigger is wrapped in its own
-/// storage checkpoint, so a handler failure rolls back its writes and
+/// ctx.block.timestamp`. The dispatcher wraps each fired trigger in its own
+/// storage checkpoint. A handler failure thus rolls back its writes and
 /// leaves `last_executed_at` unchanged for retry on the next block.
 ///
-/// For the typical case of a slow-running chain that produces blocks
-/// every few seconds, the dispatcher is a near-noop on every block and
+/// The typical case is a slow-running chain that produces blocks every few
+/// seconds. In that case the dispatcher is a near-noop on every block. It
 /// fires ProtocolCycle only on the first block whose timestamp crosses
 /// the next UTC-hour boundary.
 pub fn dispatch_triggers(
@@ -36,7 +36,7 @@ pub fn dispatch_triggers(
         let last_executed_at = cycle.last_executed_at.read(&spec.id)?;
 
         // First-ever encounter for this trigger: anchor `last_executed_at`
-        // at the current block timestamp so the first real fire is the
+        // at the current block timestamp. The first real fire is then the
         // next slot strictly after this point. Without this anchor,
         // every chain would fire on its first block because real genesis
         // timestamps are far beyond the first unix-epoch schedule slot.
@@ -62,12 +62,12 @@ pub fn dispatch_triggers(
         }
 
         // refuse to fire a gated trigger until Phase 1
-        // has accounted the parent block. Under the V2 reorder
-        //, Phase 1 commits BEFORE Phase 2 (`CycleTick`), so
-        // this gate is normally vacuously satisfied; it fires only when
+        // has accounted the parent block. Under the V2 reorder,
+        // Phase 1 commits BEFORE Phase 2 (`CycleTick`). Thus
+        // this gate is normally vacuously satisfied. It fires only when
         // a regression reorders the phases or a new trigger reads state
-        // that races the parent-finalization tx. Defer silently - no
-        // error, no state change - so the trigger retries on the next
+        // that races the parent-finalization tx. Defer silently (no
+        // error, no state change), so the trigger retries on the next
         // block.
         let progress = EvmAccountingProgress::new(ctx);
         if accounting_gate_blocks(spec, &progress, &ctx.block)? {
@@ -83,7 +83,7 @@ pub fn dispatch_triggers(
 
         // At midnight, keep the protocol slot pending
         // until the previous day's final late-vote window has executed. Other
-        // triggers retain their own cadence; no sleep or wall-clock timer.
+        // triggers retain their own cadence. This gate uses no sleep or wall-clock timer.
         if spec.id == crate::triggers::TriggerId::ProtocolCycle.as_u32() {
             if let crate::handler::ProtocolDayAction::SettlePrevious { day } =
                 crate::handler::protocol_day_action(

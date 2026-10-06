@@ -676,7 +676,7 @@ fn stored_job(intent_id: B256, encoded: &[u8]) -> HashMapStorageProvider {
         // Metadosis slots directly or imports its private schema.
         let slot = intent_storage_key(intent_id)
             .unwrap()
-            .mapping_slot(U256::from(20));
+            .mapping_slot(U256::from(19));
         StorageBytes::new(slot, METADOSIS_ADDRESS, storage)
             .write(encoded)
             .unwrap();
@@ -889,8 +889,8 @@ fn active_generation_decodes_present_record_and_rejects_malformed_bytes() {
         }
     }
 
-    // Discover the one native length slot through the public owner getter;
-    // this fixture does not import or replicate the private Metadosis schema.
+    // Discover the one native length slot through the public owner getter.
+    // This fixture does not import or replicate the private Metadosis schema.
     let observed_slot = Rc::new(Cell::new(None));
     let mut reader = ReadOnlyStorageProvider::new(AbsentGenerationReader(observed_slot.clone()));
     let absent =

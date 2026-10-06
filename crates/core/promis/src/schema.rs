@@ -10,9 +10,9 @@ use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes};
 /// the non-attributable `total_supply` aggregate is kept in plaintext.
 ///
 /// Blob layout for the ciphertext balance slot: `version(8, big-endian) || AEAD-ct`
-/// (a fixed 56 bytes). The version is produced by the enclave and stored verbatim;
-/// it feeds the deterministic nonce so a slot overwrite never reuses a `(key,
-/// nonce)` pair.
+/// (a fixed 56 bytes). The enclave produces the version, and the slot stores it
+/// verbatim. The version feeds the deterministic nonce, so a slot overwrite never
+/// reuses a `(key, nonce)` pair.
 ///
 /// Storage slots:
 ///   0: total_supply (U256, plaintext aggregate - feeds `PromisMinted/Burned`)

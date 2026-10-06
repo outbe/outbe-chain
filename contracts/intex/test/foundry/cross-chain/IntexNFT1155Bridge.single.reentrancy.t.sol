@@ -13,8 +13,8 @@ import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Re
 ///      mid-`receiveMessage` (via `token.crosschainMint` -> `_mint`), re-enters the adapter's
 ///      `send` entrypoint. With both `receiveMessage` and `send` carrying `nonReentrant`, the
 ///      inner call reverts with `ReentrancyGuardReentrantCall` at the modifier check (before the
-///      zero-`to` validation), and we capture the selector. Without the guards, the inner call
-///      would revert with `InvalidReceiver` instead - distinguishing the two cases.
+///      zero-`to` validation). We capture the selector. Without the guards, the inner call
+///      would revert with `InvalidReceiver` instead. This difference distinguishes the two cases.
 contract ReentrantSendProbe is IERC1155Receiver {
     address public immutable adapter;
     bool public attempted;
@@ -27,7 +27,7 @@ contract ReentrantSendProbe is IERC1155Receiver {
     function onERC1155Received(address, address, uint256, uint256, bytes calldata) external returns (bytes4) {
         attempted = true;
 
-        SendParam memory param = SendParam({dstChainId: 0, to: bytes32(0), tokenId: 0, amount: 0});
+        SendParam memory param = SendParam({dstChainId: 0, to: bytes32(0), tokenId: 0, units: 0});
 
         try IIntexNFT1155Bridge(adapter).send{value: 0}(param) {
         // unexpected: re-entrant call should always revert (either with the guard or with InvalidReceiver)
@@ -60,11 +60,11 @@ contract ReentrantSendProbe is IERC1155Receiver {
 
 /// @title IntexNFT1155BridgeSingleReentrancyTest
 /// @notice Behavioral test that `receiveMessage` and `send` are mutually `nonReentrant`-guarded.
-/// @dev Source chain (A) caller initiates a transfer to the hostile probe on the destination chain (B). On B,
-///      `receiveMessage` -> `_dispatch` -> `token.crosschainMint` -> `_mint` invokes the probe's `onERC1155Received`,
-///      which attempts to re-enter `adapterB.send`. Expected: the inner call reverts with
-///      `ReentrancyGuardReentrantCall` - proving the guard is held by `receiveMessage` AND that `send` carries the
-///      modifier.
+/// @dev Source chain (A) caller initiates a transfer to the hostile probe on the destination chain
+///      (B). On B, `receiveMessage` -> `_dispatch` -> `token.crosschainMint` -> `_mint` invokes the
+///      probe's `onERC1155Received`, which attempts to re-enter `adapterB.send`. Expected: the
+///      inner call reverts with `ReentrancyGuardReentrantCall`. This proves that `receiveMessage`
+///      holds the guard AND that `send` carries the modifier.
 contract IntexNFT1155BridgeSingleReentrancyTest is CrossChainTest {
     uint32 private aChainId = 1;
     uint32 private bChainId = 2;
@@ -101,14 +101,14 @@ contract IntexNFT1155BridgeSingleReentrancyTest is CrossChainTest {
         tokenA.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
         tokenB.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
 
-        tokenA.issue(user, AMOUNT, SERIES_ID);
+        tokenA.issueIntex(user, AMOUNT, SERIES_ID);
     }
 
     function test_receiveMessage_blocks_reentry_to_send() public {
         ReentrantSendProbe probe = new ReentrantSendProbe(address(adapterB));
 
         SendParam memory sendParam = SendParam({
-            dstChainId: bChainId, to: bytes32(uint256(uint160(address(probe)))), tokenId: TOKEN_ID, amount: AMOUNT
+            dstChainId: bChainId, to: bytes32(uint256(uint160(address(probe)))), tokenId: TOKEN_ID, units: AMOUNT
         });
 
         uint256 fee = adapterA.quoteSend(sendParam);

@@ -148,7 +148,7 @@ contract SolverEscrowTest is Test {
         assertEq(token.balanceOf(payer), 500, "payer funds the deposit");
     }
 
-    /// @dev Operator approval must come from the recipient, not the payer: the escrow moves the
+    /// @dev Operator approval must come from the recipient, not the payer. The escrow moves the
     ///      solver's ERC6909 on lock/withdraw, so crediting a solver without it would strand it.
     function test_depositFor_recipientWithoutOperator_reverts() public {
         address payer = solver; // payer has operator set, recipient does not
@@ -583,7 +583,7 @@ contract SolverEscrowTest is Test {
         assertEq(escrow.slashedPool(id), 0, "unlock does not credit the slashed pool");
     }
 
-    /// @dev A slash must not depend on a grant the solver can revoke: the collateral is already
+    /// @dev A slash must not depend on a grant the solver can revoke. The collateral is already
     ///      in escrow custody, so revoking the operator after the claim changes nothing.
     function test_slashCollateral_afterOperatorRevoked_succeeds() public {
         uint256 id = escrow.lockId(address(token));
@@ -610,7 +610,7 @@ contract SolverEscrowTest is Test {
     }
 
     /// @dev The escrow's balance holds live locks and slashed funds on the same id. A reward must
-    ///      only ever spend the slashed part, or a later unlock could not be honored.
+    ///      only ever spend the slashed part, or the escrow could not honor a later unlock.
     function test_distributeReward_doesNotConsumeLiveLock() public {
         uint256 id = escrow.lockId(address(token));
         bytes32 liveOrder = keccak256("liveOrder");
@@ -639,7 +639,8 @@ contract SolverEscrowTest is Test {
         assertEq(compact.balanceOf(address(escrow), id), 0, "escrow drained");
     }
 
-    /// @dev A second reward exceeding the slashed pool must pay nothing rather than dip into a lock.
+    /// @dev A second reward exceeding the slashed pool must pay nothing rather than take funds
+    ///      from a lock.
     function test_distributeReward_insufficientPool_paysNothing() public {
         uint256 id = escrow.lockId(address(token));
 
@@ -659,7 +660,8 @@ contract SolverEscrowTest is Test {
     }
 
     /// @dev Forced withdrawal is allocator-independent, but it can only burn the solver's own free
-    ///      balance. Locked collateral already sits in escrow custody, so the slash still seizes it.
+    ///      balance. Locked collateral already sits in escrow custody, so the slash still seizes
+    ///      it.
     function test_slashCollateral_afterForcedWithdrawal_succeeds() public {
         uint256 id = escrow.lockId(address(token));
         bytes32 orderId = keccak256("order1");

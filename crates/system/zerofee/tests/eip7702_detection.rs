@@ -10,8 +10,8 @@
 //!
 //! If that probe returns the wrong answer we either bypass the
 //! sponsorship path for a legitimately delegated user or - worse - apply
-//! it to an unrelated account. These tests bolt the contract down using
-//! the revm primitives the executor actually calls.
+//! it to an unrelated account. These tests pin the contract with the
+//! revm primitives that the executor actually calls.
 
 use alloy_primitives::{address, Address};
 use outbe_primitives::addresses::ZEROFEE_ADDRESS;
@@ -63,7 +63,7 @@ fn legacy_marker_bytecode_does_not_trigger_sponsorship() {
 fn delegation_designator_byte_pattern_matches_expectation() {
     // `signer.code = 0xef0100 ++ ZEROFEE_ADDRESS` - 23 bytes total.
     // This is what the README and the executor code comments both
-    // claim; lock it down so a future revm bump that changes the
+    // claim. This test pins it, so a future revm bump that changes the
     // designator layout breaks this test instead of silently breaking
     // the production probe.
     let code = Bytecode::new_eip7702(ZEROFEE_ADDRESS);

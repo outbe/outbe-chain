@@ -1,18 +1,18 @@
 //! Finalized-parent attestation validation surface.
 //!
-//! The determinism-critical consensus-metadata validation that previously
-//! shared `finalization::util` with generic leaf helpers. Splitting it out
-//! keeps the BLS / committee / canonical-missed-proposer checks in one named
-//! module; `util` retains only pure leaf helpers (retry, replay classification,
-//! header-artifact extraction, signer-bitmap fill).
+//! This module holds the determinism-critical consensus-metadata validation.
+//! That validation previously shared `finalization::util` with generic leaf
+//! helpers. Splitting it out keeps the BLS / committee / canonical-missed-proposer
+//! checks in one named module. `util` retains only pure leaf helpers (retry,
+//! replay classification, header-artifact extraction, signer-bitmap fill).
 //!
 //! `validate_consensus_metadata` is the V2 structural + certificate predicate.
 //! `validate_consensus_metadata_for_verify` is retained ONLY as a legacy test
-//! fixture for `handler_tests.rs` cases that pre-date the V2 verifier - it MUST
-//! NOT be called from production runtime paths, which use
+//! fixture for `handler_tests.rs` cases that pre-date the V2 verifier. Production
+//! runtime paths MUST NOT call it. They use
 //! `outbe-consensus-proof::verify_v2_proof` instead.
 
-use std::{collections::BTreeSet, time::Duration};
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256};
 use commonware_codec::Read as _;
@@ -44,9 +44,9 @@ const MAX_MISSED_PROPOSERS_IN_METADATA: usize = u8::MAX as usize;
 /// finalized-parent attestation validation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttestationVerdict {
-    /// Attestation is absent - valid block, no settlement.
+    /// Attestation is absent. The block is valid, with no settlement.
     AcceptNone,
-    /// Attestation present and valid; embed (builder) / accept (verifier).
+    /// Attestation present and valid. Embed (builder) / accept (verifier).
     AcceptValid,
     /// Bitmap / committee / missed-proposers structurally bad.
     RejectStructural,
@@ -93,16 +93,16 @@ pub struct AttestationValidationContext<'a> {
 }
 
 // `validate_finalized_parent_attestation` was the V1
-// async certificate-validation predicate used by the proposer-side
-// exact-parent wait and by `handle_verify`. Both call sites are removed
-// (the proposer reads the proof store directly; `handle_verify`
-// is narrowed to structural checks only per). The function is
-// deleted to prevent accidental reintroduction of the BLS-on-verify path.
+// async certificate-validation predicate. The proposer-side exact-parent
+// wait and `handle_verify` used it. Both call sites are removed. The
+// proposer reads the proof store directly, and `handle_verify` is narrowed
+// to structural checks only. The function is deleted to prevent accidental
+// reintroduction of the BLS-on-verify path.
 //
 // `validate_consensus_metadata_for_verify` below is retained ONLY as a
-// test fixture for legacy `handler_tests.rs` cases that pre-date
-// - it MUST NOT be called from production runtime paths. 's
-// V2 verifier reads `outbe-consensus-proof::verify_v2_proof` instead.
+// test fixture for legacy `handler_tests.rs` cases that pre-date the V2
+// verifier. Production runtime paths MUST NOT call it. The V2 verifier
+// reads `outbe-consensus-proof::verify_v2_proof` instead.
 
 pub async fn validate_consensus_metadata_for_verify(
     clock: &impl commonware_runtime::Clock,
@@ -113,26 +113,18 @@ pub async fn validate_consensus_metadata_for_verify(
         return AttestationVerdict::AcceptNone;
     };
 
-    let certificate_verdict = validate_consensus_metadata(
-        Some(actual),
-        ctx.certificate_scheme_provider,
-        ctx.committee_provider,
-    );
-    if certificate_verdict != AttestationVerdict::AcceptValid {
-        return certificate_verdict;
+    match validate_present_metadata_for_verify(clock, actual, ctx).await {
+        Ok(()) => AttestationVerdict::AcceptValid,
+        Err(verdict) => verdict,
     }
+}
 
-    if actual.finalized_block_number >= ctx.proposed_block_number {
-        return AttestationVerdict::RejectStructural;
-    }
-
-    let epoch = Epoch::new(actual.finalized_epoch);
-    let Some(expected_committee) = ctx.committee_provider.ordered_committee(epoch) else {
-        return AttestationVerdict::RejectStructural;
-    };
-    let Some(scheme) = ctx.certificate_scheme_provider.scoped(epoch) else {
-        return AttestationVerdict::RejectCertificate;
-    };
+async fn validate_present_metadata_for_verify(
+    clock: &impl commonware_runtime::Clock,
+    actual: &CertifiedParentAccountingMetadata,
+    ctx: &AttestationValidationContext<'_>,
+) -> Result<(), AttestationVerdict> {
+    let (expected_committee, scheme) = resolve_metadata_verify_scope(actual, ctx)?;
 
     let digest = Digest(actual.finalized_block_hash);
     // The marshal lookup future borrows `&digest`, so it is not `'static` and
@@ -150,26 +142,57 @@ pub async fn validate_consensus_metadata_for_verify(
         Some(Some((height, canonical_digest))) => {
             height == Height::new(actual.finalized_block_number) && canonical_digest == digest
         }
-        Some(None) | None => return AttestationVerdict::TransientUnavailable,
+        Some(None) | None => return Err(AttestationVerdict::TransientUnavailable),
     };
     if !canonical_identity {
-        return AttestationVerdict::RejectCanonicalIdentity;
+        return Err(AttestationVerdict::RejectCanonicalIdentity);
     }
 
     match validate_canonical_missed_proposers(
         clock,
         actual,
         scheme.as_ref(),
-        ctx.elector_config_provider,
         expected_committee.as_ref(),
-        ctx.marshal_mailbox,
+        ctx,
     )
     .await
     {
-        Ok(true) => AttestationVerdict::AcceptValid,
-        Ok(false) => AttestationVerdict::RejectCanonicalIdentity,
-        Err(verdict) => verdict,
+        Ok(true) => Ok(()),
+        Ok(false) => Err(AttestationVerdict::RejectCanonicalIdentity),
+        Err(verdict) => Err(verdict),
     }
+}
+
+type MetadataVerifyScope = (Arc<Vec<Address>>, Arc<HybridScheme<MinSig>>);
+
+fn resolve_metadata_verify_scope(
+    actual: &CertifiedParentAccountingMetadata,
+    ctx: &AttestationValidationContext<'_>,
+) -> Result<MetadataVerifyScope, AttestationVerdict> {
+    let certificate_verdict = validate_consensus_metadata(
+        Some(actual),
+        ctx.certificate_scheme_provider,
+        ctx.committee_provider,
+    );
+    if certificate_verdict != AttestationVerdict::AcceptValid {
+        return Err(certificate_verdict);
+    }
+
+    if actual.finalized_block_number >= ctx.proposed_block_number {
+        return Err(AttestationVerdict::RejectStructural);
+    }
+
+    let epoch = Epoch::new(actual.finalized_epoch);
+    let expected_committee = ctx
+        .committee_provider
+        .ordered_committee(epoch)
+        .ok_or(AttestationVerdict::RejectStructural)?;
+    let scheme = ctx
+        .certificate_scheme_provider
+        .scoped(epoch)
+        .ok_or(AttestationVerdict::RejectCertificate)?;
+
+    Ok((expected_committee, scheme))
 }
 
 pub(crate) fn validate_consensus_metadata(
@@ -180,83 +203,112 @@ pub(crate) fn validate_consensus_metadata(
     let Some(actual) = actual else {
         return AttestationVerdict::AcceptNone;
     };
+    match validate_present_consensus_metadata(
+        actual,
+        certificate_scheme_provider,
+        committee_provider,
+    ) {
+        Ok(()) => AttestationVerdict::AcceptValid,
+        Err(verdict) => verdict,
+    }
+}
 
+fn validate_present_consensus_metadata(
+    actual: &CertifiedParentAccountingMetadata,
+    certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
+    committee_provider: &CommitteeProvider,
+) -> Result<(), AttestationVerdict> {
     if actual.finalized_block_number == 0 || actual.finalized_block_hash == B256::ZERO {
-        return AttestationVerdict::RejectStructural;
+        return Err(AttestationVerdict::RejectStructural);
+    }
+    let epoch = Epoch::new(actual.finalized_epoch);
+    let expected_committee = validate_metadata_committee(actual, epoch, committee_provider)?;
+    let finalization = decode_metadata_finalization(actual, expected_committee.len())?;
+    let scheme = certificate_scheme_provider
+        .scoped(epoch)
+        .ok_or(AttestationVerdict::RejectCertificate)?;
+    if !metadata_proposal_is_bound(&finalization, actual, epoch) {
+        return Err(AttestationVerdict::RejectStructural);
+    }
+    let mut rng = bls_batch_verification_rng();
+    if !finalization.verify(&mut rng, scheme.as_ref(), &Sequential) {
+        return Err(AttestationVerdict::RejectCertificate);
     }
 
-    let epoch = Epoch::new(actual.finalized_epoch);
-    let Some(expected_committee) = committee_provider.ordered_committee(epoch) else {
-        return AttestationVerdict::RejectStructural;
-    };
+    // The V2 signer bitmap is the certificate's own bitmap. There is no
+    // supplemental finalize-vote reconciliation. The V1
+    // `build_signer_bitmap_with_finalize_votes` helper is dropped.
+    let expected_bitmap = build_signer_bitmap(&finalization.certificate, expected_committee.len());
+    if expected_bitmap == actual.signer_bitmap {
+        Ok(())
+    } else {
+        Err(AttestationVerdict::RejectCertificate)
+    }
+}
+
+fn validate_metadata_committee(
+    actual: &CertifiedParentAccountingMetadata,
+    epoch: Epoch,
+    committee_provider: &CommitteeProvider,
+) -> Result<Arc<Vec<Address>>, AttestationVerdict> {
+    let expected_committee = committee_provider
+        .ordered_committee(epoch)
+        .ok_or(AttestationVerdict::RejectStructural)?;
     if expected_committee.as_ref() != &actual.ordered_committee {
-        return AttestationVerdict::RejectStructural;
+        return Err(AttestationVerdict::RejectStructural);
     }
     if actual.signer_bitmap.len() != expected_committee.len() {
-        return AttestationVerdict::RejectStructural;
+        return Err(AttestationVerdict::RejectStructural);
     }
     if actual.signer_bitmap.iter().any(|byte| *byte > 1) {
-        return AttestationVerdict::RejectStructural;
+        return Err(AttestationVerdict::RejectStructural);
     }
     let committee_set: BTreeSet<_> = expected_committee.iter().copied().collect();
-    // V2 contract requires `missed_proposers` to be empty; if any
-    // event is present, it must reference a committee member (defensive
-    // structural check - the V2 verifier enforces emptiness upstream).
+    // The V2 contract requires `missed_proposers` to be empty. If any
+    // event is present, it must reference a committee member. This is a
+    // defensive structural check. The V2 verifier enforces emptiness upstream.
     if actual
         .missed_proposers
         .iter()
         .any(|ev| !committee_set.contains(&ev.validator))
     {
-        return AttestationVerdict::RejectStructural;
+        return Err(AttestationVerdict::RejectStructural);
     }
+    Ok(expected_committee)
+}
 
+fn decode_metadata_finalization(
+    actual: &CertifiedParentAccountingMetadata,
+    member_count: usize,
+) -> Result<Finalization<HybridScheme<MinSig>, Digest>, AttestationVerdict> {
     let mut proof_reader = actual.proof.as_ref();
-    let Ok(finalization) = Finalization::<HybridScheme<MinSig>, Digest>::read_cfg(
-        &mut proof_reader,
-        &expected_committee.len(),
-    ) else {
-        return AttestationVerdict::RejectCertificate;
-    };
+    let finalization =
+        Finalization::<HybridScheme<MinSig>, Digest>::read_cfg(&mut proof_reader, &member_count)
+            .map_err(|_| AttestationVerdict::RejectCertificate)?;
     if !proof_reader.is_empty() {
-        return AttestationVerdict::RejectCertificate;
+        return Err(AttestationVerdict::RejectCertificate);
     }
+    Ok(finalization)
+}
 
-    let Some(scheme) = certificate_scheme_provider.scoped(epoch) else {
-        return AttestationVerdict::RejectCertificate;
-    };
-
+fn metadata_proposal_is_bound(
+    finalization: &Finalization<HybridScheme<MinSig>, Digest>,
+    actual: &CertifiedParentAccountingMetadata,
+    epoch: Epoch,
+) -> bool {
     let proposal = &finalization.proposal;
-    if proposal.round.epoch() != epoch
-        || proposal.round.view().get() != actual.finalized_view
-        || proposal.parent.get() != actual.parent_view
-        || proposal.payload.0 != actual.finalized_block_hash
-    {
-        return AttestationVerdict::RejectStructural;
-    }
-
-    let mut rng = bls_batch_verification_rng();
-    if !finalization.verify(&mut rng, scheme.as_ref(), &Sequential) {
-        return AttestationVerdict::RejectCertificate;
-    }
-
-    // V2 signer bitmap is the certificate's own bitmap - no
-    // supplemental finalize-vote reconciliation. The V1
-    // `build_signer_bitmap_with_finalize_votes` helper is dropped.
-    let expected_bitmap = build_signer_bitmap(&finalization.certificate, expected_committee.len());
-    if expected_bitmap == actual.signer_bitmap {
-        AttestationVerdict::AcceptValid
-    } else {
-        AttestationVerdict::RejectCertificate
-    }
+    proposal.round.epoch() == epoch
+        && proposal.round.view().get() == actual.finalized_view
+        && proposal.parent.get() == actual.parent_view
+        && proposal.payload.0 == actual.finalized_block_hash
 }
 
 async fn validate_canonical_missed_proposers(
     clock: &impl commonware_runtime::Clock,
     actual: &CertifiedParentAccountingMetadata,
     scheme: &HybridScheme<MinSig>,
-    elector_config_provider: &HybridElectorConfigProvider<MinSig>,
     expected_committee: &[Address],
-    marshal_mailbox: &crate::marshal_types::MarshalMailbox,
+    ctx: &AttestationValidationContext<'_>,
 ) -> Result<bool, AttestationVerdict> {
     if actual.finalized_view <= actual.parent_view.saturating_add(1) || actual.parent_view == 0 {
         return Ok(actual.missed_proposers.is_empty());
@@ -266,8 +318,9 @@ async fn validate_canonical_missed_proposers(
         None
     } else {
         // Borrowing future => biased select instead of `Clock::timeout`.
-        let lookup =
-            marshal_mailbox.get_finalization(Height::new(actual.finalized_block_number - 1));
+        let lookup = ctx
+            .marshal_mailbox
+            .get_finalization(Height::new(actual.finalized_block_number - 1));
         let timeout = clock.sleep(METADATA_CANONICAL_LOOKUP_TIMEOUT);
         let mut lookup = std::pin::pin!(lookup);
         let mut timeout = std::pin::pin!(timeout);
@@ -285,14 +338,14 @@ async fn validate_canonical_missed_proposers(
         actual,
         previous_finalization.as_ref(),
         scheme,
-        elector_config_provider,
+        ctx.elector_config_provider,
         expected_committee,
     ) else {
         return Ok(false);
     };
 
-    // compare V2 event list (`Vec<MissedProposerEvent>`) against
-    // the canonical-derivation `Vec<Address>` - equality holds when (a) both
+    // Compare the V2 event list (`Vec<MissedProposerEvent>`) against
+    // the canonical-derivation `Vec<Address>`. Equality holds when (a) both
     // are empty (the V2 contract) or (b) the event sequence's `.validator`
     // chain matches the expected address sequence.
     let actual_addrs: Vec<Address> = actual
@@ -339,16 +392,18 @@ fn canonical_missed_proposers(
     let elector_config = elector_config_provider.scoped(epoch)?;
     let elector = elector_config.as_ref().clone().build(participants);
 
-    // Shared single source of truth with the proposer-side reporter path: the
-    // election sequence must match exactly or this recompute would reject a
-    // valid proposer's `missed_proposers` list.
+    // This call is the single source of truth shared with the proposer-side
+    // reporter path. The election sequence must match exactly. Otherwise this
+    // recompute would reject a valid proposer's `missed_proposers` list.
     let leaders = crate::missed_proposers::elected_leaders_for_gap(
         epoch,
         &elector,
         Some(&previous.certificate),
-        parent_view,
-        current_view,
-        MAX_MISSED_PROPOSERS_IN_METADATA,
+        crate::missed_proposers::SkippedViewRange {
+            last_view: parent_view,
+            current_view,
+            cap: MAX_MISSED_PROPOSERS_IN_METADATA,
+        },
     );
     let mut missed = Vec::with_capacity(leaders.len());
     for leader in &leaders {

@@ -1,11 +1,12 @@
 //! Verify-side block resolution for the application handler.
 //!
-//! [`resolve_for_verify`] is the fetch strategy used while verifying a proposal:
-//! try the local block cache first, then subscribe to the marshal by digest
-//! (falling back to fetch-by-round) under a bounded timeout. Lifted out of
-//! `handler.rs` so the strategy - and its cache/marshal/timeout/telemetry
-//! shape - reads and tests independently of the verify event loop; it takes the
-//! block-cache and marshal seams as explicit parameters instead of `&self`.
+//! [`resolve_for_verify`] is the fetch strategy used while verifying a proposal.
+//! It tries the local block cache first. Then it subscribes to the marshal by
+//! digest, with fetch-by-round as the fallback, under a bounded timeout. The
+//! strategy moved out of `handler.rs`. Thus the strategy and its
+//! cache/marshal/timeout/telemetry shape read and test independently of the
+//! verify event loop. It takes the block-cache and marshal seams as explicit
+//! parameters instead of `&self`.
 
 use std::time::Instant;
 
@@ -39,16 +40,27 @@ impl VerifyResolveTarget {
     }
 }
 
+/// Block identity and diagnostic target for one verification lookup.
+#[derive(Clone, Copy)]
+pub(crate) struct VerifyResolveRequest {
+    pub(crate) round: Round,
+    pub(crate) digest: Digest,
+    pub(crate) target: VerifyResolveTarget,
+}
+
 /// Resolve a block needed during verify: local cache first, then marshal by
 /// digest (fallback fetch-by-round) under [`VERIFY_RESOLUTION_TIMEOUT`].
 pub(crate) async fn resolve_for_verify(
     block_cache: &BlockCache,
     marshal_mailbox: &MarshalMailbox,
     clock: &impl commonware_runtime::Clock,
-    round: Round,
-    digest: Digest,
-    target: VerifyResolveTarget,
+    request: VerifyResolveRequest,
 ) -> Result<ConsensusBlock, VerifyResolveError> {
+    let VerifyResolveRequest {
+        round,
+        digest,
+        target,
+    } = request;
     let started_at = Instant::now();
     debug!(
         %round,

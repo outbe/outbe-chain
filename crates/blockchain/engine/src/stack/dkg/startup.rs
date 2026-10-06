@@ -1,5 +1,9 @@
 use super::super::*;
 
+mod genesis;
+mod local;
+mod manual;
+
 pub(in crate::stack) fn validate_recovered_vrf_material(
     polynomial: &Sharing<MinSig>,
     boundary: Option<&DkgBoundaryArtifact>,
@@ -23,29 +27,29 @@ pub(in crate::stack) fn vrf_group_public_key_hash(polynomial: &Sharing<MinSig>) 
 
 /// Resolve the consensus participant set for restart/live-join recovery.
 ///
-/// When the node recovers a finalized DKG boundary, the threshold material it
-/// restores (`signing_share`, `polynomial`, `last_dkg_output`) belongs to the
-/// committee the recovered ceremony ran for - recorded as the DKG output's
-/// `players()`. The latest on-chain consensus set may have DRIFTED from that
-/// committee (a join/exit/jail/slash after the recovered boundary activated but
-/// before the next reshare), so the scheme must NOT be reconstructed against the
-/// latest set: committee-dependent data (votes, VRF threshold partials) must be
-/// decoded against the committee it was encoded for.
+/// When the node recovers a finalized DKG boundary, it restores threshold material
+/// (`signing_share`, `polynomial`, `last_dkg_output`). That material belongs to the
+/// committee the recovered ceremony ran for, recorded as the DKG output's `players()`.
+/// The latest on-chain consensus set may have DRIFTED from that committee (a
+/// join/exit/jail/slash after the recovered boundary activated but before the next
+/// reshare). So the scheme must NOT be reconstructed against the latest set.
+/// Committee-dependent data (votes, VRF threshold partials) must be decoded against the
+/// committee it was encoded for.
 ///
 /// The recovered output's `players()` is already a sorted, deduplicated
-/// `commonware_utils::ordered::Set`, so participant indices derive from it
-/// canonically regardless of how the set was assembled - only the *membership*
-/// matters, and the members ARE the share holders. In the common no-churn restart
-/// this set is identical to the latest committed set, so recovery is unchanged;
-/// it diverges only across a churn window, which is exactly the bug this closes.
+/// `commonware_utils::ordered::Set`. Participant indices therefore derive from it
+/// canonically, regardless of how the set was assembled. Only the *membership* matters,
+/// and the members ARE the share holders. In the common no-churn restart, this set is
+/// identical to the latest committed set, so recovery is unchanged. It diverges only
+/// across a churn window, which is exactly the bug this closes.
 ///
 /// **Drift guard.** The recovered boundary records the committee the ceremony ran
 /// for in `reshare.new_active_set` (built 1:1 from the same `players()` list at
-/// proposal time). A size mismatch between the recovered output's players and
-/// that record means the restored consensus material does not correspond to the
-/// recovered chain boundary (e.g. a stale or partial consensus-archive restore),
-/// so recovery fails fast with an explicit drift error rather than reconstruct
-/// the scheme against the wrong committee.
+/// proposal time). A size mismatch between the recovered output's players and that
+/// record means that the restored consensus material does not correspond to the
+/// recovered chain boundary (e.g. a stale or partial consensus-archive restore).
+/// Recovery then fails fast with an explicit drift error, rather than reconstruct the
+/// scheme against the wrong committee.
 pub(in crate::stack) fn select_recovery_participants(
     recovered_output_players: &commonware_utils::ordered::Set<bls12381::PublicKey>,
     boundary: &DkgBoundaryArtifact,
@@ -99,6 +103,24 @@ pub(in crate::stack) fn recover_latest_boundary_artifact(
     Ok(None)
 }
 
+/// Pinned identity, membership and chain history for each startup snapshot probe.
+#[derive(Clone, Copy)]
+pub(in crate::stack) struct StartupDkgRequest<'a> {
+    pub(in crate::stack) local_pk: &'a bls12381::PublicKey,
+    pub(in crate::stack) validator_set: &'a validators::ValidatorSet,
+    pub(in crate::stack) genesis_hash: B256,
+    pub(in crate::stack) dkg_rotation_params: DkgRotationParams,
+    pub(in crate::stack) last_consensus_finalized_height: u64,
+}
+
+/// Threshold selection inputs. Runtime, key backend and transport stay separate.
+pub(in crate::stack) struct ThresholdMaterialRequest<'a> {
+    pub(in crate::stack) args: &'a ConsensusArgs,
+    pub(in crate::stack) signing_key: bls12381::PrivateKey,
+    pub(in crate::stack) validator_set: &'a validators::ValidatorSet,
+    pub(in crate::stack) context: StartupDkgContext,
+}
+
 #[derive(Clone, Debug)]
 pub(in crate::stack) struct StartupDkgSnapshot {
     pub(in crate::stack) last_execution_height: u64,
@@ -125,11 +147,15 @@ fn read_startup_dkg_snapshot(
     node: &OutbeFullNode,
     args: &ConsensusArgs,
     key_backend: &bls::KeyBackend,
-    local_consensus_key: &bls12381::PublicKey,
-    genesis_hash: B256,
-    dkg_rotation_params: DkgRotationParams,
-    last_consensus_finalized_height: u64,
+    request: &StartupDkgRequest<'_>,
 ) -> Result<StartupDkgSnapshot> {
+    let StartupDkgRequest {
+        local_pk: local_consensus_key,
+        genesis_hash,
+        dkg_rotation_params,
+        last_consensus_finalized_height,
+        ..
+    } = *request;
     let last_execution_height = node
         .provider
         .last_block_number()
@@ -154,16 +180,16 @@ fn read_startup_dkg_snapshot(
         args.trust_el_head,
     )?;
     // NORMALIZE the tuple height to the ACTIVATION ANCHOR. The header scan
-    // returns the height of the block CARRYING the boundary artifact, but that
-    // artifact always rides the FIRST block of the new epoch - one block ABOVE
-    // the activation height the committee anchored its rotation schedule on
-    // (genesis: activation 0, committed in block 1; a reshare activated at H is
-    // committed in block H+1). A restarted node that anchors on the commit
-    // height runs its whole freeze/activation schedule one block LATE: it waits
+    // returns the height of the block CARRYING the boundary artifact. That
+    // artifact always rides the FIRST block of the new epoch, one block ABOVE
+    // the activation height the committee anchored its rotation schedule on.
+    // Genesis: activation 0, committed in block 1. A reshare activated at H is
+    // committed in block H+1. A restarted node that anchors on the commit
+    // height runs its whole freeze/activation schedule one block LATE. It waits
     // for activation H+1 while the live committee restarts its engine at H. With
-    // one such node the committee still has quorum and the laggard self-heals
-    // one block later; with two of five (e.g. a restarted validator plus a
-    // freshly promoted one) the new epoch is 3-of-5 < quorum and the chain
+    // one such node, the committee still has quorum and the laggard self-heals
+    // one block later. With two of five (e.g. a restarted validator plus a
+    // freshly promoted one), the new epoch is 3-of-5 < quorum and the chain
     // deadlocks at the boundary. Anchor = commit_height - 1, uniformly.
     let recovered_boundary = recover_latest_boundary_artifact(
         &node.provider,
@@ -253,28 +279,30 @@ async fn collect_reth_genesis_peer_evidence(node: &OutbeFullNode) -> RethGenesis
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(in crate::stack) async fn resolve_startup_dkg_snapshot<E>(
     ctx: E,
     node: &OutbeFullNode,
     args: &ConsensusArgs,
     key_backend: &bls::KeyBackend,
-    local_pk: bls12381::PublicKey,
-    validator_set: &validators::ValidatorSet,
-    genesis_hash: B256,
-    dkg_rotation_params: DkgRotationParams,
-    last_consensus_finalized_height: u64,
+    request: StartupDkgRequest<'_>,
 ) -> Result<StartupDkgSnapshot>
 where
     E: Clock,
 {
+    let StartupDkgRequest {
+        local_pk,
+        validator_set,
+        genesis_hash,
+        last_consensus_finalized_height,
+        ..
+    } = request;
     let startup_participants: commonware_utils::ordered::Set<bls12381::PublicKey> = validator_set
         .public_keys
         .clone()
         .into_iter()
         .try_collect()
         .map_err(|e| eyre::eyre!("invalid participant set: {e}"))?;
-    let local_key_in_current_consensus_set = startup_participants.position(&local_pk).is_some();
+    let local_key_in_current_consensus_set = startup_participants.position(local_pk).is_some();
     let expected_remote_peers = validator_set.public_keys.len().saturating_sub(1);
     let required_remote_peers =
         genesis_formation_required_remote_peers(validator_set.public_keys.len());
@@ -282,15 +310,7 @@ where
     let started_at = ctx.current();
 
     loop {
-        let mut snapshot = read_startup_dkg_snapshot(
-            node,
-            args,
-            key_backend,
-            &local_pk,
-            genesis_hash,
-            dkg_rotation_params,
-            last_consensus_finalized_height,
-        )?;
+        let mut snapshot = read_startup_dkg_snapshot(node, args, key_backend, &request)?;
         let evidence = collect_reth_genesis_peer_evidence(node).await;
         let gate = genesis_formation_gate_decision(
             snapshot.context,
@@ -355,9 +375,9 @@ pub(in crate::stack) enum ThresholdMaterial {
         bootstrap_from_live_dkg: bool,
     },
     /// Verifier-join: the node has the public group polynomial + DKG output but NO
-    /// threshold share. It runs the consensus engine as a VERIFIER - it follows and
+    /// threshold share. It runs the consensus engine as a VERIFIER. It follows and
     /// verifies finalized blocks (driving its execution layer to sync) but cannot
-    /// propose/sign - and acquires a share at the next DKG reshare, after which the
+    /// propose/sign. It acquires a share at the next DKG reshare. After that, the
     /// epoch loop rebuilds its scheme as a signer (Stage 4).
     VerifierOnly {
         polynomial: Sharing<MinSig>,
@@ -442,7 +462,7 @@ pub(in crate::stack) fn startup_dkg_mode(
 ///
 /// Only proven block-1 founders may be keyless while canonical state is still
 /// zero. An empty-DB verifier join may carry an already-installed key until
-/// certified sync makes the canonical value locally available; every other
+/// certified sync makes the canonical value locally available. Every other
 /// existing identity must match canonical state exactly at this gate.
 pub(in crate::stack) fn validate_offer_key_before_threshold_work(
     context: StartupDkgContext,
@@ -517,25 +537,19 @@ pub(in crate::stack) fn genesis_formation_gate_decision(
         return GenesisFormationGate::ExistingChainJoin;
     }
 
-    if evidence.peer_query_failed {
+    if evidence.peer_query_failed
+        || evidence.connected_peers < required_remote_peers
+        || evidence.peers.len() < required_remote_peers
+    {
         return GenesisFormationGate::WaitForExecutionSync;
     }
 
-    if evidence.connected_peers < required_remote_peers {
-        return GenesisFormationGate::WaitForExecutionSync;
-    }
-
-    if evidence.peers.len() < required_remote_peers {
-        return GenesisFormationGate::WaitForExecutionSync;
-    }
-
-    for peer in &evidence.peers {
-        if peer.genesis != genesis_hash {
-            return GenesisFormationGate::ExistingChainJoin;
-        }
-        if peer.blockhash != genesis_hash || peer.latest_block.unwrap_or(0) > 0 {
-            return GenesisFormationGate::ExistingChainJoin;
-        }
+    if evidence.peers.iter().any(|peer| {
+        peer.genesis != genesis_hash
+            || peer.blockhash != genesis_hash
+            || peer.latest_block.unwrap_or(0) > 0
+    }) {
+        return GenesisFormationGate::ExistingChainJoin;
     }
 
     GenesisFormationGate::Proven
@@ -655,7 +669,7 @@ pub(in crate::stack) fn tee_bootstrap_setup(
     let evm_key_path = args
         .effective_validator_evm_key()?
         .ok_or_else(|| eyre::eyre!("TEE bootstrap requires a validator EVM key"))?;
-    let evm_signer = outbe_primitives::signer::OutbeEvmSigner::from_file(&evm_key_path)
+    let evm_signer = outbe_primitives::signer::load::from_file(&evm_key_path)
         .map_err(|e| eyre::eyre!("failed to load validator EVM signer for TEE bootstrap: {e}"))?;
     let committee: std::collections::BTreeSet<alloy_primitives::Address> =
         ordered_validator_addresses(participants, validator_set)?
@@ -693,320 +707,31 @@ pub(in crate::stack) fn build_genesis_dkg_boundary_artifact(
     })
 }
 
-/// Obtain threshold material (signing share + public polynomial).
+/// Recover threshold signer/verifier material before any interactive ceremony.
 ///
-/// Three paths (tried in order):
-/// 1. **Saved DKG state** in `keys_dir` - restart precedence, wins over CLI
-/// 2. **CLI args provided** - fallback for fresh bootstrap / manual provisioning
-/// 3. **No material and no chain DKG history** - run the one-time interactive
-///    genesis DKG ceremony over P2P (BLOCKING, no blocks)
-/// 4. **No material or stale material on an existing chain** - fail startup with
-///    the explicit `VerifierOnly` recovery contract; startup cannot wait for sync
-///    before Marshal and Executor are running
-///
-/// Returns `(share, polynomial, previous_output, bootstrap_from_live_dkg)`.
-///
-/// `previous_output` is restored from persisted state when available so the
-/// next live reshare can continue from the correct prior DKG output.
-/// `bootstrap_from_live_dkg` is `true` only when this startup actually ran the
-/// interactive initial DKG ceremony (path 3).
-#[allow(clippy::too_many_arguments)]
+/// Saved local state takes precedence over matching pending recovery and manual
+/// provisioning. Only proven empty genesis formation admits interactive DKG.
+/// Existing-chain recovery and corrupt-material errors remain fail-fast.
 pub(in crate::stack) async fn obtain_threshold_material<C>(
     clock: C,
-    args: &ConsensusArgs,
     key_backend: &bls::KeyBackend,
-    signing_key: bls12381::PrivateKey,
-    validator_set: &validators::ValidatorSet,
-    startup_dkg_context: StartupDkgContext,
+    request: ThresholdMaterialRequest<'_>,
     dkg_sender: impl P2pSender<PublicKey = bls12381::PublicKey>,
     dkg_receiver: impl P2pReceiver<PublicKey = bls12381::PublicKey>,
 ) -> Result<ThresholdMaterial>
 where
     C: Clock,
 {
-    // Path 1: Try loading saved DKG state from keys_dir (restart precedence).
-    // On ordinary restart, saved local DKG state wins over CLI bootstrap material.
-    if let Some(ref keys_dir) = args.keys_dir {
-        let mut saved_state_error: Option<eyre::Report> = None;
-        let saved_state = match load_saved_dkg_state(keys_dir, key_backend) {
-            Ok(state) => state,
-            Err(error) => {
-                warn!(
-                    %error,
-                    keys_dir = %keys_dir.display(),
-                    "saved DKG state is incomplete or corrupt; checking pending DKG state before failing"
-                );
-                saved_state_error = Some(error);
-                None
-            }
-        };
-        if let Some((signing_share, polynomial, output)) = saved_state {
-            if vrf_material_matches_recovered_boundary(&polynomial, startup_dkg_context)
-                && dkg_output_matches_recovered_boundary(&output, startup_dkg_context)
-            {
-                info!(
-                    keys_dir = %keys_dir.display(),
-                    vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
-                    "threshold material ready from saved DKG state"
-                );
-                return Ok(ThresholdMaterial::Ready {
-                    signing_share,
-                    polynomial,
-                    last_dkg_output: Some(output),
-                    bootstrap_from_live_dkg: false,
-                });
-            }
-            warn!(
-                keys_dir = %keys_dir.display(),
-                local_vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
-                local_dkg_output_hash = %dkg_manager::dkg_output_hash(&output),
-                recovered_vrf_group_public_key = ?startup_dkg_context.recovered_vrf_group_public_key,
-                recovered_dkg_output_hash = ?startup_dkg_context.recovered_dkg_output_hash,
-                "saved DKG material is stale for the latest finalized boundary; checking pending DKG state"
-            );
-        }
-
-        let pending_state = match load_pending_dkg_state(keys_dir, key_backend) {
-            Ok(state) => state,
-            Err(error) => {
-                warn!(
-                    %error,
-                    keys_dir = %keys_dir.display(),
-                    "pending DKG state is incomplete or corrupt; ignoring pending material"
-                );
-                None
-            }
-        };
-        if let Some((signing_share, polynomial, output)) = pending_state {
-            if startup_dkg_context.recovered_dkg_output_hash.is_some()
-                && vrf_material_matches_recovered_boundary(&polynomial, startup_dkg_context)
-                && dkg_output_matches_recovered_boundary(&output, startup_dkg_context)
-            {
-                if startup_dkg_context.recovered_boundary_finalized {
-                    save_dkg_state(keys_dir, &signing_share, &polynomial, &output, key_backend)
-                        .wrap_err(
-                            "failed to promote pending DKG state after boundary finalization",
-                        )?;
-                    remove_pending_dkg_state(keys_dir);
-                    clear_pending_dkg_boundary(keys_dir);
-                    dkg_actor::DkgRetryStore::in_keys_dir(keys_dir, key_backend.clone())
-                        .clear()
-                        .wrap_err("failed to retire recovered DKG retry state")?;
-                    info!(
-                        keys_dir = %keys_dir.display(),
-                        vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
-                        dkg_output_hash = %dkg_manager::dkg_output_hash(&output),
-                        "threshold material ready from promoted pending DKG state"
-                    );
-                } else {
-                    info!(
-                        keys_dir = %keys_dir.display(),
-                        vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
-                        dkg_output_hash = %dkg_manager::dkg_output_hash(&output),
-                        "threshold material ready from durable pending DKG state and boundary snapshot"
-                    );
-                }
-                return Ok(ThresholdMaterial::Ready {
-                    signing_share,
-                    polynomial,
-                    last_dkg_output: Some(output),
-                    bootstrap_from_live_dkg: false,
-                });
-            }
-            warn!(
-                keys_dir = %keys_dir.display(),
-                local_vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
-                local_dkg_output_hash = %dkg_manager::dkg_output_hash(&output),
-                recovered_vrf_group_public_key = ?startup_dkg_context.recovered_vrf_group_public_key,
-                recovered_dkg_output_hash = ?startup_dkg_context.recovered_dkg_output_hash,
-                "pending DKG material is not finalized for the latest boundary"
-            );
-        }
-
-        if let Some(error) = saved_state_error {
-            return Err(error).wrap_err(
-                "saved DKG state failed to load and pending state could not be promoted",
-            );
-        }
-
-        if startup_dkg_context.has_chain_finalized_dkg_boundary()
-            && !startup_dkg_context.recovered_boundary_finalized
-        {
-            return Err(eyre::eyre!(
-                "pending DKG boundary snapshot was recovered but matching DKG material is unavailable"
-            ));
-        }
-
-        if startup_dkg_context.has_chain_finalized_dkg_boundary()
-            && !(args.signing_share.is_none()
-                && args.public_polynomial.is_some()
-                && args.dkg_output.is_some())
-        {
-            return Err(missing_current_threshold_material_error(
-                "saved and pending DKG material do not match the latest finalized boundary",
-            ));
-        }
+    if let Some(material) = local::load_local_material(request.args, key_backend, request.context)?
+    {
+        return Ok(material);
     }
-
-    // Path 2: Load from CLI args (fresh bootstrap / manual provisioning).
-    if let (Some(share_path), Some(poly_path)) = (&args.signing_share, &args.public_polynomial) {
-        let signing_share = bls::load_signing_share(share_path, key_backend)
-            .wrap_err("failed to load BLS signing share")?;
-        let polynomial = bls::load_public_polynomial(poly_path, key_backend)
-            .wrap_err("failed to load BLS public polynomial")?;
-        let cli_dkg_output = if let Some(output_path) = &args.dkg_output {
-            let output = bls::load_dkg_output(output_path, key_backend)
-                .wrap_err("failed to load BLS DKG output")?;
-            bls::validate_dkg_triplet(&signing_share, &polynomial, &output)
-                .wrap_err("CLI DKG material triplet is inconsistent")?;
-            Some(output)
-        } else {
-            None
-        };
-
-        if startup_dkg_context.recovered_dkg_output_hash.is_some() && cli_dkg_output.is_none() {
-            warn!(
-                share_path = %share_path.display(),
-                poly_path = %poly_path.display(),
-                recovered_dkg_output_hash = ?startup_dkg_context.recovered_dkg_output_hash,
-                "CLI DKG material lacks required output for recovered chain boundary"
-            );
-            return Err(missing_current_threshold_material_error(
-                "CLI DKG material lacks the output required by the latest finalized boundary",
-            ));
-        }
-
-        if !vrf_material_matches_recovered_boundary(&polynomial, startup_dkg_context)
-            || cli_dkg_output.as_ref().is_some_and(|output| {
-                !dkg_output_matches_recovered_boundary(output, startup_dkg_context)
-            })
-        {
-            warn!(
-                share_path = %share_path.display(),
-                poly_path = %poly_path.display(),
-                local_vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
-                local_dkg_output_hash = ?cli_dkg_output.as_ref().map(dkg_manager::dkg_output_hash),
-                recovered_vrf_group_public_key = ?startup_dkg_context.recovered_vrf_group_public_key,
-                recovered_dkg_output_hash = ?startup_dkg_context.recovered_dkg_output_hash,
-                "CLI DKG material is stale for the latest finalized boundary"
-            );
-            return Err(missing_current_threshold_material_error(
-                "CLI DKG material is stale for the latest finalized boundary",
-            ));
-        }
-
-        info!(
-            vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
-            "threshold material ready from CLI args"
-        );
-        return Ok(ThresholdMaterial::Ready {
-            signing_share,
-            polynomial,
-            last_dkg_output: cli_dkg_output,
-            bootstrap_from_live_dkg: false,
-        });
+    if let Some(material) =
+        manual::load_manual_material(request.args, key_backend, request.context)?
+    {
+        return Ok(material);
     }
-
-    // Path 2b: Verifier-join - public group material (--consensus.public-polynomial
-    // + --consensus.dkg-output) WITHOUT a signing share. The node runs the consensus
-    // engine in verifier mode (follow/verify finalized blocks -> sync its execution
-    // layer) and acquires a share at the next reshare. See ThresholdMaterial::VerifierOnly.
-    if args.signing_share.is_none() {
-        if let (Some(poly_path), Some(output_path)) = (&args.public_polynomial, &args.dkg_output) {
-            let polynomial = bls::load_public_polynomial(poly_path, key_backend)
-                .wrap_err("failed to load BLS public polynomial for verifier-join")?;
-            let output = bls::load_dkg_output(output_path, key_backend)
-                .wrap_err("failed to load BLS DKG output for verifier-join")?;
-            info!(
-                vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
-                "verifier-join: no threshold share; running consensus in VERIFIER mode \
-                 (follow + verify) until the next reshare grants a share"
-            );
-            return Ok(ThresholdMaterial::VerifierOnly {
-                polynomial,
-                last_dkg_output: Some(output),
-            });
-        }
-    }
-
-    // Path 3: Run interactive DKG ceremony.
-    let local_pk = signing_key.public_key();
-    let startup_participants: commonware_utils::ordered::Set<bls12381::PublicKey> = validator_set
-        .public_keys
-        .clone()
-        .into_iter()
-        .try_collect()
-        .map_err(|e| eyre::eyre!("invalid participant set: {e}"))?;
-    let local_key_in_current_consensus_set = startup_participants.position(&local_pk).is_some();
-    match startup_dkg_mode(startup_dkg_context, local_key_in_current_consensus_set) {
-        StartupDkgMode::LiveJoinRequired => {
-            warn!(
-                last_execution_height = startup_dkg_context.last_execution_height,
-                has_finalized_dkg_boundary = startup_dkg_context.has_chain_finalized_dkg_boundary(),
-                local_key_in_current_consensus_set,
-                "no current threshold material is available for existing-chain startup"
-            );
-            return Err(missing_current_threshold_material_error(
-                "no current threshold material is available for existing-chain startup",
-            ));
-        }
-        StartupDkgMode::InitialGenesisDkg => {}
-    }
-
-    info!("no threshold material available - running DKG ceremony (NO BLOCKS until complete)");
-
-    let dkg_result = dkg_actor::run_initial_dkg_durable(
-        &clock,
-        signing_key,
-        startup_participants,
-        None, // initial: no previous output
-        None, // initial: no previous share
-        0,    // initial: round 0
-        None,
-        None,
-        dkg_retry_store(args, key_backend)?,
-        dkg_sender,
-        dkg_receiver,
-    )
-    .await
-    .wrap_err("DKG ceremony failed")?;
-
-    let polynomial = dkg_result.output.public().clone();
-    let signing_share = dkg_result.share;
-    info!(
-        vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
-        "initial DKG ceremony completed; threshold material ready"
-    );
-
-    // Save DKG state to keys_dir for future restarts.
-    if let Some(ref keys_dir) = args.keys_dir {
-        let save_result = save_dkg_state(
-            keys_dir,
-            &signing_share,
-            &polynomial,
-            &dkg_result.output,
-            key_backend,
-        );
-        if let Err(e) = save_result {
-            warn!(
-                ?e,
-                "failed to save DKG state to disk (node will need to re-run DKG on restart)"
-            );
-        } else {
-            info!(keys_dir = %keys_dir.display(), "saved DKG state to disk");
-        }
-    } else {
-        warn!("no --consensus.keys-dir set, DKG state will not be persisted");
-    }
-
-    info!("DKG ceremony complete - threshold material obtained via P2P");
-
-    Ok(ThresholdMaterial::Ready {
-        signing_share,
-        polynomial,
-        last_dkg_output: Some(dkg_result.output),
-        bootstrap_from_live_dkg: true,
-    })
+    genesis::run_genesis_dkg(clock, key_backend, request, dkg_sender, dkg_receiver).await
 }
 
 pub(in crate::stack) fn validator_set_for_dkg_output_players(

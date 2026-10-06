@@ -1,7 +1,7 @@
 use crate::features::ocomp::*;
 
 // A one-Tribute scenario can reach request publication well before its
-// genesis-bound offering window closes, so the bounded wait includes the
+// genesis-bound offering window closes. The bounded wait therefore includes the
 // remaining phase interval plus finalization/request publication slack.
 pub(in crate::features::ocomp) const OCOMP_JOB_REQUEST_TIMEOUT_SECS: u64 = 300;
 
@@ -152,8 +152,8 @@ fn production_ocomp_domains_process_job_intent(world: &mut World) {
          {generation_exists:?}"
     );
     let primary = world.validators.primary_port();
-    // ResultVoteV1 carriers are signed by the role-scoped OCOMP delegates,
-    // not by the validator owner EOAs.  Probe those exact sender accounts so
+    // The role-scoped OCOMP delegates sign ResultVoteV1 carriers, not the
+    // validator owner EOAs. Probe those exact sender accounts so
     // unrelated owner-side protocol credits cannot masquerade as carrier fees.
     world.state.ocomp_validator_balances_before = (0..world.validators.size())
         .map(|validator_index| {
@@ -640,8 +640,8 @@ fn four_domains_retain_isolated_worker_artifacts(world: &mut World) {
 }
 
 /// Parent orchestration calls this for V1 immediately before releasing held
-/// V1 workers, and for V2 after its last node restart but BEFORE V2 work is
-/// released. Do not insert a post-hoc call after the processing-time jump.
+/// V1 workers. For V2, it calls this after the last V2 node restart but BEFORE
+/// V2 work is released. Do not insert a post-hoc call after the processing-time jump.
 pub(crate) fn arm_case_one_artifact_phase(
     world: &mut World,
     bundle_hash: B256,

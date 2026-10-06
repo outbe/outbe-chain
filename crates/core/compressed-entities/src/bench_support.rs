@@ -15,6 +15,29 @@ use crate::{
     ProvisionalTreeBatch, StagedTreeBatch, TreeChange,
 };
 
+/// Parent-body source for benchmarks starting with no persisted entities.
+pub struct EmptyParentBodies;
+
+impl crate::ParentBodySource for EmptyParentBodies {
+    fn get(
+        &self,
+        _entity: EntityRef,
+    ) -> Result<Option<crate::StoredBody>, crate::ParentBodySourceError> {
+        Ok(None)
+    }
+
+    fn list(
+        &self,
+        _query: crate::QueryRef,
+        _request: crate::IdPageRequest,
+    ) -> Result<crate::IdPage, crate::ParentBodySourceError> {
+        Ok(crate::IdPage {
+            ids: Vec::new(),
+            next_after: None,
+        })
+    }
+}
+
 /// Returns the protocol-derived shard for a real typed entity. This keeps the
 /// ADR-009 benchmark dataset on the production key-derivation path.
 pub fn derived_shard(entity: EntityRef, shard_count: u32) -> Result<u32, String> {
@@ -127,14 +150,24 @@ impl Adr008SmtHarness {
     }
 }
 
+/// Block identity assigned to a staged benchmark batch.
+pub struct StagedBatchIdentity {
+    pub block_number: u64,
+    pub block_hash: B256,
+    pub parent_block_hash: B256,
+}
+
+/// Catalog roots before and after the benchmark batch.
+pub struct StagedBatchRoots {
+    pub parent_root: B256,
+    pub new_root: B256,
+}
+
 /// Builds a codec-valid staged batch for measuring the finalized MDBX apply
 /// path. It intentionally does not assert any protocol capacity or timing.
 pub fn staged_batch(
-    block_number: u64,
-    block_hash: B256,
-    parent_block_hash: B256,
-    parent_root: B256,
-    new_root: B256,
+    identity: StagedBatchIdentity,
+    roots: StagedBatchRoots,
     record_count: usize,
 ) -> Result<StagedTreeBatch, String> {
     let mut branches = BTreeMap::new();
@@ -154,7 +187,7 @@ pub fn staged_batch(
                 break word;
             }
         };
-        let value_word = field_b256(block_number.wrapping_add(ordinal).max(1));
+        let value_word = field_b256(identity.block_number.wrapping_add(ordinal).max(1));
         let field = FieldValue::try_from(value_word).map_err(|error| error.to_string())?;
         let branch_key =
             BranchKey::new(index as u8, key_word).map_err(|error| error.to_string())?;
@@ -173,14 +206,14 @@ pub fn staged_batch(
         );
     }
     ProvisionalTreeBatch::new_fixture_single_collection(
-        block_number,
-        parent_block_hash,
-        parent_root,
-        new_root,
+        identity.block_number,
+        identity.parent_block_hash,
+        roots.parent_root,
+        roots.new_root,
         branches,
         leaves,
     )
-    .map(|batch| batch.freeze(block_hash))
+    .map(|batch| batch.freeze(identity.block_hash))
     .map_err(|error| error.to_string())
 }
 

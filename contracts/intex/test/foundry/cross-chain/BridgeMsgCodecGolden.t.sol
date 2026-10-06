@@ -11,7 +11,7 @@ import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 
 /// @dev Golden-value and per-field round-trip coverage for BridgeMsgCodec encode/decode.
 contract BridgeMsgCodecGoldenTest is Test {
-    /// @dev Fixed call stamp; these tests exercise the wire, not the clock.
+    /// @dev Fixed call stamp. These tests exercise the wire, not the clock.
     uint32 internal constant CALLED_AT = 1_777_000_000;
 
     // Byte-literal goldens for the fixed-width packed messages.
@@ -243,7 +243,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         p.callThreshold = 0x9ABC;
         p.callPriceMinor = 0xA1B2C3D4E5F60718;
         p.recipients = recipients;
-        p.quantities = quantities;
+        p.units = quantities;
 
         BridgeMsgCodec.IssuanceInstructionsPayload memory d = this.exposedDecodeIssuanceInstructions(
             BridgeMsgCodec.encodeIssuanceInstructions(p.worldwideDay, 0, 1, IssuanceBatchLib.one(p))
@@ -264,8 +264,8 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(d.callPriceMinor, 0xA1B2C3D4E5F60718, "callPriceMinor");
         assertEq(d.recipients[0], address(0xA11CE), "recipients[0]");
         assertEq(d.recipients[1], address(0xB0B), "recipients[1]");
-        assertEq(d.quantities[0], 0xDEAD, "quantities[0]");
-        assertEq(d.quantities[1], 0xBEEF, "quantities[1]");
+        assertEq(d.units[0], 0xDEAD, "units[0]");
+        assertEq(d.units[1], 0xBEEF, "units[1]");
     }
 
     function test_RoundTrip_SingleField_SeriesId() public view {

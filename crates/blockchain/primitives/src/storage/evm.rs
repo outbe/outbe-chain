@@ -14,8 +14,8 @@ use crate::storage::PrecompileStorageProvider;
 /// Provides journaled access to persistent storage (sload/sstore), transient
 /// storage (tload/tstore), logs, and balance movement for stateful precompiles.
 ///
-/// Gas model: every sload/sstore is metered with the flat per-op costs
-/// defined in [`crate::storage::gas`]. The precompile dispatcher in
+/// Gas model: the provider meters every sload/sstore with the flat per-op
+/// costs defined in [`crate::storage::gas`]. The precompile dispatcher in
 /// `outbe-evm` charges [`crate::storage::gas::PRECOMPILE_BASE_GAS`] up front
 /// and constructs the provider with the remaining gas budget via
 /// [`EvmStorageProvider::new_with_gas`]. Dispatch code then derives actual
@@ -30,10 +30,10 @@ pub struct EvmStorageProvider<'a> {
 impl<'a> EvmStorageProvider<'a> {
     /// Creates a provider without a bounded gas budget.
     ///
-    /// Intended for call sites that do not need to meter the caller: the
+    /// Intended for call sites that do not need to meter the caller. The
     /// tracker starts at `u64::MAX`, so [`PrecompileStorageProvider::gas_used`]
-    /// still reports the per-op total that was actually deducted. Static
-    /// flag defaults to `false`; use [`Self::new_with_is_static`] to
+    /// still reports the per-op total that was actually deducted. The static
+    /// flag defaults to `false`. Use [`Self::new_with_is_static`] to
     /// propagate the caller's STATICCALL context.
     pub fn new(internals: EvmInternals<'a>) -> Self {
         Self::new_with_is_static(internals, u64::MAX, false)
@@ -41,9 +41,9 @@ impl<'a> EvmStorageProvider<'a> {
 
     /// Creates a provider with an explicit remaining gas budget.
     ///
-    /// Used by the precompile dispatcher to pass the caller-visible gas
-    /// remaining after the base-dispatch charge. Static flag defaults to
-    /// `false`; use [`Self::new_with_is_static`] to propagate STATICCALL.
+    /// The precompile dispatcher uses it to pass the caller-visible gas
+    /// remaining after the base-dispatch charge. The static flag defaults to
+    /// `false`. Use [`Self::new_with_is_static`] to propagate STATICCALL.
     pub fn new_with_gas(internals: EvmInternals<'a>, gas_limit: u64) -> Self {
         Self::new_with_is_static(internals, gas_limit, false)
     }
@@ -114,7 +114,7 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_> {
         // hash for any `number` within stored history and `B256::ZERO`
         // for blocks outside the window (or ahead of the current head).
         // We map ZERO back to `None` so callers see a clean "unknown"
-        // signal - genuine canonical hashes are statistically never zero.
+        // signal. Genuine canonical hashes are statistically never zero.
         let hash =
             self.internals.db_mut().block_hash(number).map_err(|e| {
                 PrecompileError::Storage(format!("block_hash({number}) failed: {e}"))
@@ -137,7 +137,7 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_> {
     }
 
     fn sload(&mut self, address: Address, key: U256) -> Result<U256> {
-        // EIP-2929 warm read price; Outbe bills every read at this rate.
+        // EIP-2929 warm read price. Outbe bills every read at this rate.
         self.gas.deduct(WARM_STORAGE_READ_COST)?;
         let value = self
             .internals
@@ -157,8 +157,8 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_> {
     }
 
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
-        // EIP-2929 SSTORE_RESET; Outbe has no refund model, so every write
-        // is billed at the reset price (no SSTORE_SET distinction).
+        // EIP-2929 SSTORE_RESET. Outbe has no refund model, so Outbe bills
+        // every write at the reset price (no SSTORE_SET distinction).
         self.gas.deduct(SSTORE_RESET)?;
         self.internals
             .sstore(address, key, value)

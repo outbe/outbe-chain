@@ -54,12 +54,12 @@ fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
 fn factory_provider() -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT as u64));
-    // Stub IntexNFT1155: void calls succeed; balanceOf returns 0 (32 bytes).
+    // Stub IntexNFT1155: void calls succeed, and balanceOf returns 0 (32 bytes).
     storage.stub_sub_call_at(
         crate::constants::INTEX_NFT1155_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
-    // Stub OriginRouter: send* calls return bytes32 sendId (32 bytes); the value is ignored.
+    // Stub OriginRouter: send* calls return bytes32 sendId (32 bytes). The value is ignored.
     storage.stub_sub_call_at(
         crate::constants::ORIGIN_ROUTER_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
@@ -67,7 +67,7 @@ fn factory_provider() -> HashMapStorageProvider {
     storage
 }
 
-/// These cases assert the PROD terms; an unset profile resolves by chain id, and
+/// These cases assert the PROD terms. An unset profile resolves by chain id, and
 /// the test chain is not mainnet.
 fn select_prod_profile(storage: &StorageHandle<'_>) {
     crate::schema::IntexFactoryContract::new(storage.clone())
@@ -76,12 +76,12 @@ fn select_prod_profile(storage: &StorageHandle<'_>) {
         .unwrap();
 }
 
-/// Test ids carry a fixed USD/U pair; only the day varies.
+/// Test ids carry a fixed USD/U pair. Only the day varies.
 fn sid(worldwide_day: u32) -> SeriesId {
     SeriesId::pack(WorldwideDay::new(worldwide_day), *b"USD", b'U').unwrap()
 }
 
-/// Force-call one group against the protocol call window; how many series moved.
+/// Force-call one group against the protocol call window. Returns how many series moved.
 fn call_group(
     s: &StorageHandle<'_>,
     f: &mut IntexFactoryContract,
@@ -116,19 +116,24 @@ fn sample(worldwide_day: u32) -> IssuanceParams {
         issuance_currency: 840,
         reference_currency: 840,
         recipients: vec![],
-        quantities: vec![],
+        units: vec![],
         recipient_chains: vec![],
         // One target in the snapshot exercises the per-chain ISSUANCE loop (empty recipients).
         snapshot_chains: vec![1],
     }
 }
 
+mod capacity_conservation;
 mod creator_reward;
+mod direct_fx_admission;
 mod entrypoints;
 mod groups;
 mod issuance;
 mod lifecycle;
+mod mining_after_deadline;
+mod mining_sequence;
 mod parked;
+mod router_fault;
 mod scans;
 mod settlement;
 mod vwap_push;

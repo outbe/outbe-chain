@@ -169,9 +169,9 @@ impl OutbeEvmConfig {
             inputs.push(SystemTxInputV2::CertifiedParentAccounting { metadata });
         }
         if block_number >= 2 {
-            // mandatory inclusion-window phase after Phase 1. The
-            // gathered credits ride in the header artifact (empty until Phase 7);
-            // executor parity re-derives the same input on the verifier path.
+            // Mandatory inclusion-window phase after Phase 1. The
+            // gathered credits ride in the header artifact (empty until Phase 7).
+            // Executor parity re-derives the same input on the verifier path.
             inputs.push(SystemTxInputV2::LateFinalizeCredits {
                 artifact: artifacts.late_finalize_credits.clone().unwrap_or_default(),
             });
@@ -211,7 +211,7 @@ impl OutbeEvmConfig {
                     error.into(),
                 ))
             })?;
-            if &payload.policy != expected_policy {
+            if &payload.authority.policy != expected_policy {
                 return Err(BlockExecutionError::Internal(
                     alloy_evm::block::InternalBlockExecutionError::Other(
                         "block-1 OST3 policy does not match the immutable ChainSpec schedule"
@@ -281,12 +281,12 @@ impl OutbeEvmConfig {
                     )
                 })?;
 
-                // for body[0] (Phase 1
-                // CertifiedParentAccounting on block_number >= 2) reuse the
-                // prebuilt tx supplied by the payload builder. The defensive
-                // calldata equality check guarantees the tx fed to pre-exec
-                // and the tx going into body[0] are byte-identical even if
-                // the calldata derivation ever diverges.
+                // For body[0] (Phase 1
+                // CertifiedParentAccounting on block_number >= 2), reuse the
+                // prebuilt tx that the payload builder supplies. The defensive
+                // calldata equality check guarantees that the tx fed to
+                // pre-exec and the tx in body[0] are byte-identical. This
+                // holds even if the calldata derivation ever diverges.
                 if ordinal == 0
                     && matches!(kind, crate::system_tx::SystemTxKind::CertifiedParentAccounting)
                 {
@@ -314,20 +314,13 @@ impl OutbeEvmConfig {
                     }
                 }
 
-                let unsigned = build_unsigned_system_tx_with_gas_limit(
-                    kind,
-                    ordinal.try_into().map_err(|_| {
+                let unsigned = build_unsigned_system_tx_with_gas_limit(outbe_primitives::system_tx::SystemTxEnvelopeInput {kind, ordinal: ordinal.try_into().map_err(|_| {
                         BlockExecutionError::Internal(
                             alloy_evm::block::InternalBlockExecutionError::Other(
                                 format!("system tx ordinal {ordinal} exceeds u8 range").into(),
                             ),
                         )
-                    })?,
-                    block_number,
-                    chain_id,
-                    calldata,
-                    gas_limit,
-                )
+                    })?, block_number, chain_id, calldata, gas_limit})
                 .map_err(|error| {
                     BlockExecutionError::Internal(
                         alloy_evm::block::InternalBlockExecutionError::Other(
@@ -413,11 +406,11 @@ impl OutbeEvmConfig {
     /// `block_number <= OutbeProtocolSchedule.genesis_bootstrap_block_number`
     /// (genesis bootstrap skips Phase 1 entirely).
     ///
-    /// The returned `Recovered<TransactionSigned>` is the canonical witness:
-    /// the payload builder caches it in [`OutbeBlockExecutionCtx::prebuilt_phase1_tx`]
-    /// for the executor's pre-exec Phase 1 commit, and reuses it byte-for-byte
-    /// in the main `build_begin_system_txs` call so the body[0] tx and the
-    /// pre-exec witness share the same `signature_hash`.
+    /// The returned `Recovered<TransactionSigned>` is the canonical witness.
+    /// The payload builder caches it in [`OutbeBlockExecutionCtx::prebuilt_phase1_tx`]
+    /// for the executor's pre-exec Phase 1 commit. The payload builder also
+    /// reuses it byte-for-byte in the main `build_begin_system_txs` call, so the
+    /// body[0] tx and the pre-exec witness share the same `signature_hash`.
     pub fn build_signed_phase1_tx(
         &self,
         block_number: u64,
@@ -428,7 +421,7 @@ impl OutbeEvmConfig {
     ) -> Result<Option<Recovered<TransactionSigned>>, BlockExecutionError> {
         use outbe_primitives::protocol_schedule::OutbeProtocolSchedule;
 
-        // / gate on the protocol-schedule field rather than a
+        // Gate on the protocol-schedule field rather than a
         // magic literal `1`. The schedule is the single source of truth.
         let schedule = OutbeProtocolSchedule::default();
         if block_number <= schedule.genesis_bootstrap_block_number {

@@ -3,8 +3,9 @@ pragma solidity ^0.8.30;
 
 import {Routes} from "./routes/Routes.sol";
 
-/// @dev Deploys every route in `script/routes/Routes.sol` on the connected chain. Which side of each route is
-///      canonical is derived from `OUTBE_CHAIN_ID`, so the same command runs on every chain.
+/// @dev Deploys every route in `script/routes/Routes.sol` on the connected chain. The script
+///      derives the canonical side of each route from `OUTBE_CHAIN_ID`, so the same command runs
+///      on every chain.
 contract DeployRoutes is Routes {
     function run() public virtual {
         string memory salt = vm.envString("CONTRACT_SALT");

@@ -1,6 +1,6 @@
 //! Structured errors for the enclave crypto / sealing core.
 //!
-//! Per project safety rules: no `unwrap`/`expect`/`panic` in these paths - every
+//! Per project safety rules, these paths have no `unwrap`/`expect`/`panic`. Every
 //! fallible operation returns a `TeeError`.
 
 use thiserror::Error;

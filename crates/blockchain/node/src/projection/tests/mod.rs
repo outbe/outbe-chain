@@ -1,6 +1,5 @@
 use super::open_logical_projection;
 use super::test_support::admit_startup_finalized_target;
-use super::test_support::run_durable_projection_writer;
 use super::test_support::FinalizedTargetDisposition;
 use std::{
     sync::{
@@ -20,9 +19,9 @@ use super::test_support::project_through_target;
 use super::test_support::projection_failure_class;
 use super::test_support::record_finalized_target;
 use super::test_support::record_or_publish_finalized_target;
-use super::test_support::run_projection_loop;
 use super::test_support::spawn_detached_projection_work;
 use super::test_support::supervise_projection_future;
+use super::test_support::{run_projection_loop, ProjectionLoopInputs, ProjectionProgressSenders};
 use super::validate_projection_network;
 use super::DurableProjectionWrite;
 use super::FinalizedProjectionSink;
@@ -58,7 +57,8 @@ use reth_provider::test_utils::MockEthProvider;
 
 mod fixtures;
 use fixtures::{
-    add_empty_block, checkpoint, initialized_runtime, BlockingWriteStorage, FailAfterStartupStorage,
+    add_empty_block, checkpoint, initialized_runtime, projection_runtime, BlockingWriteStorage,
+    FailAfterStartupStorage,
 };
 
 mod containment;

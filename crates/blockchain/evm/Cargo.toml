@@ -59,8 +59,6 @@ outbe-protocol.workspace = true
 outbe-poseidon.workspace = true
 ark-bn254.workspace = true
 ark-ff.workspace = true
-outbe-paynote.workspace = true
-outbe-emit.workspace = true
 
 # Alloy
 alloy-rpc-types-eth.workspace = true
@@ -95,14 +93,11 @@ serde_json.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-# Emit integration-test fixtures: real witness construction and proving stay
-# test-only; no proving API enters production.
 outbe-chain-constants.workspace = true
 outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
 outbe-node.workspace = true
 outbe-metadosis = { workspace = true, features = ["test-utils"] }
 outbe-nod = { workspace = true, features = ["test-utils"] }
-outbe-paynote = { workspace = true, features = ["test-utils"] }
 outbe-gratis = { workspace = true, features = ["test-enclave"] }
 outbe-tee-enclave.workspace = true
 alloy-sol-types.workspace = true

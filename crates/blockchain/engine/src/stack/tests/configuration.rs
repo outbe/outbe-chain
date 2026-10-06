@@ -184,16 +184,16 @@ fn test_build_peer_map_excludes_unreachable() {
 
 /// commonware 2026.5.0's `validate_label` panics if a span/metric label is not
 /// `[a-zA-Z][a-zA-Z0-9_]*`. The `with_label` -> `.child()` migration carried
-/// dotted labels `dkg.live`/`dkg.retry`, which panicked at block ~90 during DKG
-/// rotation - a rare path no short localnet hits. This feeds the labels the
-/// engine passes to `Context::child(...)` through the REAL commonware validator
-/// (the same function the runtime invokes), so an invalid label fails here
-/// instead of in production. Asserts real label values via the real validator;
-/// it does NOT scan source text.
+/// dotted labels `dkg.live`/`dkg.retry`. They panicked at block ~90 during DKG
+/// rotation. No short localnet hits this rare path. This test feeds the labels
+/// that the engine passes to `Context::child(...)` through the REAL commonware
+/// validator (the same function the runtime invokes). So an invalid label fails
+/// here instead of in production. The test asserts real label values via the
+/// real validator. It does NOT scan source text.
 ///
-/// Add new labels here when introducing a labeled child context. New labels are
-/// additionally caught at runtime (commonware panics) by the localnet harness,
-/// which spawns the `dkg_retry`/`dkg_live` contexts during epoch rotation.
+/// Add new labels here when you introduce a labeled child context. The localnet
+/// harness also catches new labels at runtime (commonware panics). The harness
+/// spawns the `dkg_retry`/`dkg_live` contexts during epoch rotation.
 const ENGINE_SPAWN_LABELS: &[&str] = &[
     "application",
     "broadcast",
@@ -248,8 +248,8 @@ fn dotted_label_is_rejected_by_commonware_validate_label() {
 #[test]
 fn marshal_init_option_height_maps_none_to_genesis_zero() {
     // Exercise the PRODUCTION mapping (super::map_marshal_init_height), not stdlib
-    // Option::unwrap_or - so a regression in how Actor::init's Option<Height> is
-    // mapped (e.g. mapping None to a non-zero height, or dropping Some(n)) fails here.
+    // Option::unwrap_or. So a regression in the mapping of Actor::init's Option<Height>
+    // (e.g. mapping None to a non-zero height, or dropping Some(n)) fails here.
     assert_eq!(super::map_marshal_init_height(None).get(), 0);
     assert_eq!(
         super::map_marshal_init_height(Some(Height::new(7))).get(),
@@ -282,8 +282,8 @@ fn read_ms_uses_default_when_absent() {
     );
 }
 
-/// Test 9: a present value is returned verbatim (including 0 - the value is read
-/// here; the `> 0` rule is enforced by `validate_timing`, see Test 11).
+/// Test 9: `read_ms` returns a present value verbatim, including 0. The value is
+/// only read here. `validate_timing` enforces the `> 0` rule (see Test 11).
 #[test]
 fn read_ms_accepts_present_value() {
     assert_eq!(

@@ -16,9 +16,9 @@ struct Ingress {
     installed: bool,
     quiescing: bool,
     executor: Option<Mailbox>,
-    // These deliveries were not accepted by the executor. Do not acknowledge
+    // The executor did not accept these deliveries. Do not acknowledge
     // or cancel them while Marshal is alive. Its existing max_pending_acks
-    // bounds this collection; the archived blocks remain available on restart.
+    // bounds this collection. The archived blocks remain available on restart.
     withheld: Vec<Exact>,
 }
 
@@ -58,7 +58,7 @@ impl FollowerDrainControl {
                 .lock()
                 .map_err(|_| eyre!("follower ingress lock poisoned"))?;
             ingress.quiescing = true;
-            // Dropping the sole sender closes ingress; executor drains its
+            // Dropping the sole sender closes ingress. The executor drains its
             // already accepted queue and closes its height notification stream.
             ingress.executor.take();
             ingress.installed

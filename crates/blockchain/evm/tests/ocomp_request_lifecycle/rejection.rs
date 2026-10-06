@@ -5,20 +5,18 @@
 use super::*;
 
 pub(crate) fn run() {
-    let VotingOpenScenario {
-        chain_spec,
-        prepared,
-        signer,
-        runtime_body_readers,
-        fork_install,
-        dkg,
-        snapshot,
-        proposer,
-        open_height,
-        intent_id,
-        voting_open,
-        ..
-    } = super::request::open_voting();
+    let (
+        environment,
+        VotingOpenState {
+            prepared,
+            proposer,
+            open_height,
+            intent_id,
+            voting_open,
+            ..
+        },
+    ) = super::request::open_voting().into_successor_parts();
+    let fixture = environment.fixture(&prepared.tree_service);
     let rejected_input = SystemTxInputV2::CycleTick
         .encode()
         .expect("cycle tick input encodes");
@@ -49,22 +47,19 @@ pub(crate) fn run() {
     let height = open_height + 1;
     // The canonical successor returns only after the production builder, the
     // import replay, and the historical replay agree on the execution output,
-    // including receipts, and the header state root matches that output.
+    // including receipts. The header state root must also match that output
+    // before it returns.
     let built = build_canonical_ocomp_successor(
-        &chain_spec,
-        &prepared.tree_service,
-        &signer,
-        &runtime_body_readers,
-        &fork_install,
-        &dkg,
-        &snapshot,
-        proposer,
-        voting_open.header,
-        &voting_open.storage,
-        height,
-        prepared.request_time + (height - REQUEST_HEIGHT),
-        intent_id,
-        vec![rejected, valid],
+        fixture,
+        OcompSuccessorBlock {
+            proposer,
+            parent: voting_open.header,
+            parent_storage: &voting_open.storage,
+            height,
+            timestamp: prepared.request_time + (height - REQUEST_HEIGHT),
+            intent_id,
+            user_transactions: vec![rejected, valid],
+        },
     );
     assert_eq!(
         built.user_transaction_hashes,

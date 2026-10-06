@@ -12,6 +12,8 @@ pub enum IntexFactoryError {
     ZeroAddress,
     #[error("amount must be positive")]
     ZeroAmount,
+    #[error("units must be positive")]
+    ZeroUnits,
     #[error("series not found")]
     SeriesNotFound,
     #[error("series not settleable in state {0}")]
@@ -20,8 +22,8 @@ pub enum IntexFactoryError {
     DeadlineExpired,
     #[error("zero balance")]
     ZeroBalance,
-    #[error("amount exceeds balance")]
-    AmountExceedsBalance,
+    #[error("units exceed balance")]
+    UnitsExceedBalance,
     #[error("insufficient settled balance")]
     InsufficientSettled,
     #[error("insufficient proof of work")]
@@ -35,9 +37,9 @@ pub enum IntexFactoryError {
         authorized: alloy_primitives::U256,
         required: alloy_primitives::U256,
     },
-    #[error("payment token {0} has no registered vault")]
-    PaymentTokenNotRegistered(alloy_primitives::Address),
-    #[error("payment token currency {0} does not match the series")]
+    #[error("settlement asset {0} has no registered vault")]
+    SettlementAssetNotRegistered(alloy_primitives::Address),
+    #[error("settlement asset currency {0} does not match the series")]
     SettlementCurrencyMismatch(u16),
     #[error("no COEN rate published for currency {0}")]
     FxRateUnavailable(u16),
@@ -73,18 +75,6 @@ pub enum IntexFactoryError {
 
     #[error("settlement token moved an unexpected amount")]
     SettlementAmountMismatch,
-
-    #[error("PayNote context {actual} does not match settlement {expected}")]
-    PayNoteContextMismatch {
-        expected: alloy_primitives::B256,
-        actual: alloy_primitives::B256,
-    },
-
-    #[error("PayNote spends {covered}, settlement costs {required}")]
-    PayNoteCostMismatch {
-        covered: alloy_primitives::U256,
-        required: alloy_primitives::U256,
-    },
 }
 
 impl From<outbe_common::pow::PowError> for IntexFactoryError {

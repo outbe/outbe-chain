@@ -99,10 +99,10 @@ fn gas_10_low_gas_zero_fee_policy_failure_must_not_mint_intrinsic_gas() {
 }
 
 /// The per-block zero-fee soft-failure cap admits up to
-/// `MAX_ZERO_FEE_SOFT_FAILURES_PER_BLOCK` soft-failures, then rejects further
-/// ones with a tx-level `InvalidTx` - the variant the payload builder SKIPS
-/// (mark_invalid + continue) and a validator REJECTS the block on, NOT a
-/// fatal `Internal` error that would abort the build (the 2026-05-15 halt).
+/// `MAX_ZERO_FEE_SOFT_FAILURES_PER_BLOCK` soft-failures. Then it rejects further
+/// ones with a tx-level `InvalidTx`. The payload builder SKIPS this variant
+/// (mark_invalid + continue), and a validator REJECTS the block on it. It is NOT
+/// a fatal `Internal` error that would abort the build (the 2026-05-15 halt).
 #[test]
 fn zero_fee_soft_failure_cap_admits_then_rejects_with_invalid_tx() {
     use alloy_evm::block::{BlockExecutionError, BlockValidationError};
@@ -152,8 +152,8 @@ fn zero_fee_oracle_vote_from_delegated_feeder_keeps_zero_balance() {
         seed_registered_active_validator(storage.clone(), validator, &pk);
 
         // Feeder resolution moved to the role-scoped ValidatorSet
-        // delegation registry; the legacy oracle-side mapping is no longer
-        // consulted by `resolve_validator_for_feeder`.
+        // delegation registry. `resolve_validator_for_feeder` no longer
+        // consults the legacy oracle-side mapping.
         let mut validator_set = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         validator_set.set_delegate(
             validator,
@@ -237,6 +237,17 @@ fn zero_fee_oracle_vote_from_delegated_feeder_keeps_zero_balance() {
         executor
             .execute_transaction(zero_fee_tx)
             .expect("delegated zero-fee oracle vote should execute");
+
+        let cfg = &executor.inner.evm.ctx_mut().cfg;
+        assert_eq!(
+            (
+                cfg.disable_balance_check,
+                cfg.disable_base_fee,
+                cfg.disable_fee_charge
+            ),
+            (false, false, false),
+            "oracle waiver must restore fee validation after execution"
+        );
 
         assert_eq!(executor.receipts().len(), 1);
         assert!(executor.receipts()[0].success);
@@ -333,7 +344,7 @@ fn parity_soft_failed_zero_fee_receipt_is_byte_equal_across_runs() {
     assert!(!receipts_a[0].success);
     assert_eq!(receipts_a[0].logs.len(), 1);
     // Soft-fail log must come from the zero-fee policy address with the
-    // OutbeFailure topic0 - anything else is a parity drift.
+    // OutbeFailure topic0. Anything else is a parity drift.
     assert_eq!(
         receipts_a[0].logs[0].address,
         outbe_primitives::addresses::ZERO_FEE_POLICY_LOG_ADDRESS
@@ -366,7 +377,7 @@ fn parity_soft_failed_zero_fee_receipt_is_byte_equal_across_runs() {
 
 /// / T6.6 property: `validator_fee_sum` MUST NOT be perturbed
 /// by soft-failed zero-fee transactions. Failed zero-fee txs never run
-/// the EVM and never contribute miner fees; only successful user txs in
+/// the EVM and never contribute miner fees. Only successful user txs in
 /// the priority-fee path increment `current_block_validator_fees`.
 ///
 /// This is a focused invariance test (proptest-style over multiple
@@ -414,26 +425,12 @@ fn property_soft_fail_does_not_perturb_validator_fee_sum() {
         let ctx = execution_ctx(Some(1), Bytes::new());
         // Construct OutbeBlockExecutor directly (instead of through
         // `config.create_executor`) to keep the concrete type so we can
-        // call `current_execution_summary` - the method is private to
-        // `OutbeBlockExecutor` and hidden behind the `BlockExecutorFor`
-        // opaque return type otherwise.
+        // call `current_execution_summary`. The method is private to
+        // `OutbeBlockExecutor`. Otherwise the `BlockExecutorFor` opaque
+        // return type hides it.
         let mut executor = OutbeBlockExecutor::new(
             EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-            None,
-            Bytes::new(),
-            None,
-            false,
-            None,
-            ctx.inner.parent_hash,
-            None,
-            ctx.expected_begin_system_txs.clone(),
-            ctx.expected_end_system_txs.clone(),
-            ctx.system_layout_error.clone(),
-            ctx.parent_consensus_metadata.clone(),
-            ctx.proposer_evm_address,
-            ctx.execute_outbe_block_hooks,
-            ctx.prebuilt_phase1_tx.clone(),
-            ctx.parent_artifact_hint,
+            fixtures::executor_inputs_from_ctx(&ctx, None, false),
         );
 
         // Baseline: no txs.
@@ -464,7 +461,7 @@ fn property_soft_fail_does_not_perturb_validator_fee_sum() {
 /// `on_new_head_block` -> `pool.remove_transactions(block_hashes)` path.
 ///
 /// This is the contract that lets (T4 Won't Do) skip any custom
-/// `mark_invalid` plumbing - confirmation that the executor's `Ok` return
+/// `mark_invalid` plumbing. It confirms that the executor's `Ok` return
 /// is enough for the natural-eviction flow downstream.
 #[test]
 fn soft_fail_returns_ok_so_tx_lands_in_block_body() {
@@ -505,7 +502,7 @@ fn soft_fail_returns_ok_so_tx_lands_in_block_body() {
     let ctx = execution_ctx(Some(1), Bytes::new());
     let mut executor = config.create_executor(evm, ctx);
 
-    // Soft-fail path returns `Ok` - the contract that lets the wrapping
+    // Soft-fail path returns `Ok`. This is the contract that lets the wrapping
     // `BasicBlockBuilder` append the tx to `block.body.transactions`.
     let gas_output = executor
         .execute_transaction(zero_fee_tx)
@@ -524,8 +521,8 @@ fn soft_fail_returns_ok_so_tx_lands_in_block_body() {
         !executor.receipts()[0].success,
         "soft-fail receipt must have status=0"
     );
-    // Receipt contains the synthetic failure log; eth_getTransactionReceipt
-    // will surface this to external observers.
+    // Receipt contains the synthetic failure log. eth_getTransactionReceipt
+    // will show this to external observers.
     assert_eq!(executor.receipts()[0].logs.len(), 1);
     assert_eq!(
         executor.receipts()[0].logs[0].address,
@@ -558,8 +555,8 @@ fn agent_reward_query_input() -> Vec<u8> {
 }
 
 /// Sponsored signer derived from the alloy test-signature recovery.
-/// We don't care WHICH address it is - only that it is stable across
-/// runs and we attach delegation + balance + nonce to it.
+/// We don't care WHICH address it is. We only need it to be stable across
+/// runs, and we attach delegation + balance + nonce to it.
 fn sponsored_test_tx(input: Vec<u8>) -> reth_ethereum::TransactionSigned {
     TxEip1559 {
         chain_id: CHAIN_ID,
@@ -772,6 +769,102 @@ fn eip7702_bootstrap_rejects_zero_balance_without_state_change() {
     assert_eq!(zerofee_counter_for(&mut state, signer), 0);
 }
 
+#[test]
+fn bootstrap_execution_restores_existing_fee_flags_on_every_result_exit() {
+    let config = OutbeEvmConfig::new(test_chain_spec());
+    for flags in 0..8u8 {
+        for outcome in ["included", "declined", "error"] {
+            let recovered = bootstrap_test_tx();
+            let signer = Address::from(*recovered.signer());
+            let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+            let marker = Bytecode::new_legacy([0xef].into());
+            db.insert_account_info(
+                ZEROFEE_ADDRESS,
+                AccountInfo {
+                    code_hash: marker.hash_slow(),
+                    code: Some(marker),
+                    ..Default::default()
+                },
+            );
+            db.insert_account_info(
+                signer,
+                AccountInfo {
+                    balance: U256::from(1),
+                    ..Default::default()
+                },
+            );
+            let mut state = State::builder()
+                .with_database(db)
+                .with_bundle_update()
+                .build();
+            let expected = (flags & 1 != 0, flags & 2 != 0, flags & 4 != 0);
+            let mut env = pectra_evm_env(1);
+            env.cfg_env.disable_balance_check = expected.0;
+            env.cfg_env.disable_base_fee = expected.1;
+            env.cfg_env.disable_fee_charge = expected.2;
+            if outcome == "error" {
+                // The waiver is authorized, but the inner executor rejects
+                // the transaction against the available block gas.
+                env.block_env.gas_limit = 0;
+            }
+            {
+                let evm = config.evm_with_env(&mut state, env);
+                let mut executor =
+                    config.create_executor(evm, execution_ctx(Some(1), Bytes::new()));
+                let result = executor.execute_transaction_with_commit_condition(recovered, |_| {
+                    if outcome == "declined" {
+                        CommitChanges::No
+                    } else {
+                        CommitChanges::Yes
+                    }
+                });
+                match outcome {
+                    "included" => {
+                        assert!(result.unwrap().is_some());
+                        assert_eq!(executor.receipts().len(), 1);
+                        assert!(executor.receipts()[0].success);
+                    }
+                    "declined" => {
+                        assert!(result.unwrap().is_none());
+                        assert!(executor.receipts().is_empty());
+                    }
+                    "error" => {
+                        assert!(result.is_err());
+                        assert!(executor.receipts().is_empty());
+                    }
+                    _ => unreachable!(),
+                }
+                let cfg = &executor.inner.evm.ctx_mut().cfg;
+                assert_eq!(
+                    (
+                        cfg.disable_balance_check,
+                        cfg.disable_base_fee,
+                        cfg.disable_fee_charge
+                    ),
+                    expected,
+                    "flags={flags}, outcome={outcome}"
+                );
+                assert_eq!(
+                    executor.current_execution_summary().validator_fee_sum,
+                    U256::ZERO
+                );
+            }
+            let account = state.basic(signer).unwrap().unwrap();
+            assert_eq!(account.balance, U256::from(1));
+            assert_eq!(account.nonce, if outcome == "included" { 2 } else { 0 });
+            assert_eq!(
+                account.code.and_then(|code| code.eip7702_address()),
+                if outcome == "included" {
+                    Some(ZEROFEE_ADDRESS)
+                } else {
+                    None
+                }
+            );
+            assert_eq!(zerofee_counter_for(&mut state, signer), 0);
+        }
+    }
+}
+
 fn cache_db_with_paymaster_account(
     signer: Address,
     signer_balance: U256,
@@ -835,12 +928,11 @@ fn zerofee_counter_for(
         .saturating_to::<u64>()
 }
 
-/// Happy path: a sponsored tx with `value=0`, `priority_fee=0`,
-/// `to in whitelist` is admitted by the
-/// executor pre-fee hook, executed under zero-fee cfg overrides,
-/// and produces a receipt with a `SponsorshipAuthorized` log. The
-/// signer's balance is untouched and ZEROFEE_ADDRESS' counter slot
-/// is bumped to `(today, 1)`.
+/// Happy path: the executor pre-fee hook admits a sponsored tx with
+/// `value=0`, `priority_fee=0`, `to in whitelist`. The tx executes under
+/// zero-fee cfg overrides and produces a receipt with a
+/// `SponsorshipAuthorized` log. The signer's balance is untouched, and
+/// ZEROFEE_ADDRESS' counter slot is bumped to `(today, 1)`.
 #[test]
 fn eip7702_sponsored_tx_burns_quota_and_emits_event() {
     let config = OutbeEvmConfig::new(test_chain_spec());
@@ -871,9 +963,9 @@ fn eip7702_sponsored_tx_burns_quota_and_emits_event() {
         assert_eq!(receipts.len(), 1);
         assert!(receipts[0].success, "sponsored transaction must succeed");
 
-        // Find the SponsorshipAuthorized log on the receipt - this
+        // Find the SponsorshipAuthorized log on the receipt. This
         // is the guarantee. Topic[0] must match the event sig
-        // hash; signer is topic[1] indexed.
+        // hash. The signer is topic[1] indexed.
         let sig_hash = SponsorshipAuthorized::SIGNATURE_HASH;
         let sponsorship_log = receipts[0]
             .logs
@@ -893,7 +985,7 @@ fn eip7702_sponsored_tx_burns_quota_and_emits_event() {
     }
     state.merge_transitions(BundleRetention::Reverts);
 
-    // Balance must be exactly what we put in - no fee debit. This
+    // Balance must be exactly what we put in, with no fee debit. This
     // is the consensus-visible guarantee the README promises.
     let after = signer_balance(&mut state, signer);
     assert_eq!(
@@ -913,9 +1005,9 @@ fn eip7702_sponsored_tx_burns_quota_and_emits_event() {
 }
 
 /// EIP-7702 delegation to a different address must NOT trigger the
-/// sponsored path. The tx goes through the normal fee path; with
+/// sponsored path. The tx goes through the normal fee path. With
 /// `priority_fee = 0` and signer's balance below the gas cost, the
-/// EVM `disable_balance_check` would normally let it through - we
+/// EVM `disable_balance_check` would normally let it through. We
 /// assert it does NOT.
 #[test]
 fn eip7702_delegation_to_non_paymaster_falls_through_to_fee_path() {
@@ -957,12 +1049,12 @@ fn eip7702_delegation_to_non_paymaster_falls_through_to_fee_path() {
         let mut executor = config.create_executor(evm, ctx);
 
         // The tx is shaped like a sponsored envelope (priority_fee=0,
-        // small gas) - but because signer's code points to ORACLE,
+        // small gas). But signer's code points to ORACLE, so
         // the pre-fee hook leaves it to the normal path. The normal
-        // path requires balance to cover `gas_limit * max_fee_per_gas`,
-        // which 2 COEN (2_000_000 unit) covers at the protocol fee floor,
-        // so this succeeds. The key assertion is that NO SponsorshipAuthorized
-        // log is emitted and the counter stays at 0.
+        // path requires balance to cover `gas_limit * max_fee_per_gas`.
+        // 2 COEN (2_000_000 unit) covers it at the protocol fee floor,
+        // so this succeeds. The key assertion is that the executor emits NO
+        // SponsorshipAuthorized log and the counter stays at 0.
         executor
             .execute_transaction(recovered)
             .expect("non-sponsored tx should still execute through normal fee path");
@@ -981,8 +1073,8 @@ fn eip7702_delegation_to_non_paymaster_falls_through_to_fee_path() {
     }
     state.merge_transitions(BundleRetention::Reverts);
 
-    // Counter must remain at 0 - no quota burn for delegation to
-    // foreign address.
+    // Counter must remain at 0. Delegation to a foreign address burns
+    // no quota.
     let counter = zerofee_counter_for(&mut state, signer);
     assert_eq!(counter, 0, "non-sponsored path must not burn quota");
 }
@@ -1049,13 +1141,16 @@ fn zerofee_counter_slot(signer: Address) -> U256 {
     })
 }
 
-/// F2/code-110 executor-level proof: when the signer has already
-/// burned all 8 slots for today, a 9th sponsored tx is NOT rejected
-/// by the pre-fee hook as a hard error - it lands in the block with
-/// a `status=0` receipt carrying `OutbeFailure(110)`, the counter
-/// stays at 8 (no over-burn), and no balance is debited. This is the
-/// exact contract the README promises and the txpool relies on
-/// (pool admits, executor produces the soft-failure).
+/// F2/code-110 executor-level proof: the signer has already burned all
+/// 8 slots for today. The pre-fee hook does NOT reject a 9th sponsored
+/// tx as a hard error. Instead:
+/// - the tx lands in the block with a `status=0` receipt carrying
+///   `OutbeFailure(110)`.
+/// - the counter stays at 8 (no over-burn).
+/// - no balance is debited.
+///
+/// This is the exact contract the README promises and the txpool relies
+/// on (pool admits, executor produces the soft-failure).
 #[test]
 fn eip7702_ninth_sponsored_tx_soft_fails_with_code_110() {
     let config = OutbeEvmConfig::new(test_chain_spec());
@@ -1120,7 +1215,7 @@ fn eip7702_ninth_sponsored_tx_soft_fails_with_code_110() {
             "rejected tx must not emit SponsorshipAuthorized"
         );
     }
-    // Counter must stay at exactly the limit - no 9th increment.
+    // Counter must stay at exactly the limit, with no 9th increment.
     // Read LIVE storage (not bundle_state): the rejected tx makes no
     // counter change, so the seeded value only exists in the base
     // state, not in the post-execution change set.
@@ -1147,7 +1242,7 @@ fn eip7702_ninth_sponsored_tx_soft_fails_with_code_110() {
 /// so the pre-fee hook must resolve the delegation via
 /// `db.code_by_hash(code_hash)`. The other integration tests insert
 /// `code: Some(..)` and therefore only exercise the `maybe_code`
-/// arm; this test forces the fallback by registering the delegation
+/// arm. This test forces the fallback by registering the delegation
 /// bytecode in the contracts cache while leaving the account's
 /// `code` field `None`.
 #[test]
@@ -1165,7 +1260,7 @@ fn eip7702_delegation_detected_via_code_by_hash_fallback() {
     // `code == None`, `code_hash` set, and the delegation bytecode
     // registered in the contracts cache (reachable only via
     // code_by_hash). The first insert (code: Some) registers the
-    // contract; the second (code: None) replaces the account entry
+    // contract. The second (code: None) replaces the account entry
     // while leaving the contract in the cache.
     let delegation = Bytecode::new_eip7702(ZEROFEE_ADDRESS);
     let delegation_hash = delegation.hash_slow();
@@ -1230,8 +1325,8 @@ fn eip7702_delegation_detected_via_code_by_hash_fallback() {
     }
     state.merge_transitions(BundleRetention::Reverts);
 
-    // Counter bumped to 1 and no fee debited - confirms the fallback
-    // branch actually routed into the sponsored path.
+    // Counter bumped to 1 and no fee debited. This confirms that the
+    // fallback branch actually routed into the sponsored path.
     let counter = zerofee_counter_for(&mut state, signer);
     assert_eq!(
         outbe_zerofee::unpack_counter(counter).1,
@@ -1242,11 +1337,11 @@ fn eip7702_delegation_detected_via_code_by_hash_fallback() {
 }
 
 /// Additive-delegation guarantee: a delegated account that sets a tip
-/// (`priority_fee > 0`) is NOT requesting sponsorship - its tx must
+/// (`priority_fee > 0`) is NOT requesting sponsorship. Its tx must
 /// run through the normal fee path (balance debited, no quota burn,
 /// no SponsorshipAuthorized event), exactly as if the account were
-/// not delegated. This is what lets a signer keep transacting and
-/// paying after the daily free quota is exhausted; without the fix
+/// not delegated. This lets a signer keep transacting and
+/// paying after the daily free quota is exhausted. Without the fix,
 /// the executor soft-failed every non-free-envelope tx from a
 /// delegated account, jailing it into free-only mode.
 #[test]
@@ -1295,7 +1390,7 @@ fn eip7702_delegated_account_with_priority_fee_pays_normally() {
             receipts[0].success,
             "paying delegated tx must succeed as a normal tx"
         );
-        // No SponsorshipAuthorized event - this was not a sponsored tx.
+        // No SponsorshipAuthorized event. This was not a sponsored tx.
         let sig_hash = SponsorshipAuthorized::SIGNATURE_HASH;
         assert!(
             !receipts[0]
@@ -1308,7 +1403,7 @@ fn eip7702_delegated_account_with_priority_fee_pays_normally() {
     state.merge_transitions(BundleRetention::Reverts);
 
     // Fee WAS debited (normal path), and the daily quota counter was
-    // NOT touched - the tx never entered the sponsorship branch.
+    // NOT touched. The tx never entered the sponsorship branch.
     assert!(
         signer_balance(&mut state, signer) < initial_balance,
         "normal fee path must debit the signer's balance"

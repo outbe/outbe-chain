@@ -4,7 +4,7 @@ use eyre::Result;
 use reth_cli_runner::CliRunner;
 use reth_ethereum::tasks::{RuntimeConfig, TokioConfig};
 
-/// The Tokio owner must never be retained by provider/network task clones.
+/// Provider/network task clones must never retain the Tokio owner.
 /// Join blocking work before process exit, including while unwinding.
 struct ExecutionRuntimeOwner(Option<tokio::runtime::Runtime>);
 
@@ -12,7 +12,7 @@ impl Drop for ExecutionRuntimeOwner {
     fn drop(&mut self) {
         if let Some(runtime) = self.0.take() {
             // A timed shutdown can leave a worker closing RocksDB after C++
-            // process-global mutexes have been destroyed by exit().
+            // process-global mutexes were destroyed by exit().
             drop(runtime);
         }
     }
@@ -103,7 +103,7 @@ mod tests {
     fn late_provider_runtime_clone_can_drop_in_async_task_after_runner_shutdown() {
         let result = run_with_execution_runtime(RuntimeConfig::default(), |runner| {
             // ProviderFactory retains this same Runtime type. Its last clone may
-            // outlive the CLI runner and be released by a network task.
+            // outlive the CLI runner, and a network task may release it.
             let last_provider_runtime = runner.runtime();
             let handle = last_provider_runtime.handle().clone();
             let (release, released) = tokio::sync::oneshot::channel();

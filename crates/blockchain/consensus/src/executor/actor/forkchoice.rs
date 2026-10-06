@@ -73,7 +73,7 @@ impl LastCanonicalized {
     /// where Simplex parent rolls back to the last finalized block).
     ///
     /// Pre-finalization head changes are expected on view timeout / leader
-    /// rotation; logging the flip-flop and rollback paths here makes those
+    /// rotation. Logging the flip-flop and rollback paths here makes those
     /// otherwise-silent canonical-tip transitions auditable from the logs.
     pub(super) fn update_head(self, height: Height, digest: Digest) -> Self {
         let mut this = self;
@@ -121,10 +121,10 @@ impl LastCanonicalized {
     /// Returns new state with updated finalized (and head if needed).
     ///
     /// The strict `>` check enforces protocol invariant
-    /// "finalization is monotonic". Stale and conflicting attempts are
-    /// silently ignored by the check; we log them so that any future bug
-    /// or upstream wire-up regression surfaces immediately instead of
-    /// silently dropping a finalize message.
+    /// "finalization is monotonic". The check silently ignores stale and
+    /// conflicting attempts. We log them so that any future bug or upstream
+    /// wire-up regression surfaces immediately instead of silently dropping
+    /// a finalize message.
     pub(super) fn update_finalized(self, height: Height, digest: Digest) -> Self {
         let mut this = self;
         if height > this.finalized_height {

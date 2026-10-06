@@ -52,7 +52,7 @@ impl IntexFactoryContract<'_> {
         keccak256(buf)
     }
 
-    /// Composite key for a group's member list; the layout `bin_index_key` uses,
+    /// Composite key for a group's member list. It uses the layout of `bin_index_key`,
     /// over a separate column keyed by worldwide day instead of bin id.
     pub(crate) fn group_member_key(
         reference_currency: u16,
@@ -62,7 +62,7 @@ impl IntexFactoryContract<'_> {
         Self::bin_index_key(reference_currency, worldwide_day.value(), index)
     }
 
-    /// Enroll a series in its call-price bin; its day's group is created with the first member.
+    /// Enroll a series in its call-price bin. Its day's group is created with the first member.
     pub(crate) fn insert_call_bin(
         &mut self,
         series_id: SeriesId,
@@ -198,7 +198,7 @@ impl IntexFactoryContract<'_> {
     }
 
     /// Move a group the sweep could not finish into a later bucket. Its members
-    /// and deadline stay put; only where the sweep next finds it changes.
+    /// and deadline do not change. Only the place where the sweep next finds it changes.
     pub(crate) fn defer_called_group(
         &mut self,
         reference_currency: u16,
@@ -340,10 +340,15 @@ impl IntexFactoryContract<'_> {
         self.called_group_count.write(&key, members.len() as u32)
     }
 
-    /// Drop whatever is left of a bucket the sweep has finished.
-    pub(crate) fn force_retire_bucket(&mut self, day: u32) -> Result<u32> {
+    /// Retire a bucket the sweep has finished. Every group still in it moves to the
+    /// bucket its deadline falls in, never before the next hour. Returns where each went.
+    pub(crate) fn force_retire_bucket(
+        &mut self,
+        day: u32,
+        now: u64,
+    ) -> Result<Vec<(u16, WorldwideDay, u32)>> {
         let len = self.expiry_bucket_len.read(&day)?;
-        let mut dropped = 0u32;
+        let mut requeued = Vec::new();
         for slot in 0..len {
             let slot_key = Self::bucket_slot_key(day, slot);
             let key = self.expiry_bucket_at.read(&slot_key)?;
@@ -351,8 +356,14 @@ impl IntexFactoryContract<'_> {
                 continue;
             }
             let (iso_code, worldwide_day) = Self::unscoped(key);
-            self.remove_called_group(iso_code, worldwide_day)?;
-            dropped += 1;
+            if self.called_group_count.read(&key)? == 0 {
+                self.remove_called_group(iso_code, worldwide_day)?;
+                continue;
+            }
+            let target = Self::deadline_bucket(self.called_group_deadline.read(&key)?)
+                .max(Self::deadline_bucket(now).saturating_add(1));
+            self.defer_called_group(iso_code, worldwide_day, target)?;
+            requeued.push((iso_code, worldwide_day, target));
         }
         self.expiry_bucket_len.clear(&day)?;
         self.expiry_bucket_live.clear(&day)?;
@@ -361,7 +372,7 @@ impl IntexFactoryContract<'_> {
             self.expiry_sweep_day.write(0)?;
             self.expiry_cursor.write(0)?;
         }
-        Ok(dropped)
+        Ok(requeued)
     }
 
     /// Free one bucket slot, retiring the bucket once nothing waits in it.
@@ -517,7 +528,7 @@ impl GroupIndex<'_> {
         Ok(())
     }
 
-    /// Drop the group's bin entry (swap-and-pop); clear the trie bit when the bin
+    /// Drop the group's bin entry (swap-and-pop). Clear the trie bit when the bin
     /// empties.
     fn detach(
         &self,

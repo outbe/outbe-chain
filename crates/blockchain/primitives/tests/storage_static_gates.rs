@@ -1,12 +1,11 @@
-//! verifies that each of the 8 mutating methods on
+//! Verifies that each of the 8 mutating methods on
 //! [`outbe_primitives::storage::StorageHandle`] returns
 //! [`outbe_primitives::error::PrecompileError::WriteProtection`] when
 //! the underlying provider reports `is_static() == true`.
 //!
-//! The gates are the runtime enforcement of STATICCALL semantics: a
-//! precompile invoked under STATICCALL must not modify state. Before
-//! the gates were absent and mutations silently succeeded
-//! (consensus bug).
+//! The gates enforce STATICCALL semantics at runtime: a precompile
+//! invoked under STATICCALL must not modify state. Previously, the gates
+//! were absent and mutations silently succeeded (consensus bug).
 
 use alloy_primitives::{address, Address, LogData, U256};
 use outbe_primitives::{

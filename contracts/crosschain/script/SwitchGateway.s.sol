@@ -7,12 +7,14 @@ import {console2} from "forge-std/console2.sol";
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {ERC7786Bridge} from "src/ERC7786Bridge.sol";
 
-/// @dev Switches the bridge's active gateway, i.e. the cross-chain protocol (LayerZero <-> Hyperlane), via
-///      `bridge.setGateway`. The target adapter must already be deployed (1_DeployAdapters) and its CREATE3 address is
-///      derived from the salt. Applications are unaffected - they keep talking to the same bridge.
+/// @dev Switches the bridge's active gateway, i.e. the cross-chain protocol
+///      (LayerZero <-> Hyperlane), via `bridge.setGateway`. The target adapter must already be
+///      deployed (1_DeployAdapters). The script derives its CREATE3 address from the salt.
+///      Applications are unaffected. They keep talking to the same bridge.
 ///
-/// Run on EVERY chain consistently. Messages already in flight through the previous adapter are dropped on arrival
-/// (rejected by the bridge) and must be re-sent from the source through the new gateway.
+/// Run on EVERY chain consistently. Messages already in flight through the previous adapter are
+/// dropped on arrival (the bridge rejects them). They must be sent again from the source through
+/// the new gateway.
 ///
 /// Required env (DEPLOYER_PK must be the bridge owner):
 ///   DEPLOYER_PK, CONTRACT_SALT, CREATE3_FACTORY_ADDRESS, ACTIVE_GATEWAY ("lz" | "hyperlane").

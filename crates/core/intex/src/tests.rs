@@ -120,7 +120,7 @@ fn owner() -> Address {
     Address::repeat_byte(0xA1)
 }
 
-/// Test ids carry a fixed USD/U pair; only the day varies.
+/// Test ids carry a fixed USD/U pair. Only the day varies.
 fn sid(worldwide_day: u32) -> SeriesId {
     SeriesId::pack(WorldwideDay::new(worldwide_day), *b"USD", b'U').unwrap()
 }
@@ -175,8 +175,8 @@ fn create_then_read_round_trip() {
         assert_eq!(r.issued_at, ISSUED_AT);
         assert_eq!(r.called_at, 0);
         assert_eq!(r.worldwide_day, 20260101.into());
-        // The ledger stores the call period verbatim; defaulting is the
-        // caller's job.
+        // The ledger stores the call period verbatim. The caller must apply
+        // any default.
         assert_eq!(r.call_notice_period_seconds, CALL_NOTICE_PERIOD);
         assert_eq!(r.issuance_currency, 840);
         assert_eq!(r.reference_currency, 840);
@@ -459,8 +459,8 @@ fn arming_twice_in_one_day_expects_the_union_of_winning_chains() {
         api::arm_proceeds(&storage, DAY, &[10, 20], DEADLINE).unwrap();
         api::arm_proceeds(&storage, DAY, &[20, 30], DEADLINE).unwrap();
 
-        // Chain 20 is armed by both and must count once; chain 30 joins the two
-        // already armed, so the fan-in completes only on the third arrival.
+        // Both arm calls arm chain 20, and it must count once. Chain 30 joins the
+        // two already armed, so the fan-in completes only on the third arrival.
         api::credit_proceeds(&storage, DAY, 10, U256::from(1u64)).unwrap();
         api::credit_proceeds(&storage, DAY, 20, U256::from(1u64)).unwrap();
         assert!(!api::proceeds_ready(&storage, DAY).unwrap());
@@ -971,8 +971,19 @@ fn with_registry_at<R>(now: u64, f: impl FnOnce(StorageHandle) -> R) -> R {
 const NOTICE_END: u64 = ISSUED_AT as u64 + CALL_NOTICE_PERIOD as u64;
 
 #[test]
+fn series_data_reports_the_settlement_deadline_once_called() {
+    with_registry_at(NOTICE_END, |s| {
+        api::create_series(&s, sample_params(62)).unwrap();
+        assert_eq!(dispatch_series_data(&s, sid(62)).settlementDeadline, 0);
+
+        let id = called_series(&s, 63);
+        assert_eq!(dispatch_series_data(&s, id).settlementDeadline, NOTICE_END);
+    });
+}
+
+#[test]
 fn a_called_series_reads_expired_from_its_deadline_not_from_the_sweep() {
-    // Strictly after: on the deadline itself the notice has not run out.
+    // Strictly after: on the deadline itself the notice has not expired.
     with_registry_at(NOTICE_END, |s| {
         let id = called_series(&s, 60);
         assert_eq!(dispatch_series_data(&s, id).state, IntexState::Called as u8);
@@ -997,8 +1008,8 @@ fn realized_units_can_never_exceed_the_issued_count() {
     with_registry(|s| {
         let id = called_series(&s, 45);
         api::record_settled_units(&s, id, 100).unwrap();
-        // One unit past the cap means the two ledgers disagree; the forfeit
-        // arithmetic would underflow later, so it is refused here instead.
+        // One unit past the cap means the two ledgers disagree. The forfeit
+        // arithmetic would underflow later, so this call refuses it here instead.
         assert!(api::record_gem_factory_units(&s, id, owner(), 1).is_err());
         assert_eq!(api::expire_series(&s, id).unwrap().units, 0);
     });
@@ -1114,7 +1125,7 @@ fn the_unpaid_remainder_excludes_settled_exercised_and_gem_factory_units() {
 }
 
 /// Burning erases who held the units, so the two per-owner ledgers are written at
-/// the moment of the burn. Nothing reads them on chain yet; a later reader cannot
+/// the moment of the burn. Nothing reads them on chain yet. A later reader cannot
 /// reconstruct them.
 #[test]
 fn the_per_owner_ledgers_record_who_burned_the_units() {

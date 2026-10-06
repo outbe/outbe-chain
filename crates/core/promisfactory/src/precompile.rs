@@ -1,5 +1,5 @@
-//! Promisfactory precompile at `0x2337`. ABI dispatch only - the promis
-//! mint/burn orchestration + Fidelity bookkeeping lives in [`crate::runtime`].
+//! Promisfactory precompile at `0x2337`. This file does ABI dispatch only. The promis
+//! mint/burn orchestration and the Fidelity bookkeeping live in [`crate::runtime`].
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
@@ -37,7 +37,7 @@ pub fn dispatch(
                         mac: c.mac.0,
                         op_nonce: c.opNonce,
                     };
-                    runtime::mine_coen(storage.clone(), sender, c.amount, auth)
+                    runtime::mine_coen(storage.clone(), sender, c.promisMinor, auth)
                 }),
                 mineGratis(c) => mutate(c, caller, |sender, c| {
                     let promis_auth = ModifyAuth {
@@ -51,7 +51,7 @@ pub fn dispatch(
                     runtime::mine_gratis(
                         storage.clone(),
                         sender,
-                        c.amount,
+                        c.promisMinor,
                         promis_auth,
                         gratis_auth,
                     )

@@ -27,14 +27,14 @@ pub struct AccountConfig {
     /// Hex-encoded private key of the attester account: the validator's oracle
     /// delegate (same key as outbe-feeder) or the validator itself.
     pub private_key: String,
-    /// Validator this attester acts for; also the checkpoint bucket name.
+    /// Validator that this attester acts for. It is also the checkpoint bucket name.
     pub validator_address: String,
 }
 
 /// Checkpoint submission settings. The attester reads this validator's own
 /// public-read bucket (the location it announced on-chain, `<bucket>/<domain>/`)
-/// for every domain the HyperlaneController knows and submits the latest
-/// signed checkpoint.
+/// for every domain that the HyperlaneController knows. It submits the latest
+/// signed checkpoint of each domain.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HyperlaneConfig {

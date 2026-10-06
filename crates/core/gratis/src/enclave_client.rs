@@ -1,11 +1,16 @@
 //! Host-side enclave client for the confidential Gratis write path.
 //!
-//! Every Gratis state transition routes through the enclave: [`crate::runtime`]
-//! reads the current ciphertext from committed storage, hands it + the op to the
-//! enclave via [`apply_gratis_op`], and stores the returned ciphertext verbatim.
-//! Mirrors `tributefactory::enclave_offer` - same determinism (canonical-hash
-//! recheck) and attestation (verify-then-discard) guarantees, and the same
-//! `tee_sidecar_unavailable` failure mode when no enclave is configured.
+//! Every Gratis state transition goes through the enclave. [`crate::runtime`] does
+//! these steps:
+//!
+//! 1. It reads the current ciphertext from committed storage.
+//! 2. It sends the ciphertext and the op to the enclave through [`apply_gratis_op`].
+//! 3. It stores the returned ciphertext verbatim.
+//!
+//! This module mirrors `tributefactory::enclave_offer`. It gives the same determinism
+//! guarantee (canonical-hash recheck) and the same attestation guarantee
+//! (verify-then-discard). It also has the same `tee_sidecar_unavailable` failure mode
+//! when no enclave is configured.
 
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_tee::protocol::{
@@ -17,10 +22,10 @@ use outbe_tee::protocol::{
 /// Determinism: recompute the canonical inputs hash and reject a mismatch
 /// (`tee_enclave_nondeterminism`). Attestation: verify the tag against the
 /// enclave key pinned from its quote (`tee_gratis_attestation_invalid`), then
-/// discard it - it is never written to state. A missing enclave is
-/// `tee_sidecar_unavailable`. All of these are `Fatal` (a node/consensus fault,
-/// not a user revert); a *business* rejection is carried in
-/// `GratisOpResult::status` and handled by the caller.
+/// discard the tag. The tag is never written to state. A missing enclave
+/// is `tee_sidecar_unavailable`. All of these errors are `Fatal` (a node/consensus
+/// fault, not a user revert). `GratisOpResult::status` carries a *business*
+/// rejection, and the caller handles it.
 pub(crate) fn apply_gratis_op(req: GratisOpRequest) -> Result<GratisOpResult> {
     #[cfg(any(test, feature = "test-enclave"))]
     if let Some(result) = test_enclave::try_apply(&req) {
@@ -70,9 +75,9 @@ pub(crate) fn apply_gratis_op(req: GratisOpRequest) -> Result<GratisOpResult> {
 
 /// In-process enclave stand-in for tests (this crate's tests and any downstream
 /// crate that enables the `test-enclave` feature). It runs the **real**
-/// `outbe_tee_enclave::gratis::apply_op` engine against a fixed dev state key, so
-/// the full confidential path is exercised without an SGX sidecar. Attestation is
-/// not checked on this path (it is verified only in the mock-enclave e2e).
+/// `outbe_tee_enclave::gratis::apply_op` engine against a fixed dev state key. Thus
+/// tests exercise the full confidential path without an SGX sidecar. This path does
+/// not check attestation. Only the mock-enclave e2e verifies it.
 #[cfg(any(test, feature = "test-enclave"))]
 pub mod test_enclave {
     use super::*;
@@ -114,10 +119,10 @@ pub mod test_enclave {
         STATE_KEY.with(|k| {
             k.borrow().map(|key| {
                 let mut result = outbe_tee_enclave::gratis::apply_op(&key, req);
-                // Mirror the real transport's combined op: on success, apply the
+                // Mirror the real transport's combined op. On success, apply the
                 // co-located fidelity cohort section under the INDEPENDENT
-                // fidelity key (the shared dev fidelity identity, so a folded
-                // mint writes a blob the fidelity stand-in can later read).
+                // fidelity key. That key is the shared dev fidelity identity, so a
+                // folded mint writes a blob that the fidelity stand-in can later read.
                 if let (outbe_tee::protocol::GratisOpStatus::Applied, Some(section)) =
                     (&result.status, &req.fidelity)
                 {
@@ -127,9 +132,9 @@ pub mod test_enclave {
                         DEV_EPOCH,
                     )
                     .expect("derive dev fidelity state key");
-                    // Mirror the real transport: a failing fidelity section
-                    // rejects the WHOLE op (rejected_result), so the host reverts
-                    // and writes NEITHER ledger - not a panic.
+                    // Mirror the real transport. A failing fidelity section
+                    // rejects the WHOLE op (rejected_result). The host then reverts
+                    // and writes NEITHER ledger. The failure is not a panic.
                     match outbe_tee_enclave::fidelity::apply_cohort_section(
                         &fidelity_key,
                         req.account,

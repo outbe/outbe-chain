@@ -18,6 +18,7 @@ Environment=OUTBE_OCOMP_BASE_PATH=/opt/outbe-chain
 Environment=OCOMP_VALIDATOR_INDEX=0
 Environment=OUTBE_OCOMP_RPC_URL=http://127.0.0.1:8545
 Environment=RUST_MIN_STACK=16777216
+ExecStartPre=/opt/outbe-chain/deploy/validator/outbe-validator-service.py wait-validator-dependencies
 ExecStart=/opt/outbe-chain/outbe-chain node \
   --tee-session-mode production-node-host \
   --chain /opt/outbe-chain/genesis.json \
@@ -52,7 +53,9 @@ ExecStart=/opt/outbe-chain/outbe-chain node \
   --consensus.peers ${OUTBE_CONSENSUS_PEERS} \
   --radicle.control-socket /opt/outbe-chain/keys/radicle/node/outbe-control.sock \
   --radicle.status-address 127.0.0.1:8876
+ExecStartPost=/opt/outbe-chain/deploy/validator/outbe-validator-service.py wait-rpc
 Restart=on-failure
+RestartMode=direct
 RestartSec=5
 RestartSteps=5
 RestartMaxDelaySec=60

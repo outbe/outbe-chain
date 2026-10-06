@@ -235,8 +235,8 @@ impl EmbeddedOcompDomainV1 {
         }
         let cas_limits = CasLimits {
             max_object_bytes: CAS_MAX_OBJECT_BYTES,
-            // CAS is disk-backed and chunked. Capacity is governed by the
-            // filesystem/operator, never by a product-level total-job cap.
+            // CAS is disk-backed and chunked. The filesystem/operator governs
+            // capacity, never a product-level total-job cap.
             max_total_bytes: u64::MAX,
         };
         let local_results = Arc::new(
@@ -324,9 +324,11 @@ impl EmbeddedOcompDomainV1 {
                         .ok_or(EmbeddedOcompRuntimeErrorV1::MissingValidatorRpc)?;
                     let owner_uid = effective_uid()
                         .map_err(|error| stage("resolve Node effective uid", error))?;
-                    let evm_signer =
-                        OutbeEvmSigner::from_strict_file(&layout.evm_key_path, owner_uid)
-                            .map_err(|error| stage("open Validator OCOMP EVM key", error))?;
+                    let evm_signer = outbe_primitives::signer::load::from_strict_file(
+                        &layout.evm_key_path,
+                        owner_uid,
+                    )
+                    .map_err(|error| stage("open Validator OCOMP EVM key", error))?;
                     let result_signer = OcompSigner::from_file(&layout.result_key_path, owner_uid)
                         .map_err(|error| stage("open Validator OCOMP result key", error))?;
                     let sign_once = SignOnceStore::open(
@@ -570,7 +572,7 @@ impl EmbeddedOcompDomainV1 {
         Ok(())
     }
 
-    /// Drives one payout tick over `days`; without it a node-embedded domain
+    /// Drives one payout tick over `days`. Without it, a node-embedded domain
     /// certifies contributors that nobody ever pays.
     pub fn spawn_validator_payout(
         &self,

@@ -254,7 +254,6 @@ fn nod_item_and_bucket_follow_the_same_closed_transition_lifecycle() {
         settled_nods: 0,
         bucket_key: B256::repeat_byte(22),
         worldwide_day: WorldwideDay::new(8),
-        floor_price_minor: U256::from(10),
         entry_price_minor: U256::from(11),
         reference_currency: 840,
     };
@@ -350,7 +349,6 @@ fn every_typed_collection_obeys_the_complete_same_block_transition_matrix() {
         settled_nods: 0,
         bucket_key: B256::repeat_byte(0x33),
         worldwide_day: WorldwideDay::new(8),
-        floor_price_minor: U256::from(10),
         entry_price_minor: U256::from(11),
         reference_currency: 840,
     };
@@ -508,7 +506,7 @@ fn canonical_events_use_domain_emitters_and_survive_as_ordered_operations() {
     let nod = nod_item(entity(10, 4), owner);
     let nod_scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
-        // Finish the previous scope first; cleanup emits no event.
+        // Finish the previous scope first. Cleanup emits no event.
         end_block(storage.clone(), &scope).unwrap();
         begin_block(storage.clone(), &nod_scope).unwrap();
         mint(storage, &nod_scope, BodyInput::NodItem(&nod)).unwrap();

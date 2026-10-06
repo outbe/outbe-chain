@@ -1,8 +1,8 @@
 //! Read-only view precompile for the Intex module.
 //!
-//! Writes stay Rust-to-Rust (IntexFactory); this surface only exposes reads so
+//! Writes stay Rust-to-Rust (IntexFactory). This surface only exposes reads so
 //! off-chain consumers can observe the canonical series identity + lifecycle.
-//! Every method is a view; `reject_value` rejects any `msg.value` before a read.
+//! Every method is a view. `reject_value` rejects any `msg.value` before a read.
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolInterface;
@@ -46,7 +46,13 @@ pub fn dispatch(
                 let exercised = registry.exercised_units.read(&series_id)?;
                 let gem_factory = registry.gem_factory_units.read(&series_id)?;
                 let now = storage.timestamp()?.to::<u64>();
-                to_abi_data(&record, settled, exercised, gem_factory, now)
+                let mut data = to_abi_data(&record, settled, exercised, gem_factory, now)?;
+                if data.state == crate::schema::IntexState::Issued as u8
+                    && crate::api::is_qualified(&storage, &record)?
+                {
+                    data.state = 1;
+                }
+                Ok(data)
             }),
             seriesExists(c) => view(c, |c| registry.series_exists(SeriesId::from(c.seriesId))),
             totalSeries(_) => metadata::<IIntex::totalSeriesCall>(|| registry.read_total_series()),
@@ -107,5 +113,10 @@ fn to_abi_data(
         settledUnits: settled,
         exercisedUnits: exercised,
         gemFactoryUnits: gem_factory,
+        settlementDeadline: if r.called_at == 0 {
+            0
+        } else {
+            u64::from(r.called_at) + u64::from(r.call_notice_period_seconds)
+        },
     })
 }

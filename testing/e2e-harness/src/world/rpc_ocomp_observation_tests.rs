@@ -181,8 +181,8 @@ impl RpcServer {
                     }
                     Err(error) => panic!("accept RPC: {error}"),
                 };
-                // Accepted sockets inherit nonblocking mode on some platforms;
-                // this fixture uses blocking reads with bounded timeouts.
+                // Accepted sockets inherit nonblocking mode on some platforms.
+                // This fixture uses blocking reads with bounded timeouts.
                 stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(5)))

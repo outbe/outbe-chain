@@ -1,12 +1,12 @@
 //! Owned processes and containers, plus the small IO helpers the node/enclave
 //! launchers share.
 //!
-//! Every process the harness launches is **owned**: nodes are held as
+//! Every process the harness launches is **owned**. The harness holds nodes as
 //! [`ChildGuard`]s (killed + reaped on drop, no `nohup`/pid-files) and enclave
-//! containers as [`EnclaveGuard`]s - the `docker run` runs in the **foreground**
-//! (no `-d`) as an owned child, with a `docker rm -f` backstop on drop. Because a
-//! fresh `World` is built per scenario, dropping it tears everything down; the
-//! `Localnet`/`Nodes` handles that hold these guards are non-`Clone`.
+//! containers as [`EnclaveGuard`]s. The `docker run` runs in the **foreground**
+//! (no `-d`) as an owned child, with a `docker rm -f` backstop on drop. The
+//! harness builds a fresh `World` per scenario, so dropping it removes everything.
+//! The `Localnet`/`Nodes` handles that hold these guards are non-`Clone`.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::Read;
@@ -37,7 +37,7 @@ const PINNED_QVL_RUNTIME_FILES: &[(&str, &str)] = &[
 const SENSITIVE_ARG_FLAGS: &[&str] = &["--private-key", "--p2p-secret-key-hex", "--dkg-seed"];
 
 /// How long a node/enclave gets to exit on SIGTERM before it is killed. Reth
-/// closes its database well inside this; the ceiling only bounds teardown when
+/// closes its database well inside this. The ceiling only bounds teardown when
 /// a process is wedged.
 pub(crate) const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -94,10 +94,10 @@ impl DockerImageId {
 
 /// Build a `Vec<String>` of process arguments from `Display` tokens.
 ///
-/// Every argument is stringified once (`to_string`), so callers write clean
-/// literals, ports, and paths - pass a path's `.display()` - without sprinkling
-/// `.into()` / `.to_string()` / `.display().to_string()`. `.extend(args![...])` a
-/// base list with conditional or role-specific tails.
+/// The macro converts every argument to a string once (`to_string`). Callers
+/// write clean literals, ports, and paths without `.into()` / `.to_string()` /
+/// `.display().to_string()` calls. For a path, pass its `.display()`. Use
+/// `.extend(args![...])` to add conditional or role-specific tails to a base list.
 macro_rules! args {
     ($($x:expr),* $(,)?) => {
         ::std::vec![$($x.to_string()),*]
@@ -198,12 +198,11 @@ impl ChildGuard {
     /// Stop and synchronously reap this owned process. Idempotent after exit.
     ///
     /// SIGTERM first, SIGKILL only if the process will not leave. A node killed
-    /// outright never closes its database: reth heals the torn static-file write
-    /// on the next launch by dropping the newest block, which strands the
-    /// offchain-data projection one block short of the finalized head, and
-    /// execution then waits forever for a projected parent that can never
-    /// arrive. Stopping the way an operator would is what makes a restart
-    /// reproducible.
+    /// outright never closes its database. On the next launch, reth heals the
+    /// torn static-file write by dropping the newest block. That strands the
+    /// offchain-data projection one block short of the finalized head. Execution
+    /// then waits forever for a projected parent that can never arrive. A stop
+    /// that follows the operator path is what makes a restart reproducible.
     pub(crate) fn stop(&mut self) {
         self.stop_with_signal("TERM");
     }
@@ -275,8 +274,8 @@ impl Drop for DockerGuard {
 
 /// An owned enclave: the foreground child (killed on drop) plus, for the
 /// containerized profile, a `docker rm -f` backstop for the container itself.
-/// Field order matters - the `docker run` client is dropped first, then the
-/// container is force-removed. A native host enclave has no container, so the
+/// Field order matters. Drop releases the `docker run` client first, and then
+/// the backstop force-removes the container. A native host enclave has no container, so the
 /// child guard alone owns its whole lifetime.
 #[derive(Debug)]
 pub(crate) struct EnclaveGuard {
@@ -678,7 +677,7 @@ pub(crate) fn ensure_enclave_image(
 ) -> Result<DockerImageId> {
     // The scenario's first setup call creates its signing key and freezes the
     // mutable image tag to one immutable image ID. All later starts must use
-    // that retained ID: another concurrent E2E run may legitimately retag the
+    // that retained ID. Another concurrent E2E run may legitimately retag the
     // process-global test image without changing this scenario's SIGSTRUCT.
     if signing_key.exists() {
         let metadata = fs::symlink_metadata(signing_key)?;
@@ -783,8 +782,8 @@ fn build_enclave_command(spec: &EnclaveSpec, image_id: &DockerImageId) -> Result
     ));
 
     // Real SGX: fail closed when no enclave device exists. The same test image
-    // also supports the separately selected GramineDirectDev lane, so silently
-    // omitting the device here would record a false hardware-mode observation.
+    // also supports the separately selected GramineDirectDev lane. A silent
+    // omission of the device here would record a false hardware-mode observation.
     if let Some(enclave_device) = select_sgx_enclave_device(
         spec.pass_sgx_devices,
         Path::new("/dev/sgx_enclave").exists(),
@@ -1033,9 +1032,9 @@ pub(crate) fn read_trimmed(path: &Path) -> Result<String> {
         .collect())
 }
 
-/// Normalize a hex secret file in place (strip whitespace/newlines) so it can
-/// be passed to reth's file-based `--p2p-secret-key` flag, which parses the
-/// file contents without trimming. The file stays where it is; inlining the
+/// Normalize a hex secret file in place (strip whitespace/newlines). The caller
+/// can then pass it to reth's file-based `--p2p-secret-key` flag, which parses
+/// the file contents without trimming. The file stays where it is. Inlining the
 /// hex into argv (`--p2p-secret-key-hex`) would expose the key to every local
 /// user via `ps`.
 pub(crate) fn normalized_secret_file(path: &Path) -> Result<PathBuf> {

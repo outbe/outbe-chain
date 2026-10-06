@@ -8,7 +8,8 @@ import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
-/// @dev `getClaimableRefund` must report exactly what `claimRefund` then pays, from exactly when it pays it.
+/// @dev `getClaimableRefund` must report exactly what `claimRefund` then pays, from exactly when
+///      it pays it.
 contract EscrowAdapterClaimableTest is Test {
     EscrowAdapter internal escrow;
     MockTheCompact internal compact;
@@ -58,7 +59,8 @@ contract EscrowAdapterClaimableTest is Test {
         winners[0] = who;
     }
 
-    /// @dev The view's amount is paid in full, not a wei earlier than its timestamp, and nothing is left after.
+    /// @dev The claim pays the view's amount in full, not a wei earlier than its timestamp, and
+    ///      leaves nothing after.
     function _assertClaimMatchesView(uint128 expectedAmount, uint32 expectedAt) internal {
         (uint128 amount, uint32 claimableAt) = escrow.getClaimableRefund(DAY, bidder);
         assertEq(amount, expectedAmount, "amount");

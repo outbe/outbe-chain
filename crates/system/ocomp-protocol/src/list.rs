@@ -30,9 +30,9 @@ impl OrderedListLimits {
 
 /// Incremental implementation of the frozen ordered-list commitment.
 ///
-/// The caller declares the exact population up front. Leaves are accepted in
-/// canonical index order and only one pending hash per tree level is retained,
-/// so memory use is independent of the complete catalog size.
+/// The caller declares the exact population up front. This type accepts leaves
+/// in canonical index order. It retains only one pending hash per tree level, so
+/// memory use is independent of the complete catalog size.
 pub struct StreamingOrderedListRoot {
     kind: ListKind,
     expected_count: u32,

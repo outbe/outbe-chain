@@ -13,7 +13,6 @@ use outbe_primitives::dispatch::{
     view,
 };
 use outbe_primitives::error::Result;
-use outbe_primitives::storage::gas::{PRECOMPILE_BASE_GAS, ZK_VERIFY_GAS};
 use outbe_primitives::storage::StorageHandle;
 
 use crate::runtime;
@@ -27,16 +26,6 @@ sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
     "../../../contracts/precompiles/src/IIntexFactory.sol"
 );
-
-/// Base gas charged by the registry before invoking [`dispatch`]: `settleIntexWithPayNote`
-/// verifies a PayNote spend proof, which is real native work every validator
-/// repeats.
-pub fn base_gas(input: &[u8]) -> u64 {
-    match input.first_chunk::<4>() {
-        Some(&IIntexFactory::settleIntexWithPayNoteCall::SELECTOR) => ZK_VERIFY_GAS,
-        _ => PRECOMPILE_BASE_GAS,
-    }
-}
 
 // Arming the proceeds fan-in is production work of the issuance leg, which a
 // payout e2e never reaches: it runs no auction, so it issues nothing. This
@@ -57,7 +46,7 @@ sol! {
             uint256 entryPriceMinor,
             uint16 referenceCurrency,
             address[] recipients,
-            uint256[] quantities,
+            uint256[] units,
             uint32[] recipientChains,
             uint32[] snapshotChains
         ) external;
@@ -110,13 +99,13 @@ pub fn dispatch(
     value: U256,
 ) -> Result<Bytes> {
     // IntexFactory is a payable route, so the boundary credits value to this
-    // address; every selector the module has not published refuses it here.
+    // address. Every selector the module has not published refuses it here.
     reject_value_unless_payable(data, PAYABLE_SELECTORS, &value)?;
     #[cfg(feature = "e2e-test")]
     if let Ok(call) = IIntexFactoryTestArming::seedDayVwapsForTestCall::abi_decode(data) {
         // What `set_vwap` does in this module's own tests: the per-day value keyed by
         // the pair's registry index, and the watermark the begin-block hook would move.
-        // Nothing is added to the Oracle crate; only the days it serves are filled in.
+        // This adds nothing to the Oracle crate. It only writes data for the days the crate serves.
         use outbe_oracle::schema::OracleContract;
         use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
@@ -164,7 +153,7 @@ pub fn dispatch(
                     issuance_currency,
                     reference_currency: call.referenceCurrency,
                     recipients: call.recipients.clone(),
-                    quantities: call.quantities.clone(),
+                    units: call.units.clone(),
                     recipient_chains: call.recipientChains.clone(),
                     snapshot_chains: call.snapshotChains.clone(),
                 },
@@ -213,33 +202,24 @@ pub fn dispatch(
                     runtime::settle_intex(
                         &storage,
                         SeriesId::from(c.seriesId),
-                        c.intexOwner,
+                        c.owner,
                         sender,
-                        c.amount,
+                        c.units,
                         c.asset,
                         c.snapshotId,
                     )
                 }),
-                settleIntexWithPayNote(c) => mutate_void(c, caller, |sender, c| {
-                    runtime::settle_intex_with_paynote(
-                        &storage,
-                        SeriesId::from(c.seriesId),
-                        c.intexOwner,
-                        sender,
-                        c.amount,
-                        &c.payNoteProof,
-                    )
-                }),
                 quoteSettlement(c) => metadata::<IIntexFactory::quoteSettlementCall>(|| {
-                    let (settlement_currency, amount, snapshot_id) = runtime::quote_settlement(
-                        &storage,
-                        SeriesId::from(c.seriesId),
-                        c.paymentToken,
-                        c.amount,
-                    )?;
+                    let (settlement_currency, payment_minor, snapshot_id) =
+                        runtime::quote_settlement(
+                            &storage,
+                            SeriesId::from(c.seriesId),
+                            c.asset,
+                            c.units,
+                        )?;
                     Ok(IIntexFactory::quoteSettlementReturn {
                         settlementCurrency: settlement_currency,
-                        payableUnits: amount,
+                        paymentMinor: payment_minor,
                         snapshotId: snapshot_id,
                     })
                 }),
@@ -255,7 +235,7 @@ pub fn dispatch(
                 }),
                 // Off-chain the owner brute-forces `nonce` so the work hash
                 // SHA256(owner ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)
-                // has the protocol's leading zero bytes; `seq` is the on-chain
+                // has the protocol's leading zero bytes. `seq` is the on-chain
                 // per-(series, owner) counter.
                 minePromis(c) => mutate(c, caller, |_sender, c| {
                     let auth = outbe_promisfactory::api::ModifyAuth {
@@ -266,7 +246,7 @@ pub fn dispatch(
                         &storage,
                         SeriesId::from(c.seriesId),
                         c.owner,
-                        c.amount,
+                        c.units,
                         c.nonce,
                         auth,
                     )
@@ -303,6 +283,9 @@ pub fn dispatch(
                 }),
                 seriesUnitCounts(c) => view(c, |c| {
                     runtime::series_unit_counts(&storage, c.seriesId.into())
+                }),
+                ownerBalances(c) => view(c, |c| {
+                    runtime::owner_balances(&storage, c.seriesId.into(), c.owner)
                 }),
             }
         },

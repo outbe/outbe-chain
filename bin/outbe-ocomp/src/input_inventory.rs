@@ -1,9 +1,11 @@
 //! Disk-backed authority for one finalized Tribute population.
 //!
-//! The input population may be arbitrarily larger than RAM. We therefore keep
-//! only one bounded sort run in memory, merge runs with bounded fan-in, and
-//! publish the immutable inventory header only after the CE root, exact count,
-//! and nominal total have all closed.
+//! The input population may be arbitrarily larger than RAM. Therefore this module:
+//!
+//! - keeps only one bounded sort run in memory
+//! - merges runs with bounded fan-in
+//! - publishes the immutable inventory header only after the CE root, exact
+//!   count, and nominal total have all closed
 
 use std::{
     cmp::{Ordering, Reverse},
@@ -42,7 +44,7 @@ const OWNER_BYTES: usize = 20;
 const ISO_BITMAP_BYTES: usize = 8_192;
 const RUN_HEADER_BYTES: u64 = 16;
 const BODY_HEADER_BYTES: u64 = 20;
-// Work heartbeat cadence only; it does not cap the inventory population.
+// Work heartbeat cadence only. It does not cap the inventory population.
 const INVENTORY_PROGRESS_RECORD_HEARTBEAT: u64 = 256;
 
 #[derive(Clone, Debug, Eq, PartialEq)]

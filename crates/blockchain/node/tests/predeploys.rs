@@ -1,25 +1,26 @@
 //! Integration tests for genesis pre-deployed external contracts.
 //!
-//! These contracts are placed at well-known addresses by the genesis pipeline
-//! (`scripts/seed_genesis.py` consuming `seed-testnet.json:contracts[]`, which
-//! references the bytecode/state triplet under `scripts/contracts/` produced
-//! by `scripts/fetch_contract.py`). They are ordinary EVM accounts holding
-//! canonical third-party (or Outbe-internal) runtime bytecode - not Outbe
+//! The genesis pipeline places these contracts at well-known addresses. The
+//! pipeline is `scripts/seed_genesis.py`, which consumes
+//! `seed-testnet.json:contracts[]`. That list references the bytecode/state
+//! triplet under `scripts/contracts/`, which `scripts/fetch_contract.py`
+//! produces. These contracts are ordinary EVM accounts that hold canonical
+//! third-party (or Outbe-internal) runtime bytecode. They are not Outbe
 //! stateful precompiles.
 //!
 //! Coverage:
 //!  * `predeployed_bytecode_matches_vendored_artifacts` - the test genesis
 //!    `alloc` carries byte-identical bytecode to the canonical `*.code.hex`
-//!    files under `scripts/contracts/`. The corresponding `*.meta.json`
-//!    is cross-checked against the address constant in `addresses.rs`,
-//!    catching artifacts fetched from the wrong address.
-//!  * `entrypoint_v07_inlines_sender_creator_immutable` - the SenderCreator
-//!    address is encoded as an immutable inside EntryPoint v0.7's runtime
-//!    bytecode. Catches the v0.7 constructor side-effect gotcha: if the
-//!    SenderCreator we pre-deploy lives at a different address than the one
-//!    EntryPoint expects, UserOperation `initCode` flows would silently
-//!    revert.
-//!  * `handleops_end_to_end` (`#[ignore]`) - stretch goal tracked.
+//!    files under `scripts/contracts/`. The test also cross-checks the
+//!    corresponding `*.meta.json` against the address constant in
+//!    `addresses.rs`. This catches artifacts fetched from the wrong address.
+//!  * `entrypoint_v07_inlines_sender_creator_immutable` - EntryPoint v0.7's
+//!    runtime bytecode encodes the SenderCreator address as an immutable.
+//!    The test catches a gotcha from a side effect of the v0.7 constructor.
+//!    If the SenderCreator we pre-deploy lives at a different address than
+//!    the one EntryPoint expects, UserOperation `initCode` flows would
+//!    silently revert.
+//!  * `handleops_end_to_end` (`#[ignore]`) - a tracked stretch goal.
 
 use alloy_primitives::Address;
 use outbe_primitives::addresses::{
@@ -121,9 +122,9 @@ fn predeployed_bytecode_matches_vendored_artifacts() {
             p.label, p.name
         );
 
-        // Cross-check the meta.json address against the Rust constant. Guards
-        // against an artifact accidentally fetched from a different address
-        // than the predeploy is supposed to live at.
+        // Cross-check the meta.json address against the Rust constant. This
+        // guards against an artifact accidentally fetched from a different
+        // address than the predeploy is supposed to live at.
         let meta = load_meta(p.name);
         let meta_addr = meta["address"]
             .as_str()
@@ -141,9 +142,9 @@ fn predeployed_bytecode_matches_vendored_artifacts() {
 #[test]
 fn entrypoint_v07_inlines_sender_creator_immutable() {
     // Solidity inlines `immutable` address values directly into runtime
-    // bytecode (typically as `PUSH20 <address>`), not into storage. If the
-    // SenderCreator we pre-deploy is at a different address than the one
-    // EntryPoint v0.7's compiled bytecode expects, UserOperation `initCode`
+    // bytecode (typically as `PUSH20 <address>`), not into storage. Suppose the
+    // SenderCreator we pre-deploy is at a different address than the one that
+    // EntryPoint v0.7's compiled bytecode expects. Then UserOperation `initCode`
     // flows would route through a contract that does not exist and silently
     // revert. Verifying the address pattern occurs in the EntryPoint runtime
     // catches that mismatch in CI rather than in production.

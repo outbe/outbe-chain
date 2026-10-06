@@ -151,7 +151,7 @@ impl<'storage> Vote<'storage> {
             .ok_or_else(|| VoteError::ProposalCounterExhausted.into())
     }
 
-    /// Returns `true` when `proposal_id` has been allocated by `write_proposal`.
+    /// Returns `true` when `write_proposal` allocated `proposal_id`.
     pub fn proposal_exists(&self, proposal_id: U256) -> Result<bool> {
         let count = self.proposal_count.read()?;
         Ok(!proposal_id.is_zero() && proposal_id <= count)
@@ -207,7 +207,7 @@ impl<'storage> Vote<'storage> {
     }
 
     /// Records one new proposal liability. The caller may wrap this in a wider
-    /// admission checkpoint; this method is independently atomic as well.
+    /// admission checkpoint. This method is also atomic on its own.
     pub fn record_proposal_bond(&mut self, proposal_id: U256, amount: U256) -> Result<()> {
         if amount.is_zero() {
             return Err(VoteError::InvalidBondAmount.into());
@@ -451,19 +451,17 @@ impl<'storage> Vote<'storage> {
         proposal.set_proposal_status(new_status);
         self.proposals.update(&proposal)?;
 
-        let old_unsettled = matches!(old_status, ProposalStatus::Pending | ProposalStatus::Error);
-        let new_unsettled = matches!(new_status, ProposalStatus::Pending | ProposalStatus::Error);
-        if old_unsettled && !new_unsettled {
+        if !old_status.is_terminal() && new_status.is_terminal() {
             self.remove_pending_proposal_id(proposal_id)?;
         }
-        if !old_unsettled && new_unsettled {
+        if old_status.is_terminal() && !new_status.is_terminal() {
             self.pending_proposal_ids.push(proposal_id)?;
         }
 
         Ok(())
     }
 
-    fn remove_pending_proposal_id(&mut self, proposal_id: U256) -> Result<()> {
+    pub(crate) fn remove_pending_proposal_id(&mut self, proposal_id: U256) -> Result<()> {
         let ids = self.pending_proposal_ids.read_all()?;
         let Some(removed_idx) = ids.iter().position(|p| *p == proposal_id) else {
             warn!("proposal {proposal_id} not found in pending proposal list");

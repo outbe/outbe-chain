@@ -132,7 +132,7 @@ pub fn install_certified_contributor_root(
             .encode_log_data(),
         )?;
         // As with every owner step, advance the non-journaled cursor only after
-        // all journaled state and event writes have succeeded.
+        // all journaled state and event writes succeed.
         capability.authorize_contributor_installation()?;
         Ok(())
     })?;
@@ -383,7 +383,7 @@ mod tests {
         }
     }
 
-    /// Test ids carry a fixed USD/U pair; only the day varies.
+    /// Test ids carry a fixed USD/U pair. Only the day varies.
     fn test_sid(worldwide_day: u32) -> SeriesId {
         SeriesId::pack(WorldwideDay::new(worldwide_day), *b"USD", b'U').unwrap()
     }

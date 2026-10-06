@@ -4,3 +4,5 @@ mod decode;
 mod nod;
 mod retirement;
 mod support;
+
+mod partitions;

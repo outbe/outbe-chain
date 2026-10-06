@@ -1,6 +1,6 @@
 //! Const functions for protocol version parsing and formatting.
 //!
-//! Because string cannot be used in const functions, we use slice of bytes instead.
+//! Const functions cannot use strings, so these functions use byte slices instead.
 
 use alloy_primitives::U256;
 use outbe_primitives::storage::types::{Storable, StorableType};
@@ -59,7 +59,7 @@ impl StorableType for ProtocolVersion {
 
 impl Storable for ProtocolVersion {
     fn from_word(word: U256) -> Self {
-        // Storable::from_word cannot return Result; saturate instead of panicking.
+        // Storable::from_word cannot return Result. Saturate instead of panicking.
         Self::from_raw(word.saturating_to::<u32>())
     }
 

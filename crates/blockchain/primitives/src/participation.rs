@@ -153,6 +153,20 @@ pub fn decode_participation_extended(
     extra_data: &[u8],
     validators: &[Address],
 ) -> Option<DecodedParticipation> {
+    let (participation, missed_offset) = decode_participation_bitmap(extra_data, validators)?;
+    let (missed_proposers, after_missed) = decode_optional_addresses(extra_data, missed_offset);
+    let (byzantine_validators, _) = decode_optional_addresses(extra_data, after_missed);
+    Some(DecodedParticipation {
+        participation,
+        missed_proposers,
+        byzantine_validators,
+    })
+}
+
+fn decode_participation_bitmap(
+    extra_data: &[u8],
+    validators: &[Address],
+) -> Option<(ParticipationData, usize)> {
     // Minimum: magic(4) + version(1) + count(2) + at least 1 bitmap byte
     if extra_data.len() < 8 {
         return None;
@@ -195,56 +209,75 @@ pub fn decode_participation_extended(
         }
     }
 
-    // Decode missed proposers (if present).
-    let missed_offset = 7 + bitmap_len;
-    let (missed_proposers, after_missed) = if extra_data.len() > missed_offset {
-        let missed_count = extra_data[missed_offset] as usize;
-        let addrs_offset = missed_offset + 1;
-        let needed = addrs_offset + missed_count * 20;
-        if extra_data.len() >= needed {
-            let addrs = (0..missed_count)
-                .map(|i| {
-                    let start = addrs_offset + i * 20;
-                    Address::from_slice(&extra_data[start..start + 20])
-                })
-                .collect();
-            (addrs, needed)
-        } else {
-            (Vec::new(), extra_data.len())
-        }
-    } else {
-        (Vec::new(), extra_data.len())
-    };
+    Some((ParticipationData { voters, absent }, 7 + bitmap_len))
+}
 
-    // Decode byzantine validators (if present, after missed proposers section).
-    let byzantine_validators = if extra_data.len() > after_missed {
-        let byz_count = extra_data[after_missed] as usize;
-        let addrs_offset = after_missed + 1;
-        let needed = addrs_offset + byz_count * 20;
-        if extra_data.len() >= needed {
-            (0..byz_count)
-                .map(|i| {
-                    let start = addrs_offset + i * 20;
-                    Address::from_slice(&extra_data[start..start + 20])
-                })
-                .collect()
-        } else {
-            Vec::new()
-        }
-    } else {
-        Vec::new()
+/// An absent or truncated optional section is empty and consumes the remainder.
+/// In particular, a malformed missed section cannot become a byzantine section.
+fn decode_optional_addresses(extra_data: &[u8], offset: usize) -> (Vec<Address>, usize) {
+    let Some(&count) = extra_data.get(offset) else {
+        return (Vec::new(), extra_data.len());
     };
-
-    Some(DecodedParticipation {
-        participation: ParticipationData { voters, absent },
-        missed_proposers,
-        byzantine_validators,
-    })
+    let addresses_start = offset + 1;
+    let section_end = addresses_start + usize::from(count) * 20;
+    let Some(addresses) = extra_data.get(addresses_start..section_end) else {
+        return (Vec::new(), extra_data.len());
+    };
+    let addresses = addresses
+        .chunks_exact(20)
+        .map(Address::from_slice)
+        .collect();
+    (addresses, section_end)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn optional_sections_preserve_truncation_and_validator_order() {
+        let validators = [Address::with_last_byte(2), Address::with_last_byte(1)];
+        // An independent wire vector: first validator present, second absent.
+        let header = b"OUTB\x01\x00\x02\x80";
+        let missed = Address::with_last_byte(0xAA);
+        let byzantine = Address::with_last_byte(0xBB);
+        let mut complete = header.to_vec();
+        complete.push(1);
+        complete.extend_from_slice(missed.as_slice());
+        complete.push(1);
+        complete.extend_from_slice(byzantine.as_slice());
+        for end in header.len()..=complete.len() {
+            let decoded = decode_participation_extended(&complete[..end], &validators).unwrap();
+            assert_eq!(decoded.participation.voters, [validators[0]]);
+            assert_eq!(decoded.participation.absent, [validators[1]]);
+            assert_eq!(
+                decoded.missed_proposers,
+                if end >= 29 { vec![missed] } else { vec![] }
+            );
+            assert_eq!(
+                decoded.byzantine_validators,
+                if end == 50 { vec![byzantine] } else { vec![] }
+            );
+        }
+        // A zero missed count allows the following byzantine section.
+        let mut without_missed = header.to_vec();
+        without_missed.extend_from_slice(&[0, 1]);
+        without_missed.extend_from_slice(byzantine.as_slice());
+        without_missed.push(0xFF); // trailing bytes are tolerated
+        let decoded = decode_participation_extended(&without_missed, &validators).unwrap();
+        assert!(decoded.missed_proposers.is_empty());
+        assert_eq!(decoded.byzantine_validators, [byzantine]);
+    }
+
+    #[test]
+    fn empty_committee_keeps_legacy_minimum_header_length() {
+        assert!(decode_participation_extended(b"OUTB\x01\x00\x00", &[]).is_none());
+        let decoded = decode_participation_extended(b"OUTB\x01\x00\x00\x00", &[]).unwrap();
+        assert!(decoded.participation.voters.is_empty());
+        assert!(decoded.participation.absent.is_empty());
+        assert!(decoded.missed_proposers.is_empty());
+        assert!(decoded.byzantine_validators.is_empty());
+    }
 
     #[test]
     fn test_roundtrip_all_present() {
@@ -365,8 +398,8 @@ mod tests {
         let decoded = decode_participation(&encoded, &sorted_decode_order).unwrap();
 
         // BUG: bitmap says positions 0,1 are signers -> maps to a,b in sorted order.
-        // But the ACTUAL signers were b,d. So 'a' is falsely marked as voter
-        // and 'd' is falsely marked as absent - wrong slashing!
+        // But the ACTUAL signers were b,d. So the decoder falsely marks 'a' as
+        // voter and 'd' as absent. This causes wrong slashing!
         assert!(
             decoded.voters.contains(&a), // WRONG: a didn't vote
             "old bug: a falsely marked as voter"
@@ -502,7 +535,7 @@ mod proptests {
             prop_assert_eq!(decoded.missed_proposers, expected_missed);
         }
 
-        /// Encoding is deterministic - same inputs always produce identical bytes.
+        /// Encoding is deterministic. Same inputs always produce identical bytes.
         #[test]
         fn encoding_deterministic(
             (validators, signers) in validators_and_signers(),
@@ -525,7 +558,7 @@ mod proptests {
             prop_assert!(decode_participation(&encoded, &wrong).is_none());
         }
 
-        /// Random garbage bytes never panic - they return None.
+        /// Random garbage bytes never panic. They return None.
         #[test]
         fn random_bytes_no_panic(
             data in proptest::collection::vec(any::<u8>(), 0..512),

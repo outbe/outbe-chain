@@ -356,7 +356,7 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
     };
     let nod_owner = Address::repeat_byte(0x42);
     let nod_id = outbe_compressed_entities::derive_poseidon_entity_id(nod_owner, day).unwrap();
-    let bucket_key = NodContract::bucket_key(day, U256::from(14), 978);
+    let bucket_key = NodContract::bucket_key(day, U256::from(16), 978);
     let mut nod = NodItemState {
         is_settled: false,
         nod_id,
@@ -364,7 +364,6 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
         gratis_load_minor: U256::from(13),
         worldwide_day: day,
         league_id: 7,
-        floor_price_minor: U256::from(14),
         bucket_key,
         issuance_currency: 840,
         reference_currency: 978,
@@ -424,7 +423,6 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
         settled_nods: 0,
         bucket_key,
         worldwide_day: day,
-        floor_price_minor: nod.floor_price_minor,
         entry_price_minor: U256::from(17),
         reference_currency: nod.reference_currency,
     };

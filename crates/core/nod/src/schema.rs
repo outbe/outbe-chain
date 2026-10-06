@@ -19,11 +19,12 @@ pub enum EffectiveState {
     Forfeited = 4,
 }
 
-/// Input for `NodContract::issue`. `nod_id` is derived inside the contract via
-/// `NodContract::nod_id(owner, worldwide_day)`; the floor from `entry_price_minor` (see
-/// [`NodContract::floor_price_minor`]); the cost from `entry_price_minor` and
-/// `gratis_load_minor` (see [`crate::api::settlement_cost_minor`]). `issued_at` is stamped inside `issue`
-/// from the current block timestamp and is not part of caller inputs.
+/// Input for `NodContract::issue`. The contract derives `nod_id` via
+/// `NodContract::nod_id(owner, worldwide_day)`. It derives the floor from `entry_price_minor`
+/// (see [`NodContract::floor_price_minor`]). It derives the cost from `entry_price_minor` and
+/// `gratis_load_minor` (see [`crate::api::settlement_cost_minor`]). `issued_at` is not part of
+/// caller inputs: it is the block timestamp, or the certified generation time for a materialized
+/// Nod.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NodIssueParams {
     pub owner: Address,
@@ -55,9 +56,6 @@ pub struct NodItemState {
     #[attribute(order = 3)]
     pub league_id: u16,
 
-    #[attribute(order = 4)]
-    pub floor_price_minor: U256,
-
     #[attribute(order = 5)]
     pub bucket_key: B256,
 
@@ -79,42 +77,49 @@ pub struct NodItemState {
 /// reads. Grouped rather than passed positionally so five same-typed numbers
 /// cannot silently swap places on the way to storage.
 ///
-/// Second-encoded like `GemData`'s window, threshold and notice; the daily scan
+/// Second-encoded like `GemData`'s window, threshold and notice. The daily scan
 /// divides them back into day counts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CallTerms {
     /// `entry_price_minor x (100 + call_rate) / 100`.
-    pub call_price: U256,
+    pub call_price_minor: U256,
     /// Selects the `COEN/<iso>` VWAP series the breach is measured on.
     pub reference_currency: u16,
-    /// Markup percent the call price was derived at; provenance for a
-    /// `call_price` that outlives the constant.
+    /// Markup percent the call price was derived at. It is the provenance for a
+    /// `call_price_minor` that outlives the constant.
     pub call_rate: u16,
     /// Trailing span the daily scan reads for breaches, in seconds.
-    pub call_window: u32,
+    pub call_window_seconds: u32,
     /// Breach seconds within that span which arm the call.
-    pub call_threshold: u32,
+    pub call_threshold_seconds: u32,
     /// Seconds after `called_at` in which the owner must settle.
-    pub call_notice_period: u32,
+    pub call_notice_period_seconds: u32,
 }
 
-/// Shared bucket body. Unpaid membership is tracked by `bucket_nod_count`;
-/// the body is deleted when both unpaid and settled counts reach zero.
+/// Shared bucket body. `bucket_nod_count` tracks unpaid membership.
+/// The body is deleted when both unpaid and settled counts reach zero.
 #[derive(Serialize, Deserialize)]
 pub struct NodBucketState {
     pub bucket_key: B256,
     pub worldwide_day: WorldwideDay,
-    pub floor_price_minor: U256,
     pub entry_price_minor: U256,
 
-    /// Denomination of `floor_price_minor`, propagated from the Nods in the
+    /// Denomination of `entry_price_minor`, propagated from the Nods in the
     /// bucket. Qualification compares the floor against the COEN day price for this
     /// currency only, and the call index is namespaced by it.
     pub reference_currency: u16,
 
-    /// Live paid entitlements; decreases when exercised.
+    /// Live paid entitlements. The count decreases when one is exercised.
     #[serde(default)]
     pub settled_nods: u64,
+}
+
+impl NodBucketState {
+    /// The floor every Nod in the bucket shares, derived from its entry price.
+    pub fn floor_price_minor(&self) -> outbe_primitives::error::Result<U256> {
+        NodContract::floor_price_minor(self.entry_price_minor)
+            .ok_or_else(|| crate::errors::NodError::FloorPriceOverflow.into())
+    }
 }
 
 /// Immutable owner projection frozen into one OCOMP activation precondition.
@@ -157,7 +162,7 @@ impl NodCertifiedGenerationProjection {
     /// Packs the owner-specific counts and logical issuance time into one slot.
     ///
     /// Layout, from least-significant bits: `issued_at:u64`,
-    /// `tribute_count:u32`, `nod_count:u32`, `bucket_count:u32`; the upper
+    /// `tribute_count:u32`, `nod_count:u32`, `bucket_count:u32`. The upper
     /// 96 bits are reserved and must remain zero.
     #[must_use]
     pub fn metadata_word(&self) -> U256 {
@@ -171,7 +176,7 @@ impl NodCertifiedGenerationProjection {
 /// EVM storage layout for the Nod NFT contract.
 ///
 /// Nod item and bucket bodies live in the compressed-entity store, not here.
-/// Bucket key = keccak256(worldwide_day ++ floor_price_minor ++ reference_currency).
+/// Bucket key = keccak256(worldwide_day ++ entry_price_minor ++ reference_currency).
 ///
 /// Uncalled buckets wait in a per-currency bitmap trie by call price, see `state::CallBins`.
 ///
@@ -243,7 +248,7 @@ pub struct NodContract {
     #[attribute(order = 30)]
     pub ocomp_materialization_head_sequence: outbe_primitives::storage::dsl::Value<u64>,
 
-    /// Next-free FIFO sequence. Genesis initializes it to one; equality with
+    /// Next-free FIFO sequence. Genesis initializes it to one. Equality with
     /// the head denotes an empty FIFO.
     #[attribute(order = 31)]
     pub ocomp_materialization_tail_sequence: outbe_primitives::storage::dsl::Value<u64>,
@@ -280,9 +285,9 @@ pub struct NodContract {
     /// `entry_price_minor x (100 + CALL_RATE_PCT) / 100`, snapshotted at issuance so
     /// the daily scan never loads a bucket body just to decide.
     #[attribute(order = 40)]
-    pub callable_bucket_call_price: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub callable_bucket_call_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    /// Snapshotted with the call price; selects the `COEN/<iso>` VWAP series.
+    /// Snapshotted with the call price. Selects the `COEN/<iso>` VWAP series.
     #[attribute(order = 41)]
     pub callable_bucket_currency: Mapping<B256, u16>,
 
@@ -298,29 +303,29 @@ pub struct NodContract {
         outbe_primitives::storage::dsl::Map<WorldwideDay, B256>,
 
     // --- Call terms sealed at issuance. The daily scan and the settlement-time
-    // deadline check read a bucket's own copy, so retuning a constant leaves
+    // deadline check read a bucket's own copy. Thus a retuned constant leaves
     // every already-issued bucket on the terms it was issued with.
-    /// Markup percent [`Self::callable_bucket_call_price`] was derived at.
+    /// Markup percent [`Self::callable_bucket_call_price_minor`] was derived at.
     #[attribute(order = 45)]
     pub callable_bucket_call_rate: Mapping<B256, u16>,
 
     /// Trailing span the daily scan reads for breaches, in seconds.
     #[attribute(order = 46)]
-    pub callable_bucket_call_window: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub callable_bucket_call_window_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     /// Breach seconds within that span which arm the call.
     #[attribute(order = 47)]
-    pub callable_bucket_call_threshold: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub callable_bucket_call_threshold_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     /// Seconds after `bucket_called_at` in which the owner must settle.
     #[attribute(order = 48)]
-    pub callable_bucket_call_notice_period: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub callable_bucket_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    /// Widest `call_window` ever issued in a reference currency, in seconds. It
+    /// Widest `call_window_seconds` ever issued in a reference currency, in seconds. It
     /// only grows, so the trailing span the daily scan collects always covers a
     /// bucket whose sealed window outruns the current constant.
     #[attribute(order = 49)]
-    pub max_call_window: outbe_primitives::storage::dsl::Map<u16, u32>,
+    pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
     /// Complete entry-price snapshot captured before issuance, once per day.
     #[attribute(order = 50)]
@@ -331,14 +336,14 @@ pub struct NodContract {
     pub entry_price_currency: Mapping<WorldwideDay, Mapping<u32, u16>>,
     /// Six-decimal entry price by reference ISO, independent of Oracle indices.
     #[attribute(order = 53)]
-    pub entry_price_value: Mapping<WorldwideDay, Mapping<u16, U256>>,
+    pub entry_price_minor: Mapping<WorldwideDay, Mapping<u16, U256>>,
 
-    /// First member's `issued_at`, sealed at bucket creation; VWAP history counts from its
+    /// First member's `issued_at`, sealed at bucket creation. VWAP history counts from its
     /// `first_full_day`. Later members inherit it, like the call terms.
     #[attribute(order = 54)]
     pub callable_bucket_issued_at: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    // Frozen-day call sweep: 0 = idle; one day waits behind the in-flight one at most.
+    // Frozen-day call sweep: 0 = idle. At most one day waits behind the in-flight one.
     /// UTC day an unfinished call sweep is pinned to.
     #[attribute(order = 59)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
@@ -365,13 +370,13 @@ pub struct NodContract {
     #[attribute(order = 68)]
     pub called_bucket_index: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    /// `index + 1` in `called_buckets`; 0 starts from the top.
+    /// `index + 1` in `called_buckets`. 0 starts from the top.
     #[attribute(order = 69)]
     pub forfeit_cursor: outbe_primitives::storage::dsl::Value<u32>,
     /// ISO the call arm resumes at, or `CALL_ARM_DONE`.
     #[attribute(order = 70)]
     pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
-    /// `(bin << 32) | entries left`; 0 left walks the bin from the top.
+    /// `(bin << 32) | entries left`. 0 left walks the bin from the top.
     #[attribute(order = 71)]
     pub call_bin_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
 
@@ -380,7 +385,7 @@ pub struct NodContract {
     #[attribute(order = 72)]
     pub entry_price_source_day: Mapping<WorldwideDay, u32>,
 
-    /// Call-term profile selector seeded from genesis; see `crate::config`.
+    /// Call-term profile selector seeded from genesis. See `crate::config`.
     #[attribute(order = 73)]
     pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
 }
@@ -390,30 +395,37 @@ impl<'storage> NodContract<'storage> {
         self.storage.clone()
     }
 
-    /// A Nod floor derives from its entry alone, rounded down once; `None` only on overflow.
+    /// A Nod floor derives from its entry alone, rounded down once. `None` only on overflow.
     pub fn floor_price_minor(entry_price_minor: U256) -> Option<U256> {
         entry_price_minor
             .checked_mul(U256::from(100 + crate::constants::FLOOR_RATE_PCT))
             .map(|scaled| scaled / U256::from(100u64))
     }
 
+    /// Whether the floor and the call price at any `u16` call rate fit `U256` for this entry.
+    pub fn is_issuable_entry(entry_price_minor: U256) -> bool {
+        entry_price_minor
+            .checked_mul(U256::from(100 + u32::from(u16::MAX)))
+            .is_some()
+    }
+
     /// Computes the bucket key from
-    /// `(worldwide_day, floor_price_minor, reference_currency)`.
+    /// `(worldwide_day, entry_price_minor, reference_currency)`.
     ///
-    /// The currency is part of the preimage because `floor_price_minor` is
-    /// denominated in it: two Nods sharing a day and a floor value in
-    /// different currencies are priced against different oracle rates and must
-    /// not share a bucket. This is the single derivation - the Lysis program
+    /// The currency is part of the preimage because `entry_price_minor` is
+    /// denominated in it. Two Nods that share a day and an entry value in
+    /// different currencies are priced against different oracle rates. They must
+    /// not share a bucket. This is the single derivation. The Lysis program
     /// calls it too, so the off-chain and on-chain keys cannot drift.
     pub fn bucket_key(
         worldwide_day: WorldwideDay,
-        floor_price_minor: U256,
+        entry_price_minor: U256,
         reference_currency: u16,
     ) -> B256 {
         use alloy_primitives::keccak256;
         let mut buf = [0u8; 38];
         buf[0..4].copy_from_slice(worldwide_day.key_bytes().as_slice());
-        buf[4..36].copy_from_slice(&floor_price_minor.to_be_bytes::<32>());
+        buf[4..36].copy_from_slice(&entry_price_minor.to_be_bytes::<32>());
         buf[36..38].copy_from_slice(&reference_currency.to_be_bytes());
         keccak256(buf)
     }

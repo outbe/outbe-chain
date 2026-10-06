@@ -153,9 +153,9 @@ impl OcompCapacityResourceMeterV1 {
     }
 }
 
-/// Measures the exact host facts used by OCM-26. Disk rates are produced by
-/// Rust-owned durable writes in the target workspace, not inferred from a
-/// provider label.
+/// Measures the exact host facts used by OCM-26. Rust-owned durable writes in
+/// the target workspace produce the disk rates. The rates are not inferred from
+/// a provider label.
 #[cfg(feature = "ocomp-integration")]
 pub fn observe_capacity_host(workspace: &Path) -> Result<OcompCapacityHostObservationV1> {
     validate_real_directory(workspace, "capacity workspace")?;

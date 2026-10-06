@@ -8,8 +8,8 @@ import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 
-/// A chain's share of a day is a set of series, carried in as few messages as the caps
-/// allow; a series may span several, which create-if-absent makes safe.
+/// A chain's share of a day is a set of series. The set arrives in as few messages as the caps
+/// allow. A series may span several messages, and create-if-absent makes that safe.
 contract TargetRouterIssuanceBatchTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant DAY = 20_250_101;
@@ -46,7 +46,7 @@ contract TargetRouterIssuanceBatchTest is CrossChainTest {
         payload.callThreshold = 5;
         payload.callPriceMinor = 200e6;
         payload.recipients = recipients;
-        payload.quantities = quantities;
+        payload.units = quantities;
     }
 
     function _issueTo(address recipient, uint256 quantity)
@@ -105,7 +105,7 @@ contract TargetRouterIssuanceBatchTest is CrossChainTest {
         BridgeMsgCodec.IssuanceInstructionsPayload[] memory tail = new BridgeMsgCodec.IssuanceInstructionsPayload[](1);
         (address[] memory r2, uint256[] memory q2) = _issueTo(second, 6);
         tail[0] = _series("20250101-USD-U", r2, q2);
-        // The second piece repeats the series; creating it again would revert, so the
+        // The second piece repeats the series. Creating it again would revert, so the
         // receiver must recognise that it already exists.
         _deliver(1, 2, tail);
 
@@ -115,8 +115,8 @@ contract TargetRouterIssuanceBatchTest is CrossChainTest {
     }
 
     function test_AFullMessageStaysUnderTheSendCeiling() public view {
-        // The caps are counts, not bytes, so pin that the worst case they admit - every
-        // series slot filled, every recipient slot filled - still fits the wire.
+        // The caps are counts, not bytes. So pin that the worst case they admit still fits the
+        // wire: every series slot filled and every recipient slot filled.
         uint256 seriesCount = BridgeMsgCodec.MAX_SERIES_PER_ISSUANCE;
         uint256 perSeries = BridgeMsgCodec.MAX_RECIPIENTS_PER_ISSUANCE / seriesCount;
 

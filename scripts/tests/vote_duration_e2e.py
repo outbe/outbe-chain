@@ -3,7 +3,7 @@
 
 Uses disposable keys, data directories, loopback ports and software enclave fixtures.
 Never points at an existing network. The 1000/30000-block cases check creation and
-restart persistence; short windows exercise expiry, approval and Update activation.
+restart persistence. Short windows exercise expiry, approval and Update activation.
 """
 from __future__ import annotations
 

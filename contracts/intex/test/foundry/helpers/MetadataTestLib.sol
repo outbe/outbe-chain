@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-/// @dev Decoding/matching helpers for base64 data-URI metadata assertions.
+/// @dev Helpers that decode and match base64 data-URI metadata in test assertions.
 library MetadataTestLib {
     bytes internal constant JSON_PREFIX = "data:application/json;base64,";
     bytes internal constant SVG_KEY = "\"image\":\"data:image/svg+xml;base64,";

@@ -18,12 +18,14 @@ impl OcompRetentionCoordinator {
         let proof_job_id = intent
             .job_id(candidate.block_hash, candidate.state_root, &limits)
             .map_err(|error| RetentionError::Source(format!("derive proof JobId: {error}")))?;
-        if proof_job_id != job_id
+        let intent_identity_mismatch = proof_job_id != job_id
             || proof_intent_id != candidate.intent_id
-            || proof.protocol_bundle_hash != candidate.protocol_bundle_hash
+            || proof.protocol_bundle_hash != candidate.protocol_bundle_hash;
+        let finalized_request_mismatch = intent_identity_mismatch
             || proof.parent_accounting.finalized_block_number != candidate.block_number
             || proof.parent_accounting.finalized_block_hash != candidate.block_hash
-            || intent.wwd != candidate.wwd
+            || intent.wwd != candidate.wwd;
+        if finalized_request_mismatch
             || intent.ce_sealed_root != candidate.ce_sealed_root
             || intent
                 .input_lease_id()
@@ -44,8 +46,9 @@ impl OcompRetentionCoordinator {
     ) -> Result<LysisOpeningsProofV1, RetentionError> {
         let candidate = self.live_candidate(job_id)?;
         let proof = self.source.build_lysis_openings(candidate, subjects)?;
-        if proof.job_id != job_id
-            || proof.protocol_bundle_hash != candidate.protocol_bundle_hash
+        let job_identity_mismatch =
+            proof.job_id != job_id || proof.protocol_bundle_hash != candidate.protocol_bundle_hash;
+        if job_identity_mismatch
             || proof.finalized_block_hash != candidate.block_hash
             || proof.finalized_state_root != candidate.state_root
             || proof.wwd != candidate.wwd

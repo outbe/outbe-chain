@@ -34,7 +34,7 @@ impl Drop for OwnedState {
 pub struct EndpointTaskOwner(Arc<Mutex<OwnedState>>);
 
 impl EndpointTaskOwner {
-    /// `false` means shutdown won the startup race; no task was spawned.
+    /// `false` means shutdown won the startup race. The owner spawned no task.
     pub fn start(
         &self,
         run: impl Future<Output = Result<(), ManagerError>> + Send + 'static,
@@ -167,8 +167,8 @@ mod tests {
                 })
                 .unwrap();
             assert!(completion.await.is_err());
-            // Poll the retained handle to completion via shutdown, never turn a
-            // closed mailbox into success or lose the original network error.
+            // Poll the retained handle to completion via shutdown. Never turn a
+            // closed mailbox into success, and never lose the original network error.
             let error = owner.shutdown(&resolver).await.unwrap_err().to_string();
             assert!(error.contains(if panic {
                 "endpoint panic witness"

@@ -3,14 +3,16 @@
 //! Verifies that after outbe-precompile propagation, a sub-call driven by
 //! `sub_call::run` can reach an outbe stateful precompile and returns its
 //! output. The target is the stateless Poseidon-BN254 hash precompile at
-//! `ZKPROOF_POSEIDON_ADDRESS` (`0xEE07`), chosen because it needs no state or
-//! contract setup: raw bytes in, 32-byte hash out.
+//! `ZKPROOF_POSEIDON_ADDRESS` (`0xEE07`). The test uses it because it needs no
+//! state or contract setup: raw bytes in, 32-byte hash out.
 //!
 //! This proves the child frame uses `OutbeSubCallPrecompiles` (which dispatches
 //! outbe addresses) rather than plain `EthPrecompiles`. With the old wiring the
 //! call to `0xEE07` would fall through to an empty-account call and return
-//! `Success` with empty returndata; here we assert the returndata equals the
+//! `Success` with empty returndata. Here we assert the returndata equals the
 //! Poseidon hash of the input.
+
+mod sub_call_support;
 
 use std::sync::Arc;
 
@@ -95,8 +97,8 @@ impl AuthenticatedParentTree for StaticAuthenticatedParent {
 
 #[test]
 fn subcall_reaches_outbe_poseidon_precompile() {
-    // No account is inserted for the precompile address: outbe precompiles are
-    // dispatched by the provider, not backed by real accounts/bytecode.
+    // The test inserts no account for the precompile address. The provider
+    // dispatches outbe precompiles. Real accounts/bytecode do not back them.
     let mut ctx = Context::mainnet().with_db(CacheDB::new(EmptyDB::default()));
 
     // One 32-byte BN254 field element as Poseidon input.
@@ -106,11 +108,7 @@ fn subcall_reaches_outbe_poseidon_precompile() {
 
     let result = sub_call::run(
         &mut ctx,
-        CALLER,
-        /* outer_is_static = */ false,
-        SpecId::PRAGUE,
-        None,
-        Arc::new(ExecutionScope::new()),
+        sub_call_support::fresh_environment(CALLER, SpecId::PRAGUE),
         SubCallInput {
             target: ZKPROOF_POSEIDON_ADDRESS,
             value: U256::ZERO,
@@ -158,11 +156,7 @@ fn subcall_reaches_stablecoin_policy_registry_with_canonical_view_output() {
 
     let result = sub_call::run(
         &mut ctx,
-        CALLER,
-        false,
-        SpecId::PRAGUE,
-        None,
-        Arc::new(ExecutionScope::new()),
+        sub_call_support::fresh_environment(CALLER, SpecId::PRAGUE),
         SubCallInput {
             target: STABLECOIN_POLICY_REGISTRY_ADDRESS,
             value: U256::ZERO,
@@ -223,11 +217,7 @@ fn contract_originated_poseidon_call_receives_its_calldata() {
 
     let result = sub_call::run(
         &mut ctx,
-        CALLER,
-        false,
-        SpecId::PRAGUE,
-        None,
-        Arc::new(ExecutionScope::new()),
+        sub_call_support::fresh_environment(CALLER, SpecId::PRAGUE),
         SubCallInput {
             target: POSEIDON_CALLER,
             value: U256::ZERO,
@@ -274,7 +264,6 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
             settled_nods: 0,
             bucket_key,
             worldwide_day: day,
-            floor_price_minor: U256::from(10),
             entry_price_minor: U256::from(9),
             reference_currency: 978,
         })
@@ -286,7 +275,6 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
         gratis_load_minor: U256::from(11),
         worldwide_day: day,
         league_id: 3,
-        floor_price_minor: U256::from(10),
         bucket_key,
         issuance_currency: 840,
         reference_currency: 978,
@@ -335,11 +323,13 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
 
     let result = sub_call::run(
         &mut ctx,
-        CALLER,
-        false,
-        SpecId::PRAGUE,
-        Some(readers),
-        scope,
+        sub_call::SubCallEnvironment {
+            self_address: CALLER,
+            outer_is_static: false,
+            spec: SpecId::PRAGUE,
+            runtime_body_readers: Some(readers),
+            execution_scope: scope,
+        },
         SubCallInput {
             target: NOD_ADDRESS,
             value: U256::ZERO,

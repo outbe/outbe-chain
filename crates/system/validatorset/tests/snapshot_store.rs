@@ -1,7 +1,7 @@
 //! Integration tests for the V2 `CommitteeSnapshotStore`.
 //!
-//! Layout tests pin the schema slot indices for slot 30 and slots 31..40 so
-//! schema drift is caught as a wire-format-breaking change. Hash and key
+//! Layout tests pin the schema slot indices for slot 30 and slots 31..40. Thus
+//! the tests catch schema drift as a wire-format-breaking change. Hash and key
 //! formula tests pin the byte layout. The atomicity tests use
 //! the V2 atomic boundary hook (`activate_boundary_atomic`) to verify that
 //! a failure in the middle of activation never leaves a partial snapshot
@@ -85,8 +85,8 @@ fn ocomp_registration(
     (registration, encoded)
 }
 
-/// Hand-rolled legacy `hash_active_set` (addresses-only) - kept verbatim from
-/// `crates/blockchain/consensus/src/dkg_manager.rs::hash_active_set` so the
+/// Hand-rolled legacy `hash_active_set` (addresses-only). It is a verbatim copy of
+/// `crates/blockchain/consensus/src/dkg_manager.rs::hash_active_set`, so the
 /// distinctness assertion in
 /// `committee_set_hash_v2_never_equals_legacy_active_set_hash_for_same_addresses`
 /// is a true comparison against the legacy formula.
@@ -109,41 +109,7 @@ fn committee_snapshot_storage_slots_31_to_40_are_stable() {
     StorageHandle::enter(&mut storage, |storage| {
         let vs = ValidatorSet::new(storage);
 
-        assert_eq!(vs.committee_snapshot_exists.base_slot(), U256::from(31u64));
-        assert_eq!(vs.committee_snapshot_len.base_slot(), U256::from(32u64));
-        assert_eq!(
-            vs.committee_snapshot_address_at.base_slot(),
-            U256::from(33u64)
-        );
-        assert_eq!(
-            vs.committee_snapshot_pubkey_lo_at.base_slot(),
-            U256::from(34u64)
-        );
-        assert_eq!(
-            vs.committee_snapshot_pubkey_hi_at.base_slot(),
-            U256::from(35u64)
-        );
-        assert_eq!(
-            vs.committee_snapshot_vrf_material_version.base_slot(),
-            U256::from(36u64)
-        );
-        assert_eq!(
-            vs.committee_snapshot_vrf_group_public_key_hash.base_slot(),
-            U256::from(37u64)
-        );
-        assert_eq!(
-            vs.committee_snapshot_vrf_group_public_key_len.base_slot(),
-            U256::from(38u64)
-        );
-        assert_eq!(
-            vs.committee_snapshot_vrf_group_public_key_chunk_at
-                .base_slot(),
-            U256::from(39u64)
-        );
-        assert_eq!(
-            vs._reserved_committee_snapshot_slot_40.slot(),
-            U256::from(40u64),
-        );
+        outbe_validatorset::test_support::assert_committee_snapshot_schema_slots(&vs);
     });
 }
 
@@ -503,8 +469,8 @@ fn committee_set_hash_formula_includes_domain_epoch_len_addresses_pubkeys_and_vr
 
     // Domain: changing the domain string changes the hash. We exercise this by
     // hashing a synthetic input that mirrors `committee_set_hash_v2` but with
-    // an alternate domain; if the function didn't include the domain prefix,
-    // it would equal the recomputed value below - and we assert it does NOT.
+    // an alternate domain. If the function didn't include the domain prefix,
+    // it would equal the recomputed value below. We assert it does NOT.
     let mut alt_domain_buf = Vec::new();
     alt_domain_buf.extend_from_slice(b"DIFFERENT_DOMAIN_V2");
     alt_domain_buf.extend_from_slice(&5u64.to_be_bytes());
@@ -635,8 +601,8 @@ fn committee_set_hash_v2_never_equals_legacy_active_set_hash_for_same_addresses(
 #[test]
 fn committee_snapshot_order_matches_commonware_public_key_order_not_address_order() {
     // Pick addresses and pubkeys whose Commonware (lexicographic on raw
-    // pubkey bytes) order is the inverse of the address order: addresses
-    // sort 0x11.. < 0x22.. but pubkeys sort 0xFF.. > 0xAA...
+    // pubkey bytes) order is the inverse of the address order. Addresses
+    // sort 0x11.. < 0x22.., but pubkeys sort 0xFF.. > 0xAA...
     let entry_a = CommitteeEntry {
         address: address!("0x1111111111111111111111111111111111111111"),
         consensus_pubkey: pubkey_filled(0xFF),
@@ -708,8 +674,8 @@ fn boundary_block_writes_both_outgoing_and_incoming_snapshots_atomically() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_block_number(1);
     StorageHandle::enter(&mut storage, |storage| {
-        // Admit OCOMP material for both validators before either one can be
-        // represented by a production committee snapshot, then recreate the
+        // Admit OCOMP material for both validators before a production
+        // committee snapshot can represent either one. Then recreate the
         // real outgoing-exit/incoming-join rotation shape.
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner
@@ -931,24 +897,15 @@ fn committee_snapshot_slot39_bytes_match_commonware_encode_of_real_polynomial() 
         .iter()
         .map(|k| Player::new(info.clone(), k.clone()).unwrap())
         .collect();
-    for (dealer_idx, (pub_msg, priv_msgs)) in pub_msgs.iter().zip(all_priv_msgs.iter()).enumerate()
-    {
-        let dealer_pk = keys[dealer_idx].public_key();
-        for (player_pk, priv_msg) in priv_msgs {
-            let player_idx = keys
-                .iter()
-                .position(|k| &k.public_key() == player_pk)
-                .unwrap();
-            if let Some(ack) = players[player_idx]
-                .dealer_message::<N3f1>(dealer_pk.clone(), pub_msg.clone(), priv_msg.clone())
-                .expect("fixture dealing must be valid")
-            {
-                dealers[dealer_idx]
-                    .receive_player_ack(player_pk.clone(), ack)
-                    .unwrap();
-            }
-        }
-    }
+    outbe_consensus::test_harness::acknowledge_fixture_dealings(
+        &keys,
+        outbe_consensus::test_harness::FixtureDealings {
+            public_messages: &pub_msgs,
+            private_messages: &all_priv_msgs,
+        },
+        &mut dealers,
+        &mut players,
+    );
     let mut logs = std::collections::BTreeMap::new();
     for dealer in dealers {
         let signed_log = dealer.finalize::<N3f1>();
@@ -1031,11 +988,12 @@ fn committee_snapshot_slot39_bytes_match_commonware_encode_of_real_polynomial() 
 // ---------------------------------------------------------------------------
 // 12. Boundary activation rolls back snapshots on artifact rejection.
 //
-// Behavioural test for the AC: drive `activate_boundary_atomic` through the
-// fail-closed membership check with an unregistered artifact participant, then
-// prove that the journal is reverted end-to-end - neither outgoing nor incoming
-// snapshot is reachable, and `active_consensus_set_hash` is unchanged. This
-// turns the previously mechanism-only argument (CheckpointGuard::Drop semantics
+// Behavioural test for the AC:
+// 1. Drive `activate_boundary_atomic` through the fail-closed membership check
+//    with an unregistered artifact participant.
+// 2. Prove that the journal reverts end-to-end. Neither the outgoing nor the
+//    incoming snapshot is reachable, and `active_consensus_set_hash` is unchanged.
+// This turns the previously mechanism-only argument (CheckpointGuard::Drop semantics
 // + exists-last write ordering) into a runtime assertion.
 // ---------------------------------------------------------------------------
 
@@ -1114,15 +1072,15 @@ fn boundary_activation_rolls_back_snapshots_on_failure() {
 
         // the outgoing snapshot was the FIRST thing written, and the
         // `exists` flag for it would normally be set by the time the failure
-        // happens. The CheckpointGuard drop path must revert that write -
-        // reading the snapshot back through the public API returns None.
+        // happens. The CheckpointGuard drop path must revert that write.
+        // Reading the snapshot back through the public API returns None.
         assert!(
             read_committee_snapshot(storage.clone(), outgoing_key)
                 .unwrap()
                 .is_none(),
             "outgoing snapshot must NOT be reachable after rollback",
         );
-        // Same for the incoming snapshot - that path never executes because
+        // Same for the incoming snapshot. That path never executes because
         // the activation step fails first, but we check it anyway to lock
         // the invariant.
         assert!(
@@ -1187,7 +1145,7 @@ fn committee_snapshot_prune_ring_retains_recent_and_clears_old_epochs() {
             .collect();
 
         // The oldest (total - retain) epochs are evicted: snapshot gone, exists
-        // flag cleared, length zeroed - their slots are reclaimed.
+        // flag cleared, length zeroed. Their slots are reclaimed.
         for epoch in 0..(total - retain) {
             let key = keys[epoch as usize];
             assert!(

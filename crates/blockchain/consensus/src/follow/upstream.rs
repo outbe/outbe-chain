@@ -213,7 +213,7 @@ pub trait FinalizedSource: Clone + Send + Sync + 'static {
         }
     }
     /// Untrusted ancestor bytes. Only use with an independently authenticated
-    /// expected commitment; a height alone is never finality evidence.
+    /// expected commitment. A height alone is never finality evidence.
     fn get_block(&self, height: Height) -> impl Future<Output = Option<ConsensusBlock>> + Send {
         async move { self.get_finalization(height).await.map(|value| value.block) }
     }
@@ -221,7 +221,7 @@ pub trait FinalizedSource: Clone + Send + Sync + 'static {
     /// Fetch the finalization + block for `height` from the upstream.
     ///
     /// Returns `None` when the upstream does not (yet) have it, or the request
-    /// fails; the marshal resolver will retry.
+    /// fails. The marshal resolver will retry.
     fn get_finalization(
         &self,
         height: Height,

@@ -8,8 +8,9 @@ pub use lifecycle::EndpointTaskOwner;
 pub use metrics::RadicleMetrics;
 pub use network::{
     shutdown_bounded, EndpointEvidenceHandle, EndpointNetwork, EndpointNetworkService,
-    LocalEndpointIdentity, LocalEndpointIdentityChannel, LocalEndpointIdentityHandle,
-    LocalEndpointIdentityPublisher, SignedEndpointEvidence,
+    EndpointSigningIdentity, EndpointTransport, LocalEndpointIdentity,
+    LocalEndpointIdentityChannel, LocalEndpointIdentityHandle, LocalEndpointIdentityPublisher,
+    SignedEndpointEvidence,
 };
 pub use sidecar::{query_sidecar, SidecarError, SidecarInfo};
 pub use status::{

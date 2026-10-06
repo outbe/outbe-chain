@@ -4,19 +4,19 @@
 //! What it models, faithfully:
 //!
 //! - `simulated::Network<deterministic::Context, bls12381::PublicKey>`
-//!   peer fabric - same shape as production's authenticated::lookup
-//!   network from outside the engine.
+//!   peer fabric. It has the same shape as the production authenticated::lookup
+//!   network, as seen from outside the engine.
 //! - Per-node `Muxer::new(...)` over each of three physical channels
-//!   (vote=0, cert=1, res=2). **No `.with_backup()`** - matches
+//!   (vote=0, cert=1, res=2). **No `.with_backup()`**. This matches
 //!   production's stack.rs:516-534.
 //! - `HybridScheme::<MinSig>::signer(...)` from outbe-consensus' own
-//!   `crate::hybrid` module - the actual signer construction.
+//!   `crate::hybrid` module. This is the actual signer construction.
 //! - `simplex::Engine::new(...)` driven by `RoundRobin` elector with
 //!   leader = `(epoch + view) % n`.
 //! - The harness invokes `crate::epoch_subchannels::register_epoch_subchannels`
-//!   and `crate::epoch_subchannels::take_or_register_current` - the
-//!   exact functions production calls in stack.rs at DKG completion
-//!   and the top of `'epoch_loop` respectively. Toggling
+//!   and `crate::epoch_subchannels::take_or_register_current`. Production
+//!   calls these exact functions in stack.rs: the first at DKG completion,
+//!   the second at the top of `'epoch_loop`. Toggling
 //!   `CycleOptions::use_pre_registration` switches between the
 //!   pre-fix lazy path and the post-fix pre-register path.
 //!
@@ -26,12 +26,12 @@
 //!
 //! - `MockAutomaton` (Automaton + CertifiableAutomaton) - deterministic
 //!   propose/verify/certify, no payload latency.
-//! - `MockRelay` (Relay) - shared digest -> bytes broadcast store; the
+//! - `MockRelay` (Relay) - shared digest -> bytes broadcast store. The
 //!   digest remains self-describing for the mock automaton.
 //! - `MockReporter` (Reporter) - records `Finalization` activities by
-//!   view and exposes `view_finalized(View) -> bool` so tests can
-//!   ask the precise question "did view N finalize on this node?",
-//!   insulated from later-view recovery.
+//!   view and exposes `view_finalized(View) -> bool`. With it, tests can
+//!   ask the precise question "did view N finalize on this node?". The
+//!   answer is insulated from later-view recovery.
 
 #![allow(dead_code)]
 
@@ -69,6 +69,26 @@ use crate::epoch_subchannels::{
     register_epoch_subchannels, take_or_register_current, EpochSubchannels,
 };
 use crate::hybrid::HybridScheme;
+
+#[path = "test_harness/dealings.rs"]
+mod dealings;
+pub use dealings::{acknowledge_fixture_dealings, FixtureDealings};
+
+#[path = "test_harness/marshal_resolver.rs"]
+mod marshal_resolver;
+pub use marshal_resolver::NoopMarshalResolver;
+
+#[path = "test_harness/fixtures.rs"]
+mod fixtures;
+pub use fixtures::{
+    boundary_artifact, committee_entries, committee_snapshot, fixture_signer_schemes,
+    linked_headers, signed_resolver_proposal, BoundaryFixtureSettings, FixtureSignerSharing,
+    ResolverVote, SignedResolverProposal,
+};
+
+#[path = "test_harness/send_observer.rs"]
+mod send_observer;
+pub use send_observer::{ObservedSender, SendObserver};
 
 fn namespace() -> Vec<u8> {
     crate::config::outbe_app_namespace()
@@ -178,7 +198,7 @@ impl ConsensusRelay for MockRelay {
         payload: Self::Digest,
         _plan: Self::Plan,
     ) -> commonware_actor::Feedback {
-        // The mock store is in-memory and never closes; with
+        // The mock store is in-memory and never closes. With
         // `ForwardPolicy::Disabled` the engine only emits
         // `Plan::Propose`, so storing the self-describing digest for
         // every plan is behaviour-preserving. Always accepted.
@@ -315,6 +335,23 @@ impl CycleOutcome {
     }
 }
 
+fn validate_cycle_delays(options: &CycleOptions) {
+    // Sanity check delays: activation must be >= dkg_completion.
+    for (i, &activation) in &options.activation_delay_per_node {
+        let dkg = options
+            .dkg_completion_delay_per_node
+            .get(i)
+            .copied()
+            .unwrap_or_default();
+        assert!(
+            activation >= dkg,
+            "node {i} activation_delay ({:?}) must be >= dkg_completion_delay ({:?})",
+            activation,
+            dkg
+        );
+    }
+}
+
 pub struct Harness {
     ctx: deterministic::Context,
     nodes: Vec<Node>,
@@ -328,8 +365,8 @@ impl Harness {
     pub async fn new(ctx: &deterministic::Context, n: usize) -> Self {
         assert!(n >= 2, "harness needs at least 2 nodes");
 
-        // 1. Generate n BLS private keys, then sort by encoded public key
-        // bytes - matches `ordered::Set` ordering, which is the
+        // 1. Generate n BLS private keys, then sort them by encoded public key
+        // bytes. This matches `ordered::Set` ordering, which is the
         // ordering simplex/HybridScheme indexes by.
         let mut keys: Vec<bls12381::PrivateKey> = (0u64..n as u64)
             .map(|seed| bls12381::PrivateKey::from_seed(seed.wrapping_add(1)))
@@ -347,7 +384,7 @@ impl Harness {
 
         // 2. Bootstrap DKG. `bootstrap_dkg(n)` produces shares whose
         // `share.index` matches the participant position by
-        // construction - the keys are already sorted, so shares[i]
+        // construction. The keys are already sorted, so shares[i]
         // corresponds to participants.index(keys[i].public_key()).
         let dkg = bootstrap_dkg(n as u32).expect("bootstrap_dkg");
         let polynomial = dkg.polynomial.clone();
@@ -439,7 +476,7 @@ impl Harness {
         }
 
         // commonware 2026.4.0: the simulated network only routes to peers in a
-        // tracked peer set; `add_link` alone no longer enables routing (it did
+        // tracked peer set. `add_link` alone no longer enables routing (it did
         // pre-2026.4.0). Track the full validator set at index 0 so consensus
         // vote/cert/resolver sends resolve to recipients.
         {
@@ -472,7 +509,7 @@ impl Harness {
 
     /// Compute the leader for view 1 of `epoch` using the harness's
     /// RoundRobin elector. Test authors call this BEFORE building
-    /// `CycleOptions` so timing knobs can be expressed in terms of
+    /// `CycleOptions`, so they can express timing knobs in terms of
     /// leader / followers.
     pub fn leader_for_view_one(&self, epoch: Epoch) -> usize {
         let n = self.participants.len() as u64;
@@ -480,20 +517,7 @@ impl Harness {
     }
 
     pub async fn run_cycle(&mut self, epoch: Epoch, options: CycleOptions) -> CycleOutcome {
-        // Sanity check delays: activation must be >= dkg_completion.
-        for (i, &activation) in &options.activation_delay_per_node {
-            let dkg = options
-                .dkg_completion_delay_per_node
-                .get(i)
-                .copied()
-                .unwrap_or_default();
-            assert!(
-                activation >= dkg,
-                "node {i} activation_delay ({:?}) must be >= dkg_completion_delay ({:?})",
-                activation,
-                dkg
-            );
-        }
+        validate_cycle_delays(&options);
 
         let leader_index = self.leader_for_view_one(epoch);
         let n = self.nodes.len();
@@ -502,10 +526,14 @@ impl Harness {
         // back to the harness driver.
         let (result_tx, mut result_rx) = mpsc::channel::<(usize, MockReporter)>(n);
 
-        // Kick a per-node task that performs (1) sleep until DKG
-        // completion, (2) optional pre-register, (3) sleep until
-        // activation, (4) take or register, (5) build scheme + engine,
-        // (6) start engine, (7) run for `options.run_for`.
+        // Start one task per node. Each task performs these steps:
+        // (1) sleep until DKG completion
+        // (2) optional pre-register
+        // (3) sleep until activation
+        // (4) take or register
+        // (5) build scheme + engine
+        // (6) start engine
+        // (7) run for `options.run_for`
         for i in 0..n {
             let node = &mut self.nodes[i];
             let dkg_delay = options
@@ -629,7 +657,7 @@ impl Harness {
 
                     // (7) Run window: sleep until run_for elapsed from t=0.
                     // The activation point inside this task is at
-                    // `dkg_delay + remaining = activation_delay`; we
+                    // `dkg_delay + remaining = activation_delay`. We
                     // need to sleep an additional `run_for -
                     // activation_delay`.
                     let already_elapsed = activation_delay;
@@ -663,26 +691,35 @@ impl Harness {
             }
         }
 
-        // Backfill any missing snapshots with the live reporter (per-task
-        // didn't deliver in time - pull the reporter directly).
-        let mut finalized_view_per_node = Vec::with_capacity(n);
-        let mut view_finalized_per_node = Vec::with_capacity(n);
-        let mut view_one_signers_per_node = Vec::with_capacity(n);
-        #[allow(clippy::needless_range_loop)]
-        for i in 0..n {
-            let reporter = snapshots[i]
-                .clone()
-                .unwrap_or_else(|| self.nodes[i].reporter.clone());
-            finalized_view_per_node.push(reporter.latest_finalized_view());
-            view_finalized_per_node.push(reporter.view_finalized(View::new(1)));
-            view_one_signers_per_node.push(reporter.finalized_signers(View::new(1)));
-        }
-        CycleOutcome {
-            finalized_view_per_node,
-            view_finalized_per_node,
-            view_one_signers_per_node,
-            leader_index,
-        }
+        cycle_outcome(&self.nodes, n, leader_index, &snapshots)
+    }
+}
+
+fn cycle_outcome(
+    nodes: &[Node],
+    n: usize,
+    leader_index: usize,
+    snapshots: &[Option<MockReporter>],
+) -> CycleOutcome {
+    // Backfill any missing snapshots with the live reporter (if a per-node
+    // task did not deliver in time, pull the reporter directly).
+    let mut finalized_view_per_node = Vec::with_capacity(n);
+    let mut view_finalized_per_node = Vec::with_capacity(n);
+    let mut view_one_signers_per_node = Vec::with_capacity(n);
+    #[allow(clippy::needless_range_loop)]
+    for i in 0..n {
+        let reporter = snapshots[i]
+            .clone()
+            .unwrap_or_else(|| nodes[i].reporter.clone());
+        finalized_view_per_node.push(reporter.latest_finalized_view());
+        view_finalized_per_node.push(reporter.view_finalized(View::new(1)));
+        view_one_signers_per_node.push(reporter.finalized_signers(View::new(1)));
+    }
+    CycleOutcome {
+        finalized_view_per_node,
+        view_finalized_per_node,
+        view_one_signers_per_node,
+        leader_index,
     }
 }
 

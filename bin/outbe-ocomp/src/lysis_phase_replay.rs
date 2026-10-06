@@ -236,7 +236,7 @@ pub fn admit_reported_output_finalize_unit(
 /// producers and requires byte-identical equality with the worker report.
 ///
 /// Producer artifacts are an admission precondition: their own phase replay
-/// must have completed before this verifier is invoked.
+/// must complete before the caller invokes this verifier.
 #[allow(clippy::too_many_arguments)]
 pub fn verify_output_finalize_replay(
     shard_ordinal: u32,
@@ -372,8 +372,7 @@ pub fn replay_output_finalize_artifact(
         return Err(LysisPhaseReplayError::BindingMismatch);
     }
 
-    let output = output_finalize(&amount, &prefix, plan.logical_evaluation_time)
-        .map_err(LysisArtifactErrorV1::from)?;
+    let output = output_finalize(&amount, &prefix).map_err(LysisArtifactErrorV1::from)?;
     UnitArtifactV1::from_canonical_output(
         spec,
         WorkOutputHeaderV1 {

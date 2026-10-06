@@ -6,30 +6,36 @@
 //! The marshal `resolver::p2p` `Recipients::One` pull/serve path is the only
 //! consensus path with no automated in-repo coverage prior to this test. Every
 //! other marshal test in this crate stubs the resolver (`NoopResolver`) and the
-//! broadcast buffer (`EmptyMarshalBuffer` / `RecordingMarshalBuffer`), so they
-//! never exercise the actual on-the-wire fetch where one node asks a peer for a
-//! block it is missing and the peer serves it. That real path was previously
-//! only exercised by the localnet (multi-process) harness.
+//! broadcast buffer (`EmptyMarshalBuffer` / `RecordingMarshalBuffer`). Thus they
+//! never exercise the actual on-the-wire fetch, where one node asks a peer for a
+//! block it is missing and the peer serves it. Before this test, only the
+//! localnet (multi-process) harness exercised that real path.
 //!
 //! # What this test does
 //!
 //! Two marshal actors (node A and node B) run on a single `commonware_runtime`
 //! deterministic runtime, connected by an in-process
-//! `commonware_p2p::simulated::Network`. Each node runs the production wiring:
-//! a real `marshal::resolver::p2p` resolver (registered on `MARSHAL_CHANNEL`)
-//! and a real `commonware_broadcast::buffered::Engine` buffer (registered on
-//! `BROADCAST_CHANNEL`), mirroring `crates/blockchain/engine/src/stack.rs`.
+//! `commonware_p2p::simulated::Network`. Each node runs the production wiring,
+//! which mirrors `crates/blockchain/engine/src/stack.rs`:
 //!
-//! Node A durably verifies a block and is told the matching notarization, so
-//! it can serve the block when asked for the notarized proposal at that round.
-//! Node B (which has never seen the block) calls
-//! `subscribe_by_digest(digest, DigestFallback::FetchByRound { round })`. Its
-//! resolver issues a `Notarized { round }` request over the simulated network;
-//! node A's resolver serve-side answers with `(notarization, block)`; node B
-//! verifies the threshold notarization against the shared epoch-0
-//! `HybridScheme` verifier and delivers the block. The test asserts the
-//! delivered block's digest equals node A's block digest - proving the real
-//! `Recipients::One` resolver pull/serve path works end to end.
+//! - a real `marshal::resolver::p2p` resolver (registered on `MARSHAL_CHANNEL`)
+//! - a real `commonware_broadcast::buffered::Engine` buffer (registered on
+//!   `BROADCAST_CHANNEL`)
+//!
+//! Node A durably verifies a block. The test also tells node A the matching
+//! notarization, so node A can serve the block when a peer asks for the notarized
+//! proposal at that round. Node B (which has never seen the block) calls
+//! `subscribe_by_digest(digest, DigestFallback::FetchByRound { round })`. Then:
+//!
+//! 1. Node B's resolver issues a `Notarized { round }` request over the simulated
+//!    network.
+//! 2. Node A's resolver serve-side answers with `(notarization, block)`.
+//! 3. Node B verifies the threshold notarization against the shared epoch-0
+//!    `HybridScheme` verifier and delivers the block.
+//!
+//! The test asserts that the delivered block's digest equals node A's block
+//! digest. This proves that the real `Recipients::One` resolver pull/serve path
+//! works end to end.
 
 use std::num::{NonZeroU16, NonZeroU64, NonZeroUsize};
 use std::time::Duration;
@@ -44,7 +50,6 @@ use commonware_consensus::{
 };
 use commonware_cryptography::{
     bls12381::{self, primitives::variant::MinSig},
-    certificate::Verifier as _,
     Signer as _,
 };
 use commonware_p2p::{
@@ -55,7 +60,6 @@ use commonware_parallel::Sequential;
 use commonware_runtime::{
     buffer::paged::CacheRef, deterministic, Clock as _, Quota, Runner as _, Supervisor as _,
 };
-use commonware_storage::archive::immutable;
 use commonware_utils::{
     ordered::{Quorum as _, Set},
     NZUsize, TryCollect as _, NZU32,
@@ -63,6 +67,8 @@ use commonware_utils::{
 
 use alloy_primitives::Bytes;
 use reth_ethereum::{primitives::SealedBlock, Block};
+
+use crate::test_fixtures::marshal::MarshalArchiveFixture;
 
 use crate::block::ConsensusBlock;
 use crate::digest::Digest;
@@ -185,55 +191,18 @@ async fn start_marshal_node(
     let write_buffer = NonZeroUsize::new(1024).expect("non-zero write buffer");
     let partition_prefix = format!("marshal-resolver-p2p-{label}");
 
-    let finalizations_archive = immutable::Archive::init(
-        context.child("marshal_finalizations"),
-        immutable::Config {
-            metadata_partition: format!("{partition_prefix}-finalizations-metadata"),
-            freezer_table_partition: format!("{partition_prefix}-finalizations-freezer-table"),
-            freezer_table_initial_size: 64,
-            freezer_table_resize_frequency: 10,
-            freezer_table_resize_chunk_size: 10,
-            freezer_key_partition: format!("{partition_prefix}-finalizations-freezer-key"),
-            freezer_key_page_cache: page_cache.clone(),
-            freezer_value_partition: format!("{partition_prefix}-finalizations-freezer-value"),
-            freezer_value_target_size: 1024,
-            freezer_value_compression: None,
-            ordinal_partition: format!("{partition_prefix}-finalizations-ordinal"),
-            items_per_section,
-            codec_config: HybridScheme::<MinSig>::certificate_codec_config_unbounded(),
-            replay_buffer,
-            freezer_key_write_buffer: write_buffer,
-            freezer_value_write_buffer: write_buffer,
-            ordinal_write_buffer: write_buffer,
-        },
-    )
-    .await
-    .expect("finalizations archive should initialize");
+    let archive_fixture = MarshalArchiveFixture {
+        partition_prefix: &partition_prefix,
+        page_cache: &page_cache,
+        items_per_section,
+        replay_buffer,
+        write_buffer,
+    };
 
-    let blocks_archive = immutable::Archive::init(
-        context.child("marshal_blocks"),
-        immutable::Config {
-            metadata_partition: format!("{partition_prefix}-blocks-metadata"),
-            freezer_table_partition: format!("{partition_prefix}-blocks-freezer-table"),
-            freezer_table_initial_size: 64,
-            freezer_table_resize_frequency: 10,
-            freezer_table_resize_chunk_size: 10,
-            freezer_key_partition: format!("{partition_prefix}-blocks-freezer-key"),
-            freezer_key_page_cache: page_cache.clone(),
-            freezer_value_partition: format!("{partition_prefix}-blocks-freezer-value"),
-            freezer_value_target_size: 1024,
-            freezer_value_compression: None,
-            ordinal_partition: format!("{partition_prefix}-blocks-ordinal"),
-            items_per_section,
-            codec_config: (),
-            replay_buffer,
-            freezer_key_write_buffer: write_buffer,
-            freezer_value_write_buffer: write_buffer,
-            ordinal_write_buffer: write_buffer,
-        },
-    )
-    .await
-    .expect("blocks archive should initialize");
+    let (finalizations_archive, blocks_archive) = archive_fixture
+        .open(context)
+        .await
+        .expect("marshal archives should initialize");
 
     let (actor, mailbox, _height) = marshal::core::Actor::init(
         context.child("marshal"),
@@ -302,7 +271,7 @@ async fn start_marshal_node(
 
 /// Reporter that acknowledges delivered blocks (mirrors the handler-test
 /// `AckingMarshalReporter`). The marshal actor delivers fetched/finalized
-/// blocks through this reporter; acking lets the actor make progress.
+/// blocks through this reporter. Acking lets the actor make progress.
 #[derive(Clone, Default)]
 struct AckingMarshalReporter;
 
@@ -322,8 +291,8 @@ impl commonware_consensus::Reporter for AckingMarshalReporter {
 /// resolver pull/serve path. Node B fetches a block from node A's marshal
 /// serve-side over an in-process simulated P2P network.
 ///
-/// This is the only marshal path with no other automated in-repo coverage;
-/// all sibling marshal tests stub the resolver and broadcast buffer.
+/// This is the only marshal path with no other automated in-repo coverage.
+/// All sibling marshal tests stub the resolver and broadcast buffer.
 #[test]
 fn node_b_fetches_block_from_node_a_via_recipients_one_resolver() {
     let runner = deterministic::Runner::timed(Duration::from_secs(60));
@@ -351,14 +320,14 @@ fn node_b_fetches_block_from_node_a_via_recipients_one_resolver() {
         network.start();
 
         // Register the epoch-0 verifier into each node's scheme provider so the
-        // serve-side notarization can be verified on the receiving node.
+        // receiving node can verify the serve-side notarization.
         let epoch = Epoch::new(0);
         let provider_a = HybridSchemeProvider::<MinSig>::new();
         let provider_b = HybridSchemeProvider::<MinSig>::new();
         assert!(provider_a.register(epoch, fixture.verifier.clone()));
         assert!(provider_b.register(epoch, fixture.verifier.clone()));
 
-        // Node A is the serving node; node B is the fetching node.
+        // Node A is the serving node. Node B is the fetching node.
         let node_a = start_marshal_node(&context, &oracle, &keys[0], provider_a, "node-a").await;
         let node_b = start_marshal_node(&context, &oracle, &keys[1], provider_b, "node-b").await;
 
@@ -380,7 +349,7 @@ fn node_b_fetches_block_from_node_a_via_recipients_one_resolver() {
             }
         }
 
-        // commonware 2026.x routes only to peers in a tracked peer set;
+        // commonware 2026.x routes only to peers in a tracked peer set.
         // `add_link` alone no longer enables routing. Track the full set so the
         // resolver/broadcast sends actually resolve to recipients.
         {
@@ -394,15 +363,16 @@ fn node_b_fetches_block_from_node_a_via_recipients_one_resolver() {
         let want_digest = block.digest();
 
         // Node B subscribes for the block's digest with a round-keyed fetch
-        // fallback BEFORE node A makes it available, so the resolver must pull
+        // fallback BEFORE node A makes it available. Thus the resolver must pull
         // it from a peer once it appears.
         let subscription_rx = node_b
             .mailbox
             .subscribe_by_digest(want_digest, DigestFallback::FetchByRound { round });
 
         // Node A makes the block locally available (durably verified) so it
-        // can be found by commitment, and is told the matching notarization so
-        // its resolver serve-side can answer a `Notarized { round }` request.
+        // can be found by commitment. Node A also receives the matching
+        // notarization, so its resolver serve-side can answer a
+        // `Notarized { round }` request.
         let _ = node_a.mailbox.verified(round, block.clone()).await;
 
         let proposal = Proposal::new(round, View::zero(), want_digest);
@@ -433,43 +403,47 @@ fn node_b_fetches_block_from_node_a_via_recipients_one_resolver() {
     });
 }
 
-/// SEC-4 negative path: prove node B REJECTS a forged notarization served by a
-/// peer over the same real `Recipients::One` resolver pull/serve path, instead
-/// of delivering a block under the requested digest.
+/// SEC-4 negative path: prove that node B REJECTS a forged notarization that a
+/// peer serves over the same real `Recipients::One` resolver pull/serve path.
+/// Node B must not deliver a block under the requested digest.
 ///
 /// # Why this is a genuine rejection, not an unrelated timeout
 ///
 /// The test runs two fetches over the *same* two-node harness, against the same
 /// serve-side wiring:
 ///
-/// 1. **Control (happy) fetch.** Round/view `5`, block digest `D_good`. Node A
-///    is told the *correct* notarization (quorum signature over `D_good`).
+/// 1. **Control (happy) fetch.** Round/view `5`, block digest `D_good`. The test
+///    tells node A the *correct* notarization (quorum signature over `D_good`).
 ///    Node B subscribes by `D_good` with `FetchByRound { round }`. The
 ///    subscription DELIVERS the block. This proves node A genuinely serves a
 ///    `(notarization, block)` response on this path and that B's verify/deliver
 ///    pipeline is wired correctly.
 ///
 /// 2. **Forged fetch.** Round/view `7`, block digest `D_bad`. Node A proposes +
-///    verifies the real `D_bad` block (so it is locally available to serve), and
-///    is told a *forged* notarization built by
-///    [`make_notarization_with_mismatched_proposal`]: its quorum vote signatures
-///    were produced over a *different* payload (`D_other`), but its carried
-///    `proposal` advertises round `7` and `D_bad`. Node A's serve-side
+///    verifies the real `D_bad` block (so it is locally available to serve). The
+///    test then tells node A a *forged* notarization built by
+///    [`make_notarization_with_mismatched_proposal`]. The signers produced its
+///    quorum vote signatures over a *different* payload (`D_other`), but its
+///    carried `proposal` advertises round `7` and `D_bad`. Node A's serve-side
 ///    (`handle_produce` for `Key::Notarized { round }`) caches this notarization
-///    by round, finds the `D_bad` block by the carried payload commitment, and
-///    genuinely serves `(forged_notarization, D_bad_block)` to node B - the same
-///    code path the control fetch exercised. Node B decodes the certificate
-///    (codec config matches: identical participant count), passes the structural
-///    checks (`notarization.round() == round`, `commitment(block) == payload`),
-///    then runs the threshold certificate verification: the aggregated BLS vote
-///    signature was made over `D_other`'s message but is checked against
-///    `D_bad`'s message, so verification fails and the marshal core rejects the
-///    delivery (`response.send_lossy(false)`), never caching/notifying the
-///    block. Node B's subscription does NOT resolve.
+///    by round and finds the `D_bad` block by the carried payload commitment.
+///    Then it genuinely serves `(forged_notarization, D_bad_block)` to node B.
+///    This is the same code path that the control fetch exercised. Node B then:
+///
+///    - decodes the certificate (codec config matches: identical participant count)
+///    - passes the structural checks (`notarization.round() == round`,
+///      `commitment(block) == payload`)
+///    - runs the threshold certificate verification
+///
+///    The aggregated BLS vote signature covers `D_other`'s message, but node B
+///    checks it against `D_bad`'s message. Thus verification fails and
+///    the marshal core rejects the delivery (`response.send_lossy(false)`). The
+///    marshal core never caches or notifies the block. Node B's subscription does
+///    NOT resolve.
 ///
 /// The only difference between the two fetches is the forged certificate, and
-/// only the forged fetch fails to deliver - so the timeout in phase 2 is caused
-/// by the forgery being rejected, not by node A failing to serve.
+/// only the forged fetch fails to deliver. Thus the cause of the timeout in
+/// phase 2 is the rejection of the forgery, not a failure of node A to serve.
 ///
 /// Note on the chosen mismatch: a wrong-DKG / wrong-verifier forgery would NOT
 /// be rejected by this scheme, because `HybridScheme::verify_certificate`
@@ -616,8 +590,8 @@ fn node_b_rejects_foreign_notarization_with_wrong_subject_vrf() {
                 }
             },
             _ = context.sleep(Duration::from_secs(30)) => {
-                // Expected: the forged notarization is served by node A but
-                // rejected by node B's certificate verification, so the
+                // Expected: node A serves the forged notarization, but node B's
+                // certificate verification rejects it, so the
                 // subscription never resolves. The control fetch above proved
                 // the serve path itself works, so this timeout is the rejection.
             },

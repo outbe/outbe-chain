@@ -302,10 +302,11 @@ impl Vote<'_> {
         Ok(())
     }
 
-    /// Tally proposals whose voting windows have closed.
+    /// Tallies proposals whose voting windows are closed.
     ///
-    /// Transitions `Pending` -> `Approved` | `Expired` | `Error`. Dispatches the
-    /// tally outcome to the registered target-module handler in the same pass.
+    /// Transitions `Pending` -> `Approved` | `Expired` | `Error`, all terminal.
+    /// Dispatches the tally outcome to the registered target-module handler in
+    /// the same pass and settles the proposal bond with the status.
     pub fn process_begin_block(
         &mut self,
         ctx: &BlockRuntimeContext,
@@ -317,13 +318,39 @@ impl Vote<'_> {
             let Some(proposal) = self.proposals.get(proposal_id)? else {
                 return Err(VoteError::ProposalNotFound.into());
             };
-            if proposal.proposal_status()? == ProposalStatus::Pending
-                && block_number > proposal.voting_deadline_height
-            {
-                self.finalize_voting(ctx, proposal_id, registry)?;
+            match proposal.proposal_status()? {
+                ProposalStatus::Pending if block_number > proposal.voting_deadline_height => {
+                    self.finalize_voting(ctx, proposal_id, registry)?;
+                }
+                // An earlier binary persisted this Error proposal in the pending
+                // vector and left its bond unsettled. Release it once.
+                ProposalStatus::Error => {
+                    self.settle_legacy_error(proposal_id, proposal.proposer)?;
+                }
+                ProposalStatus::Pending
+                | ProposalStatus::Approved
+                | ProposalStatus::Rejected
+                | ProposalStatus::Expired => {}
             }
         }
         Ok(())
+    }
+
+    /// Closes an Error proposal that an earlier binary left in the pending
+    /// vector. The proposal leaves the bounded pending caps, and this function
+    /// refunds its still-escrowed bond exactly once. This function does not
+    /// execute the target again and does not announce a finalization. The
+    /// admission caps already bound the pending-vector walk.
+    fn settle_legacy_error(&mut self, proposal_id: U256, proposer: Address) -> Result<()> {
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.remove_pending_proposal_id(proposal_id)?;
+            let bond = self.proposal_bond(proposal_id)?;
+            if bond.settlement == BondSettlement::Unsettled {
+                self.settle_terminal_bond(proposal_id, proposer, bond, ProposalStatus::Error)?;
+            }
+            Ok(())
+        })
     }
 
     fn finalize_voting(
@@ -361,25 +388,29 @@ impl Vote<'_> {
             bond.amount,
             status,
         )?;
-        let outcome = match target_outcome {
+        let (status, outcome) = match target_outcome {
             TargetExecutionOutcome::Applied => {
                 target_checkpoint.commit();
-                self.set_proposal_status(proposal_id, status)?;
-                self.settle_terminal_bond(proposal_id, proposal.proposer, bond, status)?;
-                match status {
+                let outcome = match status {
                     ProposalStatus::Approved => ProposalFinalization::Approved,
                     ProposalStatus::Expired => ProposalFinalization::Expired,
                     ProposalStatus::Pending | ProposalStatus::Rejected | ProposalStatus::Error => {
-                        unreachable!()
+                        return Err(VoteError::InvalidProposalStatus.into());
                     }
-                }
+                };
+                (status, outcome)
             }
+            // A target-declared execution failure. Dropping the target checkpoint
+            // drops the effects of the failure. The proposal is terminal in
+            // `Error`. The code below refunds the proposer's bond in full
+            // exactly once.
             TargetExecutionOutcome::Error { reason: _ } => {
                 drop(target_checkpoint);
-                self.set_proposal_status(proposal_id, ProposalStatus::Error)?;
-                ProposalFinalization::Error
+                (ProposalStatus::Error, ProposalFinalization::Error)
             }
         };
+        self.set_proposal_status(proposal_id, status)?;
+        self.settle_terminal_bond(proposal_id, proposal.proposer, bond, status)?;
 
         self.notify_proposal_finalized(&proposal, &tally, outcome)?;
         finalization_checkpoint.commit();
@@ -404,7 +435,9 @@ impl Vote<'_> {
         }
 
         match status {
-            ProposalStatus::Approved => {
+            // Approved and target-execution Error both return the escrow to the
+            // proposer once. Only an expired vote burns it.
+            ProposalStatus::Approved | ProposalStatus::Error => {
                 self.storage
                     .transfer_balance(VOTE_ADDRESS, owner, bond.amount)?;
                 self.settle_proposal_bond_accounting(proposal_id, BondSettlement::Refunded)?;
@@ -415,8 +448,8 @@ impl Vote<'_> {
                 self.settle_proposal_bond_accounting(proposal_id, BondSettlement::Burned)?;
                 self.notify_proposal_bond_burned(proposal_id, owner, bond.amount)
             }
-            ProposalStatus::Pending | ProposalStatus::Rejected | ProposalStatus::Error => {
-                unreachable!("only Approved or Expired can settle a proposal bond")
+            ProposalStatus::Pending | ProposalStatus::Rejected => {
+                Err(VoteError::InvalidProposalStatus.into())
             }
         }
     }

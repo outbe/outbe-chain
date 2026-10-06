@@ -33,7 +33,7 @@ pub enum OcompRecoveryOutcome {
 
 impl ValidatorSet<'_> {
     /// Records one missing OCOMP result vote. The first miss opens a fixed
-    /// recovery window; later misses count accountability but neither extend
+    /// recovery window. Later misses count accountability but neither extend
     /// the deadline nor authorize another bonded slash.
     pub fn record_ocomp_miss(&mut self, addr: Address) -> Result<OcompMissRecord> {
         let state = self.validator_state(addr)?;

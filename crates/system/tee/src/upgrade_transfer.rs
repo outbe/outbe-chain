@@ -47,7 +47,7 @@ fn invalid(message: &str) -> TransportError {
     TransportError::EnclaveError(message.into())
 }
 
-/// A placeholder is never decrypted; its context commits the export recipient.
+/// A placeholder is never decrypted. Its context commits the export recipient.
 pub fn export_placeholder(context: DcapOnboardingContextV1) -> Result<Vec<u8>, TransportError> {
     DcapOnboardingArtifactV1 {
         context,

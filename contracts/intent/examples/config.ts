@@ -7,8 +7,8 @@ export interface ChainConfig {
   name: string;
   rpc: string;
   chainId: number;
-  /** Decimals of the chain's native token; COEN and standard EVM natives are 18.
-   *  Not discoverable over RPC, so it has to be configured per chain. */
+  /** Decimals of the chain's native token. COEN and standard EVM natives are 18.
+   *  RPC does not expose this value, so configure it per chain. */
   nativeDecimals: number;
 }
 

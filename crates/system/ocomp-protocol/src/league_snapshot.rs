@@ -7,24 +7,26 @@
 //! slots against the finalized state root instead of reconstructing the raw
 //! Fidelity cohort ledger. Both the node opening builder/verifier and the
 //! off-chain worker need a pure, storage-handle-free way to derive the same
-//! slots and re-check the same commitment, so the derivation lives here - the
-//! one crate node, worker and Metadosis all depend on.
+//! slots and re-check the same commitment. For this reason, the derivation lives
+//! here. This is the one crate that node, worker and Metadosis all depend on.
 
 use alloy_primitives::{keccak256, Address, B256, U256};
 
 /// Global storage base slot of `MetadosisContract.ocomp_fidelity_league_snapshot`.
 ///
 /// The `#[storage_schema]` macro assigns this as the cumulative slot count of
-/// every preceding field, so it is a layout fact of the Metadosis contract that
-/// cannot be imported at compile time. It is pinned by
-/// `metadosis::ocomp::league_snapshot` tests asserting it equals the live
-/// `Mapping::base_slot()`; if the Metadosis layout ever changes, that test
-/// fails loudly rather than silently opening the wrong slots.
+/// every preceding field. Thus it is a layout fact of the Metadosis contract that
+/// cannot be imported at compile time. The `metadosis::ocomp::league_snapshot`
+/// tests pin it: they assert that it equals the live `Mapping::base_slot()`.
+/// If the Metadosis layout ever changes, that test fails loudly rather than
+/// silently opening the wrong slots.
 ///
-/// Derivation (anchored on the pinned `OCOMP_JOB_RECORDS_BASE_SLOT = 20`,
-/// order 8): orders 9-13 are single-slot each (21..=25), orders 15, 18 and 19
-/// single-slot each (26..=28), so the order-20 snapshot mapping lands at 29.
-pub const METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT: u64 = 29;
+/// Derivation (anchored on the pinned `OCOMP_JOB_RECORDS_BASE_SLOT = 19`,
+/// order 8):
+/// - Orders 9-13 are single-slot each (20..=24).
+/// - Orders 15, 18 and 19 are single-slot each (25..=27).
+/// - So the order-20 snapshot mapping lands at 28.
+pub const METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT: u64 = 28;
 
 /// Domain separator for the composite `(wwd, owner)` mapping key, keeping the
 /// league-snapshot key space disjoint from any other B256-keyed mapping.
@@ -51,7 +53,7 @@ pub fn league_snapshot_key(wwd: u32, owner: Address) -> B256 {
 /// applied to [`league_snapshot_key`] at [`METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT`].
 ///
 /// The rule is inlined (rather than using `outbe_primitives`'s `StorageKey`)
-/// because this crate is a non-dev dependency of `outbe-primitives`; the
+/// because this crate is a non-dev dependency of `outbe-primitives`. The
 /// [`league_snapshot_slot_matches_dsl_mapping`] test in `outbe-metadosis` pins
 /// this against the live `Mapping::get(..).slot()`.
 #[must_use]
@@ -65,9 +67,9 @@ pub fn league_snapshot_slot(wwd: u32, owner: Address) -> B256 {
 }
 
 /// League slots for a strictly-ordered owner set, in owner order. The caller is
-/// responsible for supplying canonical (ordered, unique) owners; this simply
-/// maps each to its slot so the opening's `ordered_slots` follow the owner
-/// order both the builder and verifier reconstruct.
+/// responsible for supplying canonical (ordered, unique) owners. This function
+/// only maps each owner to its slot, so the opening's `ordered_slots` follow the
+/// owner order that both the builder and verifier reconstruct.
 #[must_use]
 pub fn ordered_league_snapshot_slots(wwd: u32, owners: &[Address]) -> Vec<B256> {
     owners
@@ -77,8 +79,9 @@ pub fn ordered_league_snapshot_slots(wwd: u32, owners: &[Address]) -> Vec<B256> 
 }
 
 /// Ordered commitment over the snapshotted `(owner, league)` pairs, bound into
-/// the sealed `PreAdmissionEnvelopeV1` so the day's participating owner/league
-/// set is consensus-committed and re-checkable when verifying an opening.
+/// the sealed `PreAdmissionEnvelopeV1`. This binding makes the day's
+/// participating owner/league set consensus-committed and re-checkable when
+/// verifying an opening.
 ///
 /// `entries` must be in the same strict owner order used to build the opening.
 /// Encoding: `domain ++ wwd_be(4) ++ count_be(4) ++ (owner(20) ++ league_be(2))*`.
@@ -87,7 +90,7 @@ pub fn fidelity_league_snapshot_root(wwd: u32, entries: &[(Address, u16)]) -> B2
     let mut buf = Vec::with_capacity(LEAGUE_SNAPSHOT_ROOT_DOMAIN.len() + 8 + entries.len() * 22);
     buf.extend_from_slice(LEAGUE_SNAPSHOT_ROOT_DOMAIN);
     buf.extend_from_slice(&wwd.to_be_bytes());
-    // Length is bounded by the day's tribute count; saturate rather than cast so
+    // Length is bounded by the day's tribute count. Saturate rather than cast, so
     // the commitment stays total without a narrowing `as`.
     let count = u32::try_from(entries.len()).unwrap_or(u32::MAX);
     buf.extend_from_slice(&count.to_be_bytes());
@@ -110,7 +113,7 @@ mod tests {
     fn slot_is_stable_known_vector() {
         // Guards the exact key + base-slot derivation against accidental drift.
         // The companion `outbe-metadosis` test proves this equals the live DSL
-        // `Mapping` slot; this pins the value itself.
+        // `Mapping` slot. This test pins the value itself.
         let expected = league_snapshot_key(20_000, OWNER_A);
         let mut buf = [0u8; 64];
         buf[..32].copy_from_slice(expected.as_slice());
@@ -118,7 +121,7 @@ mod tests {
             .copy_from_slice(&U256::from(METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT).to_be_bytes::<32>());
         assert_eq!(league_snapshot_slot(20_000, OWNER_A), keccak256(buf));
         // Base slot must be the order-20 mapping slot.
-        assert_eq!(METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT, 29);
+        assert_eq!(METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT, 28);
     }
 
     #[test]

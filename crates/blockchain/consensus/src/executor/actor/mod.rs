@@ -1,11 +1,11 @@
 //! Executor actor - sends forkchoice updates and handles finalization.
 //!
-//! Tracks the canonical chain head and finalized block, sending FCU updates
+//! Tracks the canonical chain head and finalized block, and sends FCU updates
 //! to Reth's beacon engine. Receives finalized blocks from marshal via the
 //! Reporter trait and acknowledges after successful EL processing.
 //!
-//! Internal forkchoice state is updated only after a successful FCU response
-//! from the engine.
+//! The actor updates its internal forkchoice state only after a successful FCU
+//! response from the engine.
 
 use std::{
     collections::BTreeMap,
@@ -30,6 +30,14 @@ use tracing::warn;
 /// Type alias for the engine handle (standard Ethereum engine types).
 type EngineHandle = ConsensusEngineHandle<OutbePayloadTypes>;
 
+/// Genesis identity and finalized tip recovered before executor startup.
+#[derive(Clone, Copy, Debug)]
+pub struct RecoveredFinalizedState {
+    pub genesis_hash: B256,
+    pub last_finalized_height: u64,
+    pub last_finalized_hash: B256,
+}
+
 /// The executor actor.
 pub struct ExecutorActor<E> {
     context: E,
@@ -38,8 +46,8 @@ pub struct ExecutorActor<E> {
     mailbox_rx: futures::channel::mpsc::UnboundedReceiver<Message>,
     // Intentionally `tokio::sync::mpsc`: this height-signal channel is created and
     // consumed cross-crate by `outbe-engine` (`stack.rs`). It is a plain channel
-    // with no timer/spawn dependency - runtime-agnostic, so it does not pull the
-    // tokio reactor onto the executor's deterministic-capable path.
+    // with no timer/spawn dependency. It is runtime-agnostic, so it does not pull
+    // the tokio reactor onto the executor's deterministic-capable path.
     execution_finalized_height_tx: Option<tokio::sync::mpsc::UnboundedSender<u64>>,
     projection_readiness: ProjectionReadinessHandle,
     ocomp_readiness: Option<ProjectionReadinessHandle>,
@@ -48,6 +56,9 @@ pub struct ExecutorActor<E> {
     fcu_heartbeat_interval: Duration,
     next_fcu_heartbeat_deadline: SystemTime,
     pending_finalized_subscriptions: BTreeMap<Height, Vec<oneshot::Sender<()>>>,
+    // Futures are mutated exclusively by the actor. The wrapper preserves Sync
+    // for shared startup recovery references. get_mut never acquires a lock.
+    verification: parking_lot::Mutex<verification::VerificationWork>,
 }
 
 impl<E> ExecutorActor<E>
@@ -58,12 +69,16 @@ where
     pub fn new(
         context: E,
         engine: EngineHandle,
-        genesis_hash: B256,
-        last_finalized_height: u64,
-        last_finalized_hash: B256,
+        recovered: RecoveredFinalizedState,
         projection_readiness: ProjectionReadinessHandle,
         execution_finalized_height_tx: Option<tokio::sync::mpsc::UnboundedSender<u64>>,
     ) -> (Self, Mailbox) {
+        let RecoveredFinalizedState {
+            genesis_hash,
+            last_finalized_height,
+            last_finalized_hash,
+        } = recovered;
+
         let (tx, rx) = futures::channel::mpsc::unbounded();
         let mailbox = Mailbox::from_sender(tx);
         let state = LastCanonicalized::from_recovered(
@@ -86,6 +101,7 @@ where
             fcu_heartbeat_interval,
             next_fcu_heartbeat_deadline,
             pending_finalized_subscriptions: BTreeMap::new(),
+            verification: Default::default(),
         };
         (actor, mailbox)
     }
@@ -106,11 +122,11 @@ where
     /// Reconcile the startup state after marshal has exposed the exact
     /// application finalization record for the canonical execution head.
     ///
-    /// Marshal must be started before that record can be queried, while its
-    /// reporter needs this actor's mailbox. This startup-only builder closes
-    /// that ordering loop without allowing a speculative execution head to be
-    /// treated as finalized: the caller is responsible for validating the
-    /// recovered finalization digest before invoking it.
+    /// Marshal must start before anyone can query that record, but its reporter
+    /// needs this actor's mailbox. This startup-only builder closes that ordering
+    /// loop. It does not let a speculative execution head count as finalized.
+    /// The caller must validate the recovered finalization digest before it
+    /// invokes this builder.
     #[must_use]
     pub fn with_recovered_finalized_state(
         mut self,
@@ -144,15 +160,16 @@ where
     ///
     /// Returns `Err` only on an unrecoverable fault: a *finalized* block (already
     /// agreed by consensus) that this node cannot apply locally. That means our
-    /// state has diverged from the finalized chain, so the node must fail fast -
-    /// the supervisor treats this `Err` as fatal and shuts the node down with the
-    /// structured cause, rather than the silent fall-through that previously
-    /// surfaced only as an opaque marshal "did not acknowledge" panic.
+    /// state diverged from the finalized chain, so the node must fail fast.
+    /// The supervisor treats this `Err` as fatal and shuts the node down with the
+    /// structured cause. Previously, a silent fall-through surfaced only as an
+    /// opaque marshal "did not acknowledge" panic.
     async fn run(
         mut self,
         marshal: crate::marshal_types::MarshalMailbox,
         last_consensus_finalized: Height,
     ) -> eyre::Result<()> {
+        self.verification.get_mut().marshal = Some(marshal.clone());
         // Startup backfill: execution behind consensus.
         let execution_height = self.state.finalized_height;
         if let Some(readiness) = &self.ancestry_readiness {
@@ -189,14 +206,14 @@ where
                         }
                     }
                     None => {
-                        // The backfill range is `(execution_height, last_consensus_finalized]`
-                        // - every height here is <= the finalized height marshal itself
+                        // The backfill range is `(execution_height, last_consensus_finalized]`.
+                        // Every height here is <= the finalized height marshal itself
                         // reported, so marshal must be able to produce it. A `None` means
                         // marshal's archive is inconsistent (claims finalized to N but cannot
                         // serve M <= N). Skipping would leave a non-contiguous execution gap
                         // (the next block's new_payload fails on the missing parent, or the
-                        // node silently stalls below consensus height), so this is an
-                        // unrecoverable fault - fail fast like the execution-failure branch.
+                        // node silently stalls below consensus height). Thus this is an
+                        // unrecoverable fault. Fail fast like the execution-failure branch.
                         error!(
                             height = h,
                             consensus_height = last_consensus_finalized.get(),
@@ -228,8 +245,14 @@ where
 
     async fn run_live_loop(&mut self) -> eyre::Result<()> {
         // Live event loop. Mailbox messages stay biased ahead of heartbeat so
-        // queued marshal updates are not overtaken by timer work.
+        // timer work does not overtake queued marshal updates.
         loop {
+            let finalized = (
+                self.state.finalized_height,
+                crate::digest::Digest(self.state.forkchoice.finalized_block_hash),
+            );
+            self.verification.get_mut().reconcile(finalized);
+            self.verification.get_mut().schedule(&self.engine);
             let heartbeat = self.context.sleep_until(self.next_fcu_heartbeat_deadline);
             let mut heartbeat = std::pin::pin!(heartbeat);
 
@@ -248,6 +271,11 @@ where
                     self.handle_message(msg).await?;
                 },
 
+                event = self.verification.get_mut().next_event() => {
+                    if let Some((height, digest)) = self.verification.get_mut().handle_event(event, &self.context, finalized)? {
+                        self.commit_convergence(height, digest).await?;
+                    }
+                },
                 _ = &mut heartbeat => {
                     self.send_fcu_heartbeat().await;
                 },
@@ -257,6 +285,14 @@ where
 
     async fn handle_message(&mut self, msg: Message) -> eyre::Result<()> {
         match msg {
+            Message::ProjectionFailed(failure) => {
+                Err(eyre::eyre!("projection failed: {failure:?}"))
+            }
+            Message::PendingParent(parent) => self.follow_consensus_parent(parent).await,
+            Message::VerifyBlock(request) => {
+                self.verification.get_mut().queue(request);
+                Ok(())
+            }
             Message::CanonicalizeHead(req) => {
                 self.canonicalize(
                     HeadOrFinalized::Head,
@@ -321,3 +357,5 @@ pub use recovery::RecoveredForkchoiceAttempt;
 
 mod finalization;
 pub use finalization::{FinalizedCeBlock, FinalizedCeCommitter};
+
+mod verification;

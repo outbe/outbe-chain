@@ -6,16 +6,23 @@ interface IGem {
         uint256 gemId;
         address owner;
         uint8 gemType;
+        /// Read-time state: 0 Issued, 1 Qualified (derived), 2 Called, 3 Settled,
+        /// 4 Forfeited (a Called gem past its notice period, until the sweep burns it).
         uint8 state;
-        uint256 promisLoad;
-        uint256 entryPrice;
-        uint256 floorPrice;
+        uint256 promisLoadMinor;
+        uint256 entryPriceMinor;
+        uint256 floorPriceMinor;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint64 issuedAt;
-        uint256 callPrice;
+        uint256 callPriceMinor;
         uint64 calledAt;
         uint32 callNoticePeriod;
+        /// Call terms sealed at issuance, in seconds.
+        uint32 callWindow;
+        uint32 callThreshold;
+        /// Inclusive deadline: 0 when uncalled.
+        uint64 settlementDeadline;
     }
 
     // ERC-165
@@ -46,7 +53,7 @@ interface IGem {
 
     // outbe-specific views
     function getGemStatus(uint256 gemId) external view returns (GemData memory);
-    /// @notice Born Qualified (Genesis), or derived from finalized daily VWAPs; never stored.
+    /// @notice Born Qualified (Genesis), or derived from finalized daily VWAPs. Never stored.
     function isQualified(uint256 gemId) external view returns (bool);
 
     // --- Events ---
@@ -60,13 +67,13 @@ interface IGem {
     /// @notice ERC-4906: emitted over the whole id range when a bucket is called, since
     ///         gem ids carry no order a narrower range could follow.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
-    /// @notice Every gem in the bucket was force-called by the daily Call scan.
+    /// @notice The daily Call scan force-called every gem in the bucket.
     event GemBucketCalled(bytes32 indexed bucketKey, uint64 calledAt, uint64 settlementDeadline);
     /// @notice Called gem forfeit-burned after its notice period lapsed.
-    event GemExpired(uint256 indexed gemId, address owner, uint256 promisLoad);
-    /// @notice A due Called gem was not forfeited; the expiry sweep tries it again at `retryAt`.
+    event GemExpired(uint256 indexed gemId, address owner, uint256 promisLoadMinor);
+    /// @notice A due Called gem was not forfeited. The expiry sweep tries it again at `retryAt`.
     event GemExpiryDeferred(uint256 indexed gemId, uint64 retryAt);
-    /// @notice A due Called bucket was not fully forfeited; the expiry sweep tries its
+    /// @notice A due Called bucket was not fully forfeited. The expiry sweep tries its
     ///         remaining gems again at `retryAt`.
     event GemBucketExpiryDeferred(bytes32 indexed bucketKey, uint64 retryAt);
     /// @notice A reference currency was left out of one day's Call scan because its

@@ -14,7 +14,10 @@ pub mod projection;
 pub mod shutdown;
 pub mod tee_call_context;
 pub mod tee_canary;
+
 pub mod tee_remote_session;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
 
 pub use consensus::{OutbeBeaconConsensus, OutbeConsensusBuilder};
 pub use engine::OutbeEngineValidatorBuilder;

@@ -5,9 +5,9 @@
   "migration_baseline_revision": "04606071023a237e43d5a3ca47642ee202983e86",
   "decision_reference": "outbe-plan/off-chain-poc-lysis-v1-semantics.md",
   "reference_path": "testing/lysis-v1-reference/src/lib.rs",
-  "reference_sha256": "0af95a64fffb4f3529dcf4baecc3f09fc3f7f972780452c251c7607b3bd7eca5",
+  "reference_sha256": "8f3237dfede357f0a938ff43ec602a972559d0f8b5e2bc3ff7bdf9b2bbd9371b",
   "case_path": "crates/core/lysis/vectors/lysis-v1/cases.jsonl",
-  "case_file_sha256": "e67b4e1f212d741d50e2b6a8d42b75df7961e2b5f7b2e70c927a7008c7aac967",
+  "case_file_sha256": "95872f0307388940d9507c9e6fb06d9554966f1047c19e7773b79efcbae58788",
   "case_count": 16,
   "required_arithmetic_vectors": [
     "u256-wrapping-multiply",
@@ -37,9 +37,9 @@
     },
     {
       "name": "entry-derived-nod-floor",
-      "description": "The Nod floor derives from the entry price alone; the tribute price no longer raises it.",
+      "description": "A Nod action carries the observed entry price, from which its floor derives; the tribute price does not enter it.",
       "case_id": "non840-entry-floor",
-      "expected_source": "Exact integer arithmetic: floor(3000000 * 108 / 100) = 3240000, with a tribute price of 4000000."
+      "expected_source": "The action carries the observed entry price 3000000 with a tribute price of 4000000; its cost is floor(3000000 * 32000000 / 1000000) = 96000000."
     }
   ]
 }

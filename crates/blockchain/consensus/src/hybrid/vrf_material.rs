@@ -2,11 +2,12 @@
 //!
 //! [`VrfMaterialProvider`] owns the per-version DKG material (polynomial +
 //! optional local share) and every threshold-crypto operation over it: seed
-//! signing, proof recovery, and partial/proof verification. State is fully
-//! encapsulated behind the provider - the surrounding `HybridScheme` holds a
-//! provider and calls its methods, never reaching into the version map. Lifted
-//! out of `hybrid.rs` so the material lifecycle reads and tests as one unit;
-//! the dependency is one-way (`HybridScheme` -> provider).
+//! signing, proof recovery, and partial/proof verification. The provider fully
+//! encapsulates the state. The surrounding `HybridScheme` holds a provider and
+//! calls its methods, and never reaches into the version map. This module was
+//! extracted from `hybrid.rs` so that the material lifecycle reads and tests as
+//! one unit.
+//! The dependency is one-way (`HybridScheme` -> provider).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

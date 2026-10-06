@@ -2,8 +2,9 @@
 //!
 //! Each validator's `bls_seed_partial` is a BLS threshold partial signature,
 //! recoverable into the group VRF proof. By itself it carries no binding to the
-//! validator's identity key, so "validator i emitted THIS partial" is forgeable
-//! by any relay and not reproducible from chain state - making it unslashable.
+//! validator's identity key. Thus any relay can forge the claim "validator i
+//! emitted THIS partial", and chain state cannot reproduce it. This makes the
+//! partial unslashable.
 //!
 //! To make it attributable, each `HybridSignature` additionally carries a MinPk
 //! identity signature over a domain-separated message binding
@@ -57,6 +58,15 @@ pub fn seed_partial_attest_message(
     msg
 }
 
+/// The round, material version and encoded partial bound by an identity signature.
+#[derive(Clone, Copy, Debug)]
+pub struct SeedPartialAttestation<'a> {
+    pub round_epoch: u64,
+    pub round_view: u64,
+    pub vrf_material_version: u64,
+    pub partial_bytes: &'a [u8],
+}
+
 /// Verify a seed-partial identity signature against the author's MinPk identity
 /// key. Returns `true` iff `signature` is `identity_pubkey`'s signature over
 /// [`seed_partial_attest_message`] under [`OUTBE_SEED_ATTEST_NAMESPACE_V2`].
@@ -65,12 +75,16 @@ pub fn seed_partial_attest_message(
 /// deliberately emitted exactly this `(round, version, partial)` triple.
 pub fn verify_seed_partial_attest(
     identity_pubkey: &bls12381::PublicKey,
-    round_epoch: u64,
-    round_view: u64,
-    vrf_material_version: u64,
-    partial_bytes: &[u8],
+    subject: SeedPartialAttestation<'_>,
     signature: &bls12381::Signature,
 ) -> bool {
+    let SeedPartialAttestation {
+        round_epoch,
+        round_view,
+        vrf_material_version,
+        partial_bytes,
+    } = subject;
+
     let message =
         seed_partial_attest_message(round_epoch, round_view, vrf_material_version, partial_bytes);
     identity_pubkey.verify(&seed_attest_namespace(), &message, signature)
@@ -79,14 +93,11 @@ pub fn verify_seed_partial_attest(
 /// Raw-bytes variant of [`verify_seed_partial_attest`] for on-chain evidence
 /// verifiers that hold only wire bytes (e.g. SlashIndicator). `identity_pubkey`
 /// must be a 48-byte MinPk public key and `signature` a 96-byte MinPk
-/// signature; malformed inputs (wrong length, off-curve) return `false` rather
+/// signature. Malformed inputs (wrong length, off-curve) return `false` rather
 /// than panicking. Determinism: this is a plain pairing check, no RNG.
 pub fn verify_seed_partial_attest_bytes(
     identity_pubkey: &[u8],
-    round_epoch: u64,
-    round_view: u64,
-    vrf_material_version: u64,
-    partial_bytes: &[u8],
+    subject: SeedPartialAttestation<'_>,
     signature: &[u8],
 ) -> bool {
     let Ok(pubkey) =
@@ -98,25 +109,22 @@ pub fn verify_seed_partial_attest_bytes(
     else {
         return false;
     };
-    verify_seed_partial_attest(
-        &pubkey,
-        round_epoch,
-        round_view,
-        vrf_material_version,
-        partial_bytes,
-        &sig,
-    )
+    verify_seed_partial_attest(&pubkey, subject, &sig)
 }
 
 /// The single plain-pairing core for threshold-VRF seed signatures.
 ///
 /// Returns `true` iff `signature` is a valid MinSig signature by `pk` over
-/// `seed_message` under [`hybrid_seed_namespace`]. No RNG - a deterministic
-/// pairing check, so every node reaches the same verdict, which is required on
-/// the slashing path ([`verify_seed_partial_against_commitment`], `pk` = the
-/// signer's `PK_i`) and the next-height execution gate (`crate::proof::verifier`,
-/// `pk` = the committee group key). The BLS-batch path with random scalar
-/// weights is intentionally avoided here.
+/// `seed_message` under [`hybrid_seed_namespace`]. This is a deterministic
+/// pairing check with no RNG, so every node reaches the same verdict. Two paths
+/// require this:
+/// - the slashing path ([`verify_seed_partial_against_commitment`], `pk` = the
+///   signer's `PK_i`).
+/// - the next-height execution gate (`crate::proof::verifier`, `pk` = the
+///   committee group key).
+///
+/// This function intentionally avoids the BLS-batch path with random scalar
+/// weights.
 pub fn verify_seed_signature_plain(
     pk: &<MinSig as Variant>::Public,
     seed_message: &[u8],
@@ -128,21 +136,21 @@ pub fn verify_seed_signature_plain(
 /// Deterministically decide whether a threshold-VRF seed partial is VALID
 /// against the committee's full public polynomial commitment.
 ///
-/// Used by SlashIndicator to slash an *invalid* partial: it must confirm the
-/// partial does NOT verify before applying a penalty. Returns:
+/// SlashIndicator uses it to slash an *invalid* partial. SlashIndicator must
+/// confirm the partial does NOT verify before it applies a penalty. Returns:
 /// - `Some(true)`  - the partial verifies (the validator behaved correctly; NOT
 ///   slashable),
 /// - `Some(false)` - the partial does not verify (slashable),
 /// - `None`        - malformed input (undecodable commitment, signer index out
 ///   of range, or undecodable partial) - the caller must reject, not slash.
 ///
-/// `commitment_bytes` is `commonware_codec::Encode(Sharing<MinSig>)` - the same
-/// bytes whose keccak256 is committed in the committee snapshot
-/// (`vrf_public_polynomial_hash`); the caller MUST check that hash first so the
+/// `commitment_bytes` is `commonware_codec::Encode(Sharing<MinSig>)`. The
+/// committee snapshot commits the keccak256 of these same bytes
+/// (`vrf_public_polynomial_hash`). The caller MUST check that hash first so the
 /// commitment is authentic. Verification is a single deterministic pairing
 /// check (the BLS-batch path with random scalar weights is intentionally
-/// avoided), so every node reaches the same verdict - required because the
-/// result drives slashing.
+/// avoided). Thus every node reaches the same verdict. This is required because
+/// the result drives slashing.
 pub fn verify_seed_partial_against_commitment(
     commitment_bytes: &[u8],
     signer_index: u32,
@@ -150,7 +158,7 @@ pub fn verify_seed_partial_against_commitment(
     round_view: u64,
     partial_bytes: &[u8],
 ) -> Option<bool> {
-    // Cap must cover any real committee; matches the DKG decode bound.
+    // Cap must cover any real committee. It matches the DKG decode bound.
     let max = NonZeroU32::new(crate::bls::MAX_VALIDATORS)?;
     let cfg = (max, ModeVersion::v0());
     let sharing = Sharing::<MinSig>::read_cfg(&mut &commitment_bytes[..], &cfg).ok()?;

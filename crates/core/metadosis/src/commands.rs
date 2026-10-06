@@ -45,8 +45,8 @@ pub fn start_metadosis(
 }
 
 /// Purpose-bound terminal-sink adapter used by the Cycle-owned daily
-/// allocation flow. The internal sink returns a typed semantic receipt; after
-/// exhaustive confirmation that the limit is formed, the adapter returns zero
+/// allocation flow. The internal sink returns a typed semantic receipt. The
+/// adapter exhaustively confirms that the limit is formed. Then it returns zero
 /// because the allocation has no unused amount.
 pub fn apply_cycle_day_limit(ctx: &BlockRuntimeContext<'_>, amount: U256) -> Result<U256> {
     match crate::emission_sink::apply(ctx, amount)? {
@@ -264,7 +264,6 @@ mod tests {
     use outbe_compressed_entities::{begin_block, mint, BodyInput, TributeBodyV1, WwdEntityId};
     use outbe_primitives::time::WorldwideDay;
     use outbe_primitives::{
-        addresses::COMPRESSED_ENTITIES_ADDRESS,
         block::{BlockContext, BlockRuntimeContext},
         storage::{
             hashmap::HashMapStorageProvider, MetadosisCycleLifecycle, MetadosisMutationPurposeTag,
@@ -346,6 +345,8 @@ mod tests {
             );
             install_fork_profile(&ctx, &install).unwrap();
             let validators = ValidatorSet::new(storage.clone());
+            assert!(crate::api::has_active_ocomp_profile(storage.clone()).unwrap());
+            assert!(crate::api::is_active_ocomp_fork_install(storage.clone(), &install).unwrap());
             assert_eq!(
                 validators
                     .ocomp_registration(Address::repeat_byte(0xB0))
@@ -515,20 +516,7 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(1);
         let scope = ExecutionScope::new();
         StorageHandle::enter(&mut provider, |storage| {
-            storage
-                .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-                .unwrap();
-            storage
-                .sstore(
-                    COMPRESSED_ENTITIES_ADDRESS,
-                    U256::from(1),
-                    U256::from_be_slice(
-                        outbe_compressed_entities::sealed_root(B256::ZERO)
-                            .unwrap()
-                            .as_slice(),
-                    ),
-                )
-                .unwrap();
+            crate::fixture_kernel::seed_ce_genesis(&storage).unwrap();
             begin_block(storage, &scope).unwrap();
         });
         let storage_before = provider.storage.clone();

@@ -18,14 +18,14 @@ use crate::{
 };
 
 /// Boxed, `Send` future returned by [`AncestryReader`] lookups. Mirrors the
-/// marshal-backed block lookup that the application handler provides; the trait
+/// marshal-backed block lookup that the application handler provides. The trait
 /// methods carry no async context, so each returns an owned future.
 pub type BlockLookupFuture<'a> = Pin<Box<dyn Future<Output = Option<ConsensusBlock>> + Send + 'a>>;
 
 /// Read-only ancestry access used by [`Mailbox::resolve_boundary`] to walk a
 /// proposal/verification parent chain looking for an already-committed DKG
 /// boundary. The production implementation (`MarshalAncestryReader`) lives in
-/// the application handler - `dkg_manager` is the sole consumer and defines the
+/// the application handler. `dkg_manager` is the sole consumer and defines the
 /// contract it needs.
 pub trait AncestryReader: Send + Sync {
     fn get_block_by_height<'a>(&'a self, height: u64) -> BlockLookupFuture<'a>;
@@ -44,7 +44,7 @@ pub enum BoundaryRequirement {
 }
 
 /// Failure modes of [`Mailbox::resolve_boundary`]. `Unavailable` means the
-/// ancestry could not be read (retry/forfeit), `Conflict` means the ancestry
+/// ancestry could not be read (retry/forfeit). `Conflict` means the ancestry
 /// carries a contradictory boundary (deterministic reject).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BoundaryRequirementError {
@@ -93,9 +93,10 @@ pub struct CommittedDkgBoundary {
     pub block_hash: B256,
 }
 
-// `BoundaryCommitted` carries the full committed boundary; the other variants are
+// `BoundaryCommitted` carries the full committed boundary. The other variants are
 // unit. Boxing it would ripple through every match/construct site for a status
-// enum that is held briefly per epoch - not worth it for the stack-size delta.
+// enum that is held briefly per epoch. That is not worth it for the stack-size
+// delta.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BoundaryStatus {
@@ -108,6 +109,12 @@ pub enum BoundaryStatus {
 pub(super) struct BoundaryStatusCacheEntry {
     pub(super) query_artifact_hash: B256,
     pub(super) status: BoundaryStatus,
+}
+
+struct BoundaryScanQuery<'a> {
+    pending: &'a DkgBoundaryArtifact,
+    pending_hash: B256,
+    original_parent_hash: B256,
 }
 
 impl Mailbox {
@@ -197,11 +204,11 @@ impl Mailbox {
     /// `BoundaryOutcome`, whether the parent ancestry already committed it, or
     /// whether there is no pending boundary.
     ///
-    /// The boundary-status cache (process-local memoization keyed by
-    /// `(parent_hash, pending_artifact_hash)`) is consulted first; on a miss the
-    /// parent chain is walked via `ancestry` down to `boundary_scan_floor`, and
-    /// the resolved verdict is cached. Each cache touch is a discrete
-    /// `with_state` call - no lock guard is ever held across an `.await`.
+    /// This method consults the boundary-status cache (process-local memoization
+    /// keyed by `(parent_hash, pending_artifact_hash)`) first. On a miss, it walks
+    /// the parent chain via `ancestry` down to `boundary_scan_floor` and caches
+    /// the resolved verdict. Each cache touch is a discrete `with_state` call.
+    /// No lock guard is ever held across an `.await`.
     ///
     /// Both the propose path (`build_block`) and the verify path
     /// (`validate_header_consensus_artifacts`) call this, so the result must be
@@ -223,66 +230,21 @@ impl Mailbox {
             .map_err(|error| BoundaryRequirementError::Unavailable(error.to_string()))?;
 
         if let Some(status) = self.cached_boundary_status(original_parent_hash, pending_hash) {
-            return match status {
-                BoundaryStatus::NoBoundarySeen => Ok(BoundaryRequirement::MustEmit),
-                BoundaryStatus::BoundaryCommitted(committed) => {
-                    if committed.artifact_hash == pending_hash && committed.artifact == *pending {
-                        Ok(BoundaryRequirement::AlreadyCommitted)
-                    } else {
-                        Err(BoundaryRequirementError::Conflict(
-                            "cached DKG BoundaryOutcome conflicts with pending boundary"
-                                .to_string(),
-                        ))
-                    }
-                }
-                BoundaryStatus::Conflict => Err(BoundaryRequirementError::Conflict(
-                    "cached parent ancestry carries conflicting DKG BoundaryOutcome".to_string(),
-                )),
-            };
+            return Self::cached_boundary_requirement(status, pending, pending_hash);
         }
 
-        if !ancestry.is_ready() {
-            return Err(BoundaryRequirementError::Unavailable(
-                "DKG boundary ancestry unavailable: marshal ancestry reader is not ready"
-                    .to_string(),
-            ));
-        }
+        ensure_boundary_ancestry_ready(ancestry)?;
 
         let mut current = parent.clone();
         let scan_floor = boundary_scan_floor(pending);
+        let query = BoundaryScanQuery {
+            pending,
+            pending_hash,
+            original_parent_hash,
+        };
         loop {
-            if let Some(boundary) =
-                block_boundary_artifact(&current).map_err(BoundaryRequirementError::Unavailable)?
-            {
-                let boundary_hash = Self::boundary_artifact_hash(&boundary)
-                    .map_err(|error| BoundaryRequirementError::Unavailable(error.to_string()))?;
-                if boundary_hash == pending_hash && boundary == *pending {
-                    let committed = CommittedDkgBoundary {
-                        artifact: boundary,
-                        artifact_hash: boundary_hash,
-                        block_number: current.number(),
-                        block_hash: current.block_hash(),
-                    };
-                    self.record_boundary_status(
-                        original_parent_hash,
-                        pending_hash,
-                        BoundaryStatus::BoundaryCommitted(committed),
-                    );
-                    return Ok(BoundaryRequirement::AlreadyCommitted);
-                }
-                if boundary.epoch == pending.epoch {
-                    self.record_boundary_status(
-                        original_parent_hash,
-                        pending_hash,
-                        BoundaryStatus::Conflict,
-                    );
-                    return Err(BoundaryRequirementError::Conflict(
-                        // Outbe has one DKG boundary artifact per epoch. Same
-                        // epoch with different bytes means a local state bug or a
-                        // conflicting proposal, not an alternate valid activation.
-                        "parent ancestry carries conflicting DKG BoundaryOutcome".to_string(),
-                    ));
-                }
+            if let Some(requirement) = self.observed_boundary_requirement(&current, &query)? {
+                return Ok(requirement);
             }
 
             if current.number() == 0 || current.number() <= scan_floor {
@@ -294,40 +256,128 @@ impl Mailbox {
                 return Ok(BoundaryRequirement::MustEmit);
             }
 
-            let expected_hash = current.parent_hash();
-            let expected_height = current.number().saturating_sub(1);
-            let mut next = ancestry.get_block_by_height(expected_height).await;
-            let needs_hash_lookup = match next.as_ref() {
-                Some(block) if block.block_hash() == expected_hash => false,
-                Some(block) => {
-                    let stale_hash = block.block_hash();
-                    if self.evict_boundary_status(stale_hash) {
-                        debug!(
-                            expected_height,
-                            stale_hash = %stale_hash,
-                            expected_hash = %expected_hash,
-                            "evicted stale DKG boundary status after non-canonical ancestry height hit"
-                        );
-                    }
-                    true
-                }
-                None => true,
-            };
-            if needs_hash_lookup {
-                next = ancestry.get_block_by_hash(expected_hash).await;
-            }
-            let Some(next) = next else {
-                return Err(BoundaryRequirementError::Unavailable(format!(
-                    "DKG boundary ancestry unavailable before seeing pending boundary: missing parent {expected_hash} at height {expected_height}",
-                )));
-            };
-            if next.number() != expected_height {
-                return Err(BoundaryRequirementError::Unavailable(format!(
-                    "DKG boundary ancestry unavailable: parent {expected_hash} resolved at height {}, expected {expected_height}",
-                    next.number()
-                )));
-            };
-            current = next;
+            current = self.next_boundary_ancestor(&current, ancestry).await?;
         }
     }
+
+    fn cached_boundary_requirement(
+        status: BoundaryStatus,
+        pending: &DkgBoundaryArtifact,
+        pending_hash: B256,
+    ) -> Result<BoundaryRequirement, BoundaryRequirementError> {
+        match status {
+            BoundaryStatus::NoBoundarySeen => Ok(BoundaryRequirement::MustEmit),
+            BoundaryStatus::BoundaryCommitted(committed) => {
+                if committed.artifact_hash == pending_hash && committed.artifact == *pending {
+                    Ok(BoundaryRequirement::AlreadyCommitted)
+                } else {
+                    Err(BoundaryRequirementError::Conflict(
+                        "cached DKG BoundaryOutcome conflicts with pending boundary".to_string(),
+                    ))
+                }
+            }
+            BoundaryStatus::Conflict => Err(BoundaryRequirementError::Conflict(
+                "cached parent ancestry carries conflicting DKG BoundaryOutcome".to_string(),
+            )),
+        }
+    }
+
+    fn observed_boundary_requirement(
+        &self,
+        current: &ConsensusBlock,
+        query: &BoundaryScanQuery<'_>,
+    ) -> Result<Option<BoundaryRequirement>, BoundaryRequirementError> {
+        let BoundaryScanQuery {
+            pending,
+            pending_hash,
+            original_parent_hash,
+        } = *query;
+        if let Some(boundary) =
+            block_boundary_artifact(current).map_err(BoundaryRequirementError::Unavailable)?
+        {
+            let boundary_hash = Self::boundary_artifact_hash(&boundary)
+                .map_err(|error| BoundaryRequirementError::Unavailable(error.to_string()))?;
+            if boundary_hash == pending_hash && boundary == *pending {
+                let committed = CommittedDkgBoundary {
+                    artifact: boundary,
+                    artifact_hash: boundary_hash,
+                    block_number: current.number(),
+                    block_hash: current.block_hash(),
+                };
+                self.record_boundary_status(
+                    original_parent_hash,
+                    pending_hash,
+                    BoundaryStatus::BoundaryCommitted(committed),
+                );
+                return Ok(Some(BoundaryRequirement::AlreadyCommitted));
+            }
+            if boundary.epoch == pending.epoch {
+                self.record_boundary_status(
+                    original_parent_hash,
+                    pending_hash,
+                    BoundaryStatus::Conflict,
+                );
+                return Err(BoundaryRequirementError::Conflict(
+                    // Outbe has one DKG boundary artifact per epoch. Same
+                    // epoch with different bytes means a local state bug or a
+                    // conflicting proposal, not an alternate valid activation.
+                    "parent ancestry carries conflicting DKG BoundaryOutcome".to_string(),
+                ));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Read one parent without holding the state lock across ancestry lookups.
+    async fn next_boundary_ancestor<R: AncestryReader>(
+        &self,
+        current: &ConsensusBlock,
+        ancestry: &R,
+    ) -> Result<ConsensusBlock, BoundaryRequirementError> {
+        let expected_hash = current.parent_hash();
+        let expected_height = current.number().saturating_sub(1);
+        let mut next = ancestry.get_block_by_height(expected_height).await;
+        let needs_hash_lookup = match next.as_ref() {
+            Some(block) if block.block_hash() == expected_hash => false,
+            Some(block) => {
+                let stale_hash = block.block_hash();
+                if self.evict_boundary_status(stale_hash) {
+                    debug!(
+                        expected_height,
+                        stale_hash = %stale_hash,
+                        expected_hash = %expected_hash,
+                        "evicted stale DKG boundary status after non-canonical ancestry height hit"
+                    );
+                }
+                true
+            }
+            None => true,
+        };
+        if needs_hash_lookup {
+            next = ancestry.get_block_by_hash(expected_hash).await;
+        }
+        let Some(next) = next else {
+            return Err(BoundaryRequirementError::Unavailable(format!(
+                "DKG boundary ancestry unavailable before seeing pending boundary: missing parent {expected_hash} at height {expected_height}",
+            )));
+        };
+        if next.number() != expected_height {
+            return Err(BoundaryRequirementError::Unavailable(format!(
+                "DKG boundary ancestry unavailable: parent {expected_hash} resolved at height {}, expected {expected_height}",
+                next.number()
+            )));
+        };
+        Ok(next)
+    }
+}
+
+fn ensure_boundary_ancestry_ready(
+    ancestry: &impl AncestryReader,
+) -> Result<(), BoundaryRequirementError> {
+    if !ancestry.is_ready() {
+        return Err(BoundaryRequirementError::Unavailable(
+            "DKG boundary ancestry unavailable: marshal ancestry reader is not ready".to_string(),
+        ));
+    }
+    Ok(())
 }

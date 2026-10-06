@@ -3,10 +3,10 @@ import type { Abi } from "viem";
 /**
  * Generated precompile ABIs.
  *
- * Source of truth is `contracts/precompiles/src/I*.sol`; these JSON artifacts
- * are produced by `mise run export-abi` and checked for staleness in CI.
- * Nothing here is hand-written - a signature can only change by changing the
- * Solidity. Each ABI is used whole; the registry does not filter it.
+ * The source of truth is `contracts/precompiles/src/I*.sol`. `mise run export-abi`
+ * produces these JSON artifacts, and CI checks them for staleness.
+ * Nothing here is hand-written. A signature can only change when the Solidity
+ * changes. The registry uses each ABI whole and does not filter it.
  */
 import IAgentReward from "../../contracts/precompiles/abi-export/IAgentReward.json";
 import ICredis from "../../contracts/precompiles/abi-export/ICredis.json";
@@ -18,7 +18,6 @@ import IGratis from "../../contracts/precompiles/abi-export/IGratis.json";
 import IMetadosis from "../../contracts/precompiles/abi-export/IMetadosis.json";
 import INod from "../../contracts/precompiles/abi-export/INod.json";
 import IOracle from "../../contracts/precompiles/abi-export/IOracle.json";
-import IPayNote from "../../contracts/precompiles/abi-export/IPayNote.json";
 import IPromis from "../../contracts/precompiles/abi-export/IPromis.json";
 import IPromisLimit from "../../contracts/precompiles/abi-export/IPromisLimit.json";
 import ISlashIndicator from "../../contracts/precompiles/abi-export/ISlashIndicator.json";
@@ -42,7 +41,6 @@ export const PRECOMPILE_ABI = {
   IMetadosis: asAbi(IMetadosis),
   INod: asAbi(INod),
   IOracle: asAbi(IOracle),
-  IPayNote: asAbi(IPayNote),
   IPromis: asAbi(IPromis),
   IPromisLimit: asAbi(IPromisLimit),
   ISlashIndicator: asAbi(ISlashIndicator),

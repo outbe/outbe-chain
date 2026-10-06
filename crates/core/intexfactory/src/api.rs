@@ -1,8 +1,8 @@
 //! Cross-module API for IntexFactory.
 //!
-//! `issue` is the clearing engine's (Desis) issuance hand-off - a Rust-to-Rust
-//! call, not a precompile selector, mirroring Intex's write API. The
-//! user-facing surface (settle / minePromis) lives in the precompile.
+//! `issue` is the issuance hand-off of the clearing engine (Desis). It is a
+//! Rust-to-Rust call, not a precompile selector, and it mirrors the Intex write
+//! API. The user-facing surface (settle / minePromis) lives in the precompile.
 
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -13,8 +13,8 @@ use crate::runtime;
 use crate::schema::IssuanceParams;
 
 /// Create a series and enroll it in the call-price index, returning what each
-/// target chain must be told. Called by the clearing engine after a cleared auction,
-/// which packs the day's legs into messages and sends them.
+/// target chain must be told. The clearing engine calls this after a cleared auction.
+/// The clearing engine then packs the day's legs into messages and sends them.
 pub fn issue(
     storage: &StorageHandle<'_>,
     params: IssuanceParams,
@@ -38,8 +38,8 @@ pub fn discard_day_contributors(
 }
 
 /// Resolved IntexFactory protocol parameters (genesis profile). The clearing
-/// engine (Desis) reads these to source floor%/call%/call-trigger at auction
-/// start, keeping a single source of truth instead of hardcoding them.
+/// engine (Desis) reads these at auction start to source floor%/call%/call-trigger.
+/// This keeps a single source of truth instead of hardcoded values.
 pub fn read_params(storage: &StorageHandle<'_>) -> Result<IntexParams> {
     config::read(storage)
 }

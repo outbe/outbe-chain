@@ -165,9 +165,14 @@ struct WirePayload {
 
 /// Decodes a byte-exact canonical Stablecoin Factory V1 proposal.
 ///
-/// The decoder parses into a fixed typed shape, validates every field, re-encodes it,
-/// and requires byte equality. This rejects whitespace, alternate key order, duplicate
-/// or unknown keys, non-shortest JSON escaping and alternate numeric spellings.
+/// The decoder does these steps:
+/// 1. Parse the bytes into a fixed typed shape.
+/// 2. Validate every field.
+/// 3. Re-encode the payload.
+/// 4. Require byte equality with the input.
+///
+/// This rejects whitespace, alternate key order, duplicate or unknown keys, non-shortest
+/// JSON escaping and alternate numeric spellings.
 pub fn decode_canonical_stablecoin_create(
     bytes: &[u8],
 ) -> Result<StablecoinCreatePayload, StablecoinCodecError> {
@@ -348,10 +353,7 @@ fn parse_canonical_address(value: &str) -> Result<Address, StablecoinCodecError>
 fn parse_canonical_decimal(value: &str, reject_zero: bool) -> Result<U256, StablecoinCodecError> {
     let bytes = value.as_bytes();
     let canonical = value == "0"
-        || (!bytes.is_empty()
-            && bytes[0].is_ascii_digit()
-            && bytes[0] != b'0'
-            && bytes.iter().all(u8::is_ascii_digit));
+        || (!bytes.is_empty() && bytes[0] != b'0' && bytes.iter().all(u8::is_ascii_digit));
     if !canonical {
         return Err(StablecoinCodecError::InvalidJson);
     }

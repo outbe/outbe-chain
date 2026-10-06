@@ -42,9 +42,9 @@ fn fp_root(x_fp: U256, _p: u32, q: u32) -> Result<U256> {
     let one = U1024::from(1u64);
     let two = U1024::from(2u64);
 
-    // For p=1: y^q = x_fp * SCALE^(q-1). Built in U1024 so the scale-stacking
-    // cannot wrap; `checked_mul` turns the by-width-impossible overflow into a
-    // structured revert instead of masking it mod 2^256.
+    // For p=1: y^q = x_fp * SCALE^(q-1). The target is built in U1024 so the
+    // scale-stacking cannot wrap. `checked_mul` turns the by-width-impossible
+    // overflow into a structured revert instead of masking it mod 2^256.
     let mut target = U1024::from(x_fp);
     for _ in 0..(q - 1) {
         target = target.checked_mul(scale_w).ok_or_else(|| {
@@ -52,7 +52,7 @@ fn fp_root(x_fp: U256, _p: u32, q: u32) -> Result<U256> {
         })?;
     }
     // Search bound: a partial power above 2*target means `mid` is too big.
-    // In-use targets sit far inside U1024; saturate the search bound defensively.
+    // In-use targets sit far inside U1024. Saturate the search bound defensively.
     let target2 = target.saturating_mul(two);
 
     // Binary search for y such that y^q <= target (all in U1024).
@@ -77,7 +77,7 @@ fn fp_root(x_fp: U256, _p: u32, q: u32) -> Result<U256> {
         }
     }
 
-    // The root is small (`~= 10^6`); narrow it back with a checked conversion
+    // The root is small (`~= 10^6`). Narrow it back with a checked conversion
     // rather than a silent truncation.
     let y: U256 = lo
         .uint_try_to()
@@ -136,8 +136,8 @@ fn policy_tau_fp(p: &[u64], nt: usize) -> Result<Vec<U256>> {
 }
 
 /// Fallback tau weight `ng^(1/5) * nt^(1/10)` used when a group has zero
-/// population or a zero root divisor. Extracted so the two call sites share one
-/// implementation (both roots are computed via the overflow-safe [`fp_root`]).
+/// population or a zero root divisor. It is a separate function so the two call
+/// sites share one implementation (the overflow-safe [`fp_root`] computes both roots).
 fn fallback_tau(ng: usize, nt: usize) -> Result<U256> {
     let ng_fp = U256::from(ng as u64) * SCALE;
     let nt_fp = U256::from(nt as u64) * SCALE;
@@ -209,8 +209,8 @@ fn compute_moments_fp(y_fp: &[U256], tau: &[U256]) -> MomentsFp {
 /// # Parameters
 /// - `y_fp`: interest share per FI group in fixed-point (sum = SCALE), ordered
 ///   by allocation priority, highest first. Population counts use the same order.
-///   Caller is responsible for normalization - integer-division truncation must
-///   be absorbed before this call.
+///   The caller must normalize the shares. The caller must absorb integer-division
+///   truncation before this call.
 /// - `p`: population counts per FI group
 /// - `nt`: total tribute count
 /// - `f_fp`: target fraction in fixed-point (SCALE-based)
@@ -221,12 +221,14 @@ fn compute_moments_fp(y_fp: &[U256], tau: &[U256]) -> MomentsFp {
 ///
 /// # Post-condition
 /// `sum(f1[i] * y_fp[i]) / SCALE <= f_fp` - weighted expenditure never exceeds
-/// the target allocation. Fractions are scaled down monotonically if the raw
-/// algorithm output would overshoot; relative ratios between groups are preserved.
+/// the target allocation. If the raw algorithm output would overshoot, the
+/// function scales the fractions down monotonically. The scaling keeps the
+/// relative ratios between groups.
 ///
 /// # Errors
 /// Returns `PrecompileError::Revert` if a signed-int conversion fails at a
-/// boundary (impossible under current bounds; see overflow analysis in tests).
+/// boundary. This is impossible under current bounds (see the overflow analysis
+/// in tests).
 pub fn calc_fraction_distribution_fp(
     y_fp: &[U256],
     p: &[u64],
@@ -248,9 +250,9 @@ pub fn calc_fraction_distribution_fp(
     // beta = (f/fmax - E[Y]) / Var[Y]
     // f1[i] = fmax * sum_{j>=i} m[j] * (1 + beta * (Y[j] - E[Y]))
 
-    // signed I256 arithmetic throughout - no intermediate scale-down.
+    // Signed I256 arithmetic throughout - no intermediate scale-down.
     // All unsigned inputs are <= SCALE (10^6), far under I256::MAX (~5.8*10^76),
-    // so try_from conversions cannot fail in practice; we still return a
+    // so try_from conversions cannot fail in practice. We still return a
     // structured Fatal instead of panicking per CLAUDE.md rules.
     let f_over_fmax = (f_fp * SCALE).checked_div(fmax_fp).unwrap_or(U256::ZERO);
     let scale_i = u256_to_i256(SCALE)?;
@@ -287,13 +289,13 @@ pub fn calc_fraction_distribution_fp(
         };
     }
 
-    // normalize f1 so weighted expenditure does not exceed f_fp.
+    // Normalize f1 so weighted expenditure does not exceed f_fp.
     // Raw algorithm output can have `sum(f1[i] * y_fp[i]) / SCALE > f_fp` because
     // the per-group distribution doesn't enforce a limit-preserving invariant
     // on its own. Scale down proportionally (monotone, preserves ratios, never
-    // rounds up) so downstream `gratis_load = fraction * nominal / SCALE` in
-    // `lysis::runtime` cannot overspend the allocation and silently skip the
-    // tail of the tribute list.
+    // rounds up). With this scaling, the downstream
+    // `gratis_load = fraction * nominal / SCALE` in `lysis::runtime` cannot
+    // overspend the allocation and silently skip the tail of the tribute list.
     let weighted_total: U256 = f1
         .iter()
         .zip(y_fp.iter())
@@ -314,8 +316,8 @@ fn u256_to_i256(value: U256) -> Result<I256> {
     })
 }
 
-/// Narrow a positive `I256` back to `U256`. Negative inputs clamp to zero;
-/// positive `I256` always fits in `U256` (positive range is `[0, 2^255)`,
+/// Narrow a positive `I256` back to `U256`. Negative inputs clamp to zero.
+/// A positive `I256` always fits in `U256` (positive range is `[0, 2^255)`,
 /// strictly contained in `U256`).
 fn i256_to_u256_clamped(value: I256) -> U256 {
     U256::try_from(value).unwrap_or(U256::ZERO)
@@ -377,8 +379,8 @@ mod tests {
     }
 
     /// Reference `round(base^(1/q) * SCALE)` computed in `f64` (test-only per
-    /// CLAUDE.md section 5.6). Used only to know the *magnitude* of the expected root;
-    /// the exactness is pinned by [`test_fp_root_floor_identity`] in integers.
+    /// CLAUDE.md section 5.6). Used only to know the *magnitude* of the expected root.
+    /// [`test_fp_root_floor_identity`] pins the exactness in integers.
     fn ref_root_scaled(base: u128, q: u32) -> u128 {
         let root = (base as f64).powf(1.0 / q as f64);
         (root * SCALE_U128 as f64).round() as u128
@@ -387,7 +389,7 @@ mod tests {
     /// Known-answer test: `fp_root` must land within a tiny tolerance of the
     /// real fractional power at the in-use `q in {5, 10}`. A scale-stacking wrap
     /// (the OIP-00043 bug) makes `target` - and thus the root - garbage, off by
-    /// many orders of magnitude, so it fails this check while still satisfying
+    /// many orders of magnitude. Such a root fails this check. It still satisfies
     /// the loose `frac > 0` / `frac <= 2*fmax` bounds the distribution tests use.
     #[test]
     fn test_fp_root_known_answers() {

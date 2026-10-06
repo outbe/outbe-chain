@@ -41,7 +41,7 @@ pub fn is_qualified(storage: &StorageHandle<'_>, bucket: &NodBucketState) -> Res
     outbe_oracle::api::closed_above_floor(
         storage.clone(),
         bucket.reference_currency,
-        bucket.floor_price_minor,
+        bucket.floor_price_minor()?,
         first_full_day(issued_at),
     )
 }
@@ -71,12 +71,12 @@ pub fn store_entry_price_snapshot(
 
 /// The Nod's settlement cost: `floor(entry_price_minor * gratis_load_minor / 1e6)`.
 /// Positive inputs have a minimum cost of one reference-currency minor unit.
-/// Price and cost use six-decimal reference-currency precision; the load uses
+/// Price and cost use six-decimal reference-currency precision. The load uses
 /// protocol units (1e6 per whole COEN). Asset payment units are quoted separately.
 ///
-/// Derived rather than stored — the entry price lives on the Nod's bucket and
-/// the load on the Nod itself, and lysis mints the Nod from exactly this
-/// formula.
+/// The cost is derived rather than stored. The entry price lives on the Nod's
+/// bucket and the load lives on the Nod itself. Lysis mints the Nod from exactly
+/// this formula.
 pub fn settlement_cost_minor(entry_price_minor: U256, gratis_load_minor: U256) -> Result<U256> {
     let cost = checked_mul_div_floor(entry_price_minor, gratis_load_minor, SCALE_1E6_U256)?;
     if !entry_price_minor.is_zero() && !gratis_load_minor.is_zero() {
@@ -97,7 +97,9 @@ pub fn settlement_deadline(storage: &StorageHandle<'_>, bucket_key: B256) -> Res
     if called_at == 0 {
         return Ok(0);
     }
-    let notice = nod.callable_bucket_call_notice_period.read(&bucket_key)?;
+    let notice = nod
+        .callable_bucket_call_notice_period_seconds
+        .read(&bucket_key)?;
     Ok(settlement_deadline_of(called_at, notice))
 }
 

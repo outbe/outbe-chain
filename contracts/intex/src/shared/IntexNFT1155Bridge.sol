@@ -18,10 +18,11 @@ import {IntexGas} from "./libs/IntexGas.sol";
 
 /// @title IntexNFT1155Bridge
 /// @author Outbe
-/// @notice Batch cross-chain ERC-1155 adapter over the protocol-agnostic ERC-7786 bridge: burns on the source and
-///         mints on the paired adapter registered as the remote messenger for a chainId.
-/// @dev UUPS upgradeable; the bridge and bridged token are implementation immutables. Modes: single-recipient batch
-///      and multi-recipient.
+/// @notice Batch cross-chain ERC-1155 adapter over the protocol-agnostic ERC-7786 bridge. It burns
+///         on the source and mints on the paired adapter registered as the remote messenger for a
+///         chainId.
+/// @dev UUPS upgradeable. The bridge and bridged token are implementation immutables. Modes:
+///      single-recipient batch and multi-recipient.
 contract IntexNFT1155Bridge is
     IIntexNFT1155Bridge,
     ERC7786MessengerBase,
@@ -37,16 +38,17 @@ contract IntexNFT1155Bridge is
     /// @notice The bridgeable ERC-1155 this adapter burns on send and mints on receive.
     IERC1155Bridgeable public immutable token;
 
-    /// @notice Snapshot of one batch item whose `token.crosschainMint` reverted; `exists` distinguishes
-    ///         never-failed from failed-and-retried. The revert data is not kept: neither
-    ///         `retryCrosschainMint` nor `reclaimToSource` reads it, and `CrosschainMintFailed` carries
-    ///         it for whoever diagnoses the failure. Ordered so the address, chain and flag share a slot.
+    /// @notice Snapshot of one batch item whose `token.crosschainMint` reverted. `exists`
+    ///         distinguishes never-failed from failed-and-retried. The struct does not keep the
+    ///         revert data: neither `retryCrosschainMint` nor `reclaimToSource` reads it.
+    ///         `CrosschainMintFailed` carries it for whoever diagnoses the failure. The field order
+    ///         lets the address, chain and flag share a slot.
     struct FailedCrosschainMint {
         address to;
         uint32 srcChainId;
         bool exists;
         uint256 tokenId;
-        uint256 amount;
+        uint256 units;
     }
 
     /// @custom:storage-location erc7201:outbe.intex.IntexNFT1155Bridge
@@ -86,10 +88,10 @@ contract IntexNFT1155Bridge is
     function failedCrosschainMints(bytes32 receiveId, uint256 idx)
         external
         view
-        returns (address to, uint256 tokenId, uint256 amount, bool exists)
+        returns (address to, uint256 tokenId, uint256 units, bool exists)
     {
         FailedCrosschainMint storage f = _bs().failedCrosschainMints[receiveId][idx];
-        return (f.to, f.tokenId, f.amount, f.exists);
+        return (f.to, f.tokenId, f.units, f.exists);
     }
 
     function supportsInterface(bytes4 interfaceId) public view override(AccessControlUpgradeable) returns (bool) {
@@ -110,9 +112,9 @@ contract IntexNFT1155Bridge is
     /// @inheritdoc IIntexNFT1155Bridge
     function send(SendParam calldata _sendParam) external payable nonReentrant returns (bytes32 sendId) {
         bytes memory message = _buildSingleMsg(_sendParam);
-        token.crosschainBurn(msg.sender, _toAddress(_sendParam.to), _sendParam.tokenId, _sendParam.amount);
+        token.crosschainBurn(msg.sender, _toAddress(_sendParam.to), _sendParam.tokenId, _sendParam.units);
         sendId = _send(_sendParam.dstChainId, message, IntexGas.nftMint(1));
-        emit Bridged(sendId, _sendParam.dstChainId, msg.sender, _sendParam.tokenId, _sendParam.amount);
+        emit Bridged(sendId, _sendParam.dstChainId, msg.sender, _sendParam.tokenId, _sendParam.units);
     }
 
     /// @dev `assertAddress` has already rejected anything not address-shaped by the time this narrows one.
@@ -122,15 +124,15 @@ contract IntexNFT1155Bridge is
 
     /// @dev A single transfer is a 1-item `SEND` batch: it shares the batch wire format and receive path.
     function _buildSingleMsg(SendParam calldata _sendParam) internal pure returns (bytes memory) {
-        // reject a malformed recipient before burning; the receive path rejects it too
+        // reject a malformed recipient before burning. The receive path rejects it too.
         IntexNFT1155BridgeCodec.assertAddress(_sendParam.to);
         if (_sendParam.to == bytes32(0)) revert InvalidReceiver();
         uint256[] memory tokenIds = new uint256[](1);
         tokenIds[0] = _sendParam.tokenId;
-        uint256[] memory amounts = new uint256[](1);
-        amounts[0] = _sendParam.amount;
+        uint256[] memory units = new uint256[](1);
+        units[0] = _sendParam.units;
         return IntexNFT1155BridgeCodec.encodeBatch(
-            IntexNFT1155BridgeCodec.BatchPayload({to: _sendParam.to, tokenIds: tokenIds, amounts: amounts})
+            IntexNFT1155BridgeCodec.BatchPayload({to: _sendParam.to, tokenIds: tokenIds, units: units})
         );
     }
 
@@ -144,16 +146,16 @@ contract IntexNFT1155Bridge is
     /// @inheritdoc IIntexNFT1155Bridge
     function batchSend(BatchSendParam calldata _sendParam) external payable nonReentrant returns (bytes32 sendId) {
         if (_sendParam.tokenIds.length == 0) revert EmptyBatch();
-        if (_sendParam.tokenIds.length != _sendParam.amounts.length) revert ArrayLengthMismatch();
+        if (_sendParam.tokenIds.length != _sendParam.units.length) revert ArrayLengthMismatch();
 
         // Build first: the zero-`to` and `MAX_BATCH_SIZE` guards fail fast before any burn.
         bytes memory message = _buildBatchMsg(_sendParam);
         for (uint256 i = 0; i < _sendParam.tokenIds.length; i++) {
-            token.crosschainBurn(msg.sender, _toAddress(_sendParam.to), _sendParam.tokenIds[i], _sendParam.amounts[i]);
+            token.crosschainBurn(msg.sender, _toAddress(_sendParam.to), _sendParam.tokenIds[i], _sendParam.units[i]);
         }
 
         sendId = _send(_sendParam.dstChainId, message, IntexGas.nftMint(_sendParam.tokenIds.length));
-        emit BatchBridged(sendId, _sendParam.dstChainId, msg.sender, _sendParam.tokenIds, _sendParam.amounts);
+        emit BatchBridged(sendId, _sendParam.dstChainId, msg.sender, _sendParam.tokenIds, _sendParam.units);
     }
 
     function _buildBatchMsg(BatchSendParam calldata _sendParam) internal pure returns (bytes memory) {
@@ -164,7 +166,7 @@ contract IntexNFT1155Bridge is
         }
         return IntexNFT1155BridgeCodec.encodeBatch(
             IntexNFT1155BridgeCodec.BatchPayload({
-                to: _sendParam.to, tokenIds: _sendParam.tokenIds, amounts: _sendParam.amounts
+                to: _sendParam.to, tokenIds: _sendParam.tokenIds, units: _sendParam.units
             })
         );
     }
@@ -185,20 +187,20 @@ contract IntexNFT1155Bridge is
     {
         uint256 len = _sendParam.recipients.length;
         if (len == 0) revert EmptyBatch();
-        if (len != _sendParam.tokenIds.length || len != _sendParam.amounts.length) revert ArrayLengthMismatch();
+        if (len != _sendParam.tokenIds.length || len != _sendParam.units.length) revert ArrayLengthMismatch();
 
         bytes memory message = _buildMultiMsg(_sendParam);
         for (uint256 i = 0; i < len; i++) {
             IntexNFT1155BridgeCodec.assertAddress(_sendParam.recipients[i]);
             if (_sendParam.recipients[i] == bytes32(0)) revert InvalidReceiver();
             token.crosschainBurn(
-                msg.sender, _toAddress(_sendParam.recipients[i]), _sendParam.tokenIds[i], _sendParam.amounts[i]
+                msg.sender, _toAddress(_sendParam.recipients[i]), _sendParam.tokenIds[i], _sendParam.units[i]
             );
         }
 
         sendId = _send(_sendParam.dstChainId, message, IntexGas.nftMint(_sendParam.recipients.length));
         emit MultiBridged(
-            sendId, _sendParam.dstChainId, msg.sender, _sendParam.recipients, _sendParam.tokenIds, _sendParam.amounts
+            sendId, _sendParam.dstChainId, msg.sender, _sendParam.recipients, _sendParam.tokenIds, _sendParam.units
         );
     }
 
@@ -208,7 +210,7 @@ contract IntexNFT1155Bridge is
         }
         return IntexNFT1155BridgeCodec.encodeMulti(
             IntexNFT1155BridgeCodec.MultiPayload({
-                recipients: _sendParam.recipients, tokenIds: _sendParam.tokenIds, amounts: _sendParam.amounts
+                recipients: _sendParam.recipients, tokenIds: _sendParam.tokenIds, units: _sendParam.units
             })
         );
     }
@@ -251,10 +253,10 @@ contract IntexNFT1155Bridge is
         address toAddress = address(uint160(uint256(p.to)));
 
         for (uint256 i = 0; i < p.tokenIds.length; i++) {
-            _tryCrosschainMintOne(srcChainId, receiveId, i, toAddress, p.tokenIds[i], p.amounts[i]);
+            _tryCrosschainMintOne(srcChainId, receiveId, i, toAddress, p.tokenIds[i], p.units[i]);
         }
 
-        emit BatchReceived(receiveId, srcChainId, toAddress, p.tokenIds, p.amounts);
+        emit BatchReceived(receiveId, srcChainId, toAddress, p.tokenIds, p.units);
     }
 
     function _handleMultiReceive(uint32 srcChainId, bytes32 receiveId, bytes calldata message) internal {
@@ -264,51 +266,53 @@ contract IntexNFT1155Bridge is
             IntexNFT1155BridgeCodec.assertAddress(p.recipients[i]);
             if (p.recipients[i] == bytes32(0)) revert InvalidReceiver();
             address toAddress = address(uint160(uint256(p.recipients[i])));
-            _tryCrosschainMintOne(srcChainId, receiveId, i, toAddress, p.tokenIds[i], p.amounts[i]);
+            _tryCrosschainMintOne(srcChainId, receiveId, i, toAddress, p.tokenIds[i], p.units[i]);
         }
 
-        emit MultiReceived(receiveId, srcChainId, p.recipients, p.tokenIds, p.amounts);
+        emit MultiReceived(receiveId, srcChainId, p.recipients, p.tokenIds, p.units);
     }
 
-    /// @dev Isolate a per-item `token.crosschainMint` revert: park a snapshot for `retryCrosschainMint`
-    ///      instead of failing the whole batch.
+    /// @dev Isolate a per-item `token.crosschainMint` revert. Park a snapshot for
+    ///      `retryCrosschainMint` instead of failing the whole batch.
     function _tryCrosschainMintOne(
         uint32 srcChainId,
         bytes32 receiveId,
         uint256 idx,
         address to,
         uint256 tokenId,
-        uint256 amount
+        uint256 units
     ) internal {
-        try this.crosschainMintOne(to, tokenId, amount) {
+        try this.crosschainMintOne(to, tokenId, units) {
         // ok
         }
         catch (bytes memory reason) {
             _bs().failedCrosschainMints[receiveId][idx] =
-                FailedCrosschainMint({to: to, srcChainId: srcChainId, exists: true, tokenId: tokenId, amount: amount});
-            emit CrosschainMintFailed(srcChainId, receiveId, idx, to, tokenId, amount, reason);
+                FailedCrosschainMint({to: to, srcChainId: srcChainId, exists: true, tokenId: tokenId, units: units});
+            emit CrosschainMintFailed(srcChainId, receiveId, idx, to, tokenId, units, reason);
         }
     }
 
     /// @notice Self-call shim so a per-item mint revert lands in `_tryCrosschainMintOne`'s catch. Self-only.
-    function crosschainMintOne(address to, uint256 tokenId, uint256 amount) external {
+    function crosschainMintOne(address to, uint256 tokenId, uint256 units) external {
         if (msg.sender != address(this)) revert NotSelf();
-        token.crosschainMint(to, tokenId, amount);
+        token.crosschainMint(to, tokenId, units);
     }
 
-    /// @notice Permissionless retry of a previously-failed crosschainMint; the entry is cleared on success.
+    /// @notice Permissionless retry of a previously-failed crosschainMint. A success clears the
+    ///         entry.
     function retryCrosschainMint(bytes32 receiveId, uint256 idx) external nonReentrant {
         IntexNFT1155BridgeStorage storage $ = _bs();
         FailedCrosschainMint memory f = $.failedCrosschainMints[receiveId][idx];
         if (!f.exists) revert NoSuchFailedCrosschainMint(receiveId, idx);
         delete $.failedCrosschainMints[receiveId][idx];
-        token.crosschainMint(f.to, f.tokenId, f.amount);
+        token.crosschainMint(f.to, f.tokenId, f.units);
         emit CrosschainMintRetried(receiveId, idx);
     }
 
-    /// @notice Permissionless reclaim of a batch item the destination gate rejects terminally: re-mints the owner
-    ///         on the origin chain via a reverse one-item transfer, the only exit that does not re-hit the
-    ///         destination lifecycle gate. Caller-funded; consumes the entry once (CEI delete first).
+    /// @notice Permissionless reclaim of a batch item that the destination gate rejects
+    ///         terminally. It re-mints the owner on the origin chain via a reverse one-item
+    ///         transfer. This is the only exit that does not re-hit the destination lifecycle gate.
+    ///         The caller funds it. It consumes the entry once (CEI delete first).
     /// @param receiveId Inbound message id where the item's crosschainMint is stranded.
     /// @param idx Position of the stranded item in that batch.
     function reclaimToSource(bytes32 receiveId, uint256 idx) external payable nonReentrant returns (bytes32 sendId) {
@@ -321,13 +325,13 @@ contract IntexNFT1155Bridge is
         recipients[0] = bytes32(uint256(uint160(f.to)));
         uint256[] memory tokenIds = new uint256[](1);
         tokenIds[0] = f.tokenId;
-        uint256[] memory amounts = new uint256[](1);
-        amounts[0] = f.amount;
+        uint256[] memory units = new uint256[](1);
+        units[0] = f.units;
         bytes memory message = IntexNFT1155BridgeCodec.encodeMulti(
-            IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts})
+            IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, units: units})
         );
         sendId = _send(f.srcChainId, message, IntexGas.nftMint(1));
-        emit CrosschainMintReclaimed(receiveId, idx, f.srcChainId, f.to, f.tokenId, f.amount);
+        emit CrosschainMintReclaimed(receiveId, idx, f.srcChainId, f.to, f.tokenId, f.units);
     }
 
     /// @inheritdoc IIntexNFT1155Bridge
@@ -336,7 +340,7 @@ contract IntexNFT1155Bridge is
         uint256 balance = address(this).balance;
         if (amount > balance) revert NativeBalanceInsufficient(balance, amount);
 
-        // admin-only native recovery; arbitrary destination is intentional
+        // admin-only native recovery. The arbitrary destination is intentional.
         // slither-disable-next-line arbitrary-send-eth
         (bool ok,) = to.call{value: amount}("");
         if (!ok) revert NativeSweepFailed();

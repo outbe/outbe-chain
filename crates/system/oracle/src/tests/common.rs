@@ -25,7 +25,7 @@ pub(super) fn with_storage_at<F: FnOnce(StorageHandle)>(timestamp: u64, f: F) {
 }
 
 // Assets the suite quotes pairs in. `COEN` is the native asset and `USD`/`EUR`
-// are ISO 4217 codes, so both encode to reserved addresses; the ERC20 stand-ins
+// are ISO 4217 codes, so both encode to reserved addresses. The ERC20 stand-ins
 // use their real mainnet addresses, which sit well outside the ISO range.
 pub(super) const COEN: Address = Address::ZERO;
 pub(super) const USDT: Address = address!("0xdac17f958d2ee523a2206206994597c13d831ec7");

@@ -164,6 +164,11 @@
             "name": "gemFactoryUnits",
             "type": "uint32",
             "internalType": "uint32"
+          },
+          {
+            "name": "settlementDeadline",
+            "type": "uint64",
+            "internalType": "uint64"
           }
         ]
       }

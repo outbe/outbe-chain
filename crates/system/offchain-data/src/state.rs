@@ -18,10 +18,12 @@ use super::{ProjectionCheckpoint, ProjectionError};
 
 /// Local representation version owned by this projector.
 ///
+/// Version 3 requires entity-owned shared/WWD/owner partitions in every datasource.
+/// Existing version 2 databases require a fresh projection root.
 /// Version 2 adds the job-scoped retained Tribute body and day-index
 /// namespaces. Version 1 nodes must fail closed instead of silently ignoring
 /// those records during OCOMP retention and release.
-pub const STORAGE_SCHEMA_VERSION: u32 = 2;
+pub const STORAGE_SCHEMA_VERSION: u32 = 3;
 /// Namespace containing the singleton projector state.
 pub const PROJECTION_STATE_NAMESPACE: &str = "projection_state";
 /// Singleton projector-state key.
@@ -175,7 +177,7 @@ where
 /// Reads and validates the managed projection state without acquiring a writer.
 ///
 /// Snapshot exporters use this narrow surface only as an availability signal.
-/// The checkpoint is never input authority; exported bodies still have to close
+/// The checkpoint is never input authority. Exported bodies still have to close
 /// against the exact finalized compressed-entity snapshot.
 pub fn read_projection_state(
     config: ProjectionConfig,

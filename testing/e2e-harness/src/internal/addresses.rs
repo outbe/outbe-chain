@@ -34,6 +34,8 @@ pub(crate) const PROMIS_FACTORY_ADDR: Address =
 #[cfg(feature = "ocomp-integration")]
 pub(crate) const GEM_ADDR: Address = address!("0x0000000000000000000000000000000000001013");
 #[cfg(feature = "ocomp-integration")]
+pub(crate) const INTEX_ADDR: Address = address!("0x0000000000000000000000000000000000001014");
+#[cfg(feature = "ocomp-integration")]
 pub(crate) const INTEX_FACTORY_ADDR: Address =
     address!("0x0000000000000000000000000000000000001015");
 #[cfg(feature = "ocomp-integration")]
@@ -41,9 +43,6 @@ pub(crate) const GEM_FACTORY_ADDR: Address = address!("0x00000000000000000000000
 #[cfg(feature = "ocomp-integration")]
 pub(crate) const VAULT_ROUTER_ADDR: Address =
     address!("0x0000000000000000000000000000000000001017");
-/// PayNote shielded note pool; a Nod's cost is discharged by spending one.
-#[cfg(feature = "ocomp-integration")]
-pub(crate) const PAYNOTE_ADDR: Address = address!("0x0000000000000000000000000000000000001019");
 /// Metadosis worldwide-day registry (`getWorldwideDay(uint32)`).
 pub(crate) const WWD_ADDR: Address = address!("0x000000000000000000000000000000000000100E");
 /// PromiseLimit carry-over ledger (`totalUnallocated()`).

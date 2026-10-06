@@ -5,9 +5,9 @@ pragma solidity ^0.8.30;
 ///
 /// Governance-owned controller of the Hyperlane bridge. Holds only the local
 /// InterchainAccountRouter address and a `domain -> StorageMessageIdMultisigIsm`
-/// table (the Outbe chain included under its own domain); validator sets live
-/// in the ISMs themselves. Every mutation except `initialize` and `fund` is
-/// applied by the validator vote target (see the crate README for the JSON payloads).
+/// table (the Outbe chain included under its own domain). Validator sets live
+/// in the ISMs themselves. The validator vote target applies every mutation except
+/// `initialize` and `fund` (see the crate README for the JSON payloads).
 interface IHyperlaneController {
     event Initialized(address indexed icaRouter);
     event DomainAdded(uint32 indexed domain, address indexed ism);
@@ -22,11 +22,11 @@ interface IHyperlaneController {
     event LivenessJailed(address indexed validator);
 
     /// One-shot bootstrap. `domains[i] -> (isms[i], hooks[i])` must include the
-    /// Outbe domain (= chain id); `hooks` are the MerkleTreeHook addresses whose
-    /// checkpoints the validators sign; `validatorAnnounce` is the Outbe
+    /// Outbe domain (= chain id). `hooks` are the MerkleTreeHook addresses whose
+    /// checkpoints the validators sign. `validatorAnnounce` is the Outbe
     /// ValidatorAnnounce where validators publish their checkpoint bucket.
     /// Caller must be the current owner of the Outbe ISM (the deployer that
-    /// staged `transferOwnership` to this precompile); the precompile accepts
+    /// staged `transferOwnership` to this precompile). The precompile accepts
     /// that pending ownership and verifies it owns `icaRouter`.
     function initialize(
         address icaRouter,
@@ -44,7 +44,7 @@ interface IHyperlaneController {
     /// Liveness proof: an active validator (or its oracle delegate, the feeder
     /// key) submits its latest signed checkpoint for `domain`. The signature is
     /// recovered over the Hyperlane digest and must match the validator's
-    /// Hyperlane signer; only a higher `index` than the recorded one is accepted.
+    /// Hyperlane signer. Only a higher `index` than the recorded one is accepted.
     function submitCheckpoint(uint32 domain, bytes32 root, uint32 index, bytes32 messageId, bytes calldata signature)
         external;
 

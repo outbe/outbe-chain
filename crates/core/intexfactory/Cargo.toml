@@ -14,7 +14,6 @@ outbe-vaultrouter.workspace = true
 outbe-promisfactory.workspace = true
 outbe-oracle.workspace = true
 outbe-common.workspace = true
-outbe-paynote.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 ring.workspace = true
@@ -23,8 +22,11 @@ tracing.workspace = true
 
 [dev-dependencies]
 outbe-intex = { workspace = true, features = ["test-utils"] }
-outbe-paynote = { workspace = true, features = ["test-utils"] }
-outbe-protocol.workspace = true
+# Drive the confidential Promis mint path in tests via the in-process enclave.
+outbe-promis = { workspace = true, features = ["test-enclave"] }
+outbe-tee.workspace = true
+outbe-tee-enclave.workspace = true
+revm.workspace = true
 serde_json.workspace = true
 
 [lints]

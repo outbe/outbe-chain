@@ -2,8 +2,8 @@
 //! periodic DKG scheduler.
 //!
 //! These steps deliberately use only valid genesis profiles and public
-//! transactions/RPC reads. In particular, `pending_set_change` is observed as a
-//! durable on-chain hint; it is never used to force the scheduler.
+//! transactions/RPC reads. In particular, the steps observe `pending_set_change`
+//! as a durable on-chain hint. They never use it to force the scheduler.
 
 use std::thread::sleep;
 use std::time::Duration;

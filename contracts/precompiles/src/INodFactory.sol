@@ -29,9 +29,8 @@ interface INodFactory {
 
     error NodMaterializationRejected(uint8 code);
 
-    /// @notice Emitted when a Nod is paid. ERC20 payments use a zero nullifier;
-    /// PayNote payments identify the spent note by its nullifier.
-    event NodPaid(address indexed owner, uint256 nodId, address asset, bytes32 nullifier, uint256 amountCovered);
+    /// @notice Emitted when a Nod is paid.
+    event NodPaid(address indexed owner, uint256 nodId, address asset, uint256 paymentMinor);
 
     /// @notice Constant-size owner event for one certified OCOMP generation.
     /// There is deliberately no matching public installation selector.
@@ -46,40 +45,35 @@ interface INodFactory {
         bytes32 nodRoot,
         bytes32 bucketRoot,
         bytes32 outputManifestRoot,
-        uint256 nodAmountTotal,
+        uint256 totalSettlementCostMinor,
         uint256 lysisAllocationMinor,
         uint64 issuedAt,
         bytes32 stateEventDigest
     );
 
-    /// @notice Pay a qualified Nod in ERC20 base units of `asset`.
+    /// @notice Pay a qualified Nod, or a called one at or before its settlement
+    /// deadline, in ERC20 base units of `asset`. Any caller may pay. The Nod stays
+    /// with its owner. Approve NodFactory for the `quoteSettlement` amount first.
     /// The asset must have a reserve vault and report the Nod's reference or
     /// issuance ISO 4217 code. Issuance-currency payment converts the
     /// reference-currency entry cost at the COEN cross rate of the trailing VWAP
     /// snapshot required at this block.
-    /// @param snapshotId The snapshot `quoteSettlement` returned; an
+    /// @param snapshotId The snapshot `quoteSettlement` returned. An
     /// issuance-currency payment naming any other snapshot reverts. Ignored on
     /// the reference rail.
     function settleNod(uint256 nodId, address asset, uint256 snapshotId) external;
-
-    /// @notice Pay a qualified Nod at or before its settlement deadline.
-    /// The PayNote proof must name the caller as its owner, carry an asset the
-    /// Nod accepts on either currency rail, and spend exactly the cost. The proof
-    /// names no VWAP snapshot: an issuance-currency note must spend what
-    /// `quoteSettlement` returns at the executing block.
-    function settleNodWithPayNote(uint256 nodId, bytes calldata payNoteProof) external;
 
     /// @notice What settling `nodId` with `asset` costs, and which of the Nod's
     /// two currencies that asset settles on. Reverts for an asset the Nod
     /// does not accept.
     /// @return settlementCurrency ISO 4217 code the payment is denominated in.
-    /// @return payableUnits Amount to pay, in `asset`'s own minor units.
-    /// @return snapshotId Trailing VWAP snapshot the amount converts at; zero on
+    /// @return paymentMinor Amount to pay, in `asset`'s own minor units.
+    /// @return snapshotId Trailing VWAP snapshot the amount converts at. Zero on
     /// the reference rail. It goes stale at the next update cutoff.
     function quoteSettlement(uint256 nodId, address asset)
         external
         view
-        returns (uint16 settlementCurrency, uint256 payableUnits, uint256 snapshotId);
+        returns (uint16 settlementCurrency, uint256 paymentMinor, uint256 snapshotId);
 
     /// @notice Exercise a paid Nod and mint its Gratis load to the Nod owner.
     /// @param nonce PoW over
@@ -87,7 +81,7 @@ interface INodFactory {
     /// with `miningSequence = 0` and the required leading zero bytes. The owner is the Nod owner.
     /// @param mac Gratis mint authorization under the owner's modify key.
     /// @param opNonce The owner's current Gratis operation nonce, bound by `mac`.
-    function mineGratis(uint256 nodId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
+    function mineGratis(uint256 nodId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256 gratisMinor);
 
     /// @notice Materialize the current certified FIFO head from one canonical
     /// proof-backed OCOMP batch.

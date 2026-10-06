@@ -14,15 +14,15 @@ pub(super) fn encode_revert_reason(msg: String) -> Bytes {
 /// into a revm [`PrecompileResult`] that the EVM interpreter understands.
 ///
 /// `actual_gas` is the total gas charge attributed to this precompile call
-/// (`PRECOMPILE_BASE_GAS` plus any storage-op gas). It is reported on
-/// success and `Revert*` paths so the interpreter charges the caller
-/// correctly; `Halt(OOG)` reports zero gas because revm treats OOG halts
-/// as "consume everything" via `spend_all` in
+/// (`PRECOMPILE_BASE_GAS` plus any storage-op gas). The function reports it on
+/// success and `Revert*` paths, so the interpreter charges the caller
+/// correctly. `Halt(OOG)` reports zero gas because revm treats OOG halts
+/// as "consume everything" through `spend_all` in
 /// `revm-handler::precompile_output_to_interpreter_result`.
 ///
-/// The mapping is exhaustive over `PrecompileError`'s declared variants;
-/// the trailing wildcard arm exists only to satisfy `#[non_exhaustive]`
-/// from outbe-primitives and surfaces unknown variants as `Fatal` rather
+/// The mapping is exhaustive over `PrecompileError`'s declared variants.
+/// The trailing wildcard arm exists only to satisfy `#[non_exhaustive]`
+/// from outbe-primitives. It surfaces unknown variants as `Fatal` rather
 /// than panicking. The `SubCall(_)` arm remains fatal until the adapter has
 /// a protocol mapping that distinguishes child-frame halts from contract
 /// reverts without changing consensus behavior.

@@ -38,8 +38,8 @@ impl AttesterHealth {
         self.miss_count.store(misses, Ordering::Relaxed);
     }
 
-    /// Unhealthy once the controller has recorded a liveness miss: the next
-    /// misses lead to a jail, so the operator must look now.
+    /// Unhealthy once the controller records a liveness miss. The next misses
+    /// lead to a jail, so the operator must look now.
     fn is_healthy(&self) -> bool {
         self.miss_count.load(Ordering::Relaxed) == 0
     }

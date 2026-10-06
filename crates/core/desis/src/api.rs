@@ -1,10 +1,10 @@
 //! Cross-module API for Desis (Rust-to-Rust, not precompile selectors).
 //!
-//! Metadosis hands the day over as a one-shot auction brief; the Desis
-//! begin-block schedule drives every stage from there. Capacity rejection is a
-//! typed business result. Every technical or invariant failure remains an
-//! `Err`, with all partial writes reverted. The auction key is the worldwide
-//! day - one auction per day; series ids are allocated at issuance.
+//! Metadosis passes the day as a one-shot auction brief. From there, the Desis
+//! begin-block schedule drives every stage. Capacity rejection is a typed
+//! business result. Every technical or invariant failure remains an `Err`, with
+//! all partial writes reverted. The auction key is the worldwide day: one
+//! auction per day. Series ids are allocated at issuance.
 
 use alloy_primitives::U256;
 use outbe_primitives::error::Result;
@@ -19,7 +19,7 @@ use crate::schema::DesisContract;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum AuctionBriefRejectionReason {
-    SupplyExceedsAuctionDomain = 1,
+    DesisLimitExceedsAuctionDomain = 1,
 }
 
 impl AuctionBriefRejectionReason {
@@ -29,8 +29,8 @@ impl AuctionBriefRejectionReason {
     }
 }
 
-/// What an oversized limit means for the caller: the settlement paths carry it
-/// to the unallocated pool, the OCOMP request path cannot because its receipt
+/// What an oversized limit means for the caller. The settlement paths carry it
+/// to the unallocated pool. The OCOMP request path cannot, because its receipt
 /// commits a brief hash that a rejection would have nothing to fill.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BriefOverflowPolicy {
@@ -49,7 +49,7 @@ pub enum AuctionBriefReceipt {
     },
 }
 
-/// Record the day's auction brief (limit in raw PROMIS, day type); the day is
+/// Record the day's auction brief (limit in raw PROMIS, day type). The day is
 /// priced at auction start, not here. Only a limit outside Desis' `u128` auction
 /// domain is a committed rejection. Invalid state, timestamp overflow,
 /// storage/index/event faults and corruption propagate as `Err`.
@@ -65,7 +65,7 @@ pub fn dispatch_auction_brief(
         let anchor = runtime::preflight_brief(&storage, worldwide_day, now)?;
         let Ok(desis_limit_u128) = u128::try_from(desis_limit_minor) else {
             let max_accepted = U256::from(u128::MAX);
-            let reason = AuctionBriefRejectionReason::SupplyExceedsAuctionDomain;
+            let reason = AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain;
             if matches!(overflow, BriefOverflowPolicy::Reject) {
                 return Err(outbe_primitives::error::PrecompileError::Revert(
                     "auction brief limit exceeds Desis u128 domain".into(),
@@ -74,8 +74,8 @@ pub fn dispatch_auction_brief(
             let mut contract = storage.contract::<DesisContract>();
             contract.emit(IDesis::AuctionBriefRejectedToCarryOver {
                 worldwideDay: worldwide_day.into(),
-                supply: desis_limit_minor,
-                maxAccepted: max_accepted,
+                desisLimitMinor: desis_limit_minor,
+                maxAcceptedMinor: max_accepted,
                 reasonCode: reason.code(),
             })?;
             return Ok(AuctionBriefReceipt::RejectedToCarryOver {

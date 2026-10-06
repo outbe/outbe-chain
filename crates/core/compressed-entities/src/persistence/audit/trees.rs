@@ -171,7 +171,7 @@ fn verify_collection(
         .ok_or_else(|| invalid("catalog entry has no materialized collection roots"))?;
     let top = aggregate_b256_shard_roots(&roots).map_err(|error| invalid(error.to_string()))?;
     // Every native v1 domain has the same K. This helper commits the collection
-    // key and K, not the domain ID; the hashed key is never inverted into a domain.
+    // key and K, not the domain ID. The hashed key is never inverted into a domain.
     let expected = collection_root(CeDomain::Tribute, collection, top)
         .map_err(|error| invalid(error.to_string()))?;
     let key = prefixed_key(TreeNamespace::Catalog, collection.as_bytes());

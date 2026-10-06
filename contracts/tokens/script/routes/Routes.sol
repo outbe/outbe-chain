@@ -11,15 +11,16 @@ import {BridgeableERC20Stable} from "../../src/synthetic/BridgeableERC20Stable.s
 /// @dev One route, ready to deploy on the connected chain.
 struct Route {
     RouteSpec spec;
-    /// @dev For the side this chain holds. Empty when that side is never placed by this script - the USDC synthetic
-    ///      is issued by governance, and `_deployRoute` rejects an unset env var rather than deploying nothing.
+    /// @dev For the side this chain holds. Empty when this script never places that side.
+    ///      Governance issues the USDC synthetic, and `_deployRoute` rejects an unset env var
+    ///      rather than deploying nothing.
     bytes initCode;
     /// @dev The canonical side is a mintable stand-in for a token this repo does not issue, and gets bootstrapped.
     bool mintsCanonicalMock;
 }
 
-/// @dev Every route, as data. Adding a token is one entry in `routes()` plus its init code - `BaseRoute` stays
-///      route-agnostic, and no caller names a route to deploy it.
+/// @dev Every route, as data. Adding a token is one entry in `routes()` plus its init code.
+///      `BaseRoute` stays route-agnostic, and no caller names a route to deploy it.
 ///
 ///      `routes()` cannot be `view`: with `dynamic_test_linking` on, `type(T).creationCode` compiles to a
 ///      state-modifying `vm.getCode()` cheatcode call.
@@ -30,8 +31,9 @@ abstract contract Routes is BaseRoute {
     function routes() public returns (Route[] memory list) {
         list = new Route[](3);
 
-        // Canonical USDT on the external chain, ERC-7802 synthetic on Outbe. Point `CANONICAL_USDT_TOKEN` at the
-        // issuer's USDT on a real network; leave it unset on a testnet, where the mock below is deployed instead.
+        // Canonical USDT on the external chain, ERC-7802 synthetic on Outbe. Point
+        // `CANONICAL_USDT_TOKEN` at the issuer's USDT on a real network. Leave it unset on a
+        // testnet, where the script deploys the mock below instead.
         RouteSpec memory usdt = RouteSpec({
             tokenLabel: "USDT",
             canonicalOnOutbe: false,

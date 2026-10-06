@@ -235,24 +235,25 @@ where
                     }
                     Err(error) => {
                         // A finalized block (already agreed by consensus) that we
-                        // cannot apply locally means our state has diverged from the
-                        // finalized chain - unrecoverable. Fail fast deterministically
-                        // with the structured cause. We deliberately do NOT
-                        // acknowledge: the block was not processed, and acking would
-                        // lie to the marshal's progress tracking (letting it prune a
-                        // block we still need).
+                        // cannot apply locally means our state diverged from the
+                        // finalized chain. This is unrecoverable. Fail fast
+                        // deterministically with the structured cause. We deliberately
+                        // do NOT acknowledge: we did not process the block. An ack
+                        // would lie to the marshal's progress tracking (letting it prune
+                        // a block we still need).
                         //
                         // Note: the unacknowledged `ack` still cancels on drop, and
                         // upstream marshal `handle_ack` treats a canceled ack as fatal
-                        // (`panic!("application did not acknowledge...")`). With the
-                        // runtime's `catch_panics`, that panic is CAUGHT (it does not
-                        // abort the process) - so it is NOT the shutdown driver and does
+                        // (`panic!("application did not acknowledge...")`). The
+                        // runtime's `catch_panics` CATCHES that panic (it does not
+                        // abort the process). So it is NOT the shutdown driver and does
                         // NOT pre-empt this path. The authoritative shutdown driver is
-                        // the structured `Err` returned here: it propagates out of
-                        // run_live_loop/run, the supervisor select treats the executor
-                        // exit as fatal, and the node shuts down with the cause below.
+                        // the structured `Err` returned here:
+                        // - it propagates out of run_live_loop/run.
+                        // - the supervisor select treats the executor exit as fatal.
+                        // - the node shuts down with the cause below.
                         // The marshal panic may still appear in logs (a caught,
-                        // less-informative secondary symptom) - this `error!` precedes
+                        // less-informative secondary symptom). This `error!` precedes
                         // it with the real reason.
                         error!(
                             %height, %digest, %error,
@@ -267,6 +268,7 @@ where
                 }
             }
             commonware_consensus::marshal::Update::Tip(round, height, digest) => {
+                self.verification.get_mut().finalized(round, height, digest);
                 debug!(
                     %round, %height, %digest,
                     "marshal tip update"
@@ -280,7 +282,7 @@ where
     ///
     /// Returns `Err` when the finalized block cannot be applied (execution layer
     /// rejected it, the engine call failed, or canonicalization failed/was
-    /// dropped). A `Syncing` payload status is not a failure - it proceeds to
+    /// dropped). A `Syncing` payload status is not a failure. It proceeds to
     /// canonicalization like the prior behavior.
     pub(super) async fn handle_finalize_inner(
         &mut self,

@@ -31,6 +31,7 @@ tracing.workspace = true
 k256 = { workspace = true, optional = true }
 
 [dev-dependencies]
+outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
 k256.workspace = true
 num-bigint.workspace = true
 outbe-offchain-storage.workspace = true

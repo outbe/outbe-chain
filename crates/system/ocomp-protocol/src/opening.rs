@@ -84,8 +84,8 @@ impl RawContractOpeningProofV1 {
 }
 
 /// Partitions one complete canonical owner set into bounded node opening
-/// requests. Every request carries the same complete Oracle ISO subject set;
-/// callers publish one byte-identical Oracle opening after verification.
+/// requests. Every request carries the same complete Oracle ISO subject set.
+/// Callers publish one byte-identical Oracle opening after verification.
 pub fn partition_lysis_opening_subjects(
     owners: &[Address],
     reference_isos: &[u16],

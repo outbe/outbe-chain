@@ -1,18 +1,19 @@
 use super::super::*;
 
 /// reth's canonical head can lead consensus finalization by the in-flight block
-/// (steady state: `head_height = finalized_height + 1`; a few during a
-/// finalization hiccup). On a plain restart in that window the head has no
-/// finalization record yet - a normal unfinalized head, not archive corruption.
-/// A head leading the marshal finalized tip by at most this many blocks is
-/// treated as that benign case; a larger lead is suspicious and stays fatal.
+/// (steady state: `head_height = finalized_height + 1`, and a few during a
+/// finalization hiccup). On a plain restart in that window, the head has no
+/// finalization record yet. This is a normal unfinalized head, not archive
+/// corruption. A head that leads the marshal finalized tip by at most this many
+/// blocks is treated as that benign case. A larger lead is suspicious and stays
+/// fatal.
 pub(in crate::stack) const MAX_UNFINALIZED_HEAD_LEAD: u64 = 16;
 
 /// Whether an execution head that leads the marshal's durable finalized tip is
-/// the benign "unfinalized in-flight head" case rather than archive corruption:
-/// a real finalized tip (`> 0`) and a positive, bounded lead. The caller still
-/// confirms the marshal actually holds the finalized tip's finalization record
-/// before treating the restart as recoverable.
+/// the benign "unfinalized in-flight head" case rather than archive corruption.
+/// The benign case is a real finalized tip (`> 0`) and a positive, bounded lead.
+/// The caller still confirms that the marshal actually holds the finalized tip's
+/// finalization record before it treats the restart as recoverable.
 pub(in crate::stack) fn unfinalized_head_lead_is_recoverable(
     last_execution_height: u64,
     finalized_tip: u64,
@@ -23,7 +24,7 @@ pub(in crate::stack) fn unfinalized_head_lead_is_recoverable(
 
 /// Highest height that both the execution store and durable consensus finality
 /// can authorize at startup. An execution-only head is speculative and must not
-/// seed finalized forkchoice state; a consensus-only suffix is backfilled later.
+/// seed finalized forkchoice state. A consensus-only suffix is backfilled later.
 pub(in crate::stack) fn durable_recovery_anchor_height(
     last_execution_height: u64,
     finalized_tip: u64,
@@ -91,16 +92,26 @@ pub(in crate::stack) struct CertifiedFollowerRecoveryAnchor {
     pub(in crate::stack) block: outbe_consensus::block::ConsensusBlock,
 }
 
-#[allow(clippy::too_many_arguments)]
+pub(in crate::stack) struct FollowerRecoveryBlock<'a> {
+    pub(in crate::stack) checkpoint: ProjectionCheckpoint,
+    pub(in crate::stack) block: &'a outbe_consensus::block::ConsensusBlock,
+}
+
 pub(in crate::stack) fn validate_ancestor_follower_recovery_record(
-    height: u64,
-    canonical_hash: B256,
+    local: FollowerRecoveryBlock<'_>,
     local_finalization: Option<&outbe_consensus::marshal_types::Finalization>,
-    local_block: &outbe_consensus::block::ConsensusBlock,
     upstream: &outbe_consensus::follow::upstream::AncestorFinalityProof,
     schemes: &HybridSchemeProvider<MinSig>,
     epocher: &outbe_consensus::follow::FollowerEpocher,
 ) -> Result<CertifiedFollowerRecoveryAnchor> {
+    let FollowerRecoveryBlock {
+        checkpoint:
+            ProjectionCheckpoint {
+                block_number: height,
+                block_hash: canonical_hash,
+            },
+        block: local_block,
+    } = local;
     use commonware_consensus::types::Epocher as _;
     upstream.validate_envelope(Height::new(height))?;
     ensure!(
@@ -121,11 +132,15 @@ pub(in crate::stack) fn validate_ancestor_follower_recovery_record(
     );
     if upstream.ancestors.is_empty() {
         return validate_certified_follower_recovery_record(
-            height,
-            canonical_hash,
+            crate::stack::recovery::anchor::FollowerRecoveryBlock {
+                checkpoint: ProjectionCheckpoint {
+                    block_number: height,
+                    block_hash: canonical_hash,
+                },
+                block: local_block,
+            },
             local_finalization
                 .ok_or_else(|| eyre::eyre!("missing normalized direct recovery certificate"))?,
-            local_block,
             &certified.finalization,
             &certified.block,
             schemes,
@@ -162,16 +177,22 @@ pub(in crate::stack) fn validate_ancestor_follower_recovery_record(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(in crate::stack) fn validate_certified_follower_recovery_record(
-    height: u64,
-    canonical_hash: B256,
+    local: FollowerRecoveryBlock<'_>,
     local_finalization: &outbe_consensus::marshal_types::Finalization,
-    local_block: &outbe_consensus::block::ConsensusBlock,
     upstream_finalization: &outbe_consensus::marshal_types::Finalization,
     upstream_block: &outbe_consensus::block::ConsensusBlock,
     schemes: &HybridSchemeProvider<MinSig>,
 ) -> Result<CertifiedFollowerRecoveryAnchor> {
+    let FollowerRecoveryBlock {
+        checkpoint:
+            ProjectionCheckpoint {
+                block_number: height,
+                block_hash: canonical_hash,
+            },
+        block: local_block,
+    } = local;
+
     ensure!(
         local_block.number() == height,
         "local archived block reports height {}, expected {height}",
@@ -289,10 +310,10 @@ pub(in crate::stack) fn reconcile_recovered_execution_head(
 /// Reconcile the derived CE tree only after startup has selected an exact
 /// finality anchor backed by both the marshal archive and durable Reth state.
 ///
-/// Marshal's processed height is an acknowledgement floor: it can lag the
-/// archive by one block when the process stops after the CE commit but before
-/// the ACK is durably recorded. It is therefore diagnostic context, not the
-/// recovery authority.
+/// Marshal's processed height is an acknowledgement floor. It can lag the
+/// archive by one block. This happens when the process stops after the CE commit
+/// but before the ACK is durably recorded. It is therefore diagnostic context,
+/// not the recovery authority.
 pub(in crate::stack) fn recover_ce_at_reconciled_anchor(
     ce_startup_recovery: &dyn CeStartupRecovery,
     marshal_processed_height: u64,

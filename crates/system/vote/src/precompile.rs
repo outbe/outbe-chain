@@ -36,8 +36,8 @@ pub fn dispatch_with_handlers(
     value: U256,
     registry: &VoteTargetRegistry,
 ) -> Result<Bytes> {
-    // Vote is a payable route, so the boundary credits value to this address;
-    // every selector the module has not published refuses it here.
+    // Vote is a payable route, so the boundary credits value to this address.
+    // Every selector that the module does not publish refuses the value here.
     reject_value_unless_payable(data, PAYABLE_SELECTORS, &value)?;
     dispatch_call(data, IVote::IVoteCalls::abi_decode, |call| {
         dispatch_vote_call(storage, call, caller, value, registry)

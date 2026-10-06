@@ -187,9 +187,9 @@ fn handshake_and_offer_roundtrip_over_uds() {
 
 #[test]
 fn rejects_tampered_report_data_binding() {
-    // The development connection still enforces the REPORT_DATA key binding; the
-    // mock enclave produces a correct binding, so connect succeeds. Negative
-    // binding cases are covered by the host unit path.
+    // The development connection still enforces the REPORT_DATA key binding. The
+    // mock enclave produces a correct binding, so connect succeeds. The host unit
+    // path covers negative binding cases.
     let dir = tempfile::tempdir().unwrap();
     let sock = dir.path().join("enclave.sock");
     let keys = EnclaveKeys::new(OFFER_SECRET, None).unwrap();
@@ -239,13 +239,14 @@ fn development_session_cannot_invoke_production_dcap_verifier() {
 
 /// End-to-end **throughput** of the full enclave offer path INCLUDING transport:
 /// `postcard` codec + Noise-IK encrypt/decrypt + framed UDS round-trip + the
-/// in-enclave decrypt/economics/Poseidon. The Noise handshake is paid once per
-/// connection (amortized), matching production where the host holds a long-lived
+/// in-enclave decrypt/economics/Poseidon. The test pays the Noise handshake once per
+/// connection (amortized). This matches production, where the host holds a long-lived
 /// channel to the sidecar and sends one `ProcessTributeOfferBatch` per block.
 ///
-/// Reports offers/sec and per-batch latency. Native here; run the SAME binary
-/// under gramine-sgx on real hardware to fold in SGX enter/exit + gramine syscall
-/// emulation (the only overhead this native run omits) for the production figure.
+/// The test reports offers/sec and per-batch latency. This run is native. For the
+/// production figure, run the SAME binary under gramine-sgx on real hardware. That run
+/// adds SGX enter/exit + gramine syscall emulation (the only overhead this native run
+/// omits).
 ///
 /// Ignored by default (it is a benchmark, not a correctness gate). Run with:
 ///   cargo test -p outbe-tee-enclave --test transport \
@@ -256,21 +257,22 @@ fn transport_throughput_offers_per_sec() {
     use std::time::Instant;
 
     // Batch size per request and number of requests (one channel, reused).
-    // The codec is `postcard` (compact binary): the offer ciphertext rides as raw
-    // bytes (1x) not a JSON number array (~4x), so the 64 KiB Noise frame now fits
-    // ~100+ offers/request (serde_json capped near ~30). 100 here exercises that.
+    // The codec is `postcard` (compact binary). The offer ciphertext rides as raw
+    // bytes (1x), not as a JSON number array (~4x). Thus the 64 KiB Noise frame now
+    // fits ~100+ offers/request (serde_json capped near ~30). The value 100 here
+    // exercises that.
     const BATCH: usize = 100;
     const REQUESTS: usize = 200;
     const WARMUP: usize = 20;
 
     // Two modes:
-    //  - default (env unset): spin up an in-process enclave server over UDS -> the
-    //    NATIVE figure (no SGX);
+    //  - default (env unset): start an in-process enclave server over UDS -> the
+    //    NATIVE figure (no SGX).
     //  - OUTBE_TEE_BENCH_ENDPOINT=<host:port|path>: connect to an EXTERNAL enclave
     //    (e.g. one running under gramine-sgx, launched by scripts/sgx-bench.sh) ->
     //    the PRODUCTION SGX figure incl. enclave enter/exit + gramine syscall
-    //    emulation. The offer public key is fetched via GetPublicKeys so we encrypt
-    //    to whatever key that enclave actually holds.
+    //    emulation. The test fetches the offer public key via GetPublicKeys, so we
+    //    encrypt to whatever key that enclave actually holds.
     let endpoint = std::env::var("OUTBE_TEE_BENCH_ENDPOINT").ok();
     let mode = if endpoint.is_some() {
         "gramine-sgx, transport-included"

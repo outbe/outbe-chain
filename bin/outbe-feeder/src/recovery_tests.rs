@@ -1,6 +1,6 @@
 //! Exercise the production tick, signing and durable recovery against a local
-//! JSON-RPC transport. This fixture models RPC outcomes, not chain execution;
-//! real quorum/tally behavior is exercised separately on a local network.
+//! JSON-RPC transport. This fixture models RPC outcomes, not chain execution.
+//! Real quorum/tally behavior is exercised separately on a local network.
 use std::{
     collections::BTreeMap,
     path::PathBuf,
@@ -115,7 +115,7 @@ impl RpcState {
                         u64::from(self.oracle_enabled),
                     ])
                 } else if selector == IValidatorSet::validatorByAddressCall::SELECTOR {
-                    // Twelve tuple heads; dynamic consensusPubkey is empty.
+                    // Twelve tuple heads. Dynamic consensusPubkey is empty.
                     let mut values = vec![U256::ZERO; 13];
                     values[0] = U256::from_be_slice(self.validator.as_slice());
                     values[1] = U256::from(12u64 * 32);
@@ -125,7 +125,7 @@ impl RpcState {
                     words(&[U256::from_be_slice(self.resolved_validator.as_slice())])
                 } else if selector == IOracle::getAggregateVoteCall::SELECTOR {
                     // exists plus four dynamic empty arrays. Presence is the
-                    // scheduler input; tuple contents are immaterial here.
+                    // scheduler input. Tuple contents are immaterial here.
                     ints(&[u64::from(self.exists), 160, 192, 224, 256, 0, 0, 0, 0])
                 } else if selector == IOracle::getExchangeRateDataCall::SELECTOR {
                     ints(&[1_000_000, self.height.max(1), 1_790_000_000])
@@ -527,7 +527,7 @@ async fn blocked_case_recovers(case: BlockedCase) {
         state.resolved_validator = state.validator;
     }
     // A corrected state on the next committed head is reconsidered within
-    // the same eight-block period; a blocked check cannot consume that period.
+    // the same eight-block period. A blocked check cannot consume that period.
     f.tick().await.unwrap();
     assert_eq!(f.rpc.state.lock().unwrap().broadcasts.len(), 1);
     assert_eq!(f.pending().observed_height, 10);

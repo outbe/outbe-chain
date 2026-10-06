@@ -3,11 +3,11 @@
 //! that its SEED sub-namespace matches the verifier-side accessor.
 //!
 //! Both sides derive from the chain-bound base `outbe_app_namespace()`
-//! (`b"outbe" || chain_id_be`,). Since the INDIVIDUAL vote
+//! (`b"outbe" || chain_id_be`,). The INDIVIDUAL vote
 //! sub-namespaces (notarize/nullify/finalize) are committee-bound and supplied
 //! per-scheme (`HybridScheme` overrides them via
-//! `crate::proof::constants::*_namespace(participants)`), so the singleton no
-//! longer drives live votes - only its chain-only SEED is shared with `elect`.
+//! `crate::proof::constants::*_namespace(participants)`). So the singleton no
+//! longer drives live votes. Only its chain-only SEED is shared with `elect`.
 
 use commonware_cryptography::bls12381;
 use commonware_cryptography::Signer as _;
@@ -53,9 +53,9 @@ fn singleton_seed_matches_accessor_and_votes_are_committee_bound() {
     );
 
     // the live vote namespaces are committee-bound and supplied per-scheme,
-    // so they differ from the singleton's chain-only vote fields. (Per-scheme
-    // signer<->verifier vote parity is exercised by the m28 fingerprint test and
-    // the 4-node localnet lockstep.)
+    // so they differ from the singleton's chain-only vote fields. (The m28
+    // fingerprint test and the 4-node localnet lockstep exercise per-scheme
+    // signer<->verifier vote parity.)
     let committee = committee();
     assert_ne!(
         ns.notarize.as_slice(),

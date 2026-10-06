@@ -8,7 +8,7 @@
 //! - `errors.rs` - module-local activation error type.
 //!
 //! `pub use` re-exports below preserve the old `contract` / `logic`
-//! paths for external callers; migrate them opportunistically.
+//! paths for external callers. Migrate them opportunistically.
 pub mod delegation;
 pub mod errors;
 pub mod hooks;

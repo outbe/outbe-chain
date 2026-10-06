@@ -1,13 +1,14 @@
 //! Tribute computation - economics + `tribute_id`. Pure, deterministic, integer
 //! (U256) only.
 //!
-//! Economics move the settlement->nominal computation **into the enclave**, faithfully replicating the host's current
-//! `outbe-tributefactory::runtime` math, with two intentional differences:
+//! The economics code moves the settlement->nominal computation **into the enclave**.
+//! It replicates the host's current `outbe-tributefactory::runtime` math exactly, with
+//! two intentional differences:
 //!
-//!   - checked arithmetic (no panics, per project safety rules - the host code
-//!     used unchecked ops); on overflow the offer is rejected, not aborted;
-//!   - the exact WorldwideDay VWAP legs and reference S-curve are public inputs,
-//!     read by the node from committed Oracle state and identical on every validator.
+//!   - Checked arithmetic (no panics, per project safety rules). The host code used
+//!     unchecked ops. On overflow the enclave rejects the offer and does not abort.
+//!   - The exact WorldwideDay VWAP legs and reference S-curve are public inputs. The
+//!     node reads them from committed Oracle state. They are identical on every validator.
 //!
 //! `tribute_id` is a Poseidon-BN254 hash over sensitive decrypted data, so it is
 //! computed only in the enclave.
@@ -37,11 +38,11 @@ pub(crate) struct CanonicalAmount {
     pub(crate) amount_minor: U256,
 }
 
-/// Poseidon-BN254 over N BE-encoded field elements packed into `input`
+/// Poseidon-BN254 over N BE-encoded field elements packed into `input`.
 /// The raw input format is the chain's `outbe_evm::zk::poseidon_hash` format
 /// (multiple of 32 bytes). The implementation uses the same crate and Circom
 /// parameters, but stays local so the enclave does not pull the EVM and
-/// Barretenberg backend. Each chunk is reduced mod the BN254 scalar order.
+/// Barretenberg backend. The function reduces each chunk mod the BN254 scalar order.
 fn poseidon_hash(input: &[u8]) -> Result<[u8; 32], String> {
     if input.is_empty() {
         return Err("poseidon: empty input".to_string());
@@ -66,7 +67,7 @@ fn poseidon_hash(input: &[u8]) -> Result<[u8; 32], String> {
 }
 
 /// Parse the `tribute_draft_id` (a 32-byte value as a hex string, optional `0x`
-/// prefix) into raw bytes - mirrors host `parse_su_hashes`.
+/// prefix) into raw bytes. Mirrors host `parse_su_hashes`.
 fn parse_draft_id(draft_id: &str) -> Result<[u8; 32], String> {
     let hex_str = draft_id.strip_prefix("0x").unwrap_or(draft_id);
     let bytes =
@@ -82,17 +83,16 @@ fn parse_draft_id(draft_id: &str) -> Result<[u8; 32], String> {
     Ok(out)
 }
 
-/// `tribute_id = Poseidon(owner, worldwide_day)` - BN254/circom, computed inside
-/// the enclave. The id is deterministic in `(owner, worldwide_day)` ALONE: this
-/// is what enforces the one-tribute-per-owner-per-day invariant. A second offer
-/// for the same owner and day recomputes the same id, so the host's
-/// `get_tribute(id).is_some()` check rejects it (`TributeAlreadyExists`). The
-/// `tribute_draft_id` is still validated (must be 32-byte hex) but intentionally
-/// NOT mixed into the id - mixing it in made the id per-offer-unique and silently
-/// allowed duplicate tributes per owner per day.
+/// `tribute_id = Poseidon(owner, worldwide_day)`, BN254/circom. The enclave computes it.
+/// The id is deterministic in `(owner, worldwide_day)` ALONE. This property enforces
+/// the one-tribute-per-owner-per-day invariant. A second offer for the same owner and
+/// day recomputes the same id, so the host's `get_tribute(id).is_some()` check rejects
+/// it (`TributeAlreadyExists`). This function still validates the `tribute_draft_id`
+/// (must be 32-byte hex) but intentionally does NOT mix it into the id. Mixing it in
+/// made the id per-offer-unique and silently allowed duplicate tributes per owner per day.
 ///
-/// Field-element encoding (each reduced mod the BN254 order by `poseidon_hash`):
-/// - `owner`: address left-padded to 32 bytes;
+/// Field-element encoding (`poseidon_hash` reduces each one mod the BN254 order):
+/// - `owner`: address left-padded to 32 bytes.
 /// - `worldwide_day`: its `YYYYMMDD` word as 32-byte big-endian.
 pub fn compute_token_id(
     owner: Address,
@@ -113,7 +113,7 @@ pub fn compute_token_id(
 /// `nominal = floor(amount * 1_000_000 * reference_vwap /
 ///                  (issuance_vwap * effective_ref))`
 ///
-/// Intermediate products are widened to 512 bits. Overflow, missing required
+/// The function widens intermediate products to 512 bits. Overflow, missing required
 /// VWAPs, and a positive result rounded to zero reject the offer.
 pub(crate) fn compute_nominal(
     amount_minor: U256,
@@ -306,7 +306,7 @@ mod tests {
         assert_ne!(base, compute_token_id(b, DAY, DRAFT_A).unwrap()); // owner
         assert_ne!(base, compute_token_id(a, NEXT_DAY, DRAFT_A).unwrap()); // day
 
-        // draft_id is deliberately NOT bound into the id - same owner+day yields
+        // draft_id is deliberately NOT bound into the id. The same owner+day yields
         // the same id regardless of draft, which enforces one-per-owner-per-day.
         assert_eq!(base, compute_token_id(a, DAY, DRAFT_B).unwrap());
     }

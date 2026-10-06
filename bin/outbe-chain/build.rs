@@ -4,8 +4,8 @@
 //! Mirrors reth-node-core's build script (which kona-node and others
 //! copy) so operators see a familiar block format. Uses `vergen-git2` to
 //! pull commit/SHA/dirty/describe and `vergen` for build timestamp,
-//! cargo features and target triple. No runtime dependency is added -
-//! everything is collected at build time and exposed via
+//! cargo features and target triple. The script adds no runtime dependency.
+//! It collects everything at build time and exposes it through
 //! `cargo:rustc-env`.
 //!
 //! Exported `cargo:rustc-env` variables, consumed by `main.rs`:
@@ -14,10 +14,10 @@
 //! - `OUTBE_LONG_VERSION_<0..>` five-line block: Version / Commit SHA /
 //!   Build Timestamp / Build Features / Build Profile.
 //!
-//! Build profile (`debug` / `release` / custom like `maxperf`) is taken
-//! from `OUT_DIR` rather than `PROFILE` because Cargo collapses any
-//! non-`release` custom profile into `release` for `PROFILE` while
-//! preserving the actual profile name in the output path.
+//! The script takes the build profile (`debug` / `release` / custom like
+//! `maxperf`) from `OUT_DIR`, not from `PROFILE`. Cargo collapses any
+//! non-`release` custom profile into `release` for `PROFILE`, but it keeps
+//! the actual profile name in the output path.
 #![allow(missing_docs)]
 
 use std::{env, error::Error};
@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let sha_short = &sha[..8.min(sha.len())];
     let is_dirty = env::var("VERGEN_GIT_DIRTY")? == "true";
     // `git describe --tags --always` ends in `-g<short-sha>` when HEAD is
-    // not exactly on a tag. We use that to flip the `-dev` suffix on.
+    // not exactly on a tag. We use that to enable the `-dev` suffix.
     let describe = env::var("VERGEN_GIT_DESCRIBE")?;
     let not_on_tag = describe.ends_with(&format!("-g{sha_short}"));
     let version_suffix = if is_dirty || not_on_tag { "-dev" } else { "" };

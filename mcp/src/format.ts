@@ -6,6 +6,7 @@ import {
   zeroAddress,
 } from "viem";
 import {
+  credisStateName,
   currencyLabel,
   dayTypeName,
   gemStateName,
@@ -21,6 +22,7 @@ import {
  *  - WorldwideDay u32 YYYYMMDD .......... crates/core/common/src/worldwideday.rs
  *  - native COEN amounts at 1e18 ........ explicit contract/function boundaries
  *  - protocol monetary amounts at 1e6 ... crates/blockchain/primitives/src/units.rs
+ *  - asset-native amounts, raw .......... the asset's own decimals (Credis, settlement)
  *  - Credis annual currency rate at 1e6 . Oracle/Credis contract
  *  - generic prices/ratios at 1e18 ...... their owning protocol modules
  *  - status / day_type enums ............ crates/core/metadosis/src/schema.rs
@@ -28,15 +30,12 @@ import {
 
 const DATE_RE = /(worldwideday|^wwd$|^wwds$|^date$|^day$)/i;
 const SIX_DECIMAL_AMOUNT_RE = /(minor$|amount|stake|balance|pledged|reward)/i;
+const ASSET_UNIT_AMOUNT_RE =
+  /^(principal|outstandingPrincipal|principalPaid|principalWrittenOff|interestPaid|interestAccrued|interest|payment|amount)Minor$/;
 const SIX_DECIMAL_RATE_RE = /currencyrate/i;
 const DIMENSIONLESS_FP18_RE = /(rewardband|minvalidperwindow|slashfraction)/i;
 const GENERIC_FP18_RE = /(vwap|twap|rate|price|volume|peakprice|currentvalue|nominalprice|maxscurve)/i;
-/// Gem and Credis prices are six-decimal. Scoped to those structs: the same
-/// field names on other instruments are 1e18.
-const GEM_SIX_DECIMAL_RE =
-  /^(entryPrice|floorPrice|callPrice|callAnchorPrice|sourceEntryPrice|sourceFloorPrice|promisLoad|remainingCapacity)$/;
-const GEM_STRUCT_RE = /^struct I(?:Gem(?:Factory)?|Credis)\./;
-const TIME_RE = /(at$|time$|timestamp$|start$|end$|date$|duedate$|paidat$)/i;
+const TIME_RE = /(at$|time$|timestamp$|start$|end$|date$|duedate$|paidat$|deadline$)/i;
 
 function isIsoCurrencyAddress(value: unknown): boolean {
   if (typeof value !== "string") return false;
@@ -73,7 +72,7 @@ export interface ReturnFormatContext {
   contractName?: string;
   /** Raw ABI arguments for a call resolved to the Oracle precompile. */
   oracleArgs?: readonly unknown[];
-  /** The registry's own answer for a market; the local rule is the fallback. */
+  /** The registry's own answer for a market. The local rule is the fallback. */
   scaleFor?: (base: unknown, quote: unknown) => number | undefined;
 }
 
@@ -169,13 +168,23 @@ function isUint(type: string, bits?: number): boolean {
  * `enclosingTupleType` is the enclosing tuple's `internalType` (e.g. `struct
  * IGovernance.Proposal`) when there is one. A bare `status` byte means the
  * WorldwideDay lifecycle everywhere except inside a governance proposal, which
- * uses its own enum - so the enclosing struct disambiguates them.
+ * uses its own enum. So the enclosing struct disambiguates them.
  */
 interface ScalarFormatContext {
   contractName?: string;
   functionName?: string;
   enclosingTupleType?: string;
   marketDecimals?: number;
+}
+
+/** Names a `state` code by the contract whose struct carries it. Any other keeps the bare code. */
+function lifecycleStateName(v: number, context: ScalarFormatContext): string | undefined {
+  const owner =
+    /\bI(Gem|Credis)\./.exec(context.enclosingTupleType ?? "")?.[1]?.toLowerCase() ??
+    context.contractName;
+  if (owner === "gem") return gemStateName(v);
+  if (owner === "credis") return credisStateName(v);
+  return undefined;
 }
 
 function isNativeCoenAmount(name: string, context: ScalarFormatContext): boolean {
@@ -221,7 +230,8 @@ function formatScalar(
   }
   if (isUint(type, 8) && n === "state") {
     const v = Number(value);
-    return { code: v, name: gemStateName(v) };
+    const name = lifecycleStateName(v, context);
+    return name === undefined ? { code: v } : { code: v, name };
   }
   if (isUint(type, 16) && /currency/i.test(n)) {
     return currencyLabel(Number(value));
@@ -241,15 +251,12 @@ function formatScalar(
     const v = value as bigint;
     return { raw: v.toString(), value: formatUnits(v, 6) };
   }
-  if (type === "uint256" && SIX_DECIMAL_AMOUNT_RE.test(n)) {
-    const v = value as bigint;
-    return { raw: v.toString(), value: formatUnits(v, 6) };
+  // Credis principal and interest and settlement payments are in the asset's own
+  // atomic units, whose decimals vary by asset.
+  if (type === "uint256" && ASSET_UNIT_AMOUNT_RE.test(n)) {
+    return (value as bigint).toString();
   }
-  if (
-    type === "uint256" &&
-    GEM_SIX_DECIMAL_RE.test(n) &&
-    GEM_STRUCT_RE.test(context.enclosingTupleType ?? "")
-  ) {
+  if (type === "uint256" && SIX_DECIMAL_AMOUNT_RE.test(n)) {
     const v = value as bigint;
     return { raw: v.toString(), value: formatUnits(v, 6) };
   }

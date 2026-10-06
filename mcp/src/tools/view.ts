@@ -18,7 +18,7 @@ const wwd = z.number().int().describe("WorldwideDay as YYYYMMDD, e.g. 20260601")
  * Normalise the proposal status.
  *
  * `format.ts` already renders `status` as `{code, name}` for `IGovernance.*`
- * structs; this only backfills the name when a caller hands over a raw code.
+ * structs. This function only backfills the name when a caller gives a raw code.
  */
 function annotateProposal(p: unknown): Record<string, unknown> {
   const r = { ...(p as Record<string, unknown>) };
@@ -143,8 +143,8 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "gem_settle_quote",
     "What settling a gem with a given asset costs, and which of the gem's two currencies " +
-      "that asset settles on. `payableUnits` is in the asset's own minor units; `snapshotId` " +
-      "is the trailing VWAP snapshot a direct issuance-currency settlement must name (zero on " +
+      "that asset settles on. `paymentMinor` is in the asset's own minor units; `snapshotId` " +
+      "is the trailing VWAP snapshot an issuance-currency settlement must name (zero on " +
       "the reference rail). An issuance-currency quote expires at the next whole UTC hour.",
     {
       id: z.string().describe("Gem token id (decimal or 0x hex)"),
@@ -174,7 +174,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   // --- Credis ----------------------------------------------------------------
   server.tool(
     "credis_position_get",
-    "Credis position by id (decoded: principal, outstanding, collateral, prices, state) " +
+    "Credis position by id (decoded: principal, outstanding, Gratis, prices, state) " +
       "plus parsed tokenURI metadata.",
     { id: z.string().describe("Position id (decimal or 0x hex)") },
     handler(async ({ id }) => {
@@ -189,14 +189,11 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   // --- Balances --------------------------------------------------------------
   server.tool(
     "gratis_balance",
-    "Gratis balance + pledged amount for an account (in COEN).",
+    "Encrypted Gratis balance; decrypt locally with the account view key. Pledge notes are tracked privately.",
     { account: addr },
     handler(async ({ account }) => {
-      const [balance, pledged] = await Promise.all([
-        view(ctx, "gratis", "balanceOf", [account]),
-        view(ctx, "gratis", "pledgedOf", [account]),
-      ]);
-      return ok({ account, balance, pledged });
+      const balance = await view(ctx, "gratis", "balanceOf", [account]);
+      return ok({ account, balance });
     }),
   );
 
@@ -267,7 +264,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
     {},
     handler(async () => {
       // The oracle enumerates its registry by index rather than returning the
-      // whole table, so the table is assembled here.
+      // whole table, so this tool assembles the table.
       const count = Number(await view(ctx, "oracle", "getPairCount", []));
       const indices = Array.from({ length: count }, (_, i) => i + 1);
       const pairs = await Promise.all(
@@ -396,9 +393,9 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   );
 
   // Index-backed, PAGINATED listing (metadata only - omits the full text).
-  // Exactly one of `author` / `status` must be given; each maps to a dedicated
-  // on-chain index (get*ByAuthor / get*ByStatus). Returns `total` (the whole
-  // bucket size) plus the requested `[offset, offset+limit)` page.
+  // The caller must give exactly one of `author` / `status`. Each maps to a
+  // dedicated on-chain index (get*ByAuthor / get*ByStatus). Returns `total` (the
+  // whole bucket size) plus the requested `[offset, offset+limit)` page.
   const listFilter = {
     author: z.string().optional().describe("0x address - list this author's proposals"),
     status: z

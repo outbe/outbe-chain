@@ -30,16 +30,16 @@ use crate::error::Result;
 
 // === Sub-call API surface (T(-0.5) stub types) ===
 //
-// Compile-only types shipped to lock the API contract for
-// outbe-precompile authors integrating sub-call code in parallel with the
+// Compile-only types that lock the API contract for outbe-precompile
+// authors. These authors integrate sub-call code in parallel with the
 // backend implementation (T0..T7). Real bodies for `StorageHandle::call` /
 // `staticcall` land in T4 (STATICCALL driver) and T6 (CALL driver) without
 // changing the signatures defined here.
 
 /// Input to a sub-call dispatched from a Rust precompile.
 ///
-/// Placeholder shape; T1 may add fields. Real sub-call driver consumes this in
-/// `run_sub_call_impl(ctx, input, ...)` (T4/T5).
+/// Placeholder shape. T1 may add fields. The real sub-call driver consumes this
+/// in `run_sub_call_impl(ctx, input, ...)` (T4/T5).
 #[derive(Debug, Clone)]
 pub struct SubCallInput {
     /// Target contract address.
@@ -60,9 +60,9 @@ pub struct SubCallInput {
 pub enum SubCallStatus {
     /// Child frame returned normally.
     Success,
-    /// Child frame reverted; raw returndata preserved.
+    /// Child frame reverted. The raw returndata is preserved.
     Revert(Bytes),
-    /// Child frame halted; structured reason forwarded.
+    /// Child frame halted. The structured reason is forwarded.
     Halt(SubCallError),
 }
 
@@ -83,8 +83,8 @@ impl SubCallOutput {
     /// Constructs the stub-default success output:
     /// `{ status: Success, returndata: empty, gas_used: 0, gas_refunded: 0 }`.
     ///
-    /// Used by T(-0.5) stub methods on `StorageHandle` until T4/T6 land real
-    /// behaviour. MUST NOT be used in production sub-call paths.
+    /// T(-0.5) stub methods on `StorageHandle` use this until T4/T6 land real
+    /// behaviour. Production sub-call paths MUST NOT use it.
     pub fn default_success() -> Self {
         Self {
             status: SubCallStatus::Success,
@@ -97,8 +97,8 @@ impl SubCallOutput {
 
 /// Sub-call failure modes.
 ///
-/// Intentionally NOT marked `#[non_exhaustive]` at T(-0.5); T4/T6 may revisit
-/// once real dispatch is wired.
+/// Intentionally NOT marked `#[non_exhaustive]` at T(-0.5). T4/T6 may revisit
+/// this once real dispatch is wired.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum SubCallError {
     /// Provider does not implement sub-call (default trait method).
@@ -254,8 +254,8 @@ pub trait PrecompileStorageProvider {
 
     /// Returns the immutable genesis block hash for this execution context.
     ///
-    /// Production providers source this from the canonical `ChainSpec`; it is
-    /// never accepted from transaction calldata or mutable contract storage.
+    /// Production providers source this from the canonical `ChainSpec`. They
+    /// never accept it from transaction calldata or mutable contract storage.
     fn genesis_hash(&self) -> B256;
 
     /// Returns the current block timestamp.
@@ -263,11 +263,11 @@ pub trait PrecompileStorageProvider {
 
     /// Test fixtures only: advance the provider's reported block timestamp.
     ///
-    /// Production providers (EVM) own block time and ignore this call; the
+    /// Production providers (EVM) own block time and ignore this call. The
     /// default no-op preserves that invariant. The in-memory test provider
     /// (`HashMapStorageProvider`) overrides this to drive `timestamp()` from
-    /// inside a `StorageHandle::enter` scope, so per-block lifecycle tests can
-    /// advance time without splitting the enter block.
+    /// inside a `StorageHandle::enter` scope. This lets per-block lifecycle
+    /// tests advance time without splitting the enter block.
     fn set_block_timestamp(&mut self, _timestamp: U256) {}
 
     /// Returns the current block beneficiary (coinbase).
@@ -282,9 +282,9 @@ pub trait PrecompileStorageProvider {
     ///
     /// `SlashIndicator::submit_invalid_vrf_evidence`
     /// rejects evidence whose `parent_block_hash` is not the canonical hash
-    /// at `parent_block_number`. No default impl on purpose - every storage
-    /// provider must answer this question explicitly so a missing override
-    /// cannot silently accept side-chain evidence.
+    /// at `parent_block_number`. This method has no default impl on purpose.
+    /// Every storage provider must answer this question explicitly, so a
+    /// missing override cannot silently accept side-chain evidence.
     fn canonical_block_hash(&mut self, number: u64) -> Result<Option<alloy_primitives::B256>>;
 
     /// Sets the bytecode at the given address.
@@ -346,20 +346,20 @@ pub trait PrecompileStorageProvider {
 
     /// Increases the native token balance of an address (minting).
     ///
-    /// Used by system hooks (e.g., block reward emission) to mint new tokens
-    /// to a contract address. No source is debited - this creates new supply.
+    /// System hooks (e.g., block reward emission) use this to mint new tokens
+    /// to a contract address. It debits no source. It creates new supply.
     fn increase_balance(&mut self, address: Address, amount: U256) -> Result<()>;
 
     /// Decreases the native token balance of an address (burning).
     ///
-    /// Used by slashing and other system hooks to destroy tokens.
+    /// Slashing and other system hooks use this to destroy tokens.
     /// Returns an error if the address has insufficient balance.
     fn decrease_balance(&mut self, address: Address, amount: U256) -> Result<()>;
 
     /// Synchronous Rust -> Solidity sub-call.
     ///
-    /// Default body returns [`SubCallError::NotAvailable`]; concrete
-    /// providers wired to the sub-call driver override with a real implementation that
+    /// Default body returns [`SubCallError::NotAvailable`]. Concrete providers
+    /// wired to the sub-call driver override it with a real implementation that
     /// routes through `run_sub_call_impl`. Test / read-only / block-level
     /// providers may keep the default.
     fn sub_call(

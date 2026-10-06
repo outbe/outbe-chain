@@ -39,8 +39,9 @@ impl TeeRegistry<'_> {
     }
 
     /// The current tribute-offer epoch (slot 4). The enclave derives the resident
-    /// offer key for this epoch from `group_sig`; `0` until an offer-key rotation
-    /// advances it. Bound into one-time registry onboarding ingestion.
+    /// offer key for this epoch from `group_sig`. The value is `0` until an
+    /// offer-key rotation advances it. The one-time ingestion of registry
+    /// onboarding binds this epoch.
     pub fn tribute_offer_epoch(&self) -> Result<u64> {
         self.tribute_offer_epoch.read()
     }
@@ -54,9 +55,9 @@ impl TeeRegistry<'_> {
 
     /// Record the recipient X25519 pubkeys announced by a `BoundaryOutcome`
     /// (`DkgBoundaryArtifact::tee_recipient_pubkeys`). Latest announcement wins
-    /// (key rotation). Called from the boundary system-tx handler; the keys ride
-    /// in the hash-committed block artifact, so every validator records the same
-    /// ordered set deterministically. A `B256::ZERO` key clears the announcement.
+    /// (key rotation). The boundary system-tx handler calls this function. The
+    /// keys ride in the hash-committed block artifact, so every validator records
+    /// the same ordered set deterministically. A `B256::ZERO` key clears the announcement.
     pub fn record_boundary_recipient_keys(&mut self, keys: &[(Address, B256)]) -> Result<()> {
         for (validator, recipient_x25519) in keys {
             self.announced_recipient_x25519
@@ -90,9 +91,9 @@ impl TeeRegistry<'_> {
     /// Write the one-time bootstrap result.
     ///
     /// Native-only: the `TeeBootstrap` system-tx handler calls this
-    /// through `StorageHandle::contract` after full validation. Idempotency is
-    /// enforced here as a defense in depth - a second bootstrap is rejected even
-    /// if the system-tx ordering guard is bypassed.
+    /// through `StorageHandle::contract` after full validation. This function
+    /// enforces idempotency as a defense in depth. It rejects a second bootstrap
+    /// even if the system-tx ordering guard is bypassed.
     pub fn write_bootstrap(&mut self, data: &TeeBootstrapData) -> Result<()> {
         if self.bootstrapped.read()? {
             return Err(PrecompileError::Revert(

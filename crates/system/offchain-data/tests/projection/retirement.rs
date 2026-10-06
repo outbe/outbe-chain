@@ -253,7 +253,7 @@ fn rocksdb_retirement_and_gc_preserve_open_export_session_and_durable_checkpoint
             .encode(),
         expected
     );
-    // The same primary capability is used by projection and post-release GC.
+    // Projection and post-release GC use the same primary capability.
     let gc = RetainedTributeWriter::new(storage.clone(), storage.clone());
     assert!(gc.release_input_lease_page(pin.input_lease_id).unwrap());
     assert!(gc.release_input_lease_page(pin.input_lease_id).unwrap());

@@ -1,20 +1,19 @@
 //! Per-block fee escrow + participation accumulation hook.
 //!
-//! Invoked from the executor's post-exec block AFTER the top-level
-//! fingerprint check (step 9) and `record_finalized_participation` have
-//! run. Performs the idempotent per-finalized-block work:
+//! The executor's post-exec block invokes this hook AFTER the top-level
+//! fingerprint check (step 9) and `record_finalized_participation`
+//! run. The hook does the idempotent per-finalized-block work:
 //!
 //! 1. Lazily initialize `last_settled_utc_day` on the first finalized
 //!    day observed (so the day-settle eligibility window opens correctly).
 //! 2. Per-block accumulation: `daily_fee_sum_raw`, `daily_fee_dust`,
 //!    guarded by `block_metadata_counted[fb_hash]`.
 //! 3. Per-block fee ESCROW + participation count, guarded by `fb_hash` /
-//!    `(fb_hash, voter)` composite keys. Fees are NOT paid eagerly: the
-//!    block's `validator_fee_sum` is escrowed via
-//!    `late_settlement::escrow_block_fee` (`pending_fees[fb_hash]`, base
-//!    2f+1 seeded at `k=0`) and settled at `N+K` over the inclusion-window
-//!    voter set. The daily emission top-up lands later at
-//!    the day-boundary settle (step 11).
+//!    `(fb_hash, voter)` composite keys. The hook does NOT pay fees eagerly.
+//!    `late_settlement::escrow_block_fee` escrows the `validator_fee_sum` of the
+//!    block (`pending_fees[fb_hash]`, base 2f+1 seeded at `k=0`). The fee settles
+//!    at `N+K` over the inclusion-window voter set. The daily emission top-up
+//!    lands later at the day-boundary settle (step 11).
 //! 4. Advance `max_observed_finalized_day` (monotonic).
 //!
 
@@ -28,13 +27,13 @@ use outbe_primitives::{
 
 use crate::schema::Rewards;
 
-/// number of recent finalized blocks whose per-`fb_hash` guard maps
+/// Number of recent finalized blocks whose per-`fb_hash` guard maps
 /// (`block_metadata_counted`, `metadata_fingerprint_for_block`,
 /// `fee_dust_counted_for_block`, `fee_settled`) stay live. The replay/settle
 /// horizon is the K-block late-finalize window
-/// ([`LATE_FINALIZE_WINDOW_K`](outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K) = 3),
-/// so retaining the last 64 finalized blocks is generous; older guard flags
-/// are pruned by [`prune_block_guards`]. Changing it is a hard fork.
+/// ([`LATE_FINALIZE_WINDOW_K`](outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K) = 3).
+/// Thus, a retention of the last 64 finalized blocks is generous. [`prune_block_guards`]
+/// prunes older guard flags. A change to this value is a hard fork.
 pub const BLOCK_GUARD_RETAIN: u64 = 64;
 
 /// Record `fb_hash` in the prune ring and clear the four per-`fb_hash` guard
@@ -43,11 +42,11 @@ pub const BLOCK_GUARD_RETAIN: u64 = 64;
 /// Without this, `block_metadata_counted`, `metadata_fingerprint_for_block`,
 /// `fee_dust_counted_for_block`, and `fee_settled` grow by one entry per
 /// finalized block forever. The evicted block is `BLOCK_GUARD_RETAIN` >> K
-/// blocks old, so it can no longer be re-counted or settled and clearing its
+/// blocks old, so nothing can re-count or settle it. Thus, clearing its
 /// guards cannot weaken replay protection for any block still in the window.
-/// The nested `participation_counted_for_block[fb_hash]` map is freed at
-/// settlement instead (see `late_settlement::settle_window`), where the
-/// credited voter set is known.
+/// Settlement frees the nested `participation_counted_for_block[fb_hash]` map
+/// instead (see `late_settlement::settle_window`), where the credited voter
+/// set is known.
 fn prune_block_guards(rewards: &Rewards<'_>, fb_hash: B256) -> Result<()> {
     let seq = rewards.block_guard_ring_seq.read()?;
     let idx = seq % BLOCK_GUARD_RETAIN;
@@ -77,14 +76,14 @@ fn prune_block_guards(rewards: &Rewards<'_>, fb_hash: B256) -> Result<()> {
 /// - resolved the finalized parent's `validator_fee_sum` and timestamp.
 ///
 /// `voters` is the list of validator addresses whose `signer_bitmap`
-/// bit was set; the slashing wrappers handle the absent set separately.
+/// bit was set. The slashing wrappers handle the absent set separately.
 ///
-/// `validator_fee_sum` is read from
-/// `finalized.summary.validator_fee_sum` and represents the raw fees
+/// `validator_fee_sum` comes from
+/// `finalized.summary.validator_fee_sum`. It is the raw fees
 /// escrowed on `REWARDS_ADDRESS` for the finalized parent block.
 ///
 /// `finalized_block_timestamp` is the timestamp of the finalized parent
-/// block, used to compute the UTC day key (`fb_day`).
+/// block. The hook uses it to compute the UTC day key (`fb_day`).
 pub fn on_finalized_metadata(
     ctx: &BlockRuntimeContext,
     metadata: &CertifiedParentAccountingMetadata,
@@ -97,9 +96,9 @@ pub fn on_finalized_metadata(
 
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
 
-    // first sight of this finalized block? `block_metadata_counted` is the
-    // durable per-`fb_hash` first-seen signal, so the prune ring advances exactly
-    // once per finalized block even if the hook is re-entered for the same hash.
+    // First sight of this finalized block? `block_metadata_counted` is the
+    // durable per-`fb_hash` first-seen signal. Thus, the prune ring advances exactly
+    // once per finalized block, even if the hook runs again for the same hash.
     let first_seen = !rewards.block_metadata_counted.read(&fb_hash)?;
 
     // 1. Lazy init of `last_settled_utc_day` on first finalized day observed.
@@ -109,9 +108,9 @@ pub fn on_finalized_metadata(
             .write(previous_date_key(fb_day))?;
     }
 
-    // per-day raw fee accumulation still feeds the daily-emission cap,
-    // but the fees themselves are now ESCROWED per finalized block (not paid
-    // eagerly) and settled at N+K. Idempotent via `block_metadata_counted`.
+    // The per-day raw fee accumulation still feeds the daily-emission cap.
+    // But the hook now ESCROWS the fees per finalized block (it does not pay them
+    // eagerly), and they settle at N+K. Idempotent via `block_metadata_counted`.
     if first_seen {
         let closes_at = metadata
             .finalized_block_number
@@ -130,13 +129,13 @@ pub fn on_finalized_metadata(
         rewards.block_metadata_counted.write(&fb_hash, true)?;
     }
 
-    // per-block fee escrow (replaces the former eager per-voter
-    // `transfer_balance`): record `pending_fees[fb_hash]` and seed the base 2f+1
-    // (the eager finalize signers) at inclusion distance k=0. The fee is settled
-    // at N+K by the `LateFinalizeCredits` begin-zone phase over the full credited
-    // voter set (decay-weighted, fixed denominator); residue burns.
-    // Committee size = ordered_committee length, bounded by MAX_VALIDATORS (256),
-    // so it always fits u32 (clamp is a defensive no-panic guard, never hit).
+    // Per-block fee escrow (replaces the former eager per-voter
+    // `transfer_balance`). Record `pending_fees[fb_hash]` and seed the base 2f+1
+    // (the eager finalize signers) at inclusion distance k=0. At N+K, the
+    // `LateFinalizeCredits` begin-zone phase settles the fee over the full credited
+    // voter set (decay-weighted, fixed denominator). The residue burns.
+    // Committee size = ordered_committee length, bounded by MAX_VALIDATORS (256).
+    // Thus, it always fits u32 (the clamp is a defensive no-panic guard, never hit).
     let committee_size = u32::try_from(metadata.ordered_committee.len()).unwrap_or(u32::MAX);
     crate::late_settlement::escrow_block_fee(
         ctx,
@@ -321,7 +320,7 @@ mod tests {
             )
             .unwrap();
 
-            // fees are ESCROWED, not paid eagerly - voter balances stay
+            // Fees are ESCROWED, not paid eagerly. Voter balances stay
             // zero and the full fee remains on REWARDS until settle at N+K.
             assert_eq!(ctx.storage.balance(VAL_X).unwrap(), U256::ZERO);
             assert_eq!(ctx.storage.balance(VAL_Y).unwrap(), U256::ZERO);
@@ -402,7 +401,7 @@ mod tests {
             )
             .unwrap();
 
-            // No eager payout; escrow holds the full fee once.
+            // No eager payout. The escrow holds the full fee once.
             assert_eq!(ctx.storage.balance(VAL_X).unwrap(), U256::ZERO);
             assert_eq!(ctx.storage.balance(VAL_Y).unwrap(), U256::ZERO);
 
@@ -522,7 +521,7 @@ mod tests {
 
             // `daily_settled` is a Cycle-owned completion marker.
             // makes finalized metadata synchronous Phase 1 input before Cycle
-            // runs, so the old late-after-settle fatal guard is removed.
+            // runs, so the old late-after-settle fatal guard is gone.
             ctx.storage
                 .contract::<Rewards>()
                 .daily_settled
@@ -572,7 +571,7 @@ mod tests {
                 rewards.daily_fee_sum_raw.read(&20240101).unwrap(),
                 U256::from(100u64)
             );
-            // Whole fee escrowed; no base voters -> the entire pool becomes
+            // Whole fee escrowed. No base voters -> the entire pool becomes
             // burnable residue at settle.
             assert_eq!(
                 rewards.pending_fees.read(&FB_HASH_A).unwrap(),
@@ -591,10 +590,9 @@ mod tests {
         // on_finalized_metadata does not trigger day-boundary
         // settlement. The hook only updates the per-day fee
         // accumulators, per-voter participation, and the monotonic
-        // `max_observed_finalized_day` watermark. Day-boundary settle
-        // is owned by the new Cycle orchestrator and
-        // fires via `crate::api::prepare_daily_validator_gem_batch`, not from this
-        // hook.
+        // `max_observed_finalized_day` watermark. The new Cycle orchestrator owns
+        // the day-boundary settle. The settle fires via
+        // `crate::api::prepare_daily_validator_gem_batch`, not from this hook.
         let mut storage = HashMapStorageProvider::new(CHAIN_ID);
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
@@ -629,24 +627,25 @@ mod tests {
             assert!(!rewards.daily_settled.read(&20240101).unwrap());
             assert!(!rewards.daily_settled.read(&20240102).unwrap());
             assert!(!rewards.daily_settled.read(&20240103).unwrap());
-            // `last_settled_utc_day` is lazy-initialized on the very
-            // first observed finalized day to `previous_date_key(fb_day)`
-            // and is no longer advanced by the hook.
+            // The hook lazy-initializes `last_settled_utc_day` on the very
+            // first observed finalized day to `previous_date_key(fb_day)`.
+            // The hook no longer advances it.
             assert_eq!(rewards.last_settled_utc_day.read().unwrap(), 20231231);
         });
     }
 
     // -- Step 23: idempotency property test -----------------------------
     //
-    // Replay-safety contract: applying a canonical sequence of finalized
-    // metadata events, then re-applying any subset of those events any
-    // number of times, must produce a state byte-equal to the
-    // canonical-only baseline. This is the structural justification for
-    // removing the `<= applied_number` watermark in step 12.
+    // Replay-safety contract:
+    // 1. Apply a canonical sequence of finalized metadata events.
+    // 2. Re-apply any subset of those events any number of times.
+    // 3. The resulting state must be byte-equal to the canonical-only baseline.
+    // This is the structural justification for the removal of the
+    // `<= applied_number` watermark in step 12.
     //
     // The test only exercises *duplicate* replays of already-applied
-    // events. Re-ordering distinct events is intentionally NOT covered:
-    // `daily_voter_at[day][i]` records first-seen order, so a different
+    // events. The test intentionally does NOT cover re-ordering of distinct
+    // events. `daily_voter_at[day][i]` records first-seen order, so a different
     // order produces a different (still valid) storage layout.
 
     use proptest::prelude::*;
@@ -755,8 +754,8 @@ mod tests {
     }
 
     /// Apply a canonical event sequence to a fresh storage and return the
-    /// snapshot. Replay schedule = list of indices into `events` that
-    /// will be re-applied (in order, as duplicates) immediately after
+    /// snapshot. Replay schedule = list of indices into `events`. The function
+    /// re-applies each listed event (in order, as duplicates) immediately after
     /// the canonical event at the same index. The schedule is empty for
     /// the baseline run.
     fn run_scenario(
@@ -813,9 +812,9 @@ mod tests {
     fn arb_event(idx: u8) -> impl Strategy<Value = Event> {
         // All 4 events share UTC day 20240101 (timestamps within
         // [GENESIS_TS, GENESIS_TS + 86_400)). This isolates the
-        // replay-idempotency property from the late-after-settle guard:
-        // out-of-order arrivals across UTC days are a *separate* contract
-        // already covered by `late_metadata_after_settle_is_fatal`.
+        // replay-idempotency property from the late-after-settle guard.
+        // Out-of-order arrivals across UTC days are a *separate* contract.
+        // `late_metadata_after_settle_is_fatal` already covers it.
         (any::<u8>(), 0u64..86_400u64)
             .prop_filter("at least one voter", |(m, _)| m & 0b111 != 0)
             .prop_map(move |(m, offset)| Event {
@@ -864,9 +863,8 @@ mod tests {
         }
     }
 
-    /// a finalized block evicted from the prune ring has all four of its
-    /// per-`fb_hash` guard maps cleared, while blocks still inside the retention
-    /// window keep theirs.
+    /// The prune ring clears all four per-`fb_hash` guard maps of a finalized block
+    /// that it evicts. Blocks still inside the retention window keep their guards.
     #[test]
     fn block_guard_ring_evicts_and_clears_old_guards() {
         fn fb(i: u64) -> B256 {
@@ -880,7 +878,7 @@ mod tests {
             let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
             let rewards = ctx.storage.contract::<Rewards>();
 
-            // `victim` carries all four live per-fb_hash guards; `survivor` is a
+            // `victim` carries all four live per-fb_hash guards. `survivor` is a
             // block recorded one step later that must stay live.
             let victim = fb(1);
             let survivor = fb(2);

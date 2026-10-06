@@ -1,9 +1,9 @@
 //! Daily Called scan: force-calls a series once its COEN VWAP exceeded
 //! the call trigger on `call_threshold_seconds` of the last `call_window_seconds`. Candidates
-//! come from the call-trigger bin index; counts are recomputed each run from the
-//! Oracle's finalized per-UTC-day VWAPs, which the Oracle begin-block hook
-//! closes before the CycleTick that drives this scan. Driven by the Cycle daily
-//! trigger.
+//! come from the call-trigger bin index. Each run recomputes the counts from the
+//! Oracle's finalized per-UTC-day VWAPs. The Oracle begin-block hook closes these
+//! VWAPs before the CycleTick that drives this scan. The Cycle daily trigger drives
+//! this scan.
 
 use std::collections::BTreeMap;
 
@@ -15,7 +15,7 @@ use outbe_primitives::daily_sweep::{Scheduled, SweepDays};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result},
+    error::{PrecompileError, Result, SweepFailure},
     math::{constants::MAX_BIN_ID, tree_math},
     storage::StorageHandle,
     time::{first_full_day, previous_date_key, timestamp_to_date_key, SECONDS_PER_DAY},
@@ -31,7 +31,7 @@ use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
 use crate::state::{CallBins, Group};
 
-/// Schedule the day the Oracle has just finalized: open a Called sweep over it and
+/// Schedule the day the Oracle just finalized: open a Called sweep over it and
 /// run its first slice, or queue it behind the sweep still in flight.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let Some(last_closed_day) = closed_day(ctx)? else {
@@ -72,7 +72,7 @@ pub(crate) fn closed_day(ctx: &BlockRuntimeContext) -> Result<Option<u32>> {
     let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
 
     // The Oracle begin-block hook finalizes that day earlier in this same
-    // block; a lagging watermark means the ordering broke - skip loudly
+    // block. A lagging watermark means the ordering broke. Skip loudly
     // instead of misreading an unfinalized day as empty.
     // todo use api.rs
     let finalized = OracleContract::new(ctx.storage.clone())
@@ -120,7 +120,7 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         let finished = if budget.is_spent() {
             false
         } else {
-            // No registered pair is an answer; a failed read is not.
+            // No registered pair is an answer. A failed read is not.
             match outbe_oracle::api::coen_pair_index_opt(ctx.storage.clone(), iso_code)? {
                 None => true,
                 Some(pair_index) => {
@@ -163,8 +163,8 @@ fn call_currency(
 ) -> Result<(u32, bool)> {
     let mut factory = IntexFactoryContract::new(ctx.storage.clone());
     let params = crate::config::read_from(&factory, ctx.block.chain_id)?;
-    // Widest terms ever issued here, not the live profile: a series keeps the terms
-    // it was issued with, and a narrowed profile must not hide it from the search.
+    // Use the widest terms ever issued here, not the live profile. A series keeps the
+    // terms it was issued with, and a narrowed profile must not hide it from the search.
     let (window_days, threshold_days) = factory.scan_call_terms(
         iso_code,
         params.call_window_seconds,
@@ -231,8 +231,9 @@ fn call_currency(
                 break 'bins;
             }
             budget.spend_decision();
-            // Isolate per-group: a deterministic Err rolls back the group's checkpoint and is
-            // skipped (logged); structural reads above keep `?` so infra errors still propagate.
+            // Isolate per group. A deterministic Err rolls back the group's checkpoint, and the
+            // scan logs it and skips the group. A node-local Err, like the structural reads
+            // above, fails the block.
             let res = ctx.storage.with_checkpoint(|| {
                 try_call_group(
                     &ctx.storage,
@@ -249,6 +250,7 @@ fn call_currency(
                     budget.spend_actions(applied);
                     called = called.saturating_add(applied);
                 }
+                Err(e) if e.sweep_failure() == SweepFailure::Propagate => return Err(e),
                 Err(e) => {
                     tracing::warn!(target: "outbe::intexfactory", iso_code, worldwide_day = %worldwide_day, error = ?e, "call scan: skipping group");
                 }
@@ -299,7 +301,7 @@ impl DayVwaps {
 /// The finalized VWAP window one call scan decides against, and the price that
 /// summarises it.
 pub(crate) struct CallWindow {
-    /// Most recent fully-closed UTC day; the window ends here.
+    /// Most recent fully-closed UTC day. The window ends here.
     pub(crate) last_day: u32,
     /// Window length and required breach count, both in whole days.
     pub(crate) days: u32,
@@ -307,7 +309,7 @@ pub(crate) struct CallWindow {
     /// The `threshold`-th largest VWAP: `trigger < p_star` and "breached on at
     /// least `threshold` days" are one statement, so a group decides by comparison.
     pub(crate) p_star: U256,
-    /// The window's first day; a group issued on or before it sees the whole window.
+    /// The window's first day. A group issued on or before it sees the whole window.
     pub(crate) first_day: u32,
 }
 
@@ -407,9 +409,10 @@ pub(crate) fn try_call_group(
     {
         trigger < window.p_star
     } else {
-        // A shorter window than the scan's - issued inside it, or different stored
-        // parameters - so its own days are counted. Wider stored parameters are only
-        // reached under `p_star`; only a profile change on a live chain parts them.
+        // The group has a shorter window than the scan's: it was issued inside it, or it
+        // has different stored parameters. So the scan counts its own days. Wider stored
+        // parameters are only reached under `p_star`. Only a profile change on a live
+        // chain parts them.
         count_breaches(
             oracle,
             vwaps,
@@ -423,23 +426,25 @@ pub(crate) fn try_call_group(
         return Ok(0);
     }
 
-    // u32 timestamp; bounded until 2106 (matches issued_at).
+    // u32 timestamp. It is bounded until 2106 (matches issued_at).
     let called_at = u32::try_from(now_ts)
         .map_err(|_| PrecompileError::Revert("block timestamp exceeds u32".into()))?;
     for &series_id in &group.members {
         outbe_intex::api::mark_called(storage, series_id, called_at)?;
     }
+    let settlement_deadline = u64::from(called_at) + u64::from(series.call_notice_period_seconds);
     // Park it with its members: the expiry sweep has no other way back to them.
     factory.remove_call_bin_group(group.iso_code, group.worldwide_day)?;
     factory.push_called_group(
         group.iso_code,
         group.worldwide_day,
-        u64::from(called_at) + u64::from(series.call_notice_period_seconds),
+        settlement_deadline,
         &group.members,
     )?;
 
-    // A slice of this sweep runs in a block hook, which cannot call contracts, so the notices leave from
-    // the `intex_drain_notices` trigger. Each carries its own series: the group has left the index by then.
+    // A slice of this sweep runs in a block hook, which cannot call contracts. So the notices
+    // leave from the `intex_drain_notices` trigger. Each notice carries its own series: the group
+    // has left the index by then.
     for &series_id in &group.members {
         crate::notify::enqueue_notice(
             factory,
@@ -453,6 +458,7 @@ pub(crate) fn try_call_group(
             crate::precompile::IIntexFactory::SeriesCalled {
                 seriesId: series_id.into(),
                 calledAt: called_at,
+                settlementDeadline: settlement_deadline,
             },
         )?;
     }
@@ -460,15 +466,17 @@ pub(crate) fn try_call_group(
 }
 
 /// One message per group, split only where the wire's cap forces it. `called_at`
-/// travels so every target derives the same deadline the origin did.
+/// travels so every target derives the same deadline the origin did. Returns the
+/// series whose message the router refused. A node-local failure fails the block instead.
 pub(crate) fn notify_called(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,
     called_at: u32,
     members: &[SeriesId],
-) -> Result<()> {
+) -> Result<Vec<SeriesId>> {
+    let mut refused = Vec::new();
     for chunk in members.chunks(MAX_SERIES_PER_MARK) {
-        // Best-effort, and the batch is the unit: a failure loses the mark for every series in it.
+        // The batch is the unit: a refusal returns every series in it.
         let sent = storage.with_checkpoint(|| {
             // Relay-float-funded: value 0, so the router self-quotes and pays the fee from its float.
             storage.call(
@@ -484,18 +492,23 @@ pub(crate) fn notify_called(
             )?;
             Ok(())
         });
-        if let Err(error) = sent {
-            tracing::warn!(
-                target: "outbe::intexfactory",
-                worldwide_day = worldwide_day.value(),
-                called_at,
-                series = ?chunk.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
-                error = ?error,
-                "called notice: dropping"
-            );
+        match sent {
+            Ok(()) => {}
+            Err(error) if error.sweep_failure() == SweepFailure::Propagate => return Err(error),
+            Err(error) => {
+                tracing::warn!(
+                    target: "outbe::intexfactory",
+                    worldwide_day = worldwide_day.value(),
+                    called_at,
+                    series = ?chunk.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+                    error = ?error,
+                    "called notice: refused"
+                );
+                refused.extend_from_slice(chunk);
+            }
         }
     }
-    Ok(())
+    Ok(refused)
 }
 
 /// Index of the currency the cursor names, or the head when the registry dropped it.
@@ -506,8 +519,8 @@ pub(crate) fn currency_position(currencies: &[u16], cursor: u32) -> usize {
         .unwrap_or(0)
 }
 
-/// Work one scan may do, split by cost: deciding a group is a single read,
-/// applying it writes once per series and queues its notice.
+/// Work one scan may do, split by cost. Deciding a group is a single read.
+/// Applying it writes once per series and queues its notice.
 pub(crate) struct ScanBudget {
     decisions: u32,
     actions: u32,
@@ -528,7 +541,7 @@ impl ScanBudget {
     }
 
     /// Whole groups only. A transition shrinks its bin, so stopping on actions
-    /// resumes past the work done; stopping on decisions would restart on the
+    /// resumes past the work done. Stopping on decisions would restart on the
     /// same groups, so they bound the scan at the next bin boundary instead.
     pub(crate) fn admits_actions(&self, members: u32) -> bool {
         members <= self.actions || self.actions == self.actions_full

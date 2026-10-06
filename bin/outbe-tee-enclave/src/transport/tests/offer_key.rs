@@ -22,8 +22,8 @@ fn persistence_failure_never_activates_offer_key() {
 }
 
 /// Seal the DKG-derived offer key + group signature, then a fresh boot unseals
-/// and restores the byte-identical offer public key AND the group signature -
-/// the restart fast-path that skips the ceremony.
+/// and restores the byte-identical offer public key AND the group signature.
+/// This is the restart fast-path that skips the ceremony.
 #[test]
 fn ws_c_seal_then_unseal_restores_tribute_offer_key_and_group_sig() {
     let dir = tempfile::tempdir().unwrap();
@@ -46,9 +46,9 @@ fn ws_c_seal_then_unseal_restores_tribute_offer_key_and_group_sig() {
     );
 }
 
-/// vA seals at SVN 1; a vB enclave of the SAME signer (same mock MRSIGNER key,
-/// different build) boots at SVN 2 and unseals vA's blob - cross-version
-/// unseal with the anti-rollback floor satisfied.
+/// vA seals at SVN 1. A vB enclave of the SAME signer (same mock MRSIGNER key,
+/// different build) boots at SVN 2 and unseals vA's blob. This is a
+/// cross-version unseal with the anti-rollback floor satisfied.
 #[test]
 fn ws_c_cross_version_unseal_same_signer_key() {
     let dir = tempfile::tempdir().unwrap();
@@ -140,7 +140,7 @@ fn ws_c_seal_is_write_once() {
     );
 }
 
-/// The encoded share is only present inside the AEAD ciphertext - it never
+/// The encoded share is only present inside the AEAD ciphertext. It never
 /// appears as plaintext bytes in the on-disk blob (secret-at-rest invariant).
 #[test]
 fn ws_c_share_never_in_host_plaintext() {

@@ -19,10 +19,10 @@ Outputs:
   - network.md: human-readable launch plan with addresses, ports, and commands
 
 OCOMP V1 requires exactly four founding validators with threshold 3. Generated
-founders get fresh consensus identity, EVM, Reth and OCOMP keys. The permanent
-offer key and threshold shares are created only by the live block-1 founding
-ceremony; this tool deliberately does not precompute a conflicting DKG triplet.
-Existing-validator mode requires the complete matching identity material; the
+founders get fresh consensus identity, EVM, Reth and OCOMP keys. Only the live
+block-1 founding ceremony creates the permanent offer key and threshold shares.
+This tool deliberately does not precompute a conflicting DKG triplet.
+Existing-validator mode requires the complete matching identity material. The
 script never emits a knowingly partial launch command.
 """
 
@@ -813,9 +813,10 @@ def command_lines(
     lines = [
         'export RUST_MIN_STACK="${RUST_MIN_STACK:-16777216}"',
         "",
-        # The p2p key is passed as a FILE (`--p2p-secret-key`), never inline hex
-        # in argv: the command line is world-readable via `ps`. reth parses the
-        # file contents without trimming, so normalize it in place (idempotent).
+        # The command passes the p2p key as a FILE (`--p2p-secret-key`), never as
+        # inline hex in argv: the command line is world-readable via `ps`. reth
+        # parses the file contents without trimming, so normalize it in place
+        # (idempotent).
         f"printf '%s' \"$(tr -d '[:space:]' < {shell_quote(p2p_secret_runtime_path)})\" > {shell_quote(p2p_secret_runtime_path)}",
         "",
         f"{chain_binary} node \\",

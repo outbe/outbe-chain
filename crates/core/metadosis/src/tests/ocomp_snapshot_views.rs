@@ -145,7 +145,7 @@ fn oversized_closed_count_rejects_before_payload() {
 #[test]
 fn oversized_scheduler_rejects_before_payload() {
     let slots = NativeSlots::discover();
-    let length = 8 + 148 * usize::from(u16::MAX) + 1;
+    let length = 8 + 36 * usize::from(u16::MAX) + 1;
     assert_rejects_before_payload(&slots, slots.scheduler, U256::from(length * 2 + 1));
 }
 
@@ -307,7 +307,7 @@ fn awaiting_and_voting_jobs_are_canonical_ordered_and_readonly() {
     let expected = vec![awaiting, (fixture.intent_id, voting)];
     let before = fixture.provider.storage.clone();
 
-    // ReadOnlyStorageProvider rejects every write; repeating the public view
+    // ReadOnlyStorageProvider rejects every write. Repeating the public view
     // also verifies deterministic order independent of request insertion order.
     assert_eq!(readonly_jobs(&fixture.provider).unwrap(), expected);
     assert_eq!(readonly_jobs(&fixture.provider).unwrap(), expected);

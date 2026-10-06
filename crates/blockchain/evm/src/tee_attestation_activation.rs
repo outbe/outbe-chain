@@ -1,7 +1,7 @@
 //! Genesis-fixed authority for V1 TEE attestation.
 //!
 //! Every runnable chain must carry this field. Devnet and testnet may
-//! explicitly select `DcapRequired` or `GramineDirectDev`; mainnet requires
+//! explicitly select `DcapRequired` or `GramineDirectDev`. Mainnet requires
 //! `DcapRequired`. Both use OST3, and neither can fall back at runtime.
 
 use std::sync::Arc;
@@ -28,7 +28,7 @@ pub const TEE_ATTESTATION_V1_ACTIVATION_HEIGHT: u64 = 1;
 
 /// Pre-measurement network authority derived from the seeded genesis. It is
 /// intentionally independent of `teeAttestationV1`, because that policy is
-/// created only after the descriptor has contributed to `MRENCLAVE`.
+/// created only after the descriptor contributed to `MRENCLAVE`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DcapSeededChainSpecBindingV1 {
     pub chain_id: u64,
@@ -77,22 +77,7 @@ fn genesis_consensus_keys_v1(genesis: &Value) -> Result<Vec<[u8; 48]>, String> {
         .get("storage")
         .and_then(Value::as_object)
         .ok_or_else(|| "seeded genesis ValidatorSet has no storage".to_owned())?;
-    let read = |slot: [u8; 32], label: &str| -> Result<U256, String> {
-        let wanted = hex::encode(slot);
-        let raw = storage
-            .iter()
-            .find(|(key, _)| key.trim_start_matches("0x").eq_ignore_ascii_case(&wanted))
-            .and_then(|(_, value)| value.as_str())
-            .ok_or_else(|| format!("seeded genesis lacks ValidatorSet {label}"))?;
-        let bytes = hex::decode(raw.trim_start_matches("0x"))
-            .map_err(|error| format!("decode ValidatorSet {label}: {error}"))?;
-        if bytes.len() > 32 {
-            return Err(format!(
-                "seeded genesis ValidatorSet {label} exceeds one word"
-            ));
-        }
-        Ok(U256::from_be_slice(&bytes))
-    };
+    let read = |slot, label| read_seeded_validator_word(storage, slot, label);
     let direct_slot = |slot: u64| U256::from(slot).to_be_bytes();
     let mapping_slot = |key: [u8; 32], slot: u64| {
         let mut preimage = [0_u8; 64];
@@ -145,6 +130,27 @@ fn genesis_consensus_keys_v1(genesis: &Value) -> Result<Vec<[u8; 48]>, String> {
         return Err("seeded genesis contains duplicate consensus keys".into());
     }
     Ok(keys)
+}
+
+fn read_seeded_validator_word(
+    storage: &serde_json::Map<String, Value>,
+    slot: [u8; 32],
+    label: &str,
+) -> Result<U256, String> {
+    let wanted = hex::encode(slot);
+    let raw = storage
+        .iter()
+        .find(|(key, _)| key.trim_start_matches("0x").eq_ignore_ascii_case(&wanted))
+        .and_then(|(_, value)| value.as_str())
+        .ok_or_else(|| format!("seeded genesis lacks ValidatorSet {label}"))?;
+    let bytes = hex::decode(raw.trim_start_matches("0x"))
+        .map_err(|error| format!("decode ValidatorSet {label}: {error}"))?;
+    if bytes.len() > 32 {
+        return Err(format!(
+            "seeded genesis ValidatorSet {label} exceeds one word"
+        ));
+    }
+    Ok(U256::from_be_slice(&bytes))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -245,10 +251,11 @@ impl DcapChainSpecBindingV1 {
             );
         }
         let matches_rule = policy.measurement_rules.iter().any(|rule| {
-            rule.mrenclave == mrenclave
+            let exact_measurement = rule.mrenclave == mrenclave
                 && rule.mrsigner == mrsigner
                 && rule.isv_prod_id == isv_prod_id
-                && rule.minimum_isv_svn == isv_svn
+                && rule.minimum_isv_svn == isv_svn;
+            exact_measurement
                 && rule.admit_from_height == policy.activation_height
                 && rule.admit_until_height_exclusive == u64::MAX
         });
@@ -345,14 +352,7 @@ fn validate_activation(
     let encoded_schedule = decode_bounded_hex(&raw.policy_schedule)?;
     let policy_schedule = TeePolicyScheduleV1::decode_canonical(&encoded_schedule)
         .map_err(|error| format!("invalid canonical TEE policy schedule: {error}"))?;
-    if policy_schedule.chain_id != chain_id_word(chain_id)
-        || policy_schedule.genesis_hash != genesis_hash
-    {
-        return Err("TEE policy schedule does not match ChainSpec identity".into());
-    }
-    if policy_schedule.entries.len() != 1 {
-        return Err("genesis TEE policy schedule must contain exactly one initial policy".into());
-    }
+    validate_initial_schedule_binding(&policy_schedule, chain_id, genesis_hash)?;
     let computed_policy_schedule_hash = policy_schedule
         .schedule_hash()
         .map_err(|error| format!("cannot hash TEE policy schedule: {error}"))?;
@@ -389,6 +389,22 @@ fn validate_activation(
         },
         policy_schedule,
     })
+}
+
+fn validate_initial_schedule_binding(
+    policy_schedule: &TeePolicyScheduleV1,
+    chain_id: u64,
+    genesis_hash: B256,
+) -> Result<(), String> {
+    if policy_schedule.chain_id != chain_id_word(chain_id)
+        || policy_schedule.genesis_hash != genesis_hash
+    {
+        return Err("TEE policy schedule does not match ChainSpec identity".into());
+    }
+    if policy_schedule.entries.len() != 1 {
+        return Err("genesis TEE policy schedule must contain exactly one initial policy".into());
+    }
+    Ok(())
 }
 
 fn decode_bounded_hex(value: &str) -> Result<Vec<u8>, String> {

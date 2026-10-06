@@ -14,7 +14,7 @@ use crate::world::World;
 /// first.
 const UNREACHABLE_NONCE_GAP: u64 = 64;
 
-/// The harness runs validators with `--txpool.lifetime 30s`; allow generous
+/// The harness runs validators with `--txpool.lifetime 30s`. Allow a generous
 /// margin for the maintenance tick that performs the eviction.
 const LIFETIME_WAIT: Duration = Duration::from_secs(75);
 const PENDING_STALENESS_WAIT: Duration = Duration::from_secs(50);
@@ -129,7 +129,7 @@ fn queued_eviction_survives_restart(world: &mut World) {
         .expect("queued transaction hash");
     let ports = world.validators.committee_ports();
     // A surviving process is not yet a ready RPC. Keep the bounded catch-up
-    // barrier before sampling the post-repair anchor, never omit a slow node.
+    // barrier before sampling the post-repair anchor. Never omit a slow node.
     world
         .rpc
         .wait_finalized_checkpoint(&ports, 1, 60)

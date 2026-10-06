@@ -2,7 +2,7 @@
 //!
 //! Owns the promis mint/burn orchestration on top of the confidential Promis token
 //! (`outbe_promis::api`). Writes are authorized by the caller's Promis modify key
-//! (`mac` + `opNonce`). `mint` wraps `outbe_promis::api::mint`; `mine_coen` is the
+//! (`mac` + `opNonce`). `mint` wraps `outbe_promis::api::mint`. `mine_coen` is the
 //! symmetric sale path: it wraps `outbe_promis::api::burn`, mints native COEN 1:1,
 //! and emits `CoenMined`. `mine_gratis` is the conversion path: it burns promis and
 //! mints the matching Gratis through `outbe_gratisfactory::api::mint`.
@@ -17,7 +17,7 @@ use outbe_primitives::units::checked_protocol_to_native;
 use outbe_promis::api::{self as promis, ModifyAuth};
 
 /// Mint `amount` promis to `account` (authorized by the account owner's modify
-/// key). The `PromisMinted` event is emitted by the Promis token.
+/// key). The Promis token emits the `PromisMinted` event.
 ///
 /// Internal cross-module API (not exposed on the precompile ABI). The production
 /// callers are GemFactory's and IntexFactory's mine paths, which delegate the
@@ -33,8 +33,8 @@ pub fn mint(
 
 /// Burn `amount` promis from `account`, mint the matching native COEN to `account`
 /// 1:1, and emit `CoenMined`. Returns the minted native amount. The confidential
-/// burn runs inside the enclave and is authorized by the caller's Promis modify
-/// key (`auth`).
+/// burn runs inside the enclave. The caller's Promis modify key (`auth`) authorizes
+/// the burn.
 pub fn mine_coen(
     storage: StorageHandle<'_>,
     account: Address,
@@ -46,14 +46,14 @@ pub fn mine_coen(
 
     promis::burn(storage.clone(), account, amount, auth)?;
 
-    // PROMIS stays at six decimals; the matching native COEN exits at 18 decimals.
+    // PROMIS stays at six decimals. The matching native COEN exits at 18 decimals.
     storage.increase_balance(account, native_amount)?;
 
     storage.emit_event(
         PROMIS_FACTORY_ADDRESS,
         alloy_sol_types::SolEvent::encode_log_data(&IPromisFactory::CoenMined {
             sender: account,
-            amount: native_amount,
+            coenMinor: native_amount,
         }),
     )?;
 

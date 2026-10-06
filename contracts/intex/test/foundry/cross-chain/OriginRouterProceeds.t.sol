@@ -19,7 +19,8 @@ contract MockWCOEN {
     receive() external payable {}
 }
 
-/// @dev IntexFactory precompile stub: records the value/series/source of each `distribute`; can be toggled to revert.
+/// @dev IntexFactory precompile stub: records the value/series/source of each `distribute`. A test
+///      can toggle it to revert.
 contract MockIntexFactory {
     bool public shouldRevert;
     uint32 public lastWorldwideDay;
@@ -72,7 +73,8 @@ contract OriginRouterProceedsTest is CrossChainTest {
         from = _interop(BNB_CHAIN_ID, targetRouter);
 
         // Register BNB and seed the day's target snapshot: proceeds authenticate the source against it.
-        // No float needed - the mock bridge fee defaults to 0, so the seed STAGE_START costs nothing.
+        // No float is needed. The mock bridge fee defaults to 0, so the seed STAGE_START costs
+        // nothing.
         origin.addTarget(BNB_CHAIN_ID);
         _seedDaySnapshot(WORLDWIDE_DAY);
     }
@@ -112,7 +114,7 @@ contract OriginRouterProceedsTest is CrossChainTest {
         emit IOriginRouter.ProceedsParked(0, WORLDWIDE_DAY, AMOUNT);
         bytes4 magic = _receive(BNB_CHAIN_ID, AMOUNT, WORLDWIDE_DAY);
 
-        // The transfer still settles (magic returned) and the native is held for retry.
+        // The transfer still settles (magic returned), and the router holds the native for retry.
         assertEq(magic, IERC7786TokenReceiver.onCrosschainTokensReceived.selector);
         assertEq(factory.calls(), 0);
         IOriginRouter.ParkedProceeds memory p = origin.parkedProceeds(0);
@@ -165,7 +167,8 @@ contract OriginRouterProceedsTest is CrossChainTest {
     }
 
     function test_RevertWhen_ProceedsSenderSpoofed() public {
-        // Permissionless bridge: a sender other than the registered BNB peer must be rejected.
+        // Permissionless bridge: the router must reject a sender other than the registered BNB
+        // peer.
         bytes memory spoofed = _interop(BNB_CHAIN_ID, stranger);
         vm.prank(tokenBridge);
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.UnauthorizedProceedsSender.selector, spoofed));

@@ -8,9 +8,9 @@ use outbe_primitives::time::WorldwideDay as WorldwideDayKey;
 ///
 /// Earlier DSL collections occupy more than one slot, so this is deliberately
 /// not the field's `order = 8`. OCM finality proof construction and verification
-/// use this fixed consensus path; the storage behavior test pins it to the
+/// use this fixed consensus path. The storage behavior test pins it to the
 /// macro-generated contract layout.
-pub const OCOMP_JOB_RECORDS_BASE_SLOT: u64 = 20;
+pub const OCOMP_JOB_RECORDS_BASE_SLOT: u64 = 19;
 
 /// WorldwideDay status values stored as u8.
 pub mod status {
@@ -73,7 +73,7 @@ pub struct WorldwideDay {
     pub scheduled_process_time: u64,
 
     #[attribute(order = 7, default = U256::ZERO)]
-    pub metadosis_limit_amount: U256,
+    pub metadosis_limit_minor: U256,
 
     #[attribute(order = 8, default = U256::ZERO)]
     pub previous_vwap: U256,
@@ -92,19 +92,19 @@ pub struct DayLimitFormationReceiptState {
     pub formed: bool,
 
     #[attribute(order = 1, default = U256::ZERO)]
-    pub base_limit: U256,
+    pub base_limit_minor: U256,
 
     #[attribute(order = 2, default = U256::ZERO)]
-    pub carry_over_before: U256,
+    pub promis_limit_before_minor: U256,
 
     #[attribute(order = 3, default = U256::ZERO)]
-    pub carry_over_taken: U256,
+    pub promis_limit_taken_minor: U256,
 
     #[attribute(order = 4, default = U256::ZERO)]
-    pub carry_over_after: U256,
+    pub promis_limit_after_minor: U256,
 
     #[attribute(order = 5, default = U256::ZERO)]
-    pub formed_day_limit: U256,
+    pub metadosis_limit_minor: U256,
 
     #[attribute(order = 6)]
     pub block_number: u64,
@@ -130,76 +130,6 @@ pub struct OcompPreAdmissionState {
     pub envelope_hash: B256,
 }
 
-#[storage_record(exists_field = outcome)]
-pub struct WorldwideDayTerminalReceiptState {
-    #[key]
-    pub wwd: WorldwideDayKey,
-
-    #[attribute(order = 0, default = terminal_outcome::NONE)]
-    pub outcome: u8,
-
-    #[attribute(order = 1, default = U256::ZERO)]
-    pub value_routed: U256,
-
-    #[attribute(order = 2, default = U256::ZERO)]
-    pub carry_over_before: U256,
-
-    #[attribute(order = 3, default = U256::ZERO)]
-    pub carry_over_after: U256,
-
-    #[attribute(order = 4, default = terminal_retirement::NONE)]
-    pub retirement: u8,
-
-    #[attribute(order = 5)]
-    pub block_number: u64,
-}
-
-/// Exact bounded evidence for the deterministic retained-cap admission policy.
-#[storage_record(exists_field = outcome)]
-pub struct CapacityForfeitureReceiptState {
-    #[key]
-    pub wwd: WorldwideDayKey,
-
-    #[attribute(order = 0, default = terminal_outcome::NONE)]
-    pub outcome: u8,
-
-    #[attribute(order = 1)]
-    pub max_retained_wwds: u32,
-
-    #[attribute(order = 2)]
-    pub retained_count_before: u32,
-
-    #[attribute(order = 3, default = U256::ZERO)]
-    pub value_routed: U256,
-
-    #[attribute(order = 4, default = U256::ZERO)]
-    pub carry_over_before: U256,
-
-    #[attribute(order = 5, default = U256::ZERO)]
-    pub carry_over_after: U256,
-
-    #[attribute(order = 6, default = B256::ZERO)]
-    pub sealed_collection_root: B256,
-
-    #[attribute(order = 7)]
-    pub forfeited_count: u32,
-
-    #[attribute(order = 8, default = U256::ZERO)]
-    pub forfeited_nominal: U256,
-
-    #[attribute(order = 9)]
-    pub source_generation: u64,
-
-    #[attribute(order = 10)]
-    pub retired_generation: u64,
-
-    #[attribute(order = 11, default = terminal_retirement::NONE)]
-    pub retirement: u8,
-
-    #[attribute(order = 12)]
-    pub block_number: u64,
-}
-
 /// EVM storage layout for the Metadosis orchestrator contract.
 ///
 /// Manages worldwide day lifecycle and daily emission accumulation.
@@ -212,15 +142,13 @@ pub struct MetadosisContract {
     #[attribute(order = 1)]
     pub worldwide_days: outbe_primitives::storage::dsl::Map<WorldwideDayKey, WorldwideDay>,
 
-    #[attribute(order = 2)]
-    pub active_wwd_count: outbe_primitives::storage::dsl::Value<u16>,
-
     #[attribute(order = 3)]
     pub active_wwd: outbe_primitives::storage::dsl::Set<WorldwideDayKey>,
 
     /// Bounded FIFO of terminal (COMPLETED/FAILED) WorldwideDays, newest at the
     /// back. Capped at `MAX_RECORDS_KEPT`: when a new terminal day pushes past
-    /// the cap, the oldest is popped from the front and its record deleted.
+    /// the cap, the contract pops the oldest day from the front and deletes its
+    /// record.
     #[attribute(order = 4)]
     pub closed_wwd: outbe_primitives::storage::dsl::Deque<WorldwideDayKey>,
 
@@ -230,8 +158,8 @@ pub struct MetadosisContract {
         outbe_primitives::storage::dsl::Map<WorldwideDayKey, OcompPreAdmissionState>,
 
     /// Exact bounded live-Job registry. Empty while no OCOMP intent is pending.
-    /// READY work is kept in the separately bounded ordered index below; each
-    /// live entry retains an independent per-WWD FSM and IntentId.
+    /// The separately bounded ordered index below keeps READY work. Each live
+    /// entry retains an independent per-WWD FSM and IntentId.
     #[attribute(order = 7)]
     pub ocomp_scheduler: outbe_primitives::storage::types::StorageBytes,
 
@@ -260,7 +188,7 @@ pub struct MetadosisContract {
     /// Per-WorldwideDay terminal IntentId, keyed
     /// by `keccak(OUTBE_OCOMP_TERMINAL_INDEX_V1 || wwd_be || index_be)` (see
     /// `ocomp::terminal_index`). The single-attempt FSM permits exactly one
-    /// immutable entry, deleted together with the day on retirement.
+    /// immutable entry. Retirement deletes the entry together with the day.
     #[attribute(order = 11)]
     pub ocomp_terminal_intents: outbe_primitives::storage::types::Mapping<B256, B256>,
 
@@ -274,7 +202,7 @@ pub struct MetadosisContract {
     >,
 
     /// Canonical ordered READY keys `(next_check_height, WWD, pending_nonce)`.
-    /// The encoded vector is bounded by `MAX_RECORDS_KEPT`; terminal request
+    /// `MAX_RECORDS_KEPT` bounds the encoded vector. Terminal request
     /// processing reads only its first key.
     #[attribute(order = 13)]
     pub ocomp_ready_index: outbe_primitives::storage::types::StorageBytes,
@@ -296,35 +224,29 @@ pub struct MetadosisContract {
     #[attribute(order = 19)]
     pub ocomp_response_deadline_index: StorageBytes,
 
-    /// Per-owner Fidelity league snapshot for one WorldwideDay, written once by
-    /// the OCOMP prepare phase. Keyed by
-    /// `outbe_ocomp_protocol::league_snapshot::league_snapshot_key(wwd, owner)`,
-    /// it stores one league word per owner so the OCOMP openings MPT-prove a
+    /// Per-owner Fidelity league snapshot for one WorldwideDay. The OCOMP
+    /// prepare phase writes it once. Key:
+    /// `outbe_ocomp_protocol::league_snapshot::league_snapshot_key(wwd, owner)`.
+    /// It stores one league word per owner, so the OCOMP openings MPT-prove a
     /// single league slot per owner instead of the raw Fidelity cohort ledger.
-    /// Base slot 29; `league_snapshot::METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT` is
-    /// pinned to this layout by test.
+    /// Base slot 28. A test pins
+    /// `league_snapshot::METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT` to this layout.
     #[attribute(order = 20)]
     pub ocomp_fidelity_league_snapshot: Mapping<B256, u16>,
 
-    /// Ordered commitment over one day's snapshotted `(owner, league)` pairs,
-    /// written alongside the per-owner snapshot during the active-phase prepare
-    /// step. The post-seal terminal request reads it (a plain storage read valid
-    /// in any lifecycle phase) to bind into the sealed pre-admission envelope. A
-    /// non-zero value also marks the day's snapshot as already built.
+    /// Ordered commitment over one day's snapshotted `(owner, league)` pairs.
+    /// The active-phase prepare step writes it together with the per-owner
+    /// snapshot. The post-seal terminal request reads it and binds it into the
+    /// sealed pre-admission envelope. This read is a plain storage read, valid
+    /// in any lifecycle phase. A non-zero value also marks the day's snapshot
+    /// as already built.
     #[attribute(order = 21)]
     pub ocomp_fidelity_league_snapshot_root:
         outbe_primitives::storage::types::Mapping<WorldwideDayKey, B256>,
 
     /// Durable typed outer-WWD terminal receipt.
     #[attribute(order = 22)]
-    pub worldwide_day_terminal_receipts:
-        outbe_primitives::storage::dsl::Map<WorldwideDayKey, WorldwideDayTerminalReceiptState>,
-
-    /// Capacity-forfeiture detail receipt linked to the generic terminal
-    /// receipt above.
-    #[attribute(order = 23)]
-    pub capacity_forfeiture_receipts:
-        outbe_primitives::storage::dsl::Map<WorldwideDayKey, CapacityForfeitureReceiptState>,
+    pub worldwide_day_terminal_receipts: Mapping<WorldwideDayKey, StorageBytes>,
 
     /// Complete Metadosis-owned semantic result for day-limit replay.
     #[attribute(order = 24)]

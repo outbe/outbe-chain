@@ -1,6 +1,6 @@
 //! Genesis-selectable parameter profile for the Gem protocol: `PROD` (real
-//! timings) and `DEV` (short timings) are fixed here. A chain picks one via the
-//! `config_profile` selector byte seeded from genesis; an unset byte resolves by
+//! timings) and `DEV` (short timings) are fixed here. A chain picks one with the
+//! `config_profile` selector byte seeded from genesis. An unset byte resolves by
 //! network, so only mainnet runs PROD.
 
 use outbe_primitives::chain::is_mainnet;
@@ -18,13 +18,13 @@ pub const PROFILE_AUTO: u8 = 0;
 pub const PROFILE_DEV: u8 = 1;
 pub const PROFILE_PROD: u8 = 2;
 
-/// Resolved Gem protocol parameters; all periods are seconds.
+/// Resolved Gem protocol parameters. All periods are in seconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GemParams {
     pub call_window_seconds: u32,
     pub call_threshold_seconds: u32,
     pub call_notice_period_seconds: u32,
-    /// Percentage points over the entry price; see `crate::constants`.
+    /// Percentage points over the entry price. See `crate::constants`.
     pub call_rate: u16,
     pub floor_rate: u16,
     /// How long a Gem Factory position may still issue gems.
@@ -32,7 +32,7 @@ pub struct GemParams {
 }
 
 impl GemParams {
-    /// Real protocol timings; the default on mainnet.
+    /// Real protocol timings. This is the default on mainnet.
     pub const PROD: Self = Self {
         call_window_seconds: CALL_WINDOW,
         call_threshold_seconds: CALL_THRESHOLD,
@@ -43,7 +43,7 @@ impl GemParams {
     };
 
     /// Short timings for dev/test. `called` is day-granular, so window and
-    /// threshold stay whole days; the notice and validity are real waits.
+    /// threshold stay whole days. The notice and validity are real waits.
     pub const DEV: Self = Self {
         call_window_seconds: 3 * 24 * 3600,
         call_threshold_seconds: 2 * 24 * 3600,
