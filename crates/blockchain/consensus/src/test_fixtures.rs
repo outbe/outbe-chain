@@ -431,9 +431,13 @@ pub(crate) fn block_with_gas_planned_system_inputs(
 pub(crate) fn block_with_system_tx(signer: &OutbeEvmSigner) -> ConsensusBlock {
     // Under V2, block 1 mandatorily carries a BoundaryOutcome.
     // Thus the minimum-shape "block with system txs" test fixture moved to
-    // block 2. The canonical layout of block 2 is
+    // block 2. This fixture builds the pre-OCOMP layout
     // `[CertifiedParentAccounting, LateFinalizeCredits, CycleTick,
-    // RewardsGemDelivery, OracleSlashWindow, HookEvents]`.
+    // RewardsGemDelivery, OracleSlashWindow, HookEvents]`. That layout is not
+    // canonical. The canonical layout of every block >= 1 also has the
+    // mandatory `OcompLifecycleBegin` begin-zone slot after
+    // `LateFinalizeCredits` and the mandatory `OcompTerminalRequest` end-zone
+    // slot.
     let parent_hash = B256::ZERO;
     block_with_system_inputs(
         signer,

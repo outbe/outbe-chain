@@ -12,14 +12,12 @@
 //!
 //! Sub-call hands `self.ctx` to the driver in [`crate::sub_call`].
 //!
-//! ## Coexistence with `EvmStorageProvider`
+//! ## Dispatch path
 //!
-//! The read-only / non-sub-call dispatch path inside
-//! [`crate::precompiles::extend_outbe_precompiles`] still uses the legacy
-//! [`outbe_primitives::storage::evm::EvmStorageProvider`], which holds `EvmInternals<'a>`.
-//! The ctx-dispatch hook constructs `CtxStorageProvider` when the dispatch needs sub-call.
-//! Both providers must agree byte-for-byte on non-sub-call semantics. They share the same
-//! upstream `EvmInternals` primitives.
+//! The ctx-dispatch hook that [`crate::precompiles::extend_outbe_precompiles`]
+//! installs builds a `CtxStorageProvider` for every Outbe precompile dispatch,
+//! read-only or not, sub-call or not. This crate does not use the legacy
+//! [`outbe_primitives::storage::evm::EvmStorageProvider`].
 
 use alloy_evm::{eth::EthEvmContext, EvmInternals};
 use alloy_primitives::{Address, Log, LogData, B256, U256};

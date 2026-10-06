@@ -4,10 +4,12 @@
 //!
 //! * [`record_phase1_progress`] - writes `last_accounted_block_number = N`
 //!   after the V2 Phase 1 system tx for block `N` commits successfully.
-//!   Sole writer for slot 0 of `ACCOUNTING_PROGRESS_ADDRESS` (INV4). The
-//!   executor reorder calls it.
+//!   Intended writer for slot 0 of `ACCOUNTING_PROGRESS_ADDRESS` (INV4).
+//!   The executor reorder calls it. The public schema field can also write
+//!   the slot. Visibility does not enforce this entrypoint.
 //! * [`read_last_accounted_block_number`] - read-only accessor for Cycle
-//!   and Rewards. Returns `0` on a fresh chain.
+//!   and the begin-block finalization path. Rewards does not read it.
+//!   Returns `0` on a fresh chain.
 //!
 //! Monotonicity: this layer rejects regressions defensively, while the
 //! Phase 1 precompile enforces the stricter exact-parent sequence.
@@ -20,7 +22,8 @@ use crate::state;
 
 /// Records that V2 Phase 1 for `block_number` committed successfully.
 ///
-/// **Sole writer** for `ACCOUNTING_PROGRESS_ADDRESS` slot 0 (INV4).
+/// Intended writer for `ACCOUNTING_PROGRESS_ADDRESS` slot 0 (INV4).
+/// The public schema field can also write that slot.
 /// The V2 executor Phase 1 path calls this function. The caller is
 /// responsible for ordering. Phase 1 commits an exact-parent successor
 /// block, so `block_number` should equal the parent height being

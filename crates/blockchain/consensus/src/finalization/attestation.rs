@@ -10,7 +10,7 @@
 //! `validate_consensus_metadata_for_verify` is retained ONLY as a legacy test
 //! fixture for `handler_tests.rs` cases that pre-date the V2 verifier. Production
 //! runtime paths MUST NOT call it. They use
-//! `outbe-consensus-proof::verify_v2_proof` instead.
+//! [`crate::proof::verify_v2_proof`] instead.
 
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
@@ -95,14 +95,15 @@ pub struct AttestationValidationContext<'a> {
 // `validate_finalized_parent_attestation` was the V1
 // async certificate-validation predicate. The proposer-side exact-parent
 // wait and `handle_verify` used it. Both call sites are removed. The
-// proposer reads the proof store directly, and `handle_verify` is narrowed
-// to structural checks only. The function is deleted to prevent accidental
-// reintroduction of the BLS-on-verify path.
+// proposer reads the proof store directly. `handle_verify` does not decode or
+// verify the carried BLS certificate in its prechecks. The EVM-side V2
+// verifier does that during execution verification. The function is deleted
+// to prevent accidental reintroduction of the BLS-on-verify path.
 //
 // `validate_consensus_metadata_for_verify` below is retained ONLY as a
 // test fixture for legacy `handler_tests.rs` cases that pre-date the V2
-// verifier. Production runtime paths MUST NOT call it. The V2 verifier
-// reads `outbe-consensus-proof::verify_v2_proof` instead.
+// verifier. Production runtime paths MUST NOT call it. They use
+// `crate::proof::verify_v2_proof` instead.
 
 pub async fn validate_consensus_metadata_for_verify(
     clock: &impl commonware_runtime::Clock,

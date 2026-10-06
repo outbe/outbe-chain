@@ -111,8 +111,10 @@ where
                         activated_participants != self.state.participants;
                     // invariant:
                     // `vrf_material_version` increments by exactly 1 per
-                    // successful reshare activation. Overflow is a
-                    // deterministic activation error, not saturation.
+                    // successful reshare activation. On this path, overflow
+                    // is a deterministic activation error, not saturation.
+                    // The dealer-only activation path below differs. It logs
+                    // the overflow and reuses the current version.
                     // The single source of truth lives in the
                     // `outbe-validatorset` crate so proposer and
                     // validator paths cannot diverge.

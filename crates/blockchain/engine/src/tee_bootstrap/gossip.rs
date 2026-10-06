@@ -57,8 +57,9 @@ where
 ///
 /// Two message kinds share the channel. A 1-byte envelope tag tells them apart:
 /// ceremony messages ([`DkgWireMessage`]) and identity announcements
-/// (`tee_bls || dkg_enc`). The ceremony addresses dealer->player bundles by the
-/// recipient's *enclave* BLS key, but P2P routes by the *consensus* BLS key.
+/// (`bls_len(u32 BE) || bls || enc(32) || sig_len(u32 BE) || sig`). The
+/// ceremony addresses dealer->player bundles by the recipient's *enclave* BLS
+/// key, but P2P routes by the *consensus* BLS key.
 /// Thus the identity exchange builds a `tee_bls -> consensus_pubkey` routing map
 /// from the authenticated sender of each identity message. Sends use this map
 /// for their address. If the channel broadcast addressed bundles instead, every

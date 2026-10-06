@@ -159,10 +159,11 @@ const INTEX_VWAP_PUSH_PERIOD_SECONDS: u64 = 3_600;
 #[cfg(feature = "e2e-test")]
 const INTEX_VWAP_PUSH_PERIOD_SECONDS: u64 = 60;
 
-/// Active trigger table. Order is informational only. The dispatcher
-/// fires triggers independently per slot.
-/// Active trigger table in permanent numeric-id order. The dispatcher walks
-/// this order when several handlers are due in the same block.
+/// Active trigger table in permanent numeric-id order.
+/// The dispatcher walks this array in order inside one block.
+/// The first handler error stops the walk.
+/// AuctionAdvance must stay after ProtocolCycle.
+/// Same-slot brief and auction order depends on that sequence.
 pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 11] {
     [
         TriggerSpec {
@@ -198,7 +199,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             label: "auction_advance",
             period_seconds: AUCTION_ADVANCE_PERIOD_SECONDS,
             start_offset_seconds: 0,
-            // Gated like emission_limit_1 so the brief it writes and this start
+            // Gated like `protocol_cycle`, so the brief it writes and this start
             // land in the same slot.
             requires_accounting_window: true,
             // A poll, not a calendar slot. The handler reads the block clock and

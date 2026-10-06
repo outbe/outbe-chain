@@ -181,7 +181,9 @@ async fn list(
     status_filter: Option<String>,
     sort_by: Option<String>,
 ) -> Result<()> {
-    // If --status is provided, always fetch all validators to filter
+    // `--active-only` reads only the active set, and `--status` filters that set.
+    // Thus `--active-only` with a non-active status gives an empty list.
+    // Without `--active-only`, the command reads all validators.
     let fetch_all = status_filter.is_some() && !active_only;
     let call = if active_only && !fetch_all {
         IValidatorSet::getActiveValidatorsCall {}.abi_encode()
@@ -202,7 +204,7 @@ async fn list(
         return Ok(());
     }
 
-    // Parse status filter (codes must match validatorset/logic.rs:42-48).
+    // The codes must match `outbe_validatorset::runtime::status` (0..=6).
     let status_code: Option<u8> = status_filter.as_deref().map(parse_status_filter);
 
     // Fetch details for all validators

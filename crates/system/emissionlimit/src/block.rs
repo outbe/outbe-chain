@@ -6,7 +6,7 @@
 //! Cycle module. That module:
 //!
 //! - reads the closed-form `day_emission_limit`
-//! - calls [`crate::allocation::allocate_emission`] with the 6-sink active table
+//! - calls [`crate::allocation::allocate_emission`] with the 5-sink active table
 //! - hands non-validator pools to `outbe_agentreward::distribute_daily`
 //! - forwards the Metadosis terminal portion through [`dispatch_terminal_remainder_at`] below.
 //!
@@ -28,8 +28,8 @@ use outbe_primitives::{
 /// accounting lands in the right bucket. This holds regardless of when the call
 /// physically runs.
 ///
-/// Returns `Fatal` if the Metadosis sink reports any unused amount.
-/// The terminal sink must be a sink, not a pass-through.
+/// Returns `Revert` if the Metadosis sink reports any unused amount.
+/// The terminal sink must consume the full amount.
 pub fn dispatch_terminal_remainder_at(
     ctx: &BlockRuntimeContext,
     amount: U256,

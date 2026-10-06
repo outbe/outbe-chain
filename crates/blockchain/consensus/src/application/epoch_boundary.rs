@@ -1,7 +1,7 @@
 //! Epoch-continuity guard and boundary-parent resolution for the application
 //! handler.
 //!
-//! Owns the whole epoch-boundary concern lifted out of `handler.rs`:
+//! Owns the whole epoch-boundary concern of the application handler:
 //! - [`ApplicationEpochFence`] - the activation-boundary state machine (active
 //!   epoch + an optional armed boundary). The handler consults it on every
 //!   propose/verify, so a stale Simplex epoch cannot submit Engine work past a
@@ -60,8 +60,9 @@ pub(crate) struct EpochBoundaryParent {
 /// that does not match the canonical anchor) from *local infrastructure issue*
 /// (the validator cannot decide locally because the finalization view or the
 /// marshal store is not yet up to date). The verify path votes `false` only in
-/// the first case. The rest bubble up as `Err` and drop the response channel.
-/// This matches the existing `resolve_for_verify` semantics for local timeouts.
+/// the first case. The other variants return as `Err`. The verify path then
+/// withholds its vote until Simplex cancels the request. Local timeouts in
+/// `resolve_for_verify` take the same path.
 #[derive(Debug)]
 pub(crate) enum EpochBoundaryParentError {
     /// Simplex parent does not match the committed continuity anchor.
@@ -75,7 +76,8 @@ pub(crate) enum EpochBoundaryParentError {
     MissingAnchor { epoch: u64 },
     /// Marshal store cannot return the anchor block.
     MissingMarshalBlock { height: u64 },
-    /// Marshal returned a block whose digest does not match the anchor.
+    /// Marshal returned a block for the anchor digest, but the block height is
+    /// not the anchor height. `got` holds the digest of the returned block.
     MarshalHashMismatch {
         height: u64,
         expected: B256,

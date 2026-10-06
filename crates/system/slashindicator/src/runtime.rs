@@ -30,7 +30,7 @@ use crate::precompile::ISlashIndicator;
 // Felony thresholds are the maximum validator misses TOLERATED within one epoch.
 // The per-epoch reset (`reset_epoch_counters`, run at the epoch boundary) zeroes
 // the miss counters. Thus a validator that crosses the threshold inside an epoch
-// is force-exited + slashed immediately. Otherwise its count resets next epoch.
+// is jailed and slashed immediately. Otherwise its count resets next epoch.
 // The epoch (`config_epoch_length_blocks`) is the ~1-hour window that also drives
 // DKG reshare / active-set rotation / counter reset. Thus a felony threshold MUST
 // stay below the epoch length. Otherwise the reset wipes the counter before it
@@ -44,8 +44,10 @@ const DEFAULT_PROPOSER_FELONY_THRESHOLD: u64 = 150;
 // Graduated escalation requires misdemeanor (warn) < felony (slash). The
 // two voter defaults were inverted (misdemeanor 500 > felony 150). Thus the harsh
 // penalty fired before the warning could ever emit. The defaults are now restored
-// to misdemeanor 150 < felony 500. Both sit above the proposer thresholds (voters
-// accrue ~1 miss per finalized block vs a proposer's ~1 per own leader slot).
+// to misdemeanor 150 and felony 500. The voter misdemeanor default equals
+// the proposer felony default (150). It does not sit above that threshold.
+// The voter felony default (500) is above both proposer thresholds. Voters
+// accrue ~1 miss per finalized block vs a proposer's ~1 per own leader slot.
 // Both also sit below the prod epoch length (1200). Thus the felony can still
 // trigger before the per-epoch reset.
 const DEFAULT_VOTER_MISDEMEANOR_THRESHOLD: u64 = 150;
@@ -130,7 +132,7 @@ impl SlashIndicator<'_> {
     /// Records a proposer miss for `validator`.
     ///
     /// - Increments proposer_miss_count[validator].
-    /// - At multiples of felony_threshold: forces exit and slashes the validator.
+    /// - At multiples of felony_threshold: jails and slashes the validator.
     /// - At multiples of misdemeanor_threshold (non-felony): misdemeanor logged only.
     pub fn slash_proposer(&mut self, validator: Address) -> Result<()> {
         let count = self.proposer_miss_count.read(&validator)? + 1;
@@ -170,7 +172,7 @@ impl SlashIndicator<'_> {
         }
 
         if count > 0 && count % felony_threshold == 0 {
-            // Felony: increment cumulative counter, force exit and slash.
+            // Felony: increment cumulative counter, jail and slash.
             let fc = self.felony_count.read(&validator)? + 1;
             self.felony_count.write(&validator, fc)?;
 
@@ -243,7 +245,7 @@ impl SlashIndicator<'_> {
     /// Records a voter miss for `validator`.
     ///
     /// - Increments voter_miss_count[validator].
-    /// - At multiples of voter_felony_threshold: forces exit and slashes the validator.
+    /// - At multiples of voter_felony_threshold: jails and slashes the validator.
     /// - At multiples of voter_misdemeanor_threshold (non-felony): misdemeanor logged only.
     pub fn slash_voter(&mut self, validator: Address) -> Result<()> {
         let count = self.voter_miss_count.read(&validator)? + 1;
@@ -282,7 +284,7 @@ impl SlashIndicator<'_> {
         }
 
         if count > 0 && count % felony_threshold == 0 {
-            // Felony: increment cumulative counter, force exit and slash. This
+            // Felony: increment cumulative counter, jail and slash. This
             // mirrors the proposer-felony path so missed finalize votes are punitive
             // once they cross the configured threshold (vote_ext.md E8 graduated to
             // T1).
@@ -367,7 +369,7 @@ impl SlashIndicator<'_> {
     /// 4. Both BLS signatures must be valid (signed over the Simplex notarize payload).
     /// 5. The signer must be a registered validator.
     ///
-    /// On success: the runtime force-exits and slashes the validator (felony). The
+    /// On success: the runtime jails and slashes the validator (felony). The
     /// evidence submitter receives a reward (evidence_reward_percent of slashed amount).
     /// Submitter ACL for the BLS-evidence precompile entry points: only
     /// currently-ACTIVE validators may submit. The verifiers run heavy
@@ -468,7 +470,7 @@ impl SlashIndicator<'_> {
         // Mark evidence as processed before applying effects
         self.evidence_processed.write(&evidence_hash, true)?;
 
-        // Felony: forced exit + slash + reward evidence submitter.
+        // Felony: jail + slash + reward evidence submitter.
         self.apply_evidence_felony(validator_addr, caller)
     }
 
@@ -481,7 +483,7 @@ impl SlashIndicator<'_> {
     /// signature for the same round (epoch + view) by the same signer. This proves
     /// the validator voted both to accept and skip the same view.
     ///
-    /// On success: the runtime force-exits and slashes the validator (felony). The
+    /// On success: the runtime jails and slashes the validator (felony). The
     /// evidence submitter receives a reward.
     pub fn submit_conflicting_vote_evidence(
         &mut self,
@@ -542,7 +544,7 @@ impl SlashIndicator<'_> {
         // Mark evidence as processed before applying effects
         self.evidence_processed.write(&evidence_hash, true)?;
 
-        // Felony: forced exit + slash + reward evidence submitter.
+        // Felony: jail + slash + reward evidence submitter.
         self.apply_evidence_felony(validator_addr, caller)
     }
 
@@ -662,7 +664,7 @@ impl SlashIndicator<'_> {
         )
     }
 
-    /// Applies a felony penalty from evidence submission: forced exit, slash, reward submitter.
+    /// Applies a felony penalty from evidence submission: jail, slash, reward submitter.
     fn apply_evidence_felony(
         &mut self,
         validator: Address,
@@ -771,7 +773,7 @@ impl SlashIndicator<'_> {
     ///    misbehavior, not for re-litigating BLS quorum or accounting
     ///    binding failures.
     /// 10. Mark dedup BEFORE applying effects, then call
-    ///     [`Self::apply_evidence_felony`] for forced exit + 5% slash +
+    ///     `apply_evidence_felony` for jail + 5% slash +
     ///     10% submitter reward. This reuses the existing felony helper. The
     ///     other evidence types share the same economics.
     pub fn submit_invalid_vrf_evidence(
@@ -990,7 +992,7 @@ impl SlashIndicator<'_> {
         self.invalid_vrf_evidence_processed
             .write(&evidence_hash, true)?;
 
-        // (13) Apply felony: forced exit + 5% slash + 10% submitter
+        // (13) Apply felony: jail + 5% slash + 10% submitter
         // reward. This uses the same helper that the other evidence types call.
         self.apply_evidence_felony(proposer, caller)?;
 
@@ -1312,10 +1314,12 @@ impl SlashIndicator<'_> {
         Ok(())
     }
 
-    /// Applies a felony for byzantine behavior detected by the consensus layer.
+    /// Applies a felony for byzantine behavior.
     ///
-    /// Post-execution hooks call this when the consensus layer detects equivocation
-    /// (ConflictingNotarize, ConflictingFinalize, NullifyFinalize).
+    /// No production caller invokes this method. The same three evidence classes
+    /// go through `submit_conflicting_notarize_evidence`,
+    /// `submit_conflicting_finalize_evidence`, and
+    /// `submit_nullify_finalize_evidence`.
     /// Unlike `apply_evidence_felony`, there is no external evidence submitter.
     /// Thus this method distributes no reward.
     pub fn slash_byzantine(&mut self, validator: Address) -> Result<()> {

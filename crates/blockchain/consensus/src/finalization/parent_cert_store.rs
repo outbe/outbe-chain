@@ -4,11 +4,13 @@
 //!
 //! 1. **Finalization** - written by the [`crate::finalization::actor::FinalizationActor`]
 //!    after Simplex emits `Activity::Finalization`. The proposer-side selector
-//!    reads it through [`CertifiedParentProofStore::get_best_parent_proof`] and
+//!    reads it through [`FinalizedParentCertStore::get_best_for_parent`] and
 //!    builds OAV3 Phase 1 metadata from
 //!    [`CertifiedParentProofRecord::to_v2_metadata`].
-//! 2. **CertifiedNotarization** - written by [`crate::reporter::OutbeReporter`]
-//!    after Simplex emits `Activity::Certification`. Commonware marshal's mailbox
+//! 2. **CertifiedNotarization** - built by [`crate::reporter::OutbeReporter`]
+//!    after Simplex emits `Activity::Certification`. The reporter enqueues the
+//!    record, and the `FinalizationActor` writes it. The `FinalizationActor` is
+//!    the single durable writer of both slots. Commonware marshal's mailbox
 //!    silently drops this activity (`_ => return;`), so Outbe is the only persistent
 //!    consumer. The slot is keyed exactly like the finalization slot and is
 //!    available to resolver-side local-witness checks.
@@ -437,10 +439,13 @@ impl CertifiedParentProofRecord {
 ///   `(epoch, view, block_hash)` whose hash matches the key.
 /// - `get_best_parent_proof` returns the finalization record first and
 ///   falls back to certified-notarization only when no finalization is present.
-/// - Reads reject any record with `format_version != 1`.
-/// - `put_certified_notarization` callers must set
-///   `local_certification_witness = true` when the writer is the local reporter,
-///   and gate remote-fetch fallbacks on the local witness having been seen.
+/// - Reads reject any record with `format_version` other than
+///   [`CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION`].
+/// - A record with `kind = ProofKind::CertifiedNotarization` is a witness
+///   record. The local observation mark is separate: the reporter sets it
+///   through `mark_local_certification_witness`. Remote-fetch fallbacks must
+///   check that mark (`has_local_certification_witness`) before they persist
+///   a record.
 pub trait CertifiedParentProofStore: Clone + Send + Sync + 'static {
     fn put_finalization(
         &self,
@@ -485,9 +490,9 @@ pub trait CertifiedParentProofStore: Clone + Send + Sync + 'static {
 
 /// Atomic snapshot returned by [`FinalizedParentCertStore::get_best_for_parent`].
 ///
-/// The store never mutates a CN witness while selecting. If
-/// `requires_promotion` is true, the caller may substitute the known parent
-/// block number on its owned clone after the bounded finalization wait expires.
+/// The store never mutates a CN witness while selecting. For the
+/// `CertifiedNotarization` variant, the caller may resolve the record height to
+/// the known parent block number after the bounded finalization wait expires.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ParentProofSelection {
     Finalization(CertifiedParentProofRecord),

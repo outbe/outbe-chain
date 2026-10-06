@@ -2,11 +2,11 @@
 //!
 //! This module replaces the V1 `FinalizationSelector::await_parent_cert` polling waiter
 //! with an event-driven exact-parent lookup: finalization slot ->
-//! certified-notarization slot. A certified-notarization record whose block
-//! number is still `0` is a local exact-key witness. The live proposer path
+//! certified-notarization slot. A certified-notarization (CN) record carries
+//! no block number. It is a local exact-key witness. The live proposer path
 //! waits briefly for the finalization slot. Only after that bounded wait
-//! expires does it promote the owned CN clone with the caller's known
-//! parent block number. The store record remains witness-only.
+//! expires does it use the CN record. The caller then resolves the CN height
+//! to its known parent block number. The store record remains witness-only.
 //!
 //! This module no longer calls `validate_finalized_parent_attestation`.
 //! The writer side is the trust boundary:
@@ -44,19 +44,22 @@ impl ParentProofSelector {
 
     /// Look up the best available direct-parent proof for the proposer.
     ///
-    /// Preference order:
-    /// 1. [`CertifiedParentProofStore::get_finalization`] - strong proof,
-    ///    Simplex `Activity::Finalization`.
-    /// 2. [`CertifiedParentProofStore::get_certified_notarization`] -
-    ///    fallback proof, Simplex `Activity::Certification`.
+    /// This method returns only a finalization record
+    /// ([`crate::finalization::parent_cert_store::CertifiedParentProofStore::get_finalization`],
+    /// Simplex `Activity::Finalization`). A certified-notarization record is
+    /// witness-only here. Only
+    /// [`Self::select_direct_parent_proof_by_key_with_wait`] uses it, after its
+    /// bounded wait.
     ///
     /// Returns `None` if one of these conditions is true:
     /// - `parent_block_number == 0` (genesis parent).
     /// - Neither slot holds a record for `parent_hash`.
-    /// - The record's `finalized_block_number` does not equal `parent_block_number`.
+    /// - Only a certified-notarization record exists for the key.
+    /// - The finalization record's `finalized_block_number` does not equal
+    ///   `parent_block_number`.
     ///
-    /// On a non-zero block-number mismatch, the selector removes the record. The
-    /// selector keeps CN records with block number `0` as local witnesses.
+    /// On a block-number mismatch, the selector removes the finalization record.
+    /// A CN record carries no block number, so this check does not apply to it.
     ///
     /// Non-blocking: this method does not poll, does not sleep, and does not
     /// `await` anything except the in-process store lock. The proposer
@@ -82,7 +85,7 @@ impl ParentProofSelector {
     ) -> Option<CertifiedParentProofRecord> {
         // Genesis parent has no proof. Block 1 uses the
         // `ConsensusHeaderArtifact::BoundaryOutcome` bootstrap path, not a
-        // certified-parent proof. See handler.rs::build_block.
+        // certified-parent proof. See the application handler's `build_block`.
         if parent_block_number == 0 {
             return None;
         }

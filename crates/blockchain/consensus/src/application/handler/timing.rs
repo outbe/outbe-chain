@@ -20,15 +20,13 @@ pub(crate) const PROPOSAL_FAILURE_LOG_WINDOW: Duration = Duration::from_secs(5);
 /// epoch boundary: bounded wait inside `handle_genesis` for the
 /// finalization view to expose a continuity anchor for the new epoch.
 ///
-/// If Commonware Simplex queries `Automaton::genesis(epoch>0)` faster than the
-/// finalization actor publishes the boundary block's anchor into
-/// `FinalizationView`, we wait up to this deadline before declaring the
-/// terminal failure path. The companion `stack.rs` pre-restart guard should
-/// normally make sure this never trips in practice.
+/// Simplex does not query `Automaton::genesis`. The genesis digest feeds
+/// `simplex::Config.floor`. No production code sends `Message::Genesis`, so
+/// only tests reach `handle_genesis` and this wait. The epoch-restart anchor
+/// wait in `outbe-engine` uses its own timeout and poll interval.
 pub(crate) const GENESIS_ANCHOR_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Poll interval used by the bounded waits in `handle_genesis` and the
-/// `stack.rs` pre-restart preconditions.
+/// Poll interval used by the bounded wait in `handle_genesis`.
 pub(crate) const GENESIS_ANCHOR_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Explicit source of proposer wall-clock time.
@@ -85,9 +83,9 @@ pub(super) fn apply_unix_time_offset_millis(now: u64, offset_secs: i64) -> eyre:
 /// Clamp a proposer's block timestamp (ms) into the deterministic drift band
 /// `[parent + min_advance, parent + band]`, with the genesis-child exception.
 ///
-/// When `parent_timestamp_millis == 0`, no finalized parent exists yet. The
-/// `finalization_view` is unseeded at genesis and does NOT carry the genesis
-/// header timestamp. The band is therefore meaningless. Capping at `0 + band`
+/// When `parent_timestamp_millis == 0`, the proposer did not resolve a parent
+/// block. This is the genesis-child case: [`proposal_timestamp_millis`] passes
+/// zero, not the genesis header timestamp. The band is therefore meaningless. Capping at `0 + band`
 /// would clamp the real wall-clock time far below the genesis timestamp. Reth
 /// would then reject the payload as a past timestamp, stalling at block 0. For
 /// a zero parent timestamp the function enforces only monotonicity (`max(now, parent + 1)`),

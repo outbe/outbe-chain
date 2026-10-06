@@ -67,11 +67,12 @@ where
 /// Run the one-time TEE DKG ceremony at startup and return the **shared offer
 /// public key** derived from the group threshold signature (Seam F). This function:
 ///
-/// 1. Connects this node's enclave.
-/// 2. Exchanges enclave identities across the committee.
-/// 3. Drives the dealer/player ceremony and the offer-key partial-signature round
+/// 1. Exchanges enclave identities across the committee.
+/// 2. Drives the dealer/player ceremony and the offer-key partial-signature round
 ///    entirely through the enclave seams.
-/// 4. Returns the byte-identical `tribute_offer_public` that every honest node derives.
+/// 3. Returns the byte-identical `tribute_offer_public` that every honest node derives.
+///
+/// The caller connects the enclave and passes the connected `client`.
 ///
 /// The offer *secret* never leaves the enclave. It is stored resident there and
 /// used to decrypt offers.

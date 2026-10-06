@@ -134,8 +134,9 @@ where
     /// silently drops a flooded batch of out-of-order hints. `hint_finalized` is
     /// fire-and-forget. So each tick the driver reads the
     /// marshal's current processed height and (re-)hints a small contiguous WINDOW
-    /// just above it. Before that, it makes sure that every epoch the window spans
-    /// has its committee registered. As the marshal processes the lowest height,
+    /// just above it. The epocher's `supported_ceiling()` caps the window. The
+    /// driver registers no committees. The resolver admission path does that.
+    /// As the marshal processes the lowest height,
     /// the floor rises and the next tick's window slides up. This keeps a bounded
     /// backlog of in-flight fetches and never leaves a gap unhinted.
     async fn pull_to(&mut self, tip: Height) {

@@ -23,8 +23,8 @@ use crate::crypto::{chacha20poly1305_decrypt, chacha20poly1305_encrypt, hkdf_sha
 use crate::errors::{Result, TeeError};
 
 /// Balance amount-slot field tag folded into the nonce derivation. Shared: every
-/// ledger's primary balance uses tag `0`. Higher tags (e.g. Gratis pledged/eoa)
-/// are ledger-local.
+/// ledger's primary balance uses tag `0`. A ledger can define higher tags as
+/// ledger-local fields.
 pub const FIELD_BALANCE: u8 = 0;
 
 /// Amount blob length: `version(8, BE) || ChaCha20Poly1305(U256 32B) (+16B tag)` =

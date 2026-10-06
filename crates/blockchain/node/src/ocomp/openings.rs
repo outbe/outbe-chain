@@ -146,9 +146,10 @@ where
 
 /// Verifies the complete historical Fidelity/Oracle input returned by the node.
 ///
-/// The first proof pass authenticates every supplied raw value against the
-/// finalized state root. Only then does the function reconstruct the
-/// count-dependent canonical slot plans and compare them with the supplied slot order.
+/// For each opening (Fidelity, then Oracle), the function authenticates every
+/// supplied raw value against the finalized state root. Then it compares the
+/// supplied slot order with the canonical slot plan. Each plan comes only from
+/// `wwd` and the expected subjects, so it reads no proven value.
 pub fn verify_lysis_openings(
     openings: &LysisOpeningsProofV1,
     finalized: &VerifiedFinalizedIntentV1,

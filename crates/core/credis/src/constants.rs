@@ -12,7 +12,7 @@ pub const TOKEN_DESCRIPTION: &str = concat!(
 /// Denominator for [`CALL_RATE_PCT`].
 pub const PRICE_RATE_DEN: u16 = 100;
 
-/// Call price: `entry + 64%`. A sustained breach of it arms the call.
+/// The call price adds 64% to `call_anchor_price_minor`. A sustained breach arms the call.
 pub const CALL_RATE_PCT: u16 = 64;
 
 /// Seconds in a day, for the second-encoded call terms below. A position seals

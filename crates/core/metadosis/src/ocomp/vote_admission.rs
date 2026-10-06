@@ -44,12 +44,6 @@ pub enum ResultVoteCarrierAdmission {
     CorruptCommittedState { source: PrecompileError },
 }
 
-/// Verifies one complete `submitLysisResult(bytes)` carrier without writing.
-///
-/// The full canonical vote is decoded here so that pool and payload
-/// construction share the same job, committee, signature, and delegate
-/// decision. Consensus execution must still verify and record the vote when
-/// the transaction is actually included.
 type AdmissionResult<T> = Result<T, ResultVoteCarrierAdmission>;
 
 struct CarrierVote<'vote> {
@@ -59,6 +53,9 @@ struct CarrierVote<'vote> {
     limits: &'vote SchemaLimits,
 }
 
+/// Verify one complete `submitLysisResult(bytes)` carrier without writes.
+/// Pool admission and payload construction share the same canonical vote decision.
+/// Consensus execution must still verify and record the included vote.
 pub fn verify_result_vote_carrier(
     storage: StorageHandle<'_>,
     calldata: &[u8],

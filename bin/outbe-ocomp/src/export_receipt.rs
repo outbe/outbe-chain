@@ -300,9 +300,11 @@ pub fn list_prepared_export_jobs(
     scan_prepared_export_jobs(base_root, max_jobs)
 }
 
-/// Lists existing prepared receipts without creating directories or changing modes.
-/// Uses the native directory selector. `ExportReceiptReader` verifies the exact
-/// receipt contents when the caller opens each selected job.
+/// Lists prepared export jobs that have no receipt yet. It creates no
+/// directories and changes no modes. It uses the same directory scan as
+/// [`list_prepared_export_jobs`]. A selected job has a `prepared.ref` and no
+/// `receipt.ref`. Thus `ExportReceiptReader::load_exact` on a selected job
+/// returns `MissingReceipt`.
 pub fn list_prepared_export_jobs_read_only(
     base_root: impl AsRef<Path>,
     max_jobs: usize,

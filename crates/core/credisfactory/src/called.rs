@@ -45,8 +45,8 @@ pub(crate) const MAX_CREDIS_DAILY_VISITS: u32 = 4096;
 /// aggregate Credis collateral on a process-global connection.
 ///
 /// A correlated mass-void is the *expected* shape of a call event, not a tail
-/// case. A sustained breach calls every position in a currency at once, so 14
-/// days later they all lapse together. Without a separate cap, one run would
+/// case. A sustained breach calls every position in a currency at once.
+/// Their seven-day notice periods end together. Without a separate cap, one run would
 /// carry the whole burst.
 ///
 /// When a run spends this budget, it only declines further voids. The pass

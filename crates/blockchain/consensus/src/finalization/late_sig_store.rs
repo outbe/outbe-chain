@@ -2,11 +2,13 @@
 //! credits (Phase 5).
 //!
 //! After a block finalizes on the eager 2f+1 quorum, additional (slow-but-honest)
-//! validators keep gossiping their finalize votes. A node observes those
-//! individual votes [`OutbeReporter`](crate::reporter) and buffers them here,
-//! keyed by view. When the matching block finalizes and its number is known, the
-//! store rekeys the buffer to `(fb_number, fb_hash)`. (`FinalizationActor` has the
-//! height. The reporter sets `finalized_block_number: 0`.) When this node is the
+//! validators keep gossiping their finalize votes. The
+//! [`OutbeReporter`](crate::reporter) observes those individual votes. The
+//! `FinalizeVerifyActor` verifies them and buffers them here, keyed by the
+//! finalized proposal hash (`fb_hash`). When the matching block finalizes and
+//! its number is known, the store rekeys the buffer to `(fb_number, fb_hash)`.
+//! (`FinalizationActor` has the height. The reporter sets
+//! `finalized_block_number: 0`.) When this node is the
 //! proposer of `N+1..N+K`, it aggregates the votes it locally holds for each
 //! in-window target into a [`LateFinalizeCreditsArtifact`].
 //!
@@ -33,8 +35,8 @@ type MinPkSig = <MinPk as Variant>::Signature;
 
 /// Process-local late-finalize signature store. These components share it
 /// (read-modify-write under a `Mutex`):
-/// - the reporter (records observed votes)
-/// - the `FinalizationActor` (resolves views to block numbers)
+/// - the `FinalizeVerifyActor` (records verified votes that the reporter observed)
+/// - the `FinalizationActor` (resolves `fb_hash` targets to block numbers)
 /// - the application handler (packs the proposer artifact)
 ///
 /// It is **not** consensus state. See the module docs.

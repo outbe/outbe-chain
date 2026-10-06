@@ -50,7 +50,7 @@ use rand_commonware::SeedableRng;
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 
-// Intentionally `tokio::sync::mpsc`: `outbe-engine` (`crates/blockchain/engine/src/stack.rs`)
+// Intentionally `tokio::sync::mpsc`: `outbe-engine` (its `stack` module)
 // creates `progress_tx` / `finalized_log_rx` cross-crate. These channels have no timer/spawn
 // dependency. Thus they are runtime-agnostic and do not require the tokio reactor. This module
 // keeps the type to preserve the cross-crate engine API.

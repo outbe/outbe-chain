@@ -91,7 +91,7 @@ fn ordered_set_index_shift_on_prefix_join() {
 // simulated network. They use outbe-chain's `HybridScheme<MinSig>` and the
 // shared `crate::epoch_subchannels::register_epoch_subchannels` /
 // `take_or_register_current` helper. Production also uses this helper in
-// `stack.rs`. Toggling `use_pre_registration` in the harness switches
+// the `stack::epoch` module. Toggling `use_pre_registration` in the harness switches
 // between the pre-fix lazy path and the post-fix pre-register path.
 //
 // Foundation tests T0 (`muxer_contract::*`) and T3
@@ -208,7 +208,7 @@ fn pre_register_helper_avoids_cross_node_race() {
         // true`. In the harness, this flag invokes
         // `register_epoch_subchannels` at modeled DKG completion. This is
         // exactly the function that the production fix calls in
-        // stack.rs:1124-1190.
+        // `stack::epoch::completion`.
         let mut dkg_completion = HashMap::new();
         let mut activation = HashMap::new();
         for i in 0..3 {

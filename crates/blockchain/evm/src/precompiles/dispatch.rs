@@ -348,7 +348,9 @@ fn translate_outcome(
     }
     match map_outbe_precompile_result(outcome.result, outcome.actual_gas) {
         Ok(output) => Ok(precompile_output_to_interpreter_result(output, gas_limit)),
-        // Fatal(String) and FatalAny(_) remain the only fatal string channel.
+        // `map_outbe_precompile_result` returns `Err` only as a revm `Fatal`.
+        // `SubCall`, `Unsupported`, and every outbe variant without an explicit
+        // arm reach this fatal string channel.
         Err(other) => Err(other.to_string()),
     }
 }

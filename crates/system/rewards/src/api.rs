@@ -108,8 +108,9 @@ fn reward_gem_retryable_error(message: impl Into<String>) -> PrecompileError {
 }
 
 /// Whether every known block's participation window for a UTC day has closed.
-/// Cycle executes before LateFinalizeCredits, so equality is still too early.
-/// The final admissible votes at the close height did not execute yet.
+/// LateFinalizeCredits runs before CycleTick in the same block.
+/// At `block_number == last_close`, those close-height credits have already run.
+/// This check still requires a later block (`block_number > last_close`).
 pub fn day_participation_complete(ctx: &BlockRuntimeContext, utc_day: u32) -> Result<bool> {
     let last_close = ctx
         .storage
@@ -603,11 +604,10 @@ fn reward_gem_batch_digest(
     keccak256(bytes)
 }
 
-/// Marks `day` as fully settled so `on_finalized_metadata` rejects any
-/// late finalized metadata for that day. The daily Cycle orchestrator owns
-/// this call. When the orchestrator finishes dispatching the pools of the day
-/// (validator topup, AgentReward pools, Metadosis terminal credit), it calls
-/// this to flip the late-after-settle guard. Idempotent.
+/// Marks `day` settled for Cycle idempotency.
+/// `on_finalized_metadata` does not read this flag.
+/// Late metadata for a settled day is accepted.
+/// A second call writes the same value.
 pub fn mark_day_settled(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
     rewards.daily_settled.write(&day, true)

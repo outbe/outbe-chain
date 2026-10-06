@@ -9,7 +9,9 @@ pub(in crate::transport) fn dispatch_dkg_open(
     participants: Vec<outbe_tee::protocol::ParticipantAnnounce>,
 ) -> EnclaveResponse {
     let result = (|| {
-        // The host relays each `(bls, enc, sig)` it gathered from peers' GetPublicKeys.
+        // The host relays each `(bls, enc, sig)` it gathered from peers'
+        // `DkgParticipantAnnounceV1` responses. The signature is scoped to this
+        // ceremony id, round and participant set.
         // Before trusting any pairing: verify every enc key is signed by the BLS
         // identity it is paired with, and reject duplicate enc keys / identities. As a
         // result, an untrusted host cannot mis-pair an enc key onto a foreign identity or

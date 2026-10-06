@@ -193,13 +193,7 @@ pub fn deadline_passed_result_vote_revert_data() -> Bytes {
     expected
 }
 
-/// Resolves the validator represented by one canonical OCOMP vote prefix from
-/// the exact historical ValidatorSet snapshot pinned by its open job.
-///
-/// The resolution deliberately does not consult the current ValidatorSet
-/// status, because membership for an already-open attempt is immutable.
-/// Missing, evicted or mismatched caller-selected state is an ordinary `None`,
-/// never a fallback to the current snapshot.
+/// Immutable protocol, attempt, and committee identity for a result vote.
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(super) struct PinnedVoteBinding {
     protocol_bundle_hash: B256,
@@ -256,6 +250,12 @@ impl PinnedCommittee {
     }
 }
 
+/// Resolve a vote participant from the historical ValidatorSet snapshot for an open or closed
+/// window.
+/// Membership remains immutable after an attempt opens. Current ValidatorSet status does not
+/// affect this lookup.
+/// Missing, evicted, or mismatched caller-selected state returns `None`. The resolver never
+/// substitutes the current snapshot.
 pub fn resolve_historical_result_vote_participant(
     storage: StorageHandle<'_>,
     prefix: &ResultVotePrefixV1,

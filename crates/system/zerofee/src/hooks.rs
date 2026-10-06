@@ -159,7 +159,8 @@ impl ZeroFeePolicyError {
     /// Stable numeric code emitted in the `OutbeFailure(code, reason)` log
     /// when the executor converts a zero-fee policy rejection into a
     /// `status=0` receipt. Codes occupy the `100..=199` band reserved for
-    /// `outbe-zerofee` failure reasons (`crate::ZERO_FEE_POLICY_LOG_ADDRESS`).
+    /// `outbe-zerofee` failure reasons
+    /// (`outbe_primitives::addresses::ZERO_FEE_POLICY_LOG_ADDRESS`).
     ///
     /// The values are part of the on-chain encoding and must not be
     /// reordered or reused after they ship. The match is exhaustive, so a

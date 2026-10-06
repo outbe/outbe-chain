@@ -130,12 +130,15 @@ where
     ///    builder decodes this from `parent_header.extra_data` at build time,
     ///    so the hint inherits the integrity of the parent block hash chain.
     ///
-    /// Returns an error only on real provider I/O failure. `HeaderNotFound`
-    /// is a visibility miss (e.g. the FCU-Valid -> MDBX-commit race), so the
-    /// executor treats it like `Ok(None)` and lets the checked
-    /// `parent_artifact_hint` fallback engage. A provider miss with no usable
-    /// hint is fatal. The executor never silently accepts a
-    /// canonical-by-number artifact.
+    /// Returns an error in these cases:
+    /// - a provider I/O failure,
+    /// - a provider miss and a hint that does not match the actual parent,
+    /// - a provider miss and no hint.
+    ///
+    /// `HeaderNotFound` is a visibility miss (e.g. the FCU-Valid -> MDBX-commit
+    /// race), so the executor treats it like `Ok(None)` and lets the checked
+    /// `parent_artifact_hint` fallback engage. The executor never silently
+    /// accepts a canonical-by-number artifact.
     pub(in crate::executor) fn accounted_parent_artifact_for_metadata(
         &self,
         metadata: &CertifiedParentAccountingMetadata,
@@ -209,9 +212,9 @@ where
     /// AFTER marker preservation plus pending-RPC short-circuit. It runs BEFORE
     /// `run_outbe_pre_execution_hooks` plus the main tx loop. Marker
     /// preservation commit is the only state-root signal that precedes
-    /// Phase 1 verify. The lifecycle hook commits and the Phase 1
-    /// commit itself (still in the main tx loop, pending the
-    /// gating consumer) only happen after a successful verify.
+    /// Phase 1 verify. The Phase 1 commit (`apply_phase1_commit_in_preexec`,
+    /// also in pre-execution) and the lifecycle hook commits happen only
+    /// after a successful verify.
     pub(in crate::executor) fn verify_phase1_in_preexec(
         &mut self,
         block_number: u64,
@@ -401,7 +404,7 @@ where
         //      `expected_begin_system_txs.first()` from the sealed block.
         //   3. Legacy proposer fallback that re-signs the artifact through
         //      `evm_signer`. Determinism preserved because the signer is
-        //      RFC 6979 (see `crates/blockchain/evm/src/signer.rs`).
+        //      RFC 6979 (see `outbe_primitives::signer::OutbeEvmSigner`).
         let Some((cached_tx_hash, signed_gas_limit)) =
             self.resolve_phase1_witness(&calldata, proposer, block_number)?
         else {

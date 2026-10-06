@@ -496,9 +496,10 @@ where
     }
 
     /// Probe whether `signer` has an EIP-7702 delegation to
-    /// [`outbe_zerofee::ZEROFEE_ADDRESS`]. If it has one, run the same
-    /// `classify_sponsorship` + `authorize_sponsorship` checks that the
-    /// executor will run at block time.
+    /// [`outbe_zerofee::ZEROFEE_ADDRESS`]. If it has one, run
+    /// `classify_sponsorship` + `precheck_sponsorship`. The precheck rejects
+    /// self-sponsorship only and reads no quota. The executor runs the
+    /// stateful `authorize_sponsorship`, with the daily quota, at block time.
     ///
     /// Returns [`SponsorshipOutcome::NotSponsored`] when no delegation
     /// is present. The tx then falls back to the standard
@@ -614,9 +615,9 @@ enum SponsorshipOutcome {
 /// so tests can check the composition without a provider mock.
 ///
 /// Inputs are the values that the caller already fetched from the latest
-/// committed state. They are the signer, its native `balance`, and the
-/// address that its account code delegates to (`None` if it is not an
-/// EIP-7702 delegation). The decision:
+/// committed state. They are the signer and the address that its account
+/// code delegates to (`None` if it is not an EIP-7702 delegation). The
+/// decision:
 ///   - `delegated_to != Some(ZEROFEE_ADDRESS)` -> `NotSponsored` (normal
 ///     fee path, never an error).
 ///   - delegated but the envelope does not match `classify_sponsorship`

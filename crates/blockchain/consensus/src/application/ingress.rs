@@ -32,7 +32,8 @@ impl Mailbox {
     /// Send a genesis request.
     ///
     /// Applies backpressure if the handler's mailbox is full rather than
-    /// dropping the message (genesis is required for correct startup).
+    /// dropping the message. Only tests send this request. Simplex takes the
+    /// genesis digest from `simplex::Config.floor`.
     pub async fn genesis(&mut self, epoch: Epoch) -> Digest {
         let (tx, rx) = oneshot::channel();
         let msg = Message::Genesis(Genesis {

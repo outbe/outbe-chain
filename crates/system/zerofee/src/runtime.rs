@@ -1,6 +1,6 @@
 //! Runtime business logic for the EIP-7702 zero-fee paymaster path.
 //!
-//! Two entry points:
+//! Three entry points:
 //!
 //! 1. [`classify_sponsorship`] - stateless envelope check used by both the
 //!    txpool admission policy and the executor pre-fee site. Returns Ok
@@ -21,9 +21,10 @@
 //!    9th-of-day sponsored tx still lands in the block with a
 //!    soft-failure receipt (code 110).
 //!
-//! The caller enforces self-sponsorship and EIP-7702 designator detection.
-//! The caller can observe `signer != ZEROFEE_ADDRESS` and the
-//! `0xef0100 ++ ZEROFEE_ADDRESS` code pattern without any storage I/O.
+//! `precheck_sponsorship` and `authorize_sponsorship` reject self-sponsorship
+//! inside this module. `classify_sponsorship` leaves that check to the caller.
+//! The caller detects the EIP-7702 designator
+//! `0xef0100 ++ ZEROFEE_ADDRESS` without storage I/O.
 
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_primitives::{Address, U256};

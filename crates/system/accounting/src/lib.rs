@@ -9,7 +9,8 @@
 //! * [`state`] - local CRUD helpers around the schema.
 //! * [`runtime`] - `record_phase1_progress(ctx, block_number)`, which the V2
 //!   executor Phase 1 path calls (the writer is wired), and
-//!   `read_last_accounted_block_number(ctx)` for Cycle/Rewards readers.
+//!   `read_last_accounted_block_number(ctx)` for Cycle and the begin-block
+//!   finalization path. Rewards does not read this slot.
 //!
 //! ## Not in scope here
 //!
@@ -24,9 +25,11 @@
 //! account. The only deployed bytecode of that account is the `[0xef]`
 //! EIP-161 marker.
 //!
-//! Only the executor Phase 1 path may write slot 0. Two facts enforce this:
-//! the schema facade visibility, and the writer `record_phase1_progress` is
-//! the only crate-public mutating entrypoint.
+//! The executor Phase 1 path is the intended writer of slot 0.
+//! `record_phase1_progress` is the crate-public mutating entrypoint.
+//! [`schema::Accounting`] and its slot field are public.
+//! Another crate can write the slot through that facade.
+//! Visibility does not enforce the single-writer rule.
 
 #![forbid(unsafe_code)]
 

@@ -28,18 +28,17 @@ use revm::{context::journaled_state::JournalCheckpoint, context::result::HaltRea
 
 use crate::error::Result;
 
-// === Sub-call API surface (T(-0.5) stub types) ===
+// === Sub-call API surface ===
 //
-// Compile-only types that lock the API contract for outbe-precompile
-// authors. These authors integrate sub-call code in parallel with the
-// backend implementation (T0..T7). Real bodies for `StorageHandle::call` /
-// `staticcall` land in T4 (STATICCALL driver) and T6 (CALL driver) without
-// changing the signatures defined here.
+// Types of the API contract between outbe precompiles and the sub-call
+// driver. `StorageHandle::call` / `staticcall` forward to the provider's
+// `sub_call`. The production driver is `outbe_evm::sub_call`, which
+// `outbe_evm::storage::CtxStorageProvider` calls.
 
 /// Input to a sub-call dispatched from a Rust precompile.
 ///
-/// Placeholder shape. T1 may add fields. The real sub-call driver consumes this
-/// in `run_sub_call_impl(ctx, input, ...)` (T4/T5).
+/// The sub-call driver (`outbe_evm::sub_call::run_with_ocomp_context`)
+/// consumes this input.
 #[derive(Debug, Clone)]
 pub struct SubCallInput {
     /// Target contract address.
@@ -83,8 +82,8 @@ impl SubCallOutput {
     /// Constructs the stub-default success output:
     /// `{ status: Success, returndata: empty, gas_used: 0, gas_refunded: 0 }`.
     ///
-    /// T(-0.5) stub methods on `StorageHandle` use this until T4/T6 land real
-    /// behaviour. Production sub-call paths MUST NOT use it.
+    /// The test provider (`HashMapStorageProvider`) returns it when its
+    /// sub-call stub is on. Production sub-call paths MUST NOT use it.
     pub fn default_success() -> Self {
         Self {
             status: SubCallStatus::Success,
@@ -97,8 +96,7 @@ impl SubCallOutput {
 
 /// Sub-call failure modes.
 ///
-/// Intentionally NOT marked `#[non_exhaustive]` at T(-0.5). T4/T6 may revisit
-/// this once real dispatch is wired.
+/// Intentionally NOT marked `#[non_exhaustive]`.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum SubCallError {
     /// Provider does not implement sub-call (default trait method).
@@ -360,7 +358,7 @@ pub trait PrecompileStorageProvider {
     ///
     /// Default body returns [`SubCallError::NotAvailable`]. Concrete providers
     /// wired to the sub-call driver override it with a real implementation that
-    /// routes through `run_sub_call_impl`. Test / read-only / block-level
+    /// routes through `outbe_evm::sub_call::run_with_ocomp_context`. Test / read-only / block-level
     /// providers may keep the default.
     fn sub_call(
         &mut self,

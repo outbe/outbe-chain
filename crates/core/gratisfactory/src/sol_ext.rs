@@ -1,8 +1,6 @@
-//! Outbound sub-call ABI surfaces.
+//! Retained external ABI declarations from the former asset-valued pledge path.
 //!
-//! External contract interfaces the gratisfactory runtime invokes via
-//! `StorageHandle::staticcall`. These are NOT the precompile's own inbound ABI. That ABI
-//! lives in `precompile.rs::IGratisFactory`.
+//! The current runtime does not use these interfaces.
 
 use alloy_sol_types::sol;
 

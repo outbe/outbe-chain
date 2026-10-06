@@ -1,17 +1,17 @@
 //! Tribute computation - economics + `tribute_id`. Pure, deterministic, integer
 //! (U256) only.
 //!
-//! The economics code moves the settlement->nominal computation **into the enclave**.
-//! It replicates the host's current `outbe-tributefactory::runtime` math exactly, with
-//! two intentional differences:
+//! The settlement->nominal computation runs **only in the enclave**. The host
+//! `outbe-tributefactory` runtime does not recompute private economics. It forwards
+//! the public pricing inputs and uses the enclave result.
 //!
-//!   - Checked arithmetic (no panics, per project safety rules). The host code used
-//!     unchecked ops. On overflow the enclave rejects the offer and does not abort.
+//!   - Arithmetic is checked (no panics, per project safety rules). On overflow the
+//!     enclave rejects the offer and does not abort.
 //!   - The exact WorldwideDay VWAP legs and reference S-curve are public inputs. The
 //!     node reads them from committed Oracle state. They are identical on every validator.
 //!
-//! `tribute_id` is a Poseidon-BN254 hash over sensitive decrypted data, so it is
-//! computed only in the enclave.
+//! The token id is a Poseidon-BN254 digest of the owner and the WorldwideDay. The host
+//! recomputes the same digest and derives the tribute id from it.
 //!
 //! Settlement arithmetic uses checked `U256` operations. The module-level lint
 //! below rejects floating-point arithmetic.
@@ -83,11 +83,13 @@ fn parse_draft_id(draft_id: &str) -> Result<[u8; 32], String> {
     Ok(out)
 }
 
-/// `tribute_id = Poseidon(owner, worldwide_day)`, BN254/circom. The enclave computes it.
-/// The id is deterministic in `(owner, worldwide_day)` ALONE. This property enforces
-/// the one-tribute-per-owner-per-day invariant. A second offer for the same owner and
-/// day recomputes the same id, so the host's `get_tribute(id).is_some()` check rejects
-/// it (`TributeAlreadyExists`). This function still validates the `tribute_draft_id`
+/// Returns the token id `Poseidon(owner, worldwide_day)`, BN254/circom.
+/// The digest depends on `(owner, worldwide_day)` ALONE. This property enforces
+/// the one-tribute-per-owner-per-day invariant. The host recomputes this digest and
+/// derives the tribute id from the day and the digest tail
+/// (`WwdEntityId::from_day_and_digest`). A second offer for the same owner and day
+/// gives the same tribute id, so the host's `get_tribute` check rejects it
+/// (`TributeAlreadyExists`). This function still checks the `tribute_draft_id`
 /// (must be 32-byte hex) but intentionally does NOT mix it into the id. Mixing it in
 /// made the id per-offer-unique and silently allowed duplicate tributes per owner per day.
 ///

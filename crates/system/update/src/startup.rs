@@ -6,7 +6,7 @@ use crate::state::ScheduledUpdateInfo;
 use crate::version::format_protocol_version;
 use crate::ProtocolVersion;
 
-/// Returns `Ok(())` when `binary_version` is new enough for `active_version`.
+/// Returns `Ok(())` when `active_version` is not above `PROTOCOL_VERSION`.
 ///
 /// Fresh/pre-vote chains use `active_version == 0` and always pass.
 pub fn assert_binary_protocol_compatible(active_version: ProtocolVersion) -> Result<(), String> {

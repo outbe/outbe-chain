@@ -219,11 +219,9 @@ pub struct MetadosisPreAdmissionProjection {
 }
 
 impl MetadosisContract<'_> {
-    /// Initializes the per-day OCOMP state on a fresh-devnet fork.
-    ///
-    /// The later fork handler owns the production call site. Repeating the
-    /// exact initialization is idempotent. This method rejects any
-    /// non-canonical partial record.
+    /// Initialize the day's OCOMP state when READY-day processing prepares it for OCOMP.
+    /// Repeating the exact initialization is idempotent.
+    /// This method rejects any non-canonical partial record.
     pub(crate) fn initialize_ocomp_pre_admission(
         &mut self,
         wwd: WorldwideDay,

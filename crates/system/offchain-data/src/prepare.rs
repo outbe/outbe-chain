@@ -20,7 +20,10 @@ use super::{
 };
 
 impl OffchainDataProjection {
-    /// Decodes and simulates the entire block without performing any writes.
+    /// Decodes and simulates the block.
+    /// With no day route, this function performs no writes.
+    /// With a day route, a Tribute read can migrate legacy keys.
+    /// That migration writes the shared database and the day databases.
     pub fn prepare_block(&self, block: &FinalizedBlock) -> Result<PreparedBlock, ProjectionError> {
         self.validate_next_block(block.number, block.hash)?;
         validate_normalized_block(block)?;

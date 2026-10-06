@@ -228,10 +228,11 @@ where
     );
     dkg_muxer.start();
 
-    // R5.4: mux the TEE DKG + TEE bootstrap channels by round, as `dkg_mux` does.
-    // The startup ceremony (round 0) and a later epoch-boundary reshare (round N)
-    // then each get isolated sub-channels. The value is `None` when no TEE enclave
-    // sidecar is set.
+    // Mux the TEE DKG + TEE bootstrap channels by round, as `dkg_mux` does.
+    // Only the startup ceremony (round 0) uses them. The round-0 DKG at startup
+    // is the only ceremony that builds the TEE key. A new node gets the
+    // permanent offer key through onboarding / key transfer, not through a
+    // later TEE reshare. The value is `None` when no TEE enclave sidecar is set.
     let mut tee_dkg_mux = tee_dkg_channel.take().map(|ch| {
         let (muxer, handle) = Muxer::new(ctx.child("tee_dkg_mux"), ch.0, ch.1, MUXER_MAILBOX);
         muxer.start();
@@ -243,12 +244,12 @@ where
         handle
     });
 
-    // R5.4: pre-register the round-0 TEE sub-channels EARLY, as the consensus
+    // Pre-register the round-0 TEE sub-channels EARLY, as the consensus
     // `dkg_mux.register(0)` does at startup. Then every node routes round 0 well
     // before the startup TEE DKG begins. Lazy registration inside the startup block
     // races: a node can broadcast its identity before a peer registers round 0.
     // The mux then drops the unrouted message -> the identity exchange hangs.
-    // Reshare rounds (N>0) still register on demand at the boundary.
+    // No later round registers on these muxes.
     let tee_dkg_round0 = match tee_dkg_mux.as_mut() {
         Some(m) => Some(
             m.register(0)

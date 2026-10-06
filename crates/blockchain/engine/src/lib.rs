@@ -3,7 +3,7 @@
 //! `outbe-validatorset`, `outbe-node`).
 //!
 //! Owns:
-//! * `stack.rs` - engine startup, epoch loop, reshare monitoring.
+//! * `stack/` - engine startup, epoch loop, reshare monitoring.
 //! * `validators.rs` - ValidatorSet storage reader (Reth state -> Commonware
 //!   participant set).
 //! * `peer_manager/` - P2P peer registration against `outbe-node`.
