@@ -211,17 +211,45 @@ fn generation_matches(
     expected_generation: u64,
 ) -> bool {
     existing.generation == expected_generation
-        && existing.job_id == input.binding.job_id
+        && binding_matches(existing, input)
+        && roots_match(existing, input)
+        && totals_match(existing, input)
+}
+
+fn binding_matches(
+    existing: &NodCertifiedGenerationProjection,
+    input: &CertifiedNodGenerationV1,
+) -> bool {
+    existing.job_id == input.binding.job_id
         && existing.program_semantics_hash == input.program_semantics_hash
-        && existing.nod_root == input.roots.nod_root
+}
+
+fn roots_match(
+    existing: &NodCertifiedGenerationProjection,
+    input: &CertifiedNodGenerationV1,
+) -> bool {
+    existing.nod_root == input.roots.nod_root
         && existing.bucket_root == input.roots.bucket_root
         && existing.output_manifest_root == input.roots.output_manifest_root
-        && existing.tribute_count == input.counts.tribute_count
-        && existing.nod_count == input.counts.nod_count
-        && existing.bucket_count == input.counts.bucket_count
+}
+
+fn totals_match(
+    existing: &NodCertifiedGenerationProjection,
+    input: &CertifiedNodGenerationV1,
+) -> bool {
+    counts_match(existing, input)
         && existing.nod_amount_total == input.nod_amount_total
         && existing.lysis_allocation_minor == input.lysis_allocation_minor
         && existing.issued_at == input.issued_at
+}
+
+fn counts_match(
+    existing: &NodCertifiedGenerationProjection,
+    input: &CertifiedNodGenerationV1,
+) -> bool {
+    existing.tribute_count == input.counts.tribute_count
+        && existing.nod_count == input.counts.nod_count
+        && existing.bucket_count == input.counts.bucket_count
 }
 
 fn validate_input(
