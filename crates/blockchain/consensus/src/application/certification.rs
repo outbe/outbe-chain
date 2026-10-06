@@ -30,7 +30,7 @@ pub(super) async fn certify(
         marshal.certified(round, block).await
     };
     // Closing the response abandons this single-shot request. Real storage
-    // failures retain Commonware's fatal policy; shutdown is not a false vote.
+    // failures retain Commonware's fatal policy. Shutdown is not a false vote.
     let durable =
         match futures::future::select(Box::pin(persist), Box::pin(response.closed())).await {
             futures::future::Either::Left((durable, _)) => durable,

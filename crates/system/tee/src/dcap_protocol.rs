@@ -1,7 +1,7 @@
 //! Stable, native-verifier-independent DCAP protocol values.
 //!
 //! These values cross the Gramine enclave seam. The node can decode and
-//! validate the canonical outcome without linking Intel QVL; only the enclave
+//! validate the canonical outcome without linking Intel QVL. Only the enclave
 //! compiles the native verifier implementation.
 
 use alloy_primitives::{keccak256, B256};
@@ -114,10 +114,10 @@ impl DcapOnboardingContextV1 {
     }
 }
 
-/// Deterministic, purpose-bound ciphertext committed by TeeRegistry. The
-/// serialized nonce is transport redundancy only: target ingest must derive
-/// the expected nonce from [`DcapOnboardingContextV1::context_hash`] and reject
-/// a mismatch before opening the AEAD ciphertext.
+/// Deterministic, purpose-bound ciphertext that TeeRegistry commits. The
+/// serialized nonce is transport redundancy only. Target ingest must derive
+/// the expected nonce from [`DcapOnboardingContextV1::context_hash`]. It must
+/// reject a mismatch before it opens the AEAD ciphertext.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DcapOnboardingArtifactV1 {
     pub context: DcapOnboardingContextV1,
@@ -520,7 +520,7 @@ pub fn dcap_evidence_hash_v1(evidence: &[u8]) -> Result<B256, DcapRejectCodeV1> 
 }
 
 /// Local-only Ed25519 signature preimage binding an enclave outcome to the
-/// exact request commitment. It is verified by the node and never enters
+/// exact request commitment. The node verifies it, and it never enters
 /// calldata, state or events.
 pub fn dcap_verification_attestation_preimage(
     request_hash: B256,
@@ -540,8 +540,8 @@ pub fn dcap_verification_attestation_preimage(
 }
 
 /// Local-only signature preimage for the purpose-bound onboarding result.
-/// Both the verifier outcome and exact deterministic artifact are authenticated
-/// by the source enclave's quote-bound Ed25519 key.
+/// The source enclave's quote-bound Ed25519 key authenticates both the verifier
+/// outcome and the exact deterministic artifact.
 pub fn dcap_onboarding_attestation_preimage(
     request_hash: B256,
     outcome: &[u8],

@@ -3,7 +3,7 @@
 //! This crate holds the **secret-bearing** logic that runs only inside the
 //! enclave: the offer-decryption primitive, the DKG -> tribute-offer-key
 //! derivation chain, and the sealed-blob format. The host (`outbe-tee`) never
-//! links the secret crypto - it only speaks the neutral `outbe_tee::protocol`
+//! links the secret crypto. It only uses the neutral `outbe_tee::protocol`
 //! message contract over a Noise-IK channel.
 //!
 //! SGX integration is real, not mocked: [`gramine`] talks to the actual
@@ -15,7 +15,7 @@
 //!
 //!   - [`crypto`] - ECDHE + HKDF + ChaCha20Poly1305 offer decrypt (byte-identical
 //!     to the host's current scheme) and the tribute-offer-key derivation.
-//!   - [`seal`]   - the `TSEAL` sealed-blob format; the sealing key is the real
+//!   - [`seal`]   - the `TSEAL` sealed-blob format. The sealing key is the real
 //!     `EGETKEY` key under `gramine-sgx` (a `mock`-gated dev key only off-hardware).
 //!   - [`gramine`] - the real `/dev/attestation/*` quote/seal/measurement surface.
 
@@ -51,11 +51,12 @@ pub mod zk_claim;
 ///
 /// In the real enclave one resident group signature yields every ledger's state
 /// key (the transport derives the gratis, fidelity, ... keys from the same
-/// `group_sig`). The per-crate in-process test enclaves must model that: the
-/// fidelity key derived when the *gratis* stand-in applies a folded cohort
-/// section MUST equal the key the *fidelity* stand-in uses for snapshots/queries,
-/// or a folded mint would write a blob the snapshot cannot read. Both derive the
-/// fidelity key from this single `(group_sig, chain)` pair.
+/// `group_sig`). The per-crate in-process test enclaves must model that. The
+/// *gratis* stand-in derives a fidelity key when it applies a folded cohort
+/// section. That key MUST equal the key the *fidelity* stand-in uses for
+/// snapshots/queries. Otherwise a folded mint would write a blob the snapshot
+/// cannot read. Both derive the fidelity key from this single `(group_sig, chain)`
+/// pair.
 pub mod dev {
     use alloy_primitives::{B256, U256};
 

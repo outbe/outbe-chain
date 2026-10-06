@@ -143,7 +143,8 @@ fn config_profile_slot_matches_seeder_layout() {
     });
 }
 
-/// Slots are dense in `order` sequence, so a field inserted rather than appended moves every one after it.
+/// Slots are dense in `order` sequence, so a field inserted rather than appended moves every
+/// one after it.
 #[test]
 fn intex_factory_slot_layout_is_pinned() {
     with_factory(|s| {

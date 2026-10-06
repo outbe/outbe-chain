@@ -1,12 +1,12 @@
 //! Gas model for Outbe stateful precompiles.
 //!
 //! Outbe runs a permissioned validator set and does not use a fee market.
-//! Pricing for SLOAD/SSTORE is sourced directly from revm upstream
+//! Outbe takes SLOAD/SSTORE pricing directly from revm upstream
 //! ([`revm::context_interface::cfg::gas::WARM_STORAGE_READ_COST`] and
-//! [`revm::context_interface::cfg::gas::SSTORE_RESET`]) - see their use in
+//! [`revm::context_interface::cfg::gas::SSTORE_RESET`]). See their use in
 //! [`super::evm::EvmStorageProvider`]. Outbe does not distinguish warm/cold
-//! accesses and does not implement SSTORE refunds, so every read is billed
-//! at the warm price and every write at the reset price.
+//! accesses and does not implement SSTORE refunds. Thus Outbe bills every
+//! read at the warm price and every write at the reset price.
 //!
 //! The Outbe-specific constants live here: [`PRECOMPILE_BASE_GAS`] for flat
 //! dispatch entry and [`ZK_VERIFY_GAS`] for one proof verification.
@@ -16,8 +16,8 @@ use crate::error::{PrecompileError, Result};
 /// Flat entry cost charged once per precompile dispatch.
 ///
 /// No direct EIP-2929 counterpart: a precompile entry is a cross-boundary
-/// action, not an SLOAD. Chosen in the same order of magnitude as the
-/// cheapest metered op so dispatch is cheap but not free, which is adequate
+/// action, not an SLOAD. The value is in the same order of magnitude as the
+/// cheapest metered op, so dispatch is cheap but not free. This is adequate
 /// DoS protection in Outbe's permissioned model.
 pub const PRECOMPILE_BASE_GAS: u64 = 200;
 
@@ -29,7 +29,7 @@ pub const ZK_VERIFY_GAS: u64 = 300_000;
 ///
 /// The tracker remembers the original limit so [`Self::used`] is correct
 /// regardless of the starting value. A failed [`Self::deduct`] must not
-/// advance the meter - the invariant is exercised by unit tests below.
+/// advance the meter. The unit tests below exercise this invariant.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct GasTracker {
     limit: u64,

@@ -698,8 +698,8 @@ fn with_canonical_frontiers(
                 .get::<tables::Headers<OutbeHeader>>(100)
                 .unwrap()
                 .unwrap();
-            // Empty native frame: canonical active authority is read at E;
-            // this tests availability, not reconstructed execution history.
+            // Empty native frame: canonical active authority is read at E.
+            // This tests availability, not reconstructed execution history.
             tx.put::<tables::BlockBodyIndices>(
                 100,
                 StoredBlockBodyIndices {

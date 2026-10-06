@@ -1,11 +1,14 @@
 //! Stateless V2 layout / version / fork validator integration tests.
 //!
 //! Pins the contract that `crates/blockchain/node/src/consensus.rs::OutbeBeaconConsensus`
-//! is a **stateless** V2 validator: it rejects legacy V1 envelopes at every
-//! height and rejects malformed V2 envelopes (wrong version byte, unknown
-//! selector, missing body-index 0 for block N >= 2, missing `BoundaryOutcome`
-//! for block 1, any system tx for block 0) **without** running any stateful
-//! BLS / VRF / accounting verification - those live exclusively in
+//! is a **stateless** V2 validator. It rejects these envelopes **without**
+//! running any stateful BLS / VRF / accounting verification:
+//! - legacy V1 envelopes, at every height.
+//! - malformed V2 envelopes (wrong version byte, unknown selector, missing
+//!   body-index 0 for block N >= 2, missing `BoundaryOutcome` for block 1, any
+//!   system tx for block 0).
+//!
+//! Those stateful checks live exclusively in
 //! `OutbeBlockExecutor::apply_pre_execution_changes`.
 //!
 //! Most tests drive the public stateless entry point
@@ -313,8 +316,8 @@ fn gas_04_osaka_user_tx_cap_accepts_visible_outbe_system_tx_envelopes() {
 // T-1: legacy V1 selectors are rejected at every height (no silent drop).
 // ---------------------------------------------------------------------------
 
-/// legacy V1 envelopes (`OSF1` / `OSC1` / `OSB1` / `OSO1`) must
-/// be rejected by the stateless validator at any block height. The decoder
+/// the stateless validator must reject legacy V1 envelopes
+/// (`OSF1` / `OSC1` / `OSB1` / `OSO1`) at any block height. The decoder
 /// raises `SystemTxError::UnknownSelector`, surfaced by
 /// `validate_system_tx_consensus_boundary` as a `ConsensusError::Other`.
 #[test]
@@ -347,8 +350,8 @@ fn legacy_v1_system_tx_rejected_at_all_heights() {
 // T-2: block 0 has no begin-zone system txs under V2.
 // ---------------------------------------------------------------------------
 
-/// block 0 must contain zero system transactions. Any
-/// begin-zone V2 system tx in block 0 is rejected by the layout validator.
+/// block 0 must contain zero system transactions. The layout validator
+/// rejects any begin-zone V2 system tx in block 0.
 #[test]
 fn block_0_has_no_begin_zone_system_txs_under_v2() {
     let signer = signer();
@@ -516,9 +519,9 @@ fn block_b_ge_2_layout_requires_certified_parent_accounting_body0() {
 // T-6: V2 envelope with wrong version byte is rejected.
 // ---------------------------------------------------------------------------
 
-/// an input whose selector is a V2 selector but whose version
-/// byte is not `SYSTEM_TX_INPUT_VERSION` (e.g. legacy `0x01`) is rejected by
-/// the decoder before any execution.
+/// the decoder rejects an input whose selector is a V2 selector but whose
+/// version byte is not `SYSTEM_TX_INPUT_VERSION` (e.g. legacy `0x01`) before
+/// any execution.
 #[test]
 fn v2_envelope_with_wrong_version_byte_rejects() {
     assert_eq!(
@@ -551,10 +554,10 @@ fn v2_envelope_with_wrong_version_byte_rejects() {
 /// reth v2.2 added `Consensus::validate_block_pre_execution_with_tx_root` and
 /// the engine-tree now calls it as the PRIMARY pre-execution validator.
 /// `OutbeBeaconConsensus` overrides it to run `validate_system_tx_consensus_boundary`
-/// before delegating to the inner Eth impl. This pins that contract: a malformed
+/// before delegating to the inner Eth impl. This pins that contract. A malformed
 /// system-tx block must be rejected via BOTH the new `_with_tx_root` entrypoint
-/// AND the legacy one, so a future bump that drops the override fails here (the
-/// other stateless tests only exercise the legacy entrypoint).
+/// AND the legacy one. A future bump that drops the override then fails here.
+/// The other stateless tests only exercise the legacy entrypoint.
 #[test]
 fn malformed_block_rejected_via_v2_with_tx_root_entrypoint() {
     let signer = signer();
@@ -594,8 +597,9 @@ fn malformed_block_rejected_via_v2_with_tx_root_entrypoint() {
 /// SSA-7: the v2.2 `validate_block_pre_execution_with_tx_root` override must FORWARD
 /// the caller-provided transaction_root to the inner Eth impl, not swallow it. On a
 /// well-formed block (which passes the Outbe system-tx boundary check), a WRONG
-/// Some(tx_root) must be rejected via the inner tx-root mismatch, and the CORRECT
-/// tx_root must pass - proving the override delegates rather than ignoring tx_root.
+/// Some(tx_root) must be rejected via the inner tx-root mismatch. The CORRECT
+/// tx_root must pass. This proves that the override delegates rather than ignores
+/// tx_root.
 #[test]
 fn with_tx_root_forwards_transaction_root_on_wellformed_block() {
     let signer = signer();
@@ -628,7 +632,7 @@ fn with_tx_root_forwards_transaction_root_on_wellformed_block() {
     );
 
     // Wrong tx_root: boundary passes, but the inner Eth impl must reject on the
-    // tx-root mismatch - only possible if the override forwarded tx_root.
+    // tx-root mismatch. That is only possible if the override forwarded tx_root.
     let wrong_tx_root = B256::repeat_byte(0xEE);
     assert_ne!(wrong_tx_root, correct_tx_root);
     let err = consensus.validate_block_pre_execution_with_tx_root(&block, Some(wrong_tx_root));
@@ -788,7 +792,8 @@ fn mandatory_late_phase_cannot_be_skipped() {
     let parent_hash = B256::with_last_byte(0xA4);
     let mut txs =
         begin_zone_txs_block2(&signer, parent_hash, LateFinalizeCreditsArtifact::default());
-    // Drop the LateFinalizeCredits tx (ordinal 1) - leaving CPA, CycleTick, OracleSlashWindow, HookEvents.
+    // Drop the LateFinalizeCredits tx (ordinal 1). This leaves CPA, CycleTick,
+    // OracleSlashWindow, HookEvents.
     txs.remove(1);
     let header = header_for_transactions(2, parent_hash, &txs);
     let err = validate_system_tx_consensus_boundary(&body(txs), &header)

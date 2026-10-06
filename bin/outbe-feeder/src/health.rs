@@ -138,7 +138,7 @@ impl FeederHealth {
         self.observations.lock().unwrap().pending = hash.map(|hash| (hash.to_string(), created_at));
     }
 
-    /// Diagnostic scheduler context; readiness is determined from observations.
+    /// Diagnostic scheduler context. Readiness is determined from observations.
     pub fn set_reason(&self, reason: &str) {
         self.observations.lock().unwrap().reason = reason.to_string();
     }
@@ -267,7 +267,7 @@ impl FeederHealth {
 /// - `GET /health` - 200 if healthy, 503 if not
 /// - `GET /status` - JSON with full feeder state
 ///
-/// Returns immediately; the server runs as a background task.
+/// Returns immediately. The server runs as a background task.
 pub async fn start_health_server(bind_addr: &str, health: Arc<FeederHealth>) -> eyre::Result<()> {
     let listener = TcpListener::bind(bind_addr).await?;
     tracing::info!(addr = bind_addr, "health server listening");

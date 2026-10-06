@@ -1,7 +1,7 @@
 use super::*;
 use alloy_sol_types::SolValue;
 
-// Independent V1 JSON and ABI words; neither expectation uses the mapper.
+// Independent V1 JSON and ABI words. Neither expectation uses the mapper.
 const LEGACY_RENEWAL_JSON: &str = concat!(
     r#"{"nodeIdHash":"0x1111111111111111111111111111111111111111111111111111111111111111""#,
     r#","enclaveId":"0x1212121212121212121212121212121212121212121212121212121212121212""#,

@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# Multi-node consensus smoke (M-24): bootstrap a 4-validator localnet, prove
-# every node clears genesis DKG and finalizes blocks in lockstep, then RESTART
-# the localnet (preserving chain state) and prove every node recovers and keeps
-# advancing in lockstep - exercising the M-21 restart-recovery path end to end.
+# Multi-node consensus smoke (M-24). The script does these steps:
+#   1. Bootstrap a 4-validator localnet.
+#   2. Prove that every node clears genesis DKG and finalizes blocks in lockstep.
+#   3. RESTART the localnet (preserving chain state).
+#   4. Prove that every node recovers and keeps advancing in lockstep.
+# The restart exercises the M-21 restart-recovery path end to end.
 #
 # This is the working replacement for the removed `localnet-chain244-smoke`
 # task (which referenced a script that never existed). It is the CI signal for
-# multi-node consensus: a non-zero, lock-stepped height on all nodes proves the
-# DKG ceremony, leader election, payload build, and finalization path all work;
-# the restart phase proves saved-DKG recovery and finalized-state resume work.
+# multi-node consensus. A non-zero, lock-stepped height on all nodes proves that
+# the DKG ceremony, leader election, payload build, and finalization path all
+# work. The restart phase proves that saved-DKG recovery and finalized-state
+# resume work.
 #
 # Env:
 #   OUT_DIR               localnet data dir (default: a fresh /tmp dir)
@@ -98,19 +101,19 @@ rm -rf "$OUT_DIR"
 # Phase 1: fresh-start consensus reaches a lock-stepped non-zero height.
 wait_all_reach "$TARGET" "$TIMEOUT" "fresh-start" || exit 1
 
-# Phase 2: restart-recovery (M-21). Stop + start preserving chain state; every
-# node must recover saved DKG material + finalized state and keep advancing in
-# lockstep PAST the pre-restart height. A false-positive recovery (wrong
-# committee, drift fail-fast) would stall a node here.
+# Phase 2: restart-recovery (M-21). Stop + start and preserve chain state. Every
+# node must recover saved DKG material + finalized state. Every node must also
+# keep advancing in lockstep PAST the pre-restart height. A false-positive
+# recovery (wrong committee, drift fail-fast) would stall a node here.
 if [[ "${SMOKE_RESTART:-1}" != "0" ]]; then
   pre="$(max_height)"
   advance="${SMOKE_RESTART_ADVANCE:-3}"
   resume_target=$((pre + advance))
   echo "smoke: restarting localnet at height ~$pre to exercise restart recovery (M-21); must advance to >= $resume_target"
   ./scripts/run-testnet.sh stop "$OUT_DIR" >/dev/null
-  # Brief settle so the OS fully releases MDBX/static_files locks before the
-  # restart spawns fresh nodes (run-testnet.sh stop already kills node children
-  # and clears stale locks; this is insurance against lock-release latency).
+  # Wait briefly so that the OS fully releases MDBX/static_files locks before the
+  # restart spawns fresh nodes. run-testnet.sh stop already kills node children
+  # and clears stale locks. This wait is insurance against lock-release latency.
   sleep 3
   ./scripts/run-testnet.sh start "$OUT_DIR" >/dev/null
   if ! wait_all_reach "$resume_target" "${SMOKE_RESTART_TIMEOUT:-$TIMEOUT}" "restart-recovery"; then

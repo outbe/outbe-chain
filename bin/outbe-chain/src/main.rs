@@ -143,8 +143,8 @@ fn main() -> eyre::Result<()> {
     }
 
     // Intercept `--version` / `-V` so that the user sees Outbe-side build
-    // metadata in addition to Reth's own version string. The Outbe block is
-    // printed first; Reth's CLI then prints its own version and exits.
+    // metadata in addition to Reth's own version string. This code prints the
+    // Outbe block first. Reth's CLI then prints its own version and exits.
     if args.iter().any(|a| a == "--version" || a == "-V") {
         print_outbe_version();
     }

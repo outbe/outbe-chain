@@ -6,7 +6,7 @@ use crate::api;
 use crate::constants::{TOKEN_DESCRIPTION, TOKEN_NAME};
 use crate::schema::{EffectiveState, NodBucketState, NodContract, NodItemState};
 
-/// The call and the sealed call terms live on the bucket, as in `nodData`; `qualified` is derived.
+/// The call and the sealed call terms live on the bucket, as in `nodData`. `qualified` is derived.
 pub(crate) fn token_uri(
     nod: &NodContract<'_>,
     item: &NodItemState,

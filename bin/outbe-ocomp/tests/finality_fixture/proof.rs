@@ -45,21 +45,22 @@ pub(crate) struct OpeningContractFixture {
 
 /// A deterministic, valid Fidelity league for populating a fixture snapshot slot.
 ///
-/// This is NOT the Fidelity league derivation - that lives in `outbe_fidelity`
-/// (`league_from_rcfi`, RCFI -> league). These fixtures mock the on-chain state a
-/// node would read, so each snapshot slot needs *some* value in the canonical
-/// `[MIN_LEAGUE, MAX_LEAGUE]` range. The value is opaque to the tests, which
-/// assert opening-proof layout and deterministic re-execution - never league
-/// semantics. A distinct (but arbitrary) per-owner value just spreads tributes
-/// across more than one Lysis per-league group; owner order carries no meaning.
+/// This is NOT the Fidelity league derivation. That derivation lives in
+/// `outbe_fidelity` (`league_from_rcfi`, RCFI -> league). These fixtures mock the
+/// on-chain state a node would read, so each snapshot slot needs *some* value in
+/// the canonical `[MIN_LEAGUE, MAX_LEAGUE]` range. The value is opaque to the
+/// tests. The tests assert opening-proof layout and deterministic re-execution,
+/// never league semantics. A distinct (but arbitrary) per-owner value just spreads
+/// tributes across more than one Lysis per-league group. Owner order carries no
+/// meaning.
 pub fn fixture_league(owner_index: usize) -> u16 {
     let span = usize::from(MAX_LEAGUE - MIN_LEAGUE) + 1;
     MIN_LEAGUE + u16::try_from(owner_index % span).unwrap_or(0)
 }
 
-/// Returns the per-owner Fidelity league snapshot slots (which live in Metadosis
-/// storage and are merged into the intent account's storage trie by the caller)
-/// plus the standalone Oracle opening contract.
+/// Returns the per-owner Fidelity league snapshot slots plus the standalone Oracle
+/// opening contract. The slots live in Metadosis storage. The caller merges them
+/// into the storage trie of the intent account.
 pub(crate) fn lysis_contracts(
     day: WorldwideDay,
     subjects: &OpeningSubjectsV1,

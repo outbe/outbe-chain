@@ -13,15 +13,17 @@ import {GasLimitAttribute} from "src/libs/GasLimitAttribute.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
-/// @dev Accepts any inbound delivery so adapter-direct sends complete and we can inspect the recorded options.
+/// @dev Accepts any inbound delivery so adapter-direct sends complete and we can inspect the
+/// recorded options.
 contract PermissiveRecipient is IERC7786Recipient {
     function receiveMessage(bytes32, bytes calldata, bytes calldata) external payable returns (bytes4) {
         return IERC7786Recipient.receiveMessage.selector;
     }
 }
 
-/// @dev Full-stack test: facade (ERC7786Bridge) -> LayerZeroGatewayAdapter -> mock endpoint, both sides on
-/// `block.chainid` but distinguished by LayerZero eid (the intent E2E simulation pattern).
+/// @dev Full-stack test: facade (ERC7786Bridge) -> LayerZeroGatewayAdapter -> mock endpoint.
+/// Both sides are on `block.chainid`, and the LayerZero eid distinguishes them (the intent E2E
+/// simulation pattern).
 contract LayerZeroGatewayAdapterTest is Test {
     address internal owner = makeAddr("owner");
     address internal app = makeAddr("app");
@@ -55,7 +57,7 @@ contract LayerZeroGatewayAdapterTest is Test {
         endpointB.setRemoteEndpoint(aEid, endpointA);
 
         vm.startPrank(owner);
-        // Both logical chains share block.chainid here; each adapter binds it to the peer's eid.
+        // Both logical chains share block.chainid here. Each adapter binds it to the peer's eid.
         adapterA.setPeerWithChain(bEid, _b32(address(adapterB)), block.chainid);
         adapterB.setPeerWithChain(aEid, _b32(address(adapterA)), block.chainid);
         facadeA.registerRemoteBridge(_interop(address(facadeB)));
@@ -88,7 +90,8 @@ contract LayerZeroGatewayAdapterTest is Test {
         vm.prank(app);
         facadeA.sendMessage{value: fee}(_interop(address(recipient)), payload, _noAttrs());
 
-        // The recipient on side B must have received the original sender (app) and the unwrapped payload.
+        // The recipient on side B must have received the original sender (app) and the unwrapped
+        // payload.
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bytes32 topic = keccak256("MessageReceived(address,bytes32,bytes,bytes,uint256)");
         bool seen;
@@ -125,7 +128,8 @@ contract LayerZeroGatewayAdapterTest is Test {
     }
 
     function test_Quote_ThroughFacade() public view {
-        // App asks the facade; facade wraps and delegates to the active gateway (the LZ adapter) -> endpoint.
+        // App asks the facade. The facade wraps and delegates to the active gateway (the LZ
+        // adapter) -> endpoint.
         uint256 fee = facadeA.quote(_interop(address(recipient)), abi.encode("settle"));
         assertEq(fee, 100, "facade quote routes through the active LZ adapter");
     }
@@ -155,7 +159,8 @@ contract LayerZeroGatewayAdapterTest is Test {
         adapterA.sendMessage{value: 100}(recipientAddr, "p", _gasAttrs(999_999));
         assertTrue(keccak256(endpointA.lastOptions()) != defaultOpts, "executionGasLimit must change the LZ options");
 
-        // A gas value equal to the adapter default produces the same options as the no-attribute path.
+        // A gas value equal to the adapter default produces the same options as the no-attribute
+        // path.
         vm.prank(app);
         adapterA.sendMessage{value: 100}(recipientAddr, "p", _gasAttrs(adapterA.defaultGasLimit()));
         assertEq(keccak256(endpointA.lastOptions()), defaultOpts, "gas equal to default yields default options");

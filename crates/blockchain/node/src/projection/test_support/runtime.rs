@@ -574,7 +574,7 @@ where
             }
 
             // Keep the critical ExEx task alive even if its input channels have closed. A normal
-            // return from an installed ExEx is treated as a critical task failure by Reth.
+            // return from an installed ExEx is a critical task failure for Reth.
             () = std::future::pending::<()>() => {}
         }
     }

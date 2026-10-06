@@ -109,7 +109,7 @@ pub struct StorageReadSource {
 }
 
 impl StorageReadSource {
-    /// Mongo preserves its primary/majority read contract; Rocks pins the caught-up view.
+    /// Mongo preserves its primary/majority read contract. Rocks pins the caught-up view.
     /// Domain completeness/commitment checks remain required for either backend.
     pub fn open_session(&self) -> Result<StorageReaderHandle, StorageError> {
         match &self.config.backend {

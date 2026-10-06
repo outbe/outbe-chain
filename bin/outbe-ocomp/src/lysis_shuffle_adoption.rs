@@ -167,8 +167,9 @@ pub fn admit_reported_lysis_shuffle_unit(
 /// Verifies the complete bounded page tree from the worker inbox while
 /// publishing each digest-valid descendant into the authoritative CAS.
 ///
-/// The root remains embedded in its `UnitArtifactV1`; only referenced
-/// descendants are required in CAS. Content-addressed objects published before
+/// The root remains embedded in its `UnitArtifactV1`. CAS must hold the
+/// referenced descendants, but it does not need to hold the root.
+/// Content-addressed objects published before
 /// a later validation failure are unreachable orphans, never an admitted unit.
 pub fn adopt_lysis_shuffle_descendants(
     root: ShuffleRunArtifactV1,

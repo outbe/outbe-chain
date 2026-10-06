@@ -1,6 +1,10 @@
-//! Target-execution `Error` is a terminal outcome: failed target effects roll
-//! back, the proposer's bond is refunded exactly once, the liability closes,
-//! nothing is burned and the proposal leaves the pending index.
+//! Target-execution `Error` is a terminal outcome:
+//!
+//! - Failed target effects revert.
+//! - The proposer's bond is refunded exactly once.
+//! - The liability closes.
+//! - Nothing is burned.
+//! - The proposal leaves the pending index.
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
@@ -87,7 +91,7 @@ fn a_bonded_target_error_refunds_the_bond_once_and_closes_the_liability() {
                 .unwrap(),
             ProposalStatus::Error
         );
-        // Failed target effects are rolled back; admission state is untouched.
+        // Failed target effects revert. Admission state stays untouched.
         assert_eq!(
             storage.sload(UPDATE_ADDRESS, U256::from(996u64)).unwrap(),
             U256::ZERO,
@@ -308,8 +312,13 @@ fn a_failure_after_every_error_finalization_mutation_rolls_back_everything() {
 }
 
 /// Writes the shape the previous binary persisted for a target-execution
-/// Error: status `Error`, the id still in the pending vector, the bond still
-/// `Unsettled`. This is the upgrade boundary, not a corrupted record.
+/// Error:
+///
+/// - status `Error`
+/// - the id still in the pending vector
+/// - the bond still `Unsettled`
+///
+/// This is the upgrade boundary, not a corrupted record.
 fn persist_legacy_error(vote: &mut Vote<'_>, proposal_id: U256) {
     let mut record = vote.proposals.get(proposal_id).unwrap().unwrap();
     record.set_proposal_status(ProposalStatus::Error);

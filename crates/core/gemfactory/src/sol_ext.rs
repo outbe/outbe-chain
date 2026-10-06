@@ -1,6 +1,6 @@
 //! Outbound sub-call ABI surfaces.
 //!
-//! Interfaces invoked by the gemfactory runtime via `StorageHandle::call`.
+//! Interfaces that the gemfactory runtime invokes via `StorageHandle::call`.
 //! Not the precompile's own inbound ABI (which lives in
 //! `precompile.rs::IGemFactory`).
 

@@ -1,9 +1,14 @@
-//! Enclave key material + quote assembly (secret-bearing - enclave only).
+//! Enclave key material + quote assembly (secret-bearing, enclave only).
 //!
-//! One sealed identity seed deterministically derives the Noise responder,
-//! recipient X25519, Ed25519 attestation, TEE-BLS and DKG-decryption keys. The
-//! public identity therefore survives restart as one atomic unit. Intent-bound
-//! DCAP quotes are generated separately by the initialized NodeHost path; this
+//! One sealed identity seed deterministically derives these keys:
+//!   - Noise responder,
+//!   - recipient X25519,
+//!   - Ed25519 attestation,
+//!   - TEE-BLS,
+//!   - DKG-decryption.
+//!
+//! The public identity therefore survives restart as one atomic unit. The
+//! initialized NodeHost path generates intent-bound DCAP quotes separately. This
 //! module retains an unattested response only for the mock/test transport.
 
 use alloy_primitives::{keccak256, B256};
@@ -22,8 +27,8 @@ use crate::gramine::{self, AttestationType};
 use crate::process::TributeOfferKeyMaterial;
 
 /// Measurement value used when no SGX hardware quote is available
-/// (`gramine-direct`/bare). Zero is not a valid SGX measurement, so it cannot be
-/// mistaken for an attested enclave - a strict host policy rejects it.
+/// (`gramine-direct`/bare). Zero is not a valid SGX measurement, so nobody can
+/// mistake it for an attested enclave. A strict host policy rejects it.
 pub const UNATTESTED_MEASUREMENT: B256 = B256::ZERO;
 
 /// Commonware namespace for the already domain-separated, ceremony-scoped DKG
@@ -32,7 +37,7 @@ pub const DKG_ENC_BIND_NAMESPACE: &[u8] = b"outbe/tee/dkg-participant-announce/v
 
 /// Versioned RFC 9380 domain for the persistent TEE-BLS identity mapping.
 /// Changing this value rotates the identity and therefore requires an explicit
-/// migration; the known-answer test below pins seed-to-public-key continuity.
+/// migration. The known-answer test below pins seed-to-public-key continuity.
 const TEE_BLS_IDENTITY_V1_DST: &[u8] = b"OUTBE_TEE_BLS_IDENTITY_V1_XMD:SHA-256";
 
 fn derive_tee_bls_identity_v1(seed: &[u8; 32]) -> Result<PrivKey, String> {
@@ -114,10 +119,10 @@ pub struct EnclaveKeys {
 }
 
 impl EnclaveKeys {
-    /// Derive the complete persistent enclave identity from one seed. On SGX the
-    /// seed is generated once and sealed by `run::resolve_enclave_identity_seed`; mock
-    /// and direct tests pass an explicit seed. `seed` is only the fallback when no
-    /// persistent seed is available and is never a production authority.
+    /// Derive the complete persistent enclave identity from one seed. On SGX
+    /// `run::resolve_enclave_identity_seed` generates the seed once and seals it.
+    /// Mock and direct tests pass an explicit seed. `seed` is only the fallback when
+    /// no persistent seed is available and is never a production authority.
     pub fn new(seed: [u8; 32], identity_seed_override: Option<[u8; 32]>) -> Result<Self, String> {
         Self::new_with_identity_seed(seed, identity_seed_override.map(Zeroizing::new), None)
     }
@@ -240,9 +245,9 @@ impl EnclaveKeys {
     pub fn tribute_offer_public(&self) -> [u8; 32] {
         self.tribute_offer_public
     }
-    /// The X25519 secret behind the one-time onboarding recipient advertised by a
-    /// keyless enclave. The finalized registry artifact is sealed to this
-    /// REPORT_DATA-bound public key and can be ingested only by this enclave.
+    /// The X25519 secret behind the one-time onboarding recipient that a keyless
+    /// enclave advertises. The finalized registry artifact is sealed to this
+    /// REPORT_DATA-bound public key. Only this enclave can ingest it.
     pub fn tribute_offer_x25519_secret(&self) -> &[u8; 32] {
         &self.tribute_offer_secret
     }
@@ -251,8 +256,8 @@ impl EnclaveKeys {
     }
 
     /// Sign `msg` with this enclave's Ed25519 attestation key. Used to
-    /// produce the per-offer attestation tag over the offer-attestation preimage;
-    /// the host verifies it against [`EnclaveKeys::attestation_pub`].
+    /// produce the per-offer attestation tag over the offer-attestation preimage.
+    /// The host verifies it against [`EnclaveKeys::attestation_pub`].
     pub fn sign_attestation(&self, msg: &[u8]) -> [u8; 64] {
         use ed25519_dalek::Signer as _;
         self.attestation_signing.sign(msg).to_bytes()
@@ -280,16 +285,16 @@ impl EnclaveKeys {
             .encode()
             .to_vec())
     }
-    /// The running enclave's ISV SVN (0 when unattested). Consumed by the
-    /// seal/unseal boot path for the anti-rollback floor (plan section "Local
+    /// The running enclave's ISV SVN (0 when unattested). The seal/unseal boot
+    /// path uses it for the anti-rollback floor (plan section "Local
     /// Persistence").
     pub fn isv_svn(&self) -> u16 {
         self.isv_svn
     }
 
     /// Exact SGX code identity of this source enclave. Purpose-bound key
-    /// delivery accepts only a target running this same measured release;
-    /// caller-supplied policy bytes are never authority for another MRENCLAVE.
+    /// delivery accepts only a target running this same measured release.
+    /// Caller-supplied policy bytes are never authority for another MRENCLAVE.
     pub(crate) const fn code_identity(&self) -> (B256, B256, u16, u16) {
         (
             self.mrenclave,
@@ -311,8 +316,8 @@ impl EnclaveKeys {
 
     /// Offer decrypt key material using an externally-supplied secret (the
     /// DKG-derived offer secret) with the fixed protocol salt
-    /// [`outbe_tee::OFFER_HKDF_SALT`] - the same non-secret domain value clients
-    /// use, shared by the dev and DKG-derived offer keys alike.
+    /// [`outbe_tee::OFFER_HKDF_SALT`]. Clients use the same non-secret domain value.
+    /// The dev and DKG-derived offer keys share it alike.
     pub fn tribute_offer_key_material_with<'a>(
         &'a self,
         secret: &'a [u8; 32],
@@ -324,9 +329,9 @@ impl EnclaveKeys {
     }
 
     /// `report_data = keccak256(noise_static_pub || recipient_x25519_pub ||
-    /// attestation_pub)` - binds the cleartext quote keys to the attestation. The
-    /// first 32 bytes of the SGX 64-byte report_data carry this value, so the
-    /// host can verify the binding against the value embedded in the real quote.
+    /// attestation_pub)`. It binds the cleartext quote keys to the attestation. The
+    /// first 32 bytes of the SGX 64-byte report_data carry this value. The host
+    /// can then verify the binding against the value embedded in the real quote.
     pub fn report_data_binding(
         noise_public: &[u8; 32],
         tribute_offer_public: &[u8; 32],
@@ -354,7 +359,7 @@ impl EnclaveKeys {
 
     /// Build the SGX quote response. The `quote_body` is the real DCAP quote
     /// generated at startup (empty when unattested). `nonce` is unused for
-    /// freshness here - the channel's freshness comes from the Noise-IK handshake
+    /// freshness here. The channel's freshness comes from the Noise-IK handshake
     /// that pins the attested static key.
     pub fn quote(&self, _nonce: [u8; 32]) -> EnclaveResponse {
         EnclaveResponse::Quote {
@@ -377,8 +382,8 @@ mod tests {
 
     /// Off SGX hardware (CI / gramine-direct / bare) the enclave MUST run
     /// unattested: empty quote and zero measurements. It must never fabricate a
-    /// quote or measurements (the old mock did exactly
-    /// that - `mock-gramine-direct-quote` + `[0xE1;32]`/`[0x51;32]`).
+    /// quote or measurements. The old mock did exactly
+    /// that: `mock-gramine-direct-quote` + `[0xE1;32]`/`[0x51;32]`.
     #[test]
     fn unattested_when_no_sgx_hardware() {
         let keys = EnclaveKeys::new([0x07; 32], Some([0x01; 32])).expect("key init off-hardware");
@@ -415,9 +420,9 @@ mod tests {
     }
 
     /// Pin the REPORT_DATA preimage byte order. The canonical layout is
-    /// `keccak256(noise_static || recipient_x25519 || attestation)`; the host
+    /// `keccak256(noise_static || recipient_x25519 || attestation)`. The host
     /// (`outbe-tee::client::verify_quote`) recomputes it in the SAME order, so a
-    /// drift on either side breaks the channel - this test freezes it.
+    /// drift on either side breaks the channel. This test freezes it.
     #[test]
     fn report_data_preimage_order_is_pinned() {
         let noise = [1u8; 32];

@@ -61,7 +61,7 @@ async fn publish_pair(
 ) {
     let _ = mailbox.verified(previous.round, previous.block).await;
     let mut reporter = mailbox.clone();
-    // Reporter::report is synchronous; preserve verified/finalization ordering.
+    // Reporter::report is synchronous. Preserve verified/finalization ordering.
     let _ = reporter.report(Activity::Finalization(previous.finalization));
     let _ = mailbox.verified(current.round, current.block).await;
     let _ = reporter.report(Activity::Finalization(current.finalization));

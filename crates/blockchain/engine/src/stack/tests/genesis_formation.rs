@@ -308,8 +308,8 @@ fn genesis_formation_gate_accepts_quorum_connected_non_mesh_topology() {
 
     // Four validators need a 3-of-4 BFT quorum, hence two matching remote
     // witnesses per node. Requiring all three remote validators creates a split
-    // startup gate on a healthy non-fully-meshed gossip topology: nodes seeing
-    // 3/3 start all-member DKG while nodes seeing 2/3 never enter it.
+    // startup gate on a healthy gossip topology that is not fully meshed. Nodes
+    // that see 3/3 start all-member DKG. Nodes that see 2/3 never enter it.
     assert_eq!(
         genesis_formation_gate_decision(
             context,

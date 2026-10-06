@@ -6,8 +6,8 @@
 //! `api.rs::IVaultRouter` and its optional cross-chain extension).
 //!
 //! The Solidity original used OpenZeppelin `SafeERC20` (`forceApprove`,
-//! `safeTransferFrom`); here those become plain ERC-20 `approve` / `transferFrom`
-//! calls whose boolean return is checked explicitly in the runtime.
+//! `safeTransferFrom`). Here those become plain ERC-20 `approve` / `transferFrom`
+//! calls. The runtime checks their boolean return explicitly.
 
 use alloy_sol_types::sol;
 

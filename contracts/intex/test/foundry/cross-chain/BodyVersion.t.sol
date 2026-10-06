@@ -10,11 +10,11 @@ import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 
 /// @dev Exercises the body-version contract on both codecs:
-///      - every encoder emits `bodyVersion == BODY_VERSION_V1` at offset 0;
-///      - every decoder reverts `UnsupportedBodyVersion(got)` on any other leading byte;
+///      - every encoder emits `bodyVersion == BODY_VERSION_V1` at offset 0.
+///      - every decoder reverts `UnsupportedBodyVersion(got)` on any other leading byte.
 ///      - round-trip preserves the version byte alongside the payload.
 contract BodyVersionTest is Test {
-    /// @dev Fixed call stamp; these tests exercise the wire, not the clock.
+    /// @dev Fixed call stamp. These tests exercise the wire, not the clock.
     uint32 internal constant CALLED_AT = 1_777_000_000;
 
     // --- BridgeMsgCodec: encoder emits version byte ---
@@ -174,11 +174,11 @@ contract BodyVersionTest is Test {
     // --- BridgeMsgCodec: sibling-array parity + cap on the variable-length decoders ---
 
     function test_BridgeCodec_DecodeBidsBatch_RejectsArrayLengthMismatch() public {
-        // Four parallel arrays with mismatched lengths: indexed in lockstep downstream, so an
-        // unequal decode would panic out of bounds inside the ordered lane. Must revert typed.
-        // The encoder now reverts on parity mismatch, so the wire payload is hand-built directly -
-        // matching the way an oversized REFUND would arrive via a peer compromise or a future
-        // encoder change.
+        // Four parallel arrays with mismatched lengths. They are indexed in lockstep downstream, so
+        // an unequal decode would panic out of bounds inside the ordered lane. Must revert typed.
+        // The encoder now reverts on parity mismatch, so the test hand-builds the wire payload
+        // directly. This matches the way an oversized REFUND would arrive via a peer compromise or
+        // a future encoder change.
         address[] memory bidders = new address[](2);
         uint16[] memory quantities = new uint16[](1); // short
         uint32[] memory rates = new uint32[](2);
@@ -212,9 +212,9 @@ contract BodyVersionTest is Test {
     }
 
     function test_BridgeCodec_DecodeIssuance_RejectsOverCap() public {
-        // The outbound encoder caps recipients at MAX_RECIPIENTS_PER_ISSUANCE, so an over-cap packet
-        // cannot be built through it; hand-build the wire body to exercise the inbound decode cap
-        // (the trusted-peer-bug path), reading the cap from the constant.
+        // The outbound encoder caps recipients at MAX_RECIPIENTS_PER_ISSUANCE, so it cannot build
+        // an over-cap packet. Hand-build the wire body to exercise the inbound decode cap (the
+        // trusted-peer-bug path). Read the cap from the constant.
         uint256 n = uint256(BridgeMsgCodec.MAX_RECIPIENTS_PER_ISSUANCE) + 1;
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
         payload.seriesId = "20260212-TRY-U";

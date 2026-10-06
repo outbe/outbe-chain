@@ -2,16 +2,16 @@
 //!
 //! Built ONLY with `--features mock` (enforced by `required-features` in
 //! `Cargo.toml`), so the production `outbe-tee-enclave` binary links none of the
-//! mock key material. It runs the SAME code path as production - the node talks
-//! to it over the same Noise-IK channel, a single path - differing only in:
-//!   - a stable EGETKEY-equivalent sealing key (the `mock` feature; lets the
-//!     sealed restart fast-path be exercised under gramine-direct, where real
-//!     `EGETKEY` is unavailable), and
+//! mock key material. It runs the SAME code path as production. The node talks
+//! to it over the same Noise-IK channel, a single path. It differs only in:
+//!   - a stable EGETKEY-equivalent sealing key (the `mock` feature). This key lets
+//!     tests exercise the sealed restart fast-path under gramine-direct, where
+//!     real `EGETKEY` is unavailable.
 //!   - a loud "MOCK ENCLAVE - NOT CONFIDENTIAL" startup banner ([`RunOpts::mock`]).
 //!
-//! There is no fabricated SGX quote: it runs unattested (empty quote), accepted
-//! by the host's development transport. Use for localnet/CI
-//! without SGX hardware; never in production.
+//! There is no fabricated SGX quote. It runs unattested (empty quote), and the
+//! host's development transport accepts that. Use for localnet/CI
+//! without SGX hardware. Never use in production.
 
 use outbe_tee_enclave::run::{run, RunOpts};
 

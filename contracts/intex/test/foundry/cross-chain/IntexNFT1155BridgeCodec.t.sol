@@ -6,7 +6,7 @@ import {Test} from "forge-std/Test.sol";
 import {IntexNFT1155BridgeCodec} from "@contracts/shared/libs/IntexNFT1155BridgeCodec.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 
-/// @dev External wrappers so the `bytes calldata` decoders can be exercised from memory in tests.
+/// @dev External wrappers so that tests can exercise the `bytes calldata` decoders from memory.
 contract CodecHarness {
     function decodeBatch(bytes calldata _message) external pure returns (IntexNFT1155BridgeCodec.BatchPayload memory) {
         return IntexNFT1155BridgeCodec.decodeBatch(_message);
@@ -150,9 +150,10 @@ contract IntexNFT1155BridgeCodecTest is Test {
     // --- schema binding: a body of the wrong type must not decode as this type ---
 
     function test_DecodeBatch_MultiPayloadBody_RevertsMalformedBody() public {
-        // Route a SEND_MULTI-shaped body through the SEND decoder. `abi.decode` is permissive, so
-        // without the canonical-form check it would misread the MultiPayload into a garbage
-        // BatchPayload (e.g. `to == bytes32(0x60)`) and crosschainMint a wrong address.
+        // Route a SEND_MULTI-shaped body through the SEND decoder. `abi.decode` is permissive.
+        // Without the canonical-form check, it would misread the MultiPayload into a garbage
+        // BatchPayload (e.g. `to == bytes32(0x60)`). It would then crosschainMint a wrong
+        // address.
         bytes memory multiBody = abi.encode(_multiOfSize(1));
         bytes memory packet =
             abi.encodePacked(IntexNFT1155BridgeCodec.BODY_VERSION_V1, IntexNFT1155BridgeCodec.SEND, multiBody);
@@ -162,8 +163,8 @@ contract IntexNFT1155BridgeCodecTest is Test {
 
     function test_DecodeMulti_BatchPayloadBody_FailsClosed() public {
         // The reverse direction: a `BatchPayload` body routed as `SEND_MULTI`. `abi.decode` itself
-        // reverts on the out-of-bounds offset (a `MultiPayload` needs a third array), so it fails
-        // closed before the canonical check - the key property is no misdecode-and-crosschainMint.
+        // reverts on the out-of-bounds offset (a `MultiPayload` needs a third array). Thus it fails
+        // closed before the canonical check. The key property is: no misdecode-and-crosschainMint.
         bytes memory batchBody = abi.encode(_batchOfSize(1));
         bytes memory packet =
             abi.encodePacked(IntexNFT1155BridgeCodec.BODY_VERSION_V1, IntexNFT1155BridgeCodec.SEND_MULTI, batchBody);
@@ -172,7 +173,7 @@ contract IntexNFT1155BridgeCodecTest is Test {
     }
 
     function test_DecodeBatch_TrailingBytes_RevertsMalformedBody() public {
-        // `abi.decode` silently ignores trailing bytes; the canonical check rejects them.
+        // `abi.decode` silently ignores trailing bytes. The canonical check rejects them.
         bytes memory packet = abi.encodePacked(
             IntexNFT1155BridgeCodec.BODY_VERSION_V1,
             IntexNFT1155BridgeCodec.SEND,
@@ -223,8 +224,9 @@ contract IntexNFT1155BridgeCodecTest is Test {
 
     // --- cap relationship ---
 
-    /// @dev The bridge's cap is deliberately the narrower one: a rejected item is recorded with its revert
-    ///      bytes, the dearest per-item work anywhere. It must never exceed the protocol-wide payload cap.
+    /// @dev The bridge's cap is deliberately the narrower one. The bridge records a rejected
+    ///      item with its revert bytes, which is the dearest per-item work anywhere. The cap
+    ///      must never exceed the protocol-wide payload cap.
     function test_MaxBatchSize_StaysWithinTheProtocolPayloadCap() public pure {
         assertLe(IntexNFT1155BridgeCodec.MAX_BATCH_SIZE, uint256(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN));
     }

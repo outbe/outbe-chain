@@ -238,7 +238,7 @@ fn verify_prechecks_reject_or_withhold_before_engine_work() {
                         shared.shared.proposer_evm_address = Some(Address::repeat_byte(1))
                     }
                     EarlyCase::CancelledProjection => {
-                        // Use height 1 so Phase 1 is optional; otherwise prechecks reject first.
+                        // Use height 1 so Phase 1 is optional. Otherwise prechecks reject first.
                         let block = proposed_block(None, false);
                         shared
                             .block_cache

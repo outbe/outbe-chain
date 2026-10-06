@@ -1,11 +1,11 @@
-//! - `OutbeReporter` fanout tests.
+//! `OutbeReporter` fanout tests.
 //!
-//! Verifies that `Activity::Certification(notarization)` is admitted by
-//! `OutbeReporter` (the Outbe-side branch of the `Reporters::from((outbe, marshal))`
-//! fanout) and persisted to the certified-parent proof store.
+//! Verifies that `OutbeReporter` (the Outbe-side branch of the
+//! `Reporters::from((outbe, marshal))` fanout) admits `Activity::Certification(notarization)`
+//! and persists it to the certified-parent proof store.
 //! Marshal's mailbox drops `Activity::Certification` via its `_ => return;` arm
-//! (monorepo `consensus/src/marshal/core/mailbox.rs:396-410`), so the persistence
-//! observed here is what marshal would *not* have done.
+//! (monorepo `consensus/src/marshal/core/mailbox.rs:396-410`). Thus marshal would *not* do
+//! the persistence that this test observes.
 //!
 
 use alloy_primitives::{address, Address};
@@ -122,12 +122,12 @@ fn build_reporter(
     verifier: HybridScheme<MinSig>,
     participants: &Set<bls12381::PublicKey>,
 ) -> (OutbeReporter, mpsc::UnboundedReceiver<FinalizationMessage>) {
-    // certified-notarization persistence is enqueued to the
-    // FinalizationActor mailbox; the test keeps the receiver to drain it.
+    // The reporter enqueues certified-notarization persistence to the
+    // FinalizationActor mailbox. The test keeps the receiver to drain it.
     let (tx, rx) = mpsc::unbounded::<FinalizationMessage>();
-    // This test exercises only the certification fan-out, not finalize votes, so
-    // a verify actor whose receiver is immediately dropped (its `mailbox.verify`
-    // becomes a no-op) is sufficient.
+    // This test exercises only the certification fan-out, not finalize votes.
+    // Thus a verify actor whose receiver is dropped immediately is sufficient.
+    // Its `mailbox.verify` becomes a no-op.
     let (_verify_actor, verify_mailbox) =
         outbe_consensus::finalization::finalize_verify::FinalizeVerifyActor::new(
             outbe_consensus::hybrid::HybridSchemeProvider::new(),
@@ -153,8 +153,8 @@ fn build_reporter(
     (reporter, rx)
 }
 
-/// apply the off-thread certified-notarization writes the reporter
-/// enqueued, exactly as the `FinalizationActor` would, so a test can assert on
+/// Apply the off-thread certified-notarization writes that the reporter
+/// enqueued, exactly as the `FinalizationActor` would. A test can then assert on
 /// the store after `report(Activity::Certification(..))`.
 fn drain_certification_writes(
     rx: &mut mpsc::UnboundedReceiver<FinalizationMessage>,
@@ -193,11 +193,11 @@ async fn reporter_fanout_persists_certification_activity_before_marshal_filter()
     assert_eq!(record.finalized_view, 2);
     assert_eq!(record.parent_view, 1);
     assert_eq!(record.finalized_block_hash, parent_hash);
-    // - Activity-driven insert always sets the local certification
-    // witness flag; remote-fetch fallbacks gate writes on
-    // this being true.
+    // An Activity-driven insert always sets the local certification
+    // witness flag. Remote-fetch fallbacks gate writes on
+    // this flag being true.
     assert!(record.is_certification_witness());
-    // The store accepted only the certified-notarization slot - finalization
+    // The store accepted only the certified-notarization slot. The finalization
     // slot is untouched.
     assert!(store.get_finalization(proof_key).is_none());
 }
@@ -208,8 +208,8 @@ async fn proof_store_ingestion_verifies_certification_activity_before_write() {
     // certificate signature no longer matches the proposal subject. The
     // reporter must drop the activity without writing.
     let (mut notarization, verifier, participants) = valid_notarization();
-    // Swap the proposal payload - the cert was signed for the original
-    // payload; the verifier will reject the post-mutation Notarization.
+    // Swap the proposal payload. The cert was signed for the original
+    // payload. The verifier will reject the post-mutation Notarization.
     let original_hash = notarization.proposal.payload.0;
     notarization.proposal.payload = OutbeDigest::from(alloy_primitives::B256::from_slice(
         Sha256::hash(&[b"tampered-payload"]).as_ref(),
@@ -222,8 +222,8 @@ async fn proof_store_ingestion_verifies_certification_activity_before_write() {
 
     let _ = reporter.report(Activity::Certification(notarization));
     // A verify failure drops on-thread before enqueue, so draining finds
-    // nothing - but apply any writes so the "nothing persisted" assertion is
-    // exact even if behavior regresses.
+    // nothing. The test still applies any writes, so the "nothing persisted"
+    // assertion is exact even if behavior regresses.
     drain_certification_writes(&mut rx, &store);
 
     // Verify-before-write contract: no record persisted on signature mismatch.
@@ -259,8 +259,8 @@ async fn reporter_handle_certification_records_witness_flag_true() {
     );
 }
 
-/// A fake `CertificationWitnessSink` recording every mark - exercises the narrow
-/// capability seam the reporter is given (instead of the full store), which is the
+/// A fake `CertificationWitnessSink` that records every mark. It exercises the narrow
+/// capability seam that the reporter receives (instead of the full store). This is the
 /// reason the seam is a trait rather than a newtype.
 #[derive(Default)]
 struct CountingWitnessSink {
@@ -279,9 +279,9 @@ impl CertificationWitnessSink for CountingWitnessSink {
 async fn reporter_marks_witness_through_narrow_sink() {
     // The reporter's only capability onto the proof store is the
     // `CertificationWitnessSink`. A valid `Activity::Certification` must drive
-    // exactly one witness mark for the `(epoch, view, parent)` it observed -
-    // proving the narrow seam is the path, and that the reporter is mockable
-    // without standing up a real store.
+    // exactly one witness mark for the `(epoch, view, parent)` it observed.
+    // This proves that the narrow seam is the path. It also proves that the
+    // reporter is mockable without a real store.
     let sink = Arc::new(CountingWitnessSink::default());
     let (notarization, verifier, participants) = valid_notarization();
     let (mut reporter, mut rx) = build_reporter(sink.clone(), verifier, &participants);

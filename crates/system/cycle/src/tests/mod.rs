@@ -1,6 +1,6 @@
 //! Cycle dispatcher tests.
 //!
-//! `next_fire_at` is asserted in `schedule_math_*`. Integration tests
+//! The `schedule_math_*` tests assert `next_fire_at`. Integration tests
 //! exercise the dispatcher loop against the `HashMapStorageProvider`
 //! so they cover the storage round-trip (`Cycle.last_executed_at`)
 //! and the genesis-anchor interaction with Rewards.
@@ -8,7 +8,7 @@
 //! The dispatcher uses a lazy first-encounter anchor: on the very
 //! first block it sees a trigger, it writes
 //! `last_executed_at = block_ts` instead of firing. This anchors the
-//! schedule at the chain's deployment instant so the first real fire
+//! schedule at the chain's deployment instant. The first real fire then
 //! happens at the *next* slot strictly after that anchor. Without
 //! this, every chain would fire its daily trigger on block 1 because
 //! `block_ts >> 86_400` is always true on a real chain.

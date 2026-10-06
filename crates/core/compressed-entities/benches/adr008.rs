@@ -36,7 +36,7 @@ fn benchmark_smt(c: &mut Criterion) {
             |(mut tree, updates)| black_box(tree.update_all(black_box(&updates)).unwrap()),
             // MDBX environments map a production-sized address space. Holding
             // Criterion's input batch alive concurrently exhausted virtual
-            // memory; one complete environment per iteration measures the
+            // memory. One complete environment per iteration measures the
             // same production settings without retaining sibling mappings.
             BatchSize::PerIteration,
         );

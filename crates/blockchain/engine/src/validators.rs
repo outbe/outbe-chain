@@ -92,8 +92,8 @@ pub fn read_consensus_validators_from_state(
 
 /// Read the DKG reshare TARGET set (`status in {ACTIVE, PENDING}`) from on-chain
 /// state. This is `next_players`: the committee the upcoming reshare grants shares
-/// to. PENDING joiners are included (so the ceremony activates them); EXITING
-/// validators are excluded (the reshare removes them). Distinct from
+/// to. The set includes PENDING joiners (so the ceremony activates them). It
+/// excludes EXITING validators (the reshare removes them). Distinct from
 /// [`read_validators_from_state`] (ACTIVE-only voting set).
 pub fn read_reshare_target_from_state(state_access: &dyn RethStateAccess) -> Result<ValidatorSet> {
     read_validator_set_from_state(state_access, ValidatorSetKind::ReshareTarget)
@@ -109,7 +109,7 @@ pub struct FrozenReshareTarget {
 
 /// Exact local identity evaluated against one canonical finalized state view.
 /// `expected_enclave_id` is present for the production NodeHost session and
-/// binds startup to its committed manifest; development transport may omit it.
+/// binds startup to its committed manifest. Development transport may omit it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LocalTeeRuntimeIdentityV1 {
     pub reth_p2p_public: [u8; 33],
@@ -139,7 +139,7 @@ pub enum LocalTeeRuntimeAdmissionV1 {
 }
 
 /// Evaluates one local node against an exact finalized Registry + ValidatorSet
-/// snapshot. The caller owns finality/header selection; this reducer never
+/// snapshot. The caller owns finality/header selection. This reducer never
 /// consults wall clock, latest state, receipts, or a local renewal journal.
 pub fn read_local_tee_runtime_admission_from_state(
     state_access: &dyn RethStateAccess,
@@ -210,7 +210,7 @@ pub fn read_local_tee_runtime_admission_from_state(
 /// Reads the ordinary ValidatorSet reshare target after `CycleTick` has already
 /// applied any TEE deadline jail visible in this exact state. New boundary
 /// artifacts retain the legacy compatibility fields but always carry an empty
-/// expiry list; ValidatorSet lifecycle is the sole production membership gate.
+/// expiry list. ValidatorSet lifecycle is the sole production membership gate.
 pub fn read_reshare_target_with_empty_tee_exclusions_from_state(
     state_access: &dyn RethStateAccess,
 ) -> Result<FrozenReshareTarget> {
@@ -254,7 +254,7 @@ enum ValidatorSetKind {
     /// offer blocks: `status in {REGISTERED, PENDING}`. Adds TEE
     /// full-nodes (REGISTERED, P2P-announced, enclave-registered, NOT staked) to the
     /// staked PENDING joiners. Voting still needs `has_bls_share`, so this cannot
-    /// affect consensus; distinct from `ReshareTarget` ({ACTIVE, PENDING}).
+    /// affect consensus. Distinct from `ReshareTarget` ({ACTIVE, PENDING}).
     AdmittedNonConsensus,
 }
 
@@ -511,8 +511,8 @@ pub fn read_tee_offer_public_at_latest(provider: &dyn StateProviderFactory) -> R
 }
 
 /// Read the on-chain tribute-offer epoch (`TeeRegistry` slot 4) from the latest
-/// state. The current permanent genesis offer key uses epoch zero; the field is
-/// decoded explicitly rather than inferred by onboarding code.
+/// state. The current permanent genesis offer key uses epoch zero. This function
+/// decodes the field explicitly. Onboarding code does not infer it.
 pub fn read_tee_offer_epoch_at_latest(provider: &dyn StateProviderFactory) -> Result<u64> {
     let state = provider
         .latest()

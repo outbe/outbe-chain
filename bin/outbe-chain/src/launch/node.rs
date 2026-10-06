@@ -10,8 +10,8 @@ type LaunchConfig = reth_node_builder::NodeConfig<ChainSpec<OutbeHeader>>;
 /// Run the main node (Reth execution + Commonware consensus).
 pub(crate) fn run_node() -> eyre::Result<()> {
     // TEE offer decryption routes exclusively through the enclave sidecar
-    // (`--tee-enclave-socket` -> persistent production NodeHost authorization);
-    // the offer-decryption key exists only inside the enclave (single path, no
+    // (`--tee-enclave-socket` -> persistent production NodeHost authorization).
+    // The offer-decryption key exists only inside the enclave (single path, no
     // in-process key material).
 
     // Pool lifetime hardening. Must run BEFORE CLI parsing: clap reads these as
@@ -50,8 +50,8 @@ pub(crate) fn run_node() -> eyre::Result<()> {
     // signal branch into aborting the stack before it returns its primary error.
     let radicle_shutdown_token = shutdown_token.child_token();
 
-    // Consensus thread is spawned conditionally - see inside run_with_components
-    // where `args.is_validator` is known. For now, prepare the closure.
+    // The launcher spawns the consensus thread conditionally. See inside
+    // run_with_components, where `args.is_validator` is known. For now, prepare the closure.
     let shutdown_token_clone = shutdown_token.clone();
     let radicle_shutdown_for_consensus = radicle_shutdown_token.clone();
     let bridge_for_consensus = bridge.clone();
@@ -290,8 +290,8 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             .with_shutdown(shutdown.clone());
         let projection_readiness_for_rpc = projection_readiness.clone();
         let radicle_status_for_rpc = radicle_status.clone();
-        // Canary-fed enclave health: published by the tee-canary worker (spawned
-        // after node launch), read by `outbe_consensusStatus.enclave`.
+        // Canary-fed enclave health. The tee-canary worker (spawned after node launch)
+        // publishes it, and `outbe_consensusStatus.enclave` reads it.
         let tee_canary_status = outbe_tee::TeeEnclaveHealthChannel::disabled();
         let tee_canary_status_for_rpc = tee_canary_status.clone();
 
@@ -331,7 +331,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
                 // path (RUSTSEC-2025 NSEC3 unbounded-loop DoS, no upstream fix)
                 // is unreachable. outbe peers via discv5 + static bootnodes and
                 // configures no DNS ENR tree, so DNS discovery provided nothing
-                // here anyway; disabling it removes the attack surface.
+                // here anyway. Disabling it removes the attack surface.
                 discovery.disable_dns_discovery = true;
                 builder
             })
@@ -359,7 +359,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
                     // Validators get the full bridge-backed handler.
                     // `--upstream` followers also run a marshal and CAN serve
                     // `outbe_getFinalization` (chaining followers), but must NOT
-                    // report validator status; they get a follower-scoped handler
+                    // report validator status. They get a follower-scoped handler
                     // that exposes only the finalization-serving capability.
                     let outbe_api = (if is_validator {
                         outbe_rpc::OutbeApiHandler::with_bridge(
@@ -536,8 +536,8 @@ pub(crate) fn run_node() -> eyre::Result<()> {
                 shutdown_token.clone(),
             )))
         });
-        // Pending staleness eviction. Node-local pool policy, so it runs in
-        // every mode - full nodes are the public RPC ingress and shed stuck
+        // Pending staleness eviction. This is node-local pool policy, so it runs in
+        // every mode. Full nodes are the public RPC ingress. They shed stuck
         // transactions that would otherwise be re-gossiped to validators.
         let txpool_maintenance_handle = tokio::spawn(shutdown.track_task("txpool maintenance task", outbe_txpool::maintain::maintain_outbe_pool(
             node.provider.clone(),
@@ -591,7 +591,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
                 info!("outbe node launched in VALIDATOR mode");
             }
 
-            // Spawn the consensus thread for validator OR follower mode; the
+            // Spawn the consensus thread for validator OR follower mode. The
             // follower branch inside `run_consensus_stack` selects the lightweight
             // follow stack (no consensus engine).
             let consensus_lifecycle = ConsensusThreadGuard::new(
@@ -757,7 +757,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
         }.await;
         if let Err(error) = result {
             // Enter Reth's normal graceful teardown even on launcher failure.
-            // The process result below retains the error; this is not success.
+            // The process result below retains the error. This is not success.
             launcher_shutdown.record_failure(error);
         }
         Ok(())

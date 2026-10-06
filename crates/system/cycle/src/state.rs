@@ -1,4 +1,4 @@
-//! : deterministic accounting-window resolution and Phase 2
+//! Deterministic accounting-window resolution and Phase 2
 //! gating helpers used by the Cycle dispatcher.
 //!
 //! Under V2 Certified-Parent Accounting, Phase 1
@@ -6,9 +6,11 @@
 //! `last_accounted_block_number := parent_block_number` to
 //! `ACCOUNTING_PROGRESS_ADDRESS` slot 0 BEFORE Phase 2 (`CycleTick`)
 //! executes. This module surfaces that property as an
-//! explicit gate so a regression that reorders Phase 1 vs Phase 2 - or
-//! adds a Cycle trigger that reads validator-pool state racing the
-//! parent-finalization tx - is caught at the dispatcher boundary.
+//! explicit gate. The gate catches these regressions at the dispatcher boundary:
+//!
+//! * a regression that reorders Phase 1 vs Phase 2.
+//! * a regression that adds a Cycle trigger that reads validator-pool state
+//!   racing the parent-finalization tx.
 //!
 //! ## Resolution contract
 //!
@@ -22,16 +24,16 @@
 //!   `block_number <= GENESIS_BOOTSTRAP_BLOCK_NUMBER = 1`).
 //! * `Some(AccountingWindow { start_block, end_inclusive })` otherwise.
 //!   `end_inclusive == block_number - 1` (the parent block, which Phase 1
-//!   must have accounted). `start_block` is informational - derived
+//!   must have accounted). `start_block` is informational. It is derived
 //!   deterministically from the period boundary preceding the current
-//!   block's timestamp - and is currently NOT consulted by the gate;
-//!   it exists for observability and is pinned by the proptest.
+//!   block's timestamp. The gate currently does NOT consult it.
+//!   It exists for observability, and the proptest pins it.
 //!
 //! ## Determinism
 //!
 //! No wall-clock reads, no RNG, no `HashMap` iteration. All arithmetic
 //! is saturating on `u64`. The function is a single pure expression of
-//! its inputs; calling it twice with the same arguments returns the same
+//! its inputs. Calling it twice with the same arguments returns the same
 //! result byte-for-byte. The proptest
 //! `cycle_window_resolution_deterministic_from_headers` pins this.
 
@@ -83,16 +85,16 @@ pub fn resolve_accounting_window(
     }
 
     // end_inclusive = parent block. The Phase 1 -> Phase 2 ordering
-    // invariant means a correctly-built block has Phase 1
-    // committed before this gate runs, so `last_accounted_block_number`
+    // invariant means that a correctly-built block has Phase 1
+    // committed before this gate runs. So `last_accounted_block_number`
     // is at least `block_number - 1` and the gate passes.
     let end_inclusive = block.block_number.saturating_sub(1);
 
     // Informational `start_block`: derived from the period boundary
     // preceding `block.timestamp`. We don't have a (timestamp ->
-    // block_number) inverse lookup at this scope; use the period start
-    // timestamp itself as an opaque deterministic marker. Pinned by the
-    // proptest only on the property of determinism, not on a specific
+    // block_number) inverse lookup at this scope. Use the period start
+    // timestamp itself as an opaque deterministic marker. The proptest
+    // pins it only on the property of determinism, not on a specific
     // numeric meaning.
     let offset_in_period = spec.start_offset_seconds % spec.period_seconds;
     let period_start_ts = block

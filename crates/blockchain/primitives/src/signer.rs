@@ -1,8 +1,8 @@
 //! Validator EVM signer system transaction artifacts.
 //!
 //! This signer is intentionally separate from the BLS consensus key and from
-//! `header.beneficiary`. It signs deterministic unsigned transaction artifacts;
-//! system tx EVM execution still runs with `SYSTEM_ADDRESS` as caller.
+//! `header.beneficiary`. It signs deterministic unsigned transaction artifacts.
+//! System tx EVM execution still runs with `SYSTEM_ADDRESS` as caller.
 
 use std::{
     path::{Path, PathBuf},
@@ -96,11 +96,11 @@ impl OutbeEvmSigner {
         Ok(Signature::from_bytes_and_parity(&bytes[..64], bytes[64] != 0).normalized_s())
     }
 
-    /// Sign a raw 32-byte prehash, returning a recoverable secp256k1 signature in
-    /// `r(32) || s(32) || v(1)` form (`v` = recovery id 0/1) - the exact format
-    /// [`crate::tee_signatures::recover_signer`] consumes. Used by the consensus
-    /// thread to sign the TEE bootstrap payload's `signing_hash` with this
-    /// validator's EVM key.
+    /// Sign a raw 32-byte prehash and return a recoverable secp256k1 signature in
+    /// `r(32) || s(32) || v(1)` form (`v` = recovery id 0/1). This is the exact
+    /// format that [`crate::tee_signatures::recover_signer`] consumes. The
+    /// consensus thread uses it to sign the TEE bootstrap payload's `signing_hash`
+    /// with this validator's EVM key.
     pub fn sign_hash(&self, hash: &alloy_primitives::B256) -> Result<[u8; 65], SignerError> {
         let signing_key = self.identity.signing_key()?;
         sign_recoverable_hash(&signing_key, hash)

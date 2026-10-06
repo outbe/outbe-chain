@@ -1,4 +1,4 @@
-//! A third party pays the successor public Nod by ERC20; its owner paid the original.
+//! A third party pays the successor public Nod by ERC20. Its owner paid the original.
 use super::*;
 use alloy_sol_types::{SolCall as _, SolError as _, SolValue as _};
 use outbe_compressed_entities::{
@@ -429,7 +429,7 @@ fn third_party_settles_and_mines(world: &mut World) {
             compressed_body(world, peer, 2, id, minted_height).is_none(),
             "mined Nod must have authenticated absence"
         );
-        // The V2 fixture issued a singleton bucket; mining its one paid right
+        // The V2 fixture issued a singleton bucket. Mining its one paid right
         // must remove the bucket instead of leaving an orphan settled counter.
         assert_eq!(paid.1.settled_nods, 1);
         assert!(
@@ -542,7 +542,7 @@ pub(super) fn qualify_public_nod(
     let mut first_boundary_day = None;
     // The first closed day can be the partial issuance day or contain earlier
     // low-price samples. The next entire UTC day uses only the declared quote.
-    // Two transitions are sufficient; no Nod state or Oracle history is injected.
+    // Two transitions are sufficient. No Nod state or Oracle history is injected.
     for boundary in 0..2 {
         crate::features::price_oracle::publish_controlled_quote(world, rate);
         let publication = world
@@ -743,8 +743,8 @@ struct NodSnapshot {
     body: Option<eth::INod::NodData>,
 }
 
-/// Read live CE views without mixing blocks. Only successful observations that
-/// straddle a head change are retried; RPC and decoding failures remain fatal.
+/// Read live CE views without mixing blocks. This function retries only successful
+/// observations that straddle a head change. RPC and decoding failures remain fatal.
 fn stable_live_read<T>(world: &World, port: u16, minimum: u64, read: impl Fn() -> T) -> T {
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {
@@ -828,7 +828,7 @@ fn assert_live_nod_revert<C: alloy_sol_types::SolCall>(
 }
 
 /// Observe an actual failed transaction without assigning it a revert reason.
-/// Wrong-MAC authorization is established separately by the controlled retry.
+/// The controlled retry establishes wrong-MAC authorization separately.
 fn assert_mined_nod_rejection<C: alloy_sol_types::SolCall>(
     world: &World,
     call: &C,

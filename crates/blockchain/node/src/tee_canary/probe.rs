@@ -1,4 +1,4 @@
-//! Blocking canary stages; telemetry and admission verdicts stay distinct.
+//! Blocking canary stages. Telemetry and admission verdicts stay distinct.
 use super::*;
 
 struct ProbeTelemetry {
@@ -35,7 +35,8 @@ fn detect_health(requester: &dyn EnclaveRequester, supported: Option<bool>) -> P
         return unchanged;
     }
     // A Health failure is ambiguous on old enclaves. A successful fallback
-    // request rules out a dead connection; key readiness is still read afresh.
+    // request rules out a dead connection. The probe still reads key readiness
+    // afresh.
     match requester.request(&EnclaveRequest::Health) {
         Ok(EnclaveResponse::HealthStatus { status }) => ProbeTelemetry {
             supported: Some(true),

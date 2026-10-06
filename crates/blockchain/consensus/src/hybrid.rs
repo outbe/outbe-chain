@@ -18,12 +18,12 @@
 //! ## Signature Verification Timing
 //!
 //! Commonware's batcher stores votes BEFORE cryptographic verification for batch
-//! efficiency. Votes are queued and batch-verified periodically via `verify_notarizes()`.
-//! Invalid signers are blocked after batch verification completes. This creates a
-//! bounded timing window where a malicious vote temporarily occupies a slot in
-//! `pending_votes` - mitigated by fast batch cycles and immediate peer blocking
-//! on verification failure. This is Commonware's intentional design choice for
-//! throughput optimization.
+//! efficiency. The batcher queues votes and batch-verifies them periodically via
+//! `verify_notarizes()`. Invalid signers are blocked after batch verification completes.
+//! This creates a bounded timing window where a malicious vote temporarily occupies a
+//! slot in `pending_votes`. Fast batch cycles and immediate peer blocking on
+//! verification failure mitigate this window. This is Commonware's intentional design
+//! choice to optimize throughput.
 
 use bytes::{Buf, BufMut};
 use commonware_codec::{Encode, Error, FixedSize, Read, ReadExt, Write};
@@ -86,14 +86,14 @@ pub struct HybridSignature<V: Variant> {
     pub vrf_material_version: u64,
     /// BLS threshold partial over the seed message (MinSig, 48 bytes for V=MinSig).
     pub bls_seed_partial: V::Signature,
-    /// MinPk identity signature (96 bytes) binding `bls_seed_partial` to the
+    /// MinPk identity signature (96 bytes) that binds `bls_seed_partial` to the
     /// signer's identity key over `(round, vrf_material_version, partial)` under
-    /// [`crate::proof::seed_attest_namespace`]. Makes the partial
-    /// non-repudiably attributable so a byzantine/equivocating partial is
-    /// slashable (see [`crate::proof::seed_partial`]). NOT aggregated into the
-    /// certificate and never reaches on-chain certificate bytes; it rides the
-    /// per-vote P2P gossip only and is consulted for attribution when the
-    /// complete vote+partial pair is excluded from quorum admission.
+    /// [`crate::proof::seed_attest_namespace`]. It makes the partial
+    /// non-repudiably attributable, so a byzantine/equivocating partial is
+    /// slashable (see [`crate::proof::seed_partial`]). It is NOT aggregated into
+    /// the certificate and never reaches on-chain certificate bytes. It rides the
+    /// per-vote P2P gossip only. It is consulted for attribution when quorum
+    /// admission excludes the complete vote+partial pair.
     pub seed_partial_identity_sig: bls12381::Signature,
 }
 
@@ -136,7 +136,7 @@ impl<V: Variant> FixedSize for HybridSignature<V> {
 }
 
 // Wire codec for `VrfProof` and `HybridCertificate` lives in `outbe-consensus-proof`.
-// Both types are re-exported below so existing call sites at
+// This module re-exports both types below so existing call sites at
 // `crate::hybrid::{VrfProof, HybridCertificate}` continue to compile and serialize
 // byte-identically. There must be exactly one definition of each in the workspace
 // (enforced by `audit_targets` / `codec_reuse` tests).
@@ -144,10 +144,10 @@ pub use crate::proof::hybrid_wire::{HybridCertificate, VrfProof};
 
 /// The committee binding shared by both roles: the ordered participant set, the
 /// versioned VRF threshold material, and the pre-computed committee-bound
-/// namespaces. These three always travel together - embedding them as one value
-/// makes that invariant structural (a `Signer` cannot carry a different
-/// shared-field shape than a `Verifier`) instead of re-stating it at every match
-/// site. The signer-only capability fields (`individual_key`, `index`) stay on
+/// namespaces. These three always travel together. Embedding them as one value
+/// makes that invariant structural, instead of re-stating it at every match
+/// site. A `Signer` cannot carry a different shared-field shape than a
+/// `Verifier`. The signer-only capability fields (`individual_key`, `index`) stay on
 /// `Signer`, so "only a signer can sign" remains enforced by the variant.
 #[derive(Clone, Debug)]
 struct RoleFields<V: Variant> {
@@ -192,11 +192,14 @@ pub struct HybridScheme<V: Variant> {
 }
 
 /// Build the per-scheme `Namespace` with the committee-bound vote
-/// sub-namespaces: notarize/nullify/finalize bind `participant_set_commitment`
-/// (so an individual vote cannot cross-verify under a different committee), while
-/// seed stays chain-only (already committee-bound by the threshold group key).
+/// sub-namespaces:
+/// - notarize/nullify/finalize bind `participant_set_commitment`, so an
+///   individual vote cannot cross-verify under a different committee.
+/// - seed stays chain-only. The threshold group key already makes it
+///   committee-bound.
+///
 /// Both the signer and verifier constructors use this, so they sign and verify
-/// votes under byte-identical namespaces, and every external verifier
+/// votes under byte-identical namespaces. Every external verifier
 /// (`proof::verifier`, `proof::late_finalize`, SlashIndicator evidence) derives
 /// the same bytes from the same committee via `crate::proof::constants`.
 fn committee_bound_namespace(
@@ -355,8 +358,9 @@ impl<V: Variant> HybridScheme<V> {
         }
     }
 
-    /// The committee binding for this scheme, regardless of role - the single
-    /// owner of the `Signer`/`Verifier` discrimination for shared-field access.
+    /// The committee binding for this scheme, regardless of role. This is the
+    /// single owner of the `Signer`/`Verifier` discrimination for shared-field
+    /// access.
     fn fields(&self) -> &RoleFields<V> {
         match &self.role {
             Role::Signer { fields, .. } | Role::Verifier { fields, .. } => fields,
@@ -400,11 +404,12 @@ impl<V: Variant> HybridScheme<V> {
         if proof.material_version != self.expected_vrf_material_version() {
             return None;
         }
-        // The consensus seed namespace is scheme-relative: it MUST match the
-        // namespace this scheme's signer used (`namespace_ref().seed`), which
-        // equals the global `hybrid_seed_namespace()` only when the scheme is
-        // built with `outbe_app_namespace()` (production). The proof-side global
-        // verifiers (`seed_partial`, `verifier`) use the constant instead.
+        // The consensus seed namespace is scheme-relative. It MUST match the
+        // namespace that this scheme's signer used (`namespace_ref().seed`).
+        // That namespace equals the global `hybrid_seed_namespace()` only when
+        // the scheme is built with `outbe_app_namespace()` (production). The
+        // proof-side global verifiers (`seed_partial`, `verifier`) use the
+        // constant instead.
         let namespace = self.namespace_ref();
         let seed_message = seed_round.encode();
         if self
@@ -444,15 +449,15 @@ impl<V: Variant> HybridScheme<V> {
         })
     }
 
-    /// Verify the seed-partial identity attestation rides correctly with the
-    /// attestation: `true` iff `seed_partial_identity_sig` is the MinPk identity
-    /// signature of the participant at `attestation.signer` over
+    /// Verify that the seed-partial identity attestation rides correctly with the
+    /// attestation. The result is `true` iff `seed_partial_identity_sig` is the
+    /// MinPk identity signature of the participant at `attestation.signer` over
     /// `(round, vrf_material_version, bls_seed_partial)`.
     ///
     /// Deterministic (plain MinPk verify, no batch RNG), so every honest node
-    /// reaches the same verdict - required because this drives slashing
+    /// reaches the same verdict. This is required because this drives slashing
     /// attribution. A `true` result proves the signer deliberately emitted this
-    /// partial (not a relay forgery); it does NOT assert the partial is valid.
+    /// partial (not a relay forgery). It does NOT assert that the partial is valid.
     pub fn verify_seed_partial_identity_sig<D: Digest>(
         &self,
         subject: Subject<'_, D>,
@@ -479,8 +484,8 @@ impl<V: Variant> HybridScheme<V> {
         )
     }
 
-    /// Record a non-valid seed-partial verdict after the complete attestation is
-    /// excluded from quorum admission. The signer is never returned through the
+    /// Record a non-valid seed-partial verdict after quorum admission excludes
+    /// the complete attestation. The signer is never returned through the
     /// p2p-invalid channel solely because of a partial problem.
     fn record_seed_partial_drop<D>(
         &self,
@@ -512,11 +517,11 @@ impl<V: Variant> HybridScheme<V> {
                 crate::metrics::record_invalid_vrf_partial();
                 // Emit the attributable facts for an external slashing watcher to
                 // pack into a SlashIndicator evidence transaction (see README
-                // "Slashing"). The node reports facts, not packed wire - keeping
+                // "Slashing"). The node reports facts, not packed wire. This keeps
                 // the consensus crate independent of the evidence codec. The
                 // identity signature makes "this signer emitted this partial"
                 // non-repudiable and re-verifiable on chain from the committee
-                // snapshot, so the watcher's submission cannot frame an honest
+                // snapshot. So the watcher's submission cannot frame an honest
                 // node.
                 let signer_pubkey = self
                     .participants_ref()
@@ -544,9 +549,10 @@ impl<V: Variant> HybridScheme<V> {
     }
 
     /// Classify a seed partial for attestation verification / slashing
-    /// attribution. Deterministic with respect to the identity-sig outcome
-    /// (every honest node reaches the same verdict on whether to attribute),
-    /// which is required because the attributable verdict feeds slashing.
+    /// attribution. The result is deterministic with respect to the identity-sig
+    /// outcome. Every honest node reaches the same verdict on whether to
+    /// attribute. This is required because the attributable verdict feeds
+    /// slashing.
     pub fn classify_seed_partial<R, D>(
         &self,
         rng: &mut R,
@@ -580,14 +586,16 @@ impl<V: Variant> HybridScheme<V> {
 pub enum SeedPartialVerdict {
     /// Active-version partial that verifies against the committee polynomial.
     Valid,
-    /// Partial tagged with a non-active material version - legitimately stale
-    /// after a reshare; excluded from recovery, not byzantine.
+    /// Partial tagged with a non-active material version. It is legitimately
+    /// stale after a reshare. It is excluded from recovery and is not byzantine.
     StaleVersion,
     /// Active-version partial that fails verification, with a valid rider
-    /// identity signature proving the signer authored it - slashable byzantine.
+    /// identity signature proving the signer authored it. It is slashable
+    /// byzantine behavior.
     AttributableInvalid,
     /// Active-version partial that fails verification but whose rider identity
-    /// signature does not verify - probable relay forgery; drop, do not attribute.
+    /// signature does not verify. This is a probable relay forgery. Drop it and
+    /// do not attribute it.
     Unattributable,
 }
 
@@ -603,8 +611,8 @@ impl SeedPartialVerdict {
 }
 
 /// Extracts the consensus round from a Subject (the round the seed partial commits
-/// to). This is the single Subject-matching core; the seed message is derived from
-/// it (see [`seed_message_from_subject`]) so the round and its seed message can
+/// to). This is the single Subject-matching core. The seed message is derived from
+/// it (see [`seed_message_from_subject`]), so the round and its seed message can
 /// never diverge.
 fn round_from_subject<D: Digest>(subject: &Subject<'_, D>) -> Round {
     match subject {
@@ -614,10 +622,10 @@ fn round_from_subject<D: Digest>(subject: &Subject<'_, D>) -> Round {
 }
 
 /// The VRF seed message for a Subject: the canonical `Round::encode()` bytes of the
-/// round the seed partial commits to. Derived from [`round_from_subject`], so it
-/// stays byte-identical to the proof-side recipe
-/// (`proof::constants::seed_namespace_and_message`) - pinned by
-/// `seed_message_matches_proof_side_recipe`.
+/// round the seed partial commits to. It is derived from [`round_from_subject`], so
+/// it stays byte-identical to the proof-side recipe
+/// (`proof::constants::seed_namespace_and_message`).
+/// `seed_message_matches_proof_side_recipe` pins this.
 fn seed_message_from_subject<D: Digest>(subject: &Subject<'_, D>) -> bytes::Bytes {
     round_from_subject(subject).encode()
 }
@@ -945,7 +953,7 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
 // ---------------------------------------------------------------------------
 
 /// Epoch-scoped provider of hybrid schemes. Thin typed wrapper over a shared
-/// [`EpochRegistry`](crate::epoch_registry::EpochRegistry); it keeps the
+/// [`EpochRegistry`](crate::epoch_registry::EpochRegistry). It keeps the
 /// `certificate::Provider` impl, which the generic registry cannot carry.
 #[derive(Clone, Debug)]
 pub struct HybridSchemeProvider<V: Variant> {
@@ -1214,7 +1222,7 @@ mod tests {
 
         let attestation = scheme0.sign::<Sha256Digest>(subject).unwrap();
 
-        // Tamper with the BLS individual vote - use a different key to produce wrong sig
+        // Tamper with the BLS individual vote. Use a different key to produce a wrong sig.
         let wrong_key = bls12381::PrivateKey::from_seed(99);
         let wrong_sig = wrong_key.sign(b"wrong", b"wrong");
         let mut tampered_sig = attestation.signature.get().cloned().unwrap();
@@ -1514,8 +1522,8 @@ mod tests {
     /// is the byzantine partial of the C-02 attack: a well-formed value that
     /// does not verify at this index. `replacement` must be a partial over a
     /// *different* seed message (e.g. a different round) so the grafted value is
-    /// distinct from every honest partial - recovery dedups by index but not by
-    /// value, and a value equal to a sibling's would be a no-op at this index.
+    /// distinct from every honest partial. Recovery dedups by index but not by
+    /// value. A value equal to a sibling's would be a no-op at this index.
     fn corrupt_seed_partial(
         attestation: &mut Attestation<TestScheme>,
         replacement: &Attestation<TestScheme>,
@@ -1555,8 +1563,8 @@ mod tests {
 
         // Corrupt a partial that lands in `threshold::recover`'s interpolation
         // set, with a well-formed-but-wrong value (signer 1's partial over a
-        // foreign round). `recover` truncates to `required` partials by index;
-        // the control assertion below guards that the chosen index actually
+        // foreign round). `recover` truncates to `required` partials by index.
+        // The control assertion below guards that the chosen index actually
         // poisons recovery, so the regression cannot silently pick a
         // truncated-out index.
         let mut corrupted = honest.clone();
@@ -1565,8 +1573,8 @@ mod tests {
         let mut rng = bls_batch_verification_rng();
 
         // Control: assembling directly from the corrupted attestations (without
-        // admission verification) yields a certificate whose proof does NOT verify - the
-        // poison the attack relied on.
+        // admission verification) yields a certificate whose proof does NOT verify.
+        // This is the poison that the attack relied on.
         let poisoned = verifier
             .assemble(
                 NonEmpty::try_new(corrupted.clone().into_iter())
@@ -1787,7 +1795,7 @@ mod tests {
     #[test]
     fn test_garbage_identity_sig_does_not_censor_the_vote() {
         // A relay that strips/corrupts seed_partial_identity_sig must NOT get the
-        // vote rejected - verify_attestation only gates on the MinPk vote.
+        // vote rejected. verify_attestation only gates on the MinPk vote.
         let (schemes, verifier) = signers_and_verifier(3);
         let proposal = sample_proposal(Epoch::new(1), View::new(2), 11);
         let subject = Subject::Finalize {
@@ -2196,10 +2204,10 @@ mod tests {
     }
 
     /// The Subject seed message must be byte-identical to the proof-side canonical
-    /// recipe `proof::constants::seed_namespace_and_message`, so the hybrid signer,
-    /// the hybrid verifier, and the proof-side slashing / next-height-gate verifiers
-    /// all derive the same VRF seed message for a given round. Locks this cross-path
-    /// determinism invariant against drift in either side.
+    /// recipe `proof::constants::seed_namespace_and_message`. This makes sure that
+    /// the hybrid signer, the hybrid verifier, and the proof-side slashing /
+    /// next-height-gate verifiers all derive the same VRF seed message for a given round. This test
+    /// locks this cross-path determinism invariant against drift in either side.
     #[test]
     fn seed_message_matches_proof_side_recipe() {
         let epoch = Epoch::new(7);
@@ -2213,7 +2221,7 @@ mod tests {
             crate::proof::constants::seed_namespace_and_message(epoch.get(), view.get());
 
         assert_eq!(hybrid_seed_message.as_ref(), proof_seed_message.as_slice());
-        // The seed message is exactly the round's canonical bytes - no path can make
+        // The seed message is exactly the round's canonical bytes. No path can make
         // the round and its seed message diverge now that one derives from the other.
         assert_eq!(hybrid_seed_message, round_from_subject(&subject).encode());
     }

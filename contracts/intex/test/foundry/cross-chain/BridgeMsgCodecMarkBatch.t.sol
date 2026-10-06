@@ -8,7 +8,7 @@ import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 /// @dev MARK_CALLED carries one day's series in one reference currency, so it round-trips a batch and
 ///      refuses an empty or over-sized one.
 contract BridgeMsgCodecMarkBatchTest is Test {
-    /// @dev Fixed call stamp; these tests exercise the wire, not the clock.
+    /// @dev Fixed call stamp. These tests exercise the wire, not the clock.
     uint32 internal constant CALLED_AT = 1_777_000_000;
 
     uint32 internal constant WORLDWIDE_DAY = 20260212;

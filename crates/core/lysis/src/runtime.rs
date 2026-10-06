@@ -15,12 +15,12 @@ pub(crate) fn consume_required_gratis(remaining: &mut U256, gratis_load: U256) -
 }
 
 /// Computes the FI -> gratis-fraction map (fixed-point, SCALE = 10^6) from each
-/// tribute's nominal amount and fidelity index. Pure integer math; deterministic
-/// across nodes.
+/// tribute's nominal amount and fidelity index. It uses only integer math. The result is
+/// deterministic across nodes.
 ///
 /// `nominal_amounts` and `tribute_fis` are index-aligned: entry `i` is the
 /// nominal interest and fidelity index of the same tribute. `total_interest` is
-/// the sum of all `nominal_amounts` (precomputed by the caller).
+/// the sum of all `nominal_amounts` (the caller precomputes it).
 #[cfg(test)]
 pub(crate) fn compute_fi_fraction_map(
     nominal_amounts: &[U256],

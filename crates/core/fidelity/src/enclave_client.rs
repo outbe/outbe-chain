@@ -2,10 +2,10 @@
 //!
 //! Every RCFI/league value and every cohort mutation routes through the enclave:
 //! [`crate::runtime`] reads the current cohort ciphertext from committed storage,
-//! hands it to the enclave, and stores the returned ciphertext verbatim. Mirrors
-//! [`outbe_gratis`]'s `enclave_client` - same determinism (canonical-hash
-//! recheck), attestation (verify-then-discard), and `tee_sidecar_unavailable`
-//! failure mode.
+//! hands it to the enclave, and stores the returned ciphertext verbatim. This module
+//! mirrors [`outbe_gratis`]'s `enclave_client`. It has the same determinism
+//! (canonical-hash recheck), attestation (verify-then-discard), and
+//! `tee_sidecar_unavailable` failure mode.
 
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_tee::protocol::{
@@ -164,9 +164,9 @@ pub(crate) fn query_index(req: FidelityQueryRequest) -> Result<FidelityQueryResu
 
 /// In-process enclave stand-in for tests (this crate's tests and any downstream
 /// crate that enables the `test-enclave` feature). Runs the **real**
-/// `outbe_tee_enclave::fidelity` engine against a fixed dev state key, so the
-/// full confidential path is exercised without an SGX sidecar. Attestation is not
-/// checked on this path (verified only in the mock-enclave e2e).
+/// `outbe_tee_enclave::fidelity` engine against a fixed dev state key, so tests
+/// exercise the full confidential path without an SGX sidecar. This path does not
+/// check attestation (only the mock-enclave e2e verifies it).
 #[cfg(any(test, feature = "test-enclave"))]
 pub mod test_enclave {
     use super::*;
@@ -181,14 +181,14 @@ pub mod test_enclave {
 
     /// Chain id the in-process enclave binds. Query auth is chain-scoped, so the
     /// resident chain must equal what the runtime derives from
-    /// `storage.chain_id()` - tests that exercise the query path build their
+    /// `storage.chain_id()`. Tests that exercise the query path build their
     /// storage with this id and sign over [`dev_chain`]. Cohort/snapshot ops do
     /// not verify chain id, so downstream crates may use any storage chain id.
     ///
     /// The group sig + chain are the SHARED dev fidelity identity
-    /// ([`outbe_tee_enclave::dev`]): the gratis stand-in derives the same
-    /// fidelity key when it applies a folded cohort section, so a folded mint and
-    /// a standalone snapshot agree.
+    /// ([`outbe_tee_enclave::dev`]). The gratis stand-in derives the same
+    /// fidelity key when it applies a folded cohort section. Thus a folded mint
+    /// and a standalone snapshot agree.
     pub const DEV_CHAIN_ID: u64 = outbe_tee_enclave::dev::FIDELITY_CHAIN_ID;
 
     /// The resident chain id as a `B256`, matching the runtime's

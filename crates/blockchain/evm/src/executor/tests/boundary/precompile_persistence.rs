@@ -1,7 +1,7 @@
 use super::super::*;
 /// Every stateful dispatch-registered precompile must be preserved by either
-/// the per-block EIP-161 marker list or canonical genesis marker bytecode;
-/// otherwise state-root computation can silently discard its storage. This
+/// the per-block EIP-161 marker list or canonical genesis marker bytecode.
+/// Otherwise state-root computation can silently discard its storage. This
 /// unit pins runtime-marker coverage for routes that are neither stateless nor
 /// genesis-preserved, while `tests/genesis.rs` binds the complementary seed.
 #[test]
@@ -16,7 +16,7 @@ fn marker_list_covers_stateful_precompiles() {
 
     // Dispatch-registered precompiles that legitimately need NO runtime 0xEF
     // marker. Each state-owning exemption must have canonical genesis-marker
-    // evidence in `tests/genesis.rs`; an unproven exemption permits silent pruning.
+    // evidence in `tests/genesis.rs`. An unproven exemption permits silent pruning.
     const MARKER_EXEMPT: [Address; 8] = [
         // Stateless verifiers - no EVM storage to preserve.
         ZKPROOF_POSEIDON_ADDRESS,

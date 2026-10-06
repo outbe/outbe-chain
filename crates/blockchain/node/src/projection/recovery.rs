@@ -18,8 +18,9 @@ pub enum ProjectionRuntimeRecoveryV1 {
 }
 
 impl ProjectionRuntimeRecoveryHandle {
-    /// Proves that the shared offchain storage backend can start transactions again, then closes only the
-    /// transient runtime-read outage. A fatal body failure is sticky and is never cleared here.
+    /// Proves that the shared offchain storage backend can start transactions again. Then it closes
+    /// only the transient runtime-read outage. A fatal body failure is sticky. This method never
+    /// clears it.
     pub fn reconcile(&self, generation: u64) -> ProjectionRuntimeRecoveryV1 {
         if let Err(error) = self.writer.verify_transaction_capability() {
             return if error.kind() == StorageErrorKind::Unavailable {

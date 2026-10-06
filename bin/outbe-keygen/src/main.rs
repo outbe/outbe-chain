@@ -138,10 +138,10 @@ enum Commands {
         output_dir: PathBuf,
     },
 
-    /// Generate the complete key bundle for one validator: BLS consensus key,
-    /// validator EVM signer, Reth P2P identity, OCOMP operational signer,
-    /// Radicle identity, the ValidatorSet registration signature, and (when
-    /// --genesis-hash is known) OCOMP result-signing artifacts.
+    /// Generate the complete key bundle for one validator. The bundle contains the BLS
+    /// consensus key, validator EVM signer, Reth P2P identity, OCOMP operational signer,
+    /// Radicle identity, and the ValidatorSet registration signature. When
+    /// --genesis-hash is known, the bundle also contains OCOMP result-signing artifacts.
     Validator {
         /// Directory that receives every generated key artifact.
         #[arg(long, default_value = ".")]
@@ -152,7 +152,7 @@ enum Commands {
         chain_id: u64,
 
         /// Genesis hash for the OCOMP registration. Omit while the genesis is
-        /// not sealed yet; generate OCOMP artifacts later with
+        /// not sealed yet. Generate OCOMP artifacts later with
         /// `outbe-keygen ocomp`.
         #[arg(long)]
         genesis_hash: Option<B256>,
@@ -491,7 +491,7 @@ fn generate_validator_bundle(
     bls::save_individual_key(&bls_key_path, &bls_key, backend)
         .wrap_err_with(|| format!("failed to write BLS key: {}", bls_key_path.display()))?;
 
-    // 2. ECDSA secp256k1 EVM signer; the validator address derives from it.
+    // 2. ECDSA secp256k1 EVM signer. The validator address derives from it.
     let evm_signing_key = SigningKey::random(&mut rand_core::OsRng);
     let evm_key_hex = Zeroizing::new(hex::encode(evm_signing_key.to_bytes()));
     write_secret_hex_file(&evm_key_path, &evm_key_hex)
@@ -521,7 +521,7 @@ fn generate_validator_bundle(
     })?;
     let ocomp_evm_address = evm_address(&ocomp_evm_key)?;
 
-    // 5. Radicle Ed25519 identity, bound atomically by the registration.
+    // 5. Radicle Ed25519 identity. The registration binds it atomically.
     let radicle = generate_radicle_identity(&radicle_home)?;
 
     // 6. Registration signature for the ValidatorSet precompile.
@@ -1414,7 +1414,7 @@ mod tests {
         std::fs::write(dir.path().join("evm-key.hex"), "0011").unwrap();
         let result = cmd_validator(dir.path().to_path_buf(), 1, None, &KeyBackend::Plaintext);
         assert!(result.is_err());
-        // Nothing else was written next to the pre-existing artifact.
+        // The command wrote nothing else next to the pre-existing artifact.
         assert!(!dir.path().join("signing-key.hex").exists());
         assert!(!dir.path().join("radicle").exists());
         // The pre-existing file is untouched.

@@ -3,8 +3,8 @@ pragma solidity 0.8.30;
 
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 
-/// @dev Builds a `CreateSeriesParams` for a given worldwide day. Currencies default to USD (840);
-///      prices/promis carry non-zero defaults.
+/// @dev Builds a `CreateSeriesParams` for a given worldwide day. Currencies default to USD (840).
+///      Prices/promis carry non-zero defaults.
 library CreateSeriesLib {
     /// @dev The readable id of that day's USD/USD series, e.g. `20260212-USD-U`.
     function seriesId(uint32 worldwideDay) internal pure returns (bytes14) {

@@ -1,7 +1,7 @@
 //! Observations from explicitly selected offline checks.
 //!
 //! This report is not startup authority or a readiness attestation. Passed
-//! checks describe only their requested integrity/relations; they do not attest
+//! checks describe only their requested integrity/relations. They do not attest
 //! untested genesis state, DKG freeze state, or upstream epoch-history inputs.
 //! Selection parsing, prerequisite expansion, and source validation belong to
 //! the orchestrator. This model performs no I/O and validates no native heights.
@@ -79,7 +79,7 @@ pub(crate) struct RequiredHeight {
     pub(crate) height: u64,
 }
 
-/// The canonical interval is [start, end_exclusive); visited may be partial.
+/// The canonical interval is [start, end_exclusive). Visited may be partial.
 /// These observations do not independently confer a Passed check status.
 #[derive(Debug, Serialize)]
 pub(crate) struct InventoryBounds {
@@ -125,7 +125,7 @@ pub(crate) struct BodyStructureObservation {
 #[derive(Debug, Serialize)]
 pub(crate) struct ValidationReport {
     /// Known source/configuration paths for safe optional report publication.
-    /// Internal observations only; never serialized as validation authority.
+    /// Internal observations only. They are never serialized as validation authority.
     #[serde(skip)]
     pub(crate) protected_paths: outbe_snapshot::layout::ProtectedPaths,
     checks: BTreeMap<CheckName, CheckReport>,

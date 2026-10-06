@@ -209,7 +209,7 @@ impl MetadosisContract<'_> {
 
     fn delete_worldwide_day_raw(&mut self, wwd_key: WorldwideDayKey) -> Result<()> {
         (|| {
-            // The day's terminal-evidence index dies with the day; without
+            // The day's terminal-evidence index dies with the day. Without
             // this, retired days would leak index entries forever.
             self.delete_terminal_index(wwd_key)?;
             self.worldwide_day_terminal_receipts
@@ -237,8 +237,8 @@ impl MetadosisContract<'_> {
     }
 
     /// Moves a now-terminal day out of the active set and onto the bounded
-    /// delete-queue; once the queue exceeds `MAX_RECORDS_KEPT`, pops the oldest
-    /// from the front and deletes its record (emitting `WorldwideDayCleanedUp`).
+    /// delete-queue. When the queue exceeds `MAX_RECORDS_KEPT`, pops the oldest
+    /// day from the front and deletes its record (emitting `WorldwideDayCleanedUp`).
     pub(crate) fn commit_retire_terminal_wwd(
         &mut self,
         permit: &crate::commit::CommitPermit<'_>,
@@ -302,7 +302,7 @@ impl MetadosisContract<'_> {
         }
         // Terminal records live in the bounded delete-queue, not active_wwd, so
         // COMPLETED/FAILED status queries must also scan the queue. The two sets
-        // are disjoint (active = non-terminal, queue = terminal), so no dedup.
+        // are disjoint (active = non-terminal, queue = terminal), so no dedup is needed.
         if wanted_status.is_terminal() {
             for wwd in self.closed_wwd.read_all()? {
                 if self.get_wwd_status(wwd)? == wanted_status {

@@ -44,8 +44,8 @@ fn test_ack_hashset_dedup() {
 // -----------------------------------------------------------------------
 
 /// Verify that self-ack is counted only when self-dealing succeeds.
-/// The acked_players HashSet starts empty and self-ack is inserted only
-/// after successful receive_player_ack.
+/// The acked_players HashSet starts empty. Self-ack goes into it only
+/// after receive_player_ack succeeds.
 #[test]
 fn test_self_ack_starts_empty() {
     let acked_players: std::collections::BTreeSet<commonware_cryptography::bls12381::PublicKey> =

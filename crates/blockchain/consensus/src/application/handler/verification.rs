@@ -56,10 +56,11 @@ struct ResolvedVerifyBlocks {
 }
 
 /// Whether the local node validates live proposals. A share-less verifier (a TEE
-/// full-node with no proposer EVM address) follows FINALIZED blocks only and skips
-/// the leader-binding / DKG-boundary checks (polynomial/DKG-view-dependent, would
-/// diverge on a verifier's stale post-rotation state). Replaces a boolean-blind
-/// `is_verifier` flag so the role choice is explicit in the type.
+/// full-node with no proposer EVM address) follows FINALIZED blocks only. It skips
+/// the leader-binding / DKG-boundary checks. These checks are
+/// polynomial/DKG-view-dependent and would diverge on a verifier's stale
+/// post-rotation state. This enum replaces a boolean-blind `is_verifier` flag so
+/// the role choice is explicit in the type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ValidatorRole {
     Signer,
@@ -115,14 +116,15 @@ pub(super) async fn validate_header_consensus_artifacts_for_activation(
         ancestry,
     } = deps;
     // Finalized-follower rule: a share-less verifier (a TEE full-node, no
-    // `proposer_evm_address`) does NOT validate live proposals - it follows
-    // FINALIZED blocks, whose threshold certificate is verified by the reporter
-    // against the GROUP public key (preserved across reshares). The leader-binding
-    // and DKG-boundary checks below are polynomial/DKG-view-dependent and would
-    // diverge on a verifier's stale post-rotation state, so they are skipped here;
-    // consensus safety for the follower comes from the finalization certificate, not
-    // from re-deriving the live proposal's leader. The verifier never votes (`me()`
-    // is None), so accepting the proposal here cannot affect the committee's quorum.
+    // `proposer_evm_address`) does NOT validate live proposals. It follows
+    // FINALIZED blocks. The reporter verifies their threshold certificate against
+    // the GROUP public key (preserved across reshares). The leader-binding and
+    // DKG-boundary checks below are polynomial/DKG-view-dependent and would
+    // diverge on a verifier's stale post-rotation state, so this function skips
+    // them. Consensus safety for the follower comes from the finalization
+    // certificate, not from re-deriving the live proposal's leader. The verifier
+    // never votes (`me()` is None), so accepting the proposal here cannot affect
+    // the committee's quorum.
     if role == ValidatorRole::VerifierOnly {
         return Ok(());
     }

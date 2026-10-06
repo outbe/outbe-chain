@@ -440,9 +440,9 @@ pub(in crate::world::ocomp) fn clear_seeded_metadosis_days(
 ///
 /// Metadosis remains pristine: block 1 creates the day and the production
 /// ResolveForming edge computes and stores the exact 50-hour VWAP. The harness
-/// supplies one ordinary DAY_TYPE_PAIR observation inside that interval so the
-/// subsequent public Tribute has a real canonical price instead of relying on a
-/// pre-materialized WWD snapshot.
+/// supplies one ordinary DAY_TYPE_PAIR observation inside that interval. This
+/// way, the subsequent public Tribute has a real canonical price instead of
+/// relying on a pre-materialized WWD snapshot.
 #[cfg(feature = "ocomp-integration")]
 pub(in crate::world::ocomp) fn seed_fresh_metadosis_oracle_input(
     genesis: &mut serde_json::Value,
@@ -479,8 +479,8 @@ pub(in crate::world::ocomp) fn seed_fresh_metadosis_oracle_input(
         let volume = U256::from(1_000_000_u64);
         let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         // Allow independent production feeders eight blocks to collect quorum.
-        // Clock-restart barriers still require a fresh finalized publication;
-        // this fixture does not change the production freshness bound.
+        // Clock-restart barriers still require a fresh finalized publication.
+        // This fixture does not change the production freshness bound.
         oracle
             .config_vote_period
             .write(E2E_ORACLE_VOTE_PERIOD_BLOCKS)?;
@@ -587,7 +587,7 @@ pub(in crate::world::ocomp) fn capacity_tribute_private_keys(count: usize) -> Re
 
 /// Seed explicitly listed bulk operators through the production registry API
 /// before launch, avoiding a governance window per owner. Returns whether the
-/// genesis changed; existing registrations must match the requested fixture.
+/// genesis changed. Existing registrations must match the requested fixture.
 ///
 /// Each owner gets a fixture chain id and its deterministic
 /// root-signing key, used to sign the offer's Merkle root.

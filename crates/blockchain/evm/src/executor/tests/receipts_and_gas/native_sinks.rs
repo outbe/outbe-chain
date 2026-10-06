@@ -1,5 +1,5 @@
-//! The EIP-1559 base fee is a native burn: the sender pays base plus tip, the
-//! rewards escrow receives only the tip, and no capacity is credited.
+//! The EIP-1559 base fee is a native burn. The sender pays base plus tip. The rewards escrow
+//! receives only the tip. No capacity is credited.
 
 use super::*;
 use outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS;

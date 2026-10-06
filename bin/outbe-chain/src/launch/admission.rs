@@ -410,7 +410,7 @@ where
     }
 }
 
-/// A canonical lease rejection is an expected stop; failure to read that state
+/// A canonical lease rejection is an expected stop. Failure to read that state
 /// is still an operational error, even though both stop the local node.
 pub(crate) fn tee_lease_exit_reason(
     verdict: Option<eyre::Result<String>>,

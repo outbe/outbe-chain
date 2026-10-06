@@ -31,7 +31,7 @@ where
         proof: outbe_tee::upgrade_transfer::UpgradeKeyProofV1,
         legacy_direct_dev_source: bool,
     ) -> RpcResult<Bytes> {
-        // Bound concurrent expensive verification on this process; never queue
+        // Bound concurrent expensive verification on this process. Never queue
         // it on the consensus enclave connection.
         static GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
         let permit = GATE
@@ -214,7 +214,7 @@ fn live_upgrade_candidate(
     timestamp: u64,
     legacy_direct_dev_source: bool,
 ) -> outbe_primitives::error::Result<bool> {
-    // The policy is read even when the first candidate condition rejects.
+    // This function reads the policy even when the first candidate condition rejects.
     let policy = registry.active_policy_v1()?;
     if !candidate_binding_matches(registry, context, timestamp)? {
         return Ok(false);

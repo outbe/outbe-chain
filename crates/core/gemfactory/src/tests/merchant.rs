@@ -411,8 +411,8 @@ fn issue_merchant_gem_source_entry_dominates_the_market_price() {
     });
 }
 
-/// Entry and floor are two independent maxima against the source terms: a tie takes the shared
-/// value, and the floor can come from the source while the entry comes from the market.
+/// Entry and floor are two independent maxima against the source terms. A tie takes the shared
+/// value. The floor can come from the source while the entry comes from the market.
 #[test]
 fn issue_merchant_gem_takes_each_maximum_independently() {
     let unit = six_decimal_unit();

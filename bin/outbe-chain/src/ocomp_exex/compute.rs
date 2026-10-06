@@ -405,8 +405,8 @@ where
                 canonical_result_digest,
             )?,
             EmbeddedJobActionV1::AwaitCanonical { .. } => {}
-            // A quorum can form before the local computation finishes; the job
-            // is then already canonical-settled and no local action remains.
+            // A quorum can form before the local computation finishes. The job is
+            // then already canonical-settled, and no local action remains.
             EmbeddedJobActionV1::ProtocolOwned => {
                 info!(
                     %job_id,

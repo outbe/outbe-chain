@@ -15,8 +15,9 @@ enum SyntheticSource {
     TokenFactory
 }
 
-/// @dev Everything a route needs to be deployed, except the token's creation code - that one cannot be data, since
-///      `type(T).creationCode` is a compile-time construct. Each route file in `script/routes/` supplies both.
+/// @dev Everything a route needs to be deployed, except the token's creation code. The creation
+///      code cannot be data, since `type(T).creationCode` is a compile-time construct. Each route
+///      file in `script/routes/` supplies both.
 struct RouteSpec {
     /// @dev Salt label of the token, and - suffixed with `Bridge` - of its bridge. Part of both CREATE3 addresses:
     ///      changing it moves every deployment of this route.
@@ -33,11 +34,13 @@ struct RouteSpec {
 }
 
 /// @dev Route-agnostic half of the deployment: guards, salts, address prediction, and the deploy sequence itself.
-///      It knows how to deploy *a* route, never which routes exist - see the sibling files in this directory.
+///      It knows how to deploy *a* route, never which routes exist. See the sibling files in this
+///      directory.
 ///
-///      Addresses come from CREATE3, so they depend only on (factory, salt, deployer) - never on the owner, the
-///      ERC-7786 hub, the bridge mode or the token metadata. That is what lets one address hold the canonical token
-///      on one chain and the ERC-7802 synthetic on another.
+///      Addresses come from CREATE3, so they depend only on (factory, salt, deployer). They never
+///      depend on the owner, the ERC-7786 hub, the bridge mode or the token metadata. That is what
+///      lets one address hold the canonical token on one chain and the ERC-7802 synthetic on
+///      another.
 ///
 /// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `BRIDGE_ADDRESS`, `OUTBE_CHAIN_ID`, `EXTERNAL_CHAIN_ID`.
 /// Optional env: `OWNER_ADDRESS` (default: deployer), `ALLOW_EOA_OWNER`, `CREATE3_FACTORY_ADDRESS`,
@@ -58,8 +61,9 @@ abstract contract BaseRoute is Script {
         return vm.envUint("DEPLOYER_PK");
     }
 
-    /// @dev `virtual` so a test harness can act as the deployer: the deployer both signs the owner-only calls and is
-    ///      part of every salt, so a harness that cannot override it cannot exercise a deployment at all.
+    /// @dev `virtual` so a test harness can act as the deployer. The deployer signs the owner-only
+    ///      calls and is also part of every salt. A harness that cannot override it cannot exercise
+    ///      a deployment at all.
     function _deployer() internal view virtual returns (address) {
         return vm.addr(_pk());
     }
@@ -87,8 +91,8 @@ abstract contract BaseRoute is Script {
     // ==================================================== Salt =====================================================
 
     /// @dev The factory namespaces this with its caller, so a third party cannot squat the address with
-    ///      their own bytecode. Consequence: every chain must be deployed from the same key, or the
-    ///      addresses diverge.
+    ///      their own bytecode. Consequence: the operator must deploy every chain from the same
+    ///      key, or the addresses diverge.
     function _salt(string memory label, string memory salt) internal pure returns (bytes32) {
         return keccak256(abi.encodePacked(label, salt));
     }
@@ -122,8 +126,9 @@ abstract contract BaseRoute is Script {
     }
 
     /// @dev Nothing may be deployed onto a chain the operator did not declare as one end of a route. A wrong
-    ///      `--rpc-url` is a mistake, not a deployment - and without this check the connected chain would silently
-    ///      count as "not Outbe", i.e. as the external end, and a full set of contracts would land on it.
+    ///      `--rpc-url` is a mistake, not a deployment. Without this check, the connected chain
+    ///      would silently count as "not Outbe", i.e. as the external end. Then a full set of
+    ///      contracts would land on it.
     function _requireDeclaredChain() internal view {
         if (!_isGuardedChain()) revert UndeclaredChain(block.chainid);
     }
@@ -185,12 +190,13 @@ abstract contract BaseRoute is Script {
     // =================================================== Deploy ====================================================
 
     /// @dev Deploys one route's token and bridge on the connected chain. The caller supplies the token's creation
-    ///      code because `type(T).creationCode` cannot be carried in a struct; everything else comes from `spec`.
-    ///      Each step checks on-chain state first, so a re-run is a no-op and a partially finished chain (the Safe
-    ///      has not executed `setTokenBridge` yet) is completed rather than skipped.
+    ///      code because `type(T).creationCode` cannot be carried in a struct. Everything else
+    ///      comes from `spec`. Each step checks on-chain state first. Thus a re-run is a no-op, and
+    ///      this function completes a partially finished chain (the Safe has not executed
+    ///      `setTokenBridge` yet) rather than skipping it.
     ///
-    ///      No broadcast is opened here on purpose: the entrypoints open a single one, and the tests call this
-    ///      directly.
+    ///      This function opens no broadcast on purpose. The entrypoints open a single one, and the
+    ///      tests call this function directly.
     function _deployRoute(address factory, string memory salt, RouteSpec memory spec, bytes memory tokenInitCode)
         internal
         returns (address token, address tokenBridge)
@@ -208,8 +214,9 @@ abstract contract BaseRoute is Script {
         bytes32 bridgeSalt = _salt(string.concat(spec.tokenLabel, "Bridge"), salt);
 
         // The two candidates for the token address, resolved independently:
-        //   - `configured`: it already exists and is not ours to place - the issuer's USDT on a real network, or a
-        //     factory-issued stablecoin on Outbe. Its address is then whatever the operator says.
+        //   - `configured`: it already exists and is not ours to place. It is the issuer's USDT on
+        //     a real network, or a factory-issued stablecoin on Outbe. Its address is then whatever
+        //     the operator says.
         //   - `predicted`: where CREATE3 will put it if this script places it.
         address configured = vm.envOr(canonical ? spec.canonicalTokenEnv : spec.syntheticTokenEnv, address(0));
         address predicted = Create3Factory(factory).predict(_deployer(), tokenSalt);
@@ -239,7 +246,8 @@ abstract contract BaseRoute is Script {
         if (configured == address(0) && !canonical) _setTokenBridge(token, tokenBridge, spec.tokenLabel);
     }
 
-    /// @dev The canonical side always takes custody; the synthetic side follows how its token is issued.
+    /// @dev The canonical side always takes custody. The synthetic side follows how its token is
+    ///      issued.
     function _bridgeMode(RouteSpec memory spec, bool canonical)
         internal
         pure

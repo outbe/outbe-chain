@@ -441,7 +441,7 @@ impl DeactivationRejection {
 }
 
 /// Proves canonical inclusion and failure of the intended transaction. Receipt
-/// evidence does not prove an exact revert reason; production tests cover that
+/// evidence does not prove an exact revert reason. Production tests cover that
 /// contract separately. Finalized block-boundary observations check atomicity.
 fn verify_deactivation_rejection(
     outcome: &TxOutcome,
@@ -461,7 +461,7 @@ fn verify_deactivation_rejection(
     );
     // ValidatorSet authorizes the config owner or validator itself. Delegated
     // operational keys do not authorize this call. Check the actor independently
-    // of receipt status; no diagnostic RPC is needed for this identity check.
+    // of receipt status. No diagnostic RPC is needed for this identity check.
     ensure!(
         (caller == before.address) == matches!(rejection, DeactivationRejection::Repeated),
         "deactivation rejection used the wrong actor"
@@ -839,8 +839,8 @@ fn submit_offer(world: &mut World, name: String) {
         );
         // The offer is admitted only from an operator L2Registry knows. This is
         // an offer precondition, so it is established before the scenario's
-        // before-offer observation rather than between that observation and the
-        // offer, which would shift every later height by the governance window.
+        // before-offer observation, not between that observation and the offer.
+        // That position would shift every later height by the governance window.
         let key = world.validators.by_name(&name)?.evm_key()?;
         crate::features::l2_registration::ensure_tribute_offer_operator(world, &key);
         for index in 0..4 {
@@ -849,7 +849,7 @@ fn submit_offer(world: &mut World, name: String) {
                 .localnet
                 .scenario_dir()
                 .join(format!("validator-{index}"));
-            // Founders predate this scenario phase; these are observation-prefix
+            // Founders predate this scenario phase. These are observation-prefix
             // bounds, not evidence that their startup happened in this interval.
             let node_log = LaunchLog::checkpoint(&dir.join("node.log"))?;
             let enclave_log = LaunchLog::checkpoint(&dir.join("enclave.log"))?;
@@ -1351,7 +1351,7 @@ fn exits_and_demotes(world: &mut World) {
 fn claim_with_exact_accounting(world: &mut World) {
     (|| -> Result<()> {
         joined(world)?;
-        // Preserve the existing short-unbonding wait; the finalized timestamp,
+        // Preserve the existing short-unbonding wait. The finalized timestamp,
         // not this sleep, is the authority for maturity.
         sleep(Duration::from_secs(10));
         let (checkpoint, before) = fresh(world, "lifecycle_before_claim", 0, 30)?;

@@ -36,8 +36,8 @@ pub(crate) struct RequestLimitSplit {
 }
 
 impl RequestLimitSplit {
-    /// Lysis is bounded by the day's own emission and what it leaves is credited to the
-    /// accumulator. The auction then draws from that accumulator: no more than the nominal beyond
+    /// The day's own emission bounds Lysis, and the accumulator receives the credit for what
+    /// Lysis leaves. The auction then draws from that accumulator: no more than the nominal beyond
     /// the symbolic share, and no more than the accumulator holds.
     pub(crate) fn derive(
         base_limit: U256,
@@ -175,7 +175,7 @@ pub(crate) fn apply_auction_brief(
 }
 
 /// What the request reserves from the accumulator for the auction. A red day opens no auction,
-/// so a receipt that gives it a Desis Limit is rejected.
+/// so this function rejects a receipt that gives it a Desis Limit.
 pub(crate) fn desis_reservation(receipt: &RequestLimitSplitReceiptV1) -> Result<U256> {
     if receipt.day_type != DayType::Green && !receipt.desis_limit_minor.is_zero() {
         return Err(MetadosisError::InvalidOcompLimitSplit {

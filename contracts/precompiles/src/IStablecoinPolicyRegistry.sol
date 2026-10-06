@@ -80,7 +80,7 @@ interface IStablecoinPolicyRegistry {
 
     /// @notice Returns up to `limit` current members starting at `offset`.
     /// @dev Valid only for Whitelist and Blacklist. `limit` must be between 1 and
-    ///      100. `offset >= policyMemberCount(policyId)` returns an empty array; the
+    ///      100. `offset >= policyMemberCount(policyId)` returns an empty array. The
     ///      final page is clamped to the current count. No ordering guarantee is
     ///      provided.
     function listPolicyMembers(uint256 policyId, uint256 offset, uint256 limit) external view returns (address[] memory);

@@ -32,8 +32,8 @@ impl MetadosisContract<'_> {
     /// Commits the certified terminal receipt and active generation after all
     /// four owner receipts have been verified in the same activation frame.
     ///
-    /// The one-shot terminal permit is advanced only after every consensus
-    /// write and event succeeds.
+    /// This function advances the one-shot terminal permit only after every
+    /// consensus write and event succeeds.
     pub(crate) fn commit_ocomp_completed(
         &mut self,
         input: CompletionInput<'_>,
@@ -115,7 +115,7 @@ impl MetadosisContract<'_> {
                 "OCOMP completion job already has a quorum",
             ));
         }
-        // Lockstep with the persisted per-day index; see `expire_ocomp_job`.
+        // Lockstep with the persisted per-day index. See `expire_ocomp_job`.
         let wwd = WorldwideDay::new(record.intent.wwd);
         let indexed_terminal = self.terminal_intent_count(wwd)?;
         if indexed_terminal != 0 || projection.terminal_records != 0 {

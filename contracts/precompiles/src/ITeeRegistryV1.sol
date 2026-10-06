@@ -35,8 +35,8 @@ struct NodeEnclaveBindingV1View {
 /// @dev One interface pins selectors, event topics and tuple layout across the
 ///      consensus precompile, the operator tooling and the CLI.
 interface ITeeRegistryV1 {
-    /// @notice Fixed-size consensus event. Evidence, collateral, advisories and
-    ///         signatures are deliberately excluded so a registration cannot
+    /// @notice Fixed-size consensus event. The event deliberately excludes evidence,
+    ///         collateral, advisories and signatures, so a registration cannot
     ///         create an unbounded log.
     event EnclaveRegisteredV1(
         bytes32 indexed nodeIdHash,
@@ -75,7 +75,7 @@ interface ITeeRegistryV1 {
 
     event ValidatorNodeHostBoundV1(address indexed validator, bytes32 indexed nodeIdHash);
 
-    /// @notice One-time permanent offer-key onboarding artifact for a newly
+    /// @notice One-time permanent artifact that onboards the offer key for a newly
     ///         created V1 binding. Renewal, replacement and idempotent replay
     ///         never emit it.
     event OfferKeySealedForRegistryV1(bytes32 indexed nodeIdHash, bytes sealedOfferKey);

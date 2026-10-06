@@ -9,8 +9,8 @@ use crate::errors::GovernanceError;
 use crate::schema::{Gip, GovernanceContract, Oip};
 
 /// Selectors on this precompile that accept native value. The route table binds
-/// this to the address's `ValuePolicy` at compile time, so a selector added here
-/// without flipping the route fails the build.
+/// this list to the address's `ValuePolicy` at compile time. If you add a selector
+/// here and do not flip the route, the build fails.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
 sol!(

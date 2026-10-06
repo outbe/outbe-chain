@@ -51,7 +51,8 @@ interface IAuction {
     /// @param orderId The unique identifier of the order
     /// @param outputAmount The amount the solver is willing to provide
     /// @param salt Random bytes32 used in commitment hash
-    /// @param originData ABI-encoded OrderData; validated against orderId, fillDeadline and amountOut floor
+    /// @param originData ABI-encoded OrderData. reveal validates it against orderId, fillDeadline
+    ///        and the amountOut floor
     function reveal(bytes32 orderId, uint256 outputAmount, bytes32 salt, bytes calldata originData) external;
 
     // ============ Router Functions ============

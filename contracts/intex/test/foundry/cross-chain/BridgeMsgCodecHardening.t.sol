@@ -6,8 +6,8 @@ import {Test} from "forge-std/Test.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 
-/// @dev Thin external wrapper around the `internal pure` encoders so the per-encoder revert paths
-///      can be asserted via `vm.expectRevert` from a test contract.
+/// @dev Thin external wrapper around the `internal pure` encoders, so that a test contract can
+///      assert the per-encoder revert paths via `vm.expectRevert`.
 contract BridgeMsgCodecHardeningHarness {
     function encodeBidsBatch(
         uint32 worldwideDay,
@@ -88,8 +88,8 @@ contract BridgeMsgCodecHardeningTest is Test {
     // --- Encoder parallel-array equality ---
 
     function test_encodeBidsBatch_arrayLengthMismatch_reverts() public {
-        // Decoder rejects parallel-array mismatch; the encoder must surface the same typed error
-        // at the source so the bridge send is aborted before paying the fee.
+        // The decoder rejects parallel-array mismatch. The encoder must surface the same typed
+        // error at the source, so that the bridge send aborts before it pays the fee.
         address[] memory bidders = new address[](2);
         bidders[0] = address(0xB1);
         bidders[1] = address(0xB2);
@@ -103,7 +103,7 @@ contract BridgeMsgCodecHardeningTest is Test {
     }
 
     function test_encodeIssuanceInstructions_arrayLengthMismatch_reverts() public {
-        // recipients.length must match quantities.length; encoder reverts before encoding.
+        // recipients.length must match quantities.length. The encoder reverts before encoding.
         address[] memory recipients = new address[](2);
         recipients[0] = address(0xA1);
         recipients[1] = address(0xA2);
@@ -160,7 +160,7 @@ contract BridgeMsgCodecHardeningTest is Test {
     // --- decodeRefundInstructions over-cap symmetric with BIDS / ISSUANCE ---
 
     function test_decodeRefundInstructions_overCap_revertsRefundBatchTooLarge() public {
-        // The outbound encoder caps at MAX_PAYLOAD_ARRAY_LEN; an over-cap inbound payload can only
+        // The outbound encoder caps at MAX_PAYLOAD_ARRAY_LEN. An over-cap inbound payload can only
         // reach the receiver via a peer compromise or a future encoder change. The decoder must
         // reject with the typed RefundBatchTooLarge error so the drop-don't-block handler surfaces
         // a parameterized diagnostic.
@@ -186,9 +186,9 @@ contract BridgeMsgCodecHardeningTest is Test {
     // --- Empty-payload typed revert on the three variable-length decoders ---
 
     function test_decodeBidsBatch_emptyMsg_revertsInvalidPayloadLength() public {
-        // The fixed-length decoders pre-check via _assertExactLength; the variable-length ones must
-        // match the same pattern so an empty `_msg` yields a typed error rather than out-of-bounds
-        // Panic(0x32) on `_msg[0]`.
+        // The fixed-length decoders pre-check via _assertExactLength. The variable-length ones must
+        // match the same pattern, so that an empty `_msg` yields a typed error rather than
+        // out-of-bounds Panic(0x32) on `_msg[0]`.
         bytes memory empty = "";
         vm.expectRevert(
             abi.encodeWithSelector(

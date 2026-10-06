@@ -392,9 +392,9 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
         ),
     ];
 
-    // Three cases that fed a wrong-width `bytes` identity are gone: a uint256
-    // identity has no malformed encoding, so the rejection they proved is now
-    // enforced by the ABI type rather than by this projector.
+    // Three cases that fed a wrong-width `bytes` identity are gone. A uint256
+    // identity has no malformed encoding. The ABI type, not this projector,
+    // now enforces the rejection that those cases proved.
     for (case, (emitter, event)) in malformed_events.into_iter().enumerate() {
         let storage = Arc::new(RecordingStorage::default());
         let mut projection = open(&storage, 80);

@@ -71,7 +71,7 @@ pub trait VoteTarget: Send + Sync {
     ) -> Result<TargetExecutionOutcome>;
 
     /// Dispatches terminal proposal outcomes to the target module.
-    /// Only result of tally is possible (Expired or Approved).
+    /// Only a tally result is possible (Expired or Approved).
     fn handle_tally(
         &self,
         ctx: &BlockRuntimeContext,

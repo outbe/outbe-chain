@@ -169,7 +169,7 @@ fn issue_zero_owner_rejected() {
 #[test]
 fn issue_no_oracle_setup_rejected() {
     // The reference currency is registered but its COEN pair is not, so the gem
-    // has no price to anchor its entry, floor and call to and issuing reverts.
+    // has no price to anchor its entry, floor and call to. Issuing reverts.
     with_storage(None, |storage| {
         let res = issue_at_live_rate(
             storage,

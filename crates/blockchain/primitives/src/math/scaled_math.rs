@@ -97,7 +97,7 @@ mod pledge_tests {
             (U256::from(333_333u64), U256::from(3_000_003u64)),
         );
         // V = 2.000000 is one canonical price. The next minor unit is a
-        // different price; there is no sub-minor residue to floor against.
+        // different price. There is no sub-minor residue to floor against.
         assert_eq!(
             checked_quote(U256::from(2_000_000u64), 6, U256::from(2_000_000u64)).unwrap(),
             (U256::from(1_000_000u64), U256::from(2_000_000u64)),
@@ -110,7 +110,7 @@ mod pledge_tests {
                 "decimals {decimals}"
             );
         }
-        // Fractional Gratis is floored first; entry uses the accepted Gratis.
+        // The quote floors fractional Gratis first. Entry uses the accepted Gratis.
         assert_eq!(
             checked_quote(U256::from(3u64), 6, U256::from(2_000_000u64)).unwrap(),
             (U256::ONE, U256::from(3_000_000u64)),
@@ -133,7 +133,7 @@ mod pledge_tests {
             checked_quote(U256::MAX, 6, U256::from(1_000_000u64)).unwrap(),
             (U256::MAX, SCALE_1E6_U256)
         );
-        // Exact upper conversion boundary; the next integer is rejected.
+        // Exact upper conversion boundary. The conversion rejects the next integer.
         assert_eq!(convert_to_u256(U512::from(U256::MAX)).unwrap(), U256::MAX);
         assert!(convert_to_u256(U512::from(U256::MAX) + U512::ONE).is_err());
     }

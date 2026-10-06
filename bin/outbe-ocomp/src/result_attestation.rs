@@ -1,8 +1,8 @@
 //! Local construction of the signed OCOMP vote carried by the public transaction.
 //!
 //! Finalized job authority comes from the Supervisor's verified public-RPC
-//! discovery record. The dedicated OCOMP key signs the inner `ResultVoteV1`;
-//! the EVM key signs only the outer transaction.
+//! discovery record. The dedicated OCOMP key signs the inner `ResultVoteV1`.
+//! The EVM key signs only the outer transaction.
 
 use alloy_primitives::{keccak256, B256};
 use outbe_ocomp_protocol::{

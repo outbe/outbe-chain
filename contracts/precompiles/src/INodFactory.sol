@@ -52,13 +52,13 @@ interface INodFactory {
     );
 
     /// @notice Pay a qualified Nod, or a called one at or before its settlement
-    /// deadline, in ERC20 base units of `asset`. Any caller may pay; the Nod stays
+    /// deadline, in ERC20 base units of `asset`. Any caller may pay. The Nod stays
     /// with its owner. Approve NodFactory for the `quoteSettlement` amount first.
     /// The asset must have a reserve vault and report the Nod's reference or
     /// issuance ISO 4217 code. Issuance-currency payment converts the
     /// reference-currency entry cost at the COEN cross rate of the trailing VWAP
     /// snapshot required at this block.
-    /// @param snapshotId The snapshot `quoteSettlement` returned; an
+    /// @param snapshotId The snapshot `quoteSettlement` returned. An
     /// issuance-currency payment naming any other snapshot reverts. Ignored on
     /// the reference rail.
     function settleNod(uint256 nodId, address asset, uint256 snapshotId) external;
@@ -68,7 +68,7 @@ interface INodFactory {
     /// does not accept.
     /// @return settlementCurrency ISO 4217 code the payment is denominated in.
     /// @return paymentMinor Amount to pay, in `asset`'s own minor units.
-    /// @return snapshotId Trailing VWAP snapshot the amount converts at; zero on
+    /// @return snapshotId Trailing VWAP snapshot the amount converts at. Zero on
     /// the reference rail. It goes stale at the next update cutoff.
     function quoteSettlement(uint256 nodId, address asset)
         external

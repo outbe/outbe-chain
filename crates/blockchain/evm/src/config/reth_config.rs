@@ -125,11 +125,11 @@ impl ConfigureEvm for OutbeEvmConfig {
             // Validator path: body[0] arrives through `expected_begin_system_txs`.
             prebuilt_phase1_tx: None,
             // Validator path: the parent block is sealed and in MDBX by the
-            // time the executor runs (validation happens after import), so
+            // time the executor runs (validation happens after import). So
             // `sealed_header_by_hash` resolves the artifact via the provider
             // (lookup ladder step 2 in `RethAccountedParentArtifactProvider`).
-            // The FCU-Valid -> MDBX-commit race is a proposer-side window only;
-            // validators do not need the in-memory `parent_artifact_hint`
+            // The FCU-Valid -> MDBX-commit race is a proposer-side window only.
+            // Validators do not need the in-memory `parent_artifact_hint`
             // fallback here.
             parent_artifact_hint: None,
             // Validator path: a `TeeBootstrap` in the body is read via

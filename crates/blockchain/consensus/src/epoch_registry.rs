@@ -15,9 +15,9 @@ use std::{
 /// Epoch-indexed registry of `Arc<T>`.
 ///
 /// `register` is insert-once: the first value for an epoch wins and a duplicate
-/// registration is ignored (returns `false`). A poisoned mutex is recovered in
-/// place - the stored map is plain data, so a panic-poisoned lock does not
-/// corrupt it, and a panic on one path cannot wedge the providers.
+/// registration is ignored (returns `false`). The registry recovers a poisoned
+/// mutex in place. The stored map is plain data, so a panic-poisoned lock does
+/// not corrupt it, and a panic on one path cannot wedge the providers.
 pub struct EpochRegistry<T> {
     inner: Arc<Mutex<HashMap<Epoch, Arc<T>>>>,
 }
@@ -46,7 +46,7 @@ impl<T> EpochRegistry<T> {
         }
     }
 
-    /// Remove the entry for `epoch`; returns `true` if one was present.
+    /// Remove the entry for `epoch`. Returns `true` if one was present.
     pub fn remove(&self, epoch: &Epoch) -> bool {
         self.guard().remove(epoch).is_some()
     }
@@ -58,8 +58,8 @@ impl<T> EpochRegistry<T> {
 }
 
 // Manual impls: the registry only holds an `Arc`, so it is `Clone`/`Default`
-// regardless of whether `T` is - avoids spurious `T: Clone`/`T: Default` bounds
-// the derives would add.
+// regardless of whether `T` is. This avoids spurious `T: Clone`/`T: Default`
+// bounds the derives would add.
 impl<T> Clone for EpochRegistry<T> {
     fn clone(&self) -> Self {
         Self {
@@ -92,7 +92,7 @@ mod tests {
         let e = Epoch::new(3);
         assert!(reg.register(e, 10));
         assert_eq!(reg.get(&e).as_deref(), Some(&10));
-        // Duplicate registration is ignored; the original value is kept.
+        // The registry ignores the duplicate registration and keeps the original value.
         assert!(!reg.register(e, 99));
         assert_eq!(reg.get(&e).as_deref(), Some(&10));
         assert!(reg.remove(&e));

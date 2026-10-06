@@ -1,8 +1,8 @@
 //! Promotion of the committed DKG boundary to durable storage.
 //!
 //! The committed boundary for epoch E+1 must reach disk even when the next
-//! ceremony (dealing E+2) runs or completes before the execution-height arm got
-//! to take it, and even when live finalization delivery never marked it
+//! ceremony (dealing E+2) runs or completes before the execution-height arm took
+//! it. It must also reach disk when live finalization delivery never marked it
 //! committed. Otherwise a crash after E+2 completes but before E+2 activates
 //! leaves no E+1 threshold material to restart from.
 

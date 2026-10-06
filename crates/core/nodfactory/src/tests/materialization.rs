@@ -392,7 +392,8 @@ fn corrupt_fifo_bounds_or_missing_head_projection_are_fatal() {
     ));
 }
 
-/// Materialization carries the proven batch's price; a snapshot saying otherwise is not read.
+/// Materialization carries the proven batch's price. It does not read a snapshot that says
+/// otherwise.
 #[test]
 fn a_materialized_nod_keeps_the_batch_entry_price() {
     let mut world = World::new();

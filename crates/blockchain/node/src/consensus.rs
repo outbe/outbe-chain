@@ -15,19 +15,20 @@
 //! V2 system-transaction layout validator on every block:
 //!
 //! - reject legacy V1 selectors (`OSF1` / `OSC1` / `OSB1` / `OSO1`) at any
-//!   height - V1 `FinalizationAndSlashing` is not silently dropped, it
-//!   surfaces a typed error;
+//!   height. The validator does not silently drop V1 `FinalizationAndSlashing`.
+//!   It surfaces a typed error.
 //! - reject malformed V2 envelopes: wrong `SYSTEM_TX_INPUT_VERSION` byte,
 //!   unknown selector, missing body index 0 (`CertifiedParentAccounting`)
 //!   for `block_number >= 2`, missing `BoundaryOutcome` for
-//!   `block_number == 1`, any system tx in `block_number == 0`;
+//!   `block_number == 1`, any system tx in `block_number == 0`.
 //! - enforce that the `CertifiedParentAccounting` metadata `finalized_block_hash`
 //!   matches the header's `parent_hash` for `block_number >= 2`.
 //!
-//! Stateful BLS / VRF / accounting verification (BLS aggregate verify, VRF
-//! proof verify, committee snapshot lookup, accounting progress comparison,
-//! artifact hash compare, signer bitmap check) is **not** performed here. It
-//! lives exclusively in `OutbeBlockExecutor::apply_pre_execution_changes`
+//! This validator does **not** perform stateful BLS / VRF / accounting
+//! verification (BLS aggregate verify, VRF proof verify, committee snapshot
+//! lookup, accounting progress comparison, artifact hash compare, signer bitmap
+//! check). That verification lives exclusively in
+//! `OutbeBlockExecutor::apply_pre_execution_changes`
 //! (executor reorder task) so consensus pre-execution and execution
 //! share a single stateful evaluator and cannot diverge.
 //!
@@ -63,9 +64,9 @@ use policy::OutbeConsensusPolicy;
 /// Build a `ConsensusError::Other` from a message string.
 ///
 /// reth v2.2.0 changed `ConsensusError::Other` to carry
-/// `Arc<dyn core::error::Error + Send + Sync>` instead of `String`, so the
-/// message is wrapped in a boxed error first. Keeps all call sites terse and
-/// avoids panics on the consensus path.
+/// `Arc<dyn core::error::Error + Send + Sync>` instead of `String`, so this
+/// function wraps the message in a boxed error first. This keeps all call sites
+/// terse and avoids panics on the consensus path.
 fn consensus_other(message: impl Into<String>) -> ConsensusError {
     ConsensusError::Other(Arc::<dyn core::error::Error + Send + Sync>::from(Box::<
         dyn core::error::Error + Send + Sync,
@@ -228,7 +229,7 @@ where
 /// Drives the `OutbeBeaconConsensus::validate_block_pre_execution` path and is
 /// also exposed for integration coverage in
 /// `crates/blockchain/node/tests/consensus_stateless.rs`. Stateful BLS / VRF /
-/// accounting checks live in the EVM executor; see module docs.
+/// accounting checks live in the EVM executor. See module docs.
 pub fn validate_system_tx_consensus_boundary(
     body: &OutbeBlockBody,
     header: &OutbeHeader,
@@ -576,12 +577,13 @@ mod tests {
     #[test]
     fn accepts_same_second_genesis_child_when_millis_increases() {
         // Proves the validator compares timestamps at millisecond granularity
-        // (seconds*1000 + millis_part), not whole seconds: a same-UNIX-second
-        // child with a higher millis part is monotonic and accepted. After
-        // this sub-second advance is only valid at the genesis boundary (parent
-        // block number 0), which is exempt from the minimum-advance bound; for
-        // any real parent the same-second child is below the 1000 ms minimum and
-        // correctly rejected (see `rejects_child_below_min_advance_timestamp_freeze`).
+        // (seconds*1000 + millis_part), not whole seconds. A same-UNIX-second
+        // child with a higher millis part is monotonic and accepted. This
+        // sub-second advance is only valid at the genesis boundary (parent block
+        // number 0). That boundary is exempt from the minimum-advance bound. For
+        // any real parent, the same-second child is below the 1000 ms minimum, and
+        // the validator correctly rejects it (see
+        // `rejects_child_below_min_advance_timestamp_freeze`).
         let consensus = OutbeBeaconConsensus::new(test_chain_spec());
         let parent = header(0, 100, 900, B256::ZERO);
         let child = header(1, 100, 901, parent.hash());
@@ -726,12 +728,13 @@ mod tests {
 
     #[test]
     fn accepts_paced_block_two_seconds_after_parent() {
-        // A min-block-time-paced block is emitted ~2s after build, but its header
-        // timestamp is fixed at build time (= max(now, parent + 1ms)). The validator
-        // timestamp rule is a parent-relative increase with NO wall-clock/arrival
-        // bound - only a deterministic max-drift band (`MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS`,
-        // 1h) far above any paced interval - so a paced (delayed-emission) block
-        // always validates and proposer pacing stays invisible to header validation.
+        // The proposer emits a min-block-time-paced block ~2s after build, but the
+        // header timestamp is fixed at build time (= max(now, parent + 1ms)). The
+        // validator timestamp rule is a parent-relative increase with NO
+        // wall-clock/arrival bound. The only bound is a deterministic max-drift band
+        // (`MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS`, 1h) far above any paced interval. So
+        // a paced (delayed-emission) block always validates, and proposer pacing
+        // stays invisible to header validation.
         let consensus = OutbeBeaconConsensus::new(test_chain_spec());
         let parent = header(1, 100, 0, B256::ZERO);
         // +2000 ms relative to the parent (the default 2s floor), as +2 seconds.
@@ -790,8 +793,8 @@ mod tests {
     #[test]
     fn rejects_far_future_timestamp_unbonding_bypass() {
         // C-01 regression: a byzantine proposer ratchets the timestamp 21 days
-        // forward (the default unbonding period) to mature its own unbonding
-        // entry and escape the slashing window in a single block. The drift
+        // forward (the default unbonding period) in a single block. The goal is to
+        // mature its own unbonding entry and escape the slashing window. The drift
         // bound must reject it on every validator (chain-state only, no clock).
         let parent = header(10, 1_000_000, 0, B256::ZERO);
         let twenty_one_days_s = 21 * 24 * 3600;
@@ -824,9 +827,9 @@ mod tests {
     fn rejects_child_below_min_advance_timestamp_freeze() {
         // regression: a colluding leader majority holds chain time near the
         // parent (here +999 ms, one below the 1000 ms minimum) to freeze
-        // day-indexed emission and unbonding maturity. A non-genesis child below
-        // the minimum advance must be rejected on every validator (chain-state
-        // only, no clock).
+        // day-indexed emission and unbonding maturity. Every validator must reject
+        // a non-genesis child below the minimum advance (chain-state only, no
+        // clock).
         let parent = header(1, 100, 0, B256::ZERO);
         let child = header(2, 100, 999, parent.hash());
         assert_eq!(
@@ -845,9 +848,9 @@ mod tests {
     #[test]
     fn genesis_child_exempt_from_min_advance() {
         // The genesis parent (block number 0) is exempt from the minimum-advance
-        // bound: the proposer's `finalization_view` is unseeded at genesis, so
-        // block 1 is monotonic-only on both proposer and validator paths. A
-        // sub-minimum advance over genesis must still be accepted.
+        // bound. The proposer's `finalization_view` is unseeded at genesis, so
+        // block 1 is monotonic-only on both proposer and validator paths. The
+        // validator must still accept a sub-minimum advance over genesis.
         let genesis = header(0, 100, 0, B256::ZERO);
         let block_one = header(1, 100, 999, genesis.hash());
         assert!(

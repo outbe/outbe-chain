@@ -54,11 +54,14 @@ where
     R: P2pReceiver<PublicKey = bls12381::PublicKey>,
     C: Clock,
 {
-    /// Announce this enclave's `(tee_bls, dkg_enc)` identity and collect all `n`
-    /// participants' identities, buffering any ceremony messages that arrive
-    /// early and recording the `tee_bls -> consensus_pubkey` routing. Returns the
-    /// identities sorted canonically by `tee_bls` (so every node derives the same
-    /// ceremony id and participant order).
+    /// Announce this enclave's `(tee_bls, dkg_enc)` identity and collect the
+    /// identities of all `n` participants. During the exchange, this method also:
+    ///
+    /// - buffers any ceremony messages that arrive early,
+    /// - records the `tee_bls -> consensus_pubkey` routing.
+    ///
+    /// Returns the identities sorted canonically by `tee_bls` (so every node
+    /// derives the same ceremony id and participant order).
     pub async fn exchange_identities(
         &mut self,
         request: IdentityExchange,
@@ -102,18 +105,18 @@ where
     ) -> eyre::Result<Vec<outbe_tee::protocol::ParticipantAnnounce>> {
         let mut collected = self.begin_identity_exchange(&request)?;
         let n = request.participant_count;
-        // Re-broadcast our identity periodically until every peer's identity is
-        // collected. The muxed sub-channel drops messages addressed to a round a
-        // peer has not yet registered, so a node that announces before its peers
-        // register would otherwise be lost and the exchange would hang. Retrying
-        // makes the exchange robust to that registration race on every round.
-        // The poll cadence is measured on the consensus runtime `Clock` (the same
-        // time source the deterministic test runtime can mock and advance), not
-        // tokio's wall-clock - keeping the identity-exchange re-announce loop
+        // Re-broadcast our identity periodically until we collect the identity of
+        // every peer. The muxed sub-channel drops messages addressed to a round that
+        // a peer has not yet registered. Without retries, a node that announces before
+        // its peers register would be lost, and the exchange would hang. Retrying lets
+        // the exchange survive that registration race on every round.
+        // The consensus runtime `Clock` measures the poll cadence, not tokio's
+        // wall-clock. The deterministic test runtime can mock and advance this same
+        // time source. This keeps the identity-exchange re-announce loop
         // reproducible and free of a direct async-runtime timer dependency. `select!`
-        // is biased top-to-bottom, so a ready message is preferred over the tick;
-        // on the tick arm the in-flight `recv` future is dropped (cancel-safe on
-        // this receiver, so no buffered message is lost).
+        // is biased top-to-bottom, so it prefers a ready message over the tick.
+        // On the tick arm, `select!` drops the in-flight `recv` future (cancel-safe
+        // on this receiver, so no buffered message is lost).
         const POLL: std::time::Duration = std::time::Duration::from_millis(750);
         let mut idle_ticks = 0u32;
         while collected.ids.len() < n {

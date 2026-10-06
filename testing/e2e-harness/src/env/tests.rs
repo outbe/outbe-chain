@@ -336,7 +336,7 @@ fn gramine_direct_uses_the_production_enclave_without_sgx_passthrough() {
 }
 
 /// The native profile runs the same mock binary and the same deterministic
-/// seed, but outside Gramine - so it must carry its own evidence label and
+/// seed, but outside Gramine. Therefore it must carry its own evidence label and
 /// must not stand in for any profile that proves a Gramine or SGX property.
 #[test]
 fn native_host_mode_is_a_distinct_profile_that_proves_no_gramine_property() {
@@ -365,7 +365,7 @@ fn native_host_mode_is_a_distinct_profile_that_proves_no_gramine_property() {
     }
 }
 
-/// Both mock profiles select the mock binary; only the wrapper differs.
+/// Both mock profiles select the mock binary. Only the wrapper differs.
 #[test]
 fn native_host_mode_selects_the_mock_enclave_binary() {
     let env = Environment {

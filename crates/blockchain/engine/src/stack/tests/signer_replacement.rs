@@ -354,7 +354,7 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
     assert_eq!(address, Some(evm_signer.address()));
 
     // Verifier-join: an EVM signer NOT in either set must NOT bail when verifier_join
-    // is true - it returns None (the node syncs as a verifier). The same signer with
+    // is true. It returns None (the node syncs as a verifier). The same signer with
     // verifier_join=false bails (the existing member-required contract).
     let empty = crate::validators::ValidatorSet {
         public_keys: Vec::new(),
@@ -391,8 +391,8 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         "non-member must run as verifier (None) when verifier-join"
     );
 
-    // Lease recovery crosses a different boundary from an unregistered live join:
-    // the old finalized DKG committee excludes this validator, while the canonical
+    // Lease recovery crosses a different boundary from an unregistered live join.
+    // The old finalized DKG committee excludes this validator. But the canonical
     // reshare target already binds its EVM address to the same BLS key. Keep that
     // identity available for the post-DKG signer transition, but do not infer any
     // threshold authority from it (the runtime still has no signing share).

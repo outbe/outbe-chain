@@ -141,7 +141,7 @@ impl Rpc {
     // ---- sends (governance / tribute go through outbe-cli) --------------
 
     /// `outbe-cli vote propose --target-module <addr> --payload <json>` from an
-    /// operator; returns the tx hash.
+    /// operator. Returns the tx hash.
     pub fn send_propose(
         &self,
         operator: &Operator,
@@ -358,7 +358,7 @@ impl Rpc {
         )
     }
 
-    /// `outbe-cli vote cast --proposal-id <id> --yes|--no`; returns the tx hash.
+    /// `outbe-cli vote cast --proposal-id <id> --yes|--no`. Returns the tx hash.
     pub fn cast_vote(&self, validator: &Validator, id: u64, approve: bool) -> Result<String> {
         let key = validator.evm_key()?;
         let ids = id.to_string();

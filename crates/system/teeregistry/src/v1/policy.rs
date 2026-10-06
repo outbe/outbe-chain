@@ -1,9 +1,9 @@
 use super::*;
 
 impl TeeRegistry<'_> {
-    /// Installs the immutable first V1 policy. Successors are staged and
-    /// promoted only by the existing protocol Update lifecycle; this bootstrap
-    /// method intentionally cannot rotate a policy.
+    /// Installs the immutable first V1 policy. Only the existing protocol Update
+    /// lifecycle stages and promotes successors. This bootstrap method
+    /// intentionally cannot rotate a policy.
     pub fn install_initial_policy_v1(&mut self, policy: &TeePolicyV1) -> Result<()> {
         let canonical = policy
             .encode_canonical()
@@ -46,7 +46,7 @@ impl TeeRegistry<'_> {
 
     /// Stages the one exact successor authorized by an approved protocol
     /// update. The policy remains unavailable to ordinary admission until its
-    /// activation height; I7 measurement transition is its only rollout path.
+    /// activation height. I7 measurement transition is its only rollout path.
     pub fn stage_successor_policy_v1(
         &mut self,
         proposal_id: U256,
@@ -139,7 +139,7 @@ impl TeeRegistry<'_> {
 
     /// Atomically promotes the successor owned by `proposal_id` once its
     /// software-update height is reached. Exact replay after promotion is a
-    /// no-op; a different or absent proposal cannot rotate policy authority.
+    /// no-op. A different or absent proposal cannot rotate policy authority.
     pub fn promote_staged_successor_policy_v1(
         &mut self,
         proposal_id: U256,
@@ -190,8 +190,8 @@ impl TeeRegistry<'_> {
         Ok(())
     }
 
-    /// Clears a staged successor only when its exact owning Update proposal is
-    /// being canceled by a newer activated protocol version.
+    /// Clears a staged successor only when a newer activated protocol version
+    /// cancels its exact owning Update proposal.
     pub fn discard_staged_successor_policy_v1(&mut self, proposal_id: U256) -> Result<()> {
         let Some((staged_proposal_id, _)) = self.staged_successor_policy_v1()? else {
             return Ok(());

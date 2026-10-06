@@ -271,7 +271,7 @@ fn application_drain_retains_transport_on_terminal_startup_and_panic_paths() {
                 // The retained owner may return after global-stop guards are
                 // acknowledged but before the network publishes its result.
                 // Its supervision tree then cancels that task. Both outcomes
-                // prove termination; a panic remains an error. Crucially, the
+                // prove termination. A panic remains an error. Crucially, the
                 // endpoint ACK/join was already required to succeed above.
                 let transport = tokio::time::timeout(Duration::from_secs(2), &mut network)
                     .await
@@ -543,7 +543,7 @@ fn fatal_stack_exit_preserves_error_and_voter_journal_can_resume() {
             .recv_timeout(Duration::from_secs(1))
             .expect("sole blocking worker must be occupied");
 
-        // Stop with the I/O worker occupied; do not assume that the upstream
+        // Stop with the I/O worker occupied. Do not assume that the upstream
         // Engine handle joins its final journal sync.
         context.sleep(Duration::from_millis(250)).await;
         fatal_tx.send(()).expect("trigger fatal stack exit");

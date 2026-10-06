@@ -4,7 +4,7 @@ use alloy_consensus::Transaction;
 use alloy_primitives::Address;
 
 impl<'a> ZeroFeeTransaction<'a> {
-    /// Adapt an immutable transaction; the caller supplies its recovered signer.
+    /// Adapt an immutable transaction. The caller supplies its recovered signer.
     pub fn from_transaction<T: Transaction + ?Sized>(tx: &'a T, signer: Address) -> Self {
         Self {
             signer,

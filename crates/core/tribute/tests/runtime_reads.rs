@@ -251,8 +251,8 @@ fn body_and_index_reads_use_the_finalized_parent_repository() {
     finish(&mut provider, &scope, &tree);
 }
 
-// Stable historical ID retained after moving duplicate admission out of the
-// OCOMP four-node E2E lane. OCM-EXP-001 separately proves exact export
+// This test keeps its stable historical ID after duplicate admission moved out
+// of the OCOMP four-node E2E lane. OCM-EXP-001 separately proves exact export
 // completeness from retained accepted inputs.
 // OCOMP-TEST-ID: OCM-E2E-004
 #[test]

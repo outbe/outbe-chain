@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Inspect an outbe-chain block - split system vs user transactions, identify
-# each system tx by its name + body zone (begin_block / end_block), and
-# surface any `OutbeFailure(uint16 indexed code, string reason)` logs
+# Inspect an outbe-chain block. The script does these steps:
+#   - split system vs user transactions,
+#   - identify each system tx by its name + body zone (begin_block / end_block),
+#   - show any `OutbeFailure(uint16 indexed code, string reason)` logs.
 #
 # Body layout:
 #   begin_block system txs ---+
@@ -42,8 +43,9 @@ SYSTEM_ADDRESS="0x0000000000000000000000000000000000000000"
 ZERO_FEE_POLICY_LOG_ADDRESS="0x000000000000000000000000000000000000ee06"
 
 # topic0 = keccak256("OutbeFailure(uint16,string)")
-# If `cast` is available we recompute live; otherwise we use the pinned value
-# verified by `outbe-evm/src/failure_receipt.rs::tests::topic0_matches_signature`.
+# If `cast` is available, the script recomputes it live. Otherwise the script uses
+# the pinned value that
+# `outbe-evm/src/failure_receipt.rs::tests::topic0_matches_signature` verifies.
 OUTBE_FAILURE_TOPIC0_PINNED="0x00c785ee545291880c31c3203459694b9f39ddf8e8d74303301b633edde3121e"
 if command -v cast >/dev/null 2>&1; then
     OUTBE_FAILURE_TOPIC0="$(cast keccak 'OutbeFailure(uint16,string)')"
@@ -81,7 +83,7 @@ rpc_call() {
 }
 
 # Decode a system tx name from its SystemTxInputV1 tag byte (input[1] = 2-char
-# hex after the leading "0x"). All four are begin_block txs today; end_block
+# hex after the leading "0x"). All four are begin_block txs today. end_block
 # is reserved but currently empty.
 system_tx_name() {
     case "$1" in
@@ -179,8 +181,8 @@ echo
 if [ "$TX_COUNT" -eq 0 ]; then
     echo "(empty block - no transactions)"
 else
-    # Pre-scan to find the first user-tx index - system txs before it are
-    # `begin_block`, system txs after it are `end_block`.
+    # Pre-scan to find the first user-tx index. System txs before it are
+    # `begin_block`. System txs after it are `end_block`.
     FIRST_USER_IDX="$(echo "$BLOCK_JSON" \
         | jq --arg sys "$OUTBE_SYSTEM_TX_ADDRESS" -r '
             [.result.transactions[]
@@ -199,8 +201,8 @@ else
 
         if [ "$TX_TO_LC" = "$OUTBE_SYSTEM_TX_ADDRESS" ]; then
             KIND="system"
-            # SystemTxInputV1 layout: input[0]=version (0x01), input[1]=name tag
-            # `eth_getBlockByNumber` returns input with leading "0x"; the name
+            # SystemTxInputV1 layout: input[0]=version (0x01), input[1]=name tag.
+            # `eth_getBlockByNumber` returns input with leading "0x". The name
             # tag is at positions 4-5 in the hex string.
             NAME_BYTE="${TX_INPUT:4:2}"
             NAME="$(system_tx_name "$NAME_BYTE")"

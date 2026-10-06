@@ -2,9 +2,9 @@
 //!
 //! The Supervisor owns the validator's role-delegated EVM key, validates the
 //! result binding, and locally builds the fixed-shape EIP-1559 transaction.
-//! This module durably
-//! records every delivery transition and only treats a receipt as final after
-//! checking the canonical block at its height and the public finalized head.
+//! This module durably records every delivery transition. It treats a receipt
+//! as final only after it checks the canonical block at its height and the
+//! public finalized head.
 
 use std::{
     fs::{self, File, OpenOptions},
@@ -56,7 +56,7 @@ pub const MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS: u128 = MIN_OCOMP_SYSTEM_CARRIER_MAX_
 
 /// The price a submitter signs with, held inside the envelope it is about to be
 /// checked against. The node's suggestion follows the base fee, which moves with
-/// traffic; signing it unclamped makes a submitter reject its own transaction.
+/// traffic. A submitter that signs it unclamped rejects its own transaction.
 pub fn fee_within_envelope(suggested: u128, min_fee: u128, max_fee: u128) -> u128 {
     suggested.clamp(min_fee, max_fee)
 }

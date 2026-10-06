@@ -1,7 +1,7 @@
 //! Confidential gratisfactory tests driven by the in-process enclave engine
-//! (`outbe_gratis::enclave_client::test_enclave`). Balances are
-//! asserted by decrypting the ciphertext with the account's view key exactly as a
-//! client would; writes carry a `ModifyAuth` bound to the account's op-nonce.
+//! (`outbe_gratis::enclave_client::test_enclave`). The tests decrypt the ciphertext with
+//! the account's view key, exactly as a client would, to assert balances. Writes carry a
+//! `ModifyAuth` bound to the account's op-nonce.
 
 use alloy_primitives::{address, Address, Bytes, FixedBytes, B256, U256};
 use alloy_sol_types::{SolCall, SolInterface};

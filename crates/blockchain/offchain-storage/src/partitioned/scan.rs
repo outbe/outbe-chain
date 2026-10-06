@@ -9,7 +9,7 @@ use std::{
     collections::{BinaryHeap, VecDeque},
 };
 
-/// Internal tuning; independent of datasource selection and entity routing.
+/// Internal tuning. It is independent of datasource selection and entity routing.
 struct ScanPolicy {
     read_ahead_entries: usize,
     read_ahead_bytes: usize,

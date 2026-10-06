@@ -117,7 +117,7 @@ impl TryFrom<B256> for TreeKey {
     }
 }
 
-/// A persisted non-zero body leaf. Delete is represented by record absence.
+/// A persisted non-zero body leaf. Record absence represents a delete.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LeafValue(FieldValue);
 

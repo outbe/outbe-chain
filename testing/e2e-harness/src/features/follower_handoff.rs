@@ -207,7 +207,7 @@ fn pin_live_handoff(world: &mut World) {
             }
         }
         // This observation must follow both local proofs. A lagging validator
-        // is already before the boundary; it must not delay valid witnesses.
+        // is already before the boundary. It must not delay valid witnesses.
         require_boundary_future(world, &pinned)
             .expect("both local witnesses precede every canonical successor boundary");
         if witnessed.iter().all(|done| *done) {
@@ -216,7 +216,7 @@ fn pin_live_handoff(world: &mut World) {
         sleep(Duration::from_millis(100));
     }
     // Keep the authenticated verifier and immutable carrier for the later
-    // boundary/restart checks; never perform a fresh latest-handoff selection.
+    // boundary/restart checks. Never perform a fresh latest-handoff selection.
     assert_eq!(follower_pids(world).unwrap(), pids);
     world.state.chained_handoff = Some(pinned);
 }

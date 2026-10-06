@@ -370,8 +370,8 @@ fn validator_redeems_reward_gem(world: &mut World) {
     let (owner, gem_id, mut gem) = wait_for_validator_reward_gem(world);
     let fixture = deploy_settlement_fixture(world);
     let url = world.rpc.url(world.validators.primary_port());
-    // A reward Gem qualifies on a closed day it held in full, and this one was delivered
-    // minutes ago: stamp it behind the day that is then seeded above its floor.
+    // A reward Gem qualifies on a closed day that it held in full. This one was delivered
+    // minutes ago. Stamp it behind the day that is then seeded above its floor.
     if !crate::features::gem_lifecycle::gem_is_qualified(&url, gem_id) {
         let now = world
             .rpc
@@ -424,8 +424,8 @@ fn validator_redeems_reward_gem(world: &mut World) {
         crate::features::gem_lifecycle::gem_is_qualified(&url, gem_id),
         "reward Gem must be qualified for settlement"
     );
-    // The cost is derived, so what to fund is the factory's own quote — already in
-    // the settlement asset's units, which the reference amount never was.
+    // The cost is derived, so the amount to fund is the factory's own quote. That quote
+    // is already in the settlement asset's units. The reference amount never was.
     let quote = eth::read_call(
         &url,
         addresses::GEM_FACTORY_ADDR,
@@ -436,7 +436,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
     )
     .expect("quote settling the reward Gem");
     let payable = quote.paymentMinor;
-    // The token is no sponsored target, so the approval pays its own gas before the drain.
+    // The token is not a sponsored target. So the approval pays its own gas before the drain.
     fund_and_approve(
         world,
         fixture.asset,
@@ -633,8 +633,8 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
         .expect("all validators finalize the reward Gem delivery");
     let qualified = || crate::features::gem_lifecycle::gem_is_qualified(&url, gem_id);
     if !qualified() {
-        // A reward Gem qualifies on a closed day it held in full, and this one was delivered
-        // minutes ago: stamp it behind the day that is then seeded above its floor.
+        // A reward Gem qualifies on a closed day that it held in full. This one was
+        // delivered minutes ago. Stamp it behind the day that is then seeded above its floor.
         let now = world
             .rpc
             .latest_block_timestamp(port)

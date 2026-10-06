@@ -13,7 +13,8 @@ import {ResetPeriod} from "the-compact/src/types/ResetPeriod.sol";
 /// @title RouterAllocator
 /// @notice Allocator for The Compact that authorizes claims from registered router operators.
 /// @dev Pure validation contract - no token operations. Registers itself with The Compact on deploy.
-///      Authorized operators (LayerZeroRouter, HyperlaneRouter, etc.) are added post-deploy via addOperator().
+///      The owner adds authorized operators (LayerZeroRouter, HyperlaneRouter, etc.) post-deploy
+///      via addOperator().
 contract RouterAllocator is IAllocator, Ownable2Step {
     // ============ Constants ============
 
@@ -90,7 +91,7 @@ contract RouterAllocator is IAllocator, Ownable2Step {
     // ============ IAllocator ============
 
     /// @inheritdoc IAllocator
-    /// @dev Called by The Compact before every allocatedTransfer().
+    /// @dev The Compact calls this before every allocatedTransfer().
     ///      operator = the address that called allocatedTransfer() = our router.
     function attest(
         address operator,
@@ -109,7 +110,7 @@ contract RouterAllocator is IAllocator, Ownable2Step {
     }
 
     /// @inheritdoc IAllocator
-    /// @dev Called by The Compact during claim processing.
+    /// @dev The Compact calls this when it processes a claim.
     ///      arbiter = the address that called claim() = our router.
     function authorizeClaim(
         bytes32, /* claimHash */

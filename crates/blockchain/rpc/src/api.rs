@@ -39,7 +39,7 @@ pub struct SlashInfo {
 /// Response type for consensus status.
 ///
 /// **Note:** This is a finalized snapshot, not real-time consensus state.
-/// Fields are updated by the reporter on each finalization event.
+/// The reporter updates the fields on each finalization event.
 /// - `current_view`: last *finalized* Simplex view (not the live voting view)
 /// - `connected_peers`: number of signers in the last certificate bitmap
 ///   (not the actual number of P2P connections)
@@ -64,14 +64,14 @@ pub struct ConsensusStatusInfo {
     pub phase1_verification_mode: Phase1VerificationMode,
     /// Local Mongo materialization and business-readiness state.
     pub projection: ProjectionStatusInfo,
-    /// Canary-observed local TEE-enclave health. Local health, not consensus
-    /// data; `disabled` when the canary worker is off.
+    /// Local TEE-enclave health that the canary observes. This is local health,
+    /// not consensus data. The value is `disabled` when the canary worker is off.
     pub enclave: EnclaveHealthInfo,
 }
 
-/// Operator-visible local TEE-enclave health, fed by the node's periodic
-/// canary decrypt (`--tee-canary.*`). Mirrors [`ProjectionStatusInfo`]'s role:
-/// local observability only, never a consensus input.
+/// Operator-visible local TEE-enclave health. The node's periodic canary
+/// decrypt (`--tee-canary.*`) supplies it. It has the same role as
+/// [`ProjectionStatusInfo`]: local observability only, never a consensus input.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnclaveHealthInfo {
@@ -87,8 +87,8 @@ pub struct EnclaveHealthInfo {
     pub uptime_s: Option<u64>,
     pub heap_current_bytes: Option<u64>,
     pub heap_peak_bytes: Option<u64>,
-    /// `null` until feature detection ran; `false` = enclave binary predates
-    /// the Health probe (canary-decrypt-only mode).
+    /// `null` until feature detection ran. `false` means that the enclave binary
+    /// predates the Health probe (canary-decrypt-only mode).
     pub health_probe_supported: Option<bool>,
 }
 
@@ -151,11 +151,12 @@ pub enum ProjectionHealth {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Phase1VerificationMode {
-    /// Validator-mode node: consensus layer validates the exact parent
-    /// certificate before it is accepted into payload attributes / proposals.
+    /// Validator-mode node: the consensus layer validates the exact parent
+    /// certificate before it accepts the certificate into payload attributes /
+    /// proposals.
     ValidatorEnforced,
-    /// Full-node mode: no consensus bridge or private BLS material is loaded;
-    /// the node imports already-finalized EL blocks under trusted-finality semantics.
+    /// Full-node mode: the node loads no consensus bridge or private BLS material.
+    /// The node imports already-finalized EL blocks under trusted-finality semantics.
     TrustedFinality,
 }
 
@@ -221,10 +222,10 @@ pub struct SyncStatusInfo {
 /// Response type for `getFinalization`: the finalized certificate + block for a
 /// height, as hex of their commonware-codec encodings. A follower's resolver
 /// reconstructs the marshal delivery as the decoded `finalizationHex` followed
-/// by the decoded `blockHex`, then verifies the certificate against the epoch
-/// committee. Hex (0x-prefixed) keeps the wire JSON-friendly; the bytes are NOT
-/// trusted by the caller - verification happens against the committee, not this
-/// RPC.
+/// by the decoded `blockHex`. Then the resolver verifies the certificate against
+/// the epoch committee. Hex (0x-prefixed) keeps the wire JSON-friendly. The
+/// caller does NOT trust the bytes. Verification happens against the committee,
+/// not this RPC.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FinalizationProof {
@@ -353,7 +354,7 @@ pub trait OutbeApi {
     ) -> jsonrpsee::core::RpcResult<outbe_compressed_entities::PointReadResultV1>;
 
     /// Builds the exact Fidelity/Oracle openings for one finalized OCOMP
-    /// `JobIntent`. The event supplies only `intent_id`; the node resolves the
+    /// `JobIntent`. The event supplies only `intent_id`. The node resolves the
     /// authoritative finalized record and exact request state locally.
     #[method(name = "getOcompLysisOpeningsV1")]
     async fn get_ocomp_lysis_openings_v1(
@@ -368,14 +369,14 @@ pub trait OutbeApi {
 
     /// Derive the account's confidential view + modify keys for `ledger` (`Gratis`
     /// or `Promis`) inside the enclave and return them sealed to `ephemeralPubkey`
-    /// (a client X25519 public key). Off-chain key delivery - it never touches
-    /// consensus state.
+    /// (a client X25519 public key). This is off-chain key delivery. It never
+    /// touches consensus state.
     ///
     /// The caller MUST prove control of `account`: `signature` is an EIP-191
     /// `personal_sign` over `"outbe/<ledger>/derive-keys/v1" || account ||
-    /// ephemeralPubkey`, and the recovered signer must equal `account`. Without a
-    /// matching signature the enclave is never asked - otherwise anyone could obtain
-    /// any account's modify key.
+    /// ephemeralPubkey`. The recovered signer must equal `account`. Without a
+    /// matching signature, the enclave never gets the request. Otherwise, anyone
+    /// could obtain any account's modify key.
     #[method(name = "deriveKeys")]
     async fn derive_keys(
         &self,
@@ -423,11 +424,11 @@ pub trait OutbeApi {
     async fn consensus_status(&self) -> jsonrpsee::core::RpcResult<ConsensusStatusInfo>;
 
     /// Returns the committed VRF seed (block header `mixHash` / prev_randao) for
-    /// the given block number, or for the latest canonical block when omitted
-    /// (which, under Outbe's fast finality, is the latest finalized block).
-    /// Reads the authoritative committed header via the provider, so the answer
-    /// is identical on validators and full nodes. `None` if the block does not
-    /// exist or carries no `mixHash`.
+    /// the given block number. When the block number is omitted, returns the seed
+    /// for the latest canonical block. Under Outbe's fast finality, that is the
+    /// latest finalized block. Reads the authoritative committed header through
+    /// the provider, so the answer is identical on validators and full nodes.
+    /// Returns `None` if the block does not exist or carries no `mixHash`.
     #[method(name = "getVrfSeed")]
     async fn get_vrf_seed(
         &self,
@@ -466,15 +467,16 @@ pub trait OutbeApi {
     async fn radicle_repositories(&self) -> jsonrpsee::core::RpcResult<Vec<RadicleRepositoryInfo>>;
 
     /// Returns the finalized certificate + block at `height` (hex-encoded), for
-    /// `--upstream` followers to backfill and verify. Served only by nodes
-    /// running consensus (validators) or a follower that has itself synced the
-    /// height; otherwise errors. The caller verifies the certificate against the
-    /// epoch committee - this RPC is a bytes transport, not a trust root.
+    /// `--upstream` followers to backfill and verify. Only nodes that run
+    /// consensus (validators), or a follower that has itself synced the height,
+    /// serve it. Otherwise, the call returns an error. The caller verifies the
+    /// certificate against the epoch committee. This RPC is a bytes transport,
+    /// not a trust root.
     #[method(name = "getFinalization")]
     async fn get_finalization(&self, height: u64) -> jsonrpsee::core::RpcResult<FinalizationProof>;
 
     /// Canonical consensus block bytes for commitment-bound ancestor recovery.
-    /// This endpoint conveys no finality authority; consumers must authenticate
+    /// This endpoint conveys no finality authority. Consumers must authenticate
     /// the requested digest through an independently verified descendant.
     #[method(name = "getConsensusBlock")]
     async fn get_consensus_block(&self, height: u64) -> jsonrpsee::core::RpcResult<Bytes>;

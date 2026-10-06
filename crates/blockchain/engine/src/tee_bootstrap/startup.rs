@@ -65,16 +65,20 @@ where
 }
 
 /// Run the one-time TEE DKG ceremony at startup and return the **shared offer
-/// public key** derived from the group threshold signature (Seam F). Connects
-/// this node's enclave, exchanges enclave identities across the committee,
-/// drives the dealer/player ceremony + the offer-key partial-signature round
-/// entirely through the enclave seams, and returns the byte-identical
-/// `tribute_offer_public` every honest node derives. The offer *secret* never leaves the
-/// enclave; it is stored resident there and used to decrypt offers.
+/// public key** derived from the group threshold signature (Seam F). This function:
 ///
-/// The request's participant count is the committee size; its network binding
-/// and offer epoch bind the derived offer
-/// key. Runs before [`run_tee_bootstrap_v2_at_startup`], whose OST3 payload registers the
+/// 1. Connects this node's enclave.
+/// 2. Exchanges enclave identities across the committee.
+/// 3. Drives the dealer/player ceremony and the offer-key partial-signature round
+///    entirely through the enclave seams.
+/// 4. Returns the byte-identical `tribute_offer_public` that every honest node derives.
+///
+/// The offer *secret* never leaves the enclave. It is stored resident there and
+/// used to decrypt offers.
+///
+/// The request's participant count is the committee size. Its network binding
+/// and offer epoch bind the derived offer key. This function runs before
+/// [`run_tee_bootstrap_v2_at_startup`], whose OST3 payload registers the
 /// returned key on-chain at block 1.
 pub async fn run_tee_dkg_at_startup<E, S, R, C>(
     client: &mut E,
@@ -193,8 +197,8 @@ where
     R: P2pReceiver<PublicKey = bls12381::PublicKey>,
     C: Clock,
 {
-    // First exchange only the public BLS identities. The resulting exact set is
-    // then network-bound inside each enclave before any share-recipient key is
+    // First exchange only the public BLS identities. Then each enclave binds the
+    // resulting exact set to the network before any share-recipient key is
     // trusted.
     let preliminary = gossip
         .exchange_identities(IdentityExchange {

@@ -1,5 +1,5 @@
 //! The factory stores the daily scan cursor. Positions and return serials live
-//! in Credis; encrypted collateral is aggregated at CREDIS_ADDRESS in Gratis.
+//! in Credis. Encrypted collateral is aggregated at CREDIS_ADDRESS in Gratis.
 
 use outbe_macros::contract;
 use outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS;

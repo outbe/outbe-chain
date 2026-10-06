@@ -47,7 +47,7 @@ impl ValidatorSet<'_> {
     /// Stores a validator's versioned Commonware P2P address payload.
     ///
     /// The stable ABI is Outbe-owned `(version, bytes)`, not Commonware's raw
-    /// codec. The payload is fully validated before any storage write.
+    /// codec. This function fully validates the payload before any storage write.
     pub fn set_p2p_address(
         &mut self,
         caller: Address,
@@ -101,11 +101,11 @@ impl ValidatorSet<'_> {
 
     /// Registers a new validator with BLS proof-of-possession verification.
     ///
-    /// When `bls_signature` is `Some`, verifies that the BLS MinPk key was used to
-    /// sign the chain-bound registration message under the "outbe_REGISTER"
+    /// When `bls_signature` is `Some`, verifies that the BLS MinPk key signed the
+    /// chain-bound registration message under the "outbe_REGISTER"
     /// namespace.
-    /// `None` is rejected by this production API. Genesis is storage-seeded;
-    /// feature-gated tests use [`Self::register_validator`] explicitly.
+    /// This production API rejects `None`. Genesis is storage-seeded.
+    /// Feature-gated tests use [`Self::register_validator`] explicitly.
     ///
     /// `consensus_pubkey` is a 48-byte BLS12-381 MinPk public key.
     /// `bls_signature` is an optional 96-byte BLS MinPk signature.
@@ -164,7 +164,7 @@ impl ValidatorSet<'_> {
         }
 
         // Every runtime registration requires proof of possession. The only
-        // no-PoP path is the feature-gated bootstrap/test helper above; normal
+        // no-PoP path is the feature-gated bootstrap/test helper above. Normal
         // owner authority does not weaken the consensus-key invariant.
         if let Some(sig_bytes) = bls_signature {
             verify_bls_registration_sig(
@@ -181,14 +181,14 @@ impl ValidatorSet<'_> {
         }
 
         // bound the free, permissionless self-registration Sybil surface.
-        // A self-registered REGISTERED node is admitted to the consensus P2P
-        // secondary tier (the TEE verifier flow), so cap how many unstaked
-        // REGISTERED validators can exist at once - far below
-        // `config_max_validators` - so an attacker cannot fill the validator set
-        // (or the consensus P2P set) with free Sybils. Owner registrations
-        // (`caller == owner`) bypass this cap. Checked before any state mutation
-        // (including the re-registration path), so an over-cap self-registration
-        // never consumes a registration slot.
+        // The consensus P2P secondary tier admits a self-registered REGISTERED
+        // node (the TEE verifier flow). So cap how many unstaked REGISTERED
+        // validators can exist at once, far below `config_max_validators`. An
+        // attacker then cannot fill the validator set (or the consensus P2P set)
+        // with free Sybils. Owner registrations (`caller == owner`) bypass this
+        // cap. This check runs before any state mutation (including the
+        // re-registration path), so an over-cap self-registration never consumes
+        // a registration slot.
         if caller == validator_addr && self.registered_count()? >= MAX_SELF_REGISTERED_UNSTAKED {
             return Err(PrecompileError::Revert(
                 "self-registration limit reached: too many unstaked REGISTERED validators \

@@ -44,7 +44,7 @@ fi
 
 RADICLE_OWNER_UID=$(id -u)
 
-# GNU stat spells this `-c '%u %a'`; BSD stat (macOS) spells it `-f '%u %Lp'`.
+# GNU stat spells this `-c '%u %a'`. BSD stat (macOS) spells it `-f '%u %Lp'`.
 # Pick the dialect once instead of assuming the GNU one.
 if stat -f '%u' . >/dev/null 2>&1; then
     stat_owner_and_mode() { stat -f '%u %Lp' "$1"; }
@@ -91,9 +91,9 @@ if [ "$(stat_owner_and_mode "$RADICLE_HOME/keys/radicle.pub" | cut -d' ' -f1)" !
     echo "Error: $RADICLE_HOME/keys/radicle.pub must be owned by uid $RADICLE_OWNER_UID" >&2
     exit 1
 fi
-# The public key is non-secret and older keygen versions inherited a group-write
-# bit. Normalize it only after exclusive ownership; the private key remains
-# strict and is never rewritten.
+# The public key is non-secret, and older keygen versions inherited a group-write
+# bit. Normalize it only after exclusive ownership. The private key remains
+# strict, and this script never rewrites it.
 chmod 644 "$RADICLE_HOME/keys/radicle.pub"
 
 for directory in storage node cobs; do
@@ -105,11 +105,11 @@ for directory in storage node cobs; do
     fi
 done
 
-# No config.json is written here. The sidecar builds its own runtime config
-# from these command-line options (`Options::node_config` in the fork) and
+# This script writes no config.json. The sidecar builds its own runtime config
+# from these command-line options (`Options::node_config` in the fork). It
 # never reads config.json, so a second copy of those settings could only drift
-# out of sync - and the `network: outbe` it used to write makes a stock `rad`
-# refuse to start, since upstream accepts only `main` or `test`.
+# out of sync. Also, the `network: outbe` that this script used to write makes a
+# stock `rad` refuse to start, because upstream accepts only `main` or `test`.
 # A client that needs config.json gets it from `outbe-cli rad init`.
 
 if [ -e "$RADICLE_CONTROL_SOCKET" ]; then

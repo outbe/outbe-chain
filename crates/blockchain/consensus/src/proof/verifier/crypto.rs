@@ -105,8 +105,8 @@ fn verify_threshold_vrf_proof(
     seed_message: &[u8],
     proof: &VrfProof<MinSig>,
 ) -> Result<(), V2VerifyError> {
-    // Plain-pairing core shared with the slashing path (`seed_partial`); no RNG,
-    // so the gate's Result is byte-deterministic across every validator.
+    // Plain-pairing core shared with the slashing path (`seed_partial`). It uses
+    // no RNG, so the gate's Result is byte-deterministic across every validator.
     if crate::proof::verify_seed_signature_plain(group_pk, seed_message, &proof.threshold_signature)
     {
         Ok(())

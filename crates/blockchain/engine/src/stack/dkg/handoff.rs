@@ -420,18 +420,21 @@ pub(in crate::stack) fn active_set_hash_from_addresses(addresses: &[EthAddress])
     alloy_primitives::keccak256(bytes)
 }
 
-/// A share-less node (verifier-join TEE full-node) that is about to participate in
-/// a DKG reshare as a player must present the COMMITTEE's current output as the
-/// ceremony `prev_output` - the DKG ceremony id binds the full previous output, so
-/// a divergent prev_output yields a divergent `info_hash`, every dealer bundle is
-/// dropped ("received DKG message for a different ceremony"), the ceremony times
-/// out, and the joiner goes ACTIVE-but-voteless. Its in-memory `last_dkg_output`
-/// may be the stale CLI `--consensus.dkg-output` bootstrap value (on a TEE chain
-/// the runtime-derived genesis consensus output differs from the bootstrap file)
-/// when it joins WITHOUT first following a reshare or restarting. Refresh it from
-/// the chain's latest finalized DKG boundary (scanning back from `scan_height`)
-/// before the ceremony. Signers already hold the correct output from their prior
-/// ceremony, so this only runs for the share-less case. Best-effort: on any
+/// This applies to a share-less node (verifier-join TEE full-node) that is about to
+/// participate in a DKG reshare as a player. That node must present the COMMITTEE's
+/// current output as the ceremony `prev_output`. The DKG ceremony id binds the full
+/// previous output. A divergent prev_output therefore yields a divergent `info_hash`.
+/// Then:
+/// - every dealer bundle is dropped ("received DKG message for a different ceremony"),
+/// - the ceremony times out,
+/// - the joiner goes ACTIVE-but-voteless.
+///
+/// The node's in-memory `last_dkg_output` may be the stale CLI `--consensus.dkg-output`
+/// bootstrap value when it joins WITHOUT first following a reshare or restarting. On a
+/// TEE chain, the runtime-derived genesis consensus output differs from the bootstrap
+/// file. Refresh the value from the chain's latest finalized DKG boundary (scanning back
+/// from `scan_height`) before the ceremony. Signers already hold the correct output from
+/// their prior ceremony, so this only runs for the share-less case. Best-effort: on any
 /// recovery/decode failure it keeps the local value and warns.
 pub(in crate::stack) fn refresh_verifier_join_prev_output(
     provider: &(impl HeaderProvider<Header = OutbeHeader> + BlockHashReader),
@@ -597,7 +600,7 @@ pub(in crate::stack) fn refresh_validator_set_at_height(
         .map_err(|e| eyre::eyre!("failed to get state at freeze height {freeze_height}: {e}"))?;
     // CycleTick has already moved every overdue ACTIVE validator into the jailed
     // lifecycle before this exact freeze state. The ordinary reshare target is
-    // therefore authoritative; legacy boundary expiry fields remain empty.
+    // therefore authoritative. Legacy boundary expiry fields remain empty.
     let filtered = validators::read_reshare_target_with_empty_tee_exclusions_from_state(&state)
         .wrap_err("failed to read frozen reshare target after TEE deadline enforcement")?;
     let new_set = filtered.validator_set;

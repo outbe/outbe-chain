@@ -7,12 +7,12 @@
 //! packed: [ date_key u32 (high 32 bits) | count u32 (low 32 bits) ]
 //! ```
 //!
-//! Slot 0 carries the schema version (currently `1`), written at
-//! genesis by `scripts/seed_genesis.py::seed_zerofee`. The macro-
-//! allocated `counter` Map uses slot 0 as its keccak base, but Map
+//! Slot 0 carries the schema version (currently `1`).
+//! `scripts/seed_genesis.py::seed_zerofee` writes it at genesis. The
+//! macro-allocated `counter` Map uses slot 0 as its keccak base. But Map
 //! entries are stored at `keccak256(addr || base_slot)`, which never
 //! collides with slot 0 itself. A future layout migration would bump
-//! the version marker and key its transformation off it; today the
+//! the version marker and base its transformation on it. Today the
 //! only consumer is the README rule "All precompiles ... slot 0 =
 //! version" plus future migration logic.
 

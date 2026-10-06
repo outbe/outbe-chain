@@ -1,10 +1,14 @@
-//! - `ParentProofResolver` bounded-fetch tests.
+//! `ParentProofResolver` bounded-fetch tests.
 //!
-//! Drives the resolver against a mock [`ParentProofTransport`] so the test
-//! suite exercises the schedule-budget enforcement, the hash-exact contract
-//! , the local-witness gate , and the competing-branch safety
-//! property - all without spinning up a real P2P stack. The marshal
-//! transport plugs into the same trait surface.
+//! Drives the resolver against a mock [`ParentProofTransport`]. Without a real P2P stack,
+//! the test suite exercises:
+//!
+//! - the schedule-budget enforcement
+//! - the hash-exact contract
+//! - the local-witness gate
+//! - the competing-branch safety property
+//!
+//! The marshal transport implements the same trait surface.
 
 use std::{
     sync::{Arc, Mutex},
@@ -123,8 +127,8 @@ struct CallLog {
 
 #[derive(Clone)]
 enum MockBehaviour {
-    /// Return this fixed Notarization on every call. Boxed because the
-    /// Notarization inline is ~500 bytes - see clippy::large_enum_variant.
+    /// Return this fixed Notarization on every call. The variant is boxed because
+    /// the inline Notarization is ~500 bytes. See clippy::large_enum_variant.
     Returns(Box<Notarization<HybridScheme<MinSig>, OutbeDigest>>),
     /// Never respond, so the resolver's per-attempt `Clock::sleep(attempt_timeout)`
     /// race always wins and the attempt times out (deterministic - no real sleep).
@@ -189,15 +193,15 @@ fn remote_notarized_fetch_hash_mismatch_returns_no_exact_parent_proof() {
     // and any mock delay advance on one virtual clock, so the test is reproducible.
     // `context` is the `Clock` threaded into `fetch_parent_proof`.
     commonware_runtime::deterministic::Runner::default().start(|context| async move {
-        // Transport returns a Notarization for payload "X" but the resolver was
-        // asked for the parent hash of payload "Y". NoProofForExactParent.
+        // The transport returns a Notarization for payload "X", but the test asks
+        // the resolver for the parent hash of payload "Y". Expected: NoProofForExactParent.
         let round = Round::new(Epoch::new(0), View::new(2));
         let (returned, verifier) = notarization_for(round, View::new(1), b"branch-x");
         let transport = MockTransport::new(MockBehaviour::Returns(Box::new(returned)));
 
         let store = FinalizedParentCertStore::new();
-        // Local witness present so a hash match WOULD succeed - proves the
-        // mismatch path short-circuits before the witness check.
+        // A local witness is present, so a hash match WOULD succeed. This proves
+        // that the mismatch path short-circuits before the witness check.
         store
             .put_certified_notarization(witness_for(
                 round,
@@ -271,10 +275,10 @@ fn remote_notarized_fetch_without_local_certification_witness_returns_no_proof()
 fn remote_notarized_returns_competing_branch_same_round_does_not_overwrite_other_hash_record() {
     use commonware_runtime::Runner as _;
     commonware_runtime::deterministic::Runner::default().start(|context| async move {
-        // Pre-existing record at hash X for round R. Fetch requested for hash Y.
-        // Mock returns notarization at round R but for hash X (competing branch).
-        // Resolver must short-circuit on hash mismatch AND the record at X
-        // must remain byte-identical (no overwrite of unrelated keys).
+        // A record already exists at hash X for round R. The test requests a fetch
+        // for hash Y. The mock returns a notarization at round R but for hash X
+        // (competing branch). The resolver must short-circuit on hash mismatch AND
+        // the record at X must remain byte-identical (no overwrite of unrelated keys).
         let round = Round::new(Epoch::new(0), View::new(2));
         let parent_view = View::new(1);
         let (competing, verifier) = notarization_for(round, parent_view, b"competing-branch-x");
@@ -349,7 +353,7 @@ fn parent_proof_fetch_respects_timeout_attempts_and_max_bytes() {
                     round,
                     parent_hash: B256::from_slice(Sha256::hash(&[b"any"]).as_ref()),
                 },
-                // More targets than ATTEMPTS - resolver must cap to ATTEMPTS.
+                // More targets than ATTEMPTS. The resolver must cap to ATTEMPTS.
                 &[0u32, 1, 2, 3, 4],
             )
             .await;
@@ -378,7 +382,7 @@ fn parent_proof_fetch_respects_timeout_attempts_and_max_bytes() {
 // -- Local helpers ---------------------------------------------------------
 
 /// Build a minimal local certification witness record so the resolver's
-/// `is_none()` gate passes. Content does not need to crypto-verify here; the
+/// `is_none()` gate passes. Content does not need to crypto-verify here. The
 /// resolver only checks for the slot's presence under the parent hash.
 fn witness_for(round: Round, parent_view: View, parent_hash: B256) -> CertifiedParentProofRecord {
     CertifiedParentProofRecord {

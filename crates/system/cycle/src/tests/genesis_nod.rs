@@ -73,7 +73,7 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
         with_execution_scope(&ctx, |scope, _| {
             let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
             let cycle = Cycle::new(storage.clone());
-            // Isolate Nod's schedule; unrelated triggers are not due.
+            // Isolate Nod's schedule. Unrelated triggers are not due.
             for spec in ACTIVE_TRIGGERS {
                 cycle
                     .last_executed_at
@@ -133,8 +133,8 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
             // rather than replaying the same latest price on subsequent blocks.
             let late = midnight + 3 * SECONDS_PER_DAY;
             let previous = previous_date_key(timestamp_to_date_key(late));
-            // The sealed test terms call on 2 breach days out of a 3-day window
-            // and an unpriced day counts as zero, so every day closed during
+            // The sealed test terms call on 2 breach days out of a 3-day window.
+            // An unpriced day counts as zero. So every day closed during
             // the halt must carry its finalized price for the call to be due.
             let mut day = previous;
             while day >= timestamp_to_date_key(midnight) {

@@ -199,7 +199,7 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
         &CREDIS_FACTORY_ADDRESS,
         IVaultRouter::StablesTarget::Credis as u8,
     )?;
-    // Reserve before pledging; the held assets are funded below through real ERC20 calls.
+    // Reserve before pledging. The code below funds the held assets through real ERC20 calls.
     router.reservations.create(&LiquidityReservation {
         id: U256::ONE,
         asset: ASSET,

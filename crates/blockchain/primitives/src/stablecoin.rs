@@ -165,9 +165,14 @@ struct WirePayload {
 
 /// Decodes a byte-exact canonical Stablecoin Factory V1 proposal.
 ///
-/// The decoder parses into a fixed typed shape, validates every field, re-encodes it,
-/// and requires byte equality. This rejects whitespace, alternate key order, duplicate
-/// or unknown keys, non-shortest JSON escaping and alternate numeric spellings.
+/// The decoder does these steps:
+/// 1. Parse the bytes into a fixed typed shape.
+/// 2. Validate every field.
+/// 3. Re-encode the payload.
+/// 4. Require byte equality with the input.
+///
+/// This rejects whitespace, alternate key order, duplicate or unknown keys, non-shortest
+/// JSON escaping and alternate numeric spellings.
 pub fn decode_canonical_stablecoin_create(
     bytes: &[u8],
 ) -> Result<StablecoinCreatePayload, StablecoinCodecError> {

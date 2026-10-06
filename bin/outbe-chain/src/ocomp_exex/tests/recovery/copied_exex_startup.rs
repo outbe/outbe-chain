@@ -170,7 +170,7 @@ fn exex_config(root: &Path) -> OcompExExConfigV1 {
         retention_selector: Arc::new(
             outbe_node::ocomp::retention::SharedOcompRetentionSelector::new(),
         ),
-        // These frames have no request/retention events; they cannot establish
+        // These frames have no request/retention events. They cannot establish
         // the installed-retention integration obligation.
         retention_required: false,
     }
@@ -225,7 +225,7 @@ fn assert_no_submissions(root: &Path) {
     }
 }
 
-// Real native storage fixture; transactions are signed but not EVM-executed.
+// Real native storage fixture. Its transactions are signed but not EVM-executed.
 fn write_frames(root: &Path, first: u64, last: u64) -> Vec<ProjectionCheckpoint> {
     let db = init_db(root.join("db"), DatabaseArguments::test()).unwrap();
     let tx = db.tx_mut().unwrap();
@@ -246,8 +246,8 @@ fn write_frames(root: &Path, first: u64, last: u64) -> Vec<ProjectionCheckpoint>
             )
             .unwrap(),
     }
-    // Native genesis fixture state. The production FIFO is empty at 1/1;
-    // all-zero storage is malformed, not an empty initialized queue.
+    // Native genesis fixture state. The production FIFO is empty at 1/1.
+    // All-zero storage is malformed, not an empty initialized queue.
     // Preserve the initialization history, not only the latest words.
     if first == 0 {
         use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};

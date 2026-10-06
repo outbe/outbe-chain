@@ -9,22 +9,22 @@ use k256::ecdsa::SigningKey;
 
 use crate::rpc::Rpc;
 
-/// Price a legacy tx off the block's base fee, with `2x` headroom so it survives a
-/// base-fee rise between the read and inclusion - the begin-zone system txs and offer
+/// Price a legacy tx from the block's base fee, with `2x` headroom so it survives a
+/// base-fee rise between the read and inclusion. The begin-zone system txs and offer
 /// decryption make blocks bursty enough for several steps.
 ///
 /// Deliberately not the `eth_gasPrice` suggestion: that figure includes the tips of
 /// recently mined txs, which on this chain are mostly our own. Doubling it fed the
 /// next suggestion, which we doubled again, and the advised price climbed 7, 14, 28,
-/// 56 with no demand behind it. Over-pricing is not free either - the sender must
-/// hold `gas_limit * gas_price` up front, so a runaway price locks a payer out.
+/// 56 with no demand behind it. Over-pricing is not free either. The sender must
+/// hold `gas_limit * gas_price` up front, so a runaway price blocks a payer.
 pub(crate) fn buffered_gas_price(base_fee: U256) -> U256 {
     base_fee
         .saturating_mul(U256::from(2))
         .max(U256::from(alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE))
 }
 
-/// Latest block base fee; a chain that states none prices at the protocol floor.
+/// Latest block base fee. A chain that states none prices at the protocol floor.
 pub(crate) async fn latest_base_fee(client: &impl Rpc) -> eyre::Result<U256> {
     let block = client.eth_get_latest_block().await?;
     Ok(block

@@ -243,7 +243,7 @@ mod tests {
             // The closed mailbox acknowledges the cloned block update inline, so
             // the waiter resolves immediately. Race it against a runtime `Clock`
             // sleep (mirrors `dkg_actor::sim_tests`) instead of a wall-clock async
-            // timeout; the safety bound never fires.
+            // timeout. The safety bound never fires.
             let mut waiter = std::pin::pin!(waiter);
             let mut timeout = std::pin::pin!(context.sleep(Duration::from_secs(1)));
             let result = commonware_macros::select! {

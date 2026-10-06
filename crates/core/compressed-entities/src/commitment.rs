@@ -62,9 +62,9 @@ impl TryFrom<[u8; 32]> for Commitment {
 
 /// The full Poseidon digest of `(owner, worldwide_day)`.
 ///
-/// [`derive_poseidon_entity_id`] keeps only its last 28 bytes, so a caller that
-/// has to check the whole digest - verifying an enclave-returned token id, for
-/// one - must take it from here and not from the identity.
+/// [`derive_poseidon_entity_id`] keeps only its last 28 bytes. A caller that
+/// has to check the whole digest must take it from here and not from the
+/// identity. One example is a caller that verifies an enclave-returned token id.
 pub fn derive_poseidon_digest(
     owner: Address,
     worldwide_day: WorldwideDay,

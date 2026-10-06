@@ -519,8 +519,8 @@ mod tests {
     }
 
     /// An `enclave` object absent from `outbe_consensusStatus` (older node) is
-    /// a warning, never a readiness failure - the happy test above covers it.
-    /// A ready canary keeps READY; degraded/unavailable flips to NOT READY.
+    /// a warning, never a readiness failure. The happy test above covers it.
+    /// A ready canary keeps READY. A degraded/unavailable canary flips to NOT READY.
     #[tokio::test]
     async fn test_run_readiness_enclave_ready_happy() {
         let mock = MockRpc {

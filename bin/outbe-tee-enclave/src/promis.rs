@@ -1,7 +1,7 @@
 //! Enclave-side Promis confidential balance engine (secret-bearing).
 //!
 //! The Promis analogue of [`crate::gratis`], restricted to Mint/Burn over an
-//! encrypted per-account balance - Promis has no pledge/credis machinery. All key
+//! encrypted per-account balance. Promis has no pledge/credis machinery. All key
 //! derivation, amount AEAD, and modify-auth verification is the shared
 //! [`crate::confidential`] core under the [`crate::confidential::PROMIS`] domain,
 //! so Promis keys are cryptographically independent from Gratis's. Every function
@@ -27,7 +27,7 @@ pub fn derive_view_key(state_key: &[u8; 32], account: Address) -> Result<[u8; 32
     PROMIS.derive_view_key(state_key, account)
 }
 
-/// Per-account modify key: authorizes writes (via HMAC); never decrypts state.
+/// Per-account modify key: authorizes writes (via HMAC). It never decrypts state.
 /// See [`crate::confidential::Domain::derive_modify_key`].
 pub fn derive_modify_key(state_key: &[u8; 32], account: Address) -> Result<[u8; 32]> {
     PROMIS.derive_modify_key(state_key, account)
@@ -75,7 +75,7 @@ fn reject(reason: impl Into<String>) -> PromisOpResult {
 }
 
 /// Apply a Promis op over encrypted state. Pure and deterministic given
-/// `state_key` + `req`. Sets `inputs_canonical_hash`; the caller (dispatch) signs
+/// `state_key` + `req`. Sets `inputs_canonical_hash`. The caller (dispatch) signs
 /// and fills `attestation_tag`. Business rejections come back as
 /// `PromisOpStatus::Rejected` (-> precompile revert), never a panic.
 pub fn apply_op(state_key: &[u8; 32], req: &PromisOpRequest) -> PromisOpResult {

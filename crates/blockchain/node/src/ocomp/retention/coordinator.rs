@@ -139,7 +139,8 @@ pub struct OcompRetentionCoordinator {
 
 impl OcompRetentionCoordinator {
     /// Open a managed journal root. Transient storage I/O enters recoverable
-    /// fail-closed unavailability; corrupt or ambiguous authority is quarantined.
+    /// fail-closed unavailability. The coordinator quarantines corrupt or ambiguous
+    /// authority.
     pub fn open(root: impl Into<PathBuf>, source: Arc<dyn FinalizedInputProofSource>) -> Self {
         Self::open_with_durability(root, source, Arc::new(OsJournalDurability))
     }

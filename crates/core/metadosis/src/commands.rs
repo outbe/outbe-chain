@@ -45,8 +45,8 @@ pub fn start_metadosis(
 }
 
 /// Purpose-bound terminal-sink adapter used by the Cycle-owned daily
-/// allocation flow. The internal sink returns a typed semantic receipt; after
-/// exhaustive confirmation that the limit is formed, the adapter returns zero
+/// allocation flow. The internal sink returns a typed semantic receipt. The
+/// adapter exhaustively confirms that the limit is formed. Then it returns zero
 /// because the allocation has no unused amount.
 pub fn apply_cycle_day_limit(ctx: &BlockRuntimeContext<'_>, amount: U256) -> Result<U256> {
     match crate::emission_sink::apply(ctx, amount)? {

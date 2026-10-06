@@ -1,7 +1,7 @@
 //! Consensus startup and the epoch application lifecycle.
 //!
 //! `run` orders startup adapters and hands ownership to the supervisor. The
-//! supervisor keeps event selection and shutdown policy visible; completion,
+//! supervisor keeps event selection and shutdown policy visible. Completion,
 //! activation, pending recovery and ceremony scheduling own DKG operations.
 //! Epoch authority, DKG progress, routed channels and persistent actors have
 //! separate state in `runtime`. These are private seams within the stack;

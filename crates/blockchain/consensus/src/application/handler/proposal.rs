@@ -122,8 +122,8 @@ impl ProposalPayloadTrace {
     }
 }
 
-// `Built` carries the full `ConsensusBlock`; the other variants are unit. This is
-// an internal result returned once per propose and consumed immediately - boxing
+// `Built` carries the full `ConsensusBlock`. The other variants are unit. This is
+// an internal result returned once per propose and consumed immediately. Boxing
 // the block would only add an allocation on the hot proposer path.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
@@ -208,9 +208,9 @@ impl ApplicationShared {
             .map_err(|error| eyre::eyre!("refusing proposal above VRF expiry: {error}"))?;
 
         // Steps 3+4: Canonicalize parent as head and build next block.
-        // Uses FCU-based flow: canonicalize_and_build sends
-        // FCU with payload attributes so the engine starts building a payload
-        // on the correct canonical state with access to the txpool.
+        // Uses FCU-based flow. canonicalize_and_build sends FCU with payload
+        // attributes. Then the engine starts to build a payload on the correct
+        // canonical state with access to the txpool.
         let candidate_execution_budget = execution_read_budget.clone();
         let outcome = self
             .build_block(

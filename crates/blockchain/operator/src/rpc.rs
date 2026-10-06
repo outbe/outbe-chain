@@ -23,7 +23,7 @@ pub trait FinalizedStateRpc {
     ) -> impl Future<Output = Result<Vec<u8>>> + Send;
 }
 
-/// Read-only Registry facts; no transaction preparation or relay capability.
+/// Read-only Registry facts. No transaction preparation or relay capability.
 pub trait RegistryRpc: ChainRpc + FinalizedStateRpc {
     fn tee_renewal_schedule_v1(&self) -> impl Future<Output = Result<TeeRenewalScheduleV1>> + Send;
 }

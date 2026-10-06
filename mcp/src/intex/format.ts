@@ -20,7 +20,7 @@ function label(table: string[], code: number | bigint): { code: number; name: st
 }
 
 // Short clarifications for non-obvious auction stages. The name stays exactly as
-// the contract enum; the note only explains it.
+// the contract enum. The note only explains it.
 const AUCTION_STAGE_NOTE: Record<number, string> = {
   2: "reveal window ended, awaiting clearing", // Issuance
 };

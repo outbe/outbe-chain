@@ -379,7 +379,7 @@ mod tests {
         let mut journal = Journal::open(&directory.path(), "identity").unwrap();
         journal.store(vote()).unwrap();
         // Move the directory so a subsequent persistence operation cannot
-        // open it; this fails reliably even when tests run as root.
+        // open it. This fails reliably even when tests run as root.
         let backup = TestDirectory::new();
         let moved = backup.0.join("moved");
         fs::rename(&directory.0, &moved).unwrap();

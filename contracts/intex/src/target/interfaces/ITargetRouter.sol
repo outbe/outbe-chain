@@ -6,9 +6,9 @@ pragma solidity 0.8.30;
 /// @notice Interface for a target-chain router. Relays revealed bids to Outbe and receives auction/series messages
 ///         from Outbe over the protocol-agnostic ERC-7786 bridge.
 /// @dev Deployed on each target chain behind a UUPS proxy. Inbound delivery arrives via
-///      {ERC7786MessengerBase-receiveMessage}; the bids relay is triggered by the inbound AUCTION_STAGE_CLEARING and
-///      funded from the contract's relay float. Auction messages are keyed by `worldwideDay`; series
-///      (issuance/mark) messages by `seriesId`.
+///      {ERC7786MessengerBase-receiveMessage}. The inbound AUCTION_STAGE_CLEARING triggers the bids relay,
+///      and the contract's relay float funds it. Auction messages are keyed by `worldwideDay`. Series
+///      (issuance/mark) messages are keyed by `seriesId`.
 interface ITargetRouter {
     // --- Events ---
     /// @notice Emitted when a bids batch is sent to Outbe.
@@ -72,7 +72,7 @@ interface ITargetRouter {
 
     event VwapRegistrySet(address registry);
 
-    /// @notice Emitted when a round of the day's bids relay leaves chunks behind: the gas it was given
+    /// @notice Emitted when a round of the day's bids relay leaves chunks unsent: the gas it was given
     ///         ran out, or a send reverted and the round rolled back.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param nextBatch First chunk still to send.
@@ -86,8 +86,8 @@ interface ITargetRouter {
     /// @param totalBatches Chunks the day's relay spans.
     event BidsRemainingSent(bytes32 indexed sendId, uint32 indexed worldwideDay, uint16 nextBatch, uint16 totalBatches);
 
-    /// @notice Emitted when the report itself could not be sent - an empty relay float, most likely - so the
-    ///         day waits for a hand-pushed `relayBids` instead of another round.
+    /// @notice Emitted when the report itself could not be sent, most likely because of an empty relay
+    ///         float. The day then waits for a hand-pushed `relayBids` instead of another round.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param nextBatch First chunk still to send.
     /// @param totalBatches Chunks the day's relay spans.
@@ -124,14 +124,15 @@ interface ITargetRouter {
     event NativeSwept(address indexed to, uint256 amount);
 
     // --- Errors ---
-    /// @notice A daily VWAP arrived before a registry was set; the transport redelivers it.
+    /// @notice A daily VWAP arrived before a registry was set. The transport redelivers it.
     error VwapRegistryUnset();
     /// @notice The registry records days from another router.
     error VwapRegistryRouterMismatch(address registryRouter);
     /// @notice Zero address provided.
     /// @param field Field name that contains zero address.
     error ZeroAddress(string field);
-    /// @notice A day's revealed bids need more than 256 batches, which the receiver's arrival mask cannot track.
+    /// @notice A day's revealed bids need more than 256 batches. The receiver's arrival mask cannot
+    ///         track that many.
     /// @param worldwideDay Worldwide day (yyyymmdd) whose relay was rejected.
     /// @param totalBatches Batch count the relay would have needed.
     error TooManyBidsBatches(uint32 worldwideDay, uint16 totalBatches);
@@ -141,7 +142,7 @@ interface ITargetRouter {
     /// @param available Current contract balance.
     /// @param requested Amount the admin attempted to sweep.
     error NativeBalanceInsufficient(uint256 available, uint256 requested);
-    /// @notice Self-call shim was invoked by an external caller; only `address(this)` is allowed.
+    /// @notice An external caller invoked the self-call shim. Only `address(this)` is allowed.
     error NotSelf();
     /// @notice `relayBids` called for a day whose relay never started or has already finished.
     /// @param worldwideDay Worldwide day (yyyymmdd).
@@ -152,7 +153,7 @@ interface ITargetRouter {
     error NoSuchParkedIssuance(uint256 idx);
     /// @notice `applyParkedMark` called for a series with nothing waiting in its slot.
     error NoParkedMark(bytes14 seriesId);
-    /// @notice The parked entry at `idx` was already resolved; another retry would repeat its effect.
+    /// @notice The parked entry at `idx` was already resolved. Another retry would repeat its effect.
     error AlreadyResolved(uint256 idx);
 
     // --- Admin ---

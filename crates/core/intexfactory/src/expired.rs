@@ -55,7 +55,7 @@ fn defer_group(
 struct GroupExpiry {
     /// Members walked, for the sweep's budget accounting.
     members: u32,
-    /// Members left unretired; a non-zero count keeps the group alive.
+    /// Members left unretired. A non-zero count keeps the group alive.
     pending: u32,
 }
 

@@ -1,19 +1,19 @@
 //! Direct-parent proof selection for the proposer path.
 //!
-//! Replaces the V1 `FinalizationSelector::await_parent_cert` polling waiter
+//! This module replaces the V1 `FinalizationSelector::await_parent_cert` polling waiter
 //! with an event-driven exact-parent lookup: finalization slot ->
 //! certified-notarization slot. A certified-notarization record whose block
 //! number is still `0` is a local exact-key witness. The live proposer path
-//! waits briefly for the finalization slot to arrive and, only after that
-//! bounded wait expires, promotes the owned CN clone with the caller's known
+//! waits briefly for the finalization slot. Only after that bounded wait
+//! expires does it promote the owned CN clone with the caller's known
 //! parent block number. The store record remains witness-only.
 //!
-//!, this module no longer calls
-//! `validate_finalized_parent_attestation`: the writer side (the
+//! This module no longer calls `validate_finalized_parent_attestation`.
+//! The writer side is the trust boundary:
 //! [`crate::finalization::actor::FinalizationActor`] for the Finalization slot
 //! and [`crate::reporter::OutbeReporter::handle_certification`] for the
-//! CertifiedNotarization slot) is the trust boundary, and re-validating on
-//! every proposer read added latency without changing the trust model.
+//! CertifiedNotarization slot. Re-validation on every proposer read added
+//! latency without a change to the trust model.
 
 use crate::finalization::parent_cert_store::{
     CertifiedParentProofKey, CertifiedParentProofRecord, FinalizedParentCertStore,
@@ -30,7 +30,7 @@ pub fn clamped_phase1_finalization_wait(requested: Duration, leader_timeout: Dur
     std::cmp::min(std::cmp::max(requested, PHASE1_FINALIZATION_WAIT_MIN), max)
 }
 
-/// Direct-parent proof selector. Cheap to clone - internally just an `Arc`
+/// Direct-parent proof selector. A clone is cheap: internally it is only an `Arc`
 /// handle on the underlying [`FinalizedParentCertStore`].
 #[derive(Clone)]
 pub struct ParentProofSelector {
@@ -50,17 +50,18 @@ impl ParentProofSelector {
     /// 2. [`CertifiedParentProofStore::get_certified_notarization`] -
     ///    fallback proof, Simplex `Activity::Certification`.
     ///
-    /// Returns `None` if `parent_block_number == 0` (genesis parent), neither
-    /// slot holds a record for `parent_hash`, or the record's
-    /// `finalized_block_number` does not equal `parent_block_number`. On a
-    /// non-zero block-number mismatch the record is removed. CN records with
-    /// block number `0` are retained as local witnesses.
+    /// Returns `None` if one of these conditions is true:
+    /// - `parent_block_number == 0` (genesis parent).
+    /// - Neither slot holds a record for `parent_hash`.
+    /// - The record's `finalized_block_number` does not equal `parent_block_number`.
+    ///
+    /// On a non-zero block-number mismatch, the selector removes the record. The
+    /// selector keeps CN records with block number `0` as local witnesses.
     ///
     /// Non-blocking: this method does not poll, does not sleep, and does not
     /// `await` anything except the in-process store lock. The proposer
-    /// (handler) is responsible for orchestrating any bounded remote fetch
-    /// fallback and for emitting the
-    /// `outbe_proposer_forfeit_total{reason="parent_proof_unavailable"}`
+    /// (handler) orchestrates any bounded remote fetch fallback. The proposer
+    /// also emits the `outbe_proposer_forfeit_total{reason="parent_proof_unavailable"}`
     /// metric on the no-proof terminal.
     pub fn select_direct_parent_proof(
         &self,
@@ -79,7 +80,7 @@ impl ParentProofSelector {
         key: CertifiedParentProofKey,
         parent_block_number: u64,
     ) -> Option<CertifiedParentProofRecord> {
-        // Genesis parent has no proof - block 1 uses the
+        // Genesis parent has no proof. Block 1 uses the
         // `ConsensusHeaderArtifact::BoundaryOutcome` bootstrap path, not a
         // certified-parent proof. See handler.rs::build_block.
         if parent_block_number == 0 {
@@ -107,8 +108,8 @@ impl ParentProofSelector {
         }
     }
 
-    /// Live proposer selector. Finalization wins deterministically; a
-    /// witness-only CN record is used only after an event-driven bounded wait.
+    /// Live proposer selector. Finalization wins deterministically. The selector
+    /// uses a witness-only CN record only after an event-driven bounded wait.
     pub async fn select_direct_parent_proof_by_key_with_wait(
         &self,
         clock: &impl commonware_runtime::Clock,
@@ -124,7 +125,7 @@ impl ParentProofSelector {
         // (`DEFAULT_PROPOSAL_TIMEOUT` == `timing::DEFAULT_LEADER_TIMEOUT_MS`).
         // NOTE: this tracks the compile-time default, not a per-network
         // `genesis.json` `leaderTimeoutMs` override. If a chain widens the leader
-        // timeout via genesis, this cap stays at the default; threading the
+        // timeout via genesis, this cap stays at the default. To pass the
         // effective `bt.leader_timeout` here is a deliberate follow-up.
         let wait = clamped_phase1_finalization_wait(
             requested_wait,
@@ -188,8 +189,8 @@ impl ParentProofSelector {
         parent_block_number: u64,
         record: CertifiedParentProofRecord,
     ) -> Option<CertifiedParentProofRecord> {
-        // A `CertifiedNotarization` witness carries no block number - it is
-        // resolved to `parent_block_number` at metadata time, so it is always
+        // A `CertifiedNotarization` witness carries no block number. Its height
+        // resolves to `parent_block_number` at metadata time, so it is always
         // consistent here. A `Finalization` record must match the proposer's
         // parent height.
         if let Some(record_block_number) = record.finalized_block_number() {
@@ -220,9 +221,9 @@ impl ParentProofSelector {
         Some(record)
     }
 
-    /// Access to the underlying store - needed by callers that want to wire a
-    /// bounded remote-fetch resolver against the same
-    /// proof slots the selector reads.
+    /// Access to the underlying store. Callers need it to connect a
+    /// bounded remote-fetch resolver to the same
+    /// proof slots that the selector reads.
     pub fn parent_cert_store(&self) -> &FinalizedParentCertStore {
         &self.parent_cert_store
     }
@@ -296,14 +297,14 @@ mod tests {
             ))
             .unwrap();
         // The store-level fallback returns the CN record when no finalization
-        // is present for the exact key - it is the proposer's fallback slot.
+        // is present for the exact key. It is the proposer's fallback slot.
         let key = CertifiedParentProofKey::new(0, 0, hash);
         let best = store.get_best_parent_proof(key).unwrap();
         assert_eq!(
             best.proof_kind(),
             ParentParticipationProof::CertifiedNotarization
         );
-        // A CN witness carries no block number of its own; the selector
+        // A CN witness carries no block number of its own. The selector
         // resolves its height to the known parent at metadata time.
         assert_eq!(best.finalized_block_number(), None);
         // The non-wait selector treats CN as witness-only and returns None.
@@ -392,7 +393,7 @@ mod tests {
                     r.proof_kind(),
                     ParentParticipationProof::CertifiedNotarization
                 );
-                // The CN witness carries no block number of its own; the
+                // The CN witness carries no block number of its own. The
                 // selector resolves its height to the known parent only at
                 // metadata time.
                 assert_eq!(r.finalized_block_number(), None);
@@ -424,7 +425,7 @@ mod tests {
                     ))
                     .unwrap();
 
-                // `Context` is not `Clone` on commonware 2026.5.0; obtain a fresh
+                // `Context` is not `Clone` on commonware 2026.5.0. Get a fresh
                 // owned context for the spawned writer via `Supervisor::child`.
                 let writer = store.clone();
                 context.child("writer").spawn(move |ctx| async move {

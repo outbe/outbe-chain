@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Run the exact test in a fresh process; return true only inside that child.
+/// Run the exact test in a fresh process. Return true only inside that child.
 pub(crate) fn in_isolated_process(case: &str) -> bool {
     const CASE: &str = "OUTBE_TEST_ISOLATED_CHAIN_CASE";
     const STARTED: &str = "OUTBE_TEST_ISOLATED_CHAIN_STARTED";

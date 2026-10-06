@@ -82,7 +82,7 @@ where
         initial_peer_hash,
         ocomp_install_hash,
     } = admission;
-    // -- 3. Set up P2P network -------------------------------------------
+    // -- 3. Configure P2P network ---------------------------------------
     let p2p_namespace = ocomp_p2p_namespace(ocomp_install_hash);
     // Cover the full registered validator set plus a local non-validator identity.
     let max_peers_per_set =
@@ -107,7 +107,7 @@ where
 
     let (mut network, mut oracle) = lookup::Network::new(ctx.child("network"), network_cfg);
 
-    // Register Simplex consensus channels (will be wrapped in Muxers).
+    // Register Simplex consensus channels. Muxers wrap them later.
     let votes = network.register(config::VOTES_CHANNEL, Quota::per_second(NZU32!(128)));
     let certificates =
         network.register(config::CERTIFICATES_CHANNEL, Quota::per_second(NZU32!(128)));
@@ -124,18 +124,18 @@ where
     let dkg_channel = network.register(config::DKG_CHANNEL, Quota::per_second(NZU32!(128)));
 
     // Register the one-time TEE bootstrap channel (only when a TEE enclave
-    // sidecar is configured). Used once at startup, like the DKG, to coordinate
-    // the committee's enclave registrations + EVM signatures into the block-1
-    // `TeeBootstrap` payload. Registered before `network.start()`.
+    // sidecar is configured). The node uses it once at startup, like the DKG.
+    // It coordinates the committee's enclave registrations + EVM signatures into
+    // the block-1 `TeeBootstrap` payload. Register it before `network.start()`.
     let mut tee_bootstrap_channel = args
         .tee_enclave_socket
         .as_ref()
         .map(|_| network.register(config::TEE_BOOTSTRAP_CHANNEL, Quota::per_second(NZU32!(64))));
 
     // Register the one-time TEE DKG channel (only when a TEE enclave sidecar is
-    // configured). Carries the enclave identity exchange + dealer/player gossip +
-    // offer-key partial-signature round that derives the shared tribute offer key
-    // at startup. Registered before `network.start()`.
+    // configured). It carries the enclave identity exchange, the dealer/player
+    // gossip, and the offer-key partial-signature round. That round derives the
+    // shared tribute offer key at startup. Register it before `network.start()`.
     let mut tee_dkg_channel = args
         .tee_enclave_socket
         .as_ref()
@@ -202,8 +202,8 @@ where
     }
 
     // -- 5. Create Muxers from physical channels ------------------------
-    // Consensus channels are muxed by epoch - each engine restart
-    // gets fresh sub-channels, preventing message interference.
+    // The Muxers split consensus channels by epoch. Each engine restart
+    // gets fresh sub-channels, which prevents message interference.
     let (vote_muxer, vote_mux) = Muxer::new(ctx.child("vote_mux"), votes.0, votes.1, MUXER_MAILBOX);
     vote_muxer.start();
 
@@ -228,9 +228,10 @@ where
     );
     dkg_muxer.start();
 
-    // R5.4: mux the TEE DKG + TEE bootstrap channels by round, mirroring `dkg_mux`,
-    // so the startup ceremony (round 0) and a later epoch-boundary reshare (round N)
-    // each get isolated sub-channels. `None` when no TEE enclave sidecar is set.
+    // R5.4: mux the TEE DKG + TEE bootstrap channels by round, as `dkg_mux` does.
+    // The startup ceremony (round 0) and a later epoch-boundary reshare (round N)
+    // then each get isolated sub-channels. The value is `None` when no TEE enclave
+    // sidecar is set.
     let mut tee_dkg_mux = tee_dkg_channel.take().map(|ch| {
         let (muxer, handle) = Muxer::new(ctx.child("tee_dkg_mux"), ch.0, ch.1, MUXER_MAILBOX);
         muxer.start();
@@ -242,12 +243,12 @@ where
         handle
     });
 
-    // R5.4: pre-register the round-0 TEE sub-channels EARLY (mirroring the
-    // consensus `dkg_mux.register(0)` at startup) so every node has round 0 routed
-    // well before the startup TEE DKG begins. Registering it lazily inside the
-    // startup block races: a node can broadcast its identity before a peer has
-    // registered round 0, and the mux drops the unrouted message -> the identity
-    // exchange hangs. Reshare rounds (N>0) still register on demand at the boundary.
+    // R5.4: pre-register the round-0 TEE sub-channels EARLY, as the consensus
+    // `dkg_mux.register(0)` does at startup. Then every node routes round 0 well
+    // before the startup TEE DKG begins. Lazy registration inside the startup block
+    // races: a node can broadcast its identity before a peer registers round 0.
+    // The mux then drops the unrouted message -> the identity exchange hangs.
+    // Reshare rounds (N>0) still register on demand at the boundary.
     let tee_dkg_round0 = match tee_dkg_mux.as_mut() {
         Some(m) => Some(
             m.register(0)

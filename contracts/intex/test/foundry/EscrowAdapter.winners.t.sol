@@ -9,7 +9,8 @@ import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
-/// @dev A refund chunk names a day's winners and its clearing terms; the escrow works out each payment itself.
+/// @dev A refund chunk names a day's winners and its clearing terms. The escrow computes each
+///      payment itself.
 contract EscrowAdapterWinnersTest is Test {
     EscrowAdapter internal escrow;
     MockWCOEN internal token;

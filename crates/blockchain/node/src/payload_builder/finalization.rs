@@ -43,16 +43,16 @@ pub(super) fn into_payload<DB: Database>(
         .is_prague_active_at_timestamp(context.attributes.inner().timestamp)
         .then_some(execution_result.requests.clone());
 
-    // capture the full execution result of the block we just built so
-    // the proposer does NOT re-execute and re-root it at finalize time.
-    // `builder` only borrowed `&mut db`, so after `finish` the merged
-    // post-state bundle is back on our local `db` and can be taken here.
+    // Capture the full execution result of the block we just built, so the
+    // proposer does NOT re-execute and re-root it at finalize time.
+    // `builder` only borrowed `&mut db`. After `finish`, the merged post-state
+    // bundle is back on our local `db`, and this code takes it here.
     // Reth's launch loop inserts `executed_block()` into the engine tree, so
-    // `ExecutorActor`'s finalize-time `new_payload` becomes a cache hit
-    // (validators already get this via their verify-time `new_payload`).
-    // This is the SAME execution that produced the sealed block below, so the
-    // cached state matches the sealed block hash exactly - no proposer/
-    // validator divergence.
+    // `ExecutorActor`'s finalize-time `new_payload` becomes a cache hit.
+    // (Validators already get this through their verify-time `new_payload`.)
+    // This is the SAME execution that produced the sealed block below. Thus the
+    // cached state matches the sealed block hash exactly, and the proposer and
+    // validator do not diverge.
     let recovered_block = Arc::new(block);
     let execution_output = Arc::new(BlockExecutionOutput {
         state: db.take_bundle(),
@@ -80,8 +80,8 @@ pub(super) fn into_payload<DB: Database>(
     }
 
     // Outbe transport cap (always on): the sealed block must fit one
-    // consensus P2P message. Final guard in case the per-tx estimate
-    // undershot (e.g. system txs / extra_data added after selection).
+    // consensus P2P message. This check is the final guard in case the per-tx
+    // estimate undershot (e.g. system txs / extra_data added after selection).
     if sealed_block.rlp_length() > OUTBE_MAX_BLOCK_SIZE {
         discard_failed_payload_candidate(
             compressed_tree_service,

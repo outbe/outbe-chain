@@ -226,7 +226,7 @@ fn lysis_opening_builder_returns_league_snapshot_and_oracle_proofs() {
     let day = WorldwideDay::new(20260724);
 
     // The Fidelity opening is now a single per-owner league word in Metadosis
-    // storage; any value in [1, 4096] is a valid league.
+    // storage. Any value in [1, 4096] is a valid league.
     let fidelity_slots = vec![(league_snapshot_slot(day.value(), owner), U256::from(7))];
 
     let oracle_plan = entry_price_slots(day, &subjects.reference_isos).unwrap();

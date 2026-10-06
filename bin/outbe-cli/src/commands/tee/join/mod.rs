@@ -301,7 +301,7 @@ pub(super) async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> R
         .encode_canonical()
         .map_err(|error| eyre::eyre!("encode address-to-NodeHost binding: {error}"))?;
     // Read the permanent chain key before generating a fresh quote. Its exact
-    // value is later authenticated again inside the recipient enclave.
+    // value is later authenticated again by the recipient enclave.
     let expected_offer_pub: [u8; 32] = finalized.tribute_offer_public.into();
     let key_epoch = call_u256(client, ITeeRegistry::keyEpochCall {}.abi_encode())
         .await?
@@ -436,9 +436,9 @@ pub(super) async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> R
     };
 
     // A permanent offer key is write-once enclave state. Classify it before
-    // producing or relaying a fresh registration so a mismatched resident key
-    // cannot mutate Registry and a matching same-enclave rejoin never repeats
-    // the onboarding ingest.
+    // producing or relaying a fresh registration. This order makes sure that a
+    // mismatched resident key cannot mutate Registry, and that a matching
+    // same-enclave rejoin never repeats the onboarding ingest.
     let offer_key_state = classify_join_offer_key_state(
         enclave.request(&EnclaveRequest::GetPublicKeys)?,
         expected_offer_pub,
@@ -754,7 +754,7 @@ pub(super) async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> R
 
     // The NodeHost admission checkpoint must be durable before the recipient
     // enclave can activate the permanent key. A crash after this write can
-    // safely resume; a write failure leaves the enclave keyless.
+    // safely resume. A write failure leaves the enclave keyless.
     let authorized_node_data_dir = if join_transport == JoinTransport::AuthorizedNodeHost {
         let node_data_dir = node_data_dir.ok_or_else(|| {
             eyre::eyre!("authenticated onboarding lost its required node data directory")

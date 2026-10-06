@@ -24,7 +24,7 @@ fn issue_creates_series_in_registry() {
                 call_notice_period_seconds: CALL_NOTICE_PERIOD,
             }
         );
-        // Born Issued; issued_at is the block timestamp.
+        // Born Issued. `issued_at` is the block timestamp.
         assert_eq!(
             r.lifecycle_state().unwrap(),
             outbe_intex::IntexState::Issued
@@ -56,7 +56,7 @@ fn issue_zero_winners_leaves_the_day_untouched() {
 
 #[test]
 fn issuance_legs_route_winners_to_their_own_chain() {
-    // One winner on chain 10, one on chain 20; chain 30 in the snapshot has none.
+    // One winner on chain 10, one on chain 20. Chain 30 in the snapshot has none.
     let other = address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
     let mut p = sample(7);
     p.recipients = vec![owner(), other];
@@ -176,8 +176,9 @@ fn a_chains_series_travel_together_up_to_the_message_caps() {
     );
 }
 
-/// The codec enforces this same number on both encode and decode (`BridgeMsgCodec.sol`), and nothing
-/// links the two languages, so the value is pinned here: changing it must be a deliberate act.
+/// The codec enforces this same number on both encode and decode (`BridgeMsgCodec.sol`).
+/// Nothing links the two languages, so the value is pinned here: changing it must be a
+/// deliberate act.
 #[test]
 fn the_recipient_cap_matches_the_wire() {
     assert_eq!(MAX_RECIPIENTS_PER_ISSUANCE, 24);

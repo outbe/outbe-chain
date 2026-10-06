@@ -8,15 +8,15 @@ use super::*;
 
 /// Spawn the drainer that answers `outbe_getFinalization` RPC requests from the
 /// marshal. The `outbe-rpc` handler cannot see the marshal or `ConsensusBlock`,
-/// so it requests bytes through [`ConsensusExecutionBridge::request_finalization`];
-/// this task is the consensus-side responder. Wired on BOTH the validator path
-/// (`run_consensus_stack`) and the certified-follower path (a follower can serve
-/// upstream too), right after `marshal_mailbox` exists.
+/// so it requests bytes through [`ConsensusExecutionBridge::request_finalization`].
+/// This task is the consensus-side responder. The stack wires it on BOTH the
+/// validator path (`run_consensus_stack`) and the certified-follower path (a
+/// follower can serve upstream too), right after `marshal_mailbox` exists.
 ///
-/// For each `(height, reply)` it reads the finalization certificate and the
-/// finalized block from the marshal, encodes both with `commonware_codec`, and
-/// answers `Some` only when both are present locally (otherwise `None`, which
-/// the RPC maps to a "not available" error).
+/// For each `(height, reply)`, it reads the finalization certificate and the
+/// finalized block from the marshal. It encodes both with `commonware_codec`.
+/// It answers `Some` only when both are present locally. Otherwise it answers
+/// `None`, which the RPC maps to a "not available" error.
 pub(in crate::stack) fn spawn_finalization_drainer<E>(
     ctx: &E,
     marshal_mailbox: outbe_consensus::marshal_types::MarshalMailbox,
@@ -36,7 +36,7 @@ pub(in crate::stack) fn spawn_finalization_drainer<E>(
                     Height::new(height),
                 )
                 .await;
-                // The receiver may have gone away (RPC client disconnected); ignore.
+                // The receiver may have gone away (RPC client disconnected). Ignore it.
                 let _ = reply.send(answer);
             }
         });
@@ -54,10 +54,13 @@ pub(in crate::stack) fn spawn_finalization_drainer<E>(
 /// 7. Block propagation - proposer broadcasts full blocks via P2P channel
 /// 8. Automatic reshare detection and DKG execution
 ///
-/// Follower stack: cold-sync finalized blocks from an upstream node, verify them
-/// against the trusted network identity (committee-chaining - see the `follow`
-/// module), and drive the EL via the existing executor, WITHOUT running the
-/// consensus engine. Selected by `--upstream`.
+/// Follower stack. It does these steps WITHOUT running the consensus engine:
+/// 1. Cold-sync finalized blocks from an upstream node.
+/// 2. Verify them against the trusted network identity (committee-chaining - see
+///    the `follow` module).
+/// 3. Drive the EL via the existing executor.
+///
+/// The `--upstream` flag selects this stack.
 pub(in crate::stack) async fn run_follow_stack<E>(
     ctx: E,
     args: ConsensusArgs,
@@ -92,8 +95,8 @@ where
 
     // Trust anchor: the genesis validator committee (the MinPk consensus key
     // set), read from the follower's OWN genesis state. Consensus finality is a
-    // multisig over these keys, so this set - not the VRF group key - is the
-    // trust root, and it is already in genesis (the operator provides nothing).
+    // multisig over these keys. So this set, not the VRF group key, is the trust
+    // root. It is already in genesis, and the operator provides nothing.
     let follower_genesis_hash = genesis_hash(&node)?;
     let genesis_validators =
         validators::read_consensus_validators_at_block(&node.provider, follower_genesis_hash)
@@ -109,9 +112,9 @@ where
             })?;
 
     // Defence in depth for callers that construct the engine stack outside the
-    // node binary. The binary already proves this equality before Reth launch;
-    // repeat it here before certified sync so no alternate embedding can process
-    // a protected block with a missing or divergent permanent key.
+    // node binary. The binary already proves this equality before Reth launch.
+    // Repeat it here before certified sync, so that no alternate embedding can
+    // process a protected block with a missing or divergent permanent key.
     let tee_probe = crate::follow_transport::UpstreamRpcClient::new(&upstream)?;
     let tee_offer_public = tee_probe
         .tribute_offer_public_key()
@@ -160,12 +163,12 @@ where
 /// Rebuild the exact parent-proof record a certified follower needs before
 /// OCOMP retention may consume a finalized block.
 ///
-/// Marshal has already verified the finalization certificate against `scheme`.
-/// This seam additionally binds that verified certificate to the exact block
-/// executed by the follower and to the historical committee snapshot committed
-/// in the follower's own canonical state. A mismatch is node-fatal: substituting
-/// either the current committee or a same-height block would make the locally
-/// produced OCOMP input proof unverifiable.
+/// Marshal already verified the finalization certificate against `scheme`.
+/// This seam also binds that verified certificate to the exact block that the
+/// follower executed. It also binds the certificate to the historical committee
+/// snapshot committed in the follower's own canonical state. A mismatch is
+/// node-fatal. A substitute (the current committee or a same-height block)
+/// would make the locally produced OCOMP input proof unverifiable.
 pub(in crate::stack) fn build_certified_follower_parent_record(
     finalization: &outbe_consensus::marshal_types::Finalization,
     block: &outbe_consensus::block::ConsensusBlock,
@@ -296,8 +299,8 @@ impl FollowerProofPersistence<'_> {
 
 /// Genesis is the trusted follower anchor, not a block carrying a certified
 /// marshal finalization. The executor still acknowledges height zero when it
-/// observes the already-canonical genesis block, so finality observers must
-/// ignore that one notification instead of asking marshal for an impossible
+/// observes the already-canonical genesis block. So finality observers must
+/// ignore that one notification. They must not ask marshal for an impossible
 /// certificate.
 pub(in crate::stack) const fn follower_height_has_certified_finalization(height: u64) -> bool {
     height > 0

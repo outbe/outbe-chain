@@ -21,8 +21,8 @@ impl BlockLifecycle for GemLifecycle {
     type EndBlockResult = ();
 
     fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
-        // A call sweep the daily trigger could not finish in one go carries on
-        // here, block by block, rather than waiting a day for the next trigger.
+        // A call sweep that the daily trigger could not finish in one pass continues
+        // here. It continues block by block and does not wait a day for the next trigger.
         run_call_slice(ctx)?;
         sweep_expired(ctx)?;
         Ok(())
@@ -64,9 +64,9 @@ pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
-/// Cycle daily-trigger entry: schedule the day the Oracle has just finalized, opening
-/// a Called sweep over it and running its first slice, or queueing it behind the
-/// sweep still in flight.
+/// Cycle daily-trigger entry: schedule the day that the Oracle has just finalized.
+/// This opens a Called sweep over the day and runs its first slice, or queues the
+/// day behind the sweep still in flight.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let Some(last_closed_day) = closed_day(ctx)? else {
         return Ok(0);
@@ -236,8 +236,8 @@ impl CallSweep<'_, '_> {
             .pair_index_of(AddressPair::new_coen_to(iso_code))?;
         let mut window = Vec::new();
         if pair_index != 0 {
-            // Widest of the live profile and anything ever issued: a gem keeps the window
-            // it was issued with, so a narrowed profile must not shorten the span.
+            // Use the widest of the live profile and anything ever issued. A gem keeps the
+            // window it was issued with, so a narrowed profile must not shorten the span.
             let window_days = self
                 .gem
                 .max_call_window_seconds
@@ -256,7 +256,7 @@ impl CallSweep<'_, '_> {
     }
 }
 
-/// Walk one currency's bucket bins up to `ceiling`, resuming where it gave out.
+/// Walk one currency's bucket bins up to `ceiling`, resuming where it stopped.
 /// Returns the calls made and whether the eligible range was walked to the end.
 ///
 /// Each bin is walked from the top, so a call's swap-pop only moves a bucket already
@@ -346,7 +346,7 @@ impl BucketCallScan<'_, '_> {
         Ok((called, true))
     }
 
-    /// Protocol errors roll back only this bucket; node-local failures fail the block.
+    /// Protocol errors roll back only this bucket. Node-local failures fail the block.
     fn call_bucket(&mut self, bucket: B256) -> Result<bool> {
         match self.ctx.storage.with_checkpoint(|| {
             self.gem
@@ -370,7 +370,7 @@ const fn unpack_cursor(packed: u64) -> (u32, u32) {
     ((packed >> 32) as u32, packed as u32)
 }
 
-/// Forfeit-burn the gems whose notice period closed; a head not due ends the pass.
+/// Forfeit-burn the gems whose notice period closed. A head that is not due ends the pass.
 fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let mut sweep = ExpirySweep {
         ctx,
@@ -450,7 +450,7 @@ impl ExpirySweep<'_, '_> {
         }
         gem.expiry_sweep_day.write(0)?;
         gem.expiry_cursor.write(0)?;
-        // Anything left broke the invariant above; retiring it keeps the tree moving.
+        // Anything left broke the invariant above. Retiring it keeps the tree moving.
         if gem.expiry_bucket_live.read(&day)? != 0 {
             let (deferred, dropped) = gem.force_retire_hour(day, self.ctx.block.timestamp)?;
             tracing::warn!(target: "outbe::gem", day, deferred, dropped, "expiry sweep: hour outlived itself, retiring it");
@@ -481,8 +481,8 @@ impl ExpirySweep<'_, '_> {
 
     fn forfeit_entry(&mut self, gem: &mut GemContract<'_>, entry: U256) -> Result<()> {
         let now = self.ctx.block.timestamp;
-        // Out of this bucket either way, so an entry that does not burn cannot hold the day
-        // back; a Called gem among them is retried later rather than lost.
+        // The entry leaves this bucket either way, so an entry that does not burn cannot
+        // block the day. A Called gem among them is retried later rather than lost.
         match self.ctx.storage.with_checkpoint(|| gem.forfeit(entry, now)) {
             Ok(true) => self.burned = self.burned.saturating_add(1),
             Ok(false) => {
@@ -520,7 +520,7 @@ impl ExpirySweep<'_, '_> {
         }
     }
 
-    /// A failed member detaches for retry; if detaching fails, defer the whole bucket.
+    /// A failed member detaches for retry. If detaching fails, defer the whole bucket.
     fn forfeit_bucket_member(
         &mut self,
         gem: &mut GemContract<'_>,

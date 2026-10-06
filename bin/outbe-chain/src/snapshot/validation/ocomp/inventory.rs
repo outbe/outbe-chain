@@ -124,7 +124,7 @@ pub(crate) struct InventoryBounds {
 }
 
 /// Canonical obligation discovery is independent of local job directories.
-/// All observations borrow the same immutable verified E; visiting this inventory
+/// All observations borrow the same immutable verified E. Visiting this inventory
 /// does not infer that the corresponding local artifacts have been validated.
 pub(crate) struct CanonicalInventory<'a, 'b> {
     pub(super) state: &'a CanonicalState<'b>,
@@ -362,8 +362,8 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
             }
             tx.put::<InventoryRows>(day_key, Vec::new())?;
             bounds.days += 1;
-            // Distinct days are discovered through the permanent series index;
-            // this records the population reached, not an unobserved final count.
+            // Distinct days are discovered through the permanent series index.
+            // This records the population reached, not an unobserved final count.
             observe_inventory_bound(
                 report.as_deref_mut(),
                 "intex_days",

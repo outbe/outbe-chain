@@ -120,8 +120,8 @@ fn the_issuance_rail_floors_the_whole_obligation_in_the_payers_favour() {
 
 #[test]
 fn a_wider_asset_keeps_what_the_six_decimal_cost_dropped() {
-    // The reference cost floors to 1, the obligation is 1.500001: an eighteen-
-    // decimal asset carries all of it, scaling the floored 1 charged 1e12.
+    // The reference cost floors to 1. The obligation is 1.500001. An
+    // eighteen-decimal asset carries all of it. Scaling the floored 1 charged 1e12.
     with_storage(Some(U256::from(1_500_001u64)), |storage| {
         let gem_id =
             issue_at_live_rate(storage, ALICE, GemTypes::Wallet, U256::ONE, 840, 840).unwrap();
@@ -288,8 +288,8 @@ fn settlement_scales_the_cost_to_the_asset_decimals() {
 #[test]
 fn an_unassigned_issuance_code_mints_and_settles_on_the_reference_rail() {
     // 899 is inside the three-digit range but is not an assigned ISO 4217 code.
-    // Gem no longer refuses it: nothing prices against it, and no settlement
-    // asset can ever report it, so it is inert - exactly as it is for a bid.
+    // Gem no longer refuses it. Nothing prices against it, and no settlement
+    // asset can ever report it. So it is inert, exactly as it is for a bid.
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let gem_id = issue_at_live_rate(

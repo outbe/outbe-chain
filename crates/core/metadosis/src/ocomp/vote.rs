@@ -1,9 +1,12 @@
 //! Consensus-state admission for direct validator `ResultVoteV1` records.
 //!
-//! The public transaction supplies one canonical signed vote. This module
-//! resolves the finalized job from the bounded response-window index, verifies
-//! the inner OCOMP signature against the pinned historical ValidatorSet and owns
-//! the atomic pinned-ValidatorSet vote transition. It never executes Lysis.
+//! The public transaction supplies one canonical signed vote. This module:
+//!
+//! - resolves the finalized job from the bounded response-window index.
+//! - verifies the inner OCOMP signature against the pinned historical ValidatorSet.
+//! - owns the atomic pinned-ValidatorSet vote transition.
+//!
+//! It never executes Lysis.
 
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use outbe_compressed_entities::ExecutionScope;
@@ -114,9 +117,9 @@ impl ResponseWindowCloseReport {
 }
 
 /// Dispatches one normal public EVM transaction containing a canonical signed
-/// `ResultVoteV1`. The outer caller is intentionally not protocol authority:
-/// eligibility and fee classification are separate, while this transition is
-/// authorized only by the inner committee signature.
+/// `ResultVoteV1`. The outer caller is intentionally not protocol authority.
+/// Eligibility and fee classification are separate. Only the inner committee
+/// signature authorizes this transition.
 pub fn dispatch_public_result_vote(
     storage: StorageHandle<'_>,
     scope: &ExecutionScope,
@@ -193,10 +196,10 @@ pub fn deadline_passed_result_vote_revert_data() -> Bytes {
 /// Resolves the validator represented by one canonical OCOMP vote prefix from
 /// the exact historical ValidatorSet snapshot pinned by its open job.
 ///
-/// Current ValidatorSet status is deliberately not consulted: membership for
-/// an already-open attempt is immutable. Missing, evicted or mismatched
-/// caller-selected state is an ordinary `None`, never a fallback to the current
-/// snapshot.
+/// The resolution deliberately does not consult the current ValidatorSet
+/// status, because membership for an already-open attempt is immutable.
+/// Missing, evicted or mismatched caller-selected state is an ordinary `None`,
+/// never a fallback to the current snapshot.
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(super) struct PinnedVoteBinding {
     protocol_bundle_hash: B256,
@@ -385,10 +388,10 @@ pub(super) fn resolve_historical_result_vote_member(
 /// Resolves and authorizes the outer EVM signer of an OCOMP system carrier.
 ///
 /// The represented validator comes exclusively from the exact historical
-/// snapshot pinned by the vote. Its own address is accepted only when no OCOMP
-/// delegate is configured; otherwise only the current reverse-verified OCOMP
-/// delegate is accepted. Current ACTIVE status is deliberately irrelevant for
-/// an already-open historical job.
+/// snapshot pinned by the vote. This function accepts the validator's own
+/// address only when no OCOMP delegate is configured. Otherwise it accepts only
+/// the current reverse-verified OCOMP delegate. Current ACTIVE status is
+/// deliberately irrelevant for an already-open historical job.
 pub fn resolve_historical_result_vote_carrier_signer(
     storage: StorageHandle<'_>,
     prefix: &ResultVotePrefixV1,

@@ -80,8 +80,8 @@ where
     let startup_dkg_context = startup_snapshot.context;
 
     // Determine founding versus existing identity before any DKG/live-join path.
-    // The mandatory enclave client was installed by the node entrypoint before
-    // Reth launch; this gate prevents threshold work and consensus startup from
+    // The node entrypoint installed the mandatory enclave client before Reth
+    // launch. This gate prevents threshold work and consensus startup from
     // treating the pre-DKG onboarding recipient as a permanent offer key.
     let verifier_join = args.signing_share.is_none()
         && args.public_polynomial.is_some()
@@ -202,11 +202,11 @@ where
     // -- 7. Build participant set (updated after each DKG reshare) -------
     // when recovering a finalized DKG boundary, reconstruct the scheme
     // against the committee the recovered threshold material belongs to (the DKG
-    // output's players), NOT the latest on-chain set, which may have drifted
-    // across a churn window. `select_recovery_participants` also fails fast if the
-    // restored material does not match the recovered boundary. On a fresh chain or
-    // when no boundary/output is recovered, fall back to the latest committed set
-    // (the genesis committee on first start).
+    // output's players). Do NOT use the latest on-chain set, which may have
+    // drifted across a churn window. `select_recovery_participants` also fails
+    // fast if the restored material does not match the recovered boundary. On a
+    // fresh chain, or when this code recovers no boundary/output, use the latest
+    // committed set as the fallback (the genesis committee on first start).
     let participants: commonware_utils::ordered::Set<bls12381::PublicKey> =
         match (recovered_boundary.as_ref(), last_dkg_output.as_ref()) {
             (Some((_, boundary)), Some(output)) => {

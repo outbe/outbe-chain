@@ -1,8 +1,8 @@
 //! Embedded OCOMP observer and local FullNode readiness gate.
 //!
-//! Finalized chain state remains the only authority. ExEx notifications are
-//! drained for Reth backpressure, while the provider's finalized head selects
-//! the exact canonical range processed here.
+//! Finalized chain state remains the only authority. This observer drains ExEx
+//! notifications for Reth backpressure. The provider's finalized head selects
+//! the exact canonical range that this observer processes.
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;

@@ -1,6 +1,6 @@
 //! V2 Phase 1 accounting-progress integration tests.
 //!
-//! Each test maps to an Acceptance Criterion in the.
+//! Each test maps to an Acceptance Criterion.
 
 use alloy_primitives::Address;
 use outbe_accounting::{
@@ -26,9 +26,10 @@ fn with_ctx<R>(block_number: u64, f: impl FnOnce(&BlockRuntimeContext) -> R) -> 
 }
 
 /// Implementation of `AccountingProgressView` that holds a captured value.
-/// Used to prove the trait surface compiles for downstream Cycle/Rewards
-/// consumers and to exercise the `last_accounted_block_number` contract
-/// without coupling tests to a specific reader.
+/// The tests use it to prove that the trait surface compiles for downstream
+/// Cycle/Rewards consumers. The tests also use it to exercise the
+/// `last_accounted_block_number` contract without coupling tests to a
+/// specific reader.
 struct StubProgressView(u64);
 
 impl AccountingProgressView for StubProgressView {
@@ -86,8 +87,8 @@ fn accounting_progress_slot0_roundtrips_last_accounted_block_number() {
         assert_eq!(raw, 1_000_000);
 
         // The `AccountingProgressView` trait is the read surface Cycle and
-        // Rewards consume; the stub here proves the trait compiles and the
-        // returned value matches the storage.
+        // Rewards consume. The stub here proves that the trait compiles and
+        // that the returned value matches the storage.
         let view = StubProgressView(raw);
         assert_eq!(
             view.last_accounted_block_number().expect("view read"),
@@ -97,8 +98,8 @@ fn accounting_progress_slot0_roundtrips_last_accounted_block_number() {
 }
 
 /// AC4 (mirror) / INV3: `ACCOUNTING_PROGRESS_ADDRESS` is in the executor's
-/// EIP-161 marker allowlist, ensuring slot 0 is preserved under state-root
-/// cleanup. Asserts the real `OUTBE_RUNTIME_MARKER_ADDRESSES` const value.
+/// EIP-161 marker allowlist, so state-root cleanup preserves slot 0.
+/// Asserts the real `OUTBE_RUNTIME_MARKER_ADDRESSES` const value.
 #[test]
 fn accounting_progress_address_is_eip161_preserved() {
     assert!(

@@ -51,8 +51,8 @@ pub(crate) fn run() {
         .is_some_and(|record| record.quorum.is_none()));
 
     // Validator 2 has not voted. Its vote arrives in the deadline block itself,
-    // after the begin zone has closed the window, so execution records the
-    // late-vote soft failure instead of rejecting the block.
+    // after the begin zone closes the window. For this reason, execution
+    // records the late-vote soft failure instead of rejecting the block.
     let late_calldata =
         encode_submit_lysis_result_calldata(&initial_voting.signed_vote(2), &poc_schema_limits())
             .expect("canonical late vote calldata");

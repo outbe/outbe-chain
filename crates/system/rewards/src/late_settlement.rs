@@ -1,7 +1,7 @@
 //! per-block fee escrow + inclusion-window settlement (Phase 6).
 //!
-//! The fees of block `N` are **escrowed** (recorded, not paid eagerly) and, once
-//! the `K`-block inclusion window closes at `N+K`, split across the full credited
+//! The fees of block `N` are **escrowed** (recorded, not paid eagerly). When the
+//! `K`-block inclusion window closes at `N+K`, they are split across the full credited
 //! voter set with a **decay-weighted, fixed-denominator** payout:
 //!
 //! ```text
@@ -9,19 +9,19 @@
 //! ```
 //!
 //! `D` is constant per block (independent of who voted), so excluding a peer
-//! enriches nobody - there is no censorship incentive. The
-//! residue (`pending - sum payout` = absentees + decay gap + division remainders)
-//! is never paid out: `sum payout + residue == pending`.
+//! enriches nobody. Thus there is no censorship incentive. Settlement never pays out
+//! the residue (`pending - sum payout` = absentees + decay gap + division remainders):
+//! `sum payout + residue == pending`.
 //!
 //! These are deterministic storage functions over an explicit
-//! [`BlockRuntimeContext`]; the executor wires them into the begin-zone CPA
-//! (escrow) and `LateFinalizeCredits` (record + settle) phases. At settle the
+//! [`BlockRuntimeContext`]. The executor wires them into the begin-zone CPA phase
+//! (escrow) and the `LateFinalizeCredits` phase (record + settle). At settle, the
 //! whole six-decimal units of the residue are burned from `REWARDS_ADDRESS` and
 //! recycled into the Metadosis carry-over via
-//! [`outbe_emissionlimit::block::dispatch_late_settlement_residue_at`]; the native
-//! remainder below one unit stays on `REWARDS_ADDRESS` for the next window. The
-//! per-window state (`pending_fees`, `late_voter_*`, the by-number lookups) is
-//! then freed, leaving only the `fee_settled` tombstone (no state bloat).
+//! [`outbe_emissionlimit::block::dispatch_late_settlement_residue_at`]. The native
+//! remainder below one unit stays on `REWARDS_ADDRESS` for the next window. Then the
+//! per-window state (`pending_fees`, `late_voter_*`, the by-number lookups) is freed.
+//! Only the `fee_settled` tombstone stays (no state bloat).
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::{
@@ -34,10 +34,11 @@ use outbe_primitives::{
 use crate::constants::{decay_weight, fixed_denominator};
 use crate::schema::Rewards;
 
-/// Record one credited voter for `fb_hash` at inclusion distance `k`, keeping the
-/// **smallest** `k` ever seen. First credit appends to the
-/// enumerable voter list; a later, larger `k` is a no-op; a later, smaller `k`
-/// improves the stored distance without re-appending.
+/// Record one credited voter for `fb_hash` at inclusion distance `k`. Keep the
+/// **smallest** `k` ever seen:
+/// - The first credit appends the voter to the enumerable voter list.
+/// - A later, larger `k` is a no-op.
+/// - A later, smaller `k` improves the stored distance without re-appending.
 pub fn record_late_credit(
     ctx: &BlockRuntimeContext,
     fb_hash: B256,
@@ -46,7 +47,7 @@ pub fn record_late_credit(
 ) -> Result<()> {
     let rewards = ctx.storage.contract::<Rewards<'_>>();
     if rewards.fee_settled.read(&fb_hash)? {
-        // Window already closed; nothing more can be credited.
+        // Window already closed. Nothing more can be credited.
         return Ok(());
     }
     if k > outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K as u8 {
@@ -86,9 +87,9 @@ pub fn record_late_credit(
 }
 
 /// Escrow block `N`'s fees (key `fb_hash`) and seed the base 2f+1 CPA signers at
-/// `k = 0`, so a later re-inclusion of a base voter at `k >= 1` cannot worsen its
-/// distance. Idempotent: re-escrowing the same block is a no-op once settled, and
-/// re-seeding a base voter is a no-op (smallest-k rule).
+/// `k = 0`. Thus a later re-inclusion of a base voter at `k >= 1` cannot worsen its
+/// distance. Idempotent: re-escrowing the same block is a no-op once settled.
+/// Re-seeding a base voter is a no-op (smallest-k rule).
 #[allow(clippy::too_many_arguments)]
 pub fn escrow_block_fee(
     ctx: &BlockRuntimeContext,
@@ -107,11 +108,11 @@ pub fn escrow_block_fee(
         return Ok(());
     }
     rewards.pending_fees.write(&fb_hash, fee_sum)?;
-    // Settle-trigger lookup by number (so block N+K can find block N's escrow)
-    // and the canonical binding the Late phase authenticates each credit against
-    // number -> {fb_hash, epoch, view, parent_view,
-    // committee_set_hash}. The full signed binding is pinned so a credit whose
-    // aggregate is over a non-canonical view of the same fb_hash is rejected.
+    // Write the settle-trigger lookup by number, so block N+K can find block N's
+    // escrow. Also write the canonical binding that the Late phase authenticates each
+    // credit against: number -> {fb_hash, epoch, view, parent_view,
+    // committee_set_hash}. This function pins the full signed binding. Thus a credit
+    // whose aggregate is over a non-canonical view of the same fb_hash is rejected.
     rewards.pending_fb_hash_at.write(&fb_number, fb_hash)?;
     rewards
         .pending_committee_size_at
@@ -132,8 +133,8 @@ pub fn escrow_block_fee(
     Ok(())
 }
 
-/// Window-close side effect run by the `LateFinalizeCredits` begin-zone phase at
-/// `current_block`: settle the target whose inclusion window just closed
+/// Window-close side effect that the `LateFinalizeCredits` begin-zone phase runs at
+/// `current_block`. It settles the target whose inclusion window just closed
 /// (`fb_number = current_block - K`), looked up by number. No-op when nothing was
 /// escrowed at that number (e.g. block 0, or a block with no fees recorded yet).
 pub fn settle_matured(
@@ -156,10 +157,10 @@ pub fn settle_matured(
     let committee_size = u64::from(rewards.pending_committee_size_at.read(&fb_number)?);
     let result = settle_window(ctx, fb_hash, committee_size)?;
 
-    // Free the number-keyed lookups now that the window is settled (the
-    // hash-keyed state is freed inside `settle_window`). This runs exactly once:
-    // a replay reads `pending_fb_hash_at[fb_number] == ZERO` above and returns
-    // early before reaching here. `fee_settled[fb_hash]` is the durable guard.
+    // Free the number-keyed lookups now that the window is settled. `settle_window`
+    // frees the hash-keyed state. This code runs exactly once: a replay reads
+    // `pending_fb_hash_at[fb_number] == ZERO` above and returns early before it gets
+    // here. `fee_settled[fb_hash]` is the durable guard.
     rewards.pending_fb_hash_at.write(&fb_number, B256::ZERO)?;
     rewards.pending_committee_size_at.write(&fb_number, 0)?;
     rewards.pending_epoch_at.write(&fb_number, 0)?;
@@ -171,9 +172,12 @@ pub fn settle_matured(
     Ok(result)
 }
 
-/// Settle the matured window for `fb_hash` exactly once: pay each credited voter
-/// `pending * w(k_i) / D` from `REWARDS_ADDRESS`, burn the whole protocol units of
-/// the residue, and assert `sum payout + residue == pending`. Returns `(distributed, residue)`.
+/// Settle the matured window for `fb_hash` exactly once:
+/// 1. Pay each credited voter `pending * w(k_i) / D` from `REWARDS_ADDRESS`.
+/// 2. Burn the whole protocol units of the residue.
+/// 3. Assert `sum payout + residue == pending`.
+///
+/// Returns `(distributed, residue)`.
 pub fn settle_window(
     ctx: &BlockRuntimeContext,
     fb_hash: B256,
@@ -222,13 +226,14 @@ pub fn settle_window(
     }
 
     // Solvency: full attendance pays at most the pool (D = N*w_max), so
-    // distributed <= pending; checked_sub guards any violation.
+    // distributed <= pending. checked_sub guards any violation.
     let residue = pending.checked_sub(distributed).ok_or_else(|| {
         PrecompileError::Revert("late settle insolvent: distributed exceeds escrow".into())
     })?;
     if !residue.is_zero() {
-        // The residue is native wei and the carry-over counts six-decimal units, so only
-        // whole units are burned and recycled; the rest waits on REWARDS for the next window.
+        // The residue is native wei, and the carry-over counts six-decimal units. Thus
+        // only whole units are burned and recycled. The rest waits on REWARDS for the
+        // next window.
         let native = residue
             .checked_add(rewards.late_residue_dust_native.read()?)
             .ok_or_else(|| PrecompileError::Revert("late residue dust overflow".into()))?;
@@ -259,20 +264,21 @@ pub fn settle_window(
 
     rewards.fee_settled.write(&fb_hash, true)?;
 
-    //  free the per-window state now that it is settled. After
-    // `fee_settled = true`, `record_late_credit` short-circuits, so nothing more
-    // is written for this `fb_hash` and the data is dead - freeing it here
+    // Free the per-window state now that it is settled. After
+    // `fee_settled = true`, `record_late_credit` short-circuits. Thus nothing more
+    // is written for this `fb_hash`, and the data is dead. Freeing it here
     // prevents unbounded state growth. `fee_settled` is the immediate
-    // double-settle / re-escrow guard; it is itself pruned later by the
-    // ring in `on_finalized_metadata` (`BLOCK_GUARD_RETAIN` blocks after the
-    // block was first counted, long past the K-block window) so it is bounded,
-    // not permanent.
+    // double-settle / re-escrow guard. The ring in `on_finalized_metadata` prunes
+    // `fee_settled` itself later (`BLOCK_GUARD_RETAIN` blocks after the block was
+    // first counted, long past the K-block window). Thus it is bounded, not
+    // permanent.
     //
-    // the nested `participation_counted_for_block[fb_hash]` map is freed
-    // here too. `late_voter_at` is a superset of the participation-counted
-    // voters (every base voter passed to `escrow_block_fee` is seeded into it at
-    // k=0), so clearing the guard for each credited voter clears every entry;
-    // any non-counted late voter is a harmless write of the default `false`.
+    // This code frees the nested `participation_counted_for_block[fb_hash]` map
+    // too. `late_voter_at` is a superset of the participation-counted voters:
+    // `escrow_block_fee` seeds every base voter passed to it into `late_voter_at`
+    // at k=0. Thus clearing the guard for each credited voter clears every entry.
+    // For any non-counted late voter, the clear is a harmless write of the default
+    // `false`.
     let participation_guard = rewards.participation_counted_for_block.get_nested(&fb_hash);
     for idx in 0..count {
         let voter = at.read(&idx)?;
@@ -395,7 +401,7 @@ mod tests {
                 BlockContext::new(156, 100, CHAIN_ID, Address::ZERO, Vec::new()),
                 handle,
             );
-            // Fee-only fixtures bypass CPA; supply the canonical day CPA binds.
+            // Fee-only fixtures bypass CPA. Supply the canonical day that CPA binds.
             ctx.storage
                 .contract::<Rewards>()
                 .pending_reward_day
@@ -411,8 +417,8 @@ mod tests {
             .unwrap();
     }
 
-    /// Full k=0 attendance pays exactly the pool; REWARDS is fully drained;
-    /// parity holds with zero residue.
+    /// Full k=0 attendance pays exactly the pool. REWARDS is fully drained.
+    /// Parity holds with zero residue.
     #[test]
     fn full_attendance_pays_exactly_pool_no_residue() {
         run(|ctx| {
@@ -487,8 +493,8 @@ mod tests {
         });
     }
 
-    /// Excluding a voter does NOT raise anyone else's payout (fixed denominator);
-    /// the absent share becomes burned residue.
+    /// Excluding a voter does NOT raise anyone else's payout (fixed denominator).
+    /// The absent share becomes burned residue.
     #[test]
     fn fixed_denominator_no_redistribution() {
         run(|ctx| {
@@ -674,7 +680,7 @@ mod tests {
         });
     }
 
-    /// A voter first seen at k=K (weight 0) earns nothing; its share burns.
+    /// A voter first seen at k=K (weight 0) earns nothing. Its share burns.
     #[test]
     fn cliff_voter_at_k_equals_k_earns_zero() {
         run(|ctx| {
@@ -729,7 +735,7 @@ mod tests {
         });
     }
 
-    /// Duplicate credit at a smaller k improves the distance (no re-append); at a
+    /// Duplicate credit at a smaller k improves the distance (no re-append). At a
     /// larger k it is a no-op.
     #[test]
     fn smallest_k_dedup() {
@@ -834,8 +840,8 @@ mod tests {
         });
     }
 
-    /// after settle, all per-window state is freed (no state
-    /// bloat); only the `fee_settled` tombstone is retained.
+    /// After settle, all per-window state is freed (no state
+    /// bloat). Only the `fee_settled` tombstone is retained.
     #[test]
     fn settle_frees_window_state() {
         run(|ctx| {

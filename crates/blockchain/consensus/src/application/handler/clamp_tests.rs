@@ -48,10 +48,10 @@ fn real_parent_applies_band() {
 
 #[test]
 fn lagging_clock_clamps_up_to_min_advance() {
-    // when the proposer's clock has not advanced `MIN` past the parent
-    // (or is in the past), the timestamp is clamped UP to `parent + MIN` so
-    // the block satisfies the validator minimum-advance rule and is accepted,
-    // rather than emitting `parent + 1` which validators would now reject.
+    // when the proposer's clock is not `MIN` past the parent (or is in the
+    // past), the clamp moves the timestamp UP to `parent + MIN`. Then the block
+    // satisfies the validator minimum-advance rule and validators accept it.
+    // The clamp does not emit `parent + 1`, which validators would now reject.
     let parent = 1_781_255_987_000u64;
     // now in the past -> parent + MIN (not parent + 1).
     assert_eq!(

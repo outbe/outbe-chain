@@ -258,8 +258,8 @@ impl World {
         );
     }
 
-    /// Stamps the bucket's call directly. The scan that decides *when* to stamp
-    /// is covered in `outbe_nod::called_tests`; what matters here is the gate
+    /// Stamps the bucket's call directly. `outbe_nod::called_tests` covers the
+    /// scan that decides *when* to stamp. What matters here is the gate
     /// `settle_nod` applies once it is stamped.
     fn mark_called(&mut self, nod_id: WwdEntityId, at: u64) {
         self.enter(|storage, scope, parent| {

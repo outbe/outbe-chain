@@ -10,7 +10,8 @@ import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-/// @dev Minimal EscrowAdapter stand-in: `finalizeAuction` returns a configured totalPaid; exposes `paymentToken`.
+/// @dev Minimal EscrowAdapter stand-in. `finalizeAuction` returns a configured totalPaid. The mock
+///      also exposes `paymentToken`.
 contract MockEscrowAdapter {
     IERC20 public paymentToken;
     uint128 public totalPaidToReturn;
@@ -36,7 +37,8 @@ contract MockEscrowAdapter {
     }
 }
 
-/// @dev Records the composed-transfer send; can be toggled to revert to exercise the park path.
+/// @dev Records the composed-transfer send. A test can toggle it to revert, to exercise the park
+///      path.
 contract MockTokenBridge {
     bool public shouldRevert;
     uint256 public fee = 0.001 ether;
@@ -150,7 +152,7 @@ contract TargetRouterProceedsTest is CrossChainTest {
 
         _deliverRefund(SERIES_ID);
 
-        // Finalization still settled; the send was parked instead of rolling back.
+        // Finalization still settled. The router parked the send instead of rolling back.
         assertEq(tokenBridge.calls(), 0);
         (uint32 s, uint128 a, bool exists, bool done) = target.parkedProceeds(0);
         assertEq(s, SERIES_ID);

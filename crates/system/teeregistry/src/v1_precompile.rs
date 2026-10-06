@@ -719,7 +719,7 @@ mod tests {
 
         // Canonical outer ABI, deliberately malformed canonical evidence. The
         // decoder rejection must occur only after the complete QVL/register
-        // protocol charge has been reserved.
+        // protocol charge is reserved.
         let input = call(vec![1, 1, 0, 0, 0, 0], 65, 64);
         let schedule = TeeRegistryGasScheduleV1::normative();
         let total = schedule
@@ -738,9 +738,9 @@ mod tests {
         let dispatch_charge = total - intrinsic - PRECOMPILE_BASE_GAS - storage_allowance;
 
         // Actual production-shaped storage gas consumes the allowance already
-        // included in `register_fixed`; it must never sit above the normative
+        // included in `register_fixed`. It must never sit above the normative
         // maximum. The malformed canonical evidence is rejected before verifier
-        // invocation and no state write is reachable.
+        // invocation. No state write is reachable.
         provider.set_gas_limit(u64::MAX);
         let result = provider
             .enter(|storage| dispatch(storage, &input, Address::repeat_byte(0x77), U256::ZERO));

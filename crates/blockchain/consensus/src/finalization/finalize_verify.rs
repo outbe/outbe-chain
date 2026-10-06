@@ -1,11 +1,11 @@
 //! Off-thread finalize-vote verification.
 //!
 //! The Simplex batcher reports `Activity::Finalize` to the reporter **before**
-//! it batch-verifies the vote: in the monorepo batcher `round.rs::add_network`
+//! it batch-verifies the vote. In the monorepo batcher, `round.rs::add_network`
 //! calls `reporter.report(Activity::Finalize(..))` and only then
 //! `verifier.add(.., /*verified=*/ false)`. The reporter therefore cannot trust
-//! those votes - it must verify each one before admitting it to the
-//! process-local [`SharedLateFinalizeStore`], or a single forged vote would
+//! those votes. It must verify each one before it admits it to the
+//! process-local [`SharedLateFinalizeStore`]. Otherwise a single forged vote would
 //! poison the proposer's late-credit aggregate and get the proposer's own block
 //! rejected pre-exec (validators re-verify the aggregate). Dropping the
 //! verification is **not** an option here (the audit's "batcher already
@@ -14,12 +14,12 @@
 //! Doing that `O(committee)` sequential BLS pairing verification inline on the
 //! Simplex voter task inflated block time and shrank the leader-timeout budget
 //! as the committee grew. This actor moves the verification + admission off the
-//! voter critical path: [`OutbeReporter`](crate::reporter::OutbeReporter)
+//! voter critical path. [`OutbeReporter`](crate::reporter::OutbeReporter)
 //! enqueues raw votes through [`FinalizeVerifyMailbox::verify`] (a non-blocking
-//! `unbounded_send`) and this actor verifies them against the epoch's committee
+//! `unbounded_send`). This actor verifies them against the epoch's committee
 //! scheme and admits only the verified ones. The store/buffer therefore still
-//! only ever holds signature-verified votes; the only observable change is that
-//! admission happens slightly later (best-effort, process-local - never
+//! only ever holds signature-verified votes. The only observable change is that
+//! admission happens slightly later (best-effort and process-local, never
 //! consensus state).
 
 use std::collections::BTreeMap;
@@ -45,7 +45,7 @@ type Job = (Epoch, Finalize<HybridScheme<MinSig>, Digest>);
 
 /// Number of recent views whose verified finalize votes stay buffered in
 /// `observed_finalizes` for future byzantine-equivocation detection. Bounds the
-/// buffer; matches the reporter's former prune window.
+/// buffer. Matches the reporter's former prune window.
 const OBSERVED_RETAIN_VIEWS: u64 = 32;
 
 /// Non-blocking handle the reporter uses to enqueue finalize votes for
@@ -64,7 +64,7 @@ impl FinalizeVerifyMailbox {
         let _ = self.tx.unbounded_send((epoch, finalize));
     }
 
-    /// A mailbox whose receiver is already dropped - every `verify` is a no-op.
+    /// A mailbox whose receiver is already dropped. Every `verify` is a no-op.
     /// For unit tests that exercise the reporter without a running actor.
     #[cfg(test)]
     pub fn disconnected() -> Self {
@@ -75,7 +75,7 @@ impl FinalizeVerifyMailbox {
 
 /// Persistent actor that verifies finalize votes off the Simplex voter task and
 /// admits the verified ones to the late-finalize store. Spawned once for the
-/// node's lifetime; it resolves each vote's committee scheme by epoch through
+/// node's lifetime. It resolves each vote's committee scheme by epoch through
 /// the shared [`HybridSchemeProvider`], so it needs no per-epoch restart.
 pub struct FinalizeVerifyActor {
     rx: mpsc::UnboundedReceiver<Job>,
@@ -112,11 +112,11 @@ impl FinalizeVerifyActor {
         }
     }
 
-    /// Verify one finalize vote against its epoch's committee scheme; on success
+    /// Verify one finalize vote against its epoch's committee scheme. On success,
     /// record it in the late-finalize store (so the proposer can credit it) and
-    /// buffer it for equivocation detection. A vote whose epoch scheme is no
-    /// longer registered (epoch already rotated out) or whose signature fails to
-    /// verify is dropped - never admitted.
+    /// buffer it for equivocation detection. The actor drops, and never admits, a
+    /// vote whose epoch scheme is no longer registered (epoch already rotated out)
+    /// or whose signature fails to verify.
     ///
     /// `pub(crate)` so the reporter's test harness (which can build a real
     /// committee + verifiable finalize) can drive admission directly.
@@ -160,7 +160,7 @@ impl FinalizeVerifyActor {
         self.observed_finalizes.retain(|v, _| *v >= min_view);
     }
 
-    /// Number of buffered (verified) votes for `view` - test-only introspection
+    /// Number of buffered (verified) votes for `view`. Test-only introspection
     /// of `observed_finalizes`.
     #[cfg(test)]
     pub(crate) fn observed_len(&self, view: u64) -> usize {

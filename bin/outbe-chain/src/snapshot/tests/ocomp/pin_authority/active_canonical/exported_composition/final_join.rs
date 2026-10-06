@@ -404,8 +404,8 @@ fn retained_discovery_ack_must_match_surviving_export_but_retired_records_stay_o
                             _ => unreachable!(),
                         }
                         // Exact native ACK envelope in test setup only. Recompute its
-                        // checksum so the existing native decoder accepts the fixture;
-                        // the failure must come from the missing cross-record relation.
+                        // checksum so the existing native decoder accepts the fixture.
+                        // The failure must come from the missing cross-record relation.
                         let canonical = ack.committed.encode_body(&limits).unwrap();
                         let mut bytes = b"OUTBDSA2".to_vec();
                         bytes.extend_from_slice(&ack.reference.encode_fixed());

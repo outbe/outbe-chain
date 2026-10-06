@@ -564,10 +564,11 @@ const gemWire = task(
   .setAction(lazy(gemWireAction));
 
 // ============================================================================
-// Precompile-caller Wire - grant roles to the EVM frames that initiate the
-// gated calls: the begin-block system caller (auction stage sends + qualify/call
-// mark sends) and the Desis precompile (clearing tick, where
-// createSeries + issuance-instructions run in-process).
+// Precompile-caller Wire
+// Grant roles to the EVM frames that initiate the gated calls:
+// - the begin-block system caller (auction stage sends + qualify/call mark sends).
+// - the Desis precompile (clearing tick). There, createSeries + issuance-instructions
+//   run in-process.
 // ============================================================================
 
 interface SystemGrantRolesArgs {
@@ -728,7 +729,7 @@ const intexFactoryAssertRelayerRoleAction = async (args: IntexFactoryAssertRelay
     };
   };
 
-  // createSeries runs in the Desis clearing-tick frame;
+  // createSeries runs in the Desis clearing-tick frame.
   // markCalled runs from begin-block (the system caller). Both need
   // RELAYER_ROLE.
   const role = await intex.read.RELAYER_ROLE();

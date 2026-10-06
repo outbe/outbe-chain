@@ -46,7 +46,7 @@ enum Command {
         #[arg(long)]
         image: String,
     },
-    /// Derive DomainEvidenceV1; no status or test result is accepted as input.
+    /// Derive DomainEvidenceV1. The command accepts no status or test result as input.
     Assemble {
         #[arg(long)]
         bundle_root: PathBuf,

@@ -485,7 +485,7 @@ fn recovered_fcu_releases_projection_wait_without_running_executor_heartbeat() {
         assert_eq!(waiting_parent.await, WaitOutcome::Ready);
         engine_task.await.unwrap();
         drop(publisher_keepalive);
-        // actor.start() is deliberately never called: no live heartbeat is
+        // The test deliberately never calls actor.start(). No live heartbeat is
         // available to rescue an incorrectly ordered startup barrier.
     });
 }
@@ -796,8 +796,8 @@ fn test_recovered_boundary_addresses_survive_latest_state_removal() {
 // T-3 / behavioural counterpart of the removed source-grep test in
 // `crates/blockchain/evm/tests/genesis.rs`. `validate_recovered_vrf_material`
 // must reject when the locally-recovered VRF group public key disagrees with
-// the finalized boundary artifact, and must accept when they match (or when
-// no boundary is supplied - bootstrap path).
+// the finalized boundary artifact. It must accept when they match, or when
+// the caller supplies no boundary (bootstrap path).
 #[test]
 fn validate_recovered_vrf_material_accepts_matching_boundary_rejects_mismatch() {
     let (_keys, _participants, _output, _share, polynomial) = run_test_dkg_complete();
@@ -832,7 +832,7 @@ fn validate_recovered_vrf_material_accepts_matching_boundary_rejects_mismatch() 
 // `select_recovery_participants` is the pure decision the recovery path now
 // uses at stack.rs section 7. The output's `players()` is already a sorted/deduped
 // `commonware_utils::ordered::Set`, so participant indices derive from it
-// canonically - the test asserts membership and the explicit drift error.
+// canonically. The test asserts membership and the explicit drift error.
 // =============================================================================
 
 /// Build a `DkgBoundaryArtifact` whose `reshare.new_active_set` records `n`
@@ -870,7 +870,7 @@ fn recovery_uses_recovered_committee_not_latest() {
     );
 
     // Subcase 2: the recovered boundary records a 4-validator active set while the
-    // restored DKG output has only 3 players - the consensus material does not
+    // restored DKG output has only 3 players. The consensus material does not
     // match the recovered chain boundary. Recovery must fail fast with an explicit
     // drift error rather than build the scheme against the wrong committee.
     let boundary_drift = test_boundary_with_active_set_len(4);
@@ -1326,8 +1326,9 @@ mod copied_native_dkg_prerequisites {
         Ok(config)
     }
 
-    // All services belong to this invocation. The copied provider is installed
-    // initially; no execution, peer loop, consensus engine or process is started.
+    // All services belong to this invocation. This function installs the copied
+    // provider initially. It starts no execution, peer loop, consensus engine or
+    // process.
     fn with_native_components(
         root: &Path,
         check: impl FnOnce(&OutbeFullNode) -> eyre::Result<()>,

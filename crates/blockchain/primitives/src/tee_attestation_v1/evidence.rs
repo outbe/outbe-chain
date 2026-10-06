@@ -238,7 +238,7 @@ pub struct GramineDirectEvidenceV1 {
     pub intent: RegistrationIntentV1,
     pub dev_attestation_public: [u8; 32],
     pub dev_signature: [u8; 64],
-    /// Payload v2 only; v1 registration/renewal encoding remains byte-identical.
+    /// Payload v2 only. The v1 registration/renewal encoding remains byte-identical.
     pub transition_key_ready_proof: Option<TransitionKeyReadyProofV1>,
 }
 

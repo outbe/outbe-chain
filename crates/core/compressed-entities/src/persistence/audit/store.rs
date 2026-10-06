@@ -160,7 +160,7 @@ const RUN_HEADER_BYTES: u64 = 32;
 static NEXT_SORT_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Sort fixed-width records by an encoded identity prefix. Payload bytes are
-/// compared only after identity; every identity must occur exactly once.
+/// compared only after identity. Every identity must occur exactly once.
 /// Work owns all files, and both this builder and its output borrow that owner.
 pub(super) struct RecordSorter<'a, const N: usize> {
     work: &'a CeAuditWork,
@@ -309,7 +309,7 @@ impl<'a, const N: usize> RecordSorter<'a, N> {
     }
 }
 
-/// Streaming output; an I/O or integrity error terminates this iterator.
+/// Streaming output. An I/O or integrity error terminates this iterator.
 pub(super) struct SortedRecords<'a, const N: usize> {
     _work: &'a CeAuditWork,
     reader: Option<RunReader<N>>,

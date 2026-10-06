@@ -8,7 +8,7 @@ use crate::errors::CredisError;
 
 /// Position lifecycle state.
 ///
-/// A position is settleable from the moment it opens; `Open -> Called` is the
+/// A position is settleable from the moment it opens. `Open -> Called` is the
 /// sustained-breach trigger. Both `Settled` (fully repaid) and `Void` (call
 /// window lapsed with a remainder) are terminal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,8 +39,8 @@ impl CredisState {
 
 /// Position record. Keyed by `keccak256(cca || smart_account || asset || block_number)`.
 ///
-/// Every term - both currency codes included - is sealed at opening and never
-/// changes afterwards; only `outstanding_principal_minor`, `outstanding_gratis_minor`,
+/// Every term, both currency codes included, is sealed at opening and never
+/// changes afterwards. Only `outstanding_principal_minor`, `outstanding_gratis_minor`,
 /// `interest_paid_minor`, `last_settled_at`, `called_at` and `state` move over the
 /// position's life.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,8 +63,8 @@ pub struct Position {
     pub asset: Address,
 
     /// ISO 4217 numeric code of `asset` (e.g. 840 = USD), read at opening.
-    /// Denominates the position and keys its policy rate. NOT the call
-    /// threshold anchor - see [`Self::reference_currency`].
+    /// Denominates the position and keys its policy rate. It is NOT the call
+    /// threshold anchor. See [`Self::reference_currency`].
     #[attribute(order = 3)]
     pub issuance_currency: u16,
 
@@ -112,9 +112,9 @@ pub struct Position {
     pub issued_at: u64,
 
     /// Start of the current accrual period. Equals `issued_at` until the
-    /// first settlement, then advances by the whole days each settlement
-    /// charges - not to the settlement timestamp, so a sub-day remainder
-    /// carries forward instead of being discarded.
+    /// first settlement. Then it advances by the whole days that each settlement
+    /// charges, not to the settlement timestamp. Thus a sub-day remainder
+    /// carries forward and is not discarded.
     #[attribute(order = 13)]
     pub last_settled_at: u64,
 
@@ -122,7 +122,7 @@ pub struct Position {
     #[attribute(order = 14, default = 0)]
     pub called_at: u64,
 
-    /// Lifecycle state as `u8`; decode via [`CredisState::from_u8`].
+    /// Lifecycle state as `u8`. Decode it via [`CredisState::from_u8`].
     #[attribute(order = 15)]
     pub state: u8,
 
@@ -145,13 +145,13 @@ pub struct Position {
     pub call_rate: u16,
 
     /// Call-trigger evaluation window in seconds (snapshot of the protocol
-    /// constant at opening); the trailing span the daily scan reads for Call
-    /// Price breaches. Divided by 86400 to get the day count.
+    /// constant at opening). This is the trailing span the daily scan reads for
+    /// Call Price breaches. Divided by 86400 to get the day count.
     #[attribute(order = 19, default = 0)]
     pub call_window_seconds: u32,
 
     /// Breach threshold in seconds (snapshot of the protocol constant at
-    /// opening); divided by 86400 to get the required breach-day count.
+    /// opening). Divided by 86400 to get the required breach-day count.
     #[attribute(order = 20, default = 0)]
     pub call_threshold_seconds: u32,
 
@@ -204,10 +204,10 @@ pub struct CredisContract {
     #[attribute(order = 4)]
     pub position_id_at_index: outbe_primitives::storage::dsl::Map<u64, U256>,
 
-    /// Dense index of the positions still on the price path - those in `Open`
-    /// or `Called`. Membership invariant: a position is listed iff
-    /// its state is non-terminal, so the daily scan visits only the positions
-    /// that can still transition instead of the whole book.
+    /// Dense index of the positions still on the price path, that is, those in
+    /// `Open` or `Called`. Membership invariant: a position is listed iff its
+    /// state is non-terminal. Thus the daily scan visits only the positions that
+    /// can still transition, not the whole book.
     #[attribute(order = 5)]
     pub active_positions: outbe_primitives::storage::dsl::List<U256>,
 

@@ -27,7 +27,7 @@ const FINALIZED_JOIN_ADMISSION_ANCHOR_BYTES: u64 = 1 + (7 * 32) + 8 + 8;
 
 /// Exact finalized checkpoint that allows a restarted validator to catch up
 /// without trusting its stale local Registry state. This is owner-only local
-/// recovery evidence; it grants no consensus membership or voting authority.
+/// recovery evidence. It grants no consensus membership or voting authority.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FinalizedJoinAdmissionAnchorV1 {
     pub chain_id: [u8; 32],

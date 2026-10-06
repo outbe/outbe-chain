@@ -339,8 +339,9 @@ mod tests {
     }
 
     /// Unused Lysis Limit is Limit minus Allocation, and that
-    /// remainder increases Promis Limit exactly once. A conservation mismatch
-    /// is already rejected with no credit (`wrong_binding_or_limit_conservation_is_side_effect_free`).
+    /// remainder increases Promis Limit exactly once. `credit_certified_carry_over` already
+    /// rejects a conservation mismatch with no credit
+    /// (`wrong_binding_or_limit_conservation_is_side_effect_free`).
     #[test]
     fn unused_lysis_plus_allocation_equals_the_limit_and_credits_once() {
         let input = input(37, 8, 2);

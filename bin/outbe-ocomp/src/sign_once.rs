@@ -1,8 +1,8 @@
 //! Immutable, Supervisor-owned sign-once authority for OCOMP result attestations.
 //!
 //! A caller supplies one typed result-signature subject, never an arbitrary
-//! purpose. The store invokes the signing closure only when the slot is empty,
-//! durably installs the complete canonical record without overwrite, and
+//! purpose. The store invokes the signing closure only when the slot is empty.
+//! It durably installs the complete canonical record without overwrite. It
 //! returns an existing record for an exact retry.
 
 use std::{
@@ -365,7 +365,7 @@ impl SignOnceStore {
         }
 
         // Published hard links must be reconciled before reservations inspect
-        // their final record; directory iteration order is not authoritative.
+        // their final record. Directory iteration order is not authoritative.
         for entry in fs::read_dir(&self.root)
             .map_err(|source| self.io("rescan sign-once reservations", &self.root, source))?
         {

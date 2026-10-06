@@ -112,9 +112,9 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
                 self.assertEqual(set(seed["balance"].values()), {"1000000000000000000000"})
                 self.assertEqual(seed["gems"][0]["promis_load"], "1000000000")
                 if filename.startswith("seed-testnet"):
-                    # A network profile seeds no worldwide day: the runtime
-                    # creates the first one at block 1, and a seeded day gets
-                    # no formation record, so reaching MissedOffering would
+                    # A network profile seeds no worldwide day. The runtime
+                    # creates the first one at block 1. A seeded day gets no
+                    # formation record, so reaching MissedOffering would
                     # kill the ProtocolCycle and stop block production.
                     self.assertNotIn("metadosis", seed)
                 else:

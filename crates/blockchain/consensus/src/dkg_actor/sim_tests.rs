@@ -1,31 +1,35 @@
 //! Deterministic DKG / reshare simulation suite.
 //!
-//! Best-practice consensus-test pattern: every ceremony outcome is pinned to a
-//! reproducible input so a regression cannot silently change agreement, the
-//! group key, or the failure mode.
+//! Best-practice consensus-test pattern: this suite pins every ceremony outcome
+//! to a reproducible input. Thus a regression cannot silently change agreement,
+//! the group key, or the failure mode.
 //!
 //! Two layers:
 //!
 //!  * **Synchronous, fixed-entropy** (`run_seeded_round`): drives the
 //!    commonware Feldman-Desmedt primitive step-for-step with a *caller-supplied*
-//!    `ChaCha20Rng` instead of `OsRng`, so the group key is a pure function of
+//!    `ChaCha20Rng` instead of `OsRng`. Thus the group key is a pure function of
 //!    `(keys, seed)`. Production correctly uses `OsRng` for dealer secrets
-//!    (unpredictability is required), so seed-determinism is a test affordance
-//!    that lets us assert byte-identical reproducibility and adversarial
-//!    rejection on *typed* errors - stronger than the existing string / outer
-//!    timeout-based assertions.
+//!    (unpredictability is required). Thus seed-determinism is a test affordance.
+//!    It lets us assert byte-identical reproducibility and adversarial
+//!    rejection on *typed* errors. This is stronger than the existing string /
+//!    outer timeout-based assertions.
 //!
 //!  * **Actor over the real wire** (`deterministic::Runner` + `simulated::Network`):
 //!    runs the production [`run_initial_dkg`] actor over the simulated p2p network
 //!    on the deterministic runtime, so task scheduling and timers are
-//!    reproducible. Asserts (a) a fully-connected committee completes and every
-//!    validator agrees on one group key, and (b) a missing dealer makes the
-//!    survivors hit the ceremony deadline and return a *clean* timeout error -
-//!    never a panic, never a divergent partial key.
+//!    reproducible. Asserts that:
+//!    (a) a fully-connected committee completes and every validator agrees on
+//!    one group key.
+//!    (b) a missing dealer makes the survivors hit the ceremony deadline and
+//!    return a *clean* timeout error. The result is never a panic and never a
+//!    divergent partial key.
 //!
-//! Adversarial cases mirrored as best practice (not 1:1): below-threshold dealers
-//! cannot mint a key, a foreign previous output (key-substitution) is rejected,
-//! and a missing dealer times out cleanly.
+//! Adversarial cases mirrored as best practice (not 1:1):
+//!
+//!  * below-threshold dealers cannot mint a key.
+//!  * a foreign previous output (key-substitution) is rejected.
+//!  * a missing dealer times out cleanly.
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
@@ -200,8 +204,8 @@ fn dkg_group_key_is_deterministic_under_fixed_entropy() {
 
 #[test]
 fn below_threshold_dealers_cannot_mint_key() {
-    // m1: a reshare whose dealer set is below the previous quorum must be
-    // rejected at `Info::new` - no ceremony, no minted key.
+    // m1: `Info::new` must reject a reshare whose dealer set is below the
+    // previous quorum. No ceremony, no minted key.
     let a = keys_from_seeds(&[1, 2, 3, 4]);
     let mut rng = ChaCha20Rng::seed_from_u64(7);
     let (output_a, _) = run_seeded_round(&a, &mut rng);
@@ -239,7 +243,7 @@ fn below_threshold_dealers_cannot_mint_key() {
 #[test]
 fn foreign_previous_output_rejected() {
     // m8: feeding committee B's output as committee A's `previous` (key
-    // substitution) must be rejected - A's dealers are not in B's player set.
+    // substitution) must be rejected. A's dealers are not in B's player set.
     let a = keys_from_seeds(&[1, 2, 3, 4]);
     let b = keys_from_seeds(&[101, 102, 103, 104]);
 
@@ -382,7 +386,7 @@ fn sim_single_missing_dealer_times_out_clean() {
         );
         network.start();
 
-        // Register + spawn only the first n-1 nodes; the last dealer never joins.
+        // Register + spawn only the first n-1 nodes. The last dealer never joins.
         let mut chans = Vec::new();
         for key in keys.iter().take(n - 1) {
             let control = oracle.control(key.public_key());

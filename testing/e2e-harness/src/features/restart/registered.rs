@@ -15,7 +15,8 @@ use cucumber::then;
 use cucumber::when;
 
 /// Restart at the earliest durable join checkpoint: registration, P2P identity
-/// and enclave join are committed, but no stake/readiness or DKG side effect is.
+/// and enclave join are committed. No stake/readiness or DKG side effect is
+/// committed.
 #[when("a registered joining node and enclave restart before staking")]
 fn restart_registered_joiner_before_staking(world: &mut World) {
     let idx = world.validators.joiner_index();
@@ -35,7 +36,7 @@ fn restart_registered_joiner_before_staking(world: &mut World) {
     restart_joiner_pair(world, idx, false).expect("restart exact registered node and enclave");
 }
 
-/// The restart must preserve exactly the registered pre-state; only subsequent
+/// The restart must preserve exactly the registered pre-state. Only subsequent
 /// stake/readiness may create one pending target and one activation.
 #[then("registration survives and the join can activate once")]
 fn registered_restart_then_join_activates(world: &mut World) {

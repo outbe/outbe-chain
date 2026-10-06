@@ -113,7 +113,7 @@ pub(crate) fn verify_canonical_obligations(
         Err(error) => return Err(error.into()),
     }
     // Distinct from Task05's secondary. The immutable reader drops before this
-    // local TempDir; no shared source handle or mutable catch-up API is exposed.
+    // local TempDir. No shared source handle or mutable catch-up API is exposed.
     let secondary = tempfile::Builder::new()
         .prefix("ocomp-projection-audit-")
         .tempdir_in(scratch_parent)?;
@@ -337,7 +337,7 @@ pub(crate) fn verify_canonical_obligations(
             listed.finalized.as_ref().map(|f| f.job_id),
         )?;
         let pin = pin_by_intent.get(intent_id).map(|index| &pins[*index]);
-        // Missing pin is observed; P>=B alone cannot imply corruption across all
+        // Missing pin is observed. P>=B alone cannot imply corruption across all
         // native runtime policies. Current source capability is still mandatory.
         let saved_export = pin.and_then(|pin| pin.authority.export);
         // A surviving complete receipt records local export progress independently

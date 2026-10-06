@@ -5,9 +5,11 @@
 //!
 //! The benchmark never starts a node, network, Docker, SGX, or a TEE sidecar.
 //! It executes both the canonical TributeFactory state transition and the
-//! canonical enclave offer processor in-process. Issuance is ZK-only, so the
-//! single scenario uses the frozen Demo Tribute proof fixture, a registered L2,
-//! and a valid BLS MinSig signature over the proof's Merkle root.
+//! canonical enclave offer processor in-process. Issuance is ZK-only. Thus the
+//! single scenario uses these inputs:
+//! - the frozen Demo Tribute proof fixture
+//! - a registered L2
+//! - a valid BLS MinSig signature over the proof's Merkle root
 
 use std::hint::black_box;
 use std::time::Instant;
@@ -85,14 +87,14 @@ use super::support::{
 };
 
 const CHAIN_ID: u64 = outbe_primitives::chain::DEVNET_CHAIN_ID;
-/// L2 chain id the bench registers and selects; it is the ABI `uint32` selector
+/// L2 chain id the bench registers and selects. It is the ABI `uint32` selector
 /// and the registry key, so a single type keeps both in sync.
 const L2_CHAIN_ID: u32 = 0xdead;
-/// Circuit version enabled for `L2_CHAIN_ID` in the canonical circuit registry;
-/// the frozen Demo Tribute fixture verifies under it.
+/// Circuit version enabled for `L2_CHAIN_ID` in the canonical circuit registry.
+/// The frozen Demo Tribute fixture verifies under it.
 ///
-/// Proving uses the active `demo_tribute` marker (1.2.0) while the registry
-/// enables 1.1.0 for this chain: the frozen `circuit.vk` files of both versions
+/// Proving uses the active `demo_tribute` marker (1.2.0), but the registry
+/// enables 1.1.0 for this chain. The frozen `circuit.vk` files of both versions
 /// are byte-identical, so one proof verifies under either entry's key.
 const L2_CIRCUIT_VERSION: &str = "1.1.0";
 const BLOCK_GAS_LIMIT: u64 = 30_000_000;
@@ -783,12 +785,13 @@ fn ms_to_ns(milliseconds: f64) -> u64 {
     (milliseconds * 1_000_000.0).round() as u64
 }
 
-/// Summarizes the ZK issuance cost decomposition of the Tribute creation
-/// scenario: the frozen verifier charge actually configured for `offerTribute`
-/// against the benchmark-calibrated alternative, both inside one ZK transaction.
+/// Summarizes how the Tribute creation scenario splits the ZK issuance cost.
+/// The summary compares the frozen verifier charge actually configured for
+/// `offerTribute` against the benchmark-calibrated alternative. Both charges
+/// are inside one ZK transaction.
 ///
-/// Issuance is ZK-only, so no cross-scenario comparison is possible or wanted;
-/// the calibration only re-prices the verifier charge within the same run.
+/// Issuance is ZK-only, so no cross-scenario comparison is possible or wanted.
+/// The calibration only re-prices the verifier charge within the same run.
 #[must_use]
 pub fn render_gas_policy(reports: &[ScenarioReport]) -> Option<String> {
     let zk = reports

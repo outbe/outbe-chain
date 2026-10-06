@@ -3,7 +3,7 @@
 //! Entries are discovered only through plan-derived ROOT_REDUCE leaves already
 //! present in the durable admission catalog. Each cursor step opens at most one
 //! CAS object. The yielded items and `Complete` are evidence inputs for a future
-//! finalizer; neither is a result, signature, or finalization capability.
+//! finalizer. Neither is a result, signature, or finalization capability.
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_lysis::program_v1::{
@@ -44,9 +44,9 @@ pub struct VerifiedLysisResultChunkV1 {
 
 /// Opens one exact result chunk through its plan-derived ROOT_REDUCE leaf.
 ///
-/// This addressable path performs no prefix scan. The leaf artifact, admitted
-/// manifest entry, CAS object, and decoded chunk are all rebound to the frozen
-/// plan before the chunk is returned.
+/// This addressable path performs no prefix scan. Before it returns the chunk,
+/// it rebinds the leaf artifact, admitted manifest entry, CAS object, and
+/// decoded chunk to the frozen plan.
 pub fn verified_result_chunk_at(
     audit: &LocalLysisPlanAuditV1<'_>,
     chunk_ordinal: u32,

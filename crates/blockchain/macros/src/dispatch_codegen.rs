@@ -166,10 +166,10 @@ fn emit_dispatch(
         .collect::<syn::Result<Vec<_>>>()?;
 
     // With no payable method the whole contract refuses value up front. Once one
-    // method is payable the boundary credits value to this address, so the
-    // contract refuses it for every selector it has not published instead -
-    // dropping the check would let every other selector silently accept value it
-    // has no accounting for.
+    // method is payable, the boundary credits value to this address. The contract
+    // then refuses value for every selector it has not published as payable. If
+    // this check is dropped, every other selector silently accepts value it has no
+    // accounting for.
     let reject_value = if any_payable {
         quote! {
             ::outbe_primitives::dispatch::reject_value_unless_payable(

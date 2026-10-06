@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Adapter failure is retained; timeout never means that resources were closed.
+/// Adapter failure is retained. A timeout never means that resources were closed.
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum StorageCloseError {
     #[error("storage lifecycle completion deadline exceeded")]

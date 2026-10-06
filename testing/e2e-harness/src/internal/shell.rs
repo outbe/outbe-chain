@@ -50,9 +50,9 @@ impl<'a> Sh<'a> {
     /// Run `outbe-cli <args>` (caller supplies global `--rpc-url` / `--private-key`)
     /// and capture stdout.
     ///
-    /// A non-zero exit is **not** an error - callers parse stdout and several
-    /// treat an empty result as "not available". But it is always reported, with
-    /// the command and both streams, so a failing send is never silent. (It used
+    /// A non-zero exit is **not** an error. Callers parse stdout, and several
+    /// treat an empty result as "not available". But this method always reports
+    /// it, with the command and both streams, so a failing send is never silent. (It used
     /// to discard stderr unless `--debug`, which left the caller failing later
     /// with no trace of why.)
     pub fn cli<I, S>(&self, args: I) -> Result<String>
@@ -67,7 +67,7 @@ impl<'a> Sh<'a> {
             .collect();
         let out = self.cli_output(&argv)?;
 
-        // `Cmd::read` strips one trailing newline; `Cmd::output` doesn't. Callers
+        // `Cmd::read` strips one trailing newline. `Cmd::output` doesn't. Callers
         // parse this stdout, so keep the old shape.
         let mut stdout = String::from_utf8_lossy(&out.stdout).into_owned();
         if stdout.ends_with('\n') {
@@ -93,8 +93,8 @@ impl<'a> Sh<'a> {
     }
 
     /// Run an `outbe-cli` command whose success is required for the scenario.
-    /// Unlike [`Self::cli`], a non-zero status is returned to the calling step
-    /// immediately, so a failed registration cannot be followed by node launch.
+    /// Unlike [`Self::cli`], this method returns a non-zero status to the calling
+    /// step immediately, so a failed registration cannot be followed by node launch.
     pub fn cli_required<I, S>(&self, args: I) -> Result<String>
     where
         I: IntoIterator<Item = S>,

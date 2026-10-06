@@ -1,6 +1,6 @@
 //! Reth ExEx adapter for finalized offchain-data projection.
 //!
-//! Canonical-chain notifications are deliberately only drained here. The provider's finalized
+//! This adapter deliberately only drains canonical-chain notifications. The provider's finalized
 //! block signal is the sole authority that permits projection writes.
 
 use alloy_primitives::B256;
@@ -52,7 +52,8 @@ pub struct OffchainDataProjectionConfig {
     pub storage: StorageConfig,
 }
 
-/// Projection instance whose offchain storage connection, topology, and managed state passed preflight.
+/// Projection instance whose offchain storage connection, topology, and managed state passed
+/// preflight.
 pub struct PreparedOffchainDataProjection {
     projector: OffchainDataProjection,
     storage: OpenedStorage,
@@ -129,7 +130,8 @@ pub struct ReadyOffchainDataProjection {
     retention_fence: Arc<ProjectionRetentionFence>,
 }
 
-/// Connects to offchain storage and validates storage prerequisites before Reth component initialization.
+/// Connects to offchain storage and validates storage prerequisites before Reth initializes its
+/// components.
 pub fn prepare_offchain_data_projection(
     config: OffchainDataProjectionConfig,
 ) -> eyre::Result<PreparedOffchainDataProjection> {

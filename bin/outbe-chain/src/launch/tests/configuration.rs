@@ -13,17 +13,19 @@ fn engine_builds_payloads_after_prefinalization_parent_switches() {
     assert!(tree.unwind_canonical_header());
 }
 
-/// Pool lifetime hardening: parked transactions must age out in minutes,
-/// not hours, RPC submissions must not be exempt from that eviction, and a
-/// restart must not resurrect what the node evicted.
+/// Pool lifetime hardening:
 ///
-/// Asserted through `TxPoolArgs::default()`, which reads the installed
-/// global defaults - the same values clap hands the node when no
+/// - Parked transactions must age out in minutes, not hours.
+/// - RPC submissions must not be exempt from that eviction.
+/// - A restart must not resurrect what the node evicted.
+///
+/// The test asserts this through `TxPoolArgs::default()`, which reads the installed
+/// global defaults. These are the same values that clap hands the node when no
 /// `--txpool.*` flag is given.
 #[test]
 fn txpool_defaults_bound_transaction_lifetime() {
-    // Installing is idempotent-by-OnceLock; another test in this binary may
-    // have installed the same values first, which is equally correct.
+    // Installing is idempotent-by-OnceLock. Another test in this binary may
+    // have installed the same values first. That is equally correct.
     let _ = super::outbe_default_txpool_values().try_init();
 
     let args = reth_node_core::args::TxPoolArgs::default();

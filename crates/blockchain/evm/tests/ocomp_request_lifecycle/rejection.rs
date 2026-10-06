@@ -47,7 +47,8 @@ pub(crate) fn run() {
     let height = open_height + 1;
     // The canonical successor returns only after the production builder, the
     // import replay, and the historical replay agree on the execution output,
-    // including receipts, and the header state root matches that output.
+    // including receipts. The header state root must also match that output
+    // before it returns.
     let built = build_canonical_ocomp_successor(
         fixture,
         OcompSuccessorBlock {

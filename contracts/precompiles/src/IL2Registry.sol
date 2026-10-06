@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
-/// Registry of L2 networks. Registration is governance-only; chain id 0 is invalid.
+/// Registry of L2 networks. Registration is governance-only. Chain id 0 is invalid.
 ///
 /// Any caller may offer a Tribute with a valid root signature and ZK proof for
 /// the selected chain. The caller need not match the registered `l1Address`.
@@ -10,9 +10,9 @@ pragma solidity ^0.8.30;
 /// x.c0 || x.c1 || y.c0 || y.c1, each component padded to 64 bytes.
 /// Registering an empty key or 256 zero bytes selects live resolution from
 /// `IDaInbox(inboxAddress).groupPubKey()`. The inbox address may differ from
-/// the owner (`l1Address`); omitted inbox addresses default to the owner.
+/// the owner (`l1Address`). An omitted inbox address defaults to the owner.
 /// Explicit registry keys take precedence.
-/// Compressed inputs are rejected; inbox keys and updates must be nonidentity.
+/// The registry rejects compressed inputs. Inbox keys and updates must be nonidentity.
 interface IL2Registry {
     event L2NetworkRegistered(uint64 indexed chainId, address indexed l1Address, bytes publicKey);
     event L2NetworkRemoved(uint64 indexed chainId);

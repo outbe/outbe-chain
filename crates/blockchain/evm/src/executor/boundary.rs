@@ -1,16 +1,16 @@
 use super::*;
 
 /// Outbe runtime addresses that receive `0xEF` EIP-161 marker bytecode in every
-/// block's pre-execution step ([`OutbeBlockExecutor::apply_pre_execution_changes`])
-/// so their persistent EVM storage survives state-root computation - EIP-161
-/// emptiness (nonce==0 && balance==0 && empty code) ignores storage, so without
-/// the marker a stateful account holding only storage is pruned.
+/// block's pre-execution step ([`OutbeBlockExecutor::apply_pre_execution_changes`]).
+/// The marker lets their persistent EVM storage survive state-root computation.
+/// EIP-161 emptiness (nonce==0 && balance==0 && empty code) ignores storage. Without
+/// the marker, a stateful account that holds only storage is pruned.
 ///
-/// This MUST contain every *stateful* runtime precompile from
+/// This list MUST contain every *stateful* runtime precompile from
 /// [`crate::precompiles::outbe_precompile_addresses`] (except stateless verifiers
-/// and genesis-seeded accounts), plus the system-only storage markers that have
-/// no dispatch registration. The superset invariant is pinned by the
-/// `marker_list_covers_stateful_precompiles` test.
+/// and genesis-seeded accounts). It MUST also contain the system-only storage
+/// markers that have no dispatch registration. The
+/// `marker_list_covers_stateful_precompiles` test pins the superset invariant.
 pub mod marker_addresses {
     use alloy_primitives::Address;
     use outbe_primitives::addresses::*;
@@ -22,17 +22,17 @@ pub mod marker_addresses {
         CREDIS_FACTORY_ADDRESS,
         PROMIS_ADDRESS,
         // PromisFactory is a live stateful precompile (in
-        // `outbe_precompile_addresses`) and is NOT genesis-seeded, so this
-        // per-block runtime marker is its only EIP-161 preservation path -
-        // mirroring GRATIS_FACTORY / GEM_FACTORY above.
+        // `outbe_precompile_addresses`) and is NOT genesis-seeded. Thus this
+        // per-block runtime marker is its only EIP-161 preservation path. This
+        // mirrors GRATIS_FACTORY / GEM_FACTORY above.
         PROMIS_FACTORY_ADDRESS,
         TRIBUTE_ADDRESS,
         NOD_ADDRESS,
         NOD_FACTORY_ADDRESS,
         TRIBUTE_FACTORY_ADDRESS,
         // reth22-1 fix: GEM and GEM_FACTORY are live stateful precompiles
-        // (in `outbe_precompile_addresses`) that were absent from this list, so
-        // their storage was silently pruned at state-root time under EIP-161.
+        // (in `outbe_precompile_addresses`). They were absent from this list,
+        // so their storage was silently pruned at state-root time under EIP-161.
         // They are NOT seeded with genesis bytecode either, so this per-block
         // runtime marker is their only preservation path.
         GEM_ADDRESS,
@@ -54,7 +54,7 @@ pub mod marker_addresses {
         STAKING_ADDRESS,
         REWARDS_ADDRESS,
         // V2 Phase 1 accounting-progress marker. System-only (no precompile
-        // dispatch); the `[0xef]` marker preserves slot 0 across EIP-161 cleanup.
+        // dispatch). The `[0xef]` marker preserves slot 0 across EIP-161 cleanup.
         ACCOUNTING_PROGRESS_ADDRESS,
         ORACLE_ADDRESS,
         OUTBE_SYSTEM_TX_ADDRESS,
@@ -159,7 +159,7 @@ pub(crate) fn apply_boundary_outcome(
 
     // The activated epoch, active membership/hash and its consensus+OCOMP
     // snapshot are one state transition. A nominal epoch height is not
-    // activation authority; only this certified BoundaryOutcome is.
+    // activation authority. Only this certified BoundaryOutcome is.
     let activation_guard = storage.checkpoint_guard();
     if advances_epoch {
         outbe_validatorset::hooks::advance_epoch(storage.clone(), timestamp, block_number)?;
@@ -203,7 +203,7 @@ fn validate_boundary_epoch_transition(
 
 /// Resets outgoing-epoch counters only for a block that actually carries the
 /// next certified BoundaryOutcome. This runs before receipt-visible
-/// LateFinalizeCredits; the BoundaryOutcome later advances epoch/set/snapshot
+/// LateFinalizeCredits. The BoundaryOutcome later advances epoch/set/snapshot
 /// without erasing misses recorded by that earlier phase.
 pub(crate) fn prepare_boundary_epoch_counters(
     storage: StorageHandle,
@@ -257,9 +257,9 @@ fn committee_snapshot_from_boundary(
         vrf_material_version: boundary.vrf_material_version,
         vrf_group_public_key_bytes: boundary.vrf_group_public_key_bytes.to_vec(),
         // Derived from the already-consensus-validated boundary `outcome` (the
-        // full DKG output), so a proposer cannot forge it. Lets SlashIndicator
-        // verify an invalid-seed-partial slash; ZERO when no full polynomial is
-        // carried (group-key-only bootstrap).
+        // full DKG output), so a proposer cannot forge it. It lets SlashIndicator
+        // verify an invalid-seed-partial slash. It is ZERO when no full
+        // polynomial is carried (group-key-only bootstrap).
         vrf_public_polynomial_hash: outbe_consensus::dkg_manager::boundary_outcome_polynomial_hash(
             boundary.outcome.as_ref(),
         ),

@@ -1,8 +1,8 @@
 //! Evidence-driven validator lifecycle consistency scenarios.
 //!
 //! These steps deliberately submit public SlashIndicator/Staking transactions.
-//! They do not patch storage or call runtime internals. All target invariants in
-//! this module are enforced by the main suite.
+//! They do not patch storage or call runtime internals. The main suite enforces
+//! all target invariants in this module.
 
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -359,7 +359,7 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
     let victim_address: Address = victim.parse().expect("parse victim address");
 
     // The accepted felony intentionally stops validator 3's node through its
-    // production TEE guard. Pin all owners before the transaction; never choose
+    // production TEE guard. Pin all owners before the transaction. Never choose
     // the replay observers by which RPC endpoints happen to remain responsive.
     let owned = capture_felony_processes(world);
     let survivor_ports = (0..3)
@@ -722,8 +722,8 @@ fn recover_unjailed_process(world: &mut World) -> Vec<(u32, u32)> {
         "this recovery fixture requires a live lease"
     );
     // Jail stops the node without expiring its binding. Certified follower
-    // startup authenticates the existing identity at a fresh upstream anchor;
-    // it can replay the historical jail before arming the local lease guard.
+    // startup authenticates the existing identity at a fresh upstream anchor.
+    // It can replay the historical jail before arming the local lease guard.
     let follower = world
         .localnet
         .launch_validator_recovery_follower(3, 0)

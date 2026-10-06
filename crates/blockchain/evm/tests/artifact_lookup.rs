@@ -1,17 +1,17 @@
 //! - exact-hash-first `AccountedParentArtifactProvider` lookup.
 //!
-//! These tests pin the four invariants from the
+//! These tests pin four invariants:
 //!
-//!: `(block_number, block_hash)` equality is a mandatory precondition
+//! - `(block_number, block_hash)` equality is a mandatory precondition
 //!   for returning the artifact.
-//!: canonical-by-number lookup is allowed only after explicit hash
+//! - canonical-by-number lookup is allowed only after explicit hash
 //!   equality.
-//!: provider-backed installation works WITHOUT a consensus bridge or
+//! - provider-backed installation works WITHOUT a consensus bridge or
 //!   proof cache (full-node mode).
-//!: a payload-builder-supplied `parent_artifact_hint` is accepted
+//! - the executor accepts a payload-builder-supplied `parent_artifact_hint`
 //!   only on exact `(block_number, block_hash)` match plus codec validation.
-//!   This invariant lives inside `OutbeBlockExecutor::accounted_parent_artifact_for_metadata`;
-//!   we verify it via a source-level structural check because the executor
+//!   This invariant lives inside `OutbeBlockExecutor::accounted_parent_artifact_for_metadata`.
+//!   We verify it through a source-level structural check, because the executor
 //!   is not constructible in isolation without a full EVM context.
 
 use std::ops::RangeBounds;
@@ -34,16 +34,16 @@ use reth_ethereum::{
 use reth_provider::{HeaderProvider, ProviderResult};
 
 // ---------------------------------------------------------------------------
-// Test fixture: an in-memory HeaderProvider that lets us seed an arbitrary
-// `(canonical_at_number, by_hash)` topology so we can distinguish exact-hash
+// Test fixture: an in-memory HeaderProvider. It lets us seed an arbitrary
+// `(canonical_at_number, by_hash)` topology. Thus we can distinguish exact-hash
 // reads from canonical-by-number reads, and stage competing branches at the
 // same height.
 // ---------------------------------------------------------------------------
 
 /// In-memory `HeaderProvider` used by all tests in this file. `canonical`
-/// is the (number -> SealedHeader) mapping returned by `sealed_header(n)`;
-/// `by_hash` is the union of all known headers across branches returned by
-/// `header(hash)` / `sealed_header_by_hash(hash)`. The two maps are
+/// is the (number -> SealedHeader) mapping that `sealed_header(n)` returns.
+/// `by_hash` is the union of all known headers across branches, which
+/// `header(hash)` / `sealed_header_by_hash(hash)` return. The two maps are
 /// independent on purpose: tests stage scenarios where a side-chain header
 /// exists in `by_hash` but is NOT canonical at its number.
 #[derive(Clone, Default)]
@@ -99,7 +99,7 @@ fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
 
 /// Build a sealed `OutbeHeader` at the given number/timestamp carrying an
 /// `ExecutionSummaryArtifact { validator_fee_sum }` in `extra_data`. The
-/// returned `SealedHeader.hash()` is deterministic for the inputs and
+/// returned `SealedHeader.hash()` is deterministic for the inputs. It is
 /// distinct per choice of `discriminator` byte (used to fork competing
 /// branches at the same height).
 fn header_with_artifact(
@@ -116,9 +116,9 @@ fn header_with_artifact(
     let inner = Header {
         number,
         timestamp,
-        // `nonce` is RLP-included in the header hash so flipping it produces
-        // distinct competing-branch headers at the same `number` without
-        // touching the consensus-visible fields tests assert against.
+        // `nonce` is RLP-included in the header hash. Flipping it produces distinct
+        // competing-branch headers at the same `number` and does not touch the
+        // consensus-visible fields that tests assert against.
         nonce: alloy_primitives::B64::with_last_byte(discriminator),
         extra_data,
         ..Default::default()
@@ -135,7 +135,7 @@ fn accounted_parent_artifact_lookup_uses_exact_hash() {
     let mut hp = StageHeaderProvider::default();
     hp.insert_canonical(sealed);
 
-    // No cache; provider-only resolution forces the exact-hash branch.
+    // No cache. Provider-only resolution forces the exact-hash branch.
     let provider = RethAccountedParentArtifactProvider::new(hp, None);
 
     let resolved = provider
@@ -148,9 +148,9 @@ fn accounted_parent_artifact_lookup_uses_exact_hash() {
 }
 
 // ---------------------------------------------------------------------------
-// a canonical-by-number entry whose hash differs
-// from the requested `block_hash` must NOT be silently returned. The provider
-// returns `Ok(None)` (caller - executor - maps this to a hard reject).
+// The provider must NOT silently return a canonical-by-number entry whose hash
+// differs from the requested `block_hash`. It returns `Ok(None)`. The caller
+// (the executor) maps this to a hard reject.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -161,7 +161,7 @@ fn canonical_number_hash_mismatch_rejects() {
     let mut hp = StageHeaderProvider::default();
     hp.insert_canonical(canonical);
 
-    // No cache; ask for a DIFFERENT hash at the same number. The provider
+    // No cache. Ask for a DIFFERENT hash at the same number. The provider
     // must not return the canonical artifact silently. Since `block_hash`
     // is not in `by_hash`, sealed_header_by_hash returns None. The
     // canonical-by-number branch is gated on `sealed_header(n).hash() ==
@@ -181,11 +181,11 @@ fn canonical_number_hash_mismatch_rejects() {
 }
 
 // ---------------------------------------------------------------------------
-// unfinalized side-chain parent. The provider must
-// resolve a header reachable only via `sealed_header_by_hash` (NOT canonical
-// at its number). The hint path is verified via a structural source check
-// because the executor's `accounted_parent_artifact_for_metadata` is
-// `pub(crate)` and cannot be invoked directly from an integration test.
+// Unfinalized side-chain parent. The provider must resolve a header that is
+// reachable only through `sealed_header_by_hash` (NOT canonical at its number).
+// A structural source check verifies the hint path, because the executor's
+// `accounted_parent_artifact_for_metadata` is `pub(crate)`. An integration test
+// cannot call it directly.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -218,8 +218,8 @@ fn unfinalized_side_chain_parent_artifact_resolves_by_exact_hash_or_parent_hint(
 }
 
 // ---------------------------------------------------------------------------
-// full-node mode (no consensus bridge) still installs a
-// provider-backed `AccountedParentArtifactProvider`. Verified through the
+// Full-node mode (no consensus bridge) still installs a provider-backed
+// `AccountedParentArtifactProvider`. The test verifies this through the
 // `OutbeEvmConfig::new_with_provider_only` constructor exposed for this path.
 // ---------------------------------------------------------------------------
 
@@ -242,11 +242,11 @@ fn full_node_import_installs_provider_backed_accounted_parent_artifact_lookup_wi
         "full-node config must not carry a consensus bridge"
     );
 
-    // Indirect: the lookup ladder lives inside the executor; here we just
-    // verify the wire-up by structurally requiring a config built via the
-    // full-node constructor to be capable of resolving the seeded header.
-    // The provider field is private, so we re-derive a fresh provider with
-    // the same fixture and assert it resolves - this guards against the
+    // Indirect: the lookup ladder lives inside the executor. Here we only
+    // verify the wire-up. We structurally require that a config built through
+    // the full-node constructor can resolve the seeded header.
+    // The provider field is private. Thus we re-derive a fresh provider with
+    // the same fixture and assert that it resolves. This guards against the
     // installer accidentally dropping the provider.
     let mut hp2 = StageHeaderProvider::default();
     hp2.insert_canonical(header_with_artifact(
@@ -292,8 +292,8 @@ fn settlement_money_loaded_from_parent_execution_summary_artifact() {
 }
 
 // ---------------------------------------------------------------------------
-// two competing branches at the same height. Each branch
-// resolves to its own artifact; a query for one branch's hash must NEVER
+// Two competing branches at the same height. Each branch
+// resolves to its own artifact. A query for one branch's hash must NEVER
 // return the other branch's artifact.
 // ---------------------------------------------------------------------------
 
@@ -306,7 +306,7 @@ fn competing_branch_same_height_stale_artifact_rejects() {
     assert_ne!(hash_a, hash_b, "branches must differ");
 
     let mut hp = StageHeaderProvider::default();
-    // branch_a is canonical; branch_b is a side-chain.
+    // branch_a is canonical. branch_b is a side-chain.
     hp.insert_canonical(branch_a);
     hp.insert_side(branch_b);
 
@@ -347,11 +347,11 @@ fn competing_branch_same_height_stale_artifact_rejects() {
     let _ = Address::ZERO; // keep alloy_primitives::Address as a used import.
 }
 
-//(exact-hash-primary lookup + hash-gated canonical-by-number
-// fallback) are covered BEHAVIORALLY by `accounted_parent_artifact_lookup_uses_exact_hash`,
-// `canonical_number_hash_mismatch_rejects`, and `competing_branch_same_height_stale_artifact_rejects`
-// above - they call `execution_summary_by_hash` over a forked provider and assert the
-// resolved artifact / rejection. No source-text scan needed.
+// `accounted_parent_artifact_lookup_uses_exact_hash`, `canonical_number_hash_mismatch_rejects`,
+// and `competing_branch_same_height_stale_artifact_rejects` above cover BEHAVIORALLY the
+// exact-hash-primary lookup and the hash-gated canonical-by-number fallback. They call
+// `execution_summary_by_hash` over a forked provider and assert the resolved artifact /
+// rejection. No source-text scan needed.
 
 // ---------------------------------------------------------------------------
 // FCU-Valid race-window: provider raises `ProviderError::HeaderNotFound`
@@ -359,9 +359,9 @@ fn competing_branch_same_height_stale_artifact_rejects() {
 // sealed header to MDBX. The trait contract treats this as a visibility miss
 // (`Ok(None)`) so the executor can fall through to its checked
 // `parent_artifact_hint`. A previous version of `execution_summary_by_hash`
-// short-circuited the `?`-propagated error as a fatal `BlockExecutionError`,
-// stranding block 2 proposals without `CertifiedParentAccounting` and stalling
-// the chain on block 1.
+// short-circuited the `?`-propagated error as a fatal `BlockExecutionError`.
+// That stranded block 2 proposals without `CertifiedParentAccounting` and
+// stalled the chain on block 1.
 // ---------------------------------------------------------------------------
 
 /// Configurable provider that lets each test choose, per-call, whether

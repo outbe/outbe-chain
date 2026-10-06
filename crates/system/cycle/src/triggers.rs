@@ -1,25 +1,25 @@
 //! Code-defined trigger registry.
 //!
-//! Triggers are declared as `const` data - there is no on-chain
+//! The code declares triggers as `const` data. There is no on-chain
 //! registration path. Adding, removing, or re-parameterizing a trigger
 //! is a hard-fork-coordinated code change. The dispatcher in
-//! [`crate::runtime`] iterates this slice on every block and fires any
-//! trigger whose next slot has been reached.
+//! [`crate::runtime`] iterates this slice on every block. It fires each
+//! trigger that has reached its next slot.
 
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 /// Stable on-chain identifier for each trigger. The numeric values
-/// must remain byte-equal forever - they are emitted as the indexed
-/// `id` in [`crate::ICycle::CycleTriggerExecuted`] and persisted in
-/// the [`crate::schema::Cycle`] mappings. New triggers append; never
+/// must remain byte-equal forever. The module emits them as the indexed
+/// `id` in [`crate::ICycle::CycleTriggerExecuted`] and persists them in
+/// the [`crate::schema::Cycle`] mappings. New triggers append. Never
 /// renumber existing ones.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum TriggerId {
     ProtocolCycle = 0,
     IntexDaily = 1,
-    /// Reserved historical identifier; no active trigger uses it.
+    /// Reserved historical identifier. No active trigger uses it.
     WwdAdvanceNoon = 2,
     AuctionAdvance = 3,
     GemDaily = 4,
@@ -51,13 +51,13 @@ pub struct TriggerSpec {
     /// midnight slots; `period_seconds = 3600, start_offset_seconds =
     /// 1800` => "every hour at :30".
     pub start_offset_seconds: u64,
-    /// when `true`, the dispatcher must additionally verify
-    /// that V2 Phase 1 (`CertifiedParentAccounting`) has committed
-    /// progress for the parent block - i.e.,
-    /// `last_accounted_block_number >= window.end_inclusive` - before
-    /// firing the handler. When `false` (e.g., a job that does NOT depend
-    /// on parent accounting state) the handler runs on its own schedule
-    /// without consulting [`outbe_primitives::accounting_progress::AccountingProgressView`].
+    /// When `true`, the dispatcher must also verify that V2 Phase 1
+    /// (`CertifiedParentAccounting`) committed progress for the parent
+    /// block before it fires the handler. That is,
+    /// `last_accounted_block_number >= window.end_inclusive`. When `false`
+    /// (e.g., a job that does NOT depend on parent accounting state), the
+    /// handler runs on its own schedule. It does not consult
+    /// [`outbe_primitives::accounting_progress::AccountingProgressView`].
     /// Default for the canonical protocol-cycle trigger is `true`.
     pub requires_accounting_window: bool,
     /// When `true` a backlog collapses to the latest due slot instead of
@@ -117,13 +117,13 @@ const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 3_600;
 const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 60;
 
 /// The Called sweep is daily in production. An e2e run seeds the days
-/// they read rather than living through them, so they need to come round sooner.
+/// they read instead of living through them, so they need to recur sooner.
 #[cfg(not(feature = "e2e-test"))]
 const INTEX_DAILY_PERIOD_SECONDS: u64 = 86_400;
 #[cfg(feature = "e2e-test")]
 const INTEX_DAILY_PERIOD_SECONDS: u64 = 60;
 
-/// The gem sweeps are daily in production for the same reason; an e2e run seeds
+/// The gem sweeps are daily in production for the same reason. An e2e run seeds
 /// the days they read instead of living through them.
 #[cfg(not(feature = "e2e-test"))]
 const GEM_DAILY_PERIOD_SECONDS: u64 = 86_400;
@@ -134,7 +134,7 @@ const GEM_POSITION_PERIOD_SECONDS: u64 = 86_400;
 #[cfg(feature = "e2e-test")]
 const GEM_POSITION_PERIOD_SECONDS: u64 = 60;
 
-/// The Nod call sweep is daily in production; an e2e run seeds the days it reads.
+/// The Nod call sweep is daily in production. An e2e run seeds the days it reads.
 #[cfg(not(feature = "e2e-test"))]
 const NOD_DAILY_PERIOD_SECONDS: u64 = 86_400;
 #[cfg(feature = "e2e-test")]
@@ -147,19 +147,19 @@ const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 600;
 const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 30;
 
 /// The daily sweeps queue their notices in a burst after midnight, so the drain
-/// comes round more often than the clearing poll.
+/// runs more often than the clearing poll.
 #[cfg(not(feature = "e2e-test"))]
 const INTEX_NOTIFY_PERIOD_SECONDS: u64 = 300;
 #[cfg(feature = "e2e-test")]
 const INTEX_NOTIFY_PERIOD_SECONDS: u64 = 30;
 
-/// A day finalizes once, so an hourly poll catches it soon after; e2e seeds days minutes apart.
+/// A day finalizes once, so an hourly poll catches it soon after. E2e seeds days minutes apart.
 #[cfg(not(feature = "e2e-test"))]
 const INTEX_VWAP_PUSH_PERIOD_SECONDS: u64 = 3_600;
 #[cfg(feature = "e2e-test")]
 const INTEX_VWAP_PUSH_PERIOD_SECONDS: u64 = 60;
 
-/// Active trigger table. Order is informational only - the dispatcher
+/// Active trigger table. Order is informational only. The dispatcher
 /// fires triggers independently per slot.
 /// Active trigger table in permanent numeric-id order. The dispatcher walks
 /// this order when several handlers are due in the same block.
@@ -170,9 +170,9 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             label: "protocol_cycle",
             period_seconds: metadosis_advance_interval_seconds,
             start_offset_seconds: 0,
-            // ProtocolCycle settles a contiguous completed UTC day; it MUST
-            // observe the parent block's Phase 1 accounting before
-            // firing, otherwise validator-pool top-ups and daily-fee reads would
+            // ProtocolCycle settles a contiguous completed UTC day. It MUST
+            // observe the parent block's Phase 1 accounting before it fires.
+            // Otherwise validator-pool top-ups and daily-fee reads would
             // race the parent-finalization tx.
             requires_accounting_window: true,
             // The handler owns the calendar decision, so missed hourly slots
@@ -185,7 +185,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             label: "intex_daily",
             period_seconds: INTEX_DAILY_PERIOD_SECONDS,
             start_offset_seconds: 0,
-            // Reads finalized oracle VWAP history to call series; no
+            // Reads finalized oracle VWAP history to call series. It has no
             // dependency on the parent block's settlement accounting.
             requires_accounting_window: false,
             // The sweeps take their day from the block clock, so a missed slot
@@ -201,9 +201,9 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             // Gated like emission_limit_1 so the brief it writes and this start
             // land in the same slot.
             requires_accounting_window: true,
-            // A poll, not a calendar slot: the handler reads the block clock and
-            // sweeps every scheduled day, so replaying a missed slot does nothing
-            // the next firing would not already do.
+            // A poll, not a calendar slot. The handler reads the block clock and
+            // sweeps every scheduled day. So replaying a missed slot does nothing
+            // that the next firing would not already do.
             coalesces_backlog: true,
             handler: TriggerHandler::AuctionAdvance,
         },
@@ -212,7 +212,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             label: "gem_daily",
             period_seconds: GEM_DAILY_PERIOD_SECONDS,
             start_offset_seconds: 0,
-            // Reads finalized oracle VWAP history to force-call gems;
+            // Reads finalized oracle VWAP history to force-call gems. It has
             // no dependency on the parent block's settlement accounting.
             requires_accounting_window: false,
             // The sweeps take their day from the block clock, so a missed slot
@@ -228,7 +228,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             period_seconds: OUTBOUND_POLL_PERIOD_SECONDS,
             start_offset_seconds: 0,
             // Clears from bids already ingested and the router's frozen target
-            // list; no dependency on the parent block's settlement accounting.
+            // list. It has no dependency on the parent block's settlement accounting.
             requires_accounting_window: false,
             // A poll has nothing to replay: a gap collapses to one clearing sweep.
             coalesces_backlog: true,
@@ -239,7 +239,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             label: "intex_drain_notices",
             period_seconds: INTEX_NOTIFY_PERIOD_SECONDS,
             start_offset_seconds: 0,
-            // Drains a queue the call sweep filled; reads no accounting state.
+            // Drains a queue that the call sweep filled. Reads no accounting state.
             requires_accounting_window: false,
             // A poll has nothing to replay: a gap collapses to one drain.
             coalesces_backlog: true,
@@ -251,7 +251,8 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             period_seconds: 86_400,
             start_offset_seconds: 0,
             // Reads finalized oracle VWAP history to latch, call and void credis
-            // positions; no dependency on the parent block's settlement accounting.
+            // positions. It has no dependency on the parent block's settlement
+            // accounting.
             requires_accounting_window: false,
             coalesces_backlog: false,
             handler: TriggerHandler::CredisCallDaily,
@@ -283,7 +284,8 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             // Polls what the origin router parked, on the same cadence as the other outbound polls.
             period_seconds: OUTBOUND_POLL_PERIOD_SECONDS,
             start_offset_seconds: 0,
-            // Reads the router's own queues; no dependency on the parent block's accounting.
+            // Reads the router's own queues. It has no dependency on the parent block's
+            // accounting.
             requires_accounting_window: false,
             // A poll has nothing to replay: a gap collapses to one sweep.
             coalesces_backlog: true,
@@ -294,7 +296,8 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             label: "intex_vwap_push",
             period_seconds: INTEX_VWAP_PUSH_PERIOD_SECONDS,
             start_offset_seconds: 0,
-            // Reads finalized oracle days; no dependency on the parent block's accounting.
+            // Reads finalized oracle days. It has no dependency on the parent block's
+            // accounting.
             requires_accounting_window: false,
             // The handler resumes from the last day it sent, so a gap collapses to one firing.
             coalesces_backlog: true,
@@ -327,8 +330,8 @@ pub fn next_fire_at(period: u64, offset: u64, last_executed_at: u64) -> u64 {
 }
 
 /// Returns the latest slot at or before `block_ts`. Recording this instead of
-/// the first due slot is what collapses a backlog for a poll-style trigger:
-/// the next call then sees a slot in the future and stops re-firing.
+/// the first due slot collapses a backlog for a poll-style trigger. The next
+/// call then sees a slot in the future and stops re-firing.
 pub fn last_fire_at(period: u64, offset: u64, block_ts: u64) -> u64 {
     if block_ts < offset {
         return offset;

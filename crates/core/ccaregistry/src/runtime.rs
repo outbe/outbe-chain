@@ -10,7 +10,7 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::{addresses::CCA_REGISTRY_ADDRESS, error::Result, storage::StorageHandle};
 
 fn now(storage: &StorageHandle<'_>) -> Result<u64> {
-    // Execution timestamps must fit Unix seconds in u64; reject rather than truncate.
+    // Execution timestamps must fit Unix seconds in u64. Reject a larger value. Do not truncate it.
     storage
         .timestamp()?
         .try_into()
@@ -116,7 +116,7 @@ pub fn claim_unbonded(storage: StorageHandle<'_>, caller: Address) -> Result<()>
     })
 }
 
-/// Trusted Rust entrypoint; called once by Credis with the current UTC reward day key (YYYYMMDD).
+/// Trusted Rust entrypoint. Credis calls it once with the current UTC reward day key (YYYYMMDD).
 pub fn position_opened(
     storage: &StorageHandle<'_>,
     cca: Address,
@@ -143,7 +143,7 @@ pub fn position_opened(
 }
 
 /// Subtract burned collateral from the void-day bucket, even after exit.
-/// Excess burns offset later same-day openings; prior days and accrued rewards stay unchanged.
+/// Excess burns offset later same-day openings. Prior days and accrued rewards stay unchanged.
 pub fn position_voided(
     storage: &StorageHandle<'_>,
     cca: Address,
@@ -161,7 +161,7 @@ pub fn position_voided(
             .read(&key)?
             .checked_add(gratis_burned - offset)
             .ok_or(CcaError::Arithmetic)?;
-        // offset <= both gratis_burned and weight; retain any excess as a deficit.
+        // offset <= both gratis_burned and weight. Keep any excess as a deficit.
         let weight = weight - offset;
         contract.gratis_deficits_per_utc_day.write(&key, deficit)?;
         contract.gratis_sum_per_utc_day.write(&key, weight)

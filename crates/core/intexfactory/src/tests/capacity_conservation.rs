@@ -48,8 +48,8 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
             },
         )
         .unwrap();
-        // Settled, exercised and converted footprints; their authorization is
-        // covered by the settlement and mining tests.
+        // Settled, exercised and converted footprints. The settlement and mining
+        // tests cover their authorization.
         api::record_settled_units(&s, id, 3).unwrap();
         api::record_exercised_units(&s, id, Address::repeat_byte(1), 1).unwrap();
         api::record_gem_factory_units(&s, id, Address::repeat_byte(1), 2).unwrap();

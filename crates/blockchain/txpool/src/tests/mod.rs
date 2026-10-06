@@ -485,13 +485,13 @@ fn reserved_system_address_invalidates_valid_pool_outcome() {
 }
 
 // -----------------------------------------------------------------
-// EIP-7702 sponsorship admission - pin the pool/executor contract:
-//   1. classify_sponsorship rejects shape violations (executor would
-//      do the same - codes must match).
+// EIP-7702 sponsorship admission. These tests pin the pool/executor contract:
+//   1. classify_sponsorship rejects shape violations (the executor would
+//      do the same, so the codes must match).
 //   2. precheck_sponsorship rejects self-sponsorship and has no
 //      account balance or quota input.
-// The pool's `try_eip7702_sponsorship` chains classify + precheck;
-// these tests cover both individually and the policy code surface.
+// The pool's `try_eip7702_sponsorship` chains classify + precheck.
+// These tests cover both individually and the policy code surface.
 // -----------------------------------------------------------------
 
 use alloy_primitives::address;
@@ -563,12 +563,13 @@ fn pool_precheck_accepts_non_paymaster_signer() {
 
 // -----------------------------------------------------------------
 // sponsorship_decision - the pure pool-admission decision core.
-// These pin the EXACT composition try_eip7702_sponsorship performs
-// (delegation match -> classify -> precheck, no quota) without needing
-// a provider mock. A regression in the wiring (reordered checks,
-// dropped classify, an accidental quota gate, or wrong delegation
-// target match) is caught here by `cargo test`, not only by the
-// gated live e2e script.
+// These tests pin the EXACT composition that try_eip7702_sponsorship
+// performs (delegation match -> classify -> precheck, no quota) without
+// a provider mock. Thus `cargo test` catches a regression in the wiring
+// here. The gated live e2e script is not the only check. Examples of such
+// a regression:
+// reordered checks, a dropped classify, an accidental quota gate, or a
+// wrong delegation target match.
 // -----------------------------------------------------------------
 
 fn ok_sponsored_envelope<'a>() -> ZeroFeeTransaction<'a> {
@@ -609,8 +610,8 @@ fn decision_accepts_well_formed_delegated_envelope() {
 fn decision_value_bearing_delegated_tx_falls_through_to_normal_path() {
     // Delegated, but the envelope carries native value, so
     // it is NOT a sponsorship request. It must fall through to the
-    // normal fee path (NotSponsored), NOT be rejected - EIP-7702
-    // delegation is additive and must never block a normal tx.
+    // normal fee path (NotSponsored). The pool must NOT reject it.
+    // EIP-7702 delegation is additive and must never block a normal tx.
     let mut tx = ok_sponsored_envelope();
     tx.value = U256::from(1);
     let out = sponsorship_decision(NON_VALIDATOR_SIGNER, Some(ZEROFEE_ADDRESS), &tx)
@@ -639,8 +640,8 @@ fn decision_paying_delegated_tx_falls_through_to_normal_path() {
 #[test]
 fn decision_non_whitelisted_target_delegated_tx_falls_through() {
     // Delegated, zero-tip, but target not in the sponsored whitelist
-    // -> not a sponsorship request -> normal path (the signer pays to
-    // call whatever contract they like; delegation does not gate it).
+    // -> not a sponsorship request -> normal path. The signer pays to
+    // call whatever contract they like. Delegation does not gate it.
     let mut tx = ok_sponsored_envelope();
     tx.to = Some(ZEROFEE_ADDRESS); // not in SPONSORED_TARGET_WHITELIST
     let out = sponsorship_decision(NON_VALIDATOR_SIGNER, Some(ZEROFEE_ADDRESS), &tx)
@@ -650,10 +651,10 @@ fn decision_non_whitelisted_target_delegated_tx_falls_through() {
 
 #[test]
 fn decision_does_not_quota_check() {
-    // sponsorship_decision has no storage access at all - it cannot
-    // perform a quota check by construction. A delegated,
-    // well-formed tx is always Accepted regardless of how many slots
-    // the signer has burned; the executor enforces the quota. This
+    // sponsorship_decision has no storage access at all. By
+    // construction, it cannot perform a quota check. A delegated,
+    // well-formed tx is always Accepted, regardless of how many slots
+    // the signer burned. The executor enforces the quota. This test
     // pins the F2 contract at the pool layer.
     for _ in 0..20 {
         let out = sponsorship_decision(

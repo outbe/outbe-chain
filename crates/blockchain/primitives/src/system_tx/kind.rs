@@ -19,8 +19,8 @@ pub enum BodyZone {
 /// Consensus activation of the PoC OCOMP system-transaction lifecycle.
 ///
 /// The production default is disabled. OCM-26 is the only task that may arm
-/// the canonical devnet schedule; earlier tasks can exercise the exact fork
-/// boundary by passing an explicit activation to layout validation.
+/// the canonical devnet schedule. Earlier tasks can exercise the exact fork
+/// boundary: they pass an explicit activation to layout validation.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum OcompLifecycleActivation {
     #[default]
@@ -58,8 +58,9 @@ pub enum SystemTxKind {
     /// Mandatory Rewards-owned retryable delivery of one prepared UTC-day Gem batch.
     RewardsGemDelivery,
     BoundaryOutcome,
-    /// Phase 3b: one-time TEE registry bootstrap (present only in the bootstrap
-    /// block; reads the same-block `CommitteeSnapshotStore` written by Phase 3a).
+    /// Phase 3b: one-time TEE registry bootstrap. It is present only in the
+    /// bootstrap block. It reads the same-block `CommitteeSnapshotStore` that
+    /// Phase 3a writes.
     TeeBootstrap,
     OracleSlashWindow,
     /// Receipt container for whitelisted pre-exec hook events (`Vote`, `Update`, ...).
@@ -100,29 +101,31 @@ impl SystemTxKind {
         }
     }
 
-    /// Whether a non-success EVM result (`Revert` / `Halt`) executing this
-    /// begin-zone phase must fail the whole block instead of being recorded as a
-    /// soft `status = 0` receipt and skipped. This classification applies only
-    /// while the result fits the aggregate internal-work budget. An OOG consumes
-    /// the full system-call gas limit; aggregate budget exhaustion always fails
-    /// atomically before a receipt, including for a phase classified as soft.
+    /// Whether a non-success EVM result (`Revert` / `Halt`) of this begin-zone
+    /// phase must fail the whole block. Otherwise the result is recorded as a
+    /// soft `status = 0` receipt and the phase is skipped. This classification
+    /// applies only while the result fits the aggregate internal-work budget.
+    /// An OOG consumes the full system-call gas limit. Aggregate budget
+    /// exhaustion always fails atomically before a receipt, including for a
+    /// phase classified as soft.
     ///
-    /// Consensus- and economic-critical phases are one-shot: their work cannot
-    /// be retried by a later block, so a swallowed revert permanently loses it -
-    /// stranded validator-fee escrow (`LateFinalizeCredits`), a dropped day of
-    /// emission / terminal Metadosis (`CycleTick`), a skipped reshare / validator
-    /// set activation (`BoundaryOutcome`), or unrecorded finalized-parent
-    /// accounting (`CertifiedParentAccounting`). For these, a revert is a hard
-    /// `BlockExecutionError`: the block is rejected on every validator
-    /// deterministically (the revert is a function of committed chain state, the
-    /// same for all proposers), honoring the "never silent stall / terminal
-    /// failure is fatal" invariant rather than silently forfeiting real money or
-    /// a protocol-state transition.
+    /// Consensus- and economic-critical phases are one-shot. A later block
+    /// cannot retry their work, so a swallowed revert permanently loses it:
+    /// - stranded validator-fee escrow (`LateFinalizeCredits`)
+    /// - a dropped day of emission / terminal Metadosis (`CycleTick`)
+    /// - a skipped reshare / validator set activation (`BoundaryOutcome`)
+    /// - unrecorded finalized-parent accounting (`CertifiedParentAccounting`)
+    ///
+    /// For these, a revert is a hard `BlockExecutionError`. Every validator
+    /// rejects the block deterministically. The revert is a function of committed
+    /// chain state, the same for all proposers. This honors the "never silent
+    /// stall / terminal failure is fatal" invariant rather than silently
+    /// forfeiting real money or a protocol-state transition.
     ///
     /// `TeeBootstrap` is mandatory at block 1: a revert would commit a genesis
     /// committee that cannot execute confidential transactions, so it fails the
     /// block. `RewardsGemDelivery` is deliberately soft so its durable FIFO
-    /// head retries in a later block; `OracleSlashWindow` and `HookEvents` also
+    /// head retries in a later block. `OracleSlashWindow` and `HookEvents` also
     /// remain soft.
     pub const fn revert_fails_block(self) -> bool {
         match self {

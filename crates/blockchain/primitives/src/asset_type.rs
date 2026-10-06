@@ -6,7 +6,7 @@
 
 use alloy_primitives::{Address, U256};
 
-/// Native COEN as an asset address - the base of every settlement pair.
+/// Native COEN as an asset address. It is the base of every settlement pair.
 pub const COEN_ASSET: Address = Address::ZERO;
 
 /// Represents an asset type supported by the Oracle.

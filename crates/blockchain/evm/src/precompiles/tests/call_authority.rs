@@ -146,8 +146,8 @@ fn inactive_lysis_selector_does_not_abort_block_execution() {
     });
 
     // With the OCOMP lifecycle inactive, the selector reaches the view
-    // dispatcher. The mapped outcome must be an ordinary revert output -
-    // an `Err` here becomes a revm `Fatal` that aborts the whole payload
+    // dispatcher. The mapped outcome must be an ordinary revert output.
+    // An `Err` here becomes a revm `Fatal` that aborts the whole payload
     // build for a transaction any external account can submit.
     let output = map_outbe_precompile_result(result, PRECOMPILE_BASE_GAS)
         .expect("inactive lysis vote must map to a revert, not a block-aborting error");

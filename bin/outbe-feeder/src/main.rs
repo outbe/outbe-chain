@@ -212,7 +212,7 @@ async fn feeder_tick(
         journal.pending().map(|p| p.created_at).unwrap_or(0),
     );
     // All reads refer to the same canonical block, including price freshness.
-    // A failed price-monitor read must not prevent voting; freshness expires.
+    // A failed price-monitor read must not prevent voting. Freshness expires.
     let monitor = async {
         for pair in &config.currency_pairs {
             let (base, quote) = pair.oracle_pair()?;
@@ -275,7 +275,7 @@ async fn feeder_tick(
         }
         PreflightResult::Eligible => {}
     }
-    // At most one aggregation/broadcast per observed head; errors never consume
+    // At most one aggregation/broadcast per observed head. Errors never consume
     // a whole period. Receipt polling continues even on an unchanged head.
     if *last_attempt == Some(head.height) {
         return Ok(());
@@ -323,7 +323,7 @@ async fn feeder_tick(
     let pending = journal.pending().expect("persisted before broadcast");
     health.set_pending(Some(&pending.hash), pending.created_at);
     health.set_reason("awaiting canonical receipt");
-    // Retain bytes before any send. Retries use the same bytes; a stalled or
+    // Retain bytes before any send. Retries use the same bytes. A stalled or
     // failed vote can be fee-bumped only at the SAME nonce, never queued behind it.
     client.broadcast(pending).await?;
     info!(tx_hash=%pending.hash,nonce=pending.nonce,period,"oracle vote broadcast; awaiting inclusion");

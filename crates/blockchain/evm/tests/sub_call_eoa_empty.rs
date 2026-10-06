@@ -2,7 +2,7 @@
 //! empty returndata.
 //!
 //! revm's `make_call_frame` short-circuits when the target's bytecode is
-//! empty: commits the journal checkpoint and returns `InstructionResult::Stop`
+//! empty. It commits the journal checkpoint and returns `InstructionResult::Stop`
 //! with empty output. The driver must translate this to
 //! `SubCallStatus::Success` + `returndata = empty`.
 

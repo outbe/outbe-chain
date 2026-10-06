@@ -186,7 +186,8 @@ contract AuctionTest is Test {
         assertEq(revealedBidsCount, 2);
         assertEq(bids.length, 2);
 
-        // Past-revealEnd clearing signal: schedule already closed reveal, signal only advances stage.
+        // Past-revealEnd clearing signal. The schedule already closed reveal, and the signal
+        // only advances the stage.
         vm.warp(startTs + REVEAL_OFFSET + 1);
         vm.prank(bridger);
         auction.startClearingStage(worldwideDay);
@@ -462,8 +463,9 @@ contract AuctionTest is Test {
         auction.wire(address(0xBEEF));
     }
 
-    /// @dev Bidders claim their own locks, so an escrow still holding them is the steady state and must not
-    ///      pin the auction to it. The locks stay where they are; only new days go to the new escrow.
+    /// @dev Bidders claim their own locks, so an escrow still holding them is the steady state and
+    ///      must not pin the auction to it. The locks stay where they are. Only new days go to the
+    ///      new escrow.
     function test_Wire_RotatesWhileLocksOutstanding() public {
         uint256 startTs = block.timestamp;
         uint32 worldwideDay = 20250201;
@@ -663,9 +665,10 @@ contract AuctionTest is Test {
     }
 
     /// @dev No-sale auction: Desis floors the clearing rate at `minIntexBidRate`, so a clearing
-    ///      with zero winners still carries a non-zero rate. This must be accepted as a valid
-    ///      result - the real invariant is `clearingRate >= minIntexBidRate`, NOT the (incorrect)
-    ///      `clearingRate == 0 <=> winners == 0`. Guards against re-introducing that wrong rule.
+    ///      with zero winners still carries a non-zero rate. The auction must accept this as a
+    ///      valid result. The real invariant is `clearingRate >= minIntexBidRate`, NOT the
+    ///      (incorrect) `clearingRate == 0 <=> winners == 0`. This test guards against
+    ///      re-introducing that wrong rule.
     function test_ExecuteAuctionClearing_NoSale_ZeroWinnersAtFloor() public {
         uint256 startTs = block.timestamp;
         uint32 worldwideDay = 20250144;
@@ -693,9 +696,10 @@ contract AuctionTest is Test {
     }
 
     /// @dev No-sale with no supply: even when `minIntexBidRate > 0`, the clearing rate can be 0
-    ///      (nothing was allocated because supply was exhausted/zero). It must still complete -
-    ///      full refund is handled via REFUND_INSTRUCTIONS, nothing is issued - and NOT revert
-    ///      `ZeroValue`/`ClearingRateBelowMin`. The `cleared` flag drives the Completed stage.
+    ///      (nothing was allocated because supply was exhausted/zero). It must still complete and
+    ///      NOT revert `ZeroValue`/`ClearingRateBelowMin`. The full refund uses
+    ///      REFUND_INSTRUCTIONS, and nothing is issued. The `cleared` flag drives the Completed
+    ///      stage.
     function test_ExecuteAuctionClearing_NoSale_ZeroRate() public {
         uint256 startTs = block.timestamp;
         uint32 worldwideDay = 20250145;
@@ -889,8 +893,8 @@ contract AuctionTest is Test {
     /// @dev Reentrancy probe: arm the escrow mock to call back into `revealBid` during
     ///      `lockFunds`. With `nonReentrant` in place the inner call reverts with
     ///      `ReentrancyGuardReentrantCall`, which propagates and unwinds all state.
-    ///      Removing `nonReentrant` from `revealBid` makes this test fail (reentry succeeds,
-    ///      attacker double-records the bid) - i.e. it is a true red->green test of the guard.
+    ///      Without `nonReentrant` on `revealBid`, this test fails (reentry succeeds, and the
+    ///      attacker double-records the bid). It is a true red->green test of the guard.
     function test_RevealBid_reentrancyBlocked() public {
         uint256 startTs = block.timestamp;
         uint32 worldwideDay = 20250201;

@@ -1,10 +1,11 @@
 //! CLI-derived configuration for the harness.
 //!
 //! Paths and toggles for isolated localnet scenarios and
-//! `update_operator_flow.sh`. Every value comes from the CLI [`Environment`] - the
+//! `update_operator_flow.sh`. Every value comes from the CLI [`Environment`]. The
 //! harness reads no product configuration from the process environment.
-//! (`PATH`/`HOME` are only read to build the child's `PATH` so `cast` resolves;
-//! the explicit Metadosis P0 lane separately records its removed env input.)
+//! (The harness reads `PATH`/`HOME` only to build the child's `PATH` so `cast`
+//! resolves. The explicit Metadosis P0 lane separately records its removed env
+//! input.)
 
 use std::{
     os::unix::ffi::OsStrExt as _,
@@ -42,7 +43,7 @@ pub(crate) fn validate_node_ipc_path(node_dir: &Path) -> Result<()> {
 #[derive(Clone, Debug)]
 pub(crate) struct Config {
     pub projection_backend: crate::env::ProjectionBackend,
-    /// Repo root (`--repo`); working dir for every script/binary we invoke.
+    /// Repo root (`--repo`). It is the working dir for every script/binary we invoke.
     pub repo: PathBuf,
     /// Localnet data dir (`--data-dir`).
     pub dir: PathBuf,
@@ -84,11 +85,11 @@ pub(crate) struct Config {
     /// past the committee (joiner, followers) resolve without pre-declaration.
     pub ports: Ports,
     /// A stable, run-dir-derived tag that scopes this run's enclave containers
-    /// (`outbe-tee-gramine-<tag>-s<scenario>-<i>`) and teardown sweep -
-    /// independent of ports.
+    /// (`outbe-tee-gramine-<tag>-s<scenario>-<i>`) and teardown sweep. The tag
+    /// is independent of ports.
     pub run_tag: String,
     /// Short, run-scoped root for Unix-domain control sockets. Persistent
-    /// Radicle state remains under `dir`; only bounded UDS paths live here.
+    /// Radicle state remains under `dir`. Only bounded UDS paths live here.
     pub radicle_runtime_root: PathBuf,
     /// This scenario's 1-based id, or `0` for the run-level config (which only
     /// sweeps, and never names a container).
@@ -147,13 +148,13 @@ impl Config {
     /// Scenario-level config: `dir` is `<run dir>/scenario-<id>`, so scenarios
     /// never overwrite each other's genesis/keys/logs.
     ///
-    /// `run_tag` deliberately still derives from the **run** dir: the enclave
-    /// container names and the teardown sweep are scoped to the run, so a SIGINT
+    /// `run_tag` deliberately still derives from the **run** dir. The enclave
+    /// container names and the teardown sweep are scoped to the run. Thus a SIGINT
     /// (which only has the run-level [`Config`]) still matches every scenario's
     /// containers.
     ///
     /// The caller must have advanced [`Ports::start_scenario`](crate::internal::ports::Ports::start_scenario)
-    /// first - `rpc0` below reads this scenario's validator-0 block.
+    /// first. `rpc0` below reads this scenario's validator-0 block.
     pub fn for_scenario(env: &Environment, id: usize) -> Self {
         let mut cfg = Self::resolve(env);
         cfg.dir = env.data_dir.join(format!("scenario-{id}"));
@@ -239,7 +240,7 @@ impl Config {
     /// Enclave container name for validator index `i`.
     ///
     /// Scoped by run tag *and* scenario, so two scenarios never contend for the
-    /// same docker name - the same isolation their dirs and ports already have.
+    /// same docker name. Their dirs and ports already have the same isolation.
     /// The teardown sweep matches on the `outbe-tee-gramine-<run_tag>-` prefix,
     /// which still covers every scenario's containers.
     pub fn tee_container(&self, i: usize) -> String {
@@ -282,9 +283,10 @@ fn short_radicle_runtime_root(run_dir: &Path) -> PathBuf {
     PathBuf::from("/tmp").join(format!("outbe-e2e-rad-{}", hex::encode(&digest[..16])))
 }
 
-/// A stable, docker-name-safe slug derived from the data dir, used to scope this
-/// run's enclave containers so parallel localnets on other `--data-dir`s don't
-/// collide and teardown can match by name without knowing the resolved ports.
+/// A stable, docker-name-safe slug derived from the data dir. It scopes this
+/// run's enclave containers, so parallel localnets on other `--data-dir`s don't
+/// collide. This scope also lets teardown match by name without knowing the
+/// resolved ports.
 fn dir_tag(dir: &Path) -> String {
     let mut tag = String::new();
     let mut prev_dash = false;
@@ -380,7 +382,7 @@ mod tests {
     }
 
     /// A scenario's data lives in its own subdir, but the enclave `run_tag` stays
-    /// the run's - the SIGINT sweep only ever sees the run-level `Config`.
+    /// the run's. The SIGINT sweep only ever sees the run-level `Config`.
     #[test]
     fn scenario_dir_is_nested_under_the_run_dir() {
         let env = Environment::default();

@@ -21,8 +21,8 @@ alloy_sol_types::sol! {
 /// Malaysian ringgit: the issuance currency lifecycle entities carry beside USD, which
 /// no reference currency list includes.
 pub(crate) const MYR_ISO: u16 = 458;
-/// Ringgit per COEN on the controlled feed, at six decimals; not round, so a converted
-/// cost leaves a remainder to floor.
+/// Ringgit per COEN on the controlled feed, at six decimals. The value is not round, so
+/// a converted cost leaves a remainder to floor.
 pub(crate) const MYR_RATE_MINOR: u64 = 4_512_345;
 /// Euro: registered with its own vault, and foreign to the MYR-issued holdings.
 pub(crate) const EUR_ISO: u16 = 978;
@@ -30,7 +30,7 @@ pub(crate) const EUR_ISO: u16 = 978;
 const ISSUANCE_MARKET_TAG: &str = "myr-issuance";
 
 const DEPLOY_FUNDING_COEN: u64 = 100;
-/// A pricing window closes on a whole hour; the margin lands the committee inside the next one.
+/// A pricing window closes on a whole hour. The margin lands the committee inside the next one.
 const WINDOW_CLOSE_MARGIN_SECS: u64 = 60;
 const WINDOW_CLOSE_TIMEOUT: Duration = Duration::from_secs(300);
 

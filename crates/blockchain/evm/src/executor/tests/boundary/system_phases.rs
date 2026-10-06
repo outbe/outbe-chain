@@ -221,7 +221,7 @@ fn full_begin_phases_then_user_tx_observes_boundary_activation() {
     // matching the V2 metadata's `(epoch, committee_set_hash)` pair, so
     // the Phase 1 `verify_v2_proof` preflight would reject. The test
     // exercises pre-exec + begin-zone receipts, not the verifier
-    // itself; opt out via the test-only escape hatch.
+    // itself. Disable the preflight with the test-only escape hatch.
     super::super::with_phase1_verify_disabled(|| {
         executor
             .apply_pre_execution_changes()

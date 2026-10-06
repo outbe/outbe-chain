@@ -17,9 +17,9 @@ import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Re
 ///      mid-`receiveMessage` (via `token.crosschainMint` -> `_mint`), re-enters the adapter's
 ///      `multiSend` entrypoint. With both `receiveMessage` and `multiSend` carrying
 ///      `nonReentrant`, the inner call reverts with `ReentrancyGuardReentrantCall`
-///      at the modifier check (before the empty-batch validation), and we capture
+///      at the modifier check (before the empty-batch validation). We capture
 ///      the selector. Without the guards, the inner call would revert with
-///      `EmptyBatch` instead - distinguishing the two cases.
+///      `EmptyBatch` instead. This difference distinguishes the two cases.
 contract ReentrantBatchProbe is IERC1155Receiver {
     address public immutable adapter;
     bool public attempted;
@@ -71,7 +71,7 @@ contract ReentrantBatchProbe is IERC1155Receiver {
 ///      on the destination chain (B). On B, `receiveMessage` -> `_handleBatchReceive` -> `token.crosschainMint`
 ///      -> `_mint` invokes the probe's `onERC1155Received`, which attempts to re-enter
 ///      `adapterB.multiSend`. Expected: the inner call reverts with
-///      `ReentrancyGuardReentrantCall` - proving the guard is held by `receiveMessage` AND that
+///      `ReentrancyGuardReentrantCall`. This proves that `receiveMessage` holds the guard AND that
 ///      `multiSend` carries the modifier.
 contract IntexNFT1155BridgeReentrancyTest is CrossChainTest {
     uint32 private aChainId = 1;

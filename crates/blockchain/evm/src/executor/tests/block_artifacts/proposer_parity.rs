@@ -1,4 +1,5 @@
-//! Proposer and validator execution produce byte-equal receipts, roots and header artifacts, including late finalize credit settlement.
+//! Proposer and validator execution produce byte-equal receipts, roots and header artifacts,
+//! including late finalize credit settlement.
 
 use super::*;
 
@@ -90,33 +91,30 @@ fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifact
     assert_eq!(proposer.0.len(), 8);
 }
 
-/// determinism gate: a block carrying a valid BLS late-finalize
-/// credit, executed on the proposer's encoded `extra_data` and on the bytes
-/// a validator decodes+re-encodes, reaches **identical** post-state and
-/// receipts. Proves the begin-zone late-credit verify+record path is
-/// deterministic across proposer and validator (artifact byte-identity is
-/// pinned here via the codec round-trip; full proposer/validator lockstep is
-/// covered end-to-end by the localnet harness).
+/// Determinism gate: a block carries a valid BLS late-finalize credit. The block executes on two
+/// inputs: the proposer's encoded `extra_data`, and the bytes that a validator decodes and
+/// re-encodes. Both runs reach **identical** post-state and receipts. This proves that the
+/// begin-zone late-credit verify+record path is deterministic across proposer and validator.
+/// The codec round-trip pins artifact byte-identity here. The localnet harness covers full
+/// proposer/validator lockstep end-to-end.
 ///
-/// The block executes at `N+K` so the begin-zone `settle_matured` is not a
-/// no-op: a pre-seeded matured escrow (block `N`, non-zero fee, one credited
-/// voter at `k=1`) is actually **paid** - and the resulting fee-share
-/// **balance delta** (voter + drained `REWARDS`) must match byte-for-byte on
-/// both the proposer and validator paths. This closes the gap
-/// where a zero `validator_fee_sum` made settlement prove nothing.
+/// The block executes at `N+K`, so the begin-zone `settle_matured` is not a no-op. The begin-zone
+/// actually **pays** a pre-seeded matured escrow (block `N`, non-zero fee, one credited voter at
+/// `k=1`). The resulting fee-share **balance delta** (voter + drained `REWARDS`) must match
+/// byte-for-byte on both the proposer and validator paths. This closes the gap where a zero
+/// `validator_fee_sum` made settlement prove nothing.
 #[test]
 fn proposer_validator_same_state_root() {
     use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
 
-    // Mirror production startup: the consensus chain id is installed into the
-    // namespace source of truth BEFORE anything signs or verifies. The
-    // executor below constructs `OutbeEvmConfig`, which now installs it for
-    // every constructor; install it here too so the finalize
-    // aggregate signed below uses the same `finalize_namespace` the verify
-    // path reads - otherwise the late-finalize BLS check fails on a namespace
-    // mismatch (`b"outbe" || 0` at sign time vs `b"outbe" || CHAIN_ID` at
-    // verify time). CHAIN_ID matches the Outbe Devnet identity used by
-    // `test_chain_spec()` throughout this shared lib-test process.
+    // Mirror production startup, which installs the consensus chain id into the namespace
+    // source of truth BEFORE anything signs or verifies. The executor below constructs
+    // `OutbeEvmConfig`, which now installs it for every constructor. Install it here too, so
+    // that the finalize aggregate signed below uses the same `finalize_namespace` that the
+    // verify path reads. Otherwise the late-finalize BLS check fails on a namespace mismatch
+    // (`b"outbe" || 0` at sign time vs `b"outbe" || CHAIN_ID` at verify time). CHAIN_ID
+    // matches the Outbe Devnet identity that `test_chain_spec()` uses throughout this shared
+    // lib-test process.
     outbe_consensus::proof::init_consensus_chain_id(CHAIN_ID).unwrap();
 
     let epoch = 0u64;
@@ -128,22 +126,20 @@ fn proposer_validator_same_state_root() {
     let settle_block = window_k + 1; // K+1 = 4: first block where N=1 matures.
     let progress_marker = settle_block - 2; // CPA progress gate: last_accounted.
 
-    // Live credit for the finalized parent (fb = settle_block - 1, distance 1),
-    // signers 0..2. The credit targets the finalized parent (`parent_hash`) -
-    // the very block the block-(N+K) CPA escrows - so its canonical binding
-    // (number->{fb_hash, epoch, committee_set_hash}) is written by
-    // `on_finalized_metadata` and the credit authenticates against it.
-    // The CPA metadata carries no base voters, so only the late credit's
-    // signers are recorded. This exercises the *recording* path's parity.
+    // Live credit for the finalized parent (fb = settle_block - 1, distance 1), signers 0..2.
+    // The credit targets the finalized parent (`parent_hash`). This is the same block that the
+    // block-(N+K) CPA escrows. Thus `on_finalized_metadata` writes its canonical binding
+    // (number->{fb_hash, epoch, committee_set_hash}), and the credit authenticates against it.
+    // The CPA metadata carries no base voters, so the recording path records only the signers
+    // of the late credit. This exercises the parity of the *recording* path.
     let (fb_number, view, parent_view) = (settle_block - 1, 9u64, 8u64);
     let parent_hash = B256::with_last_byte(0xAA);
     let fb_hash = parent_hash;
 
-    // Pre-seeded MATURED escrow for block N = settle_block - K with a non-zero
-    // fee and one credited voter at k=1. `settle_matured(settle_block, K)`
-    // settles this block, so the begin-zone actually PAYS - proving the
-    // fee-share balance delta is identical on both paths. A
-    // distinct fb_hash and a dedicated voter address keep this concern isolated
+    // Pre-seeded MATURED escrow for block N = settle_block - K, with a non-zero fee and one
+    // credited voter at k=1. `settle_matured(settle_block, K)` settles this block, so the
+    // begin-zone actually PAYS. This proves that the fee-share balance delta is identical on
+    // both paths. A distinct fb_hash and a dedicated voter address keep this concern isolated
     // from the live recording credit above.
     let settle_target = settle_block - window_k; // = 1
     let settle_fb_hash = B256::with_last_byte(0x11);
@@ -175,25 +171,27 @@ fn proposer_validator_same_state_root() {
         "codec round-trip must be byte-identical (proposer encode == validator re-encode)"
     );
 
-    // Execute block N+K with the begin-zone, capturing the recorded
-    // late-credit state for the live credit, the settled voter's fee-share
-    // balance, the drained REWARDS balance, and receipt shape.
+    // Execute block N+K with the begin-zone. Capture these values:
+    // - the recorded late-credit state for the live credit,
+    // - the fee-share balance of the settled voter,
+    // - the drained REWARDS balance,
+    // - the receipt shape.
     let run = |extra_data: Bytes| -> (usize, Vec<u64>, u32, Vec<Address>, U256, U256, u64) {
         let signer = test_evm_signer();
         let proposer = signer.address();
         let snapshot = snapshot.clone();
-        // Register the committee members so the window-close absentee pass can
-        // slash them: all four are absent for the settled block (which credited
-        // only `settle_voter`). At a single miss this is counter-only (no felony),
-        // adding no balance effect - only the parity-checked miss counters.
+        // Register the committee members, so that the window-close absentee pass can slash
+        // them. All four are absent for the settled block (which credited only
+        // `settle_voter`). At a single miss this is counter-only (no felony). It adds no
+        // balance effect, only the parity-checked miss counters.
         let mut seeded: Vec<(Address, [u8; 48])> = vec![(proposer, dummy_pubkey(0xA2))];
         for member in &snapshot.committee {
             seeded.push((member.address, member.consensus_pubkey));
         }
         let mut state = state_with_active_validators_seeded(&seeded, move |storage| {
-            // The live credit's escrow binding is written by the N+K CPA
-            // (on_finalized_metadata); the committee snapshot is pre-seeded
-            // for the credit's BLS verify.
+            // The N+K CPA (on_finalized_metadata) writes the escrow binding of the live
+            // credit. This closure pre-seeds the committee snapshot for the BLS verify of
+            // the credit.
             seed_late_credit_escrow(
                 storage,
                 &LateCreditEscrow {
@@ -225,7 +223,7 @@ fn proposer_validator_same_state_root() {
         let mut metadata = test_metadata();
         metadata.finalized_block_number = fb_number;
         metadata.finalized_block_hash = parent_hash;
-        // Canonical binding the CPA escrows; must match the credit.
+        // Canonical binding that the CPA escrows. It must match the credit.
         metadata.finalized_epoch = epoch;
         metadata.finalized_view = view;
         metadata.parent_view = parent_view;
@@ -237,8 +235,8 @@ fn proposer_validator_same_state_root() {
         ctx.parent_consensus_metadata = Some(metadata.clone());
         let mut executor = config.create_executor(evm, ctx);
 
-        // Phase 1 disabled (no CPA cert seeded); late-finalize verify runs on
-        // the valid credit + seeded snapshot.
+        // Phase 1 is disabled (no CPA cert seeded). Late-finalize verify runs on the valid
+        // credit + seeded snapshot.
         super::with_phase1_verify_disabled(|| {
             executor
                 .apply_pre_execution_changes()
@@ -308,8 +306,8 @@ fn proposer_validator_same_state_root() {
         "three voters recorded for the in-window credit"
     );
     assert_eq!(proposer_out.3, addrs[0..3].to_vec());
-    // Settlement actually PAID: the k=1 voter received its decay-weighted
-    // fee-share, and REWARDS was drained of the settled escrow.
+    // Settlement actually PAID: the k=1 voter received its decay-weighted fee-share, and
+    // settlement drained the settled escrow from REWARDS.
     assert_eq!(
         proposer_out.4, expected_payout,
         "settled k=1 voter must receive fee * w(1) / D"
@@ -323,9 +321,9 @@ fn proposer_validator_same_state_root() {
         U256::ZERO,
         "REWARDS is drained: payout transferred + residue burned"
     );
-    // Window-close slash parity: the absent committee member's miss is recorded
-    // (slash fired) and is byte-identical on the proposer and validator paths
-    // (the tuple equality above already compares it).
+    // Window-close slash parity: the window-close pass records the miss of the absent
+    // committee member (slash fired). The miss is byte-identical on the proposer and
+    // validator paths. The tuple equality above already compares it.
     assert_eq!(
         proposer_out.6, 1,
         "absent committee voter is slashed (miss recorded) at window close on both paths"
@@ -403,9 +401,9 @@ fn seed_late_credit_escrow(
     } = *fixture;
     outbe_validatorset::write_committee_snapshot(storage.clone(), epoch, snapshot)?;
 
-    // Pre-seed the matured escrow (block N), its k=1 voter, fund
-    // REWARDS to back the payout + residue burn, and advance the
-    // accounting marker so the N+K CPA progress gate passes.
+    // Pre-seed the matured escrow (block N) and its k=1 voter. Fund REWARDS to back the
+    // payout + residue burn. Advance the accounting marker, so that the N+K CPA progress
+    // gate passes.
     let seed_ctx = BlockRuntimeContext::new(
         BlockContext::new(settle_target, 1, CHAIN_ID, Address::ZERO, vec![]),
         storage,
@@ -571,8 +569,8 @@ fn late_credit_signature(
         OutbeDigest(fb_hash),
     );
     let msg = proposal.encode().to_vec();
-    // finalize votes bind the ordered committee; build the canonical
-    // `Set` from the same committee the snapshot/verifier uses.
+    // Finalize votes bind the ordered committee. Build the canonical `Set` from the same
+    // committee that the snapshot/verifier uses.
     let committee_set: commonware_utils::ordered::Set<bls12381::PublicKey> =
         commonware_utils::ordered::Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
     let sigs: Vec<bls12381::Signature> = [0usize, 1, 2]

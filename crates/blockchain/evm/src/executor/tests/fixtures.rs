@@ -379,9 +379,9 @@ pub(super) fn state_with_active_validators_seeded_at_block_with_cycle_frames(
         seed_test_committee_snapshot(storage.clone(), validators);
         // Seed the COEN/840 oracle pair + a 1.0 rate so begin-block
         // NOD/GEM/INTEX floor-price promotion resolves a live rate instead
-        // of soft-skipping the scan. 840 is also pushed onto the reference
-        // currency list, matching genesis: the Nod qualifier reads its ISO
-        // from there, not from a hard-coded constant.
+        // of soft-skipping the scan. Also push 840 onto the reference currency
+        // list to match genesis. The Nod qualifier reads its ISO from there, not
+        // from a hard-coded constant.
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
         outbe_oracle::schema::OracleContract::new(storage.clone())
@@ -425,10 +425,10 @@ pub(super) fn state_with_active_validators_seeded_at_block_with_cycle_frames(
         outbe_primitives::addresses::TRIBUTE_ADDRESS,
         NOD_ADDRESS,
         outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-        // marker allowlist: the accounting-progress marker account
-        // is preserved across EIP-161 by `0xef` bytecode in production, so its
-        // seeded slot survives as live state here too (otherwise an empty
-        // account's storage reads back as zero).
+        // marker allowlist: in production, `0xef` bytecode preserves the
+        // accounting-progress marker account across EIP-161. So its seeded
+        // slot survives as live state here too. Otherwise an empty account's
+        // storage reads back as zero.
         outbe_primitives::addresses::ACCOUNTING_PROGRESS_ADDRESS,
     ];
     // `cache_db_from_storage` carries storage slots but not balances, and the
@@ -674,11 +674,12 @@ pub(super) fn test_metadata() -> CertifiedParentAccountingMetadata {
 
 // `finish_rejects_execution_summary_mismatch` was removed.
 // The previous test asserted mismatch via the `total_emission_limit`
-// field, which has been dropped from `ExecutionSummaryArtifact` in
-// wire format v0x04. The remaining `validator_fee_sum` field is
-// verified by the broader `outbe_rewards::on_finalized_metadata`
-// hook and the metadata-fingerprint guard in
-// `outbe_rewards::runtime::check_and_record_metadata_fingerprint`.
+// field. Wire format v0x04 dropped that field from
+// `ExecutionSummaryArtifact`. The broader
+// `outbe_rewards::on_finalized_metadata` hook and the
+// metadata-fingerprint guard in
+// `outbe_rewards::runtime::check_and_record_metadata_fingerprint`
+// verify the remaining `validator_fee_sum` field.
 
 pub(super) fn dummy_pubkey(seed: u8) -> [u8; 48] {
     let mut pk = [0u8; 48];
@@ -867,8 +868,8 @@ pub(super) fn metadata_with(
         ordered_committee: committee,
         signer_bitmap,
         // convert V1-shape `Vec<Address>` test fixture into V2
-        // `Vec<MissedProposerEvent>` (view defaults to 0 - V2 contract is
-        // empty list, this fixture exercises the validation path only).
+        // `Vec<MissedProposerEvent>`. The view defaults to 0. The V2 contract
+        // is an empty list. This fixture exercises the validation path only.
         missed_proposers: missed_proposers
             .into_iter()
             .map(

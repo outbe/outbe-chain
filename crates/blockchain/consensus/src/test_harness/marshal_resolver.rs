@@ -8,15 +8,17 @@ use commonware_utils::vec::NonEmptyVec;
 
 use crate::digest::Digest;
 
-/// Accept requests without delivering blocks; the caller retains the handler keepalive.
+/// Accept requests without delivering blocks. The caller retains the handler keepalive.
 #[derive(Clone, Default)]
 pub struct NoopMarshalResolver;
 
-// commonware 2026.5.0 split the resolver surface: the base `Resolver` keeps
-// `fetch`/`fetch_all`/`retain` (now SYNC, returning `Feedback`, generic over
-// `Into<Fetch<Key, Subscriber>>`) and gained `type Subscriber`; `cancel`/`clear`
-// were removed; the targeted methods moved to `TargetedResolver`. The marshal
-// actor requires `Key = handler::Key<Commitment>` and `Subscriber =
+// commonware 2026.5.0 split the resolver surface:
+// - The base `Resolver` keeps `fetch`/`fetch_all`/`retain` (now SYNC, returning
+//   `Feedback`, generic over `Into<Fetch<Key, Subscriber>>`) and gained
+//   `type Subscriber`.
+// - commonware 2026.5.0 removed `cancel`/`clear`.
+// - The targeted methods moved to `TargetedResolver`.
+// The marshal actor requires `Key = handler::Key<Commitment>` and `Subscriber =
 // handler::Annotation`.
 impl Resolver for NoopMarshalResolver {
     type Key = handler::Key<Digest>;

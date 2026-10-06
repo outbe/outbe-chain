@@ -1,18 +1,18 @@
 //! `HyperlaneController` - governance-owned controller of the Hyperlane bridge (`0x...EE14`).
 //!
-//! The precompile is the owner of every Hyperlane core contract on Outbe
-//! (Mailbox, ProxyAdmin, IGP, gas oracle, ProtocolFee, InterchainAccountRouter,
-//! StorageMessageIdMultisigIsm) and, through its Interchain Account, of the
-//! same contracts on remote chains. It holds no validator set of its own: the
-//! ISMs are the source of truth, the controller only forwards owner calls.
+//! The precompile owns every Hyperlane core contract on Outbe (Mailbox,
+//! ProxyAdmin, IGP, gas oracle, ProtocolFee, InterchainAccountRouter,
+//! StorageMessageIdMultisigIsm). Through its Interchain Account, it also owns
+//! the same contracts on remote chains. It holds no validator set of its own.
+//! The ISMs are the source of truth. The controller only forwards owner calls.
 //!
 //! - `initialize`, `fund` and the permissionless `sync` (mirror the active
 //!   validator set into every ISM) are the only direct write selectors.
 //! - Validator rotation, generic local / remote owner calls and table changes
-//!   are methods on [`HyperlaneControllerContract`]; the trigger that runs them
+//!   are methods on [`HyperlaneControllerContract`]. The trigger that runs them
 //!   (validator vote or another authority) is not wired yet.
-//! - Remote dispatch fees (IGP quote) are paid from the controller's own
-//!   balance, topped up through `fund`.
+//! - The controller pays remote dispatch fees (IGP quote) from its own
+//!   balance. `fund` adds value to that balance.
 
 pub mod errors;
 pub mod lifecycle;

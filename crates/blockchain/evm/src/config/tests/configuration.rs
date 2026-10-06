@@ -82,10 +82,10 @@ fn context_for_next_block_strips_plain_builder_extra_data() {
 fn context_for_next_block_uses_outbe_parent_hash() {
     let config = OutbeEvmConfig::new(test_chain_spec());
     let parent = test_parent_with_millis_part(7);
-    // Post-refactor (sub-second timestamp moved into `extra_data`)
+    // Post-refactor (sub-second timestamp moved into `extra_data`),
     // the wrapper hash and the inner Ethereum hash are identical
-    // by design - that is the Ethereum-spec compatibility this
-    // refactor guarantees. The test still verifies that
+    // by design. This refactor guarantees that Ethereum-spec
+    // compatibility. The test still verifies that
     // `context_for_next_block` propagates the sealed parent hash
     // unchanged.
     let inner_parent_hash = parent.header().inner.hash_slow();
@@ -151,9 +151,10 @@ fn context_for_next_block_drops_legacy_finalization_header_tag() {
 }
 
 /// `sanitize_next_block_extra_data` must PRESERVE a non-empty
-/// `late_finalize_credits` artifact (while resetting `execution_summary` and
-/// `timestamp_millis_part`, which the payload builder recomputes) - otherwise
-/// the proposer-packed late credits would be silently dropped before sealing.
+/// `late_finalize_credits` artifact (while it resets `execution_summary` and
+/// `timestamp_millis_part`, which the payload builder recomputes). Otherwise,
+/// the sanitizer would silently drop the proposer-packed late credits before
+/// sealing.
 #[test]
 fn sanitizer_preserves_late_credits() {
     let config = OutbeEvmConfig::new(test_chain_spec());

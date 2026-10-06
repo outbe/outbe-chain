@@ -30,7 +30,7 @@ fn distribute_no_contributors_burns() {
     );
 
     StorageHandle::enter(&mut storage, |s| {
-        // Armed but no contributors recorded; the single chain completes the fan-in.
+        // Armed but no contributors recorded. The single chain completes the fan-in.
         outbe_intex::api::arm_proceeds(&s, WorldwideDay::new(7), &[10], DEADLINE_FUTURE).unwrap();
         s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(100u64))
             .unwrap();
@@ -51,7 +51,7 @@ fn distribute_no_contributors_burns() {
         );
         runtime::sweep_proceeds_deadlines(&s, DEADLINE_FUTURE).unwrap();
 
-        // No round opened; the ownerless proceeds were destroyed, not vaulted.
+        // No round opened. The ownerless proceeds were destroyed, not vaulted.
         assert_eq!(s.balance(VAULT_ROUTER_ADDRESS).unwrap(), U256::ZERO);
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
     });
@@ -105,7 +105,7 @@ fn unpublished_selectors_refuse_native_value() {
 
 /// `distribute` is the one published payable selector here, and it credits
 /// auction proceeds straight from `msg.value`. The route table only decides that
-/// this *address* may be credited; nothing in it proves the dispatch actually
+/// this *address* may be credited. Nothing in it proves the dispatch actually
 /// hands the value to the handler. This does: the handler rejects a zero amount,
 /// so the two outcomes separate exactly on whether the value arrived.
 #[test]
@@ -271,7 +271,7 @@ fn certified_day_opens_a_payout_round_instead_of_burning_the_pot() {
             .unwrap()
             .expect("certified day must open a payout round");
         assert_eq!(round.amount, amount);
-        // The pot stays on the precompile until batches draw it down.
+        // The pot stays on the precompile until batches spend it.
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), amount);
     });
 }
@@ -527,7 +527,7 @@ fn day_without_contributor_authority_holds_the_pot_until_the_deadline() {
             .unwrap()
             .is_none());
 
-        // The root arrives late; the preserved pot now funds the round.
+        // The root arrives late. The preserved pot now funds the round.
         let leaves = population(300);
         install_generation(&s, &leaves);
         runtime::try_settle_proceeds(
@@ -594,8 +594,8 @@ fn late_proceeds_after_an_ownerless_certified_day_burn() {
         deliver_proceeds(&s, U256::from(500u64));
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
 
-        // A duplicate delivery lands after finalization cleared the deadline;
-        // it must burn like any other late arrival, not sit on the balance.
+        // A duplicate delivery lands after finalization cleared the deadline.
+        // It must burn like any other late arrival, not sit on the balance.
         s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(70u64))
             .unwrap();
         runtime::distribute(

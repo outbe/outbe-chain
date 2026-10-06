@@ -150,9 +150,10 @@ impl ValidatorNodeBindingV1 {
 }
 
 /// Bounded canonical preimage of the stable `NodeHost` authorization committed
-/// by every registration. Remote peers disclose this public witness so the
-/// target can recover the exact Noise IK initiator static from finalized state
-/// without accepting a full initialization manifest or a host assertion.
+/// by every registration. Remote peers disclose this public witness. With it,
+/// the target can recover the exact Noise IK initiator static from finalized
+/// state. This recovery does not accept a full initialization manifest or a
+/// host assertion.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NodeHostAuthorizationWitnessV1 {
     pub chain_id: [u8; 32],
@@ -300,9 +301,9 @@ impl EnclaveInitializationManifestV1 {
     }
 
     /// Stable authority shared by successive enclave initializations for one
-    /// node. Fresh initialization challenges and enclave keys are deliberately
-    /// excluded; changing the persistent NodeHost key or node identity changes
-    /// this commitment.
+    /// node. This commitment deliberately excludes fresh initialization
+    /// challenges and enclave keys. Changing the persistent NodeHost key or node
+    /// identity changes this commitment.
     pub fn node_host_authorization_hash(&self) -> Result<B256, CodecError> {
         NodeHostAuthorizationWitnessV1::from_manifest(self)?.authorization_hash()
     }
@@ -319,7 +320,7 @@ impl EnclaveInitializationManifestV1 {
     }
 
     /// Verify the node proof of possession over the exact canonical manifest.
-    /// Validators authorize with their EVM key; full nodes authorize with the
+    /// Validators authorize with their EVM key. Full nodes authorize with the
     /// compressed secp256k1 key already used as their Reth P2P identity.
     pub fn verify_node_signature(&self, signature: &[u8; 65]) -> bool {
         let Ok(hash) = self.authorization_hash() else {
@@ -332,7 +333,7 @@ impl EnclaveInitializationManifestV1 {
 
     /// Ensure a requested quote is for this exact initialized identity. Dynamic
     /// operation/version/nonce/lease/policy fields remain part of the intent and
-    /// may change; node, chain, profile and persistent key authority may not.
+    /// may change. Node, chain, profile and persistent key authority may not change.
     pub fn validate_intent_binding(&self, intent: &RegistrationIntentV1) -> Result<(), CodecError> {
         self.validate()?;
         intent.validate()?;

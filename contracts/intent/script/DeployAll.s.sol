@@ -45,9 +45,10 @@ contract DeployAll is DeployRouter, DeploySolverEscrow, DeployAuction, Configure
         address factoryAddr = vm.envAddress("CREATE3_FACTORY_ADDRESS");
         console2.log("Create3Factory:", factoryAddr);
 
-        // Everything below is deterministic from (factory, deployer, salt). If the router already exists, the whole
-        // stack is already deployed - skip it: re-deploying escrow/auction/allocator would waste gas and the router's
-        // CREATE3 would revert on collision anyway.
+        // Everything below is deterministic from (factory, deployer, salt). If the router already
+        // exists, the whole stack is already deployed, so skip it. A re-deploy of
+        // escrow/auction/allocator would waste gas, and the router's CREATE3 would revert on
+        // collision anyway.
         address routerAddr = Create3Factory(factoryAddr).predict(vm.addr(deployerPrivateKey), getRouterSalt(salt));
         if (routerAddr.code.length != 0) {
             console2.log("Already deployed - skipping. Router:", routerAddr);

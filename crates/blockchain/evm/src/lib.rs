@@ -17,15 +17,15 @@ pub mod zk;
 #[cfg(test)]
 mod zk_tests;
 /// Re-export of the validator EVM signer, which now lives in
-/// `outbe-primitives::signer`. Wire/data-only type (no EVM runtime), so it
-/// belongs with the other primitives; keeping `outbe_evm::signer` as a path
-/// preserves the existing `pub use` re-exports below.
+/// `outbe-primitives::signer`. It is a wire/data-only type (no EVM runtime), so it
+/// belongs with the other primitives. The `outbe_evm::signer` path stays, so the
+/// existing `pub use` re-exports below continue to work.
 pub use outbe_primitives::signer;
 /// Re-export of the system-tx codec, which now physically lives in
 /// `outbe-primitives::system_tx`. The codec is wire/data-only (no EVM
-/// runtime), so it belongs with the rest of the consensus primitives;
-/// keeping the path `outbe_evm::system_tx` working avoids touching ~50
-/// call sites in executor / payload builder / tests.
+/// runtime), so it belongs with the rest of the consensus primitives.
+/// The path `outbe_evm::system_tx` continues to work, so ~50 call sites in
+/// executor / payload builder / tests need no change.
 pub use outbe_primitives::system_tx;
 
 pub use config::{

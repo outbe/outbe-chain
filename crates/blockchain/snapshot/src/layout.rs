@@ -19,8 +19,8 @@ pub struct ProtectedPaths(pub Vec<PathBuf>);
 
 /// Reject aliases and overlapping source/protected/output paths without writes.
 ///
-/// Native sources must exist. Protected and output paths may be absent; their
-/// existing ancestors are resolved so an alias cannot hide a nested path.
+/// Native sources must exist. Protected and output paths may be absent. This
+/// function resolves their existing ancestors, so an alias cannot hide a nested path.
 /// This checks a stopped layout, not concurrent filesystem replacement. The
 /// archive reader/writer must separately enforce contained, no-follow access.
 pub fn validate_layout(

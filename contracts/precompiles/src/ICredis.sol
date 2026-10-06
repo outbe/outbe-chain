@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
-/// @notice Principal and interest amounts are in the position asset's atomic units; Gratis
+/// @notice Principal and interest amounts are in the position asset's atomic units. Gratis
 ///         amounts and prices are at scale 1e6.
 interface ICredis {
     /// Emitted once, when a position opens: positions are never burned.
     event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
-    // Declared for ERC-721 shape only: a position is bound to its smart account, so these two are never emitted.
+    // Declared for ERC-721 shape only. A position is bound to its smart account, so these two
+    // are never emitted.
     event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId);
     event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
     /// ERC-4906: emitted when a position is called, on every settlement, and when it is voided.
@@ -68,7 +69,7 @@ interface ICredis {
         bytes32 returnNoteSerial;
         /// P - the stablecoin amount disbursed. Never changes.
         uint256 principalMinor;
-        /// P_out - decreases with each settlement; the position closes at zero.
+        /// P_out - decreases with each settlement. The position closes at zero.
         uint256 outstandingPrincipalMinor;
         /// G - the pledged Gratis, valued 1:1 against principal at the reservation quote rate.
         uint256 gratisMinor;
@@ -111,7 +112,8 @@ interface ICredis {
     function getPosition(uint256 positionId) external view returns (Position memory);
     function ownerOf(uint256 positionId) external view returns (address);
 
-    // ERC-721 transfer surface. A position is bound to its smart account: transfers and approvals always revert.
+    // ERC-721 transfer surface. A position is bound to its smart account: transfers and
+    // approvals always revert.
     function transferFrom(address from, address to, uint256 positionId) external;
     function safeTransferFrom(address from, address to, uint256 positionId) external;
     function safeTransferFrom(address from, address to, uint256 positionId, bytes calldata data) external;
@@ -141,7 +143,8 @@ interface ICredis {
     ///         settlements. Forfeiture does not add unpaid interest.
     function interestPaidMinor(uint256 positionId) external view returns (uint256);
 
-    /// @notice Sum of `principalMinor` and `outstandingPrincipalMinor` across the account's positions.
+    /// @notice Sum of `principalMinor` and `outstandingPrincipalMinor` across the account's
+    ///         positions.
     function credisPrincipalAndOutstandingOf(address smartAccount)
         external
         view

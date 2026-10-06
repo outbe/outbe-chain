@@ -83,8 +83,8 @@ pub(super) fn canonical_artifact_fixture(
     let topology = completed_job_topology();
     let bundle_hash = topology.launch_identity.unwrap().protocol_bundle_hash;
     // A valid one-Tribute, zero-value result, using the same conservation
-    // shape as the production result-attestation tests. No runtime output
-    // or scenario directory is needed by these filesystem regressions.
+    // shape as the production result-attestation tests. These filesystem
+    // regressions need no runtime output or scenario directory.
     let mut result = LysisResultV1 {
         protocol_bundle_hash: bundle_hash,
         job_id: B256::repeat_byte(0x42),

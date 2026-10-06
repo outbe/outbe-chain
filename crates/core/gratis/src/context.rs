@@ -1,6 +1,6 @@
 //! Operation contexts authenticated by pledge-note proofs.
 //!
-//! Both circuits authenticate an opaque nonzero field; the consuming runtime
+//! Both circuits authenticate an opaque nonzero field. The consuming runtime
 //! recomputes its meaning here. Domain bytes and encoding are protocol-stable.
 
 use alloy_primitives::{keccak256, Address, B256, U256};

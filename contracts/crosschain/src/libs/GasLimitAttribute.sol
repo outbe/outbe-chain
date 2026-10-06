@@ -10,22 +10,23 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  * execution gas limit.
  *
  * Applications pass it in the `attributes` array of {IERC7786GatewaySource-sendMessage} (and the
- * matching `quote`); each adapter translates the transport-agnostic value into its native mechanism
+ * matching `quote`). Each adapter translates the transport-agnostic value into its native mechanism
  * (LayerZero executor options, Hyperlane hook metadata). When the attribute is absent, the adapter
- * falls back to its own `defaultGasLimit`.
+ * uses its own `defaultGasLimit`.
  */
 library GasLimitAttribute {
     /// @dev `bytes4(keccak256("executionGasLimit(uint256)"))`.
     bytes4 internal constant SELECTOR = bytes4(keccak256("executionGasLimit(uint256)"));
 
-    /// @dev ABI-encodes the attribute carrying `gasLimit`, for use in an ERC-7786 `attributes` array.
+    /// @dev ABI-encodes the attribute carrying `gasLimit`, for use in an ERC-7786 `attributes`
+    /// array.
     function encode(uint256 gasLimit) internal pure returns (bytes memory) {
         return abi.encodeWithSelector(SELECTOR, gasLimit);
     }
 
     /**
-     * @dev Scans `attributes` for the executionGasLimit attribute, returning whether it was present
-     * and the decoded gas limit (the last occurrence wins). Reverts
+     * @dev Scans `attributes` for the executionGasLimit attribute. Returns whether the attribute is
+     * present and the decoded gas limit (the last occurrence wins). Reverts
      * {IERC7786GatewaySource-UnsupportedAttribute} for any other attribute, as ERC-7786 requires.
      */
     function find(bytes[] calldata attributes) internal pure returns (bool found, uint256 gasLimit) {
@@ -39,9 +40,9 @@ library GasLimitAttribute {
     }
 
     /**
-     * @dev Resolves the destination gas for a message: the executionGasLimit attribute bounded to `uint128`, or
-     * `defaultGasLimit` when the attribute is absent. Reverts as {find} for any other attribute, or via {SafeCast}
-     * if the requested gas exceeds `uint128`.
+     * @dev Resolves the destination gas for a message. The result is the executionGasLimit
+     * attribute bounded to `uint128`, or `defaultGasLimit` when the attribute is absent. Reverts as
+     * {find} for any other attribute, or via {SafeCast} if the requested gas exceeds `uint128`.
      */
     function resolve(bytes[] calldata attributes, uint128 defaultGasLimit) internal pure returns (uint128) {
         (bool found, uint256 gasLimit) = find(attributes);

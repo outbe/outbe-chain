@@ -14,9 +14,10 @@ export const DEFAULT_ROUTER = "0xC846a86D4FE91a43E900a7a3bd5BE23ED2C30492";
 export const DEFAULT_FILL_DEADLINE_SECONDS = 120; // 120s
 
 /**
- * Supported networks besides `outbe` (always the connected ctx). Resolved by
- * name or chain id - no RPC URLs, no aliases; the model normalizes natural
- * language ("bsc" typed in Cyrillic, "BSC testnet") to `bsc`. Add a row to support another chain.
+ * Supported networks besides `outbe` (always the connected ctx). A network is
+ * resolved by name or chain id, with no RPC URLs and no aliases. The model
+ * normalizes natural language ("bsc" typed in Cyrillic, "BSC testnet") to `bsc`.
+ * Add a row to support another chain.
  */
 export interface NetworkDef {
   name: string;

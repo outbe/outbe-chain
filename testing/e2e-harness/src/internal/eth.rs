@@ -7,11 +7,11 @@
 //! (`ProviderBuilder::new().connect_http(...)`, calldata `abi_encode` + `call` +
 //! `abi_decode_returns`, `EthereumWallet` sends).
 //!
-//! The harness is synchronous (cucumber steps are plain fns), so each call
-//! bridges to alloy's async API via [`block_on`], which runs the future on a
-//! dedicated background runtime and blocks the caller on a channel. That works
-//! regardless of whether the calling step runs on a tokio worker or a plain
-//! thread - there is no runtime nesting to panic on.
+//! The harness is synchronous (cucumber steps are plain fns). Each call
+//! therefore bridges to alloy's async API via [`block_on`]. It runs the future
+//! on a dedicated background runtime and blocks the caller on a channel. That
+//! works regardless of whether the calling step runs on a tokio worker or a
+//! plain thread. There is no runtime nesting to panic on.
 
 use std::future::Future;
 use std::sync::mpsc::sync_channel;
@@ -40,10 +40,10 @@ pub(crate) const REVERT_FRIENDLY_GAS_LIMIT: u64 = 10_000_000;
 /// Maximum fee accepted for a transaction intended for the next block.
 ///
 /// EIP-1559 permits the base fee to grow by at most one eighth per block. The
-/// harness reads the latest canonical fee and covers that complete increase,
-/// rather than using a static multiplier that can be simultaneously too low on
-/// a busy chain and needlessly expensive for an account's upfront-balance
-/// check on a fresh chain.
+/// harness reads the latest canonical fee and covers that complete increase.
+/// It does not use a static multiplier. A static multiplier can be too low on a
+/// busy chain. The same multiplier can at the same time be needlessly expensive
+/// for an account's upfront-balance check on a fresh chain.
 fn next_block_fee_cap(base_fee: u128, priority_fee: u128) -> Result<u128> {
     let growth = base_fee / 8 + u128::from(!base_fee.is_multiple_of(8));
     let next_base_fee = base_fee
@@ -233,7 +233,7 @@ fn eth_runtime() -> &'static Runtime {
 
 /// Run an async future to completion from a synchronous step. The future runs on
 /// [`eth_runtime`] and the caller blocks on a channel, so there is no runtime
-/// nesting - this is safe whether the caller is a tokio worker or a plain thread.
+/// nesting. This is safe whether the caller is a tokio worker or a plain thread.
 pub(crate) fn block_on<F>(f: F) -> F::Output
 where
     F: Future + Send + 'static,
@@ -834,8 +834,8 @@ pub(crate) fn receipt_json(url: &str, tx: &str) -> Option<serde_json::Value> {
     raw_json_with_params(url, "eth_getTransactionReceipt", serde_json::json!([tx]))
 }
 
-/// Sign and send a contract call from `key`, waiting for its receipt; returns the
-/// tx hash. `value` funds a payable call (e.g. `stake`).
+/// Sign and send a contract call from `key`, and wait for its receipt. Returns
+/// the tx hash. `value` funds a payable call (e.g. `stake`).
 pub(crate) fn send_call<C: SolCall>(
     url: &str,
     to: Address,
@@ -1067,9 +1067,9 @@ pub(crate) fn send_call_outcome<C: SolCall>(
 
 /// Submit sequential-nonce calls before waiting for any receipt.
 ///
-/// This is the narrow batching primitive used by lifecycle tests that must put
-/// dependent transactions into the same candidate block without enabling
-/// non-production automine or storage controls. The caller can compare the
+/// Some lifecycle tests must put dependent transactions into the same candidate
+/// block without enabling non-production automine or storage controls. This is
+/// the narrow batching primitive for those tests. The caller can compare the
 /// returned receipt block numbers and fail explicitly if the node split them.
 pub(crate) fn send_prepared_calls_outcomes(
     url: &str,
@@ -1173,8 +1173,8 @@ pub(crate) fn send_value_outcome(
 
 /// Submit a value transfer at an explicit nonce WITHOUT waiting for a receipt.
 ///
-/// Used by the pool-eviction scenarios: a nonce ahead of the account's next
-/// nonce parks the transaction in the queued sub-pool, where it can never be
+/// The pool-eviction scenarios use this. A nonce ahead of the account's next
+/// nonce parks the transaction in the queued sub-pool. There it can never be
 /// mined and must age out. Returns the transaction hash.
 pub(crate) fn send_value_at_nonce(
     url: &str,
@@ -1378,9 +1378,11 @@ pub(crate) fn install_delegation_with_overrides(
 /// funded `payer_key` signs the outer transaction and pays its gas.
 ///
 /// A distinct authority signs its current account nonce. The `+1` rule in
-/// [`install_delegation_with_overrides`] only applies when the authority is
-/// also the transaction sender and its transaction nonce is incremented
-/// before the authorization tuple is processed.
+/// [`install_delegation_with_overrides`] only applies when both are true:
+///
+/// - the authority is also the transaction sender
+/// - its transaction nonce is incremented before the authorization tuple is
+///   processed.
 #[cfg(feature = "ocomp-integration")]
 pub(crate) fn install_delegation_for_authority(
     url: &str,
@@ -1538,7 +1540,7 @@ pub(crate) fn send_sponsored_call<C: SolCall>(
 
 /// Move the complete spendable native balance to `recipient` with a plain
 /// 21k transfer. This is scenario plumbing for proving ZeroFee from an exact
-/// zero balance; it computes the deterministic next-block base fee and makes
+/// zero balance. It computes the deterministic next-block base fee and makes
 /// `value + fee == current_balance`.
 #[cfg(feature = "ocomp-integration")]
 pub(crate) fn drain_native_balance(

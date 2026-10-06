@@ -18,7 +18,7 @@ const wwd = z.number().int().describe("WorldwideDay as YYYYMMDD, e.g. 20260601")
  * Normalise the proposal status.
  *
  * `format.ts` already renders `status` as `{code, name}` for `IGovernance.*`
- * structs; this only backfills the name when a caller hands over a raw code.
+ * structs. This function only backfills the name when a caller gives a raw code.
  */
 function annotateProposal(p: unknown): Record<string, unknown> {
   const r = { ...(p as Record<string, unknown>) };
@@ -264,7 +264,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
     {},
     handler(async () => {
       // The oracle enumerates its registry by index rather than returning the
-      // whole table, so the table is assembled here.
+      // whole table, so this tool assembles the table.
       const count = Number(await view(ctx, "oracle", "getPairCount", []));
       const indices = Array.from({ length: count }, (_, i) => i + 1);
       const pairs = await Promise.all(
@@ -393,9 +393,9 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   );
 
   // Index-backed, PAGINATED listing (metadata only - omits the full text).
-  // Exactly one of `author` / `status` must be given; each maps to a dedicated
-  // on-chain index (get*ByAuthor / get*ByStatus). Returns `total` (the whole
-  // bucket size) plus the requested `[offset, offset+limit)` page.
+  // The caller must give exactly one of `author` / `status`. Each maps to a
+  // dedicated on-chain index (get*ByAuthor / get*ByStatus). Returns `total` (the
+  // whole bucket size) plus the requested `[offset, offset+limit)` page.
   const listFilter = {
     author: z.string().optional().describe("0x address - list this author's proposals"),
     status: z

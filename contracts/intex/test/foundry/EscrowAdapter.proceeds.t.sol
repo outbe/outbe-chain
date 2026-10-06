@@ -38,7 +38,8 @@ contract EscrowAdapterProceedsTest is Test {
     }
 
     function test_RevertWhen_FinalizeWithProceedsAndNoRecipient() public {
-        // One Intex at the full rate of a 1-unit basis locks 1e18, all of it paid at a full-rate clearing.
+        // One Intex at the full rate of a 1-unit basis locks 1e18. A full-rate clearing pays all
+        // of it.
         paymentToken.mint(bidder1, 1e18);
         vm.prank(auction);
         escrow.lockFunds(worldwideDay1, bidder1, 1e18, 1_000_000, 1);

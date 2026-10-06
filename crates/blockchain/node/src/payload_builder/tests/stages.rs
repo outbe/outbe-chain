@@ -16,8 +16,8 @@ struct UserStageResult {
     rejected: usize,
 }
 
-/// Exercise pool selection against the real EVM. Block hooks are disabled to
-/// isolate this stage from the bootstrap zone covered by the replay tests.
+/// Exercise pool selection against the real EVM. This helper disables block hooks to
+/// isolate this stage from the bootstrap zone that the replay tests cover.
 fn run_user_stage(
     transactions: &[(u64, u64)],
     reserved_end_gas: u64,
@@ -78,7 +78,7 @@ fn run_user_stage(
             let encoded_length = tx.encode_2718_len();
             let recovered = tx.try_into_recovered().expect("user signature recovers");
             // Different signed messages recover different addresses with the
-            // synthetic signature; fund each sender at its requested nonce.
+            // synthetic signature. Fund each sender at its requested nonce.
             let sender = alloy_primitives::Address::from(*recovered.signer());
             if !candidates.iter().any(|&(seen, _, _)| seen == sender) {
                 candidates.push((

@@ -231,7 +231,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     });
     let claim = |amount| IAgentReward::claimRewardCall { pool: 2, amount }.abi_encode();
     let before = snapshot(&mut db);
-    // Both spot and an older daily VWAP are available; neither may replace yesterday.
+    // Both spot and an older daily VWAP are available. Neither may replace yesterday.
     with_storage(&mut db, |storage| {
         seed_oracle(&storage);
         seed_vwap(
@@ -271,7 +271,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         assert_eq!(snapshot(&mut db), before);
     }
 
-    // Force a failure inside issuance after the Gem has been stored.
+    // Force a failure inside issuance after the Gem is stored.
     with_storage(&mut db, |storage| {
         outbe_gemfactory::schema::GemFactoryContract::new(storage)
             .total_gems_issued

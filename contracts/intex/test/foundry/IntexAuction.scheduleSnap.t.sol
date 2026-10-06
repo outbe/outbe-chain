@@ -9,7 +9,7 @@ import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {MockAuctionEscrow} from "@test-mocks/MockAuctionEscrow.sol";
 
 /// @dev Schedule snap on the bridge clearing signal: an early signal pulls `revealEnd`
-///      forward; a late signal leaves the schedule untouched.
+///      forward. A late signal leaves the schedule untouched.
 contract IntexAuctionScheduleSnapTest is Test {
     IntexAuction auction;
     MockAuctionEscrow escrow;

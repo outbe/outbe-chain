@@ -1,8 +1,8 @@
 //! stdout/JSON parsers for `cast` and `outbe-cli` output.
 //!
 //! These replace the `sed -n '4p'` / `awk` / `jq` one-liners in
-//! shell parsing with small, testable
-//! functions. No `regex` crate - the patterns are simple enough by hand.
+//! shell parsing with small, testable functions.
+//! They do not use the `regex` crate. The patterns are simple enough by hand.
 
 /// Parse a value that may be decimal or `0x`-hex (uint values from `cast`).
 pub(crate) fn hex_or_dec(s: &str) -> Option<u64> {
@@ -14,8 +14,8 @@ pub(crate) fn hex_or_dec(s: &str) -> Option<u64> {
     }
 }
 
-/// Extract the first `0x...64hex` after "...ransaction sent:" - matches the bash
-/// `extract_tx_hash` regex (`update_operator_flow.sh:141`). Works for both the
+/// Extract the first `0x...64hex` after "...ransaction sent:". This matches the bash
+/// `extract_tx_hash` regex (`update_operator_flow.sh:141`). It works for both the
 /// "Proposal transaction sent:" and "Vote transaction sent:" CLI lines.
 pub(crate) fn extract_tx_hash(stdout: &str) -> Option<String> {
     const MARK: &str = "ransaction sent:";
@@ -100,7 +100,7 @@ pub struct ScheduledUpdate {
     pub status: u64,
 }
 
-/// `key=value` token from a space-separated status line; `value` runs to the
+/// `key=value` token from a space-separated status line. `value` runs to the
 /// next whitespace.
 fn field_after(line: &str, key: &str) -> String {
     match line.find(key) {

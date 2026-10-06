@@ -116,7 +116,7 @@ impl<R: Rpc + Sync> NetworkPreparation<'_, R> {
             if new_attempt
                 || active.schedule.finalized_timestamp >= evidence.intent().requested_valid_until
             {
-                None // Next nonce and fresh evidence; the expired authority cannot be reused.
+                None // Next nonce and fresh evidence. The expired authority cannot be reused.
             } else {
                 Some(value)
             },

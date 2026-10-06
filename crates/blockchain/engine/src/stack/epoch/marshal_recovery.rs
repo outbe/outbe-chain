@@ -78,10 +78,10 @@ where
         )
         .await;
 
-    // commonware 2026.5.0: `Actor::init` now returns `Option<Height>` - `None`
+    // commonware 2026.5.0: `Actor::init` now returns `Option<Height>`. `None`
     // means no durable consensus finalization yet (fresh genesis). Map that to
-    // height 0, preserving the prior non-optional `Height` semantics used by the
-    // genesis-formation proof, crash-recovery detection, and executor start.
+    // height 0. This keeps the prior non-optional `Height` semantics that the
+    // genesis-formation proof, crash-recovery detection, and executor start use.
     let last_consensus_finalized = map_marshal_init_height(last_consensus_finalized_opt.height());
 
     info!(

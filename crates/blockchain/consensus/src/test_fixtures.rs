@@ -1,12 +1,17 @@
 //! Shared unit-test fixtures used by more than one module's `#[cfg(test)]`
 //! tests.
 //!
-//! These builders were originally local to `application::handler`'s test
-//! module. The DKG boundary-resolution tests moved to `dkg_manager::tests`
-//! (where the logic now lives), and both test modules need the same
-//! `ConsensusBlock` builders, validator-set helper, deterministic DKG runtime
-//! artifacts, and the in-memory `AncestryReader`. Promoting them here keeps a
-//! single definition instead of duplicating across modules.
+//! These builders were originally local to the test module of `application::handler`.
+//! The DKG boundary-resolution tests moved to `dkg_manager::tests`, where the logic
+//! now lives. Both test modules need the same items:
+//!
+//! - the `ConsensusBlock` builders
+//! - the validator-set helper
+//! - deterministic DKG runtime artifacts
+//! - the in-memory `AncestryReader`
+//!
+//! This module keeps a single definition of these items, so the test modules do not
+//! duplicate them.
 
 pub(crate) mod marshal;
 
@@ -424,9 +429,9 @@ pub(crate) fn block_with_gas_planned_system_inputs(
 }
 
 pub(crate) fn block_with_system_tx(signer: &OutbeEvmSigner) -> ConsensusBlock {
-    // block 1 mandatorily carries a BoundaryOutcome under V2,
-    // so the minimum-shape "block with system txs" test fixture moved to
-    // block 2 where the canonical layout is
+    // Under V2, block 1 mandatorily carries a BoundaryOutcome.
+    // Thus the minimum-shape "block with system txs" test fixture moved to
+    // block 2. The canonical layout of block 2 is
     // `[CertifiedParentAccounting, LateFinalizeCredits, CycleTick,
     // RewardsGemDelivery, OracleSlashWindow, HookEvents]`.
     let parent_hash = B256::ZERO;

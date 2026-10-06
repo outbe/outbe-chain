@@ -147,8 +147,11 @@ impl AllFixture {
     fn signed(&self, artifact: &Path) -> ValidationInputs {
         let before = fingerprint(self.source.path());
         let archive = artifact.join("snapshot.tar");
-        // This production create path observes current native progress, closes readers,
-        // enumerates and hashes the actual damaged files, then signs NEW manifest bytes.
+        // This production create path:
+        // 1. observes current native progress.
+        // 2. closes readers.
+        // 3. enumerates and hashes the actual damaged files.
+        // 4. signs NEW manifest bytes.
         let (_, signer) = crate::snapshot::create::create(
             &archive,
             &self.source.path().join("snapshot-signing-key.hex"),
@@ -171,7 +174,7 @@ impl AllFixture {
 }
 
 fn seal_source(layout: &NativeLayout) -> OutbeHeader {
-    // Use the same supported test precreation as tests/bodies.rs; do not alter owners.
+    // Use the same supported test precreation as tests/bodies.rs. Do not alter owners.
     drop(
         reth_ethereum::provider::db::create_db(
             layout.chain_root.join("compressed_entities/smt"),

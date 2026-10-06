@@ -475,8 +475,8 @@ fn ineligible_request_defers_only_the_ready_key_without_effects() {
 fn deferred_day_does_not_starve_a_later_eligible_job_intent() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     outbe_fidelity::enclave_client::test_enclave::install();
-    // Oracle starts un-armed so the first ready day defers (OracleProfileNotReady);
-    // it is armed mid-test so the later day becomes eligible.
+    // Oracle starts un-armed so the first ready day defers (OracleProfileNotReady).
+    // The test arms it mid-test so the later day becomes eligible.
     let fixture = prepare_ready_days_fixture(&mut provider, false);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -1192,9 +1192,10 @@ fn prepare_request_fixture_with_day_type(
 
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
-        // `oracle_ready` gates OCOMP admission: when false the Oracle profile is
-        // left un-armed so the terminal request defers with OracleProfileNotReady
-        // (the deferral path formerly exercised via Fidelity readiness).
+        // `oracle_ready` gates OCOMP admission. When it is false, the fixture leaves the
+        // Oracle profile un-armed, so the terminal request defers with
+        // OracleProfileNotReady. Tests formerly exercised this deferral path via
+        // Fidelity readiness.
         if oracle_ready {
             outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
         }

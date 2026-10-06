@@ -1,8 +1,9 @@
 //! Outbe Hyperlane attester daemon.
 //!
-//! Proves that this validator's Hyperlane agent keeps signing: reads the
-//! latest signed checkpoint per domain from the validator's own bucket and
-//! submits it to the HyperlaneController precompile (see `attester.rs`).
+//! Proves that this validator's Hyperlane agent keeps signing. The daemon reads
+//! the latest signed checkpoint per domain from the validator's own bucket. It
+//! submits that checkpoint to the HyperlaneController precompile (see
+//! `attester.rs`).
 
 mod abi;
 mod attester;

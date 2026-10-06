@@ -1,8 +1,8 @@
 //! Fast guard for the consensus crate's direct dependency boundary.
 //!
-//! The resolved transitive graph is checked separately by
-//! `mise run audit-consensus-deps`. Running Cargo recursively from a Rust test
-//! can deadlock on Cargo's package-cache lock, so this default-suite test reads
+//! `mise run audit-consensus-deps` checks the resolved transitive graph
+//! separately. Running Cargo recursively from a Rust test can deadlock on
+//! Cargo's package-cache lock. For this reason, this default-suite test reads
 //! the package manifest directly instead.
 
 const MANIFEST: &str = include_str!("../Cargo.toml");

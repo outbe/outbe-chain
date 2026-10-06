@@ -5,18 +5,21 @@
 //! 1. `scripts/seed_genesis.py` writes `ACCOUNTING_PROGRESS_ADDRESS = 0xEE04`
 //!    with the canonical `0xef` marker bytecode and `slot 0 = 0`.
 //! 2. The Python seeder must not write any `ValidatorSet` storage entry at
-//!    the direct slots 31..40 - those are reserved for the runtime
-//!    `CommitteeSnapshotStore` whose first writer is block 1's
+//!    the direct slots 31..40. Those slots are reserved for the runtime
+//!    `CommitteeSnapshotStore`, whose first writer is block 1's
 //!    `BoundaryOutcome` system transaction.
-//! 3. The genesis JSON produced by the seeder must not embed private DKG
-//!    share material in any path; private keys live exclusively in the
+//! 3. The genesis JSON that the seeder produces must not embed private DKG
+//!    share material in any path. Private keys live exclusively in the
 //!    per-validator directories under the operator filesystem.
 //!
-//! Tests `T-3..T-9` live in [`mod runtime`] and exercise the begin-zone
+//! Tests `T-3..T-9` live in [`mod runtime`]. They exercise the begin-zone
 //! system-transaction layout contract (`outbe_evm::system_tx`) for the
-//! genesis bootstrap: block 0 has no begin-zone txs, block 1 mandatorily
-//! carries `BoundaryOutcome`, block 2+ requires `CertifiedParentAccounting`
-//! before any user transaction reads `last_accounted_block_number`.
+//! genesis bootstrap:
+//!
+//! - block 0 has no begin-zone txs
+//! - block 1 mandatorily carries `BoundaryOutcome`
+//! - block 2+ requires `CertifiedParentAccounting` before any user transaction
+//!   reads `last_accounted_block_number`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -51,8 +54,8 @@ const FIXTURE_GENESIS: &str = r#"{
 
 const FIXTURE_SEED: &str = "{}";
 
-// 96-hex-char (48-byte) placeholder BLS MinPk public keys; matches the
-// length check in `scripts/seed_genesis.py::pubkey_bytes`.
+// 96-hex-char (48-byte) placeholder BLS MinPk public keys. The length matches
+// the length check in `scripts/seed_genesis.py::pubkey_bytes`.
 const FIXTURE_VALIDATORS_4_PUBLIC_ONLY: &str = r#"[
   { "address": "0x1111111111111111111111111111111111111111",
     "public_key": "111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
@@ -84,9 +87,9 @@ fn seed_genesis_script() -> PathBuf {
 }
 
 /// Run `scripts/seed_genesis.py` against the supplied fixtures inside a fresh
-/// temp directory and return the parsed JSON plus the raw text. The text is
-/// kept verbatim so DKG-share scans operate on the on-disk representation,
-/// not the serde-roundtripped one.
+/// temp directory and return the parsed JSON plus the raw text. The function
+/// keeps the text verbatim so DKG-share scans operate on the on-disk
+/// representation, not the serde-roundtripped one.
 fn run_seed_genesis(
     genesis_json: &str,
     seed_json: &str,
@@ -205,13 +208,13 @@ fn compressed_entities_genesis_binds_schema_and_empty_sealed_catalog_root() {
 }
 
 /// `seed_genesis.py` does not write any direct-slot
-/// storage entry at `ValidatorSet` slots 31..40, matching the Rust schema in
-/// `crates/system/validatorset/src/schema.rs` (slots 31..39 are mappings
-/// with no base-slot value, slot 40 is a reserved `Slot<B256>` that must be
-/// zero at genesis).
+/// storage entry at `ValidatorSet` slots 31..40. This matches the Rust schema in
+/// `crates/system/validatorset/src/schema.rs`. In that schema, slots 31..39 are
+/// mappings with no base-slot value. Slot 40 is a reserved `Slot<B256>` that
+/// must be zero at genesis.
 ///
 /// This protects the invariant that genesis carries no committee-snapshot
-/// material; block 1's `BoundaryOutcome` system tx is the first writer.
+/// material. Block 1's `BoundaryOutcome` system tx is the first writer.
 #[test]
 fn seed_genesis_writes_committee_snapshot_slots_31_to_40_matching_rust_schema() {
     // 1. Rust-schema sanity: the slot indices on the contract facade must be
@@ -225,7 +228,7 @@ fn seed_genesis_writes_committee_snapshot_slots_31_to_40_matching_rust_schema() 
     // 2. Python-output check: for each slot in 31..=40, the corresponding
     //    direct slot key (`hex32(N)`) must be absent from the seeded
     //    `VALIDATOR_SET_ADDRESS` storage. Mappings (slots 31..39) write at
-    //    keccak-derived keys and never the base slot itself; the reserved
+    //    keccak-derived keys and never the base slot itself. The reserved
     //    `Slot<B256>` at 40 must be untouched.
     let (_tmp, genesis, _raw) = run_seed_genesis(
         FIXTURE_GENESIS,
@@ -244,7 +247,8 @@ fn seed_genesis_writes_committee_snapshot_slots_31_to_40_matching_rust_schema() 
     }
 }
 
-/// The seeder writes the Nod FIFO bounds as raw slots; read them back through the schema.
+/// The seeder writes the Nod FIFO bounds as raw slots. This test reads them back through
+/// the schema.
 #[test]
 fn seeded_nod_fifo_reads_back_through_the_schema() {
     use outbe_primitives::addresses::NOD_ADDRESS;
@@ -280,7 +284,7 @@ fn seeded_nod_fifo_reads_back_through_the_schema() {
 /// runtime preservation, and genesis seeding so an uncovered precompile fails
 /// loudly instead of losing its storage.
 ///
-/// The two stateless verifiers are skipped: they own no EVM storage to
+/// This test skips the two stateless verifiers: they own no EVM storage to
 /// preserve, matching the `MARKER_EXEMPT` rationale in the executor's
 /// `marker_list_covers_stateful_precompiles` unit test.
 #[test]
@@ -328,8 +332,8 @@ fn every_stateful_precompile_preserved_by_marker_or_genesis() {
 }
 
 /// `ZEROFEE_ADDRESS` is exempt from the runtime marker list because genesis is
-/// responsible for preserving it. This verifies that the seeder actually
-/// writes `0xEF` code at that address; otherwise the exemption would silently
+/// responsible for preserving it. This test verifies that the seeder actually
+/// writes `0xEF` code at that address. Otherwise the exemption would silently
 /// discard its storage.
 #[test]
 fn zerofee_precompile_is_genesis_seeded_with_marker_bytecode() {
@@ -397,7 +401,7 @@ fn genesis_json_does_not_contain_private_dkg_shares() {
 // These tests pin the V2 system-transaction layout contract surfaced through
 // `outbe_evm::system_tx::expected_begin_block_kinds`. The contract is the
 // single source of truth for which kinds appear in which order at each
-// block height; the executor and the block builder both consume it. Pinning
+// block height. The executor and the block builder both consume it. Pinning
 // it here keeps the genesis-bootstrap requirements (block 1 BoundaryOutcome
 // before block 2 CertifiedParentAccounting) visible alongside the genesis
 // seeder regressions above.
@@ -406,9 +410,9 @@ fn genesis_json_does_not_contain_private_dkg_shares() {
 // T-3 / used to live here as a source-text grep of
 // `engine/src/stack.rs::validate_recovered_vrf_material`. Source-grep tests
 // drift the moment anyone renames a local, so the behavioural assertion
-// belongs next to the function. The DKG-share / VRF-group-key mismatch
-// rejection is exercised end-to-end by `outbe-engine`'s stack tests
-// (`stack::tests::*_dkg_*` family) and by the localnet restart smoke harness.
+// belongs next to the function. `outbe-engine`'s stack tests
+// (`stack::tests::*_dkg_*` family) and the localnet restart smoke harness
+// exercise the DKG-share / VRF-group-key mismatch rejection end-to-end.
 
 /// T-4 (runtime semantic) / block 1's begin-zone layout under V2
 /// includes `BoundaryOutcome`, which carries the genesis `DkgManager` output
@@ -449,9 +453,9 @@ fn genesis_committee_snapshot_exists_before_block2_accounting() {
 }
 
 /// T-6 / block 1 emits `BoundaryOutcome` strictly before any block 2
-/// activity. Block ordering is monotonic (`finalization is monotonic`), so a successful BoundaryOutcome
-/// at block 1 is observable to any block N >= 2 via the
-/// `CommitteeSnapshotStore`.
+/// activity. Block ordering is monotonic (`finalization is monotonic`). Thus a
+/// successful BoundaryOutcome at block 1 is observable to any block N >= 2 via
+/// the `CommitteeSnapshotStore`.
 #[test]
 fn block1_boundary_outcome_writes_epoch0_snapshot_before_block2() {
     let block1 = expected_begin_block_kinds(1, true, false);
@@ -464,7 +468,7 @@ fn block1_boundary_outcome_writes_epoch0_snapshot_before_block2() {
         "BoundaryOutcome must appear inside the block 1 begin-zone (any \
          position) so the snapshot write happens before block 1 finalizes"
     );
-    // No CertifiedParentAccounting at block 1 - the snapshot must be readable
+    // No CertifiedParentAccounting at block 1. The snapshot must be readable
     // by block 2's Phase 1, not consumed in-block.
     assert!(
         !block1.contains(&SystemTxKind::CertifiedParentAccounting),
@@ -476,7 +480,7 @@ fn block1_boundary_outcome_writes_epoch0_snapshot_before_block2() {
 /// T-7 / same ordering invariant approached from the
 /// `runtime_genesis_dkg_boundary` angle. The runtime `DkgManager` (consensus
 /// crate) produces the `DkgBoundaryArtifact` consumed by the V2
-/// `BoundaryOutcome` system tx at block 1; verifying the expected kind set
+/// `BoundaryOutcome` system tx at block 1. Verifying the expected kind set
 /// pins the genesis-DKG -> epoch-0-snapshot path.
 #[test]
 fn runtime_genesis_dkg_boundary_seeds_epoch0_vrf_snapshot_before_block2() {
@@ -512,7 +516,7 @@ fn block2_requires_v2_parent_accounting() {
         Some(&SystemTxKind::CertifiedParentAccounting)
     );
 
-    // Higher blocks (e.g. 100) keep the same requirement; the V2 contract is
+    // Higher blocks (e.g. 100) keep the same requirement. The V2 contract is
     // not localized to block 2.
     let block100 = expected_begin_block_kinds(100, false, false);
     assert_eq!(
@@ -523,7 +527,7 @@ fn block2_requires_v2_parent_accounting() {
 }
 
 /// T-9 / blocks 0 and 1 must not include `CertifiedParentAccounting`.
-/// Block 0 is genesis (no parent); block 1's parent is genesis (no Phase 1
+/// Block 0 is genesis (no parent). Block 1's parent is genesis (no Phase 1
 /// state to import). The ignored builder test
 /// `locally_built_genesis_block_reexecutes_with_same_state_root` exists
 /// because of this exact invariant.
@@ -560,7 +564,7 @@ fn load_seeded_storage(provider: &mut HashMapStorageProvider, genesis: &Value, a
     }
 }
 
-/// The seeder writes raw slots; this reads them back through the schemas that own them.
+/// The seeder writes raw slots. This test reads them back through the schemas that own them.
 #[test]
 fn seeded_profiles_and_gems_read_back_through_their_schemas() {
     const SEED: &str = r#"{

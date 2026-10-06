@@ -3,10 +3,10 @@
 //! Discovery is stateless: candidate days are dates, finalized chain state
 //! answers everything else, and the paid-leaf bitmap is the only progress.
 //! A day is refused unless the artifact's root, count and total match the
-//! certified values. Payouts share the role-delegated key with result votes,
-//! so the caller must not run a tick while vote work is pending, and one tick
-//! drives its batch to finality before yielding the nonce. The gate is
-//! best-effort across a restart; the nonce self-heal on both machines closes
+//! certified values. Payouts share the role-delegated key with result votes.
+//! Thus the caller must not run a tick while vote work is pending, and one tick
+//! drives its batch to finality before it yields the nonce. The gate is
+//! best-effort across a restart. The nonce self-heal on both machines closes
 //! the residual overlap.
 
 use std::{
@@ -448,7 +448,7 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
                             retry_at: Instant::now(),
                         });
                     backoff.attempts = backoff.attempts.saturating_add(1);
-                    // A lost race resolves through the bitmap; only a
+                    // A lost race resolves through the bitmap. Only a
                     // deterministic revert keeps hitting the same window.
                     let delay = FINALITY_WAIT.saturating_mul(1 << backoff.attempts.min(5));
                     backoff.retry_at = Instant::now() + delay.min(REVERT_BACKOFF_CAP);
@@ -785,7 +785,7 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
             }
             let certified = self.read_certified_generation(worldwide_day)?;
             if certified.contributor_count != round.contributorCount {
-                // Two finalized reads raced a recertification; retry next tick.
+                // Two finalized reads raced a recertification. Retry next tick.
                 self.log_skip(worldwide_day, "certified and round counts disagree");
                 continue;
             }
@@ -876,7 +876,7 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
         contributor_count: u32,
     ) -> Result<Option<(u32, u32)>, PayoutSubmissionErrorV1> {
         let word_count = contributor_count.div_ceil(CONTRIBUTOR_CHUNK_CAPACITY);
-        // Words before the frontier were observed fully paid; bits never clear.
+        // Words before the frontier were observed fully paid. Bits never clear.
         let frontier = self
             .scan_frontier
             .get(&worldwide_day)
@@ -1181,7 +1181,7 @@ impl PayoutSubmissionJournalV1 {
         }
     }
 
-    /// Drops every record of a fully paid day; none can be needed again.
+    /// Drops every record of a fully paid day. None can be needed again.
     fn remove_day(&self, worldwide_day: u32) -> Result<(), PayoutSubmissionErrorV1> {
         let prefix = format!("{worldwide_day}-");
         let entries = fs::read_dir(&self.root)

@@ -198,8 +198,8 @@ where
         {
             return Ok(BuildOutcome::Cancelled);
         }
-        // Result-vote carriers are checked on the exact in-progress block state
-        // before execution; see `carrier_admission`.
+        // The builder checks result-vote carriers on the exact in-progress block
+        // state before execution. See `carrier_admission`.
         let carrier_block = self
             .evm_config
             .ocomp_lifecycle_active_at(block_number)

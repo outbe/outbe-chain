@@ -28,7 +28,7 @@ pub const BASIS_POINT_MAX: u16 = 10_000;
 pub const REAL_ID_SHIFT: i32 = 1 << 23;
 
 /// Largest representable bin id (uint24 max). LB's `safe24` reverts past
-/// this; the Outbe `price_helper::get_id_from_price` saturates instead.
+/// this. The Outbe `price_helper::get_id_from_price` saturates instead.
 pub const MAX_BIN_ID: u32 = (1 << 24) - 1;
 
 #[cfg(test)]

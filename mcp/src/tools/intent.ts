@@ -42,8 +42,8 @@ import { resolveToken } from "../intent/tokens.js";
  * Intent / cross-chain order tools (ERC-7683 LayerZeroRouter). User surface:
  * open an order, track its lifecycle, refund an expired one. Domain logic lives
  * in `src/intent/` (registry/format/tokens). Networks come from the NETWORKS
- * table; a resolved network reuses the connected `ctx` when the chain id matches,
- * else opens a fresh client via `createCtx`.
+ * table. A resolved network reuses the connected `ctx` when the chain id matches.
+ * Otherwise it opens a fresh client via `createCtx`.
  *
  * Env (optional): OUTBE_INTENT_ROUTER (router address override).
  */
@@ -62,7 +62,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
   const router = getAddress(process.env.OUTBE_INTENT_ROUTER ?? DEFAULT_ROUTER);
   const pk = process.env.OUTBE_PRIVATE_KEY;
 
-  // --- network resolution (reuses root createCtx; cached per network) --------
+  // --- network resolution (reuses root createCtx, cached per network) --------
   const toNet = (name: string, c: Ctx): Network => ({
     name,
     chainId: c.chain.id,
@@ -73,8 +73,8 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
   });
   const netCache = new Map<string, Network>();
 
-  // Resolve a network from the NETWORKS table by name or chain id. Reuses the
-  // connected ctx (its client/wallet) when the chain id matches, else opens a
+  // Resolve a network from the NETWORKS table by name or chain id. When the chain
+  // id matches, reuse the connected ctx (its client/wallet). Otherwise open a
   // fresh client via createCtx. The model normalizes language to a known name.
   async function resolveNetwork(spec: string): Promise<Network> {
     const s = spec.trim().toLowerCase();
@@ -131,7 +131,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
     return { account, network: n.name, token, balance: { raw: bal.toString(), value: formatUnits(bal, decimals) } };
   }
 
-  /** Read openOrders on a hint network, else probe outbe/bsc; decode the order. */
+  /** Read openOrders on a hint network, else probe outbe/bsc. Then decode the order. */
   async function loadOrder(
     orderId: Hex,
     hint: Network,

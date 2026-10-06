@@ -217,7 +217,7 @@ pub struct TestDefinitionV1 {
     /// Production seam exercised by the test.
     #[serde(alias = "production_entrypoint")]
     pub production_interface: String,
-    /// Required tests close the domain; optional tests are still validated.
+    /// Required tests close the domain. Optional tests are still validated.
     #[serde(default = "default_required")]
     pub required: bool,
     /// Required execution lane.

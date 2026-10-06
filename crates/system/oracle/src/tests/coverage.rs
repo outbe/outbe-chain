@@ -1,6 +1,6 @@
-//! Finalized-window coverage (E01): an hour counts only with two thirds of
-//! the tally rounds its blocks allowed, and the hours that count must hold two
-//! thirds of the whole window's rounds.
+//! Finalized-window coverage (E01). An hour counts only when it has two thirds
+//! of the tally rounds that its blocks allowed. The hours that count must hold
+//! two thirds of the rounds of the whole window.
 
 use alloy_primitives::U256;
 use outbe_primitives::address_pair::AddressPair;
@@ -11,7 +11,7 @@ use super::common::*;
 use super::window::default_snapshot_at;
 
 /// Fills `[start, start + 8h)` with `count` evenly spaced snapshots for `pair`
-/// and records 1,800 blocks per hour; with `vote_period = 8` the window allows
+/// and records 1,800 blocks per hour. With `vote_period = 8` the window allows
 /// exactly 1,800 rounds. `sparse_pair` joins every 18th snapshot.
 fn fill_window(
     oracle: &mut OracleContract<'_>,
@@ -44,8 +44,8 @@ fn finalized_window_vwap_requires_two_thirds_round_coverage() {
     let start = day + 2 * hour;
     let cutoff = start + 8 * hour;
 
-    // 1,300 of 1,800 possible rounds (72%) is enough; a pair present in only
-    // 73 of them is not, and the judgement is per pair.
+    // 1,300 of 1,800 possible rounds (72%) is enough. A pair present in only
+    // 73 of them is not enough. The judgement is per pair.
     with_storage_at(cutoff + 5 * 60, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
         let usd = AddressPair::new_coen_to(840);
@@ -59,8 +59,8 @@ fn finalized_window_vwap_requires_two_thirds_round_coverage() {
             Some(coen_iso(2))
         );
         assert_eq!(oracle.finalized_window_vwap(eur, snapshot).unwrap(), None);
-        // The raw rolling read still sees the sparse pair; only the finalized
-        // window is gated.
+        // The raw rolling read still sees the sparse pair. The gate applies only
+        // to the finalized window.
         assert_eq!(
             oracle.calculate_vwap(eur, start, cutoff).unwrap(),
             coen_iso(5)
@@ -81,7 +81,7 @@ fn finalized_window_vwap_requires_two_thirds_round_coverage() {
         );
     });
 
-    // Exactly two thirds passes; one round fewer fails.
+    // Exactly two thirds passes. One round fewer fails.
     with_storage_at(cutoff + 5 * 60, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
         let usd = AddressPair::new_coen_to(840);
@@ -162,8 +162,8 @@ fn window_vwap_for(per_hour: [u64; 8], prices: [u64; 8]) -> Option<U256> {
 #[test]
 fn finalized_window_vwap_leaves_out_hours_below_two_thirds() {
     // Hour 3 has 149 of 225 rounds, one short of two thirds, at a wild price.
-    // It is left out entirely: the seven full hours carry the window (1,575 of
-    // 1,800) and its price never reaches the VWAP.
+    // The VWAP leaves it out entirely. The seven full hours carry the window
+    // (1,575 of 1,800), and the price of hour 3 never reaches the VWAP.
     assert_eq!(
         window_vwap_for(
             [225, 225, 225, 149, 225, 225, 225, 225],
@@ -208,7 +208,7 @@ fn finalized_window_vwap_needs_two_thirds_of_the_window_from_counting_hours() {
         window_vwap_for([160, 160, 0, 160, 160, 0, 160, 160], twos),
         None
     );
-    // Seven hours at 172 (1,204) clear the window; at 171 (1,197) they do not.
+    // Seven hours at 172 (1,204) clear the window. At 171 (1,197) they do not.
     assert_eq!(
         window_vwap_for([172, 172, 172, 0, 172, 172, 172, 172], twos),
         Some(coen_iso(2))
@@ -218,7 +218,7 @@ fn finalized_window_vwap_needs_two_thirds_of_the_window_from_counting_hours() {
         None
     );
     // Hours that fail individually do not rescue the total: 8 x 149 = 1,192
-    // snapshots exist, none of them counts.
+    // snapshots exist, but none of them counts.
     assert_eq!(window_vwap_for([149; 8], twos), None);
 }
 

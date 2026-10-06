@@ -203,8 +203,8 @@ where
     for attempt in 1..=FINALIZED_ROUND_RECOVERY_ATTEMPTS {
         // Measure the per-attempt timeout on the consensus runtime `Clock`, not
         // tokio's wall-clock, so recovery is reproducible under the deterministic
-        // test runtime. `Clock::timeout` requires a `Send + 'static` future, so the
-        // mailbox is cloned (a cheap sender clone) and moved into the request.
+        // test runtime. `Clock::timeout` requires a `Send + 'static` future, so this
+        // loop clones the mailbox (a cheap sender clone) and moves it into the request.
         let mailbox = marshal_mailbox.clone();
         match clock
             .timeout(FINALIZED_ROUND_RECOVERY_TIMEOUT, async move {

@@ -1,9 +1,9 @@
 use super::super::*;
 
-/// Maps an `ExecutionResult` (from a Phase 1-4 system tx that produced
-/// `!is_success`) to a stable `u16` `OutbeFailure` code in the 200-299
-/// band reserved for `outbe-evm` phase failures. The exhaustive `match`
-/// makes adding a new revm variant a compile error.
+/// Maps an `ExecutionResult` to a stable `u16` `OutbeFailure` code. The result
+/// comes from a Phase 1-4 system tx that produced `!is_success`. The code is in
+/// the 200-299 band reserved for `outbe-evm` phase failures. The exhaustive
+/// `match` makes adding a new revm variant a compile error.
 ///
 /// Codes:
 /// - 201 - explicit revert (Solidity `require`, `revert`, etc.)
@@ -12,9 +12,9 @@ use super::super::*;
 pub(crate) fn system_tx_failure_code_for_result(result: &ExecutionResult<HaltReason>) -> u16 {
     match result {
         // Callers only reach this fn under `!result.is_success()`, so the Success
-        // arm is unreachable in practice; map it to the generic 299 fallback
-        // deterministically rather than `debug_assert!`-panicking (no panic-class
-        // macro on the executor path).
+        // arm is unreachable in practice. Map it deterministically to the generic
+        // 299 fallback instead of a `debug_assert!` panic. The executor path uses
+        // no panic-class macro.
         ExecutionResult::Success { .. } => 299,
         ExecutionResult::Revert { .. } => 201,
         ExecutionResult::Halt { reason, .. } => match reason {
@@ -64,10 +64,10 @@ where
     /// and visible gas accounting.
     ///
     /// The precompile executes under the separate internal system-work budget.
-    /// The public Ethereum block gas lane charges the signed envelope's visible
-    /// base gas (intrinsic plus any schedule-hashed protocol precharge) and any
-    /// explicit compressed-entity gas, without exposing the internal execution
-    /// lane.
+    /// The public Ethereum block gas lane charges the visible base gas of the
+    /// signed envelope (intrinsic plus any schedule-hashed protocol precharge).
+    /// It also charges any explicit compressed-entity gas. It does not expose the
+    /// internal execution lane.
     pub(in crate::executor) fn commit_system_transaction(
         &mut self,
         output: EthTxResult<E::HaltReason, alloy_consensus::TxType>,

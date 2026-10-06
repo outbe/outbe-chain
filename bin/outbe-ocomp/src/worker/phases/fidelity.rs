@@ -154,11 +154,11 @@ pub(in super::super) fn execute_fidelity_map_unit(
                         .collect::<BTreeMap<_, _>>();
                     for owner in &owners {
                         require_lease_active(cancelled)?;
-                        // Independently re-derive each owner's snapshot slot rather
-                        // than trusting slot order; the MPT-proven value is the
-                        // on-chain league Metadosis committed for this day at
-                        // prepare time. An absent (zero) or out-of-range word means
-                        // the owner was not snapshotted and is rejected.
+                        // Independently re-derive each owner's snapshot slot. Do not
+                        // trust slot order. The MPT-proven value is the on-chain
+                        // league that Metadosis committed for this day at prepare
+                        // time. An absent (zero) or out-of-range word means that
+                        // the owner was not snapshotted, and the worker rejects the owner.
                         let slot = league_snapshot_slot(manifest.wwd, *owner);
                         let word = slot_values
                             .get(&slot)

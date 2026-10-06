@@ -1,19 +1,18 @@
 //! Terminal-Metadosis dispatch helper.
 //!
-//! After (Phase 4 of the Cycle epic) EmissionLimit is no
-//! longer wired into the per-block lifecycle. The previous
-//! `EmissionLimitLifecycle::begin_block` / `run_begin_block` /
-//! `dispatch_block_emission` triple has been removed; the day
-//! orchestration runs out of the new Cycle module which
-//! reads the closed-form `day_emission_limit`, calls
-//! [`crate::allocation::allocate_emission`] with the 6-sink active
-//! table, hands non-validator pools to `outbe_agentreward::distribute_daily`,
-//! and forwards the Metadosis terminal portion through
-//! [`dispatch_terminal_remainder_at`] below.
+//! After (Phase 4 of the Cycle epic), EmissionLimit is no longer wired into the per-block
+//! lifecycle. The previous `EmissionLimitLifecycle::begin_block` / `run_begin_block` /
+//! `dispatch_block_emission` triple was removed. The day orchestration runs in the new
+//! Cycle module. That module:
 //!
-//! This file is intentionally tiny - it owns the purpose-bound terminal
-//! dispatch calls used by Cycle and late fee settlement. Keeping them distinct
-//! prevents a non-daily residue from becoming an OCOMP base-limit producer.
+//! - reads the closed-form `day_emission_limit`
+//! - calls [`crate::allocation::allocate_emission`] with the 6-sink active table
+//! - hands non-validator pools to `outbe_agentreward::distribute_daily`
+//! - forwards the Metadosis terminal portion through [`dispatch_terminal_remainder_at`] below.
+//!
+//! This file is intentionally tiny. It owns the purpose-bound terminal dispatch calls that
+//! Cycle and late fee settlement use. Keeping them distinct prevents a non-daily residue from
+//! becoming an OCOMP base-limit producer.
 
 use alloy_primitives::U256;
 use outbe_primitives::{
@@ -25,12 +24,12 @@ use outbe_primitives::{
 /// `timestamp`.
 ///
 /// The Cycle day handler dispatches the previous UTC day's terminal Metadosis
-/// amount. The sink must use that previous-day timestamp so worldwide-day
-/// accounting lands in the right bucket regardless of when the call physically
-/// runs.
+/// amount. The sink must use that previous-day timestamp so that worldwide-day
+/// accounting lands in the right bucket. This holds regardless of when the call
+/// physically runs.
 ///
-/// Returns `Fatal` if the Metadosis sink reports any unused amount -
-/// the terminal sink is required to be a sink, not a pass-through.
+/// Returns `Fatal` if the Metadosis sink reports any unused amount.
+/// The terminal sink must be a sink, not a pass-through.
 pub fn dispatch_terminal_remainder_at(
     ctx: &BlockRuntimeContext,
     amount: U256,
@@ -50,9 +49,9 @@ pub fn dispatch_terminal_remainder_at(
 
 /// Recycles a late fee-settlement residue into terminal Metadosis headroom.
 ///
-/// This is deliberately distinct from [`dispatch_terminal_remainder_at`]:
-/// the genesis-active OCOMP profile permits only the daily Cycle amount to form
-/// a base day limit, while late residues accumulate as carry-over for the next
+/// This function is deliberately distinct from [`dispatch_terminal_remainder_at`].
+/// The genesis-active OCOMP profile permits only the daily Cycle amount to form
+/// a base day limit. Late residues accumulate as carry-over for the next
 /// unformed limit. Startup rejects a missing profile before either path runs.
 pub fn dispatch_late_settlement_residue_at(
     ctx: &BlockRuntimeContext,

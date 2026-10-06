@@ -1,18 +1,18 @@
-//! the consensus chain id MUST be installed into the
-//! signing-namespace source of truth by the PRODUCTION `OutbeEvmConfig`
-//! constructors, not only the test-only `::new`.
+//! The PRODUCTION `OutbeEvmConfig` constructors, not only the test-only `::new`,
+//! MUST install the consensus chain id into the signing-namespace source of
+//! truth.
 //!
-//! Before the fix, `init_consensus_chain_id` was called only from
-//! `OutbeEvmConfig::new`, but the live node builds the EVM via `new_with_bridge`
+//! Before the fix, only `OutbeEvmConfig::new` called `init_consensus_chain_id`.
+//! But the live node builds the EVM through `new_with_bridge`
 //! (offline subcommands) and `new_with_bridge_and_summary_provider` /
-//! `new_with_provider_only` (via `OutbeExecutorBuilder::build_evm`). Those built
-//! `Self {}` inline and skipped the install, so `consensus_chain_id()` stayed at
-//! its default `0` and the consensus namespace collapsed to `b"outbe" || 0` on
-//! every chain - silently disabling the cross-chain-replay
-//! binding while every test/localnet (all at one chain id) stayed lockstep.
+//! `new_with_provider_only` (through `OutbeExecutorBuilder::build_evm`). Those built
+//! `Self {}` inline and skipped the install. Thus `consensus_chain_id()` stayed at
+//! its default `0`, and the consensus namespace collapsed to `b"outbe" || 0` on
+//! every chain. That silently disabled the cross-chain-replay binding,
+//! while every test/localnet (all at one chain id) stayed lockstep.
 //!
-//! This lives in its own test binary so the process-global `OnceLock` chain id is
-//! pristine - no sibling unit test can install a different id first.
+//! This test lives in its own test binary, so the process-global `OnceLock` chain id
+//! is pristine. No sibling unit test can install a different id first.
 
 use std::sync::Arc;
 

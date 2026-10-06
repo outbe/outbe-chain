@@ -1,10 +1,16 @@
 //! Durable supervisor authority for one published input manifest.
 //!
 //! The exporter may construct CAS objects, but they do not become computation
-//! authority by existing on disk. This store binds the exact finalized job
-//! journal record, local reconstruction lease, closed manifest/catalog and
-//! publication receipt into one content-addressed record. A cold restart must reload
-//! and revalidate the same bytes before planning or finalization.
+//! authority by existing on disk. This store binds these items into one
+//! content-addressed record:
+//!
+//! - the exact journal record of the finalized job
+//! - the local reconstruction lease
+//! - the closed manifest/catalog
+//! - the publication receipt
+//!
+//! A cold restart must reload and revalidate the same bytes before planning or
+//! finalization.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -326,8 +332,8 @@ impl ExportedManifestBindingReader {
 
     /// Check the exact native binding against the caller-authenticated immutable
     /// finalized job specification. The caller obtains that specification from
-    /// current canonical job/finality state and its retained request checkpoint;
-    /// a surviving discovery spool record is not required.
+    /// current canonical job/finality state and its retained request checkpoint.
+    /// This check does not require a surviving discovery spool record.
     ///
     /// This retains the native owner's comparisons. Full checkpoint height and
     /// schema checks against canonical state remain the caller's responsibility.

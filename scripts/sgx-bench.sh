@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # Production-figure throughput benchmark: drive tribute offers through the enclave
-# running under REAL gramine-sgx (so the numbers include SGX enter/exit + gramine
-# syscall emulation on the Noise/UDS->TCP transport, not just native CPU).
+# running under REAL gramine-sgx. The numbers then include SGX enter/exit + gramine
+# syscall emulation on the Noise/UDS->TCP transport, not just native CPU.
 #
-# It launches `outbe-tee-enclave` under gramine-sgx on a loopback TCP port (host
-# processes cannot reach gramine pathname UDS, hence TCP), then runs the
-# `transport_throughput_offers_per_sec` test as a native client pointed at it via
-# OUTBE_TEE_BENCH_ENDPOINT. The enclave's compute runs in SGX; the test times it.
+# It launches `outbe-tee-enclave` under gramine-sgx on a loopback TCP port. It uses
+# TCP because host processes cannot reach gramine pathname UDS. Then it runs the
+# `transport_throughput_offers_per_sec` test as a native client. The client finds the
+# enclave through OUTBE_TEE_BENCH_ENDPOINT. The enclave's compute runs in SGX, and
+# the test times it.
 #
-# A no-attestation manifest variant is used so the enclave loads without a
+# The script uses a no-attestation manifest variant so the enclave loads without a
 # provisioned PCK (DCAP quote generation is unrelated to throughput). It is still
 # real SGX: memory encryption, real enclave transitions, EGETKEY - exactly the
 # overhead we want to measure.

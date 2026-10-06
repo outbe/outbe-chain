@@ -39,7 +39,7 @@ fn seed_oracle(storage: &StorageHandle<'_>, day: WorldwideDay) -> (AddressPair, 
     let wwd_values = oracle.worldwide_day_vwap_value.get_nested(&day);
     wwd_values.write(&1, scaled(100, COEN_ISO_SCALE)).unwrap();
     wwd_values.write(&2, scaled(200, COEN_ISO_SCALE)).unwrap();
-    // S-Curve/day-type remains specific to COEN/840; other COEN/ISO markets
+    // S-Curve/day-type remains specific to COEN/840. Other COEN/ISO markets
     // are six-decimal VWAP markets without an S-Curve entry.
     oracle.scurve_count.write(3).unwrap();
     oracle.scurve_oldest_idx.write(2).unwrap();
@@ -100,7 +100,7 @@ fn oracle_opening_plan_reads_the_exact_raw_slots_used_by_runtime_semantics() {
                 U256::from(1),   // pair_index[COEN/840]
                 U256::from(2),   // pair_index[COEN/978]
                 U256::from(1),   // wwd_vwap_exists
-                // One value word per subject pair, at its registry index - the
+                // One value word per subject pair, at its registry index. The
                 // pair itself no longer has to be opened alongside it.
                 scaled(100, COEN_ISO_SCALE), // wwd_vwap_value[1]
                 scaled(200, COEN_ISO_SCALE), // wwd_vwap_value[2]
@@ -217,9 +217,9 @@ fn oracle_opening_plan_checks_every_cap_before_detail_allocation() {
     );
 }
 
-/// A pair registered *after* the day's VWAP was written still resolves: the
-/// value column is keyed by the registry index, so a later registration simply
-/// finds an unwritten (zero) slot rather than a mismatched entry.
+/// A pair registered *after* the day's VWAP was written still resolves. The
+/// registry index keys the value column, so a later registration simply finds
+/// an unwritten (zero) slot rather than a mismatched entry.
 #[test]
 fn oracle_opening_prices_a_pair_registered_after_the_day_was_written() {
     let mut provider = HashMapStorageProvider::new(1);
@@ -227,7 +227,7 @@ fn oracle_opening_prices_a_pair_registered_after_the_day_was_written() {
         let day = WorldwideDay::new(20260715);
         seed_oracle(&storage, day);
         let oracle = OracleContract::new(storage.clone());
-        // GBP joins the registry and the reference list after the fact; it has
+        // GBP joins the registry and the reference list after the fact. It has
         // no VWAP for the day and no S-curve entry.
         oracle
             .pair_to_index

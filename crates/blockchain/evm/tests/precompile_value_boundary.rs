@@ -4,10 +4,10 @@
 //! These drive real EVM frames through `OutbeEvmFactory` rather than calling the
 //! classifier directly, so they exercise the opcode shapes an attacker actually
 //! emits. `CALLCODE` and `DELEGATECALL` reach a precompile with a
-//! `bytecode_address` that differs from the `target_address` revm credited: that
-//! is how forged value would be booked by a payable precompile that trusts
-//! `msg.value`, and how a contract would act under its own caller's identity
-//! against the precompile's global state.
+//! `bytecode_address` that differs from the `target_address` revm credited. In
+//! that shape, a payable precompile that trusts `msg.value` would book forged
+//! value. In that shape, a contract would also act under its own caller's
+//! identity against the precompile's global state.
 
 mod sub_call_support;
 
@@ -171,13 +171,13 @@ fn db_with_registered_validator(validator: Address) -> CacheDB<EmptyDB> {
 }
 
 /// CALLCODE hands the boundary a `CallValue::Transfer` whose amount came off the
-/// stack, but caller and target are the same account, so revm's journal performs a
+/// stack. But caller and target are the same account, so revm's journal performs a
 /// balance check and moves nothing. Crediting it would let `staking.stake` book
 /// stake `STAKING_ADDRESS` never received - repeatable at no cost.
 #[test]
 fn callcode_to_staking_with_value_cannot_credit_stake() {
     // CALLCODE sets `caller` to the executing account, so the borrower stakes to
-    // itself and the self-stake gate passes: only the value boundary stands
+    // itself and the self-stake gate passes. Only the value boundary stands
     // between this frame and a credited stake.
     let outcome = run(
         db_with_borrower(0xf2),
@@ -209,8 +209,8 @@ fn callcode_to_staking_with_value_cannot_credit_stake() {
 #[test]
 fn delegatecall_to_staking_with_value_cannot_credit_stake() {
     // DELEGATECALL keeps the inherited `caller`, which is the EOA that funded
-    // the borrower, so the stake must name the EOA for the self-stake gate to
-    // pass and leave the value boundary as the only remaining check.
+    // the borrower. So the stake must name the EOA for the self-stake gate to
+    // pass. Then the value boundary is the only remaining check.
     let outcome = run(
         db_with_borrower(0xf4),
         BORROWER,
@@ -243,8 +243,8 @@ fn zero_value_callcode_is_refused_too() {
         stake_calldata(BORROWER, STAKE_VALUE),
     );
 
-    // A delegated frame is refused whether or not it carries value: dispatch
-    // would otherwise run against the precompile's own storage while `caller`
+    // A delegated frame is refused whether or not it carries value. Otherwise
+    // dispatch would run against the precompile's own storage while `caller`
     // stays the frame's inherited caller.
     assert_eq!(
         revert_reason(&outcome.result).as_deref(),
@@ -255,7 +255,7 @@ fn zero_value_callcode_is_refused_too() {
 }
 
 /// Gratis has no payable selector, so value sent to it has no accounting entry and
-/// no withdrawal path; it must be refused before any state is touched.
+/// no withdrawal path. It must be refused before any state is touched.
 #[test]
 fn plain_call_with_value_to_non_payable_precompile_is_rejected() {
     let mut db = CacheDB::new(EmptyDB::default());
@@ -306,12 +306,12 @@ fn plain_call_with_value_credits_a_payable_precompile() {
     );
 }
 
-/// Reserving the `0x53c0...` class must not make native value unspendable there: an
-/// empty-calldata send is an ordinary transfer the class dispatch returns from
-/// without touching token state.
+/// Reserving the `0x53c0...` class must not make native value unspendable there.
+/// An empty-calldata send is an ordinary transfer. The class dispatch returns
+/// from it without touching token state.
 ///
 /// This address is unissued, which is the branch that also existed before the
-/// class narrowing, so the test guards against over-restricting rather than
+/// class narrowing. So the test guards against over-restricting rather than
 /// proving the narrowing. The issued-token half is
 /// `precompile_routes::tests::registered_stablecoin_token_refuses_a_plain_native_transfer`.
 #[test]
@@ -355,10 +355,11 @@ fn native_transfer_to_stablecoin_class_address_succeeds() {
 /// The impersonation the delegated-frame refusal closes, independent of value.
 ///
 /// `DELEGATECALL` keeps the frame's inherited caller, and dispatch keys the
-/// precompile's storage on the borrowed address, so before the refusal a
+/// precompile's storage on the borrowed address. So before the refusal, a
 /// contract could run any caller-authenticated selector - here `unstake` - as
-/// whoever called it, against real staking state. Without the guard this reaches
-/// staking and fails on staking's own accounting; with it, the frame never runs.
+/// whoever called it, against real staking state. Without the guard, this
+/// reaches staking and fails on staking's own accounting. With the guard, the
+/// frame never runs.
 #[test]
 fn delegatecall_cannot_act_under_the_inherited_caller() {
     let mut db = CacheDB::new(EmptyDB::default());
@@ -391,7 +392,7 @@ fn delegatecall_cannot_act_under_the_inherited_caller() {
 
 /// The stranding bug R-02 names, at execution level.
 ///
-/// Oracle put its value check on mutating selectors only, so a funded call to a
+/// Oracle put its value check on mutating selectors only. So a funded call to a
 /// view like `getPairCount` used to **succeed**: revm had already credited the
 /// precompile account, the view ignored the value, and the frame committed. The
 /// value then sat at an address with no accounting entry and no way out. The

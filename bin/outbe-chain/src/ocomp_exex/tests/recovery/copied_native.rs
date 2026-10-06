@@ -878,7 +878,8 @@ fn copied_native_fatal_evidence_remains_authoritative_on_reopen() {
         .unwrap()
         .unwrap()
         .contains("copied fatal evidence"));
-    // This is the same startup reader; the component fixture does not run the ExEx fatal wait loop.
+    // This is the same startup reader. The component fixture does not run the ExEx
+    // fatal wait loop.
     persist_generic_fatal_evidence(&copied, B256::repeat_byte(0x42), "replacement").unwrap();
     assert!(load_persisted_fatal_evidence(&copied)
         .unwrap()

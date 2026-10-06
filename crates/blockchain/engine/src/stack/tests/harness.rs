@@ -27,9 +27,9 @@ impl Buffer<outbe_consensus::marshal_types::Variant> for EmptyMarshalBuffer {
     }
 
     // `subscribe_by_*` are now SYNC and return `Option<oneshot::Receiver<..>>`.
-    // We retain the pending sender (so the receiver never resolves) and hand
-    // back `Some(rx)`, preserving the "block is never available" semantics this
-    // empty buffer represents.
+    // We keep the pending sender, so the receiver never resolves, and return
+    // `Some(rx)`. This preserves the "block is never available" semantics that
+    // this empty buffer represents.
     fn subscribe_by_digest(
         &self,
         _digest: outbe_consensus::digest::Digest,
@@ -66,7 +66,7 @@ impl Reporter for AckingMarshalReporter {
     type Activity = Update<ConsensusBlock, commonware_utils::acknowledgement::Exact>;
 
     // `report` is now SYNC and returns `Feedback` (commonware 2026.5.0). The
-    // body is unchanged work (acknowledge delivered blocks); we always return
+    // body does unchanged work (acknowledge delivered blocks). We always return
     // `Feedback::Ok` because this test reporter has no downstream mailbox that
     // can close.
     fn report(&mut self, activity: Self::Activity) -> Feedback {
@@ -214,12 +214,12 @@ where
     )
     .await;
 
-    // 2026.5.0: the resolver handoff changed - the marshal actor takes
-    // `(handler::Receiver<Commitment>, R)` where `R: TargetedResolver`. The
-    // receiver/handler pair is produced by `handler::init`; the `Handler` is
-    // returned as the keepalive (dropping it closes the receiver and shuts the
-    // actor's run loop down). The old `mpsc::Sender<handler::Message>` type is
-    // now private and cannot be named or constructed by tests.
+    // 2026.5.0: the resolver handoff changed. The marshal actor takes
+    // `(handler::Receiver<Commitment>, R)` where `R: TargetedResolver`.
+    // `handler::init` produces the receiver/handler pair. This function returns
+    // the `Handler` as the keepalive. Dropping it closes the receiver and stops
+    // the actor's run loop. The old `mpsc::Sender<handler::Message>` type is now
+    // private, so tests cannot name or construct it.
     let (resolver_rx, resolver_handler) = handler::init::<outbe_consensus::digest::Digest>(
         context.child("resolver_handler"),
         NonZeroUsize::new(16).unwrap(),

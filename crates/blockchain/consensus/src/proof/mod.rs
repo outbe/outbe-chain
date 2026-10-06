@@ -11,8 +11,8 @@
 //!
 //! This module intentionally avoids any reference to `crate::stack`,
 //! `crate::validators`, `crate::hybrid::HybridScheme` private DKG state, or any
-//! runtime/mailbox/marshal type so the same code is reused by the EVM executor
-//! and full-node import paths via re-export.
+//! runtime/mailbox/marshal type. Thus the EVM executor and full-node import paths
+//! reuse the same code through re-export.
 
 pub mod committee;
 pub(crate) mod committee_keys;

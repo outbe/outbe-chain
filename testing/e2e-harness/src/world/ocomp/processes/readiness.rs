@@ -25,7 +25,7 @@ impl OcompTopology {
     }
 
     /// Fail immediately when a required owned OCOMP role exits. Registration
-    /// convergence is retryable during startup; a dead child is not.
+    /// convergence is retryable during startup. A dead child is not.
     #[cfg(feature = "ocomp-integration")]
     pub fn ensure_baseline_processes_alive(
         &mut self,
@@ -41,7 +41,7 @@ impl OcompTopology {
     }
 
     /// Probe the public Supervisor status surfaces without relying on retained
-    /// child guards. This is used by the separate `localnet status` process.
+    /// child guards. The separate `localnet status` process uses this.
     #[cfg(feature = "ocomp-integration")]
     pub fn observe_baseline_runtime(
         &self,

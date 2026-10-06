@@ -108,7 +108,7 @@ fn the_fx_leg_is_floored_together_with_the_units() {
 
 #[test]
 fn a_hundred_dollars_converts_to_ninety_euros_at_every_asset_scale() {
-    // 100 USD = entry 2.00 x load 50; R = 2.00 USD/COEN, I = 1.80 EUR/COEN.
+    // 100 USD = entry 2.00 x load 50. R = 2.00 USD/COEN, I = 1.80 EUR/COEN.
     let product = U256::from(2_000_000u64) * U256::from(50_000_000u64);
     let rate = Some((U256::from(1_800_000u64), U256::from(2_000_000u64)));
     for (decimals, expected) in [
@@ -412,7 +412,7 @@ fn settle_rejects_expired_deadline() {
         crate::constants::INTEX_NFT1155_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
-    // Stub OriginRouter: send* calls return bytes32 sendId (32 bytes); the value is ignored.
+    // Stub OriginRouter: send* calls return bytes32 sendId (32 bytes). The value is ignored.
     storage.stub_sub_call_at(
         crate::constants::ORIGIN_ROUTER_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
@@ -470,8 +470,8 @@ fn settled_token_id_tags_the_series_id() {
     let settled = runtime::settled_token_id(series_id);
     let tag: U256 = U256::from(1u8) << 112;
 
-    // Solidity derives the same value; the tag sits above the 14-byte series-id space, so the two
-    // id classes cannot collide and clearing it recovers the series.
+    // Solidity derives the same value. The tag sits above the 14-byte series-id space, so the two
+    // id classes cannot collide, and clearing the tag recovers the series.
     assert!(issued < tag);
     assert_eq!(settled, issued | tag);
     assert_eq!(settled & !tag, issued);
@@ -550,7 +550,7 @@ fn compute_pow_hash_matches_the_shared_client_vectors() {
 fn validate_pow_accepts_valid_and_rejects_invalid_nonce() {
     let pa = U256::from(1_000u64);
     let (series_id, seq) = (sid(7), 0u32);
-    // Difficulty 1: ~1/256 of nonces pass; brute-force a valid and an invalid one.
+    // Difficulty 1: ~1/256 of nonces pass. Brute-force a valid and an invalid one.
     let mut good = None;
     let mut bad = None;
     for n in 0u64..100_000 {
@@ -597,7 +597,7 @@ fn mine_promis_rejects_missing_series() {
 }
 
 /// A mining that fails after any of its writes leaves the sequence, the units and every
-/// event as they were, so the same nonce and the same paid units can be tried again.
+/// event as they were. So the same nonce and the same paid units can be tried again.
 #[test]
 fn a_mining_that_fails_after_any_write_changes_nothing() {
     use crate::sol_ext::IERC1155;
@@ -678,7 +678,7 @@ fn the_unit_counts_view_reports_the_disjoint_classes() {
     });
 }
 
-/// Live balances count until the series expires; the owner's history stays with the owner.
+/// Live balances count until the series expires. The owner's history stays with the owner.
 #[test]
 fn the_owner_balances_view_reports_live_units_and_owner_history() {
     use crate::sol_ext::IERC1155;

@@ -131,12 +131,12 @@ contract SyncTokenBridge {
     }
 }
 
-/// @dev Origin==target on one chain: both routers, the auction, the escrow and the canonical NFT
-///      are wired to a synchronous in-process bridge, so every protocol message - including the
-///      nested bids relay fired from inside the CLEARING delivery - executes in the sending
-///      transaction, mirroring the loopback transport. Each delivery runs under its exact IntexGas
-///      executionGasLimit attribute, so an undersized budget out-of-gases the delivery and fails
-///      the walk: the test doubles as the budget check.
+/// @dev Origin==target on one chain. The setup wires both routers, the auction, the escrow and the
+///      canonical NFT to a synchronous in-process bridge. Thus every protocol message executes in
+///      the sending transaction, as in the loopback transport. This includes the nested bids relay
+///      that fires from inside the CLEARING delivery. Each delivery runs under its exact IntexGas
+///      executionGasLimit attribute. An undersized budget makes the delivery run out of gas and
+///      fails the walk. Thus the test is also the budget check.
 contract LocalLoopbackTest is Test {
     uint32 internal constant DAY = 20260714;
     uint128 internal constant PROMIS_LOAD_MINOR = 1e6;
@@ -270,7 +270,7 @@ contract LocalLoopbackTest is Test {
         vm.prank(iba2);
         auction.commitBid(DAY, keccak256(_sig(iba2, 40, 700_000, iba2Pk)));
 
-        // 3. Past commitEnd the stage computes to RevealingBids; reveals lock escrow
+        // 3. Past commitEnd, the stage computes to RevealingBids. Reveals lock escrow
         //    (qty * load * rate / 1e6), converted to 18-decimal WCOEN.
         vm.warp(startTs + 101);
         assertEq(uint8(auction.getAuctionStage(DAY)), uint8(IIntexAuction.AuctionStage.RevealingBids), "not revealing");
@@ -280,7 +280,7 @@ contract LocalLoopbackTest is Test {
         assertEq(uint256(escrow.getBidLock(DAY, iba2).lockedAmount), 28e18, "iba2 lock");
 
         // 4. CLEARING: the delivery itself fires the nested bids relay (BIDS_BATCH + BIDS_DONE)
-        //    back through the loopback to the origin - three chained same-tx deliveries.
+        //    back through the loopback to the origin. This makes three chained same-tx deliveries.
         vm.warp(startTs + 201);
         vm.prank(address(desis));
         origin.sendAuctionStageClearing(DAY, local, IntexGas.AUCTION_STAGE_CLEARING);
@@ -300,8 +300,8 @@ contract LocalLoopbackTest is Test {
         assertEq(result.auctionClearingRate, 700_000, "clearing rate");
 
         // 6. REFUND_INSTRUCTIONS: the delivery takes each winner's payment AND routes the paid wCOEN to
-        //    the origin (sync token leg + unwrap + factory hand-off), all inside the refund budget; the
-        //    rest of each lock waits for its claim. iba2 is the partial fill: 20 of 40.
+        //    the origin (sync token leg + unwrap + factory hand-off), all inside the refund budget.
+        //    The rest of each lock waits for its claim. iba2 is the partial fill: 20 of 40.
         address[] memory bidders = new address[](2);
         bidders[0] = iba1;
         bidders[1] = iba2;
