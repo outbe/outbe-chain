@@ -1,13 +1,11 @@
 [Unit]
 Description=Outbe Validator
 After=network-online.target outbe-enclave.service outbe-radicle.service
-Wants=network-online.target
+Wants=network-online.target outbe-enclave.service outbe-radicle.service
 Wants=outbe-ocomp-exporter.service outbe-ocomp-worker@0.service
-Requires=outbe-enclave.service outbe-radicle.service
 Conflicts=outbe-full-node.service
 PartOf=outbe-validator.target
-StartLimitIntervalSec=300
-StartLimitBurst=5
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -54,7 +52,7 @@ ExecStart=/opt/outbe-chain/outbe-chain node \
   --radicle.control-socket /opt/outbe-chain/keys/radicle/node/outbe-control.sock \
   --radicle.status-address 127.0.0.1:8876
 ExecStartPost=/opt/outbe-chain/deploy/validator/outbe-validator-service.py wait-rpc
-Restart=on-failure
+Restart=always
 RestartMode=direct
 RestartSec=5
 RestartSteps=5

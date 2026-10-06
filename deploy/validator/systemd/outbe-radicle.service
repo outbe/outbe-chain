@@ -3,8 +3,7 @@ Description=Outbe validator Radicle sidecar
 After=network-online.target
 Wants=network-online.target
 PartOf=outbe-validator.target
-StartLimitIntervalSec=300
-StartLimitBurst=5
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -20,7 +19,7 @@ ExecStart=/opt/outbe-chain/outbe-radicle \
   --max-validators 128 \
   --external-inbound-reserve 16 \
   --advertise ${OUTBE_EXTERNAL_IP}:8776
-Restart=on-failure
+Restart=always
 RestartMode=direct
 RestartSec=5
 RestartSteps=5
