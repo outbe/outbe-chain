@@ -1,0 +1,83 @@
+name: qlty smells
+
+# Report code smells (complexity, duplication, many parameters, deep nesting)
+# for the files that a pull request changes. The check is informational:
+# `qlty smells` exits 0 when it finds smells, so it never blocks a merge.
+#
+# Findings reach the pull request in two places:
+#   - code scanning annotations on the changed lines (SARIF upload);
+#   - a table in the job summary.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  smells:
+    name: qlty smells
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      # The SARIF upload writes code scanning alerts.
+      security-events: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          # qlty compares against the base branch, so the job needs its history.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: qltysh/qlty-action/install@c9b09987143d1e4ac955f4803c7bea742102feb5 # v2.4.0
+
+      - name: Find smells in changed files
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          qlty smells --upstream "origin/${BASE_REF}" --sarif --no-upgrade-check \
+            > qlty-smells.sarif
+
+      - name: Write job summary
+        run: |
+          count=$(jq '[.runs[].results[]] | length' qlty-smells.sarif)
+          {
+            echo "## qlty smells in changed files"
+            echo
+            echo "Findings: ${count}"
+            if [ "${count}" -gt 0 ]; then
+              echo
+              echo "| File | Line | Rule | Finding |"
+              echo "|---|---|---|---|"
+              jq -r '
+                [.runs[].results[]]
+                | sort_by(.locations[0].physicalLocation.artifactLocation.uri,
+                          .locations[0].physicalLocation.region.startLine)
+                | .[:300][]
+                | [ .locations[0].physicalLocation.artifactLocation.uri,
+                    (.locations[0].physicalLocation.region.startLine | tostring),
+                    (.ruleId | sub("^qlty:"; "")),
+                    (.message.text | gsub("\\|"; "\\|")) ]
+                | "| `\(.[0])` | \(.[1]) | \(.[2]) | \(.[3]) |"
+              ' qlty-smells.sarif
+              if [ "${count}" -gt 300 ]; then
+                echo
+                echo "The table shows the first 300 findings. Code scanning has all of them."
+              fi
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      # A pull request from a fork gets a read-only token, so the upload is
+      # skipped there. The job summary still lists the findings.
+      - name: Upload SARIF to code scanning
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          sarif_file: qlty-smells.sarif
+          category: qlty-smells
