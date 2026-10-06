@@ -523,6 +523,7 @@ fn settle_erc20(
 
 mod costs;
 mod currency_snapshots;
+mod direct_fx_admission;
 mod issuance;
 mod note_regressions;
 mod paid_entitlement;

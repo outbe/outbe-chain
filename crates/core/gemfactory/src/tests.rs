@@ -468,6 +468,7 @@ fn merchant_entry_price(storage: &StorageHandle, source_entry: U256) -> U256 {
 }
 
 mod capacity_conservation;
+mod direct_fx_admission;
 mod eligibility;
 mod issuance;
 mod merchant;
