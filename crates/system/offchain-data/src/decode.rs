@@ -116,8 +116,7 @@ pub(super) fn decode_event(
             source,
             tribute_id,
             &event.canonicalPayload,
-            event.previousCommitment,
-            event.newCommitment,
+            (event.previousCommitment, event.newCommitment),
             event.schemaVersion,
         )?;
         Some(ProjectionEvent::TributeStored {
@@ -170,8 +169,7 @@ pub(super) fn decode_event(
             source,
             nod_id,
             &event.canonicalPayload,
-            event.previousCommitment,
-            event.newCommitment,
+            (event.previousCommitment, event.newCommitment),
             event.schemaVersion,
         )?;
         Some(ProjectionEvent::NodStored {
@@ -209,8 +207,7 @@ pub(super) fn decode_event(
             source,
             bucket_id,
             &event.canonicalPayload,
-            event.previousCommitment,
-            event.newCommitment,
+            (event.previousCommitment, event.newCommitment),
             event.schemaVersion,
         )?;
         Some(ProjectionEvent::BucketStored {
@@ -290,10 +287,10 @@ pub(super) fn validate_stored_commitment(
     source: ProjectionSource,
     identity: WwdEntityId,
     payload: &[u8],
-    previous: B256,
-    new: B256,
+    commitments: (B256, B256),
     schema_version: u32,
 ) -> Result<(), ProjectionError> {
+    let (previous, new) = commitments;
     if !previous.is_zero() {
         outbe_compressed_entities::Commitment::try_from(previous.0)
             .map_err(|error| malformed_event(source, error))?;

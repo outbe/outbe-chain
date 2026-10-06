@@ -4,6 +4,7 @@ pub mod day_schema;
 mod day_state;
 pub mod enclave_client;
 pub mod errors;
+mod issuance;
 pub mod partitioning;
 pub mod precompile;
 pub mod projection;

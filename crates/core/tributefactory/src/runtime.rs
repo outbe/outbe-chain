@@ -234,6 +234,19 @@ impl TributeFactoryContract<'_> {
         let (wallet_addresses, sra_addresses) =
             validate_agent_reward_addresses(&result.wallet_addresses, &result.sra_addresses)?;
 
+        self.issue_processed_record(scope, parent, record)?;
+
+        self.record_agent_reward_activity(&wallet_addresses, &sra_addresses)?;
+
+        Ok(tribute_id)
+    }
+
+    fn issue_processed_record(
+        &mut self,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
+        record: &outbe_tribute::TributeRecord,
+    ) -> Result<()> {
         let mut tribute = TributeContract::new(self.storage.clone());
         if let Some(body) = record.encrypted() {
             tribute.issue_encrypted(scope, parent, body)?;
@@ -252,9 +265,7 @@ impl TributeFactoryContract<'_> {
             ));
         }
 
-        self.record_agent_reward_activity(&wallet_addresses, &sra_addresses)?;
-
-        Ok(tribute_id)
+        Ok(())
     }
 
     /// Records one successful offer in the UTC reward-day bucket consumed by

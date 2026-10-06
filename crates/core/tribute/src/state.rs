@@ -123,14 +123,10 @@ impl TributeContract<'_> {
         parent: &impl ParentBodySource,
         tribute_id: WwdEntityId,
     ) -> Result<Option<TributeData>> {
-        read(
-            self.storage_handle(),
-            scope,
-            parent,
-            EntityRef::Tribute(tribute_id),
-        )?
-        .map(|current| tribute_from_verified(&current))
-        .transpose()
+        self.get_record(scope, parent, tribute_id)?
+            .as_ref()
+            .map(calculation_view)
+            .transpose()
     }
 
     pub fn get_day_totals(&self, day: WorldwideDay) -> Result<DayTotals> {
