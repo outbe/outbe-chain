@@ -551,7 +551,7 @@ mod tests {
             deviation_thresholds: vec![],
             provider_endpoints: vec![],
             dex_providers: vec![],
-            aggregator_v3_providers: vec![],
+            external_oracles: vec![],
             health: None,
         }
     }

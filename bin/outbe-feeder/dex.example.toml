@@ -1,8 +1,8 @@
 # Template only: all token/pool addresses below are illustrative placeholders.
 # Replace them with deployed COEN and stablecoin contracts and actual pools.
 # Also replace the Outbe RPC/chain/account and match the on-chain vote period.
-# Chainlink and RedStone push feeds are read by named [[aggregator_v3_providers]]
-# sections; see README "AggregatorV3 providers" for that configuration.
+# Chainlink and RedStone push feeds are read by named [[external_oracles]]
+# sections; see README "External oracles" for that configuration.
 [chain]
 rpc_endpoint = "http://localhost:8545"
 chain_id = 31337

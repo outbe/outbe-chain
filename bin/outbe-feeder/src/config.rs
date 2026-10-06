@@ -23,10 +23,11 @@ pub struct FeederConfig {
     /// Finalized EVM pool readers. They are independent of the destination Outbe RPC.
     #[serde(default)]
     pub dex_providers: Vec<crate::provider::dex::DexProviderConfig>,
-    /// `AggregatorV3Interface` feed readers (Chainlink, RedStone push); each
-    /// section is a provider named by the operator, with its own EVM RPC.
+    /// External oracles read from their on-chain feed contracts (Chainlink,
+    /// RedStone push; any `AggregatorV3Interface` contract). Each section is a
+    /// provider named by the operator, with its own EVM RPC.
     #[serde(default)]
-    pub aggregator_v3_providers: Vec<crate::provider::aggregator_v3::AggregatorV3ProviderConfig>,
+    pub external_oracles: Vec<crate::provider::external_oracle::ExternalOracleConfig>,
     /// Health/status HTTP server configuration.
     pub health: Option<HealthConfig>,
 }
@@ -226,10 +227,10 @@ impl FeederConfig {
                     ));
                 }
                 if !Self::KNOWN_PROVIDERS.contains(&source.provider.as_str())
-                    && !crate::provider::aggregator_v3::is_section_name(self, &source.provider)
+                    && !crate::provider::external_oracle::is_section_name(self, &source.provider)
                 {
                     return Err(eyre::eyre!(
-                        "unknown provider '{}' for pair {}/{}. Known: {:?} or an aggregator_v3_providers name",
+                        "unknown provider '{}' for pair {}/{}. Known: {:?} or an external_oracles section name",
                         source.provider,
                         pair.base,
                         pair.quote,
@@ -295,7 +296,7 @@ impl FeederConfig {
         }
 
         crate::provider::dex::validate_config(self)?;
-        crate::provider::aggregator_v3::validate_config(self, Self::KNOWN_PROVIDERS)?;
+        crate::provider::external_oracle::validate_config(self, Self::KNOWN_PROVIDERS)?;
         Ok(())
     }
 
@@ -355,7 +356,7 @@ mod tests {
             deviation_thresholds: vec![],
             provider_endpoints: vec![],
             dex_providers: vec![],
-            aggregator_v3_providers: vec![],
+            external_oracles: vec![],
             health: None,
         }
     }

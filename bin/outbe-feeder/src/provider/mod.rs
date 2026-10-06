@@ -1,10 +1,10 @@
 //! Price provider trait and implementations.
 
-pub mod aggregator_v3;
 pub mod binance;
 pub mod coinbase;
 pub(crate) mod dex;
 pub(crate) mod evm_rpc;
+pub mod external_oracle;
 pub mod gate;
 pub mod huobi;
 pub mod kraken;
@@ -217,14 +217,14 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
             )?),
             other => {
                 let Some(section) = config
-                    .aggregator_v3_providers
+                    .external_oracles
                     .iter()
                     .find(|section| section.name == other)
                 else {
                     tracing::warn!(provider = other, "unknown provider, skipping");
                     continue;
                 };
-                Box::new(aggregator_v3::AggregatorV3Provider::new(section)?)
+                Box::new(external_oracle::ExternalOracleProvider::new(section)?)
             }
         };
         let configured_pairs = config
