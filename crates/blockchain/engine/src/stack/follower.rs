@@ -13,10 +13,16 @@ use super::*;
 /// validator path (`run_consensus_stack`) and the certified-follower path (a
 /// follower can serve upstream too), right after `marshal_mailbox` exists.
 ///
-/// For each `(height, reply)`, it reads the finalization certificate and the
-/// finalized block from the marshal. It encodes both with `commonware_codec`.
-/// It answers `Some` only when both are present locally. Otherwise it answers
-/// `None`, which the RPC maps to a "not available" error.
+/// For each `(height, reply)`, it reads the finalized block from the marshal.
+/// It looks for the finalization certificate in this order:
+/// 1. the marshal.
+/// 2. a retained finalization for the same block in the parent-cert store.
+/// 3. the parent finalization that the child block carries.
+///
+/// It encodes both with `commonware_codec`. It answers `None` only when the
+/// block is missing locally. The RPC maps `None` to a "not available" error.
+/// When it finds no certificate, it answers `Some` with an empty
+/// `finalization` field.
 pub(in crate::stack) fn spawn_finalization_drainer<E>(
     ctx: &E,
     marshal_mailbox: outbe_consensus::marshal_types::MarshalMailbox,
@@ -42,19 +48,7 @@ pub(in crate::stack) fn spawn_finalization_drainer<E>(
         });
 }
 
-/// Run the consensus stack.
-///
-/// Wires together:
-/// 1. Validator configuration (static JSON or dynamic from EVM state)
-/// 2. HybridScheme signing (BLS individual + BLS12-381 threshold VRF)
-/// 3. P2P network channels (lookup::Network) with Muxers for epoch-scoped sub-channels
-/// 4. Application handler (propose/verify via beacon engine)
-/// 5. Executor actor (FCU updates, finalization)
-/// 6. Simplex consensus engine (restarted on reshare)
-/// 7. Block propagation - proposer broadcasts full blocks via P2P channel
-/// 8. Automatic reshare detection and DKG execution
-///
-/// Follower stack. It does these steps WITHOUT running the consensus engine:
+/// Run the follower stack. It does these steps WITHOUT running the consensus engine:
 /// 1. Cold-sync finalized blocks from an upstream node.
 /// 2. Verify them against the trusted network identity (committee-chaining - see
 ///    the `follow` module).

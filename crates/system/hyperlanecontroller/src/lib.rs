@@ -6,11 +6,12 @@
 //! the same contracts on remote chains. It holds no validator set of its own.
 //! The ISMs are the source of truth. The controller only forwards owner calls.
 //!
-//! - `initialize`, `fund` and the permissionless `sync` (mirror the active
-//!   validator set into every ISM) are the only direct write selectors.
-//! - Validator rotation, generic local / remote owner calls and table changes
-//!   are methods on [`HyperlaneControllerContract`]. The trigger that runs them
-//!   (validator vote or another authority) is not wired yet.
+//! - Direct write selectors are `initialize`, `fund`, permissionless `sync`,
+//!   `setHyperlaneSigner`, and `submitCheckpoint`.
+//! - `sync` rotates validators through `set_validators_and_threshold`.
+//!   Begin-block liveness calls the same rotation.
+//!   `call_remote`, `call_local`, `add_domain`, and `remove_domain` have no
+//!   production caller yet.
 //! - The controller pays remote dispatch fees (IGP quote) from its own
 //!   balance. `fund` adds value to that balance.
 

@@ -108,10 +108,10 @@ fn emit_gem_issued(storage: &StorageHandle<'_>, gem_id: U256, position_id: U256)
     )
 }
 
-/// Send a merchant's whole Intex series to the Gem Factory and issue a GemPosition NFT. Burns the
-/// merchant's entire Issued holding on IntexNFT1155 (`sendToGemFactory`, GEM_ROLE)
-/// and records the position with a snapshot of the source entry/floor and the
-/// resulting Promis capacity. Returns the issued `position_id`.
+/// Issue a GemPosition NFT from the merchant's selected `units` of Issued Intex.
+/// The merchant can transfer a partial holding. The position pins the source entry and floor.
+/// Its Promis capacity equals the source load times the burned units.
+/// Return the issued `position_id`.
 pub fn issue_gem_position(
     storage: &StorageHandle<'_>,
     caller: Address,

@@ -59,9 +59,9 @@ pub fn run_slash_window(ctx: &BlockRuntimeContext) -> Result<()> {
 /// At UTC day boundaries: runs S-curve peak detection for each registered,
 /// active reference-currency COEN pair.
 ///
-/// It deliberately defers slash-window force-exits to the receipt-visible
-/// `OracleSlashWindow` system phase. This lets a same-block `BoundaryOutcome`
-/// activate its target set before Oracle penalties mark underperformers EXITING.
+/// It defers the slash window to the receipt-visible `OracleSlashWindow` phase.
+/// A same-block boundary can activate its target set before Oracle jails
+/// an underperformer. The penalty is jail, not a move to EXITING.
 fn run_begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
     let mut oracle = OracleContract::new(ctx.storage.clone());
     let block_number = ctx.block.block_number;

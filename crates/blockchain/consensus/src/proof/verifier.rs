@@ -39,18 +39,18 @@ use crypto::verify_v2_certificate_low_level;
 #[derive(Debug, Clone)]
 pub struct VerifiedProof {
     /// Encoded signer bitmap (`1` = signed, `0` = absent), one byte per
-    /// participant, in the same order as `snapshot.ordered_committee`.
+    /// participant, in the same order as `snapshot.committee`.
     pub signer_bitmap: Vec<u8>,
     /// `keccak256(VrfProof::encode())` - canonical fingerprint of the VRF
     /// proof carried in this certificate. See
-    /// [`crate::canonical_vrf_proof_hash_v2`].
+    /// [`crate::proof::canonical_vrf_proof_hash_v2`].
     pub vrf_proof_hash: B256,
     /// Material version of the verified VRF proof. Used by Rewards/Slash V2
     /// settlement to bind to the active VRF material.
     pub vrf_material_version: u64,
 }
 
-// `V2VerifyError` lives in [`crate::error`]. The enum is in a separate module
+// `V2VerifyError` lives in [`crate::proof::error`]. The enum is in a separate module
 // so that its variant taxonomy is the single source of truth for both the
 // verifier and the downstream evidence wrappers.
 

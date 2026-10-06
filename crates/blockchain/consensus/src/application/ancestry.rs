@@ -3,10 +3,10 @@
 //! `dkg_manager` (the consumer) declares the [`AncestryReader`] interface it
 //! needs to walk a certified ancestry chain when it resolves the DKG boundary.
 //! This module supplies the production adapter that satisfies it. The adapter
-//! lives here, not inline in `handler.rs`. Here it sits beside the
-//! propose/verify call sites that own the marshal mailbox, block cache,
-//! readiness gate, and runtime clock. This keeps the 2000-line handler free of
-//! block-walk/timeout policy and gives the adapter its own test surface.
+//! lives in the application module, not in the `handler` module. The handler
+//! owns the marshal mailbox, block cache, readiness gate, and runtime clock,
+//! and passes them in. This keeps the handler free of block-walk/timeout
+//! policy and gives the adapter its own test surface.
 //!
 //! The seam has two adapters: this `MarshalAncestryReader` (production) and the
 //! `TestAncestryReader` fake in `crate::test_fixtures` (consumer tests in

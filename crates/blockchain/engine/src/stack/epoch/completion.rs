@@ -111,8 +111,9 @@ where
         // - stashing the pending activation.
         // - the `execution_finalized_height_tx.send(...)`
         //   call. That call may immediately wake the
-        //   activation branch (when `should_activate_now`
-        //   is true).
+        //   activation branch (when
+        //   `pending_dkg_handoff_decision` returns
+        //   `PendingDkgHandoffDecision::Activate`).
         // This closes a cross-node race. In that race, a
         // faster peer can begin broadcasting epoch-N+1
         // traffic before this node registers the

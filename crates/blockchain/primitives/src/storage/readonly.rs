@@ -2,7 +2,9 @@
 //!
 //! The consensus layer uses it to read precompile state (e.g., the ValidatorSet
 //! contract) at a specific block height without going through the EVM.
-//! Only `sload()` is functional. All write operations are no-ops.
+//! Only `sload()` is functional. State writes (`sstore`, `tstore`, `set_code`,
+//! balance changes) return a `Fatal` error. `emit_event` succeeds and drops the
+//! log.
 
 use alloy_primitives::{Address, LogData, B256, U256};
 use revm::{
@@ -64,7 +66,8 @@ impl ReadOnlyBlockContext {
     }
 }
 
-/// Only `sload()` works. This provider rejects all write operations.
+/// Only `sload()` works. This provider rejects all state writes with a `Fatal`
+/// error. `emit_event` is a silent no-op.
 /// Context-free constructors retain zero block fields for pure storage reads.
 /// Readers whose answer depends on time or height must require
 /// [`ReadOnlyBlockContext`].

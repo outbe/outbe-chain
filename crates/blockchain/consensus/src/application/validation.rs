@@ -1,7 +1,7 @@
 //! Pure block-acceptance rules for the application handler.
 //!
 //! These are the deterministic "what makes a proposed block invalid?" checks.
-//! They moved here from the propose/verify event loop of `handler.rs`. They
+//! They live outside the propose/verify paths of the `handler` module. They
 //! take an immutable block plus the scheme/committee providers and return a
 //! `Result`. They use no clock, no marshal and no runtime state. Thus they read
 //! and test as a standalone validation layer. `handler` calls them. The tests

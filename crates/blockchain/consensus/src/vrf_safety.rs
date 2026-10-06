@@ -8,7 +8,7 @@
 //!   import pipeline must consult the state-backed canonical
 //!   `CommitteeSnapshotStore` instead. This gate is process-local and would
 //!   diverge from the snapshot on restart.
-//! - **Do not import** it into the V2 verifier (`outbe-consensus-proof`)
+//! - **Do not import** it into the V2 verifier (`crate::proof`)
 //!   either. Verifier inputs come from chain state, not from local
 //!   bookkeeping.
 //! - Legitimate importers:

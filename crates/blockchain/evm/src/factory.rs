@@ -1,7 +1,8 @@
 //! Custom EVM factory for Outbe.
 //!
 //! `OutbeEvmFactory` creates EVM instances with Outbe precompiles registered
-//! via `set_precompile_lookup`. The factory is wired into reth's node via
+//! via `set_ctx_dispatch_hook` in `extend_outbe_precompiles`. The factory is
+//! wired into reth's node via
 //! `OutbeExecutorBuilder` (defined in `crate::config`).
 
 use alloy_evm::{

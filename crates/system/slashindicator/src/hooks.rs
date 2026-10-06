@@ -93,9 +93,9 @@ pub fn prune_slash_guards(storage: StorageHandle, fb_hash: B256) -> Result<()> {
     Ok(())
 }
 
-/// Called from post-execution when consensus detects byzantine behavior
-/// (equivocation). The `evidence_processed` guard inside `slash_byzantine`
-/// already makes it idempotent. This refactor does not affect it.
+/// Wrapper for [`SlashIndicator::slash_byzantine`].
+/// No production caller invokes this wrapper.
+/// Evidence classes use the `submit_*_evidence` methods instead.
 pub fn slash_byzantine(storage: StorageHandle, validator: Address) -> Result<()> {
     let mut si = SlashIndicator::new(storage);
     si.slash_byzantine(validator)

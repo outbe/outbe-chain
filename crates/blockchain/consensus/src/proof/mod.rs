@@ -7,7 +7,8 @@
 //! * Canonical fingerprint helpers used by Rewards, the certified-parent proof store,
 //!   and slashing evidence (`committee_set_hash_v2`, `canonical_signer_set_hash`,
 //!   `canonical_vrf_proof_hash_v2`, `invalid_vrf_evidence_hash_v2`)
-//! * V2 domain-separation constants (`OUTBE_HYBRID_SEED_NAMESPACE_V2`)
+//! * V2 domain-separation namespaces. These are chain-id-bound functions, such
+//!   as `hybrid_seed_namespace()` and `seed_attest_namespace()`, not constants.
 //!
 //! This module intentionally avoids any reference to `crate::stack`,
 //! `crate::validators`, `crate::hybrid::HybridScheme` private DKG state, or any

@@ -16,7 +16,8 @@
 //! instead of hex strings. As a result, many more offers fit under the 64 KiB
 //! Noise frame per `ProcessTributeOfferBatch`.
 //! Both binaries are built from this crate, so encoder and decoder always agree.
-//! The chain is from-genesis, so there is no legacy wire to stay compatible with.
+//! `decode_call` still accepts a context-less request.
+//! It tags that request `EnclaveContextKindV1::Legacy`.
 
 use std::io::{Read, Write};
 

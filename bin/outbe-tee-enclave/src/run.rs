@@ -175,11 +175,6 @@ pub fn run(opts: RunOpts) -> i32 {
         Err(code) => return code,
     };
 
-    // Resident chain id from `--chain-id` (default ZERO), bound INDEPENDENTLY of
-    // sealing. It scopes every state-key derivation and the owner-authorized
-    // fidelity query, which cross-checks it against the node's chain. Sourcing it
-    // from `--chain-id` here (not from the seal-only boot config) lets a
-    // non-sealing enclave still answer chain-scoped queries.
     // Shared, write-once permanent offer-key slot. It is restored only after the
     // sealed initialization manifest establishes the exact network binding.
     let offer_key: crate::transport::SharedTributeOfferKey =
@@ -251,6 +246,12 @@ pub fn run(opts: RunOpts) -> i32 {
             }
         }
     }
+    // Resident chain id. When the initialization state has a network binding
+    // (initialization manifest or mock development binding), its chain id wins.
+    // `--chain-id` (default ZERO) is only the fallback. It is bound INDEPENDENTLY
+    // of sealing. It scopes every state-key derivation and the owner-authorized
+    // fidelity query, which cross-checks it against the node's chain. The fallback
+    // lets a non-sealing enclave still answer chain-scoped queries.
     let chain_id = initialization
         .network_binding()
         .ok()

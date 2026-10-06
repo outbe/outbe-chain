@@ -11,7 +11,7 @@ use super::{
 /// [`SYSTEM_TX_ARTIFACT_GAS_LIMIT`](super::SYSTEM_TX_ARTIFACT_GAS_LIMIT).
 /// The signed transaction stored in the block body only needs to be valid as an
 /// Ethereum legacy envelope. Charging intrinsic calldata gas keeps system txs visible to
-/// generic replay/import tooling without exposing the 100M internal lane.
+/// generic replay/import tooling without exposing the 10B internal lane.
 pub fn system_tx_intrinsic_gas(calldata: &[u8]) -> Result<u64, SystemTxError> {
     calldata
         .iter()

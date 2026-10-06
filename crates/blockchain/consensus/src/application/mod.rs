@@ -1,7 +1,9 @@
 //! Application actor - bridges Simplex consensus with Reth's execution layer.
 //!
-//! Handles propose/verify/finalize requests from the consensus engine
-//! by communicating with Reth via `beacon_engine_handle`.
+//! Handles propose/verify/certify requests and the relay from the consensus
+//! engine by communicating with Reth via `beacon_engine_handle`.
+//! Finalization does not reach this module. It flows voter -> `OutbeReporter`
+//! -> `FinalizationActor`.
 
 pub mod actor;
 pub(crate) mod ancestry;

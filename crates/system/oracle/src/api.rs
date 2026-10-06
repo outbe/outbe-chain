@@ -21,9 +21,12 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::Stora
 
 /// Bounded Oracle projection captured before the terminal OCOMP request.
 ///
-/// `oracle_state_version` reuses the authoritative monotonic index of the
-/// snapshot stream. Every exchange-rate snapshot advances it. The WWD and S-curve
-/// counters identify the exact derived collections read for this day.
+/// `oracle_state_version` is the `ocomp_state_version` counter.
+/// It is not the snapshot-stream index.
+/// It advances on snapshots, WorldwideDay VWAP writes, UTC-day finalization,
+/// and S-curve writes. It advances only after the profile is ready.
+/// It does not advance on every snapshot.
+/// The WWD and S-curve counters identify the derived collections for this day.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OcompOraclePreAdmissionProjection {
     pub profile_ready: bool,
@@ -42,8 +45,9 @@ pub struct OcompOraclePreAdmissionProjection {
 /// [`OracleError::NotReferenceCurrency`] otherwise.
 ///
 /// Reference currencies are the ISO 4217 numeric codes considered valid
-/// for off-chain pricing references. Genesis pre-fills the list with `[840]`
-/// (USD). Future protocol upgrades may extend it.
+/// for off-chain pricing references. Genesis pre-fills six codes:
+/// CNY 156, HKD 344, JPY 392, GBP 826, USD 840, and EUR 978.
+/// USD is the mandatory member. Future protocol upgrades may extend it.
 pub fn check_reference_currency(ctx: &BlockRuntimeContext, iso_code: u16) -> Result<()> {
     check_reference_currency_with_storage(ctx.storage.clone(), iso_code)
 }
@@ -445,11 +449,11 @@ pub fn store_worldwide_day_vwap_snapshot(
     oracle.store_worldwide_day_vwap_snapshot(worldwide_day, start_time, end_time)
 }
 
-/// Returns the finalized VWAP for `pair` on the given UTC calendar day, or `None`
-/// if the day is not finalized or had no oracle data for that pair. `utc_day` is
-/// a yyyymmdd UTC date key, e.g. `20260625`. To distinguish "not finalized yet"
-/// from "finalized, no data", compare `utc_day` against the oracle's
-/// `utc_day_vwap_last_finalized` watermark.
+/// Returns the stored VWAP for `pair` on that UTC calendar day, or `None`
+/// when the day has no entry. `utc_day` is a yyyymmdd UTC date key.
+/// A day above `utc_day_vwap_last_finalized` is not finalized.
+/// After a gap wider than the backfill cap, a day at or below the watermark
+/// can also be unfinalized. An empty entry is then not proof of no data.
 pub fn get_utc_day_vwap(
     storage: StorageHandle,
     utc_day: u32,

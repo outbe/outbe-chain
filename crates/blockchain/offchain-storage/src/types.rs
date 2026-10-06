@@ -10,7 +10,8 @@ pub const MAX_KEY_BYTES: usize = 1_024;
 pub const MAX_VALUE_BYTES: usize = 8 * 1024 * 1024;
 /// Provisional maximum requested entries in one scan page.
 pub const MAX_SCAN_ENTRIES: usize = 1_024;
-/// Provisional maximum sum of value bytes in one scan page.
+/// Provisional maximum sum of value bytes plus encoded metadata bytes in one
+/// scan page.
 pub const MAX_SCAN_PAGE_VALUE_BYTES: usize = 8 * 1024 * 1024;
 /// Maximum number of metadata entries attached to one stored value.
 pub const MAX_METADATA_ENTRIES: usize = 32;

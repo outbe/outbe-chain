@@ -557,10 +557,10 @@ pub(in crate::stack) fn genesis_formation_gate_decision(
 
 /// Direct Reth connections needed to prove a fresh genesis formation before
 /// entering the all-member DKG. The execution P2P graph need not be a complete
-/// mesh: one local validator plus a `N-f` BFT quorum of matching genesis peers
-/// is sufficient evidence. DKG itself still requires every configured genesis
-/// dealer log, so lowering this transport gate cannot let a partial committee
-/// complete network formation.
+/// mesh: one local validator plus `N-f-1` matching genesis peers is sufficient
+/// evidence. Together they form an `N-f` BFT quorum. DKG itself still requires
+/// every configured genesis dealer log, so lowering this transport gate cannot
+/// let a partial committee complete network formation.
 pub(in crate::stack) fn genesis_formation_required_remote_peers(validator_count: usize) -> usize {
     let max_byzantine = validator_count.saturating_sub(1) / 3;
     validator_count

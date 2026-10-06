@@ -194,7 +194,7 @@ impl SystemTransactions {
                 inputs.prebuilt_phase1_tx,
                 // The same bootstrap payload the executor branch above received,
                 // so the injected body matches the expected begin-zone order
-                // (TeeBootstrap at begin_order 3, before OracleSlashWindow).
+                // (TeeBootstrap at begin_order 6, before OracleSlashWindow).
                 inputs.pending_tee_bootstrap,
             )
             .map_err(|err| {

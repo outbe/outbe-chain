@@ -383,7 +383,7 @@ fn test_evidence_reward() {
 // 7. test_conflicting_vote_evidence
 // ---------------------------------------------------------------------------
 /// Verifies that conflicting vote evidence (notarize + nullify same round)
-/// correctly force-exits the validator and rewards the submitter.
+/// correctly jails the validator and rewards the submitter.
 #[test]
 fn test_conflicting_vote_evidence() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
@@ -540,7 +540,7 @@ fn test_conflicting_vote_same_type_fails() {
 // ---------------------------------------------------------------------------
 // 10. test_full_lifecycle_integration
 // ---------------------------------------------------------------------------
-/// Integration test: register -> stake -> activate -> propose -> slash -> forced exit.
+/// Integration test: register -> stake -> activate -> propose -> slash -> jail.
 #[test]
 fn test_full_lifecycle_integration() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
@@ -608,7 +608,7 @@ fn test_full_lifecycle_integration() {
             si.slash_proposer(validator).unwrap();
         }
 
-        // 6. Verify forced exit
+        // 6. Verify jail
         assert!(matches!(
             vs.validator_lifecycle(validator).unwrap(),
             ValidatorLifecycle::JailRetained(_)
@@ -641,7 +641,7 @@ fn test_full_lifecycle_integration() {
 
 // ---------------------------------------------------------------------------
 // Voter felony: missed finalize votes are punitive at the felony threshold.
-// Mirrors the proposer-felony path: force-exit + 5% slash.
+// Mirrors the proposer-felony path: jail + 5% slash.
 // ---------------------------------------------------------------------------
 #[test]
 fn slash_voter_felony_force_exits_and_slashes_at_threshold() {
@@ -660,7 +660,7 @@ fn slash_voter_felony_force_exits_and_slashes_at_threshold() {
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 0);
         assert!(vs.validator_lifecycle(VAL_A).unwrap().is_active_status());
 
-        // 150th miss crosses the felony threshold -> force-exit + 5% stake slash.
+        // 150th miss crosses the felony threshold -> jail + 5% stake slash.
         si.slash_voter(VAL_A).unwrap();
         assert_eq!(si.get_voter_miss_count(VAL_A).unwrap(), 150);
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 1);

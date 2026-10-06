@@ -2,7 +2,7 @@
 //!
 //! This module contains [`SubcallGasMeter`], a thin wrapper over
 //! [`revm::interpreter::Gas`]. The wrapper exposes the API that the outbe sub-call driver
-//! ([`crate::sub_call::run_sub_call_impl`]) needs.
+//! ([`crate::sub_call::run`]) needs.
 //!
 //! ## Why a separate type
 //!

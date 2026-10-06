@@ -53,15 +53,23 @@ pub(crate) fn enforce_enclave_upgrade_deadline(
 /// against `HashMapStorageProvider`. Ordering is load-bearing:
 ///
 /// 1. Genesis-state validation (blocks 0/1 only, if consensus config was supplied).
-/// 2. `VoteLifecycle::begin_block` - tally expired proposals and dispatch approved ones.
+/// 2. `VoteLifecycle::begin_block_with_handlers` - tally expired proposals and
+///    dispatch approved ones.
 /// 3. `UpdateLifecycle::begin_block_with_handlers` - activate scheduled updates at activation height.
-/// 4. `RewardsLifecycle::begin_block` - locks `genesis_utc_day` on
+/// 4. `enforce_enclave_upgrade_deadline` - when an enclave upgrade sweep is due,
+///    jail each active validator without the successor enclave binding and
+///    slash 10% of its stake. It runs after Update.
+/// 5. `RewardsLifecycle::begin_block` - locks `genesis_utc_day` on
 ///    block 0. The per-block emission and per-day settle paths
 ///    moved to the Cycle module.
-/// 5. The Metadosis WWD state machine moved to the hourly ProtocolCycle
+/// 6. The Metadosis WWD state machine moved to the hourly ProtocolCycle
 ///    handler. There is no per-block hook here anymore.
-/// 6. Staking matured-unbonding processing.
-/// 7. `OracleLifecycle::begin_block` - tally + daily S-curve only.
+/// 7. Staking matured-unbonding processing.
+/// 8. `OracleLifecycle::begin_block` - tally + daily S-curve only.
+/// 9. `GemLifecycle::begin_block` - continue the daily GEM call sweep. It reads
+///    the Oracle surface, so it runs after Oracle.
+/// 10. `IntexLifecycle::begin_block` - continue the INTEX series call sweep and
+///     the payout and expiry drains. It also runs after Oracle.
 ///
 /// Oracle slash-window force-exits run later as the receipt-visible
 /// `OracleSlashWindow` begin-zone system phase, after optional `BoundaryOutcome`.

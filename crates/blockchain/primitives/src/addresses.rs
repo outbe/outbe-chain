@@ -63,15 +63,18 @@ pub const FIDELITY_ADDRESS: Address = address!("0x000000000000000000000000000000
 /// Emission limit precompile address (system-only, no user-facing precompile).
 pub const EMISSION_LIMIT_ADDRESS: Address = address!("0x000000000000000000000000000000000000100D");
 
-/// Metadosis precompile address (system-only, no user-facing precompile).
+/// Metadosis precompile address. Its registered dispatch serves public view
+/// methods (for example `getWorldwideDay`) to any caller. It also routes the
+/// `submitLysisResult` result-vote selector.
 pub const METADOSIS_ADDRESS: Address = address!("0x000000000000000000000000000000000000100E");
 
-/// Promis limit precompile address (system-only, no user-facing precompile).
+/// Promis limit precompile address. Its registered dispatch serves the public
+/// view method `totalUnallocated` to any caller.
 pub const PROMIS_LIMIT_ADDRESS: Address = address!("0x000000000000000000000000000000000000100F");
 
-/// Cycle precompile address (system-only). Hosts the per-day trigger
-/// registry that drives `EmissionLimit.cycle_handler::run_daily_dispatch`
-/// at UTC midnight. See epic, Phase 5.
+/// Cycle precompile address (system-only). Hosts the storage of the
+/// code-defined trigger registry (`outbe_cycle::schema::Cycle`). The hourly
+/// `ProtocolCycle` trigger runs `outbe_cycle::handler::run_protocol_cycle`.
 pub const CYCLE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001010");
 
 /// Checkout Credis Agent registry precompile. Holds agent bonds and daily CCA
@@ -139,8 +142,9 @@ pub const ZKPROOF_POSEIDON_ADDRESS: Address =
 /// precompile does a lookup of `circuit_hash` in the canonical-circuit table from
 /// `outbe-zk-canonical`. It then dispatches verification to the
 /// Barretenberg FFI vendored by `outbe-zk-circuit-noir`. Output is 32
-/// bytes: `0x..01` on a valid proof, `0x..00` otherwise (including
-/// unknown circuit hashes).
+/// bytes: `0x..01` on a valid proof. It is `0x..00` for an unknown circuit
+/// hash or a proof that the verifier rejects. Malformed ABI input, a nonzero
+/// call value, and a verifier-backend error revert.
 pub const ZKPROOF_GROTH16_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE08");
 
 /// ZeroFee paymaster precompile address (stateful).
@@ -153,7 +157,7 @@ pub const ZKPROOF_GROTH16_ADDRESS: Address = address!("0x00000000000000000000000
 /// single `Mapping<Address, u64>` packing `(date_key: u32, count: u32)` per
 /// signer. The reset on day flip is lazy.
 ///
-/// View ABI (see `interfaces/IZeroFee.sol` for the authoritative
+/// View ABI (see `contracts/precompiles/src/IZeroFee.sol` for the authoritative
 /// definition). It has two methods. Both are anchored to the current
 /// block's UTC day, so callers never supply or reconcile the day themselves:
 ///   - `authorizeSponsorship(address signer) view returns (bool)` -
@@ -179,10 +183,15 @@ pub const ZEROFEE_ADDRESS: Address = address!("0x0000000000000000000000000000000
 /// TEE Registry precompile (storage-backed KV).
 ///
 /// Records the per-validator TEE registration bundle and the global
-/// `tribute_offer_public_key` written once by the `TeeBootstrap` system
-/// transaction (Phase 3b). The public ABI is read-only (clients fetch the offer
-/// key via `eth_call`). The system-tx handler performs the initial write
-/// natively through `StorageHandle::contract`, not via the public ABI.
+/// `tribute_offer_public_key`. The `TeeBootstrap` system transaction writes the
+/// offer key once, natively through `StorageHandle::contract`, not via the
+/// public ABI. The public ABI has view methods (clients fetch the offer key via
+/// `eth_call`). It also has caller-bound mutating methods:
+/// - `registerEnclave`
+/// - `renewEnclave`
+/// - `replaceEnclaveBinding`
+/// - `transitionEnclaveMeasurement`
+/// - `prepareEnclaveUpgrade`
 pub const TEE_REGISTRY_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0A");
 
 /// On-chain upgrade governance precompile address.

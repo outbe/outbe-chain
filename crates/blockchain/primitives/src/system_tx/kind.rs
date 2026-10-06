@@ -18,9 +18,10 @@ pub enum BodyZone {
 
 /// Consensus activation of the PoC OCOMP system-transaction lifecycle.
 ///
-/// The production default is disabled. OCM-26 is the only task that may arm
-/// the canonical devnet schedule. Earlier tasks can exercise the exact fork
-/// boundary: they pass an explicit activation to layout validation.
+/// The `Default` value is `Disabled`. The production node binary arms the
+/// activation from the required chain-spec OCOMP fork install, at the install's
+/// activation height. Tests can exercise the exact fork boundary: they pass an
+/// explicit activation to layout validation.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum OcompLifecycleActivation {
     #[default]

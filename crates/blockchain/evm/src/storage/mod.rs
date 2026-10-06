@@ -7,7 +7,7 @@
 //!
 //! [`CtxStorageProvider`] owns a `&'a mut EthEvmContext<DB>` field so that
 //! `sub_call(input)` can pass the same
-//! `&mut ctx` to `run_sub_call_impl(ctx, ...)`. The outer dispatch path
+//! `&mut ctx` to `sub_call::run_with_ocomp_context(ctx, ...)`. The outer dispatch path
 //! borrows `CtxStorageProvider` through
 //! [`outbe_primitives::storage::StorageHandle::with_provider`]. That method uses
 //! `Rc<RefCell<&mut dyn PrecompileStorageProvider>>` and releases the inner

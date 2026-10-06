@@ -56,12 +56,12 @@ pub enum PrecompileError {
     #[error("revert with bytes: {0}")]
     RevertBytes(Bytes),
 
-    /// Sub-call halt forwarded from `run_sub_call_impl`.
+    /// Sub-call failure: a child-frame halt, or a provider-level sub-call
+    /// error such as `NotAvailable`.
     #[error("sub-call error: {0}")]
     SubCall(SubCallError),
 
-    /// Operation is not supported by this provider (e.g., `set_code` on
-    /// `DirectStorageProvider`).
+    /// Operation is not supported by this provider.
     #[error("unsupported operation")]
     Unsupported,
 
