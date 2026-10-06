@@ -71,8 +71,13 @@ impl ProposalStatus {
     }
 
     /// Returns `true` when the proposal leaves the bounded pending index.
+    /// `Error` is terminal: a target-execution failure is never retried and its
+    /// bond is settled with the status.
     pub const fn is_terminal(self) -> bool {
-        matches!(self, Self::Approved | Self::Rejected | Self::Expired)
+        matches!(
+            self,
+            Self::Approved | Self::Rejected | Self::Expired | Self::Error
+        )
     }
 }
 
