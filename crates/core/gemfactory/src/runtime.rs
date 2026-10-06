@@ -17,21 +17,21 @@ use outbe_common::settlement::{floor_to_asset_units, PaymentCurrency};
 use crate::constants::SRA_RATE;
 use crate::errors::GemFactoryError;
 use crate::precompile::IGemFactory::{GemExercised, GemIssued, GemPositionIssued, GemSettled};
-use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
+use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition, GemTypes};
 use crate::sol_ext::{IIntexNFT1155, IReferenceCurrency, IERC20};
 use outbe_vaultrouter::api::IVaultRouter;
 
 /// Issues one agent-class gem priced at `entry_price`, the COEN rate in
 /// `reference_currency` that the caller resolved for the gem's own day.
-pub fn issue_gem(
-    storage: &StorageHandle<'_>,
-    owner: Address,
-    gem_type: GemTypes,
-    promis_load: U256,
-    issuance_currency: u16,
-    reference_currency: u16,
-    entry_price: U256,
-) -> Result<U256> {
+pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<U256> {
+    let GemIssueParams {
+        owner,
+        gem_type,
+        promis_load,
+        issuance_currency,
+        reference_currency,
+        entry_price,
+    } = params;
     if owner.is_zero() {
         return Err(GemFactoryError::InvalidOwner.into());
     }

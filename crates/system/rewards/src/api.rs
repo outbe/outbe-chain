@@ -534,12 +534,14 @@ fn deliver_oldest_reward_gem_batch_inner(
     for (owner, load) in recipients {
         outbe_gemfactory::api::issue_gem(
             &ctx.storage,
-            owner,
-            gem_type,
-            load,
-            issuance_currency,
-            reference_currency,
-            entry_price,
+            outbe_gemfactory::GemIssueParams {
+                owner,
+                gem_type,
+                promis_load: load,
+                issuance_currency,
+                reference_currency,
+                entry_price,
+            },
         )?;
     }
     for index in 0..recipient_count {

@@ -247,12 +247,14 @@ pub(crate) fn issue_reward_gem(
     })?;
     outbe_gemfactory::api::issue_gem(
         storage,
-        owner,
-        gem_type,
-        load,
-        AGENT_GEM_CURRENCY,
-        AGENT_GEM_CURRENCY,
-        entry_price,
+        outbe_gemfactory::GemIssueParams {
+            owner,
+            gem_type,
+            promis_load: load,
+            issuance_currency: AGENT_GEM_CURRENCY,
+            reference_currency: AGENT_GEM_CURRENCY,
+            entry_price,
+        },
     )
 }
 
