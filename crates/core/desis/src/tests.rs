@@ -353,9 +353,11 @@ fn open_clearing(s: &StorageHandle, units: u128) {
 fn mark_done(s: &StorageHandle, chain: u32, total_batches: u16, total_bids: u32) {
     runtime::process_bids_done(
         s.clone(),
-        ORIGIN_ROUTER_ADDRESS,
-        WORLDWIDE_DAY,
-        chain,
+        runtime::Inbound {
+            caller: ORIGIN_ROUTER_ADDRESS,
+            worldwide_day: WORLDWIDE_DAY,
+            src_chain_id: chain,
+        },
         total_batches,
         total_bids,
     )
@@ -372,9 +374,11 @@ fn relay_bids(s: &StorageHandle, chain: u32, n: u8, rate: u32) {
         let end = start.saturating_add(cap).min(n);
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            chain,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: chain,
+            },
             batch_index,
             total_batches,
             (start..end)
@@ -1406,9 +1410,11 @@ fn process_bids_in_non_revealing_stage_fails() {
         // Stage is Started, not Revealing. The call must be rejected.
         assert!(runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN
+            },
             0,
             1,
             bids(2, 200)
@@ -1425,9 +1431,11 @@ fn process_bids_rejects_non_origin_caller() {
         let attacker = bidder(99);
         assert!(runtime::process_bids_batch(
             s.clone(),
-            attacker,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: attacker,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN
+            },
             0,
             1,
             bids(3, 200)
@@ -1446,9 +1454,11 @@ fn process_bids_rejects_an_oversized_batch() {
         let over = u8::try_from(MAX_BIDS_PER_BATCH + 1).unwrap();
         let error = runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             bids(over, 200),
@@ -1475,9 +1485,11 @@ fn process_bids_accumulate_across_batches() {
         // Revealing. Nothing auto-transitions. The chain finalizes only on its BIDS_DONE marker.
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             2,
             bids(3, 200),
@@ -1485,9 +1497,11 @@ fn process_bids_accumulate_across_batches() {
         .unwrap();
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             1,
             2,
             bids(2, 150),
@@ -1517,9 +1531,11 @@ fn marker_finalizes_chain_once_batches_and_totals_match() {
         open_revealing(&s);
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             bids(4, 200),
@@ -1549,9 +1565,11 @@ fn marker_arriving_before_batches_still_finalizes() {
         assert!(s.contract::<DesisContract>().chain_done.read(&key).unwrap() == 0);
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             bids(2, 200),
@@ -1568,9 +1586,11 @@ fn marker_total_mismatch_keeps_chain_not_done() {
         open_revealing(&s);
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             bids(3, 200),
@@ -1596,9 +1616,11 @@ fn a_redelivered_batch_counts_once() {
         for _ in 0..2 {
             runtime::process_bids_batch(
                 s.clone(),
-                ORIGIN_ROUTER_ADDRESS,
-                WORLDWIDE_DAY,
-                SRC_CHAIN,
+                runtime::Inbound {
+                    caller: ORIGIN_ROUTER_ADDRESS,
+                    worldwide_day: WORLDWIDE_DAY,
+                    src_chain_id: SRC_CHAIN,
+                },
                 0,
                 2,
                 bids(3, 200),
@@ -1622,9 +1644,11 @@ fn a_batch_declaring_another_total_is_refused() {
         // The first batch fixes the chain's span: a batch claiming another could complete the set early.
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             2,
             bids(1, 200),
@@ -1632,9 +1656,11 @@ fn a_batch_declaring_another_total_is_refused() {
         .unwrap();
         assert!(runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN
+            },
             1,
             3,
             bids(1, 200),
@@ -1654,9 +1680,11 @@ fn no_bids_clears_as_no_sale() {
         // A single empty batch (batch 0 of 1) plus a zero-bid marker finalizes the chain.
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             vec![],
@@ -1688,9 +1716,11 @@ fn clearing_allocates_up_to_the_limit() {
         // 5 bidders competing for 3 supply units.
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             bids(5, 200),
@@ -1709,9 +1739,11 @@ fn clearing_transitions_to_cleared() {
         open_clearing(&s, 1);
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             bids(1, 200),
@@ -1876,9 +1908,11 @@ fn clearing_uniform_price_is_last_allocated_bid() {
         ];
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             three_bids,
@@ -1920,9 +1954,11 @@ fn clear_bids_below_min_price_skipped() {
         ];
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             low_bids,
@@ -1961,9 +1997,11 @@ fn clear_refunds_equal_locked_minus_paid() {
         ];
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             two_bids,
@@ -2029,9 +2067,11 @@ fn clear_rate_escrow_scales_by_basis() {
         ];
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             rate_bids,
@@ -2075,9 +2115,11 @@ fn clearing_returns_the_unused_limit_and_dust_to_promis() {
         arm_clearing(&s);
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             bids(1, 200),
@@ -2119,9 +2161,11 @@ fn two_chain_bids_merge_and_carry_source_chain() {
         // Chain A: one bid at 300. Chain B: one bid at 200.
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            chain_a,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: chain_a,
+            },
             0,
             1,
             vec![BidData {
@@ -2137,9 +2181,11 @@ fn two_chain_bids_merge_and_carry_source_chain() {
         mark_done(&s, chain_a, 1, 1);
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            chain_b,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: chain_b,
+            },
             0,
             1,
             vec![BidData {
@@ -2175,9 +2221,11 @@ fn force_clear_waits_then_fires_when_all_done() {
         open_clearing(&s, 2);
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            chain_a,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: chain_a,
+            },
             0,
             1,
             bids(1, 200),
@@ -2198,9 +2246,11 @@ fn force_clear_waits_then_fires_when_all_done() {
         // Chain B reports -> the gate opens and the tick clears.
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            chain_b,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: chain_b,
+            },
             0,
             1,
             bids(1, 200),
@@ -2276,9 +2326,11 @@ fn force_clear_skips_missing_chain_after_deadline() {
         // Only chain A finalizes.
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            chain_a,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: chain_a,
+            },
             0,
             1,
             bids(1, 200),
@@ -2328,9 +2380,11 @@ fn tick_gate_clears_ready_day() {
         open_clearing(&s, 1);
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             bids(1, 200),
@@ -2427,9 +2481,11 @@ fn clearing_issues_one_series_per_winning_currency_pair() {
         relayed[2].reference_currency = 978;
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            chain,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: chain,
+            },
             0,
             1,
             relayed,
@@ -2592,9 +2648,11 @@ fn clearing_marks_the_bid_supply_ran_out_in() {
         };
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             vec![bid(0, 900_000, 2), bid(1, 800_000, 2), bid(2, 700_000, 1)],
@@ -2709,9 +2767,11 @@ fn a_relayed_bid_naming_an_unspellable_currency_is_refused_at_intake() {
 
         let err = runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            chain,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: chain,
+            },
             0,
             1,
             relayed,
@@ -2756,9 +2816,11 @@ fn a_batch_for_a_day_never_briefed_is_acknowledged() {
     StorageHandle::enter(&mut storage, |s| {
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            UNBRIEFED_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: UNBRIEFED_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             bids(1, 200),
@@ -2778,9 +2840,11 @@ fn a_batch_after_clearing_is_acknowledged_as_obsolete() {
         open_clearing(&s, 10);
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             vec![],
@@ -2790,9 +2854,11 @@ fn a_batch_after_clearing_is_acknowledged_as_obsolete() {
         clear(&s);
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             bids(1, 200),
@@ -2810,9 +2876,11 @@ fn a_batch_before_reveal_still_reverts_so_the_transport_redelivers() {
         runtime::schedule_tick(&s, NOW).unwrap(); // Started, commit stage running
         assert!(runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN
+            },
             0,
             1,
             bids(1, 200),
@@ -2831,9 +2899,11 @@ fn an_early_marker_stands_against_a_conflicting_one() {
         for total_bids in [1u32, 2] {
             runtime::process_bids_done(
                 s.clone(),
-                ORIGIN_ROUTER_ADDRESS,
-                WORLDWIDE_DAY,
-                SRC_CHAIN,
+                runtime::Inbound {
+                    caller: ORIGIN_ROUTER_ADDRESS,
+                    worldwide_day: WORLDWIDE_DAY,
+                    src_chain_id: SRC_CHAIN,
+                },
                 1,
                 total_bids,
             )
@@ -2841,9 +2911,11 @@ fn an_early_marker_stands_against_a_conflicting_one() {
         }
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             bids(1, 200),
@@ -2864,9 +2936,11 @@ fn a_repeated_marker_is_a_no_op_and_a_differing_one_is_reported() {
         open_revealing(&s);
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             2,
             bids(1, 200),
@@ -2877,9 +2951,11 @@ fn a_repeated_marker_is_a_no_op_and_a_differing_one_is_reported() {
         for total_bids in [3u32, 3, 5] {
             runtime::process_bids_done(
                 s.clone(),
-                ORIGIN_ROUTER_ADDRESS,
-                WORLDWIDE_DAY,
-                SRC_CHAIN,
+                runtime::Inbound {
+                    caller: ORIGIN_ROUTER_ADDRESS,
+                    worldwide_day: WORLDWIDE_DAY,
+                    src_chain_id: SRC_CHAIN,
+                },
                 2,
                 total_bids,
             )

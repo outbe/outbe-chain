@@ -20,6 +20,23 @@ enum Intake {
     UnknownDay,
 }
 
+/// The `InboundIgnored` reason for a message the intake no longer takes. `None` while it is open.
+fn ignored_reason(stage: AuctionStage) -> Result<Option<u8>> {
+    Ok(match intake_state(stage)? {
+        Intake::Open => None,
+        Intake::Closed => Some(IGNORED_OBSOLETE),
+        Intake::UnknownDay => Some(IGNORED_NOT_FOUND),
+    })
+}
+
+/// Where an inbound bid message comes from: the relaying caller, the day and the source chain.
+#[derive(Clone, Copy)]
+pub struct Inbound {
+    pub caller: Address,
+    pub worldwide_day: WorldwideDay,
+    pub src_chain_id: u32,
+}
+
 fn emit_inbound_ignored(
     contract: &mut DesisContract<'_>,
     worldwide_day: WorldwideDay,
@@ -42,58 +59,23 @@ fn emit_inbound_ignored(
 /// briefed, is acknowledged with `InboundIgnored`: no later state could make it applicable.
 pub fn process_bids_batch(
     storage: StorageHandle<'_>,
-    caller: Address,
-    worldwide_day: WorldwideDay,
-    src_chain_id: u32,
+    inbound: Inbound,
     batch_index: u16,
     total_batches: u16,
     bids: Vec<BidData>,
 ) -> Result<()> {
+    let Inbound {
+        caller,
+        worldwide_day,
+        src_chain_id,
+    } = inbound;
     require_origin_router(caller)?;
     require_nonzero_worldwide_day(worldwide_day)?;
-    // The arrival bitmap is a U256, so at most 256 batches (batch_index 0..=255) are trackable.
-    if total_batches == 0 || total_batches > MAX_BID_BATCHES || batch_index >= total_batches {
-        return Err(PrecompileError::Revert(
-            "processBidsBatch: invalid batch index/total".into(),
-        ));
-    }
-    // Same reason as the currency check below: an over-wide batch is admissible
-    // here but not at clearing, where the refund fan-out would reject the day.
-    if bids.len() > MAX_BIDS_PER_BATCH {
-        return Err(DesisError::BidBatchTooLarge(bids.len(), MAX_BIDS_PER_BATCH).into());
-    }
-    // Checked here because clearing cannot recover from it: an unspellable code would
-    // otherwise surface as a day whose clearing reverts every block.
-    if let Some(bad) = bids.iter().find(|bid| {
-        SeriesId::currency_code(bid.issuance_currency).is_err()
-            || SeriesId::currency_code(bid.reference_currency).is_err()
-    }) {
-        return Err(DesisError::UnspellableBidCurrency(
-            bad.issuance_currency,
-            bad.reference_currency,
-        )
-        .into());
-    }
+    check_batch_shape(batch_index, total_batches, &bids)?;
     let mut contract = storage.contract::<DesisContract>();
 
-    match intake_state(contract.read_stage(worldwide_day)?)? {
-        Intake::Open => {}
-        Intake::Closed => {
-            return emit_inbound_ignored(
-                &mut contract,
-                worldwide_day,
-                src_chain_id,
-                IGNORED_OBSOLETE,
-            );
-        }
-        Intake::UnknownDay => {
-            return emit_inbound_ignored(
-                &mut contract,
-                worldwide_day,
-                src_chain_id,
-                IGNORED_NOT_FOUND,
-            );
-        }
+    if let Some(reason) = ignored_reason(contract.read_stage(worldwide_day)?)? {
+        return emit_inbound_ignored(&mut contract, worldwide_day, src_chain_id, reason);
     }
 
     let chain_key = DesisContract::chain_key(worldwide_day, src_chain_id);
@@ -132,12 +114,15 @@ pub fn process_bids_batch(
 /// first marker stands.
 pub fn process_bids_done(
     storage: StorageHandle<'_>,
-    caller: Address,
-    worldwide_day: WorldwideDay,
-    src_chain_id: u32,
+    inbound: Inbound,
     total_batches: u16,
     total_bids: u32,
 ) -> Result<()> {
+    let Inbound {
+        caller,
+        worldwide_day,
+        src_chain_id,
+    } = inbound;
     require_origin_router(caller)?;
     require_nonzero_worldwide_day(worldwide_day)?;
     if total_batches == 0 || total_batches > 256 {
@@ -147,24 +132,8 @@ pub fn process_bids_done(
     }
     let mut contract = storage.contract::<DesisContract>();
 
-    match intake_state(contract.read_stage(worldwide_day)?)? {
-        Intake::Open => {}
-        Intake::Closed => {
-            return emit_inbound_ignored(
-                &mut contract,
-                worldwide_day,
-                src_chain_id,
-                IGNORED_OBSOLETE,
-            );
-        }
-        Intake::UnknownDay => {
-            return emit_inbound_ignored(
-                &mut contract,
-                worldwide_day,
-                src_chain_id,
-                IGNORED_NOT_FOUND,
-            );
-        }
+    if let Some(reason) = ignored_reason(contract.read_stage(worldwide_day)?)? {
+        return emit_inbound_ignored(&mut contract, worldwide_day, src_chain_id, reason);
     }
 
     let chain_key = DesisContract::chain_key(worldwide_day, src_chain_id);
@@ -184,6 +153,33 @@ pub fn process_bids_done(
     contract.chain_done_bids.write(&chain_key, total_bids)?;
 
     try_finalize_chain(&mut contract, worldwide_day, src_chain_id)
+}
+
+fn check_batch_shape(batch_index: u16, total_batches: u16, bids: &[BidData]) -> Result<()> {
+    // The arrival bitmap is a U256, so at most 256 batches (batch_index 0..=255) are trackable.
+    if total_batches == 0 || total_batches > MAX_BID_BATCHES || batch_index >= total_batches {
+        return Err(PrecompileError::Revert(
+            "processBidsBatch: invalid batch index/total".into(),
+        ));
+    }
+    // Same reason as the currency check below: an over-wide batch is admissible
+    // here but not at clearing, where the refund fan-out would reject the day.
+    if bids.len() > MAX_BIDS_PER_BATCH {
+        return Err(DesisError::BidBatchTooLarge(bids.len(), MAX_BIDS_PER_BATCH).into());
+    }
+    // Checked here because clearing cannot recover from it: an unspellable code would
+    // otherwise surface as a day whose clearing reverts every block.
+    if let Some(bad) = bids.iter().find(|bid| {
+        SeriesId::currency_code(bid.issuance_currency).is_err()
+            || SeriesId::currency_code(bid.reference_currency).is_err()
+    }) {
+        return Err(DesisError::UnspellableBidCurrency(
+            bad.issuance_currency,
+            bad.reference_currency,
+        )
+        .into());
+    }
+    Ok(())
 }
 
 /// Mark the chain done once its BIDS_DONE marker and every batch have arrived with matching totals.

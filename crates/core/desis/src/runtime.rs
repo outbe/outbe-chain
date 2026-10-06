@@ -340,7 +340,7 @@ pub use clearing::tick_gate;
 pub(crate) use clearing::{
     clearing_round_gas, force_clear, refund_chunk_count, refund_chunks, RefundChunk,
 };
-pub use intake::{process_bids_batch, process_bids_done};
+pub use intake::{process_bids_batch, process_bids_done, Inbound};
 #[cfg(test)]
 pub(crate) use schedule::schedule_tick;
 pub use schedule::tick_schedule;
