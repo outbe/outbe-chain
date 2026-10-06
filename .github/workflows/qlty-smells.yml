@@ -1,8 +1,9 @@
 name: qlty smells
 
 # Report code smells (complexity, duplication, many parameters, deep nesting)
-# for the files that a pull request changes. The check is informational:
-# `qlty smells` exits 0 when it finds smells, so it never blocks a merge.
+# for the files that a pull request changes. The job fails when it finds at
+# least one smell. `qlty smells` itself exits 0, so the last step checks the
+# finding count.
 #
 # Findings reach the pull request in two places:
 #   - code scanning annotations on the changed lines (SARIF upload);
@@ -45,8 +46,10 @@ jobs:
             > qlty-smells.sarif
 
       - name: Write job summary
+        id: summary
         run: |
           count=$(jq '[.runs[].results[]] | length' qlty-smells.sarif)
+          echo "count=${count}" >> "${GITHUB_OUTPUT}"
           {
             echo "## qlty smells in changed files"
             echo
@@ -81,3 +84,15 @@ jobs:
         with:
           sarif_file: qlty-smells.sarif
           category: qlty-smells
+
+      # This step runs last, so the summary and the annotations exist when the
+      # job fails.
+      - name: Fail when smells are found
+        env:
+          COUNT: ${{ steps.summary.outputs.count }}
+        run: |
+          if [ "${COUNT}" -gt 0 ]; then
+            echo "::error title=qlty smells::${COUNT} smell(s) in changed files. See the job summary or the annotations on the changed lines."
+            exit 1
+          fi
+          echo "No smells in changed files."
