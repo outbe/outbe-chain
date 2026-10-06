@@ -277,18 +277,31 @@ fn fold_profile(
     Ok(iparams)
 }
 
-/// Broadcast AUCTION_STAGE_START with the given schedule and day state.
-#[allow(clippy::too_many_arguments)]
-fn send_stage_start(
-    storage: &StorageHandle<'_>,
+/// What one AUCTION_STAGE_START message announces besides its day state.
+#[derive(Clone, Copy)]
+struct StageStart<'a> {
     worldwide_day: WorldwideDay,
-    config: &AuctionConfig,
-    iparams: &outbe_intexfactory::IntexParams,
+    config: &'a AuctionConfig,
+    iparams: &'a outbe_intexfactory::IntexParams,
     commit_end: u32,
     reveal_end: u32,
     issuance_end: u32,
+}
+
+/// Broadcast AUCTION_STAGE_START with the given schedule and day state.
+fn send_stage_start(
+    storage: &StorageHandle<'_>,
+    start: StageStart<'_>,
     day_state: u8,
 ) -> Result<()> {
+    let StageStart {
+        worldwide_day,
+        config,
+        iparams,
+        commit_end,
+        reveal_end,
+        issuance_end,
+    } = start;
     let mut prices = Vec::with_capacity(config.reference_prices.len());
     for row in &config.reference_prices {
         let floor = outbe_intexfactory::marked_up(row.entry_price_minor, iparams.floor_rate)?;

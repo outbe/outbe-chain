@@ -52,50 +52,36 @@ fn advance_day(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u6
         let commit_end = anchor.saturating_add(COMMIT_WINDOW_SECONDS);
         let reveal_end = commit_end.saturating_add(u64::from(REVEAL_WINDOW_SECONDS));
         let issuance_end = reveal_end.saturating_add(SETTLEMENT_WINDOW_SECONDS);
+        let windows = Windows {
+            commit_end,
+            reveal_end,
+            issuance_end,
+        };
         match stage {
             AuctionStage::Cleared | AuctionStage::Cancelled => {
                 return contract.remove_sched_active(worldwide_day);
             }
             _ if now >= issuance_end => {
                 // A day that never started is sent as a late start while the router accepts it.
-                if stage == AuctionStage::Briefed
+                let started_late = stage == AuctionStage::Briefed
                     && storage
                         .with_checkpoint(|| {
-                            start_auction(
-                                storage,
-                                &mut contract,
-                                worldwide_day,
-                                commit_end,
-                                reveal_end,
-                                issuance_end,
-                                now,
-                            )
+                            start_auction(storage, &mut contract, worldwide_day, windows, now)
                         })
-                        .is_ok()
-                {
-                    return Ok(());
-                }
-                contract.emit(IDesis::AuctionOverdue {
-                    worldwideDay: worldwide_day.into(),
-                })?;
-                refund_unused_desis_limit(storage, &mut contract, worldwide_day)?;
-                contract.remove_gate_active(worldwide_day)?;
-                contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
-                return contract.remove_sched_active(worldwide_day);
+                        .is_ok();
+                return if started_late {
+                    Ok(())
+                } else {
+                    retire_overdue(storage, &mut contract, worldwide_day)
+                };
             }
             AuctionStage::Briefed if now >= anchor => {
                 // The chain has to run the windows the START message announces.
                 #[cfg(feature = "e2e-test")]
                 contract.auction_at.write(&worldwide_day, ts32(anchor)?)?;
-                if let StartOutcome::Retired = start_auction(
-                    storage,
-                    &mut contract,
-                    worldwide_day,
-                    commit_end,
-                    reveal_end,
-                    issuance_end,
-                    now,
-                )? {
+                if let StartOutcome::Retired =
+                    start_auction(storage, &mut contract, worldwide_day, windows, now)?
+                {
                     return Ok(());
                 }
             }
@@ -110,9 +96,31 @@ fn advance_day(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u6
     }
 }
 
+fn retire_overdue(
+    storage: &StorageHandle<'_>,
+    contract: &mut DesisContract<'_>,
+    worldwide_day: WorldwideDay,
+) -> Result<()> {
+    contract.emit(IDesis::AuctionOverdue {
+        worldwideDay: worldwide_day.into(),
+    })?;
+    refund_unused_desis_limit(storage, contract, worldwide_day)?;
+    contract.remove_gate_active(worldwide_day)?;
+    contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
+    contract.remove_sched_active(worldwide_day)
+}
+
 /// u32 wire timestamp (bounded until 2106).
 fn ts32(ts: u64) -> Result<u32> {
     u32::try_from(ts).map_err(|_| PrecompileError::Revert("schedule timestamp exceeds u32".into()))
+}
+
+/// The ends of a day's commit, reveal and issuance windows.
+#[derive(Clone, Copy)]
+struct Windows {
+    commit_end: u64,
+    reveal_end: u64,
+    issuance_end: u64,
 }
 
 enum StartOutcome {
@@ -124,16 +132,18 @@ enum StartOutcome {
 
 /// Dispatch the START message for a briefed day: a red, unpriced, sub-unit or late day is
 /// born cancelled, otherwise it starts green.
-#[allow(clippy::too_many_arguments)]
 fn start_auction(
     storage: &StorageHandle<'_>,
     contract: &mut DesisContract<'_>,
     worldwide_day: WorldwideDay,
-    commit_end: u64,
-    reveal_end: u64,
-    issuance_end: u64,
+    windows: Windows,
     now: u64,
 ) -> Result<StartOutcome> {
+    let Windows {
+        commit_end,
+        reveal_end,
+        issuance_end,
+    } = windows;
     // The day before this start, not before the brief.
     let utc_day = previous_date_key(timestamp_to_date_key(now));
     let rows: Vec<ReferenceCurrencyPrice> =
@@ -149,7 +159,14 @@ fn start_auction(
     let mut config = AuctionConfig::from_reference_prices(rows, promis_load_minor);
     let iparams = fold_profile(storage, contract, &mut config)?;
     contract.write_auction_config(worldwide_day, &config)?;
-    let (commit, reveal, issuance) = (ts32(commit_end)?, ts32(reveal_end)?, ts32(issuance_end)?);
+    let start = StageStart {
+        worldwide_day,
+        config: &config,
+        iparams: &iparams,
+        commit_end: ts32(commit_end)?,
+        reveal_end: ts32(reveal_end)?,
+        issuance_end: ts32(issuance_end)?,
+    };
 
     // A day nobody could price cannot hold an auction, and ends as a red day does. But
     // unlike a red day, it was briefed with a limit, which has to be returned.
@@ -159,16 +176,7 @@ fn start_auction(
     let below_one_unit = desis_limit_minor < U256::from(config.promis_load_minor);
     let late = commit_end.saturating_sub(now) < MIN_COMMIT_WINDOW_SECONDS;
     if unpriced || red || below_one_unit || late {
-        send_stage_start(
-            storage,
-            worldwide_day,
-            &config,
-            &iparams,
-            commit,
-            reveal,
-            issuance,
-            DAY_STATE_RED,
-        )?;
+        send_stage_start(storage, start, DAY_STATE_RED)?;
         contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
         if unpriced {
             contract.emit(IDesis::AuctionCancelledUnpriced {
@@ -195,16 +203,7 @@ fn start_auction(
         contract.remove_sched_active(worldwide_day)?;
         return Ok(StartOutcome::Retired);
     }
-    send_stage_start(
-        storage,
-        worldwide_day,
-        &config,
-        &iparams,
-        commit,
-        reveal,
-        issuance,
-        DAY_STATE_GREEN,
-    )?;
+    send_stage_start(storage, start, DAY_STATE_GREEN)?;
     contract.write_stage(worldwide_day, AuctionStage::Started)?;
     contract.emit(IDesis::AuctionCreated {
         worldwideDay: worldwide_day.into(),
