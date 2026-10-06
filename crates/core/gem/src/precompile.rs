@@ -118,7 +118,13 @@ pub fn dispatch(
             }),
             getGemStatus(c) => view(c, |c| {
                 let item = gem.get_gem(c.gemId)?.ok_or(GemError::GemNotFound)?;
-                Ok(to_abi_data(&item, storage.timestamp()?.to::<u64>()))
+                let mut data = to_abi_data(&item, storage.timestamp()?.to::<u64>());
+                if data.state == crate::schema::GemState::Issued as u8
+                    && crate::api::is_qualified(&storage, &item)?
+                {
+                    data.state = 1;
+                }
+                Ok(data)
             }),
             isQualified(c) => view(c, |c| {
                 let item = gem.get_gem(c.gemId)?.ok_or(GemError::GemNotFound)?;

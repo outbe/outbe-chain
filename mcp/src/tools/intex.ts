@@ -347,7 +347,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "intex_series_info",
     "Canonical series record from the outbe Intex: promis load, entry/floor/call prices, currencies, " +
-      "lifecycle state (Issued/Called/Expired), whether it has qualified (derived from finalized daily " +
+      "lifecycle state (Issued/Qualified/Called/Expired), whether it has qualified (derived from finalized daily " +
       "VWAPs, never stored), issued/called timestamps, the settlementDeadline and the derived `expired` " +
       "flag - check `expired` before attempting settle (past-deadline settles revert) - " +
       "and how the issued units split into active, settled, exercised, sent to the Gem Factory and forfeited.",
@@ -470,7 +470,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
             return {
               ...base,
               series: fromSeriesId(seriesHex),
-              state: intexState(d.state),
+              state: intexState(d.state === 0 && qualified ? 1 : d.state),
               ...(qualified === undefined ? {} : { qualified }),
               settlementDeadline: epochIso(settlementDeadline),
               expired: settlementDeadline > 0 && Math.floor(Date.now() / 1000) > settlementDeadline,

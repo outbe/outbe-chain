@@ -8969,6 +8969,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-macros",
  "outbe-ocomp-protocol",
+ "outbe-oracle",
  "outbe-primitives",
  "revm",
  "thiserror 2.0.18",
