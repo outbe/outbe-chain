@@ -124,6 +124,8 @@ mod event_abi {
     alloy_sol_types::sol!("../../contracts/precompiles/src/INodFactory.sol");
     #[cfg(feature = "ocomp-integration")]
     alloy_sol_types::sol!("../../contracts/precompiles/src/IGemFactory.sol");
+    #[cfg(feature = "ocomp-integration")]
+    alloy_sol_types::sol!("../../contracts/precompiles/src/IIntex.sol");
     alloy_sol_types::sol!("../../contracts/precompiles/src/IMetadosis.sol");
     alloy_sol_types::sol!(
         #![sol(extra_derives(Debug, PartialEq))]
@@ -131,7 +133,7 @@ mod event_abi {
     );
 }
 #[cfg(feature = "ocomp-integration")]
-pub use event_abi::{IGemFactory, INodFactory};
+pub use event_abi::{IGemFactory, IIntex, INodFactory};
 pub use event_abi::{IMetadosis, IStablecoinFactory, ITribute};
 
 // Precompile ABI surface the harness reads/writes, generated from the canonical

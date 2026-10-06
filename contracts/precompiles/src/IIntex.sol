@@ -30,6 +30,8 @@ interface IIntex {
         uint32 callWindow;
         uint32 callThreshold;
         uint256 callPriceMinor;
+        /// @notice Read-time state: 0 Issued, 1 Qualified (derived, never stored), 2 Called,
+        ///         3 Expired (a Called series past its notice period).
         uint8 state;
         uint32 issuedAt;
         uint32 calledAt;

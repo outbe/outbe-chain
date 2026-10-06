@@ -62,8 +62,9 @@ const REFERENCE_BYTE: u8 = b'U';
 const CATCH_UP_TIMEOUT_SECS: u64 = 900;
 /// The sender fires every minute in e2e, then the relay carries the day over.
 const VWAP_PUSH_TIMEOUT_SECS: u64 = 600;
-/// `IntexState::Issued` / `Called`.
+/// `IntexState::Issued` / `Qualified` / `Called`.
 const ISSUED: u8 = 0;
+const QUALIFIED: u8 = 1;
 const CALLED: u8 = 2;
 /// Derived against the clock on both chains; never written by anything.
 const EXPIRED: u8 = 3;
@@ -443,7 +444,7 @@ impl Lifecycle for IntexLifecycle {
         let url = world.rpc.url(world.validators.primary_port());
         all_series(world)
             .into_iter()
-            .all(|series| is_qualified(&url, series))
+            .all(|series| is_qualified(&url, series) && public_state(&url, series) == QUALIFIED)
     }
 
     /// Each paid series is paid in two parts: what is home once it qualifies, and the
@@ -1062,6 +1063,16 @@ fn prices(world: &World, series: FixedBytes<14>) -> (u64, u64, u64) {
         series,
     )
     .expect("series prices")
+}
+
+fn public_state(url: &str, series: FixedBytes<14>) -> u8 {
+    eth::read_call(
+        url,
+        addresses::INTEX_ADDR,
+        &eth::IIntex::seriesDataCall { seriesId: series },
+    )
+    .unwrap_or_else(|| panic!("series {series} does not read back"))
+    .state
 }
 
 fn is_qualified(url: &str, series: FixedBytes<14>) -> bool {

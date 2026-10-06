@@ -17,6 +17,7 @@ type StorageFreeVerifier = fn(
     &ActivationPayloadV1,
     &LysisResultV1,
     &SchemaLimits,
+    u64,
 ) -> Result<LysisApplyPlanV1, ProtocolError>;
 
 // OCOMP-TEST-ID: OCM-BND-002
@@ -32,6 +33,7 @@ fn activation_verifier_has_a_storage_free_closed_input_boundary() {
         &fixture.payload,
         &fixture.result,
         &fixture.limits,
+        fixture.nod_issued_at,
     )
     .unwrap();
     assert_eq!(
@@ -57,6 +59,7 @@ fn activation_verifier_has_a_storage_free_closed_input_boundary() {
         &rebound_payload,
         &fixture.result,
         &fixture.limits,
+        fixture.nod_issued_at,
     )
     .is_err());
 
@@ -71,6 +74,7 @@ fn activation_verifier_has_a_storage_free_closed_input_boundary() {
         &rebound_result_payload,
         &fixture.result,
         &fixture.limits,
+        fixture.nod_issued_at,
     )
     .is_err());
 }

@@ -15,7 +15,7 @@ pub mod marker_addresses {
     use alloy_primitives::Address;
     use outbe_primitives::addresses::*;
 
-    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 39] = [
+    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 38] = [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
         CREDIS_ADDRESS,
@@ -76,10 +76,6 @@ pub mod marker_addresses {
         VOTE_ADDRESS,
         // System-only compressed-entity commitment state (no public dispatch).
         COMPRESSED_ENTITIES_ADDRESS,
-        // Emit private-note pool (storage-backed, lazily initialized by the
-        // first burn). Genesis-reserved but not genesis-seeded with storage,
-        // so the runtime 0xEF marker preserves its tree/nullifier state.
-        EMIT_ADDRESS,
     ];
 }
 

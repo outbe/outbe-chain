@@ -15,7 +15,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::{first_full_day, WorldwideDay};
 
 use crate::errors::IntexError;
 use crate::payout::{
@@ -27,6 +27,17 @@ use crate::schema::{
     CertifiedContributorGenerationProjection, CertifiedPayoutRound, CreateSeriesParams,
     IntexContract, IntexState, SeriesId, SeriesRecord,
 };
+
+/// Qualification is derived from a finalized full-day observation, never stored.
+/// Readers and settlement use the same reference currency and immutable floor.
+pub fn is_qualified(storage: &StorageHandle<'_>, series: &SeriesRecord) -> Result<bool> {
+    outbe_oracle::api::closed_above_floor(
+        storage.clone(),
+        series.reference_currency,
+        series.floor_price_minor,
+        first_full_day(u64::from(series.issued_at)),
+    )
+}
 
 /// Immutable contributor target state consumed by OCOMP JobIntent assembly.
 ///

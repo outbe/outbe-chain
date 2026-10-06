@@ -150,34 +150,70 @@ mod tests {
         );
     }
 
-    /// Cross-language vectors: an external miner must reproduce these digests byte for byte.
+    /// Cross-language vectors: an external miner must reproduce these digests and
+    /// first valid nonces byte for byte.
     #[test]
     fn mining_pow_golden_vectors() {
-        let right_id = U256::from(0x1234_5678u64);
-        let owner = Address::repeat_byte(0x11);
-        for (domain, tag, expected) in [
+        use alloy_primitives::{address, b256, B256};
+
+        assert_eq!(MiningDomain::Nod.tag(), b"OUTBE_NOD_MINING_V1");
+        assert_eq!(MiningDomain::Gem.tag(), b"OUTBE_GEM_MINING_V1");
+        assert_eq!(POW_DIFFICULTY, 1);
+        let wide_id = b256!("0xffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100");
+        for (domain, right_id, owner, nonce, hash, first_valid, first_valid_hash) in [
             (
                 MiningDomain::Nod,
-                "OUTBE_NOD_MINING_V1",
-                "600ce7d86d05c5587e7c77055f0942e499e7b2a4a0ae9a2252d14c31dd7750f4",
+                U256::from(0x1234_5678u64),
+                Address::repeat_byte(0x11),
+                42,
+                b256!("0x600ce7d86d05c5587e7c77055f0942e499e7b2a4a0ae9a2252d14c31dd7750f4"),
+                556,
+                b256!("0x004a9bab5e835bb0a7ec4d52cc0e94be2dd91406769538b4204677c737ef136d"),
             ),
             (
                 MiningDomain::Gem,
-                "OUTBE_GEM_MINING_V1",
-                "d260e69b7940b333aa6a5beb27cf8ea3c6a760cfc6d7e5c1a1a281de65278979",
+                U256::from(0x1234_5678u64),
+                Address::repeat_byte(0x11),
+                42,
+                b256!("0xd260e69b7940b333aa6a5beb27cf8ea3c6a760cfc6d7e5c1a1a281de65278979"),
+                314,
+                b256!("0x006f6f7c0bf0e706ec50554404806df0810f7230d85fc65c5e55403778b0741a"),
+            ),
+            (
+                MiningDomain::Nod,
+                U256::from_be_bytes(wide_id.0),
+                address!("0xabcdef0123456789abcdef0123456789abcdef01"),
+                0x0102_0304_0506_0708,
+                b256!("0x8cf7cc1ac26dd020c313013c98bb08ab8253fe31045e253e2a357ac461ac3330"),
+                248,
+                b256!("0x007c65e12dd39ec397504f1c92b9949733a8a4921cddf5820e802e1c16a4e3c2"),
+            ),
+            (
+                MiningDomain::Gem,
+                U256::from(1u64),
+                Address::repeat_byte(0x7a),
+                0,
+                b256!("0x934e259014c8059c60179c9306e8a9aa73a846cd059fca8f23b2bb898ae10fb8"),
+                299,
+                b256!("0x00693450a64179eecb12473fc4f8006bf2373718e7d0de26a1eb59de7c2c4c5c"),
             ),
         ] {
-            assert_eq!(domain.tag().as_slice(), tag.as_bytes());
-            assert_eq!(
-                alloy_primitives::hex::encode(compute_mining_pow_hash(
+            let validate = |nonce| {
+                validate_mining_pow(domain, right_id, owner, SINGLE_EXERCISE_SEQUENCE, nonce)
+            };
+            let pow = |nonce| {
+                B256::from(compute_mining_pow_hash(
                     domain,
                     right_id,
                     owner,
                     SINGLE_EXERCISE_SEQUENCE,
-                    42
-                )),
-                expected
-            );
+                    nonce,
+                ))
+            };
+            assert_eq!(pow(nonce), hash);
+            assert_eq!(pow(first_valid), first_valid_hash);
+            assert!(validate(first_valid).is_ok());
+            assert!((0..first_valid).all(|nonce| validate(nonce).is_err()));
         }
     }
 

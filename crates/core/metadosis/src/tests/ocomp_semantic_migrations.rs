@@ -23,7 +23,7 @@ use crate::{
     },
     ocomp::schema::poc_schema_limits,
     precompile::IMetadosis,
-    schema::MetadosisContract,
+    schema::{MetadosisContract, WorldwideDayEntryExt},
     WwdStatus,
 };
 
@@ -1033,7 +1033,16 @@ fn request_pinned_semantics_are_identical_at_different_activation_heights() {
     assert_eq!(second_semantics.nod.last_progress_height, 40);
     second_semantics.nod.last_progress_height = first_semantics.nod.last_progress_height;
     assert_eq!(first_semantics, second_semantics);
-    assert_eq!(first_semantics.nod.issued_at, TEST_LOGICAL_TIME);
+    let freeze_instant = StorageHandle::enter(&mut first.provider, |storage| {
+        MetadosisContract::new(storage.clone())
+            .worldwide_days
+            .entry(TEST_WWD)
+            .scheduled_process_time()
+            .read()
+            .unwrap()
+    });
+    assert_ne!(freeze_instant, TEST_LOGICAL_TIME);
+    assert_eq!(first_semantics.nod.issued_at, freeze_instant);
     assert_eq!(
         first_metadata,
         ActivationMetadata {

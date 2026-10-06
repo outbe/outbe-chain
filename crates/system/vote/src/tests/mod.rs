@@ -80,8 +80,10 @@ pub(super) const VALIDATOR_OWNER: Address = address!("0xffffffffffffffffffffffff
 
 mod bond;
 mod characterization;
+mod error_bond;
 mod guards;
 mod precompile;
+mod targets;
 
 fn dummy_pubkey(seed: u8) -> [u8; 48] {
     let mut pk = [0u8; 48];
@@ -186,7 +188,7 @@ fn proposal_status_storage_roundtrip() {
     );
     assert!(ProposalStatus::Approved.is_terminal());
     assert!(!ProposalStatus::Pending.is_terminal());
-    assert!(!ProposalStatus::Error.is_terminal());
+    assert!(ProposalStatus::Error.is_terminal());
     assert_eq!(ProposalStatus::from_u8(4).unwrap(), ProposalStatus::Error);
     assert!(ProposalStatus::from_u8(5).is_err());
 }

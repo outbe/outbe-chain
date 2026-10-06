@@ -614,23 +614,27 @@ pub fn mine_promis(
 
     validate_pow(gem_id, item.owner, nonce)?;
 
-    gem_api::burn(storage, gem_id)?;
+    // Burn, mint and the exercise event are one transition: a rejected or
+    // failed mint leaves the settled Gem in place so the owner can retry.
+    storage.clone().with_checkpoint(|| {
+        gem_api::burn(storage, gem_id)?;
 
-    // The Promis is confidential: the mint runs inside the enclave, authorized by
-    // the gem owner's Promis modify key. The client's `mac`/`opNonce` must bind the
-    // minted amount (`item.promis_load_minor`), so the client precomputes it.
-    outbe_promisfactory::api::mint(storage.clone(), item.owner, item.promis_load_minor, auth)?;
+        // The Promis is confidential: the mint runs inside the enclave, authorized by
+        // the gem owner's Promis modify key. The client's `mac`/`opNonce` must bind the
+        // minted amount (`item.promis_load_minor`), so the client precomputes it.
+        outbe_promisfactory::api::mint(storage.clone(), item.owner, item.promis_load_minor, auth)?;
 
-    emit_event(
-        storage,
-        GemExercised {
-            gemId: gem_id,
-            owner: item.owner,
-            promisLoadMinor: item.promis_load_minor,
-        },
-    )?;
+        emit_event(
+            storage,
+            GemExercised {
+                gemId: gem_id,
+                owner: item.owner,
+                promisLoadMinor: item.promis_load_minor,
+            },
+        )?;
 
-    Ok(item.promis_load_minor)
+        Ok(item.promis_load_minor)
+    })
 }
 
 /// COEN price of `iso_code` from the last closed UTC day.

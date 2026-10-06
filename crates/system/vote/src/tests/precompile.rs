@@ -10,8 +10,8 @@ use crate::precompile::{dispatch_with_handlers, IVote};
 use crate::schema::{BondSettlement, Vote};
 
 use super::{
-    characterization::PUBLIC_BONDED_REGISTRY, create_proposal_test, empty_update_payload,
-    setup_default_validators, test_vote_registry, PROPOSER, VOTER_A, VOTER_B,
+    create_proposal_test, empty_update_payload, setup_default_validators,
+    targets::PUBLIC_BONDED_REGISTRY, test_vote_registry, PROPOSER, VOTER_A, VOTER_B,
 };
 
 fn dispatch(
