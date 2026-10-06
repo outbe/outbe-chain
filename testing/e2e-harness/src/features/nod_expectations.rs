@@ -192,7 +192,7 @@ fn nod_fields_match_public_inputs(world: &mut World) {
         .expect("input JobIntent at request height")
         .intent;
     // Processing retires the current Tribute partition. Retain independently
-    // authenticated inputs before that transition, never read result bodies as
+    // authenticated inputs before that transition. Never read result bodies as
     // the source of expected economic fields.
     let inputs = world
         .state
@@ -263,7 +263,6 @@ fn nod_fields_match_public_inputs(world: &mut World) {
         expected_league.expect("input league"),
         intent.frozen_metadosis_values.lysis_limit_minor,
         entry_price,
-        intent.logical_evaluation_time,
     );
     let expected_root = nod_reference::nod_root(&expected);
     assert_eq!(

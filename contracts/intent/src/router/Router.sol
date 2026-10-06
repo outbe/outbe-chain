@@ -12,29 +12,32 @@ import {IGatewayQuote} from "../interfaces/IGatewayQuote.sol";
 
 /**
  * @title Router
- * @notice Auction-based ERC-7683 router that speaks to a protocol-agnostic ERC-7786 bridge (the `crosschain`
- *         hub's `ERC7786Bridge`) instead of embedding a specific transport.
- * @dev Composition over inheritance: the messaging protocol (LayerZero, Hyperlane, ...) is selected on the bridge
- *      ({setGateway} there); this router never changes. All settlement logic is inherited from {BaseRouter}; only the
- *      cross-chain wiring lives here:
- *        - outbound: {_dispatchSettleCrossChain}/{_dispatchRefundCrossChain} via `bridge.sendMessage`;
- *        - inbound: {receiveMessage} (called by the bridge) -> {_handleSettleOrder}/{_handleRefundOrder};
- *        - `domain == chainId`, so no protocol id translation lives here (the hub's adapters map chainId<->eid/domain).
+ * @notice Auction-based ERC-7683 router that speaks to a protocol-agnostic ERC-7786 bridge (the
+ *         `crosschain` hub's `ERC7786Bridge`) instead of embedding a specific transport.
+ * @dev Composition over inheritance. The bridge selects the messaging protocol (LayerZero,
+ *      Hyperlane, ...) through its own {setGateway}. This router never changes. It inherits all
+ *      settlement logic from {BaseRouter}. Only the cross-chain wiring lives here:
+ *        - outbound: {_dispatchSettleCrossChain}/{_dispatchRefundCrossChain} via `bridge.sendMessage`.
+ *        - inbound: {receiveMessage} (the bridge calls it) -> {_handleSettleOrder}/{_handleRefundOrder}.
+ *        - `domain == chainId`, so no protocol id translation lives here. The hub's adapters map
+ *          chainId<->eid/domain.
  *
- *      The matching Router on each destination must be registered via {setRemoteRouter} (explicit per-chain wiring,
- *      like LayerZero peers / Hyperlane enrolled routers); sending to an unregistered domain reverts.
+ *      A {setRemoteRouter} call must register the matching Router on each destination. This is
+ *      explicit per-chain wiring, like LayerZero peers / Hyperlane enrolled routers. A send to an
+ *      unregistered domain reverts.
  */
 contract Router is BaseRouter, IERC7786Recipient {
     using InteroperableAddress for bytes;
 
-    /// @notice The ERC-7786 bridge this router sends through and accepts deliveries from. Fixed at deploy; the
-    ///         cross-chain protocol is swapped on the bridge itself (its `setGateway`), not by repointing here.
+    /// @notice The ERC-7786 bridge this router sends through and accepts deliveries from. It is fixed
+    ///         at deploy. Swap the cross-chain protocol on the bridge itself (its `setGateway`), not by
+    ///         repointing here.
     IERC7786GatewaySource public immutable bridge;
 
     /// @notice ERC-7930 interoperable address of the matching Router on a given domain (domain == chainId).
     mapping(uint32 domain => bytes recipient) public remoteRouters;
 
-    /// @notice Maximum orders processed per inbound message; bounds the loop's gas so an oversized
+    /// @notice Maximum orders processed per inbound message. It bounds the loop's gas, so an oversized
     ///         batch cannot make delivery un-executable.
     uint256 public constant MAX_BATCH = 100;
 
@@ -54,20 +57,6 @@ contract Router is BaseRouter, IERC7786Recipient {
     }
 
     // ============ Configuration ============
-
-    /// @notice Points the order-opening gate at a Whitelist registry; zero address opens it.
-    function setWhitelist(address registry) external onlyOwner {
-        _setWhitelist(registry);
-    }
-
-    /// @notice TEMPORARY: recovers open orders' inputs to the owner when a remote chain is down and
-    ///         no delivery can release them.
-    /// @dev TODO: remove before production - it also pays out orders a solver already filled.
-    function emergencyWithdraw(bytes32[] calldata orderIds) external onlyOwner {
-        for (uint256 i = 0; i < orderIds.length; i++) {
-            _emergencyWithdraw(orderIds[i], owner());
-        }
-    }
 
     /// @notice Registers the matching Router on `domain`. Pass empty bytes to remove it.
     /// @param interop ERC-7930 interoperable address of the remote Router (encodes chainId + address).
@@ -98,8 +87,9 @@ contract Router is BaseRouter, IERC7786Recipient {
     // ============ Messaging - inbound ============
 
     /// @inheritdoc IERC7786Recipient
-    /// @dev Called by {bridge} with a message from the matching Router on the source chain. `sender` is the ERC-7930
-    /// interoperable address of that Router; the source chainId is used directly as the origin domain.
+    /// @dev {bridge} calls this with a message from the matching Router on the source chain. `sender`
+    /// is the ERC-7930 interoperable address of that Router. The function uses the source chainId
+    /// directly as the origin domain.
     function receiveMessage(
         bytes32,
         /*receiveId*/
@@ -140,7 +130,7 @@ contract Router is BaseRouter, IERC7786Recipient {
         bridge.sendMessage{value: msg.value}(_remoteRouter(_domain), _payload, new bytes[](0));
     }
 
-    /// @dev ERC-7930 address of the matching Router on `_domain`; reverts if it was never registered.
+    /// @dev ERC-7930 address of the matching Router on `_domain`. Reverts if it was never registered.
     function _remoteRouter(uint32 _domain) internal view returns (bytes memory recipient) {
         recipient = remoteRouters[_domain];
         require(recipient.length != 0, RemoteRouterNotSet(_domain));

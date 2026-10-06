@@ -84,31 +84,20 @@ fn finalized_join_anchor_binds_the_exact_finalized_view_and_registry_binding() {
         state_root: B256::repeat_byte(0x13),
         consensus_timestamp: 19_000,
     };
-    let binding = RenewalBindingV1 {
-        node_id_hash: B256::repeat_byte(0x21),
-        enclave_id: B256::repeat_byte(0x22),
-        binding_id: B256::repeat_byte(0x23),
-        intent_hash: B256::repeat_byte(0x24),
-        evidence_hash: B256::repeat_byte(0x25),
-        policy_hash: B256::repeat_byte(0x26),
-        binding_version: 2,
-        registration_version: 3,
-        renewal_nonce: 0,
-        transition_nonce: 0,
-        lease_started_at: 18_000,
-        valid_until: 20_000,
-        collateral_valid_until: 20_000,
-        recipient_x25519: B256::repeat_byte(0x31),
-        attestation_ed25519: B256::repeat_byte(0x32),
-        noise_responder_x25519: B256::repeat_byte(0x33),
-        mrenclave: B256::repeat_byte(0x34),
-        mrsigner: B256::repeat_byte(0x35),
-        isv_prod_id: 1,
-        isv_svn: 2,
-        platform_tcb_status: 1,
-        verdict_hash: B256::repeat_byte(0x36),
-        node_host_authorization_hash: B256::repeat_byte(0x37),
-    };
+    let binding = outbe_operator::test_support::RenewalBindingFixtureV1::new(0x21)
+        .versions(2, 3)
+        .nonces(0, 0)
+        .lease(18_000, 20_000, 20_000)
+        .keys(0x31)
+        .measurements(0x34)
+        .claims(1, 2, 1)
+        .authorization(B256::repeat_byte(0x37))
+        .build();
+
+    assert_eq!(
+        serde_json::to_string(&binding).unwrap(),
+        r#"{"nodeIdHash":"0x2121212121212121212121212121212121212121212121212121212121212121","enclaveId":"0x2222222222222222222222222222222222222222222222222222222222222222","bindingId":"0x2323232323232323232323232323232323232323232323232323232323232323","intentHash":"0x2424242424242424242424242424242424242424242424242424242424242424","evidenceHash":"0x2525252525252525252525252525252525252525252525252525252525252525","policyHash":"0x2626262626262626262626262626262626262626262626262626262626262626","bindingVersion":2,"registrationVersion":3,"renewalNonce":0,"transitionNonce":0,"leaseStartedAt":18000,"validUntil":20000,"collateralValidUntil":20000,"recipientX25519":"0x3131313131313131313131313131313131313131313131313131313131313131","attestationEd25519":"0x3232323232323232323232323232323232323232323232323232323232323232","noiseResponderX25519":"0x3333333333333333333333333333333333333333333333333333333333333333","mrenclave":"0x3434343434343434343434343434343434343434343434343434343434343434","mrsigner":"0x3535353535353535353535353535353535353535353535353535353535353535","isvProdId":1,"isvSvn":2,"platformTcbStatus":1,"verdictHash":"0x3636363636363636363636363636363636363636363636363636363636363636","nodeHostAuthorizationHash":"0x3737373737373737373737373737373737373737373737373737373737373737"}"#
+    );
 
     assert_eq!(
         finalized_join_admission_anchor_v1(&view, &binding),

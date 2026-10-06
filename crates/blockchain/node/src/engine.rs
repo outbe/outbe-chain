@@ -252,24 +252,26 @@ mod tests {
     fn validates_payload_attributes_against_header_millis() {
         let validator = OutbeEngineValidator::new(MAINNET.clone());
         let header = header_with_timestamp(100, 900);
-        let valid_attrs = OutbePayloadAttributes::new(
-            alloy_primitives::Address::ZERO,
-            100_901,
-            B256::ZERO,
-            None,
-            Bytes::new(),
-            None,
-            None,
-        );
-        let invalid_attrs = OutbePayloadAttributes::new(
-            alloy_primitives::Address::ZERO,
-            100_900,
-            B256::ZERO,
-            None,
-            Bytes::new(),
-            None,
-            None,
-        );
+        let valid_attrs =
+            OutbePayloadAttributes::new(outbe_primitives::OutbePayloadAttributesInput {
+                suggested_fee_recipient: alloy_primitives::Address::ZERO,
+                timestamp_millis: 100_901,
+                prev_randao: B256::ZERO,
+                parent_beacon_block_root: None,
+                extra_data: Bytes::new(),
+                parent_consensus_metadata: None,
+                proposer_evm_address: None,
+            });
+        let invalid_attrs =
+            OutbePayloadAttributes::new(outbe_primitives::OutbePayloadAttributesInput {
+                suggested_fee_recipient: alloy_primitives::Address::ZERO,
+                timestamp_millis: 100_900,
+                prev_randao: B256::ZERO,
+                parent_beacon_block_root: None,
+                extra_data: Bytes::new(),
+                parent_consensus_metadata: None,
+                proposer_evm_address: None,
+            });
 
         validator
             .validate_payload_attributes_against_header(&valid_attrs, &header)

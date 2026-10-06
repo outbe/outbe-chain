@@ -83,7 +83,7 @@ enum DkgCommand {
         storage_dir: std::path::PathBuf,
     },
     /// Delete only the local consensus threshold material.
-    /// This never modifies or recovers the permanent TEE offer key; normal
+    /// This never modifies or recovers the permanent TEE offer key. Normal
     /// genesis or live-join gates still decide whether startup may proceed.
     ForceRestart {
         /// Storage directory containing DKG material.

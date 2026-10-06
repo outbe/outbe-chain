@@ -1,6 +1,6 @@
 //! Reth ExEx adapter for finalized offchain-data projection.
 //!
-//! Canonical-chain notifications are deliberately only drained here. The provider's finalized
+//! This adapter deliberately only drains canonical-chain notifications. The provider's finalized
 //! block signal is the sole authority that permits projection writes.
 
 use alloy_primitives::B256;
@@ -15,7 +15,7 @@ use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_data::TributeRetentionSelector;
 use outbe_offchain_storage::OpenedStorage;
 use outbe_offchain_storage::PendingOverlayStorage;
-use outbe_offchain_storage::RocksDbCloseWaiter;
+use outbe_offchain_storage::StorageCompletion;
 use outbe_offchain_storage::StorageConfig;
 use outbe_offchain_storage::StorageError;
 use outbe_offchain_storage::StorageErrorKind;
@@ -52,7 +52,8 @@ pub struct OffchainDataProjectionConfig {
     pub storage: StorageConfig,
 }
 
-/// Projection instance whose offchain storage connection, topology, and managed state passed preflight.
+/// Projection instance whose offchain storage connection, topology, and managed state passed
+/// preflight.
 pub struct PreparedOffchainDataProjection {
     projector: OffchainDataProjection,
     storage: OpenedStorage,
@@ -65,10 +66,10 @@ pub struct PreparedOffchainDataProjection {
 }
 
 impl PreparedOffchainDataProjection {
-    /// Completion of the primary RocksDB destructor, if this node uses RocksDB.
+    /// Acknowledged completion of native storage teardown and writer ownership release.
     #[must_use]
-    pub fn rocksdb_close_waiter(&self) -> Option<RocksDbCloseWaiter> {
-        self.storage.ownership.rocksdb_close_waiter()
+    pub fn storage_completion(&self) -> StorageCompletion {
+        self.storage.ownership.completion()
     }
 
     /// Typed read-only capabilities injected into EVM execution.
@@ -129,11 +130,12 @@ pub struct ReadyOffchainDataProjection {
     retention_fence: Arc<ProjectionRetentionFence>,
 }
 
-/// Connects to offchain storage and validates storage prerequisites before Reth component initialization.
+/// Connects to offchain storage and validates storage prerequisites before Reth initializes its
+/// components.
 pub fn prepare_offchain_data_projection(
     config: OffchainDataProjectionConfig,
 ) -> eyre::Result<PreparedOffchainDataProjection> {
-    prepare_offchain_data_projection_inner(config, None)
+    prepare_offchain_data_projection_inner(config, None, None)
 }
 
 /// Prepares projection with the node-owned OCOMP retention selector installed on both the
@@ -141,13 +143,21 @@ pub fn prepare_offchain_data_projection(
 pub fn prepare_offchain_data_projection_with_retention(
     config: OffchainDataProjectionConfig,
     selector: Arc<dyn TributeRetentionSelector>,
+    observe_completion: impl Fn(StorageCompletion) + Send + Sync + 'static,
 ) -> eyre::Result<PreparedOffchainDataProjection> {
-    prepare_offchain_data_projection_inner(config, Some(selector))
+    prepare_offchain_data_projection_inner(
+        config,
+        Some(selector),
+        Some(Arc::new(observe_completion)),
+    )
 }
+
+type StorageCompletionObserver = Arc<dyn Fn(StorageCompletion) + Send + Sync>;
 
 fn prepare_offchain_data_projection_inner(
     config: OffchainDataProjectionConfig,
     selector: Option<Arc<dyn TributeRetentionSelector>>,
+    observe_completion: Option<StorageCompletionObserver>,
 ) -> eyre::Result<PreparedOffchainDataProjection> {
     validate_projection_network(config.chain_id)?;
     if config.storage.start_block != 1 {
@@ -166,12 +176,14 @@ fn prepare_offchain_data_projection_inner(
         let (attempt_tx, attempt_rx) = std::sync::mpsc::sync_channel(1);
         let attempt_config = config.clone();
         let attempt_selector = selector.clone();
+        let attempt_observer = observe_completion.clone();
         std::thread::Builder::new()
             .name("offchain-startup".to_owned())
             .spawn(move || {
                 let _ = attempt_tx.send(prepare_projection_attempt(
                     &attempt_config,
                     attempt_selector,
+                    attempt_observer,
                 ));
             })
             .wrap_err("spawn offchain storage startup validation worker")?;

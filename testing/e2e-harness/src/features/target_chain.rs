@@ -1,4 +1,4 @@
-//! Steps for the local target chain cross-chain scenarios bridge to.
+//! Steps for the local target chain. Cross-chain scenarios bridge to this chain.
 
 use cucumber::{then, when};
 

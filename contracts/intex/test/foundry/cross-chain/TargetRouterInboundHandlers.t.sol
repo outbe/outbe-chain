@@ -24,11 +24,12 @@ import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 import {RevertingERC1155Receiver} from "@test-mocks/RevertingERC1155Receiver.sol";
 import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 
-/// @dev End-to-end traversal of the five `TargetRouter` inbound handlers that previously only
-///      had codec-level round-trip coverage. Each test hand-builds a `BridgeMsgCodec` packet and
-///      drives `lzReceive` from the endpoint address, then asserts the downstream side-effect on
-///      the wired contract - proving the full receiveMessage -> dispatchInbound -> _handleX -> X path
-///      under the current fail-don't-drop model.
+/// @dev End-to-end traversal of the five `TargetRouter` inbound handlers. These handlers
+///      previously had only codec-level round-trip coverage. Each test hand-builds a
+///      `BridgeMsgCodec` packet and drives `lzReceive` from the endpoint address. Then it asserts
+///      the downstream side-effect on the wired contract. This proves the full
+///      receiveMessage -> dispatchInbound -> _handleX -> X path under the current
+///      fail-don't-drop model.
 contract TargetRouterInboundHandlersTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
@@ -163,7 +164,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         }
     }
 
-    // --- _handleIssuanceInstructions: createSeries + per-recipient mint on the local IntexNFT1155 ---
+    // --- _handleIssuanceInstructions: createSeries + per-recipient mint on local IntexNFT1155 ---
     function test_handleIssuanceInstructions_createsSeriesAndIssues() public {
         address[] memory recipients = new address[](1);
         recipients[0] = bidder;
@@ -185,7 +186,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
             callThreshold: 5,
             callPriceMinor: 25e6,
             recipients: recipients,
-            quantities: quantities
+            units: quantities
         });
         bytes memory packet =
             BridgeMsgCodec.encodeIssuanceInstructions(WORLDWIDE_DAY, 0, 1, IssuanceBatchLib.one(payload));
@@ -221,7 +222,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
                     callThreshold: 5,
                     callPriceMinor: 25e6,
                     recipients: recipients,
-                    quantities: quantities
+                    units: quantities
                 })
             )
         );
@@ -260,7 +261,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         quantities[1] = 3;
         _deliver(_issuancePacket(recipients, quantities));
 
-        // Recipient stops reverting; the parked mint is retried permissionlessly.
+        // The recipient stops reverting. Any caller can retry the parked mint.
         bad.setReject(false);
         bnbRouter.applyParkedIssuance(0);
 
@@ -273,7 +274,8 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         bnbRouter.applyParkedIssuance(0);
     }
 
-    // --- _handleRefundInstructions: forwarded to EscrowAdapter.finalizeAuction; the winner's lock flips Won ---
+    // --- _handleRefundInstructions: forwarded to EscrowAdapter.finalizeAuction ---
+    // The winner's lock flips to Won.
     function test_handleRefundInstructions_finalizesEscrow() public {
         // Lock funds for the bidder so finalizeAuction's per-winner branch can land.
         paymentToken.mint(bidder, 1e18);

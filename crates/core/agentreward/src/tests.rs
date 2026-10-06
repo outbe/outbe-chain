@@ -14,7 +14,7 @@ const T_NOW: u64 = 1_700_000_000;
 /// A COEN price, in the six-decimal protocol scale prices are quoted in.
 const ONE_COEN: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 
-/// Claimable balances are native COEN; Gem loads are protocol amounts.
+/// Claimable balances are native COEN. Gem loads are protocol amounts.
 fn native(protocol_amount: u64) -> U256 {
     outbe_primitives::units::checked_protocol_to_native(U256::from(protocol_amount)).unwrap()
 }
@@ -116,7 +116,7 @@ fn gas_06_agentreward_dense_daily_distribution_completes_and_clears_indexes() {
 
 #[test]
 fn test_address_list_deduplication() {
-    // Same address incremented multiple times should appear in list only once.
+    // An address with multiple increments should appear in the list only once.
     let alice = address!("0x1111111111111111111111111111111111111111");
     let wwd = WorldwideDay::new(5);
 
@@ -154,7 +154,7 @@ fn seed_oracle(storage: &StorageHandle<'_>, price: U256) {
     seed_day_vwap(storage, price);
 }
 
-/// Publishes `vwap` as the COEN/840 VWAP of the UTC day before `T_NOW`; zero clears it.
+/// Publishes `vwap` as the COEN/840 VWAP of the UTC day before `T_NOW`. Zero clears it.
 fn seed_day_vwap(storage: &StorageHandle<'_>, vwap: U256) {
     let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 840)
         .unwrap()
@@ -229,7 +229,7 @@ fn the_sra_pool_issues_an_sra_gem_at_the_discounted_cost() {
             .claim_reward(RewardPool::Sra, alice, U256::ZERO)
             .unwrap();
         let sra_gem = gem_of(&storage, alice);
-        // The SRA share of the cost is derived, not stored; gemfactory pins the 64%
+        // The SRA share of the cost is derived, not stored. gemfactory pins the 64%
         // coefficient. What this pool owes is the Sra type and the whole load.
         assert_eq!(sra_gem.gem_type, GemTypes::Sra as u8);
         assert_eq!(sra_gem.promis_load_minor, load);
@@ -431,8 +431,8 @@ fn a_sub_unit_remainder_stays_claimable() {
         contract
             .claim_reward(RewardPool::Waa, alice, U256::ZERO)
             .unwrap();
-        // The Gem carries the convertible part; what is below one protocol unit
-        // keeps accumulating and its backing is not burned.
+        // The Gem carries the convertible part. What is below one protocol unit
+        // keeps accumulating, and the claim does not burn its backing.
         assert_eq!(
             gem_of(&storage, alice).promis_load_minor,
             U256::from(500u64)
@@ -572,7 +572,7 @@ mod distribute_daily_tests {
             let alice = address!("0x1111111111111111111111111111111111111111");
             let bob = address!("0x2222222222222222222222222222222222222222");
             let mut c = AgentRewardContract::new(ctx.storage.clone());
-            // alice 9, bob 1 -> both end up capped at 32 % of 1000 = 320 each;
+            // alice 9, bob 1 -> both are capped at 32 % of 1000 = 320 each.
             // residue = 1000 - 640 = 360.
             for _ in 0..9 {
                 c.increment_waa_tribute(DAY, alice).unwrap();
@@ -594,7 +594,7 @@ mod distribute_daily_tests {
                     .unwrap(),
                 native(640)
             );
-            // WAA index cleared after distribution.
+            // Distribution clears the WAA index.
             assert!(c2.get_all_waa_counts(DAY).unwrap().is_empty());
         });
     }
@@ -629,7 +629,7 @@ mod distribute_daily_tests {
             let excess =
                 distribute_daily(ctx, DAY, &[(PoolKind::Waa, U256::from(500u64))]).unwrap();
             assert_eq!(excess, U256::from(500u64));
-            // No eligible rewards: no backing is minted.
+            // No eligible rewards: distribution mints no backing.
             assert_eq!(
                 ctx.storage
                     .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
@@ -709,7 +709,7 @@ mod distribute_daily_tests {
     #[test]
     fn full_three_pool_dispatch_sums_excesses() {
         run(|ctx| {
-            // Seed only WAA; SRA empty; CCA empty.
+            // Seed only WAA. SRA and CCA stay empty.
             let alice = address!("0x1111111111111111111111111111111111111111");
             let mut c = AgentRewardContract::new(ctx.storage.clone());
             c.increment_waa_tribute(DAY, alice).unwrap();
@@ -735,7 +735,7 @@ mod distribute_daily_tests {
                 U256::ZERO
             );
             // burn parity: AGENT_REWARD holds exactly alice's
-            // 320 claimable; the SRA no-tribute pool was not minted.
+            // 320 claimable. Distribution did not mint the SRA no-tribute pool.
             assert_eq!(
                 ctx.storage
                     .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
@@ -762,8 +762,8 @@ mod distribute_daily_tests {
     #[test]
     fn chain_219_burn_parity_invariant() {
         // After distribute_daily on any input, balance(AGENT_REWARD)
-        // must equal the sum of claimable_rewards credited that call -
-        // never higher.
+        // must equal the sum of claimable_rewards credited that call. It must
+        // never be higher.
         run(|ctx| {
             let alice = address!("0x1111111111111111111111111111111111111111");
             let bob = address!("0x2222222222222222222222222222222222222222");
@@ -830,7 +830,7 @@ struct SolFnCanonical {
 
 /// Parses one `function NAME(...) ... returns (...)` declaration out of a
 /// Solidity interface body into a comparable canonical form. Tolerates
-/// `external`, `view`, and parameter names; returns only type lists.
+/// `external`, `view`, and parameter names. Returns only type lists.
 fn sol_function_canonical(sol: &str, name: &str) -> Option<SolFnCanonical> {
     let needle = format!("function {name}(");
     let start = sol.find(&needle)? + needle.len() - 1; // points at '('

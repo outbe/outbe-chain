@@ -10,15 +10,15 @@ import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 
 /// @dev PR-A Tier-1 input-validation hardening of BridgeMsgCodec:
-///      - fixed-width decoders assert exact length (truncation silent-truncation);
-///      - the STAGE_START `dayState` byte decodes strictly;
-///      - outbound encoders cap payload arrays at `MAX_PAYLOAD_ARRAY_LEN`;
+///      - fixed-width decoders assert exact length (truncation silent-truncation).
+///      - the STAGE_START `dayState` byte decodes strictly.
+///      - outbound encoders cap payload arrays at `MAX_PAYLOAD_ARRAY_LEN`.
 ///      - `decode*` deliberately does NOT cap (inbound is A3's drop-don't-block job).
 ///
 ///      External wrappers expose the internal calldata-slice decoders so they can be
 ///      driven through `vm.expectRevert` (mirrors BodyVersion.t.sol).
 contract BridgeMsgCodecValidationTest is Test {
-    /// @dev Fixed call stamp; these tests exercise the wire, not the clock.
+    /// @dev Fixed call stamp. These tests exercise the wire, not the clock.
     uint32 internal constant CALLED_AT = 1_777_000_000;
 
     // --- fixed-width decoders reject over-long payloads ---
@@ -204,9 +204,10 @@ contract BridgeMsgCodecValidationTest is Test {
         this.exposedEncodeIssuance(n);
     }
 
-    /// @dev decodeRefundInstructions enforces a symmetric inbound cap so a peer compromise or a
+    /// @dev decodeRefundInstructions enforces a symmetric inbound cap. Thus a peer compromise or a
     ///      future encoder change cannot deliver an oversized REFUND that exhausts the receiver's
-    ///      gas in the per-winner loop. Built by hand to bypass the now-capping encoder.
+    ///      gas in the per-winner loop. The test builds the payload by hand to bypass the
+    ///      now-capping encoder.
     function test_DecodeRefund_OverOutboundCap_RevertsRefundBatchTooLarge() public {
         uint256 n = uint256(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN) + 1;
         bytes memory overCap = abi.encodePacked(
@@ -226,8 +227,8 @@ contract BridgeMsgCodecValidationTest is Test {
 
     /// @notice The send-side `maxMessageSize` the bridge configures for these pathways. A send whose
     ///         encoded message exceeds this reverts on the source chain. This is the *byte*
-    ///         ceiling only; destination gas (the per-item crosschainMint loop) is a separate and,
-    ///         for the heavy paths, tighter limit - not measured here.
+    ///         ceiling only. Destination gas (the per-item crosschainMint loop) is a separate
+    ///         limit, and for the heavy paths a tighter one. This file does not measure it.
     uint256 internal constant MAX_MESSAGE_BYTES = 10_000;
 
     /// @dev Derives the largest array length whose encoded message still fits under
@@ -302,7 +303,7 @@ contract BridgeMsgCodecValidationTest is Test {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
         payload.seriesId = "20260212-TRY-U";
         payload.recipients = new address[](1);
-        payload.quantities = new uint256[](1);
+        payload.units = new uint256[](1);
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
             BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
@@ -338,7 +339,7 @@ contract BridgeMsgCodecValidationTest is Test {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
         payload.seriesId = "20260212-TRY-U";
         payload.recipients = new address[](1);
-        payload.quantities = new uint256[](1);
+        payload.units = new uint256[](1);
         return BridgeMsgCodec.encodeIssuanceInstructions(0, chunkIndex, totalChunks, IssuanceBatchLib.one(payload));
     }
 
@@ -350,7 +351,7 @@ contract BridgeMsgCodecValidationTest is Test {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
         payload.seriesId = "20260212-TRY-U";
         payload.recipients = new address[](n);
-        payload.quantities = new uint256[](n);
+        payload.units = new uint256[](n);
         return BridgeMsgCodec.encodeIssuanceInstructions(0, 0, 1, IssuanceBatchLib.one(payload));
     }
 }

@@ -607,7 +607,7 @@ impl Rpc {
     }
 
     /// Replay the unsupported activation calldata at its finalized receipt height.
-    /// The actual transaction is checked separately; this call identifies its
+    /// The actual transaction is checked separately. This call identifies its
     /// state-independent ABI rejection reason without claiming boundary validation.
     pub fn unsupported_activation_revert_reason_at(
         &self,

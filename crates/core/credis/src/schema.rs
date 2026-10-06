@@ -8,7 +8,7 @@ use crate::errors::CredisError;
 
 /// Position lifecycle state.
 ///
-/// A position is settleable from the moment it opens; `Open -> Called` is the
+/// A position is settleable from the moment it opens. `Open -> Called` is the
 /// sustained-breach trigger. Both `Settled` (fully repaid) and `Void` (call
 /// window lapsed with a remainder) are terminal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,9 +39,9 @@ impl CredisState {
 
 /// Position record. Keyed by `keccak256(cca || smart_account || asset || block_number)`.
 ///
-/// Every term - both currency codes included - is sealed at opening and never
-/// changes afterwards; only `outstanding`, `collateral_locked`,
-/// `interest_paid`, `last_settled_at`, `called_at` and `state` move over the
+/// Every term, both currency codes included, is sealed at opening and never
+/// changes afterwards. Only `outstanding_principal_minor`, `outstanding_gratis_minor`,
+/// `interest_paid_minor`, `last_settled_at`, `called_at` and `state` move over the
 /// position's life.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[storage_record(exists_field = smart_account)]
@@ -63,35 +63,32 @@ pub struct Position {
     pub asset: Address,
 
     /// ISO 4217 numeric code of `asset` (e.g. 840 = USD), read at opening.
-    /// Denominates the position and keys its policy rate. NOT the call
-    /// threshold anchor - see [`Self::reference_currency`].
+    /// Denominates the position and keys its policy rate. It is NOT the call
+    /// threshold anchor. See [`Self::reference_currency`].
     #[attribute(order = 3)]
     pub issuance_currency: u16,
 
-    /// The pledger EOA sealed under the enclave state key (`nonce || ct`, produced by
-    /// gratis `ConsumePledge`). Stored as ciphertext so external observers cannot link the
-    /// EOA to `smart_account`; settlement and the void recover the plaintext EOA
-    /// via a `RevealOwner` enclave round-trip to key the right `pledged_ct` and fidelity
-    /// cohort. Never a plaintext address on-chain.
+    /// Canonical, nonzero serial authenticated by the issuance proof. Repayment
+    /// notes use this serial without revealing or accessing the source account.
     #[attribute(order = 4)]
-    pub eoa_ct: Vec<u8>,
+    pub return_note_serial: B256,
 
     /// `P` - stablecoin minor units disbursed. Fixed.
     #[attribute(order = 5)]
-    pub principal: U256,
+    pub principal_minor: U256,
 
     /// `P_out` - outstanding principal. Reaching zero closes the position.
     #[attribute(order = 6)]
-    pub outstanding: U256,
+    pub outstanding_principal_minor: U256,
 
     /// `G` - pledged Gratis, valued 1:1 against principal at the pledge quote
     /// rate (COEN/`issuance_currency`, sealed into the ticket). Fixed.
     #[attribute(order = 7)]
-    pub collateral: U256,
+    pub gratis_minor: U256,
 
     /// The share of `G` still locked. Released principal-proportionally.
     #[attribute(order = 8)]
-    pub collateral_locked: U256,
+    pub outstanding_gratis_minor: U256,
 
     /// `r` - the currency's annual official policy rate (scale `1e6`) times the
     /// policy-rate factor, pinned at opening for the position's life.
@@ -101,13 +98,13 @@ pub struct Position {
     /// Principal / Gratis, in the issuance currency (scale `1e6`). Sealed on the
     /// pledge and copied here. Not an oracle quote and not the call anchor.
     #[attribute(order = 10)]
-    pub entry_price: U256,
+    pub entry_price_minor: U256,
 
-    /// `call_anchor_price * 164 / 100`, in the reference currency (scale `1e6`).
+    /// `call_anchor_price_minor * 164 / 100`, in the reference currency (scale `1e6`).
     /// The daily scan calls the position when 21 of the last 28 finalized
     /// COEN/`reference_currency` VWAPs are strictly above this price. Immutable.
     #[attribute(order = 11)]
-    pub call_price: U256,
+    pub call_price_minor: U256,
 
     /// Issuance timestamp. The interest anchor starts here, and the call scan
     /// ignores daily VWAPs from before this instant's UTC day.
@@ -115,9 +112,9 @@ pub struct Position {
     pub issued_at: u64,
 
     /// Start of the current accrual period. Equals `issued_at` until the
-    /// first settlement, then advances by the whole days each settlement
-    /// charges - not to the settlement timestamp, so a sub-day remainder
-    /// carries forward instead of being discarded.
+    /// first settlement. Then it advances by the whole days that each settlement
+    /// charges, not to the settlement timestamp. Thus a sub-day remainder
+    /// carries forward and is not discarded.
     #[attribute(order = 13)]
     pub last_settled_at: u64,
 
@@ -125,50 +122,50 @@ pub struct Position {
     #[attribute(order = 14, default = 0)]
     pub called_at: u64,
 
-    /// Lifecycle state as `u8`; decode via [`CredisState::from_u8`].
+    /// Lifecycle state as `u8`. Decode it via [`CredisState::from_u8`].
     #[attribute(order = 15)]
     pub state: u8,
 
     /// ISO 4217 numeric code of the reference currency elected at issuance
-    /// and fixed for the position's life. `call_anchor_price` and `call_price`
+    /// and fixed for the position's life. `call_anchor_price_minor` and `call_price_minor`
     /// are quoted here, and the daily breach scan reads the
-    /// COEN/`reference_currency` series. It does not denominate `entry_price`.
+    /// COEN/`reference_currency` series. It does not denominate `entry_price_minor`.
     #[attribute(order = 16)]
     pub reference_currency: u16,
 
     /// Call Notice Period in seconds: a called position whose remainder is
-    /// still outstanding at `called_at + call_notice_period` is voided.
+    /// still outstanding at `called_at + call_notice_period_seconds` is voided.
     /// Snapshot of the protocol constant at opening.
     #[attribute(order = 17, default = 0)]
-    pub call_notice_period: u32,
+    pub call_notice_period_seconds: u32,
 
     /// Call-price markup percent (snapshot of `CALL_RATE_PCT` at issuance).
-    /// Applied to `call_anchor_price`, not to `entry_price` (64 => 1.64x).
+    /// Applied to `call_anchor_price_minor`, not to `entry_price_minor` (64 => 1.64x).
     #[attribute(order = 18, default = 0)]
     pub call_rate: u16,
 
     /// Call-trigger evaluation window in seconds (snapshot of the protocol
-    /// constant at opening); the trailing span the daily scan reads for Call
-    /// Price breaches. Divided by 86400 to get the day count.
+    /// constant at opening). This is the trailing span the daily scan reads for
+    /// Call Price breaches. Divided by 86400 to get the day count.
     #[attribute(order = 19, default = 0)]
-    pub call_window: u32,
+    pub call_window_seconds: u32,
 
     /// Breach threshold in seconds (snapshot of the protocol constant at
-    /// opening); divided by 86400 to get the required breach-day count.
+    /// opening). Divided by 86400 to get the required breach-day count.
     #[attribute(order = 20, default = 0)]
-    pub call_threshold: u32,
+    pub call_threshold_seconds: u32,
 
     /// COEN price in `reference_currency` (scale `1e6`) sealed at issuance:
     /// the previous closed UTC-day VWAP, independent of spot.
-    /// Immutable. `call_price` is this value times 1.64.
+    /// Immutable. `call_price_minor` is this value times 1.64.
     #[attribute(order = 21)]
-    pub call_anchor_price: U256,
+    pub call_anchor_price_minor: U256,
 
     /// Lifetime interest collected, in the asset's minor units. The sum of
     /// successful settlement interest deltas. Unpaid interest is left out,
     /// including when the remainder is voided.
     #[attribute(order = 22)]
-    pub interest_paid: U256,
+    pub interest_paid_minor: U256,
 }
 
 impl Position {
@@ -207,10 +204,10 @@ pub struct CredisContract {
     #[attribute(order = 4)]
     pub position_id_at_index: outbe_primitives::storage::dsl::Map<u64, U256>,
 
-    /// Dense index of the positions still on the price path - those in `Open`
-    /// or `Called`. Membership invariant: a position is listed iff
-    /// its state is non-terminal, so the daily scan visits only the positions
-    /// that can still transition instead of the whole book.
+    /// Dense index of the positions still on the price path, that is, those in
+    /// `Open` or `Called`. Membership invariant: a position is listed iff its
+    /// state is non-terminal. Thus the daily scan visits only the positions that
+    /// can still transition, not the whole book.
     #[attribute(order = 5)]
     pub active_positions: outbe_primitives::storage::dsl::List<U256>,
 
@@ -223,11 +220,11 @@ pub struct CredisContract {
     #[attribute(order = 7)]
     pub called_position_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
 
-    /// Widest `call_window` ever opened in a reference currency, in seconds. It
+    /// Widest `call_window_seconds` ever opened in a reference currency, in seconds. It
     /// only grows, so the trailing span the daily scan collects always covers a
     /// position whose sealed window outruns the current constant.
     #[attribute(order = 8)]
-    pub max_call_window: outbe_primitives::storage::dsl::Map<u16, u32>,
+    pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 }
 
 impl CredisContract<'_> {

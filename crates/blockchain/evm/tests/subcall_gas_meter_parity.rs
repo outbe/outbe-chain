@@ -61,10 +61,10 @@ proptest! {
         }
     }
 
-    /// Mirrors `revm::Gas::erase_cost`. Inputs bounded below `u64::MAX / 32`
-    /// per step to avoid `remaining + returned` overflow in upstream's
-    /// unchecked add (which is the documented production-realistic range -
-    /// gas budgets are sub-tx and never approach `u64::MAX`).
+    /// Mirrors `revm::Gas::erase_cost`. Each step keeps inputs below
+    /// `u64::MAX / 32` to avoid `remaining + returned` overflow in upstream's
+    /// unchecked add. This is the documented production-realistic range:
+    /// gas budgets are sub-tx and never approach `u64::MAX`.
     #[test]
     fn erase_cost_byte_equal(
         limit in 0u64..=u64::MAX / 4,
@@ -91,10 +91,10 @@ proptest! {
         }
     }
 
-    /// Mirrors `revm::Gas::record_refund`. Inputs bounded to +/-1B per step
-    /// to avoid `refunded += refund` i64-overflow in upstream. Realistic
-    /// per-call refund values (EIP-3529 cap) are bounded by tx gas limit,
-    /// always within `i64` headroom.
+    /// Mirrors `revm::Gas::record_refund`. Each step keeps inputs within
+    /// +/-1B to avoid `refunded += refund` i64-overflow in upstream. The tx
+    /// gas limit bounds realistic per-call refund values (EIP-3529 cap).
+    /// These values are always within `i64` headroom.
     #[test]
     fn record_refund_byte_equal(
         limit in 0u64..=u64::MAX,

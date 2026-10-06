@@ -12,10 +12,11 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
 /// @title DuplicateProtectionTest
 /// @notice Duplicate-execution protection on the NFT batch adapter.
-/// @dev Message-level dedup belongs to the hub: it marks every delivery before handing it on and rolls the mark
-///      back with the transaction, so an exact replay never reaches a client (covered by
-///      `ERC7786Bridge.t.sol:test_RevertWhen_ReceiveAlreadyExecuted`). Clients therefore keep no copy of it. What
-///      stays worth pinning here is the other direction: distinct payloads carry distinct ids and must both land.
+/// @dev Message-level dedup belongs to the hub. The hub marks every delivery before it forwards the
+///      delivery, and it rolls the mark back with the transaction. Thus an exact replay never
+///      reaches a client (covered by `ERC7786Bridge.t.sol:test_RevertWhen_ReceiveAlreadyExecuted`).
+///      Clients therefore keep no copy of it. What stays worth pinning here is the other direction:
+///      distinct payloads carry distinct ids and must both land.
 contract DuplicateProtectionTest is CrossChainTest {
     uint32 internal constant SRC_CHAIN_ID = 1;
     uint32 internal constant DST_CHAIN_ID = 2;
@@ -57,7 +58,7 @@ contract DuplicateProtectionTest is CrossChainTest {
         intexDst.grantRole(intexDst.RELAYER_ROLE(), address(batchDst));
 
         // Mint on the source so the caller (an EOA that can receive/hold ERC1155) has a balance to bridge.
-        intexSrc.issue(sender, 1, SERIES_ID);
+        intexSrc.issueIntex(sender, 1, SERIES_ID);
     }
 
     function _seedSeries(IntexNFT1155 intex) internal {
@@ -70,13 +71,14 @@ contract DuplicateProtectionTest is CrossChainTest {
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = 1;
         return BatchSendParam({
-            dstChainId: DST_CHAIN_ID, to: bytes32(uint256(uint160(to))), tokenIds: tokenIds, amounts: amounts
+            dstChainId: DST_CHAIN_ID, to: bytes32(uint256(uint160(to))), tokenIds: tokenIds, units: amounts
         });
     }
 
-    /// @notice Two sends carrying distinct payloads -> distinct receiveIds, so both land. Proves the guard keys on
-    ///         the message id, not merely on the source. (Different recipients keep the payloads distinct, which the
-    ///         loopback bridge needs since it binds the receiveId to the payload bytes.)
+    /// @notice Two sends carrying distinct payloads -> distinct receiveIds, so both land. This
+    ///         proves that the guard keys on the message id, not merely on the source. (Different
+    ///         recipients keep the payloads distinct. The loopback bridge needs this because it
+    ///         binds the receiveId to the payload bytes.)
     function test_NFTBatch_DistinctMessages_BothSucceed() public {
         address other = address(0xCAFE);
 
@@ -85,7 +87,7 @@ contract DuplicateProtectionTest is CrossChainTest {
         assertEq(intexDst.balanceOf(recipient, TOKEN_ID), 1, "first send minted");
 
         // Mint another unit and send to a different recipient - a fresh payload/receiveId, not a duplicate.
-        intexSrc.issue(sender, 1, SERIES_ID);
+        intexSrc.issueIntex(sender, 1, SERIES_ID);
         vm.prank(sender);
         batchSrc.batchSend(_batchSendParam(other));
         assertEq(intexDst.balanceOf(other, TOKEN_ID), 1, "second distinct send minted");

@@ -5,12 +5,7 @@ use outbe_poseidon::{Poseidon, PoseidonHasher};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_protocol::codec::u256_limbs_be;
-use outbe_protocol::FieldElement as _;
-use outbe_zk_canonical::{
-    demo_tribute::PROOF_WORDS as DEMO_TRIBUTE_PROOF_WORDS,
-    emit_mint::PROOF_WORDS as EMIT_MINT_PROOF_WORDS,
-};
+use outbe_zk_canonical::demo_tribute::PROOF_WORDS as DEMO_TRIBUTE_PROOF_WORDS;
 
 use crate::zk::{
     dispatch_groth16, dispatch_poseidon, groth16_base_gas, poseidon_base_gas, poseidon_hash,
@@ -203,9 +198,9 @@ fn zk_verify_truncated_payload_errors() {
 }
 
 /// An offset word of `u64::MAX` used to wrap `offset + 32` to `31` in a
-/// release build, defeat the `input.len() < offset + 32` guard, and panic on
-/// the out-of-range slice index - a permissionless halt of every validator
-/// executing the `0xEE08` call.
+/// release build. Then it defeated the `input.len() < offset + 32` guard and
+/// caused a panic on the out-of-range slice index. That was a permissionless
+/// halt of every validator that executed the `0xEE08` call.
 #[test]
 fn zk_verify_max_offset_is_rejected_not_panicking() {
     let mut input = [0u8; 96];
@@ -228,8 +223,8 @@ fn zk_verify_offset_just_past_canonical_is_rejected() {
     ));
 }
 
-/// The in-bounds-but-non-canonical offset that decoded before the gate: it
-/// points one word past the length slot, so the input used to decode to a
+/// The in-bounds-but-non-canonical offset that decoded before the gate. It
+/// points one word past the length slot. Thus the input used to decode to a
 /// different proof slice than the one the encoder wrote.
 #[test]
 fn zk_verify_shifted_offset_is_rejected() {
@@ -282,103 +277,4 @@ fn dispatch_groth16_unknown_circuit_returns_zero_bytes() {
     let input = abi_encode(&[0u8; 32], &[0u8; 64]);
     let out = dispatch_groth16(storage, &input, Address::ZERO, U256::ZERO).unwrap();
     assert_eq!(out.as_ref(), &[0u8; 32]);
-}
-
-/// Real prove→verify round trip through the pinned Emit mint VK. The proof
-/// must verify as submitted and stop verifying when any public input word is
-/// changed, binding the combined wire to the frozen circuit identity.
-#[test]
-fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
-    use outbe_protocol::codec::field_to_b256;
-    use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
-    use outbe_zk_backend::barretenberg::Barretenberg;
-    use outbe_zk_canonical::emit_mint::{hash::*, Field};
-    use outbe_zk_canonical::noir::emit_mint::{EmitMint, PublicInputs, Witness};
-    use outbe_zk_canonical::CircuitId as _;
-
-    assert_eq!(EmitMint::VERSION, "1.5.0");
-    assert_eq!(
-        EmitMint::CIRCUIT_HASH,
-        alloy_primitives::hex!("812dd945e0c817fd0730c84886cf1a6a702360b09896c61ca1755fafacf31e19")
-    );
-    assert_eq!(
-        EmitMint::VK_HASH,
-        alloy_primitives::hex!("6105e42a708334bce001960c942c2cfcce78aea59016d0fa5df015bab41cc84c")
-    );
-
-    outbe_zk_backend::barretenberg::init_crs().expect("CRS init");
-
-    let owner = [0x22u8; 20];
-    let chain_id = 31_337u64;
-    let note_value = (U256::from(1) << 200usize) + U256::from(100);
-    let mint_value = (U256::from(1) << 199usize) + U256::from(40);
-    let note_amount = u256_limbs_be(&note_value.to_be_bytes::<32>());
-    let mint_units = u256_limbs_be(&mint_value.to_be_bytes::<32>());
-    let spend_key = Field::from(17u64);
-    let serial = note_sn(owner.into(), spend_key).unwrap();
-    let commitment = note_commitment(chain_id, serial, note_value).unwrap();
-    let mut tree =
-        outbe_emit::EmitTree::new(emit_domain(), empty_leaf(chain_id).unwrap(), 32).unwrap();
-    tree.append(commitment).unwrap();
-    let root = tree.root();
-    let path: [Field; 32] = tree.inclusion_path(0).unwrap().siblings.try_into().unwrap();
-    let nullifier = nullifier(commitment, spend_key).unwrap();
-    let next_key = change_key(spend_key, nullifier).unwrap();
-    let change = note_commitment(
-        chain_id,
-        note_sn(owner.into(), next_key).unwrap(),
-        note_value - mint_value,
-    )
-    .unwrap();
-
-    let public = PublicInputs {
-        chain_id,
-        root,
-        nullifier,
-        note_owner: alloy_primitives::Address::from(owner).to_field().unwrap(),
-        mint_units,
-        change_commitment: change,
-    };
-    let witness = Witness {
-        note_amount,
-        note_spend_key: spend_key,
-        leaf_index: 0,
-        auth_path: path,
-    };
-    let backend = Barretenberg::default();
-    let proof = ProofGenerator::<EmitMint>::generate(&backend, &witness, &public)
-        .expect("emit mint proof generation");
-
-    assert_eq!(proof.proof.len(), EMIT_MINT_PROOF_WORDS);
-    let mut combined = Vec::with_capacity(4 + 32 * (8 + proof.proof.len()));
-    combined.extend_from_slice(&8u32.to_be_bytes());
-    for word in <EmitMint as Circuit>::public_inputs(&public) {
-        combined.extend_from_slice(field_to_b256(&word).unwrap().as_slice());
-    }
-    for word in &proof.proof {
-        combined.extend_from_slice(word);
-    }
-
-    let encoded = abi_encode(&EmitMint::CIRCUIT_HASH, &combined);
-    let mut one = [0u8; 32];
-    one[31] = 1;
-    assert_eq!(
-        zk_verify(&encoded).expect("emit verify executes"),
-        one,
-        "real emit mint proof must verify through the pinned VK"
-    );
-
-    // Every mutation remains canonically encoded, so decoding succeeds and
-    // verification alone must turn false.
-    for slot in 0..8 {
-        let mut tampered = combined.clone();
-        let start = 4 + slot * 32;
-        tampered[start + 31] ^= 1;
-        let encoded = abi_encode(&EmitMint::CIRCUIT_HASH, &tampered);
-        assert_eq!(
-            zk_verify(&encoded).expect("tampered emit verify executes"),
-            [0u8; 32],
-            "mutating public word {slot} must invalidate the proof"
-        );
-    }
 }

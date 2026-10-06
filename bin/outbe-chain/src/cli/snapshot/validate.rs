@@ -60,7 +60,7 @@ pub(super) fn run(args: ValidateArgs) -> eyre::Result<()> {
         expected_signer: args.expected_signer,
     };
     // The validation engine creates its own bounded work under this external
-    // disposable directory. No scratch is placed in the copied native stores.
+    // disposable directory. It places no scratch in the copied native stores.
     let scratch = tempfile::tempdir()?;
     // Report isolation and semantic validation must share one native argument
     // parse because chain parsing initializes process-wide protocol constants.
@@ -116,17 +116,16 @@ mod tests {
     }
 
     fn genesis(root: &Path) -> OsString {
+        let input = root.join("base.json");
+        crate::test_utils::write_base_genesis(&input, outbe_primitives::chain::DEVNET_CHAIN_ID)
+            .unwrap();
         let output = root.join("genesis.json");
         crate::tee_genesis::run(&[
             "outbe-chain".into(),
             "tee".into(),
             "genesis".into(),
             "--input".into(),
-            concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../testing/e2e-harness/fixtures/ocomp-final-v1/artifacts/genesis-final.json"
-            )
-            .into(),
+            input.to_str().unwrap().into(),
             "--output".into(),
             output.to_str().unwrap().into(),
             "--mode".into(),

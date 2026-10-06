@@ -14,8 +14,9 @@ use crate::sol_ext::{IInterchainAccountRouter, IOwnable, IStorageMultisigIsm};
 const MAX_VALIDATORS: usize = u8::MAX as usize;
 
 /// Submissions younger than this many blocks do not count towards the
-/// per-domain reference index: time for the agent to sign, upload, and the
-/// feeder to submit before a lagging validator is considered behind.
+/// per-domain reference index. This gives the agent time to sign and upload,
+/// and the feeder time to submit, before the controller considers a lagging
+/// validator behind.
 pub const GRACE_BLOCKS: u64 = 30;
 /// The liveness verdict runs at every block number that is a multiple of
 /// this, the same cadence as the oracle slash window.
@@ -46,11 +47,15 @@ impl HyperlaneControllerContract<'_> {
     // Direct selectors
     // ----------------------------------------------------------------------
 
-    /// One-shot bootstrap: accepts the pending ownership of the local ISM,
-    /// verifies the ICA router is already owned by the controller, stores it
-    /// plus the whole `domain -> ISM` table, and dispatches `acceptOwnership()`
-    /// to every remote ISM through the Interchain Account (the controller must
-    /// be funded first: each dispatch pays the IGP quote).
+    /// One-shot bootstrap:
+    /// 1. Accepts the pending ownership of the local ISM.
+    /// 2. Verifies that the controller already owns the ICA router.
+    /// 3. Stores the router plus the whole `domain -> ISM` table.
+    /// 4. Dispatches `acceptOwnership()` to every remote ISM through the
+    ///    Interchain Account.
+    ///
+    /// The controller must have funds first, because each dispatch pays the
+    /// IGP quote.
     ///
     /// Only the current owner of the local ISM (the deployer that staged
     /// `transferOwnership` to this precompile) may call it.
@@ -116,7 +121,7 @@ impl HyperlaneControllerContract<'_> {
         })
     }
 
-    /// Records a top-up; the value itself is credited by the payable route.
+    /// Records a top-up. The payable route credits the value itself.
     pub fn fund(&mut self, from: Address, amount: U256) -> Result<()> {
         if amount.is_zero() {
             return Err(HyperlaneControllerError::ZeroFund.into());
@@ -144,8 +149,8 @@ impl HyperlaneControllerContract<'_> {
     // ----------------------------------------------------------------------
 
     /// Full rotation: `setValidatorsAndThreshold` on every remote ISM through
-    /// the Interchain Account, then on the local ISM. One checkpoint - any
-    /// failure leaves every ISM untouched.
+    /// the Interchain Account, then on the local ISM. All calls run under one
+    /// checkpoint. Any failure leaves every ISM untouched.
     pub fn set_validators_and_threshold(
         &mut self,
         validators: &[Address],
@@ -268,8 +273,8 @@ impl HyperlaneControllerContract<'_> {
     // Liveness: validators prove their Hyperlane agent keeps signing
     // ----------------------------------------------------------------------
 
-    /// Registers the key `caller`'s validator signs Hyperlane checkpoints
-    /// with. Zero resets to the validator address.
+    /// Registers the key that the validator of `caller` uses to sign Hyperlane
+    /// checkpoints. Zero resets to the validator address.
     pub fn set_hyperlane_signer(&mut self, caller: Address, signer: Address) -> Result<()> {
         let validator = self.validator_of_sender(caller)?;
         let effective = if signer == Address::ZERO {
@@ -299,10 +304,11 @@ impl HyperlaneControllerContract<'_> {
     }
 
     /// Liveness proof for one domain. The caller (validator or its oracle
-    /// delegate, i.e. the feeder key) submits its latest signed checkpoint;
-    /// the signature is verified against the validator's Hyperlane signer and
-    /// only the index is recorded. Index 0 is never accepted: the first
-    /// submission must be strictly newer than the stored zero.
+    /// delegate, i.e. the feeder key) submits its latest signed checkpoint.
+    /// The controller verifies the signature against the validator's
+    /// Hyperlane signer and records only the index. The controller never
+    /// accepts index 0: the first submission must be strictly newer than the
+    /// stored zero.
     pub fn submit_checkpoint(
         &mut self,
         caller: Address,
@@ -355,14 +361,15 @@ impl HyperlaneControllerContract<'_> {
         })
     }
 
-    /// Liveness-window verdict (every [`LIVENESS_WINDOW_BLOCKS`]). Per domain
-    /// the reference index is the `threshold`-th highest submission among
-    /// active validators, counting only submissions older than
-    /// [`GRACE_BLOCKS`]: one validator cannot inflate it, and a checkpoint
-    /// everyone is still catching up on is ignored. A validator below the
-    /// reference on any domain gets a miss; [`MAX_MISSES`] consecutive misses
-    /// jail it (no slash). A validator with no submission yet is stamped and
-    /// evaluated from the next window. Returns the validators jailed.
+    /// Liveness-window verdict (every [`LIVENESS_WINDOW_BLOCKS`]). For each
+    /// domain, the reference index is the `threshold`-th highest submission
+    /// among active validators. Only submissions older than [`GRACE_BLOCKS`]
+    /// count. This way, one validator cannot inflate the reference, and the
+    /// verdict ignores a checkpoint that everyone still trails. A validator
+    /// below the reference on any domain gets a miss. [`MAX_MISSES`]
+    /// consecutive misses jail it (no slash). A validator with no submission
+    /// yet gets a stamp, and the verdict evaluates it from the next window.
+    /// Returns the validators jailed.
     pub fn check_liveness(&mut self) -> Result<Vec<Address>> {
         if !self.is_initialized()? {
             return Ok(Vec::new());
@@ -676,7 +683,8 @@ fn same_set(left: &[Address], right: &[Address]) -> bool {
     left == right
 }
 
-/// Shape checks Hyperlane's `setValidatorsAndThreshold` would reject on-chain.
+/// Shape checks for the inputs that Hyperlane's `setValidatorsAndThreshold`
+/// would reject on-chain.
 pub fn validate_validators(
     validators: &[Address],
     threshold: u8,

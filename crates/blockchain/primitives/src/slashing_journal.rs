@@ -1,39 +1,41 @@
 //! Append-only JSONL journal for SlashIndicator/ValidatorSet critical events.
 //!
-//! The journal is a process-local sidecar to the standard reth log. It is
-//! written one JSON record per critical state-transition event under a
-//! single file path (`<datadir>/slashing-journal.jsonl`) and is **never
-//! rotated** by the application. Operators may snapshot or trim the file
-//! manually; the runtime never truncates it.
+//! The journal is a process-local sidecar to the standard reth log. The runtime
+//! writes one JSON record for each critical state-transition event to a single
+//! file path (`<datadir>/slashing-journal.jsonl`). The application **never
+//! rotates** the file. Operators may snapshot or trim the file manually. The
+//! runtime never truncates it.
 //!
 //! ## Why
 //!
 //! Standard `reth.log` rotates when each file reaches the configured size
-//! (~200 MB). At testnet finalization rates this can mean a few hours of
-//! runtime fits in the ~5-file rotation window - slash and validator-exit
-//! events are routinely lost from on-host evidence by the time anyone
-//! investigates. The journal closes that gap with a single tiny file (one
-//! JSON line per event; ~10 events/day typical) that survives indefinitely.
+//! (~200 MB). At testnet finalization rates, this can mean that only a few
+//! hours of runtime fit in the ~5-file rotation window. Slash and
+//! validator-exit events are then routinely lost from on-host evidence before
+//! anyone investigates. The journal closes that gap with a single tiny file
+//! that survives indefinitely. The file holds one JSON line per event, with
+//! ~10 events/day typical.
 //!
 //! ## Best-effort semantics
 //!
-//! The journal is **best-effort** observability - writes that fail (disk
-//! full, permission error, file unwritable) emit a `tracing::warn!` and
-//! are dropped. They never block the consensus / state-transition path
-//! that produced them. Determinism is unaffected: the journal is a side
-//! effect identical on every node, and absence of the journal does not
-//! change the on-chain state.
+//! The journal is **best-effort** observability. When a write fails (disk
+//! full, permission error, file unwritable), the journal emits a
+//! `tracing::warn!` and drops the write. A failed write never blocks the
+//! consensus / state-transition path that produced it. Determinism is
+//! unaffected. The journal is a side effect identical on every node, and the
+//! absence of the journal does not change the on-chain state.
 //!
 //! ## Initialization
 //!
-//! [`init`] is called once at node startup with the data directory. If
-//! [`init`] is not called (e.g. tests), [`record`] silently no-ops.
+//! The node calls [`init`] once at startup with the data directory. If
+//! nothing calls [`init`] (e.g. tests), [`record`] silently no-ops.
+
+use crate::journal_writer::Journal;
 
 use serde::{Deserialize, Serialize};
-use std::fs::{File, OpenOptions};
-use std::io::{BufWriter, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 /// Filename of the journal inside the configured data directory.
 pub const JOURNAL_FILENAME: &str = "slashing-journal.jsonl";
@@ -46,8 +48,9 @@ pub const JOURNAL_FILENAME: &str = "slashing-journal.jsonl";
 #[serde(tag = "event", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum JournalRecord {
-    /// `slash_proposer` recorded a miss for `validator`. Per-epoch counter
-    /// reaches `count`; threshold reference values included for context.
+    /// `slash_proposer` recorded a miss for `validator`. The per-epoch counter
+    /// reaches `count`. The record includes threshold reference values for
+    /// context.
     ProposerMiss {
         wall_clock: String,
         block_number: u64,
@@ -120,10 +123,10 @@ pub enum JournalRecord {
     },
 
     /// `submitInvalidVrfProofEvidence` accepted evidence and
-    /// applied the felony to the child block's Phase 1 tx signer. Emitted
-    /// alongside the standard `EvidenceFelony` record so operators have
-    /// the VRF-specific failure class and child-block context without
-    /// reverse-engineering the call site.
+    /// applied the felony to the child block's Phase 1 tx signer. This record
+    /// is emitted alongside the standard `EvidenceFelony` record. It gives
+    /// operators the VRF-specific failure class and child-block context
+    /// without reverse-engineering the call site.
     InvalidVrfProofEvidence {
         wall_clock: String,
         block_number: u64,
@@ -180,7 +183,7 @@ pub enum JournalRecord {
         index: u64,
     },
 
-    /// DKG reshare activated; new active set committed.
+    /// DKG reshare activated. The new active set is committed.
     ResharedSetActivated {
         wall_clock: String,
         block_number: u64,
@@ -205,32 +208,20 @@ pub enum JournalRecord {
     },
 }
 
-struct Journal {
-    writer: Mutex<BufWriter<File>>,
-}
-
 static JOURNAL: OnceLock<Journal> = OnceLock::new();
 
-/// Initialize the journal. Must be called once at node startup before any
+/// Initialize the journal. Call it once at node startup, before any
 /// state-transition path runs. Subsequent calls are no-ops.
 ///
-/// `datadir` is created if missing; the journal file is opened in append
-/// mode so existing content is preserved across node restarts.
+/// This function creates `datadir` if it is missing. It opens the journal
+/// file in append mode, so existing content stays across node restarts.
 pub fn init(datadir: &Path) -> std::io::Result<()> {
     if JOURNAL.get().is_some() {
         return Ok(());
     }
 
     let path = journal_path(datadir);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let file = OpenOptions::new().create(true).append(true).open(&path)?;
-    let writer = BufWriter::new(file);
-
-    let _ = JOURNAL.set(Journal {
-        writer: Mutex::new(writer),
-    });
+    let _ = JOURNAL.set(Journal::open(&path)?);
     tracing::info!(
         target: "outbe::slashing::journal",
         path = %path.display(),
@@ -244,9 +235,9 @@ pub fn journal_path(datadir: &Path) -> PathBuf {
     datadir.join(JOURNAL_FILENAME)
 }
 
-/// Append `record` to the journal. If [`init`] has not been called, this
-/// is a no-op (test-friendly). Write errors are logged at WARN and
-/// swallowed - never blocks the caller's state-transition path.
+/// Append `record` to the journal. If nothing called [`init`], this is a
+/// no-op (test-friendly). This function logs write errors at WARN and
+/// swallows them. It never blocks the caller's state-transition path.
 pub fn record(record: JournalRecord) {
     let Some(journal) = JOURNAL.get() else {
         return;
@@ -267,7 +258,7 @@ pub fn record(record: JournalRecord) {
     let mut guard = match journal.writer.lock() {
         Ok(g) => g,
         Err(poisoned) => {
-            // Recover from poison; a previous panic in a writer thread
+            // Recover from poison. A previous panic in a writer thread
             // does not corrupt the file pointer.
             poisoned.into_inner()
         }
@@ -316,8 +307,9 @@ fn unix_to_civil(secs: i64) -> (i64, u32, u32, u32, u32, u32) {
     (year, month, day, hour, minute, second)
 }
 
-/// Howard Hinnant's days-from-epoch -> civil-date algorithm. Same algorithm
-/// already used by `crate::time` but kept here to avoid coupling timestamps.
+/// Howard Hinnant's days-from-epoch -> civil-date algorithm. `crate::time`
+/// already uses the same algorithm. This module keeps its own copy to avoid
+/// coupling timestamps.
 fn days_to_civil(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
@@ -378,9 +370,9 @@ mod tests {
     fn init_then_record_writes_lines_and_survives_reopen() {
         let dir = tempfile::tempdir().expect("tempdir");
         // First-time init succeeds. Subsequent inits are no-ops because
-        // we use a process-global OnceLock; tests share the recorder so
-        // a second test that initializes a different dir would see this
-        // recorder's file. Therefore this test is the only one that
+        // the journal uses a process-global OnceLock. Tests share the
+        // recorder, so a second test that initializes a different dir would
+        // see this recorder's file. Therefore this test is the only one that
         // exercises the writer end-to-end.
         let path = journal_path(dir.path());
         // Hand-craft a writer using the same code path so the singleton

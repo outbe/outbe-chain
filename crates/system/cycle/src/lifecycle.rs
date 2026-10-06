@@ -1,12 +1,12 @@
 //! Block lifecycle hook for the Cycle dispatcher.
 //!
-//! moves CycleTick into begin-block system-transaction semantics.
-//! Phase 1 applies the immediate parent's finalization facts first; Phase 2
+//! This hook moves CycleTick into begin-block system-transaction semantics.
+//! Phase 1 applies the immediate parent's finalization facts first. Phase 2
 //! then runs `CycleLifecycle::begin_block`. At a UTC-day transition, settlement
 //! waits until the previous day's canonical late-credit windows have executed.
 //!
 //! The dispatcher itself is fully idempotent per slot via
-//! `Cycle.last_executed_at[trigger_id]`, so it is safe to invoke on
+//! `Cycle.last_executed_at[trigger_id]`, so the caller can safely invoke it on
 //! every block. ProtocolCycle runs on the first block after each UTC-hour
 //! boundary, subject to that participation gate, and owns contiguous-day
 //! settlement and missed-day forfeiture.
@@ -43,9 +43,9 @@ impl<'a, 'storage> CycleLifecycleContext<'a, 'storage> {
         }
     }
 
-    /// Bind genesis-day initialization to the immutable OCOMP install carried
-    /// by the selected chain manifest. The supported fresh-devnet contract
-    /// always supplies block 1; the frozen OCOMP evidence profile retains its
+    /// Binds genesis-day initialization to the immutable OCOMP install that
+    /// the selected chain manifest carries. The supported fresh-devnet contract
+    /// always supplies block 1. The frozen OCOMP evidence profile retains its
     /// existing Final/32 activation without becoming a second Metadosis
     /// compatibility target.
     #[must_use]

@@ -1,12 +1,10 @@
 [Unit]
 Description=Outbe certified FullNode
-After=network-online.target outbe-mongodb.service outbe-enclave.service
-Wants=network-online.target
+After=network-online.target outbe-enclave.service
+Wants=network-online.target outbe-enclave.service
 Wants=outbe-ocomp-exporter.service outbe-ocomp-worker@0.service
-Requires=outbe-mongodb.service outbe-enclave.service
 Conflicts=outbe-validator.service
-StartLimitIntervalSec=300
-StartLimitBurst=5
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -17,6 +15,7 @@ Environment=OUTBE_OCOMP_BASE_PATH=/opt/outbe-chain
 Environment=OCOMP_VALIDATOR_INDEX=0
 Environment=OUTBE_OCOMP_RPC_URL=http://127.0.0.1:8545
 Environment=RUST_MIN_STACK=16777216
+ExecStartPre=/opt/outbe-chain/deploy/validator/outbe-validator-service.py wait-enclave
 ExecStart=/opt/outbe-chain/outbe-chain node \
   --tee-session-mode production-node-host \
   --chain /opt/outbe-chain/genesis.json \
@@ -42,7 +41,9 @@ ExecStart=/opt/outbe-chain/outbe-chain node \
   --ipcpath /opt/outbe-chain/validator-0/data/reth.ipc \
   --log.file.directory /opt/outbe-chain/validator-0/logs \
   --upstream ${OUTBE_CERTIFIED_RPC}
-Restart=on-failure
+ExecStartPost=/opt/outbe-chain/deploy/validator/outbe-validator-service.py wait-rpc
+Restart=always
+RestartMode=direct
 RestartSec=5
 RestartSteps=5
 RestartMaxDelaySec=60

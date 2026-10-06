@@ -19,7 +19,7 @@ import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.so
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 
-/// @dev One day's series in one reference currency travel as a single mark message: the origin
+/// @dev One day's series in one reference currency travel as a single mark message. The origin
 ///      broadcasts one payload per target, and the target applies every series it carries.
 contract MarkBatchWireTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
@@ -114,7 +114,7 @@ contract MarkBatchWireTest is CrossChainTest {
     }
 
     /// @dev The destination gas the router buys has to follow the batch it is sending, not the
-    ///      message type: a batch relayed on a single series' budget runs out on arrival.
+    ///      message type. A batch relayed on a single series' budget runs out on arrival.
     function test_theSendBuysDestinationGasForTheWholeBatch() public {
         vm.startPrank(intexFactory);
         outbeRouter.sendMarkCalled(WORLDWIDE_DAY, uint32(block.timestamp), MarkBatchLib.one(USD_SERIES));

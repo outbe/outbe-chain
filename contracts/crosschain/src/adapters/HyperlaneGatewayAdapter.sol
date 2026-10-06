@@ -11,20 +11,21 @@ import {GasLimitAttribute} from "../libs/GasLimitAttribute.sol";
 /**
  * @dev ERC-7786 gateway adapter for Hyperlane.
  *
- * Wraps a Hyperlane `Mailbox` behind the ERC-7786 `IERC7786GatewaySource` interface so a protocol-agnostic facade
- * (e.g. {ERC7786Bridge}) can route messages through Hyperlane without knowing about Hyperlane domains or routers.
- * All Hyperlane-specific concerns live here:
+ * Wraps a Hyperlane `Mailbox` behind the ERC-7786 `IERC7786GatewaySource` interface. A
+ * protocol-agnostic facade (e.g. {ERC7786Bridge}) can then route messages through Hyperlane without
+ * knowing about Hyperlane domains or routers. All Hyperlane-specific concerns live here:
  *
  * * chainId <-> Hyperlane domain equivalence,
  * * remote router (the matching adapter on the destination chain) registration,
  * * native fee payment via `msg.value` (Mailbox.quoteDispatch / dispatch).
  *
- * IMPORTANT: unlike LayerZero's OApp, a bare Hyperlane Mailbox does NOT verify the message sender against a trusted
- * peer -- it delivers from any sender that passes the ISM. This adapter therefore enforces the peer check itself in
- * {handle}: the message must originate from the registered remote router for its origin domain.
+ * IMPORTANT: unlike LayerZero's OApp, a bare Hyperlane Mailbox does NOT verify the message sender
+ * against a trusted peer. It delivers from any sender that passes the ISM. This adapter therefore
+ * enforces the peer check itself in {handle}: the message must originate from the registered remote
+ * router for its origin domain.
  *
- * NOTE: EVM chains only. Destination-execution gas is set per message via Hyperlane hook metadata
- * (the executionGasLimit attribute, or `defaultGasLimit` when absent).
+ * NOTE: EVM chains only. This adapter sets the destination-execution gas per message via Hyperlane
+ * hook metadata (the executionGasLimit attribute, or `defaultGasLimit` when absent).
  */
 contract HyperlaneGatewayAdapter is IERC7786GatewaySource, IGatewayQuote, IMessageRecipient, Ownable {
     using InteroperableAddress for bytes;
@@ -38,7 +39,8 @@ contract HyperlaneGatewayAdapter is IERC7786GatewaySource, IGatewayQuote, IMessa
     /// @dev Hyperlane domain => ERC-7930 EVM chainId (reverse of {chainIdToDomain}).
     mapping(uint32 domain => uint256 chainId) public domainToChainId;
 
-    /// @dev Hyperlane domain => remote adapter (the trusted peer on that chain), as a Hyperlane bytes32 address.
+    /// @dev Hyperlane domain => remote adapter (the trusted peer on that chain), as a Hyperlane
+    ///      bytes32 address.
     mapping(uint32 domain => bytes32 router) public routers;
 
     /// @dev Destination execution gas used when a message carries no executionGasLimit attribute.
@@ -65,7 +67,8 @@ contract HyperlaneGatewayAdapter is IERC7786GatewaySource, IGatewayQuote, IMessa
     // =================================================== Config ====================================================
 
     /**
-     * @dev Registers the remote adapter (`router`) for a Hyperlane `domain` and binds that domain to an EVM `chainId`.
+     * @dev Registers the remote adapter (`router`) for a Hyperlane `domain` and binds that domain
+     * to an EVM `chainId`.
      */
     function setRouterWithChain(uint32 domain, bytes32 router, uint256 chainId) public virtual onlyOwner {
         routers[domain] = router;
@@ -95,7 +98,8 @@ contract HyperlaneGatewayAdapter is IERC7786GatewaySource, IGatewayQuote, IMessa
     {
         (uint32 domain, bytes32 remoteRouter) = _route(recipient);
 
-        // Carry the source sender and the final recipient so the remote adapter can deliver per ERC-7786.
+        // Carry the source sender and the final recipient so the remote adapter can deliver per
+        // ERC-7786.
         bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
         bytes memory adapterPayload = abi.encode(sender, recipient, payload);
 
@@ -114,8 +118,8 @@ contract HyperlaneGatewayAdapter is IERC7786GatewaySource, IGatewayQuote, IMessa
         return _quoteWithGas(recipient, payload, defaultGasLimit);
     }
 
-    /// @dev Quotes the native fee, taking the destination gas from the executionGasLimit attribute (or
-    /// `defaultGasLimit` when absent) so the estimate matches {sendMessage}.
+    /// @dev Quotes the native fee. Takes the destination gas from the executionGasLimit attribute
+    /// (or `defaultGasLimit` when absent), so the estimate matches {sendMessage}.
     function quote(bytes calldata recipient, bytes calldata payload, bytes[] calldata attributes)
         public
         view
@@ -129,7 +133,8 @@ contract HyperlaneGatewayAdapter is IERC7786GatewaySource, IGatewayQuote, IMessa
 
     /// @inheritdoc IMessageRecipient
     function handle(uint32 origin, bytes32 sender, bytes calldata message) external payable virtual {
-        // Hyperlane has no built-in peer check: enforce both the mailbox and the trusted remote router here.
+        // Hyperlane has no built-in peer check: enforce both the mailbox and the trusted remote
+        // router here.
         require(msg.sender == address(MAILBOX), UnauthorizedCaller(msg.sender));
         bytes32 expected = routers[origin];
         require(expected != bytes32(0) && sender == expected, UnauthorizedSender(origin, sender));
@@ -155,7 +160,8 @@ contract HyperlaneGatewayAdapter is IERC7786GatewaySource, IGatewayQuote, IMessa
         require(remoteRouter != bytes32(0), RemoteRouterNotSet(domain));
     }
 
-    /// @dev Hyperlane StandardHookMetadata overriding the destination gas limit (refunds excess to the caller).
+    /// @dev Hyperlane StandardHookMetadata that overrides the destination gas limit (refunds excess
+    ///      to the caller).
     ///      Layout: variant | msgValue(0) | gasLimit | refundAddress.
     function _metadata(uint128 gasLimit) private view returns (bytes memory) {
         return abi.encodePacked(HOOK_METADATA_VARIANT, uint256(0), uint256(gasLimit), msg.sender);

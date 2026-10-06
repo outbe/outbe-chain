@@ -35,18 +35,18 @@ pub(crate) fn outbe_default_rpc_values() -> reth_node_core::args::DefaultRpcServ
 /// Outbe's transaction-pool defaults, installed before CLI parsing so operator
 /// `--txpool.*` flags still override them.
 ///
-/// Rationale (2026-08-22 incident): a transaction that keeps landing in
-/// proposals which fail to finalize is re-injected by the reorg path and stays
+/// Rationale (2026-08-22 incident): the reorg path re-injects a transaction that
+/// keeps landing in proposals which fail to finalize. That transaction stays
 /// pending indefinitely. Two upstream defaults made that worse:
 ///
-/// - `--txpool.lifetime` (parked sub-pools) defaults to 3 hours - far longer
-///   than any legitimate parked transaction needs on a two-second chain.
+/// - `--txpool.lifetime` (parked sub-pools) defaults to 3 hours. That is far
+///   longer than any legitimate parked transaction needs on a two-second chain.
 /// - RPC-submitted transactions are treated as "local" and are exempt from
 ///   lifetime eviction. The incident transactions arrived over public RPC, so
 ///   the exemption applied to exactly the traffic that must be evictable.
 ///
-/// The transactions backup journal is disabled for the same reason: a restart
-/// must not resurrect transactions the node deliberately evicted.
+/// These defaults also disable the transactions backup journal for the same
+/// reason: a restart must not resurrect transactions the node deliberately evicted.
 pub(crate) fn outbe_default_txpool_values() -> reth_node_core::args::DefaultTxPoolValues {
     reth_node_core::args::DefaultTxPoolValues::default()
         .with_max_queued_lifetime(OUTBE_TXPOOL_QUEUED_LIFETIME)
@@ -54,8 +54,8 @@ pub(crate) fn outbe_default_txpool_values() -> reth_node_core::args::DefaultTxPo
         .with_disable_transactions_backup(OUTBE_TXPOOL_DISABLE_BACKUP)
 }
 
-/// Parked-transaction lifetime. Reth's own default is three hours - orders of
-/// magnitude longer than a two-second chain needs.
+/// Parked-transaction lifetime. Reth's own default is three hours. That is
+/// orders of magnitude longer than a two-second chain needs.
 const OUTBE_TXPOOL_QUEUED_LIFETIME: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// RPC-submitted transactions must NOT be exempt from lifetime eviction.

@@ -1,4 +1,6 @@
-use crate::endpoint::{EndpointAddress, PeerId, VerifiedEndpoint};
+use crate::endpoint::{
+    AnchorError, AnchorSnapshot, AuthorityRecord, EndpointAddress, PeerId, VerifiedEndpoint,
+};
 use alloy_primitives::{Address, B256};
 use outbe_radicleregistry::RepoId;
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
@@ -25,6 +27,26 @@ pub struct FinalizedSnapshot {
     pub validators: Vec<FinalizedValidator>,
     pub registry_generation: u64,
     pub repositories: Vec<RepoId>,
+}
+
+impl FinalizedSnapshot {
+    /// Projects bound validator authorities at this exact finalized block.
+    pub fn endpoint_anchor(&self) -> Result<AnchorSnapshot, AnchorError> {
+        AnchorSnapshot::new(
+            self.block.number,
+            self.block.hash,
+            self.validators
+                .iter()
+                .filter_map(|validator| {
+                    Some(AuthorityRecord {
+                        validator: validator.address,
+                        peer: validator.peer,
+                        node_id: validator.node_id?,
+                    })
+                })
+                .collect(),
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

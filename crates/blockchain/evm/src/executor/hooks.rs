@@ -48,26 +48,26 @@ pub(crate) fn enforce_enclave_upgrade_deadline(
 
 /// Runs the Outbe pre-execution hook chain against a pre-built runtime context.
 ///
-/// Exercised by `OutbeBlockExecutor::apply_pre_execution_changes` against a Reth
-/// `StateDB` wrapped in `DirectStorageProvider`, and by lifecycle-level tests
+/// `OutbeBlockExecutor::apply_pre_execution_changes` calls this against a Reth
+/// `StateDB` wrapped in `DirectStorageProvider`. Lifecycle-level tests call it
 /// against `HashMapStorageProvider`. Ordering is load-bearing:
 ///
 /// 1. Genesis-state validation (blocks 0/1 only, if consensus config was supplied).
 /// 2. `VoteLifecycle::begin_block` - tally expired proposals and dispatch approved ones.
 /// 3. `UpdateLifecycle::begin_block_with_handlers` - activate scheduled updates at activation height.
-/// 4. `RewardsLifecycle::begin_block` - locks in `genesis_utc_day` on
-///    block 0; the per-block emission and per-day settle paths have
+/// 4. `RewardsLifecycle::begin_block` - locks `genesis_utc_day` on
+///    block 0. The per-block emission and per-day settle paths
 ///    moved to the Cycle module.
-/// 5. Metadosis WWD state machine has moved to the hourly ProtocolCycle
-///    handler; no per-block hook here anymore.
+/// 5. The Metadosis WWD state machine moved to the hourly ProtocolCycle
+///    handler. There is no per-block hook here anymore.
 /// 6. Staking matured-unbonding processing.
 /// 7. `OracleLifecycle::begin_block` - tally + daily S-curve only.
 ///
 /// Oracle slash-window force-exits run later as the receipt-visible
 /// `OracleSlashWindow` begin-zone system phase, after optional `BoundaryOutcome`.
-/// This preserves same-block boundary activation before any deterministic Oracle
-/// penalty can mark a target validator EXITING while keeping operator-critical
-/// Oracle events in normal EVM receipts.
+/// This order preserves same-block boundary activation before any deterministic
+/// Oracle penalty can mark a target validator EXITING. It also keeps
+/// operator-critical Oracle events in normal EVM receipts.
 pub fn run_outbe_pre_execution_hooks(
     hook_ctx: &BlockRuntimeContext,
     genesis_validators: Option<&GenesisValidators>,
@@ -116,19 +116,19 @@ fn run_outbe_pre_execution_hooks_inner(
 
     // EmissionLimit no longer participates in pre-execution lifecycle.
     // Per-block emission dispatch was removed (Phase 4 of
-    // the Cycle epic) - the closed-form daily cap, sink allocation,
+    // the Cycle epic). The closed-form daily cap, sink allocation,
     // and AgentReward / Metadosis dispatch all run from ProtocolCycle's
     // persisted UTC-day decision instead.
 
-    // Rewards lifecycle: locks in `genesis_utc_day` on block 0. Day-
-    // boundary settle moved out of Rewards (Phase 3); the
+    // Rewards lifecycle: locks `genesis_utc_day` on block 0. Day-
+    // boundary settle moved out of Rewards (Phase 3). The
     // Cycle handler now owns the daily orchestration.
     <outbe_rewards::lifecycle::RewardsLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
     // Metadosis WWD state machine + lysis distribution moved to the
     // Cycle handler. The
     // legacy `MetadosisLifecycle::begin_block` lifecycle hook used to
-    // run here on every block; it is now invoked once per hourly
+    // run here on every block. It is now invoked once per hourly
     // `outbe_cycle::handler::run_protocol_cycle` pass, after an optional
     // contiguous-day `dispatch_terminal_remainder_at` write.
 
@@ -136,21 +136,21 @@ fn run_outbe_pre_execution_hooks_inner(
     outbe_staking::hooks::process_unbonding(hook_ctx.storage.clone(), timestamp)?;
 
     // Oracle: tally at vote period boundary and run daily S-curve. Slash-window
-    // force-exits run later in the receipt-visible OracleSlashWindow system phase
-    // so Phase 3 BoundaryOutcome can activate its target set before Oracle marks
-    // underperformers EXITING.
+    // force-exits run later in the receipt-visible OracleSlashWindow system phase.
+    // This lets Phase 3 BoundaryOutcome activate its target set before Oracle
+    // marks underperformers EXITING.
     <outbe_oracle::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
     // Nod forfeits mutate compressed bodies, so the Nod sweep runs inside the
     // CycleTick system transaction.
     let _ = readers;
 
-    // GEM: carry on the daily call sweep the Cycle trigger opened, pinned to a
-    // closed UTC day. Reads the same Oracle surface, so it must run after Oracle.
+    // GEM: continue the daily call sweep that the Cycle trigger opened, pinned to
+    // a closed UTC day. It reads the same Oracle surface, so it must run after Oracle.
     <outbe_gem::GemLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
-    // INTEX: carry on the call sweep for series, plus the payout and expiry drains.
-    // Reads the same Oracle surface, so it runs after Oracle.
+    // INTEX: continue the call sweep for series, plus the payout and expiry drains.
+    // It reads the same Oracle surface, so it runs after Oracle.
     <outbe_intexfactory::IntexLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
     Ok(())
@@ -188,7 +188,7 @@ where
 
     // Preserve the concrete hook error across the executor boundary. Payload
     // construction must distinguish node-local readiness (for example a stale
-    // compressed-tree parent) from deterministic corruption; stringifying here
+    // compressed-tree parent) from deterministic corruption. Stringifying here
     // destroys that distinction and turns a cancellable job into an alarm.
     let output = result.map_err(BlockExecutionError::other)?;
 

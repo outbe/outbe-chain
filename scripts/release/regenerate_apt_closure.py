@@ -3,10 +3,10 @@
 
 The closure digest in ``release/project-toolchain-v1.json`` covers every ``.deb``
 apt downloads for the release toolchain image, including the transitive packages
-that no version pin names. It is reproducible only because
+that no version pin names. The digest is reproducible only because
 ``release/apt/ubuntu.sources`` freezes the Ubuntu archive at one snapshot
-instant, so this script is the way to regenerate it after that timestamp, a
-package version or the base image changes.
+instant. Thus, this script is the way to regenerate the digest after that
+timestamp, a package version or the base image changes.
 
 The probe reads the package set from the pin and the base image from the ELF
 build contract, so it introduces no second source of truth for either.

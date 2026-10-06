@@ -34,8 +34,8 @@ pub struct LoadedLocalLysisResultV1 {
 /// Immutable node-local results keyed by the consensus `JobId`.
 ///
 /// The store owns the publication boundary. Callers can commit one canonical
-/// result, replay that exact result, or verify an independently computed value;
-/// there is no replace/delete API that could turn a mismatch into acceptance.
+/// result, replay that exact result, or verify an independently computed value.
+/// The store has no replace/delete API that could turn a mismatch into acceptance.
 pub struct LocalLysisResultStore {
     root: PathBuf,
     owner_uid: u32,
@@ -524,11 +524,11 @@ fn validate_opened_record_metadata(
     metadata: &fs::Metadata,
     owner_uid: u32,
 ) -> Result<(), LocalLysisResultError> {
-    if !metadata.file_type().is_file()
-        || metadata.uid() != owner_uid
-        || metadata.permissions().mode() & 0o777 != RECORD_MODE
-        || metadata.nlink() != 1
-    {
+    if !outbe_primitives::local_record::is_private_single_link_file(
+        metadata,
+        owner_uid,
+        RECORD_MODE,
+    ) {
         return Err(LocalLysisResultError::UnsafeStore {
             path: path.to_path_buf(),
             reason: "opened local result metadata is unsafe",

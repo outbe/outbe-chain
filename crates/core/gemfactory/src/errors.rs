@@ -21,6 +21,9 @@ pub enum GemFactoryError {
     #[error("source intex not found")]
     SourceIntexNotFound,
 
+    #[error("source intex is not issued")]
+    SourceIntexNotIssued,
+
     #[error("position not found")]
     PositionNotFound,
 
@@ -80,18 +83,6 @@ pub enum GemFactoryError {
 
     #[error("settlement token moved an unexpected amount")]
     SettlementAmountMismatch,
-
-    #[error("PayNote context {actual} does not match settlement {expected}")]
-    PayNoteContextMismatch {
-        expected: alloy_primitives::B256,
-        actual: alloy_primitives::B256,
-    },
-
-    #[error("PayNote spends {covered}, settlement costs {required}")]
-    PayNoteCostMismatch {
-        covered: alloy_primitives::U256,
-        required: alloy_primitives::U256,
-    },
 }
 
 impl From<GemFactoryError> for PrecompileError {

@@ -1,6 +1,6 @@
 //! Anchored access to stopped native files and publication of one archive.
 //!
-//! Creation requires Linux `openat2`; other platforms return `Unsupported`
+//! Creation requires Linux `openat2`. Other platforms return `Unsupported`
 //! before opening a source or creating a pending archive.
 
 use std::{

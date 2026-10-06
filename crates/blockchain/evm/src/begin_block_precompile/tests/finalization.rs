@@ -23,6 +23,24 @@ fn record_progress(provider: &mut HashMapStorageProvider, block_number: u64) {
     });
 }
 
+fn finalized_dispatch_context(
+    state_root: B256,
+    canonical_vrf_proof_hash: B256,
+) -> PreloadedSystemTxContext {
+    PreloadedSystemTxContext {
+        proposer: VALIDATOR,
+        finalized_summary: Some(AccountedParentArtifact {
+            summary: outbe_primitives::reshare_artifact::ExecutionSummaryArtifact {
+                validator_fee_sum: U256::ZERO,
+            },
+            timestamp: 1_699_999_990,
+            state_root: Some(state_root),
+        }),
+        allow_boundary_proposer: false,
+        canonical_vrf_proof_hash,
+    }
+}
+
 fn dispatch_phase1(
     provider: &mut HashMapStorageProvider,
     metadata: CertifiedParentAccountingMetadata,
@@ -35,18 +53,7 @@ fn dispatch_phase1(
             .encode()
             .unwrap();
         with_preloaded_system_tx_context(
-            PreloadedSystemTxContext {
-                proposer: VALIDATOR,
-                finalized_summary: Some(AccountedParentArtifact {
-                    summary: outbe_primitives::reshare_artifact::ExecutionSummaryArtifact {
-                        validator_fee_sum: U256::ZERO,
-                    },
-                    timestamp: 1_699_999_990,
-                    state_root: Some(B256::repeat_byte(0x91)),
-                }),
-                allow_boundary_proposer: false,
-                canonical_vrf_proof_hash: B256::repeat_byte(0xEF),
-            },
+            finalized_dispatch_context(B256::repeat_byte(0x91), B256::repeat_byte(0xEF)),
             || dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO),
         )
     })
@@ -65,18 +72,7 @@ fn dispatch_finalization_uses_preloaded_summary_not_calldata_money() {
         .encode()
         .unwrap();
         with_preloaded_system_tx_context(
-            PreloadedSystemTxContext {
-                proposer: VALIDATOR,
-                finalized_summary: Some(AccountedParentArtifact {
-                    summary: outbe_primitives::reshare_artifact::ExecutionSummaryArtifact {
-                        validator_fee_sum: U256::ZERO,
-                    },
-                    timestamp: 1_699_999_990,
-                    state_root: Some(B256::repeat_byte(0x92)),
-                }),
-                allow_boundary_proposer: false,
-                canonical_vrf_proof_hash: B256::ZERO,
-            },
+            finalized_dispatch_context(B256::repeat_byte(0x92), B256::ZERO),
             || dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO),
         )
         .unwrap();
@@ -145,18 +141,7 @@ fn dispatch_finalization_counts_duplicate_missed_proposer_events_by_index() {
             .encode()
             .unwrap();
         with_preloaded_system_tx_context(
-            PreloadedSystemTxContext {
-                proposer: VALIDATOR,
-                finalized_summary: Some(AccountedParentArtifact {
-                    summary: outbe_primitives::reshare_artifact::ExecutionSummaryArtifact {
-                        validator_fee_sum: U256::ZERO,
-                    },
-                    timestamp: 1_699_999_990,
-                    state_root: Some(B256::repeat_byte(0x93)),
-                }),
-                allow_boundary_proposer: false,
-                canonical_vrf_proof_hash: B256::ZERO,
-            },
+            finalized_dispatch_context(B256::repeat_byte(0x93), B256::ZERO),
             || dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO),
         )
         .unwrap();

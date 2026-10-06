@@ -51,27 +51,27 @@ struct TeeGenesisArgs {
     #[arg(long)]
     output: PathBuf,
 
-    /// Genesis-fixed attestation mode; there is no runtime fallback.
+    /// Genesis-fixed attestation mode. There is no runtime fallback.
     #[arg(long, value_enum)]
     mode: TeeGenesisMode,
 
-    /// Exact release MRENCLAVE (32-byte hex); required only for DcapRequired.
+    /// Exact release MRENCLAVE (32-byte hex). Required only for DcapRequired.
     #[arg(long)]
     mrenclave: Option<String>,
 
-    /// Exact release MRSIGNER (32-byte hex); required only for DcapRequired.
+    /// Exact release MRSIGNER (32-byte hex). Required only for DcapRequired.
     #[arg(long)]
     mrsigner: Option<String>,
 
-    /// Exact release ISV product ID; required only for DcapRequired.
+    /// Exact release ISV product ID. Required only for DcapRequired.
     #[arg(long)]
     isv_prod_id: Option<u16>,
 
-    /// Minimum accepted release ISV SVN; required only for DcapRequired.
+    /// Minimum accepted release ISV SVN. Required only for DcapRequired.
     #[arg(long)]
     minimum_isv_svn: Option<u16>,
 
-    /// Minimum Intel TCB evaluation data number; required only for DcapRequired.
+    /// Minimum Intel TCB evaluation data number. Required only for DcapRequired.
     #[arg(long)]
     minimum_tcb_evaluation_data_number: Option<u32>,
 }
@@ -301,70 +301,9 @@ fn utf8_path<'a>(path: &'a Path, label: &str) -> eyre::Result<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use outbe_metadosis::{
-        proof_layout::METADOSIS_STORAGE_LAYOUT_V1_HASH, test_support::ForkInstallScenario,
-    };
-    use outbe_node::ocomp::fork::{
-        METADOSIS_STORAGE_LAYOUT_GENESIS_KEY, OCOMP_FORK_INSTALL_GENESIS_KEY,
-    };
-    use outbe_ocomp_protocol::profile::poc_schema_limits;
+    use crate::test_utils::write_base_genesis;
     use outbe_primitives::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID};
     use reth_cli::chainspec::ChainSpecParser as _;
-
-    fn write_base_genesis(path: &Path, chain_id: u64) {
-        let mut genesis = serde_json::json!({
-            "config": {
-                "chainId": chain_id,
-                "epochLengthBlocks": 300,
-                "homesteadBlock": 0,
-                "eip150Block": 0,
-                "eip155Block": 0,
-                "eip158Block": 0,
-                "byzantiumBlock": 0,
-                "constantinopleBlock": 0,
-                "petersburgBlock": 0,
-                "istanbulBlock": 0,
-                "berlinBlock": 0,
-                "londonBlock": 0,
-                "mergeNetsplitBlock": 0,
-                "terminalTotalDifficulty": 0,
-                "terminalTotalDifficultyPassed": true,
-                "shanghaiTime": 0,
-                "cancunTime": 0,
-                "pragueTime": 0
-            },
-            "nonce": "0x0",
-            "timestamp": "0x1",
-            "extraData": "0x",
-            "gasLimit": "0x1dcd6500",
-            "difficulty": "0x0",
-            "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
-            "coinbase": "0x0000000000000000000000000000000000000000",
-            "alloc": {}
-        });
-        fs::write(path, serde_json::to_vec_pretty(&genesis).unwrap()).unwrap();
-        let parsed =
-            reth_ethereum::cli::chainspec::chain_value_parser(path.to_str().unwrap()).unwrap();
-        let install = ForkInstallScenario::measurement_at(1, chain_id, parsed.genesis_hash())
-            .unwrap()
-            .into_install();
-        let limits = poc_schema_limits();
-        let canonical_bytes = install.encode_canonical(&limits).unwrap();
-        let install_hash = install.install_hash(&limits).unwrap();
-        let config = genesis["config"].as_object_mut().unwrap();
-        config.insert(
-            OCOMP_FORK_INSTALL_GENESIS_KEY.to_owned(),
-            serde_json::json!({
-                "canonicalBytes": format!("0x{}", hex::encode(canonical_bytes)),
-                "installHash": install_hash,
-            }),
-        );
-        config.insert(
-            METADOSIS_STORAGE_LAYOUT_GENESIS_KEY.to_owned(),
-            serde_json::json!({ "layoutHash": METADOSIS_STORAGE_LAYOUT_V1_HASH }),
-        );
-        fs::write(path, serde_json::to_vec_pretty(&genesis).unwrap()).unwrap();
-    }
 
     fn args(input: PathBuf, output: PathBuf, mode: TeeGenesisMode) -> TeeGenesisArgs {
         TeeGenesisArgs {
@@ -394,7 +333,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let input = root.path().join("base.json");
         let output = root.path().join("dev.json");
-        write_base_genesis(&input, DEVNET_CHAIN_ID);
+        write_base_genesis(&input, DEVNET_CHAIN_ID).unwrap();
         let before = reth_ethereum::cli::chainspec::chain_value_parser(input.to_str().unwrap())
             .unwrap()
             .genesis_hash();
@@ -416,7 +355,7 @@ mod tests {
     fn dcap_genesis_requires_exact_measurements_and_testnet_chain_id() {
         let root = tempfile::tempdir().unwrap();
         let input = root.path().join("base.json");
-        write_base_genesis(&input, TESTNET_CHAIN_ID);
+        write_base_genesis(&input, TESTNET_CHAIN_ID).unwrap();
         let before = reth_ethereum::cli::chainspec::chain_value_parser(input.to_str().unwrap())
             .unwrap()
             .genesis_hash();
@@ -447,7 +386,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let input = root.path().join("mainnet-base.json");
         let output = root.path().join("mainnet.json");
-        write_base_genesis(&input, MAINNET_CHAIN_ID);
+        write_base_genesis(&input, MAINNET_CHAIN_ID).unwrap();
         let before = reth_ethereum::cli::chainspec::chain_value_parser(input.to_str().unwrap())
             .unwrap()
             .genesis_hash();
@@ -470,7 +409,7 @@ mod tests {
 
         let dev_input = root.path().join("dev-base.json");
         let dev_output = root.path().join("dev-output.json");
-        write_base_genesis(&dev_input, TESTNET_CHAIN_ID + 1);
+        write_base_genesis(&dev_input, TESTNET_CHAIN_ID + 1).unwrap();
         assert!(generate_genesis(&args(
             dev_input,
             dev_output.clone(),
@@ -483,7 +422,7 @@ mod tests {
 
         let dcap_input = root.path().join("dcap-base.json");
         let dcap_output = root.path().join("dcap-output.json");
-        write_base_genesis(&dcap_input, TESTNET_CHAIN_ID + 1);
+        write_base_genesis(&dcap_input, TESTNET_CHAIN_ID + 1).unwrap();
         let mut dcap = args(
             dcap_input,
             dcap_output.clone(),
@@ -506,7 +445,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let input = root.path().join("base.json");
         let output = root.path().join("testnet.json");
-        write_base_genesis(&input, TESTNET_CHAIN_ID);
+        write_base_genesis(&input, TESTNET_CHAIN_ID).unwrap();
         let mut testnet = args(input, output.clone(), TeeGenesisMode::DcapRequired);
         testnet.mrenclave = Some("00".repeat(32));
         testnet.mrsigner = Some("22".repeat(32));
@@ -526,7 +465,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let input = root.path().join("base.json");
         let output = root.path().join("dev.json");
-        write_base_genesis(&input, DEVNET_CHAIN_ID);
+        write_base_genesis(&input, DEVNET_CHAIN_ID).unwrap();
         let mut development = args(input, output.clone(), TeeGenesisMode::GramineDirectDev);
         development.mrenclave = Some("11".repeat(32));
 
@@ -541,7 +480,7 @@ mod tests {
     fn input_and_output_must_be_distinct() {
         let root = tempfile::tempdir().unwrap();
         let input = root.path().join("base.json");
-        write_base_genesis(&input, DEVNET_CHAIN_ID);
+        write_base_genesis(&input, DEVNET_CHAIN_ID).unwrap();
         let original = fs::read(&input).unwrap();
 
         assert!(generate_genesis(&args(
@@ -560,7 +499,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let input = root.path().join("base.json");
         let output = root.path().join("dev.json");
-        write_base_genesis(&input, DEVNET_CHAIN_ID);
+        write_base_genesis(&input, DEVNET_CHAIN_ID).unwrap();
         fs::write(&output, b"operator-owned\n").unwrap();
         assert!(generate_genesis(&args(
             input,

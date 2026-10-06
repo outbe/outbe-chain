@@ -1,7 +1,7 @@
 """Tests for scripts/create_genesis.py: the yaml subset parser, config
 validation, key-material discovery, the seed merge, and the python seeding
-stage. Stages that need the compiled binaries are skipped when those are
-absent (and exercised by the create_genesis smoke run instead)."""
+stage. The tests skip stages that need the compiled binaries when those are
+absent. The create_genesis smoke run exercises those stages instead."""
 
 import base64
 import importlib.util
@@ -442,9 +442,9 @@ class SeedMergeTests(unittest.TestCase):
     def test_the_baseline_seeds_no_worldwide_day(self):
         # The runtime creates the first day at block 1, and the live testnet
         # genesis carries no metadosis storage. A seeded day would also be
-        # unusable: the seeder writes its limit amount but not the formation
-        # record `apply_missed_offering` requires, so reaching MissedOffering
-        # would kill the ProtocolCycle and stop block production.
+        # unusable. The seeder writes its limit amount but not the formation
+        # record that `apply_missed_offering` requires. So reaching
+        # MissedOffering would kill the ProtocolCycle and stop block production.
         base = CG.load_yaml(CG.BASE_PROFILE_PATH)
         self.assertNotIn("metadosis", base)
         self.assertNotIn("metadosis", CG.build_seed({}))
@@ -494,6 +494,17 @@ class SeedStageTests(unittest.TestCase):
             validator_set = alloc[SEED_GENESIS.VALIDATOR_SET_ADDRESS]
             slot20 = "0x" + f"{20:064x}"  # validator_count
             self.assertEqual(int(validator_set["storage"][slot20], 16), 4)
+
+    def test_a_nod_profile_reaches_the_nod_selector_slot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = minimal_config(tmp) | {"nod_profile": {"profile": "dev"}}
+            seeded = self.seed_once(pathlib.Path(tmp), config)
+
+            nod = seeded["alloc"][SEED_GENESIS.NOD_ADDRESS]
+            slot = "0x" + f"{SEED_GENESIS.NOD_PROFILE_SLOT:064x}"
+            self.assertEqual(
+                int(nod["storage"][slot], 16), SEED_GENESIS.PROFILE_SELECTORS["dev"]
+            )
 
     def test_production_seed_stage_preserves_oracle_orientation_and_wire_scales(self):
         token = "0x1111111111111111111111111111111111111111"
@@ -586,7 +597,7 @@ class SeedStageTests(unittest.TestCase):
 
     def test_a_stale_timestamp_is_refused(self):
         """A genesis stamped in the past fails at block 1 with an unrelated-
-        looking revert; catch it while it is still cheap to fix."""
+        looking revert. Catch it while it is still cheap to fix."""
         stale = int(time.time()) - 48 * 3600
         with self.assertRaisesRegex(ValueError, "lease is already expired"):
             CG.build_base_genesis(minimal_config("./keys") | {"timestamp": stale})
@@ -716,8 +727,8 @@ class LaunchBundleTests(unittest.TestCase):
             directory.mkdir(parents=True)
             (directory / "evm-key.hex").write_text(f"{index + 1:064x}\n")
         genesis = output_dir / "genesis.json"
-        # render() reads the OCOMP identity out of the install document, and
-        # locates the bundle hash by anchoring on the genesis hash, so the
+        # render() reads the OCOMP identity out of the install document and
+        # locates the bundle hash by anchoring on the genesis hash. So the
         # fixture has to carry a well-formed one.
         genesis_hash = "0x" + "ab" * 32
         canonical = ("00" * 33) + "ab" * 32 + "01" * 32 + "cd" * 32 + "0c" * 32
@@ -770,7 +781,7 @@ class LaunchBundleTests(unittest.TestCase):
 
     def test_radicle_sidecar_does_not_write_a_config_file(self):
         # The sidecar builds its runtime config from the command line and
-        # never reads config.json; a second copy could only drift, and the
+        # never reads config.json. A second copy could only drift. Also, the
         # `network: outbe` it used to contain stops a stock `rad` from
         # starting at all.
         script = LB.radicle_script(
@@ -1170,7 +1181,7 @@ class LaunchBundleTests(unittest.TestCase):
             self.assertIn("--nat extip:10.0.0.3", node)
             self.assertIn("--consensus.storage-dir", node)
             # A real gramine-sgx enclave speaks the production session even on
-            # the dev genesis profile; only a mock enclave uses the development
+            # the dev genesis profile. Only a mock enclave uses the development
             # transport, and that is what `enclave_sgx: false` selects.
             self.assertIn("--tee-session-mode production-node-host", node)
             # All three OCOMP roles read the bundle from the domain directory.

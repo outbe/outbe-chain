@@ -128,7 +128,6 @@ fn nod_item_v1_uses_one_strict_canonical_protobuf_representation() {
         gratis_load_minor: U256::from(1),
         worldwide_day: WorldwideDay::from(1),
         league_id: 2,
-        floor_price_minor: U256::from(2),
         bucket_key: B256::repeat_byte(0x33),
         issuance_currency: 840,
         reference_currency: 978,
@@ -142,7 +141,6 @@ fn nod_item_v1_uses_one_strict_canonical_protobuf_representation() {
         "1a200000000000000000000000000000000000000000000000000000000000000001",
         "2001",
         "2802",
-        "32200000000000000000000000000000000000000000000000000000000000000002",
         "3a20",
         "3333333333333333333333333333333333333333333333333333333333333333",
         "48c806",
@@ -166,7 +164,6 @@ fn settled_nod_body_round_trips_without_changing_legacy_encoding() {
         gratis_load_minor: U256::from(1),
         worldwide_day: WorldwideDay::from(1),
         league_id: 2,
-        floor_price_minor: U256::from(2),
         bucket_key: B256::repeat_byte(0x33),
         issuance_currency: 840,
         reference_currency: 978,
@@ -191,14 +188,12 @@ fn settled_nod_body_round_trips_without_changing_legacy_encoding() {
 
 /// Field 8 carried the Nod's cost until it became a derivation from the
 /// bucket's entry price and the Nod's gratis load. Every body wrote it, so
-/// retiring it is a deliberate wire break: a body that still carries it states
-/// a cost this schema no longer owns, and must be refused rather than decoded
-/// with the value dropped on the floor.
+/// retiring it is a deliberate wire break. A body that still carries it states
+/// a cost this schema no longer owns. The decoder must refuse that body, not
+/// decode it and drop the value.
 #[test]
 fn a_nod_item_carrying_the_retired_cost_field_is_rejected() {
-    // The exact bytes this schema produced before the cost became a derivation
-    // from the bucket's entry price and the Nod's gratis load: field 8 sitting
-    // in its canonical position between `bucket_key` and `issuance_currency`.
+    // Field 8 sits in its canonical position between `bucket_key` and `issuance_currency`.
     let with_cost = hex::decode(concat!(
         "0a2000000001",
         "11111111111111111111111111111111111111111111111111111111",
@@ -207,7 +202,6 @@ fn a_nod_item_carrying_the_retired_cost_field_is_rejected() {
         "1a200000000000000000000000000000000000000000000000000000000000000001",
         "2001",
         "2802",
-        "32200000000000000000000000000000000000000000000000000000000000000002",
         "3a20",
         "3333333333333333333333333333333333333333333333333333333333333333",
         "42200000000000000000000000000000000000000000000000000000000000000003",
@@ -223,13 +217,51 @@ fn a_nod_item_carrying_the_retired_cost_field_is_rejected() {
     ));
 }
 
+/// The floor derives from the bucket's entry price, so a body carrying a floor field is refused.
+#[test]
+fn a_nod_body_carrying_the_retired_floor_field_is_rejected() {
+    let item_with_floor = hex::decode(concat!(
+        "0a2000000001",
+        "11111111111111111111111111111111111111111111111111111111",
+        "1214",
+        "2222222222222222222222222222222222222222",
+        "1a200000000000000000000000000000000000000000000000000000000000000001",
+        "2001",
+        "2802",
+        "32200000000000000000000000000000000000000000000000000000000000000002",
+        "3a20",
+        "3333333333333333333333333333333333333333333333333333333333333333",
+        "48c806",
+        "50d207",
+        "5805"
+    ))
+    .unwrap();
+    assert!(matches!(
+        decode_nod_item_v1(&item_with_floor),
+        Err(CanonicalBodyError::UnknownField { field: 6 })
+    ));
+
+    let bucket_with_floor = hex::decode(concat!(
+        "0a20",
+        "3333333333333333333333333333333333333333333333333333333333333333",
+        "1001",
+        "1a200000000000000000000000000000000000000000000000000000000000000001",
+        "32200000000000000000000000000000000000000000000000000000000000000003",
+        "38c806"
+    ))
+    .unwrap();
+    assert!(matches!(
+        decode_nod_bucket_v1(&bucket_with_floor),
+        Err(CanonicalBodyError::UnknownField { field: 3 })
+    ));
+}
+
 #[test]
 fn nod_bucket_v1_uses_one_strict_canonical_protobuf_representation() {
     let body = NodBucketBodyV1 {
         settled_nods: 0,
         bucket_key: B256::repeat_byte(0x33),
         worldwide_day: WorldwideDay::from(1),
-        floor_price_minor: U256::from(1),
         entry_price_minor: U256::from(3),
         reference_currency: 840,
     };
@@ -237,7 +269,6 @@ fn nod_bucket_v1_uses_one_strict_canonical_protobuf_representation() {
         "0a20",
         "3333333333333333333333333333333333333333333333333333333333333333",
         "1001",
-        "1a200000000000000000000000000000000000000000000000000000000000000001",
         "32200000000000000000000000000000000000000000000000000000000000000003",
         "38c806"
     ))
@@ -272,8 +303,8 @@ fn nod_bucket_v1_uses_one_strict_canonical_protobuf_representation() {
         "a body without field 7 must decode to reference_currency 0"
     );
 
-    // An explicitly-encoded zero is a second encoding of the same body and
-    // must be rejected by the strict re-encode check.
+    // An explicitly-encoded zero is a second encoding of the same body. The
+    // strict re-encode check must reject it.
     let mut explicit_zero = unpriced_payload.clone();
     explicit_zero.extend_from_slice(&[0x38, 0x00]);
     assert!(matches!(
@@ -434,7 +465,6 @@ fn protobuf_profile_rejects_order_length_width_wire_and_range_violations() {
         gratis_load_minor: U256::from(1),
         worldwide_day: WorldwideDay::from(1),
         league_id: 2,
-        floor_price_minor: U256::from(2),
         bucket_key: B256::repeat_byte(0x33),
         issuance_currency: 840,
         reference_currency: 978,
@@ -456,7 +486,6 @@ fn protobuf_profile_rejects_order_length_width_wire_and_range_violations() {
         settled_nods: 0,
         bucket_key: B256::repeat_byte(0x33),
         worldwide_day: WorldwideDay::from(1),
-        floor_price_minor: U256::from(1),
         entry_price_minor: U256::from(3),
         reference_currency: 840,
     };
@@ -584,13 +613,13 @@ fn commitment_golden_vectors_are_pinned() {
 
 /// The identity-dependent half of the CES1 conformance set.
 ///
-/// These vectors were produced by an independent `@noble/curves` Poseidon, which
-/// is the entire point of the file: regenerating them from this crate would turn
-/// a cross-implementation check into a tautology. Narrowing identities to 32
-/// bytes changed every Poseidon input here, so the vectors must be reproduced by
-/// re-running that reference against the new identities before this can run
-/// again. The tag and `pbytes` vectors above are identity-independent and still
-/// cover the permutation itself.
+/// An independent `@noble/curves` Poseidon produced these vectors. That is the
+/// entire point of the file. Regenerating them from this crate would turn a
+/// cross-implementation check into a tautology. Narrowing identities to 32 bytes
+/// changed every Poseidon input here. Before this can run again, re-run that
+/// reference against the new identities to reproduce the vectors. The tag and
+/// `pbytes` vectors above are identity-independent and still cover the
+/// permutation itself.
 #[ignore = "CES1 identity/body vectors need regeneration from the @noble/curves reference for 32-byte identities"]
 #[test]
 fn commitment_identity_and_body_golden_vectors_are_pinned() {

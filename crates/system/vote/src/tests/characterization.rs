@@ -2,295 +2,22 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolError, SolEvent};
 use outbe_primitives::{
     addresses::{UPDATE_ADDRESS, VOTE_ADDRESS},
-    block::{BlockContext, BlockRuntimeContext},
     error::{PrecompileError, Result},
     stablecoin_fork::MAX_PENDING_PUBLIC_BONDED_PROPOSALS,
-    storage::{hashmap::HashMapStorageProvider, StorageHandle},
+    storage::StorageHandle,
 };
-use serde_json::Value;
 
 use crate::{
     constants::VOTING_WINDOW_BLOCKS,
-    handlers::{
-        TargetAdmission, TargetExecutionOutcome, VoteTarget, VoteTargetContext, VoteTargetRegistry,
-    },
+    handlers::TargetAdmission,
     precompile::IVote,
     schema::{BondSettlement, ProposalStatus, Vote},
 };
 
+use super::targets::*;
 use super::{
     create_proposal_test, setup_default_validators, test_vote_registry, PROPOSER, VOTER_A,
 };
-
-struct RejectingApprovedTarget;
-
-impl VoteTarget for RejectingApprovedTarget {
-    fn target_module(&self) -> Address {
-        UPDATE_ADDRESS
-    }
-
-    fn validate(&self, payload: &[u8], _context: VoteTargetContext) -> Result<()> {
-        if serde_json::from_slice::<Value>(payload).is_ok_and(|value| value.is_object()) {
-            Ok(())
-        } else {
-            Err(PrecompileError::Revert("expected object".into()))
-        }
-    }
-
-    fn handle_approved(
-        &self,
-        ctx: &BlockRuntimeContext,
-        _proposal_id: U256,
-        _payload: &[u8],
-        _context: VoteTargetContext,
-    ) -> Result<TargetExecutionOutcome> {
-        ctx.storage
-            .sstore(UPDATE_ADDRESS, U256::from(999u64), U256::from(1u64))?;
-        Ok(TargetExecutionOutcome::Error {
-            reason: "characterized target failure".into(),
-        })
-    }
-}
-
-static REJECTING_TARGET: RejectingApprovedTarget = RejectingApprovedTarget;
-static REJECTING_HANDLERS: &[&dyn VoteTarget] = &[&REJECTING_TARGET];
-static REJECTING_REGISTRY: VoteTargetRegistry = VoteTargetRegistry::new(REJECTING_HANDLERS);
-
-struct TechnicallyFailingTarget;
-
-impl VoteTarget for TechnicallyFailingTarget {
-    fn target_module(&self) -> Address {
-        UPDATE_ADDRESS
-    }
-
-    fn validate(&self, payload: &[u8], _context: VoteTargetContext) -> Result<()> {
-        if serde_json::from_slice::<Value>(payload).is_ok_and(|value| value.is_object()) {
-            Ok(())
-        } else {
-            Err(PrecompileError::Revert("expected object".into()))
-        }
-    }
-
-    fn handle_approved(
-        &self,
-        ctx: &BlockRuntimeContext,
-        _proposal_id: U256,
-        _payload: &[u8],
-        _context: VoteTargetContext,
-    ) -> Result<TargetExecutionOutcome> {
-        ctx.storage
-            .sstore(UPDATE_ADDRESS, U256::from(999u64), U256::from(1u64))?;
-        Err(PrecompileError::Fatal(
-            "characterized infrastructure failure".into(),
-        ))
-    }
-}
-
-static TECHNICALLY_FAILING_TARGET: TechnicallyFailingTarget = TechnicallyFailingTarget;
-static TECHNICALLY_FAILING_HANDLERS: &[&dyn VoteTarget] = &[&TECHNICALLY_FAILING_TARGET];
-static TECHNICALLY_FAILING_REGISTRY: VoteTargetRegistry =
-    VoteTargetRegistry::new(TECHNICALLY_FAILING_HANDLERS);
-
-const RAW_PAYLOAD: &str = "{ \"z\":1, \"a\": [2, 3] }";
-
-struct RawContextTarget;
-
-impl VoteTarget for RawContextTarget {
-    fn target_module(&self) -> Address {
-        UPDATE_ADDRESS
-    }
-
-    fn validate(&self, payload: &[u8], context: VoteTargetContext) -> Result<()> {
-        if payload != RAW_PAYLOAD.as_bytes()
-            || context.proposer != PROPOSER
-            || context.attached_value != U256::ZERO
-            || context.block_number != 10
-            || context.chain_id != 1
-        {
-            return Err(PrecompileError::Revert(
-                "raw payload or target context changed".into(),
-            ));
-        }
-        Ok(())
-    }
-
-    fn handle_approved(
-        &self,
-        _ctx: &BlockRuntimeContext,
-        proposal_id: U256,
-        payload: &[u8],
-        context: VoteTargetContext,
-    ) -> Result<TargetExecutionOutcome> {
-        let expected_height = 10 + VOTING_WINDOW_BLOCKS + 1;
-        if proposal_id != U256::from(1u64)
-            || payload != RAW_PAYLOAD.as_bytes()
-            || context.proposer != PROPOSER
-            || context.attached_value != U256::ZERO
-            || context.block_number != expected_height
-            || context.chain_id != 1
-        {
-            return Err(PrecompileError::Fatal(
-                "execution payload or target context changed".into(),
-            ));
-        }
-        Ok(TargetExecutionOutcome::Applied)
-    }
-}
-
-static RAW_CONTEXT_TARGET: RawContextTarget = RawContextTarget;
-static RAW_CONTEXT_HANDLERS: &[&dyn VoteTarget] = &[&RAW_CONTEXT_TARGET];
-static RAW_CONTEXT_REGISTRY: VoteTargetRegistry = VoteTargetRegistry::new(RAW_CONTEXT_HANDLERS);
-static DUPLICATE_HANDLERS: &[&dyn VoteTarget] = &[&RAW_CONTEXT_TARGET, &RAW_CONTEXT_TARGET];
-static DUPLICATE_REGISTRY: VoteTargetRegistry = VoteTargetRegistry::new(DUPLICATE_HANDLERS);
-
-struct PublicBondedTarget;
-
-impl VoteTarget for PublicBondedTarget {
-    fn target_module(&self) -> Address {
-        UPDATE_ADDRESS
-    }
-
-    fn admission(&self) -> TargetAdmission {
-        TargetAdmission::PublicBonded {
-            amount: U256::from(123u64),
-        }
-    }
-
-    fn validate(&self, _payload: &[u8], context: VoteTargetContext) -> Result<()> {
-        if context.attached_value != U256::from(123u64) {
-            return Err(PrecompileError::Fatal(
-                "public bonded target received the wrong attached value".into(),
-            ));
-        }
-        Ok(())
-    }
-
-    fn reserve(
-        &self,
-        storage: StorageHandle<'_>,
-        proposal_id: U256,
-        payload: &[u8],
-        _context: VoteTargetContext,
-    ) -> Result<()> {
-        if payload == b"fail" {
-            storage.sstore(UPDATE_ADDRESS, U256::from(998u64), U256::from(1u64))?;
-            return Err(PrecompileError::Revert(
-                "characterized public reservation failure".into(),
-            ));
-        }
-        if payload == b"execution-error" {
-            storage.sstore(UPDATE_ADDRESS, U256::from(997u64), proposal_id)?;
-        }
-        if payload == b"applied-write" {
-            storage.sstore(UPDATE_ADDRESS, U256::from(994u64), proposal_id)?;
-        }
-        Ok(())
-    }
-
-    fn handle_approved(
-        &self,
-        ctx: &BlockRuntimeContext,
-        _proposal_id: U256,
-        payload: &[u8],
-        context: VoteTargetContext,
-    ) -> Result<TargetExecutionOutcome> {
-        if context.attached_value != U256::from(123u64) {
-            return Err(PrecompileError::Fatal(
-                "public bonded target lost its attached value at execution".into(),
-            ));
-        }
-        if payload == b"execution-error" {
-            ctx.storage
-                .sstore(UPDATE_ADDRESS, U256::from(996u64), U256::from(1u64))?;
-            return Ok(TargetExecutionOutcome::Error {
-                reason: "characterized public target execution error".into(),
-            });
-        }
-        if payload == b"applied-write" {
-            ctx.storage
-                .sstore(UPDATE_ADDRESS, U256::from(995u64), U256::from(1u64))?;
-        }
-        Ok(TargetExecutionOutcome::Applied)
-    }
-}
-
-static PUBLIC_BONDED_TARGET: PublicBondedTarget = PublicBondedTarget;
-static PUBLIC_BONDED_HANDLERS: &[&dyn VoteTarget] = &[&PUBLIC_BONDED_TARGET];
-pub(super) static PUBLIC_BONDED_REGISTRY: VoteTargetRegistry =
-    VoteTargetRegistry::new(PUBLIC_BONDED_HANDLERS);
-
-struct FailingReserveTarget;
-
-impl VoteTarget for FailingReserveTarget {
-    fn target_module(&self) -> Address {
-        UPDATE_ADDRESS
-    }
-
-    fn validate(&self, _payload: &[u8], _context: VoteTargetContext) -> Result<()> {
-        Ok(())
-    }
-
-    fn reserve(
-        &self,
-        storage: StorageHandle<'_>,
-        _proposal_id: U256,
-        _payload: &[u8],
-        _context: VoteTargetContext,
-    ) -> Result<()> {
-        storage.sstore(UPDATE_ADDRESS, U256::from(999u64), U256::from(1u64))?;
-        Err(PrecompileError::Revert(
-            "characterized reservation failure".into(),
-        ))
-    }
-
-    fn handle_approved(
-        &self,
-        _ctx: &BlockRuntimeContext,
-        _proposal_id: U256,
-        _payload: &[u8],
-        _context: VoteTargetContext,
-    ) -> Result<TargetExecutionOutcome> {
-        Ok(TargetExecutionOutcome::Applied)
-    }
-}
-
-static FAILING_RESERVE_TARGET: FailingReserveTarget = FailingReserveTarget;
-static FAILING_RESERVE_HANDLERS: &[&dyn VoteTarget] = &[&FAILING_RESERVE_TARGET];
-static FAILING_RESERVE_REGISTRY: VoteTargetRegistry =
-    VoteTargetRegistry::new(FAILING_RESERVE_HANDLERS);
-
-fn block_context(storage: StorageHandle<'_>, block_number: u64) -> BlockRuntimeContext<'_> {
-    BlockRuntimeContext::new(BlockContext::empty_for_tests(block_number, 0, 1), storage)
-}
-
-fn public_bonded_finalization_fixture() -> (HashMapStorageProvider, U256, u64) {
-    let owner = Address::repeat_byte(0x99);
-    let mut provider = super::test_provider();
-    provider.set_balance(VOTE_ADDRESS, U256::from(130u64));
-    provider.set_balance(owner, U256::from(11u64));
-    let proposal_id;
-    {
-        let storage = StorageHandle::new(&mut provider);
-        setup_default_validators(storage.clone());
-        let mut vote = Vote::new(storage);
-        proposal_id = vote
-            .create_proposal_with_value(
-                owner,
-                UPDATE_ADDRESS,
-                "applied-write",
-                10,
-                U256::from(123u64),
-                &PUBLIC_BONDED_REGISTRY,
-            )
-            .unwrap();
-        vote.cast_vote_approve(proposal_id, PROPOSER, true, 11)
-            .unwrap();
-        vote.cast_vote_approve(proposal_id, VOTER_A, true, 11)
-            .unwrap();
-    }
-    provider.clear_mutation_failure();
-    (provider, proposal_id, 10 + VOTING_WINDOW_BLOCKS)
-}
 
 #[test]
 fn creation_preserves_original_payload_bytes_in_state_and_log() {
@@ -560,7 +287,7 @@ fn public_reservation_failure_rolls_back_proposal_liability_and_logs() {
 }
 
 #[test]
-fn public_bonded_execution_error_rolls_back_target_only_and_retains_bond_and_reservation() {
+fn public_bonded_execution_error_rolls_back_target_refunds_bond_and_keeps_reservation() {
     let mut provider = super::test_provider();
     provider.set_balance(VOTE_ADDRESS, U256::from(123u64));
     let storage = StorageHandle::new(&mut provider);
@@ -597,16 +324,19 @@ fn public_bonded_execution_error_rolls_back_target_only_and_retains_bond_and_res
             .unwrap(),
         ProposalStatus::Error
     );
-    assert_eq!(vote.list_pending_proposal_ids().unwrap(), vec![proposal_id]);
+    assert_eq!(
+        vote.list_pending_proposal_ids().unwrap(),
+        Vec::<U256>::new()
+    );
     assert_eq!(
         vote.proposal_bond(proposal_id).unwrap().settlement,
-        BondSettlement::Unsettled
+        BondSettlement::Refunded
     );
-    assert_eq!(vote.bond_liabilities().unwrap(), U256::from(123u64));
-    assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), U256::from(123u64));
+    assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
+    assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), U256::ZERO);
     assert_eq!(
         storage.balance(Address::repeat_byte(0x99)).unwrap(),
-        U256::ZERO
+        U256::from(123u64)
     );
     assert_eq!(
         storage.sload(UPDATE_ADDRESS, U256::from(997u64)).unwrap(),
@@ -990,7 +720,10 @@ fn approved_handler_failure_rolls_back_target_and_records_error_without_replay()
                 .unwrap(),
             ProposalStatus::Error
         );
-        assert_eq!(vote.list_pending_proposal_ids().unwrap(), vec![proposal_id]);
+        assert_eq!(
+            vote.list_pending_proposal_ids().unwrap(),
+            Vec::<U256>::new()
+        );
         assert_eq!(
             storage.sload(UPDATE_ADDRESS, U256::from(999u64)).unwrap(),
             U256::ZERO
@@ -1134,14 +867,14 @@ fn outer_hook_checkpoint_revert_restores_pending_state_index_and_logs() {
 }
 
 /// Vote is a payable route, so the boundary credits value to its address. Its
-/// dispatch must refuse value for every selector outside `PAYABLE_SELECTORS`, or
-/// a funded call to any other selector would strand native value at an address
-/// whose only outward path is the proposal-bond accounting.
+/// dispatch must refuse value for every selector outside `PAYABLE_SELECTORS`.
+/// Otherwise, a funded call to any other selector would strand native value at an
+/// address whose only outward path is the proposal-bond accounting.
 ///
 /// Characterization: the negative-match block this replaced already covered
-/// these selectors with the same message, so the test pins current behavior
-/// rather than proving a fix. Its value is catching a future removal of the
-/// guard.
+/// these selectors with the same message. Thus the test pins current behavior
+/// and does not prove a fix. Its value is that it catches a future removal of
+/// the guard.
 #[test]
 fn unpublished_selectors_refuse_native_value() {
     use alloy_sol_types::SolCall;

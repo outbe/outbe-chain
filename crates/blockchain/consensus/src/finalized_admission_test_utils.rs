@@ -44,6 +44,16 @@ pub struct CertifiedBlockFixture {
     pub block_hash: B256,
 }
 
+/// Complete parent-bound block input for cryptographic finality fixtures.
+pub struct CertifiedChildBlockInput {
+    pub epoch: Epoch,
+    pub height: u64,
+    pub timestamp: u64,
+    pub state_root: B256,
+    pub extra_data: Vec<u8>,
+    pub parent_hash: B256,
+}
+
 impl FinalityCommitteeFixture {
     pub fn new(seed_base: u64) -> Self {
         let mut keys = (1..=4)
@@ -95,18 +105,26 @@ impl FinalityCommitteeFixture {
         state_root: B256,
         extra_data: Vec<u8>,
     ) -> CertifiedBlockFixture {
-        self.certify_child_block(epoch, height, timestamp, state_root, extra_data, B256::ZERO)
+        self.certify_child_block(CertifiedChildBlockInput {
+            epoch,
+            height,
+            timestamp,
+            state_root,
+            extra_data,
+            parent_hash: B256::ZERO,
+        })
     }
 
-    pub fn certify_child_block(
-        &self,
-        epoch: Epoch,
-        height: u64,
-        timestamp: u64,
-        state_root: B256,
-        extra_data: Vec<u8>,
-        parent_hash: B256,
-    ) -> CertifiedBlockFixture {
+    pub fn certify_child_block(&self, input: CertifiedChildBlockInput) -> CertifiedBlockFixture {
+        let CertifiedChildBlockInput {
+            epoch,
+            height,
+            timestamp,
+            state_root,
+            extra_data,
+            parent_hash,
+        } = input;
+
         let mut block = Block::default();
         block.header.parent_hash = parent_hash;
         block.header.number = height;

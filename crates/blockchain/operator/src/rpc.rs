@@ -7,24 +7,14 @@ use eyre::{Result, WrapErr as _};
 use outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1;
 use serde_json::Value;
 
-pub trait FinalityRpc {
-    fn transaction_receipt(
-        &self,
-        transaction_hash: &str,
-    ) -> impl Future<Output = Result<Option<Value>>> + Send;
+/// Chain identity used when validating policy anchors and signing relay bytes.
+pub trait ChainRpc {
+    fn chain_id(&self) -> impl Future<Output = Result<u64>> + Send;
+}
 
-    fn logs(
-        &self,
-        address: Address,
-        topics: &[Option<String>],
-        from_block: &str,
-        to_block: &str,
-    ) -> impl Future<Output = Result<Vec<Value>>> + Send;
-
-    fn block_by_number(&self, block: u64) -> impl Future<Output = Result<Value>> + Send;
-
+/// Reads pinned to an exact finalized block tag.
+pub trait FinalizedStateRpc {
     fn finalized_block(&self) -> impl Future<Output = Result<Value>> + Send;
-
     fn call_at(
         &self,
         to: Address,
@@ -33,20 +23,49 @@ pub trait FinalityRpc {
     ) -> impl Future<Output = Result<Vec<u8>>> + Send;
 }
 
-/// RPC surface shared by manual and daemon renewal. Every Registry read is
-/// performed with [`FinalityRpc::call_at`] at the height returned by the exact
-/// finalized schedule; latest/pending state is used only for relay transport.
-pub trait RenewalRpc: FinalityRpc {
-    fn chain_id(&self) -> impl Future<Output = Result<u64>> + Send;
+/// Read-only Registry facts. No transaction preparation or relay capability.
+pub trait RegistryRpc: ChainRpc + FinalizedStateRpc {
+    fn tee_renewal_schedule_v1(&self) -> impl Future<Output = Result<TeeRenewalScheduleV1>> + Send;
+}
+
+/// Transport facts required to prepare new signed relay bytes.
+pub trait RelayPreparationRpc: ChainRpc {
     fn gas_price(&self) -> impl Future<Output = Result<U256>> + Send;
     fn transaction_count(&self, address: Address) -> impl Future<Output = Result<u64>> + Send;
     fn balance(&self, address: Address) -> impl Future<Output = Result<U256>> + Send;
+}
+
+/// Observation of an exact transaction, without authority to submit it.
+pub trait TransactionReceiptRpc {
+    fn transaction_receipt(
+        &self,
+        transaction_hash: &str,
+    ) -> impl Future<Output = Result<Option<Value>>> + Send;
+}
+
+/// Submit or replay exact signed bytes and reconcile their receipt.
+pub trait RelayRpc: TransactionReceiptRpc {
     fn send_raw_transaction(
         &self,
         raw_transaction: &[u8],
     ) -> impl Future<Output = Result<String>> + Send;
-    fn tee_renewal_schedule_v1(&self) -> impl Future<Output = Result<TeeRenewalScheduleV1>> + Send;
 }
+
+/// History needed to prove that one onboarding event became canonical.
+pub trait FinalityRpc: FinalizedStateRpc + TransactionReceiptRpc {
+    fn logs(
+        &self,
+        address: Address,
+        topics: &[Option<String>],
+        from_block: &str,
+        to_block: &str,
+    ) -> impl Future<Output = Result<Vec<Value>>> + Send;
+    fn block_by_number(&self, block: u64) -> impl Future<Output = Result<Value>> + Send;
+}
+
+/// Complete manual/daemon lifecycle capability assembled from operational needs.
+pub trait RenewalRpc: RegistryRpc + RelayPreparationRpc + RelayRpc {}
+impl<R: RegistryRpc + RelayPreparationRpc + RelayRpc + ?Sized> RenewalRpc for R {}
 
 /// Small reusable HTTP JSON-RPC transport for node-owned lifecycle workers.
 pub struct HttpRenewalRpc {
@@ -102,7 +121,7 @@ impl HttpRenewalRpc {
     }
 }
 
-impl FinalityRpc for HttpRenewalRpc {
+impl TransactionReceiptRpc for HttpRenewalRpc {
     async fn transaction_receipt(&self, transaction_hash: &str) -> Result<Option<Value>> {
         self.optional(
             "eth_getTransactionReceipt",
@@ -110,7 +129,9 @@ impl FinalityRpc for HttpRenewalRpc {
         )
         .await
     }
+}
 
+impl FinalityRpc for HttpRenewalRpc {
     async fn logs(
         &self,
         address: Address,
@@ -140,7 +161,9 @@ impl FinalityRpc for HttpRenewalRpc {
         )
         .await
     }
+}
 
+impl FinalizedStateRpc for HttpRenewalRpc {
     async fn finalized_block(&self) -> Result<Value> {
         self.call(
             "eth_getBlockByNumber",
@@ -163,14 +186,16 @@ impl FinalityRpc for HttpRenewalRpc {
     }
 }
 
-impl RenewalRpc for HttpRenewalRpc {
+impl ChainRpc for HttpRenewalRpc {
     async fn chain_id(&self) -> Result<u64> {
         parse_hex_u64(
             &self.call("eth_chainId", serde_json::json!([])).await?,
             "eth_chainId",
         )
     }
+}
 
+impl RelayPreparationRpc for HttpRenewalRpc {
     async fn gas_price(&self) -> Result<U256> {
         parse_hex_u256(
             &self.call("eth_gasPrice", serde_json::json!([])).await?,
@@ -201,7 +226,9 @@ impl RenewalRpc for HttpRenewalRpc {
             "eth_getBalance",
         )
     }
+}
 
+impl RelayRpc for HttpRenewalRpc {
     async fn send_raw_transaction(&self, raw_transaction: &[u8]) -> Result<String> {
         self.call(
             "eth_sendRawTransaction",
@@ -212,7 +239,9 @@ impl RenewalRpc for HttpRenewalRpc {
         .map(ToOwned::to_owned)
         .ok_or_else(|| eyre::eyre!("eth_sendRawTransaction returned a non-string"))
     }
+}
 
+impl RegistryRpc for HttpRenewalRpc {
     async fn tee_renewal_schedule_v1(&self) -> Result<TeeRenewalScheduleV1> {
         serde_json::from_value(
             self.call("outbe_teeRenewalScheduleV1", serde_json::json!([]))
@@ -246,3 +275,6 @@ fn decode_hex_bytes(value: &Value, method: &str) -> Result<Vec<u8>> {
     hex::decode(encoded.strip_prefix("0x").unwrap_or(encoded))
         .wrap_err_with(|| format!("decode {method} bytes"))
 }
+
+#[cfg(test)]
+mod tests;

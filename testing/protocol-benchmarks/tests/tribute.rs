@@ -32,13 +32,13 @@ fn zk_tribute_creation_runs_through_the_unified_interface() {
     assert_eq!(report.postconditions["tribute.created"], "true");
 
     // The in-process enclave step is the one latency the scenario cannot
-    // derive from an outer timer, so it must be reported on its own.
+    // derive from an outer timer, so the scenario must report it on its own.
     assert!(report
         .component_latency_ns
         .contains_key("enclave.process_offer"));
 
-    // Issuance is ZK-only, so the proof-verification latencies of the one
-    // measured path must be reported alongside it.
+    // Issuance is ZK-only, so the scenario must report the proof-verification
+    // latencies of the one measured path alongside it.
     assert!(report
         .component_latency_ns
         .contains_key("chain.ultrahonk_verify"));
@@ -66,7 +66,7 @@ fn zk_tribute_creation_runs_through_the_unified_interface() {
     );
 
     // The aggregated storage trace is a second accounting of the same
-    // operations as the storage gas components; both views must agree in
+    // operations as the storage gas components. Both views must agree in
     // gas and in operation count, priced read=warm, write=reset.
     let trace_gas: u64 = report.storage.iter().map(|entry| entry.gas).sum();
     let trace_operations: u64 = report.storage.iter().map(|entry| entry.count).sum();

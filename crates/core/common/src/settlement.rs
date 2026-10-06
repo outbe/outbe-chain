@@ -1,6 +1,6 @@
-//! Rounding rule shared by Nod, Intex and Gem settlement: the obligation is
-//! computed at full precision, any FX leg included, then floored once into the
-//! settlement asset's minor units.
+//! Rounding rule shared by Nod, Intex and Gem settlement. Settlement computes the
+//! obligation at full precision, any FX leg included, and then floors it once into
+//! the settlement asset's minor units.
 
 use alloy_primitives::U256;
 use core::fmt;
@@ -33,8 +33,9 @@ impl fmt::Display for RoundingError {
 
 /// `floor(numerator x 10^asset_decimals / (denominator x 10^obligation_decimals))`.
 ///
-/// `numerator / denominator` is the obligation carrying `obligation_decimals`; a
-/// rate leg belongs in that fraction so it is floored with the unit scaling.
+/// `numerator / denominator` is the obligation carrying `obligation_decimals`.
+/// A rate leg belongs in that fraction, so this function floors it with the unit
+/// scaling.
 pub fn floor_to_asset_units(
     numerator: U256,
     denominator: U256,
@@ -105,7 +106,7 @@ mod tests {
 
     #[test]
     fn the_rate_leg_is_floored_together_with_the_scaling() {
-        // 7.5 at rate 2/3 = 5.0 exactly; flooring the rate leg on its own first
+        // 7.5 at rate 2/3 = 5.0 exactly. Flooring the rate leg on its own first
         // (7 x 2 / 3 = 4.66) would have lost a unit.
         assert_eq!(
             floor_to_asset_units(u(7_500_000) * u(2), u(3), 6, 6),

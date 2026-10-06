@@ -28,6 +28,8 @@ for file in "$ENV_FILE" "$FEEDER_CONFIG" "$STORAGE_CONFIG"; do
     fail "configuration must not be group/world writable: $file"
 done
 
+"$HELPER" verify-rocksdb --storage-config "$STORAGE_CONFIG"
+
 seen_names=:
 while IFS= read -r line || [[ -n $line ]]; do
   [[ $line =~ ^([A-Z0-9_]+)=\"([^\"]*)\"$ ]] || \
@@ -36,7 +38,7 @@ while IFS= read -r line || [[ -n $line ]]; do
   value=${BASH_REMATCH[2]}
   case $name in
     OUTBE_EXTERNAL_IP|OUTBE_CERTIFIED_RPC|OUTBE_VALIDATOR_ADDRESS|\
-    OUTBE_BOOTNODES|OUTBE_CONSENSUS_PEERS|OUTBE_MONGODB_IMAGE|\
+    OUTBE_BOOTNODES|OUTBE_CONSENSUS_PEERS|\
     OUTBE_ENCLAVE_RUNTIME|OCOMP_CHAIN_ID|OCOMP_GENESIS_HASH|\
     OCOMP_BOOT_NONCE|OCOMP_PROTOCOL_BUNDLE_HASHES)
       ;;
@@ -56,7 +58,6 @@ required=(
   OUTBE_VALIDATOR_ADDRESS
   OUTBE_BOOTNODES
   OUTBE_CONSENSUS_PEERS
-  OUTBE_MONGODB_IMAGE
   OUTBE_ENCLAVE_RUNTIME
   OCOMP_CHAIN_ID
   OCOMP_GENESIS_HASH
@@ -73,8 +74,6 @@ done
   fail 'OUTBE_CERTIFIED_RPC must be an HTTP(S) URL'
 [[ $OUTBE_VALIDATOR_ADDRESS =~ ^0x[0-9a-fA-F]{40}$ ]] || \
   fail 'OUTBE_VALIDATOR_ADDRESS must be a 20-byte hex address'
-[[ $OUTBE_MONGODB_IMAGE =~ @sha256:[0-9a-fA-F]{64}$ ]] || \
-  fail 'OUTBE_MONGODB_IMAGE must be pinned by sha256 digest'
 [[ $OCOMP_CHAIN_ID =~ ^[1-9][0-9]*$ ]] || fail 'OCOMP_CHAIN_ID must be positive'
 [[ $OCOMP_GENESIS_HASH =~ ^0x[0-9a-f]{64}$ ]] || \
   fail 'OCOMP_GENESIS_HASH must be a 32-byte hex value'
@@ -168,7 +167,6 @@ install -d -o outbe -g outbe -m 0750 \
   "$VALIDATOR_ROOT/data" \
   "$VALIDATOR_ROOT/consensus" \
   "$VALIDATOR_ROOT/logs" \
-  "$VALIDATOR_ROOT/mongodb" \
   "$OCOMP_DOMAIN" \
   "$KEYS_DIR/radicle/storage" \
   "$KEYS_DIR/radicle/node" \
@@ -243,4 +241,5 @@ install -o root -g root -m 0644 \
 
 systemctl daemon-reload
 
+printf '%s\n' 'Outbe storage backend: rocksdb'
 printf '%s\n' 'Outbe validator services installed but not started.'

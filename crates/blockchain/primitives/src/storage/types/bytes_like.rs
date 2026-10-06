@@ -56,8 +56,8 @@ impl<'storage> StorageBytes<'storage> {
     }
 
     pub fn write(&self, data: &[u8]) -> Result<()> {
-        // Number of data-run slots the current value occupies (short form uses
-        // none - the bytes live inline in the base slot).
+        // Number of data-run slots the current value occupies. The short form
+        // uses none: its bytes live inline in the base slot.
         let old_len = self.len()?;
         let old_data_slots = if old_len <= 31 {
             0
@@ -104,9 +104,9 @@ impl<'storage> StorageBytes<'storage> {
     }
 
     /// Writes only if the stored value differs from `data`. Returns `true`
-    /// when a write was performed. The compare reads the current value once
-    /// (SLOAD, cheap) to avoid an unnecessary full rewrite (SSTORE, ~50x the
-    /// cost per slot) when the content is unchanged.
+    /// when this method wrote the value. The compare reads the current value
+    /// once (SLOAD, cheap). This avoids an unnecessary full rewrite (SSTORE,
+    /// ~50x the cost per slot) when the content is unchanged.
     pub fn write_if_changed(&self, data: &[u8]) -> Result<bool> {
         if self.read()? == data {
             return Ok(false);

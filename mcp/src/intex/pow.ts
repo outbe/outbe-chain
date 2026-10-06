@@ -6,20 +6,20 @@ import { type Address, type Hex, concat, sha256, toBytes, toHex } from "viem";
  * tiny (1 byte => ~256 tries), so a single-threaded grind is instant.
  *
  * Scheme verbatim from crates/core/intexfactory/src/runtime.rs (compute_pow_hash):
- *   preimage = holder[20] ++ promisAmount_be32 ++ seriesId[14] ++ seq_be4
+ *   preimage = holder[20] ++ promisMinor_be32 ++ seriesId[14] ++ seq_be4
  *   hash     = SHA256(preimage ++ nonce_be8)
  *   valid    = first POW_DIFFICULTY bytes of hash are zero
- * `seq` is the per-(series, holder) mine counter - read it as the count of past
- * PromisMined(series, holder) events. promisAmount = series.promisLoadMinor * amount.
+ * `seq` is the per-(series, holder) mine counter. Read it as the count of past
+ * PromisMined(series, holder) events. promisMinor = series.promisLoadMinor * units.
  */
 
 export const POW_DIFFICULTY = 1; // crates/core/common/src/pow.rs
 
 /** The raw preimage bytes, matching the Rust concatenation. */
-function preimage(holder: Address, promisAmount: bigint, seriesId: Hex, seq: number): Uint8Array {
+function preimage(holder: Address, promisMinor: bigint, seriesId: Hex, seq: number): Uint8Array {
   return concat([
     toBytes(holder),
-    toBytes(toHex(promisAmount, { size: 32 })),
+    toBytes(toHex(promisMinor, { size: 32 })),
     toBytes(seriesId),
     toBytes(toHex(seq, { size: 4 })),
   ]);
@@ -34,12 +34,12 @@ export interface PowSolution {
 /** Grind a nonce whose PoW hash has POW_DIFFICULTY leading zero bytes. */
 export function grindNonce(
   holder: Address,
-  promisAmount: bigint,
+  promisMinor: bigint,
   seriesId: Hex,
   seq: number,
 ): PowSolution {
-  const prefix = preimage(holder, promisAmount, seriesId, seq);
-  // The precompile caps nonce at u64::MAX; difficulty 1 resolves far below that.
+  const prefix = preimage(holder, promisMinor, seriesId, seq);
+  // The precompile caps nonce at u64::MAX. Difficulty 1 resolves far below that.
   for (let nonce = 0n; nonce <= 0xffff_ffff_ffff_ffffn; nonce++) {
     const data = concat([prefix, toBytes(toHex(nonce, { size: 8 }))]);
     const hash = sha256(data, "bytes");

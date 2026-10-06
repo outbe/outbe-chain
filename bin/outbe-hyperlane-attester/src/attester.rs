@@ -1,10 +1,11 @@
 //! Hyperlane liveness: submits this validator's latest signed checkpoints
 //! from its own checkpoint bucket to the HyperlaneController precompile.
 //!
-//! The bucket is the location the validator announced on Outbe's
-//! ValidatorAnnounce (`s3+http://host:port/<validator>/<folder>`); inside it
-//! every domain has a folder with `checkpoint_latest_index.json` (a bare
-//! number) and `checkpoint_<index>_with_id.json` written by the agent.
+//! The bucket is the location that the validator announced on Outbe's
+//! ValidatorAnnounce (`s3+http://host:port/<validator>/<folder>`). Inside the
+//! bucket, every domain has a folder. The agent writes two files to that folder:
+//! `checkpoint_latest_index.json` (a bare number) and
+//! `checkpoint_<index>_with_id.json`.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -75,7 +76,7 @@ impl Attester {
         }
     }
 
-    /// Polls the bucket forever; every error is logged and retried next tick.
+    /// Polls the bucket forever. It logs every error and retries on the next tick.
     pub async fn run(self) {
         let interval = Duration::from_secs(self.config.poll_interval_secs);
         info!(

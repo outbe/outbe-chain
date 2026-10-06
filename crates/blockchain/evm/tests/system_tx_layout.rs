@@ -1,8 +1,8 @@
 //! V2 begin-zone system-tx layout invariants.
 //!
 //! Covers AC1/AC3/AC4 + the block-1 mandatory BoundaryOutcome rule + the
-//! block-0 prohibition of begin-zone system txs. Codec-level rejection of V1
-//! input bytes is tested at every legacy selector + version combination.
+//! block-0 prohibition of begin-zone system txs. The tests check codec-level
+//! rejection of V1 input bytes at every legacy selector + version combination.
 
 use alloy_consensus::{SignableTransaction as _, TxLegacy};
 use alloy_primitives::{address, Bytes, Signature, TxKind, U256};
@@ -117,12 +117,13 @@ fn v2_selectors_differ_from_legacy_v1_selectors() {
     }
 }
 
-/// Legacy V1 system-tx input bytes are rejected at every height.
+/// The decoder rejects legacy V1 system-tx input bytes at every height.
 ///
-/// Two failure modes proven here: (a) the V1 selector bytes (`OSF1` / `OSC1`
-/// / `OSB1` / `OSO1`) are unknown to the V2 selector parser; (b) even if a
-/// caller padded an unknown body with version byte `1`, the decoder rejects
-/// it because `SYSTEM_TX_INPUT_VERSION == 2`.
+/// This test proves two failure modes:
+/// - (a) The V2 selector parser does not know the V1 selector bytes (`OSF1` /
+///   `OSC1` / `OSB1` / `OSO1`).
+/// - (b) Even if a caller padded an unknown body with version byte `1`, the
+///   decoder rejects it because `SYSTEM_TX_INPUT_VERSION == 2`.
 #[test]
 fn legacy_v1_system_tx_rejected_at_all_heights() {
     let v1_selectors_and_bodies: [(&[u8; 4], &[u8]); 4] = [

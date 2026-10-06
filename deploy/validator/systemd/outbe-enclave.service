@@ -1,23 +1,26 @@
 [Unit]
 Description=Outbe TEE enclave
 After=network-online.target aesmd.service
-Wants=network-online.target
-Requires=aesmd.service
+Wants=network-online.target aesmd.service
 PartOf=outbe-validator.target
-StartLimitIntervalSec=300
-StartLimitBurst=5
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=root
 EnvironmentFile=/opt/outbe-chain/validator.env
 ExecStart=/opt/outbe-chain/deploy/validator/outbe-validator-service.py enclave
-Restart=on-failure
+ExecStartPost=/opt/outbe-chain/deploy/validator/outbe-validator-service.py wait-enclave
+Restart=always
+RestartMode=direct
 RestartSec=5
 RestartSteps=5
 RestartMaxDelaySec=60
+TimeoutStartSec=150
 TimeoutStopSec=60
+KillMode=mixed
 KillSignal=SIGTERM
+SuccessExitStatus=143 SIGTERM
 UMask=0077
 LimitNOFILE=65535
 NoNewPrivileges=true

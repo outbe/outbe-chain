@@ -29,7 +29,6 @@ pub struct NodItemBodyV1 {
     pub gratis_load_minor: U256,
     pub worldwide_day: WorldwideDay,
     pub league_id: u16,
-    pub floor_price_minor: U256,
     pub bucket_key: B256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
@@ -42,9 +41,8 @@ pub struct NodItemBodyV1 {
 pub struct NodBucketBodyV1 {
     pub bucket_key: B256,
     pub worldwide_day: WorldwideDay,
-    pub floor_price_minor: U256,
     pub entry_price_minor: U256,
-    /// ISO 4217 numeric code denominating `floor_price_minor`, omitted when zero.
+    /// ISO 4217 numeric code denominating `entry_price_minor`, omitted when zero.
     pub reference_currency: u16,
     pub settled_nods: u64,
 }
@@ -195,7 +193,6 @@ pub fn encode_nod_item_v1(body: &NodItemBodyV1) -> Result<Vec<u8>, CanonicalBody
     encode_bytes_field(3, &body.gratis_load_minor.to_be_bytes::<32>(), &mut output);
     encode_optional_varint_field(4, u64::from(body.worldwide_day.value()), &mut output);
     encode_optional_varint_field(5, u64::from(body.league_id), &mut output);
-    encode_bytes_field(6, &body.floor_price_minor.to_be_bytes::<32>(), &mut output);
     encode_bytes_field(7, body.bucket_key.as_slice(), &mut output);
     encode_optional_varint_field(9, u64::from(body.issuance_currency), &mut output);
     encode_optional_varint_field(10, u64::from(body.reference_currency), &mut output);
@@ -212,7 +209,6 @@ pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyEr
     let gratis_load_minor = decode_u256(required_bytes(&mut fields, 3)?, 3)?;
     let worldwide_day = WorldwideDay::new(optional_u32(&mut fields, 4)?);
     let league_id = optional_u16(&mut fields, 5)?;
-    let floor_price_minor = decode_u256(required_bytes(&mut fields, 6)?, 6)?;
     let bucket_key = B256::from(fixed_bytes::<32>(required_bytes(&mut fields, 7)?, 7)?);
     let issuance_currency = optional_u16(&mut fields, 9)?;
     let reference_currency = optional_u16(&mut fields, 10)?;
@@ -226,7 +222,6 @@ pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyEr
         gratis_load_minor,
         worldwide_day,
         league_id,
-        floor_price_minor,
         bucket_key,
         issuance_currency,
         reference_currency,
@@ -251,9 +246,8 @@ pub fn encode_nod_bucket_v1(body: &NodBucketBodyV1) -> Result<Vec<u8>, Canonical
     let mut output = Vec::with_capacity(128);
     encode_bytes_field(1, body.bucket_key.as_slice(), &mut output);
     encode_optional_varint_field(2, u64::from(body.worldwide_day.value()), &mut output);
-    encode_bytes_field(3, &body.floor_price_minor.to_be_bytes::<32>(), &mut output);
-    // Fields 4 and 5 are reserved: qualification is derived and membership is not part of
-    // the shared body commitment.
+    // Fields 3 to 5 are reserved: the floor and qualification are derived and membership is
+    // not part of the shared body commitment.
     encode_bytes_field(6, &body.entry_price_minor.to_be_bytes::<32>(), &mut output);
     encode_optional_varint_field(7, u64::from(body.reference_currency), &mut output);
     encode_optional_varint_field(8, body.settled_nods, &mut output);
@@ -265,7 +259,6 @@ pub fn decode_nod_bucket_v1(bytes: &[u8]) -> Result<NodBucketBodyV1, CanonicalBo
     let mut fields = Fields::new(bytes);
     let bucket_key = B256::from(fixed_bytes::<32>(required_bytes(&mut fields, 1)?, 1)?);
     let worldwide_day = WorldwideDay::new(optional_u32(&mut fields, 2)?);
-    let floor_price_minor = decode_u256(required_bytes(&mut fields, 3)?, 3)?;
     let entry_price_minor = decode_u256(required_bytes(&mut fields, 6)?, 6)?;
     let reference_currency = optional_u16(&mut fields, 7)?;
     let settled_nods = optional_varint(&mut fields, 8)?;
@@ -274,7 +267,6 @@ pub fn decode_nod_bucket_v1(bytes: &[u8]) -> Result<NodBucketBodyV1, CanonicalBo
     let body = NodBucketBodyV1 {
         bucket_key,
         worldwide_day,
-        floor_price_minor,
         entry_price_minor,
         reference_currency,
         settled_nods,

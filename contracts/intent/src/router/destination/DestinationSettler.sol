@@ -19,19 +19,21 @@ import {DestinationSettlerBase} from "./DestinationSettlerBase.sol";
 abstract contract DestinationSettler is DestinationSettlerBase {
     using SafeERC20 for IERC20;
 
-    /// @notice Emitted when slashing collateral on refund fails (e.g. solver revoked the ERC-6909 operator grant).
-    ///         The refund itself still completes - slash is best-effort to preserve user-side liveness.
+    /// @notice Emitted when the collateral slash on refund fails (e.g. the solver revoked the ERC-6909
+    ///         operator grant). The refund itself still completes. The slash is best-effort to
+    ///         preserve user-side liveness.
     event SlashSkipped(bytes32 indexed orderId);
 
     /// @notice Thrown when a settle/refund batch mixes orders from different origin domains.
-    ///         The batch is dispatched to a single domain (order [0]'s), so a mixed batch would
+    ///         The router dispatches the batch to a single domain (order [0]'s). Thus a mixed batch would
     ///         silently mis-route every order whose origin differs and strand its input tokens.
     error MixedOriginDomain(uint32 expected, uint32 got);
 
     // ========== CLAIM ==========
 
-    /// @notice Claim an order after quoting ends - locks collateral of the winning solver.
-    ///         If the winner lacks sufficient collateral, the auction is restarted automatically.
+    /// @notice Claim an order after quoting ends. This locks the collateral of the winning solver.
+    ///         If the winner lacks sufficient collateral, this function restarts the auction
+    ///         automatically.
     /// @param _orderId The unique identifier of the order
     /// @param _originData The order data encoded as bytes (OrderData)
     function claimOrder(bytes32 _orderId, bytes calldata _originData) external {
@@ -41,7 +43,7 @@ abstract contract DestinationSettler is DestinationSettlerBase {
         (address winner, uint256 outputAmount) = _auction().getWinner(_orderId);
         OrderData memory orderData = OrderValidator.decodeAndCheck(_originData, _orderId, outputAmount);
 
-        // Check if winner can cover collateral - if not, restart auction
+        // Check if the winner can cover the collateral. If not, restart the auction.
         ISolverEscrow escrow = _solverEscrow();
         if (address(escrow) != address(0)) {
             address outputToken = TypeCasts.bytes32ToAddress(orderData.outputToken);
@@ -51,8 +53,8 @@ abstract contract DestinationSettler is DestinationSettlerBase {
             }
         }
 
-        // Collateral is locked before the order is marked CLAIMED: a winner whose collateral cannot
-        // be taken into custody forfeits the auction instead of blocking the order.
+        // Lock the collateral before the order is marked CLAIMED. A winner whose collateral the
+        // escrow cannot take into custody forfeits the auction instead of blocking the order.
         if (!_onClaimed(_orderId, winner, _originData)) {
             _auction().resetAuction(_orderId, winner);
             return;
@@ -119,9 +121,9 @@ abstract contract DestinationSettler is DestinationSettlerBase {
         _dispatchRefund(_requireSameOriginDomain(ordersData), _orderIds);
     }
 
-    /// @dev Returns the shared origin domain of a batch, reverting if any order's differs from the
-    ///      first. The whole batch dispatches to this one domain, so a mixed batch would silently
-    ///      mis-route the divergent orders and strand their input tokens.
+    /// @dev Returns the shared origin domain of a batch. Reverts if the origin domain of any order
+    ///      differs from the first. The whole batch dispatches to this one domain. Thus a mixed batch
+    ///      would silently mis-route the divergent orders and strand their input tokens.
     function _requireSameOriginDomain(bytes[] memory _ordersData) private pure returns (uint32 originDomain) {
         originDomain = OrderEncoder.decode(_ordersData[0]).originDomain;
         for (uint256 i = 1; i < _ordersData.length; i++) {
@@ -138,7 +140,7 @@ abstract contract DestinationSettler is DestinationSettlerBase {
     // ========== COLLATERAL HOOKS ==========
 
     /// @dev Locks collateral when an order is claimed. The lock takes custody of the winner's
-    ///      ERC-6909, which requires a live operator grant; a winner without one cannot be claimed.
+    ///      ERC-6909, which requires a live operator grant. A winner without one cannot be claimed.
     function _onClaimed(bytes32 _orderId, address _solver, bytes calldata _originData)
         internal
         override
@@ -167,8 +169,8 @@ abstract contract DestinationSettler is DestinationSettlerBase {
     }
 
     /// @dev Slashes collateral when a claimed order expires without being filled.
-    ///      Best-effort: a revert is swallowed so the user's refund still proceeds, and the missed
-    ///      slash is surfaced via SlashSkipped.
+    ///      Best-effort: this hook swallows a revert, so the user's refund still proceeds. The
+    ///      SlashSkipped event reports the missed slash.
     function _onSlashed(bytes32 _orderId) internal override {
         ISolverEscrow escrow = _solverEscrow();
         if (address(escrow) == address(0)) return;
@@ -181,7 +183,7 @@ abstract contract DestinationSettler is DestinationSettlerBase {
     // ========== ABSTRACT - MESSAGING LAYER ==========
 
     /**
-     * @dev Should be implemented by the messaging layer for dispatching a settlement instruction.
+     * @dev The messaging layer should implement this to dispatch a settlement instruction.
      * @param _originDomain The origin domain of the orders.
      * @param _orderIds The IDs of the orders to settle.
      * @param _ordersFillerData The filler data for the orders.
@@ -191,7 +193,7 @@ abstract contract DestinationSettler is DestinationSettlerBase {
         virtual;
 
     /**
-     * @dev Should be implemented by the messaging layer for dispatching a refunding instruction.
+     * @dev The messaging layer should implement this to dispatch a refunding instruction.
      * @param _originDomain The origin domain of the orders.
      * @param _orderIds The IDs of the orders to refund.
      */

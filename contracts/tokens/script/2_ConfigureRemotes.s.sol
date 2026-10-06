@@ -11,11 +11,12 @@ import {ERC7786TokenBridge} from "../src/ERC7786TokenBridge.sol";
 import {Route, Routes} from "./routes/Routes.sol";
 
 /// @dev Registers the matching bridge on every remote chain, for every route. Bridges share one CREATE3 address
-///      across chains, so the remote address equals the local one - `REMOTE_CHAIN_IDS` lists chain ids only, and the
-///      same list can be used unchanged on every chain (the local id is skipped).
+///      across chains, so the remote address equals the local one. `REMOTE_CHAIN_IDS` lists chain
+///      ids only. You can use the same list unchanged on every chain (the script skips the local
+///      id).
 ///
 /// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATE3_FACTORY_ADDRESS`, `OUTBE_CHAIN_ID`.
-/// Optional env: `REMOTE_CHAIN_IDS` (csv; no-op when unset).
+/// Optional env: `REMOTE_CHAIN_IDS` (csv, no-op when unset).
 contract ConfigureRemotes is Routes {
     function run() public virtual {
         string memory salt = vm.envString("CONTRACT_SALT");

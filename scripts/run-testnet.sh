@@ -22,15 +22,15 @@ VALIDATORS_JSON="$OUTPUT_DIR/validators.json"
 PID_DIR="$OUTPUT_DIR/pids"
 RETH_BOOTNODES="${RETH_BOOTNODES:-}"
 RETH_BOOTNODES_FILE="${RETH_BOOTNODES_FILE:-$OUTPUT_DIR/reth-bootnodes.txt}"
-# Uniform port shift so multiple localnets can run in parallel. Applied to every
-# base port below (and the TEE socket). Must match the PORT_OFFSET the network was
-# bootstrapped with - bootstrap-testnet.sh bakes the same shift into the consensus
+# Uniform port shift so multiple localnets can run in parallel. The script applies it
+# to every base port below (and the TEE socket). It must match the PORT_OFFSET that
+# the network bootstrap used. bootstrap-testnet.sh bakes the same shift into the consensus
 # p2p addresses (validators.json/genesis) and reth bootnodes.
 PORT_OFFSET="${PORT_OFFSET:-0}"
 OUTBE_TEST_DROP_NEW_PAYLOAD_VALIDATOR="${OUTBE_TEST_DROP_NEW_PAYLOAD_VALIDATOR:-}"
 OUTBE_TEST_DROP_NEW_PAYLOAD_HEIGHT="${OUTBE_TEST_DROP_NEW_PAYLOAD_HEIGHT:-}"
 # Every genesis produced by bootstrap-testnet.sh is GramineDirectDev from block
-# 1. The enclave is therefore mandatory; an unset flag cannot create a tee-less
+# 1. The enclave is therefore mandatory. An unset flag cannot create a tee-less
 # fallback network.
 : "${OUTBE_TEE_ENCLAVE:=1}"
 
@@ -114,10 +114,10 @@ do_start() {
     locate_radicle_binary
     mkdir -p "$PID_DIR"
 
-    # WS-M2 M5: re-apply TEE flags persisted by a previous start for any var the
-    # caller did not set this time, so a restart stays consistent. Dropping
-    # OUTBE_TEE_SEAL across a restart would halt every node (expected seal vs none);
-    # dropping OUTBE_TEE_ENCLAVE would silently resume the chain WITHOUT TEE. An
+    # WS-M2 M5: re-apply the TEE flags that a previous start persisted, for any var
+    # the caller did not set this time, so a restart stays consistent. Dropping
+    # OUTBE_TEE_SEAL across a restart would halt every node (expected seal vs none).
+    # Dropping OUTBE_TEE_ENCLAVE would silently resume the chain WITHOUT TEE. An
     # explicit env var still wins (the file uses `:=`, set-if-unset). Remove the file
     # (or `localnet-clean`) to switch modes.
     local tee_env_file="$OUTPUT_DIR/tee-env"
@@ -149,8 +149,8 @@ do_start() {
     local base_radicle=$((8776 + PORT_OFFSET))
     local base_radicle_status=$((8876 + PORT_OFFSET))
 
-    # Mandatory per-validator GramineDirectDev enclave. The binary is
-    # auto-detected in ./target or supplied via OUTBE_TEE_ENCLAVE_BINARY.
+    # Mandatory per-validator GramineDirectDev enclave. The script auto-detects the
+    # binary in ./target, or the caller supplies it via OUTBE_TEE_ENCLAVE_BINARY.
     local tee_enclave_bin=""
     local tee_gramine_image="outbe-tee-enclave-gramine-test"
     local tee_test_signing_key=""
@@ -165,8 +165,8 @@ do_start() {
     if [ -n "${OUTBE_TEE_ENCLAVE:-}" ]; then
         # OUTBE_TEE_ENCLAVE_MOCK=1 selects the dev mock binary
         # (`outbe-tee-enclave-mock`, built `--features mock`): unattested quote +
-        # stable sealing key, for localnet/CI without SGX. Node args are identical
-        # - only which binary the container runs differs.
+        # stable sealing key, for localnet/CI without SGX. Node args are identical.
+        # Only the binary that the container runs differs.
         local tee_bin_name="outbe-tee-enclave"
         local tee_build_hint="cargo build --release --bin outbe-tee-enclave"
         if [ -n "${OUTBE_TEE_ENCLAVE_MOCK:-}" ]; then
@@ -185,8 +185,8 @@ do_start() {
             exit 1
         fi
         # The development enclave always runs under Gramine. It deliberately
-        # uses gramine-direct even on an SGX host; real DcapRequired execution is
-        # owned by the separate I9 release harness and production genesis.
+        # uses gramine-direct even on an SGX host. The separate I9 release harness
+        # and production genesis own real DcapRequired execution.
         if ! command -v docker >/dev/null 2>&1; then
             echo "Error: OUTBE_TEE_ENCLAVE needs Docker to run the Gramine enclave." >&2
             echo "  Install Docker; there is no tee-less or bare-host fallback." >&2
@@ -267,16 +267,17 @@ do_start() {
         local -a tee_args=()
         if [ -n "$tee_enclave_bin" ]; then
             # Distinct DKG identity per validator (else the n enclaves would be
-            # the same DKG participant - a degenerate ceremony). Deterministic
-            # from the validator index; a validator-count/order change requires a
-            # clean re-bootstrap. Offset by 1 so the seed is never all-zero.
+            # the same DKG participant - a degenerate ceremony). The identity is
+            # deterministic from the validator index. A validator-count/order change
+            # requires a clean re-bootstrap. Offset by 1 so the seed is never all-zero.
             local tee_dkg_seed
             tee_dkg_seed=$(printf '%064x' "$((i + 1))")
-            # Base 17000, NOT 7000: macOS AirPlay Receiver (Control Center) binds
-            # *:7000 by default on Apple Silicon - the very platform `localnet`
-            # targets - so the node would connect to AirPlay and fail-fast on a quote
-            # timeout. 17000 is off that path. Endpoint is IPv4-literal (the enclave
-            # binds 127.0.0.1 only; `localhost` could resolve to ::1).
+            # Base 17000, NOT 7000. macOS AirPlay Receiver (Control Center) binds
+            # *:7000 by default on Apple Silicon, the very platform that `localnet`
+            # targets. On 7000 the node would connect to AirPlay and fail-fast on a
+            # quote timeout. 17000 is off that path. The endpoint is IPv4-literal
+            # because the enclave binds 127.0.0.1 only, and `localhost` could resolve
+            # to ::1.
             local tee_port=$((17000 + PORT_OFFSET + i))
             local tee_endpoint="127.0.0.1:$tee_port"
             # Tag the container with PORT_OFFSET so parallel localnets get
@@ -286,18 +287,19 @@ do_start() {
             # Withhold SGX devices unconditionally so the entrypoint selects
             # gramine-direct. This chain is explicitly not hardware evidence.
             local -a sgx_dev=()
-            # OUTBE_TEE_SEAL=1 enables the sealed restart fast-path: the enclave
+            # OUTBE_TEE_SEAL=1 enables the sealed restart fast-path. The enclave
             # seals its DKG-derived offer key + share to a PERSISTENT per-validator
-            # dir (survives container restart), so a stop/start restores the offer
-            # key from the mock lane's stable test sealing key instead of
-            # re-running the ceremony, which is invalid on a non-fresh chain.
-            # The production enclave under gramine-direct cannot EGETKEY and was
-            # rejected above when OUTBE_TEE_SEAL was requested.
-            # The enclave's resident chain id, bound on EVERY launch (independent of
-            # sealing): it scopes state-key derivation and the owner-authorized
-            # fidelity query, which cross-checks it against the node's chain. Gating
-            # it on sealing left a non-sealing enclave at ZERO chain, so those
-            # queries failed with "query authorization is for a different chain".
+            # dir (survives container restart). A stop/start then restores the offer
+            # key from the mock lane's stable test sealing key. It does not re-run
+            # the ceremony, which is invalid on a non-fresh chain.
+            # The production enclave under gramine-direct cannot EGETKEY. The check
+            # above rejected it when the caller requested OUTBE_TEE_SEAL.
+            # The enclave's resident chain id. The script binds it on EVERY launch
+            # (independent of sealing). It scopes state-key derivation and the
+            # owner-authorized fidelity query, which cross-checks it against the
+            # node's chain. Gating it on sealing left a non-sealing enclave at ZERO
+            # chain, so those queries failed with "query authorization is for a
+            # different chain".
             local tee_chain_hex
             tee_chain_hex=0x$(printf '%064x' "$(python3 -c "import json;print(json.load(open('$OUTPUT_DIR/genesis.json'))['config']['chainId'])")")
             local -a tee_chain_args=(--chain-id "$tee_chain_hex")
@@ -342,7 +344,7 @@ do_start() {
             # not just a one-shot boot snapshot).
             docker logs -f "$tee_ctr" > "$validator_dir/enclave.log" 2>&1 &
             echo $! > "$PID_DIR/validator-$i.enclave-log.pid"
-            # WS-M2 M6: fail loudly instead of silently proceeding - otherwise the node
+            # WS-M2 M6: fail loudly instead of silently proceeding. Otherwise the node
             # would later fail-fast on the missing socket with a less obvious cause.
             if [ -z "$tee_up" ]; then
                 echo "Error: validator-$i TEE enclave did not open its socket 127.0.0.1:$tee_port within ~20s." >&2
@@ -450,12 +452,12 @@ do_start() {
         if [ ${#tee_args[@]} -gt 0 ]; then
             cmd+=("${tee_args[@]}")
         fi
-        # Debug builds need a larger thread stack: on block 1 the proposer signs
+        # Debug builds need a larger thread stack. On block 1 the proposer signs
         # the begin-zone system txs, which lazily initializes k256's secp256k1
-        # generator lookup table - a huge *unoptimized* stack frame that
-        # overflows reth's ~2 MiB tokio blocking-pool thread (`thread '<unknown>'
+        # generator lookup table. That initialization is a huge *unoptimized* stack frame
+        # that overflows reth's ~2 MiB tokio blocking-pool thread (`thread '<unknown>'
         # has overflowed its stack`). Release builds optimize the frame away and
-        # are unaffected. 16 MiB is ample headroom; operators may override.
+        # are unaffected. 16 MiB is ample headroom. Operators may override it.
         local -a env_args=(
             RUST_MIN_STACK="${RUST_MIN_STACK:-16777216}"
         )
@@ -481,7 +483,7 @@ do_start() {
     done
 
     # Verify the launched processes survived startup. Reth fails fast on
-    # genesis-hash / DB mismatches and similar configuration errors, and a
+    # genesis-hash / DB mismatches and similar configuration errors. A
     # backgrounded process that exits before we exit makes the launch look
     # successful. Sleep briefly, then re-check each PID.
     if [ ${#launched[@]} -gt 0 ]; then
@@ -517,10 +519,10 @@ do_stop() {
     fi
 
     # Graceful shutdown: SIGTERM every node, then WAIT for each to exit before
-    # tearing down enclaves/locks. A node must flush its execution AND consensus
-    # (marshal) stores atomically on shutdown; killing it (or yanking its enclave)
-    # mid-flush leaves execution one block ahead of consensus, which fails the next
-    # restart with "marshal finalization missing for finalized execution height N".
+    # removing enclaves/locks. A node must flush its execution AND consensus
+    # (marshal) stores atomically on shutdown. Killing it (or removing its enclave)
+    # mid-flush leaves execution one block ahead of consensus. The next restart then
+    # fails with "marshal finalization missing for finalized execution height N".
     local -a stopping_pids=() stopping_names=()
     for pid_file in "$PID_DIR"/validator-*.pid; do
         [ -f "$pid_file" ] || continue
@@ -537,7 +539,7 @@ do_stop() {
         fi
         rm -f "$pid_file"
     done
-    # Wait up to ~60s per node for a clean exit; SIGKILL only as a last resort.
+    # Wait up to ~60s per node for a clean exit. Use SIGKILL only as a last resort.
     local idx
     for idx in "${!stopping_pids[@]}"; do
         local pid="${stopping_pids[$idx]}" name="${stopping_names[$idx]}"
@@ -548,9 +550,9 @@ do_stop() {
         done
         if kill -0 "$pid" 2>/dev/null; then
             echo "  $name did not exit in 60s - SIGKILL (restart may need resync)"
-            # $pid is the run-supervised.sh wrapper; SIGKILL cannot be forwarded
-            # to its node child, which would orphan a still-running reth process
-            # holding the MDBX/static_files locks and fail the next restart with
+            # $pid is the run-supervised.sh wrapper. The wrapper cannot forward SIGKILL
+            # to its node child. That would orphan a still-running reth process that
+            # holds the MDBX/static_files locks, and the next restart would fail with
             # "storage directory in use". Kill the child first, then the wrapper.
             pkill -KILL -P "$pid" 2>/dev/null || true
             kill -KILL "$pid" 2>/dev/null
@@ -576,8 +578,8 @@ do_stop() {
         rm -f "$pid_file"
     done
 
-    # Stop any gramine-direct enclave containers (OUTBE_TEE_GRAMINE=1) - AFTER the
-    # nodes have exited, so a node is never mid-request to an enclave being removed.
+    # Stop any gramine-direct enclave containers (OUTBE_TEE_GRAMINE=1) only AFTER the
+    # nodes exit, so a node is never mid-request to an enclave that the script removes.
     # Kill the enclave-log followers FIRST so no follower blocks on a removed
     # container's log stream.
     for lfile in "$PID_DIR"/validator-*.enclave-log.pid; do

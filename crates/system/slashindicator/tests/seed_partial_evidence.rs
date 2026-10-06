@@ -1,9 +1,9 @@
 //! End-to-end tests for `submitSeedPartialEquivocationEvidence` (Offense B).
 //!
-//! A validator that identity-signs two DIFFERENT VRF seed partials for the same
-//! `(round, vrf_material_version)` is jailed + slashed. The evidence is
-//! self-authenticating from the two MinPk identity signatures, so no committee
-//! polynomial is needed and an honest validator cannot be framed.
+//! SlashIndicator jails + slashes a validator that identity-signs two DIFFERENT
+//! VRF seed partials for the same `(round, vrf_material_version)`. The evidence
+//! is self-authenticating from the two MinPk identity signatures. Thus no
+//! committee polynomial is necessary, and nobody can frame an honest validator.
 
 use alloy_primitives::{address, Address, U256};
 use commonware_codec::Encode;
@@ -70,7 +70,7 @@ fn build_evidence(
 }
 
 /// Register ACCUSED (with `pubkey`) as an active, staked validator and SUBMITTER
-/// as an active validator; set the epoch counter so epoch-lag passes.
+/// as an active validator. Set the epoch counter so epoch-lag passes.
 fn setup(storage: StorageHandle, accused_pubkey: &[u8; 48]) {
     let mut vs = ValidatorSet::new(storage.clone());
     vs.config_owner.write(OWNER).unwrap();

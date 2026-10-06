@@ -9,8 +9,8 @@
 //!    target in the protocol whitelist). Hard limits live here so both
 //!    callers cannot drift.
 //!
-//! 2. [`authorize_sponsorship`] - stateful check executed by the
-//!    executor against the block storage handle. Enforces the daily quota
+//! 2. [`authorize_sponsorship`] - stateful check that the executor runs
+//!    against the block storage handle. Enforces the daily quota
 //!    (`effective_count < FREE_TX_DAILY_LIMIT`). Returns the
 //!    `current_day` and effective count on success so the caller can
 //!    record the use atomically.
@@ -21,9 +21,9 @@
 //!    9th-of-day sponsored tx still lands in the block with a
 //!    soft-failure receipt (code 110).
 //!
-//! Self-sponsorship and EIP-7702 designator detection are enforced by the
-//! caller - `signer != ZEROFEE_ADDRESS` and the `0xef0100 ++ ZEROFEE_ADDRESS`
-//! code pattern are observable on the caller side without any storage I/O.
+//! The caller enforces self-sponsorship and EIP-7702 designator detection.
+//! The caller can observe `signer != ZEROFEE_ADDRESS` and the
+//! `0xef0100 ++ ZEROFEE_ADDRESS` code pattern without any storage I/O.
 
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_primitives::{Address, U256};
@@ -95,9 +95,10 @@ pub struct BootstrapAccountView {
 
 /// Classifies the exact signed EIP-7702 bootstrap envelope.
 ///
-/// A non-match is deliberately represented as `None`: callers must continue
-/// through normal paid-transaction validation instead of turning a merely
-/// similar transaction into a new consensus-visible ZeroFee failure class.
+/// This function deliberately returns `None` for a non-match. Callers must
+/// then continue through normal paid-transaction validation. They must not
+/// turn a merely similar transaction into a new consensus-visible ZeroFee
+/// failure class.
 pub fn classify_bootstrap(tx: &BootstrapTransactionView<'_>) -> Option<BootstrapCandidate> {
     if tx.tx_chain_id != Some(tx.network_chain_id)
         || tx.to != Some(ZEROFEE_ADDRESS)
@@ -148,22 +149,22 @@ pub fn authorize_bootstrap(candidate: BootstrapCandidate, account: BootstrapAcco
 ///   trait-registry hooks (oracle hook should match first so validator
 ///   votes do not burn the validator's daily quota).
 ///
-/// The target whitelist is intentionally **not** a parameter - the
+/// The target whitelist is intentionally **not** a parameter. The
 /// policy reads [`outbe_primitives::zero_fee::SPONSORED_TARGET_WHITELIST`]
-/// directly so a future caller cannot drift the policy by passing a
+/// directly, so a future caller cannot drift the policy by passing a
 /// broader list.
 ///
-/// On `Ok(())` the transaction shape is accepted; on `Err(_)` the caller
-/// must reject with the matching error code.
+/// On `Ok(())`, the policy accepts the transaction shape. On `Err(_)`, the
+/// caller must reject with the matching error code.
 pub fn classify_sponsorship(tx: &ZeroFeeTransaction<'_>) -> Result<(), ZeroFeePolicyError> {
     if tx.value != U256::ZERO {
         return Err(ZeroFeePolicyError::FreeTxDailyValueNotZero);
     }
 
     if tx.max_priority_fee_per_gas != Some(0) {
-        // The fee shape rule is shared with the oracle hook (zero
-        // priority fee is the explicit sponsored opt-in); reusing
-        // `FeeCapTooLow` keeps a single code for that condition.
+        // The oracle hook shares the fee shape rule (zero priority fee
+        // is the explicit sponsored opt-in). Reusing `FeeCapTooLow`
+        // keeps a single code for that condition.
         return Err(ZeroFeePolicyError::FeeCapTooLow {
             max_fee_per_gas: tx.max_fee_per_gas,
             minimum: MIN_FREE_TX_MAX_FEE_PER_GAS,
@@ -224,14 +225,14 @@ pub struct SponsorshipAuthorization {
 /// Covers self-sponsorship rejection. Native balance is deliberately not
 /// an eligibility signal: ZeroFee exists so an otherwise valid address can
 /// transact when its spendable COEN balance is exactly zero. Quota enforcement
-/// is intentionally **not** part of this function: the protocol contract
+/// is intentionally **not** part of this function. The protocol contract
 /// requires quota-exhausted txs to land in the block with a soft-failure
-/// receipt code 110, so the pool must admit them and let the executor
+/// receipt code 110. So the pool must admit them and let the executor
 /// (authoritative) produce the receipt.
 ///
-/// The pool calls this; the executor calls the full
-/// [`authorize_sponsorship`] which additionally consults block storage
-/// for the quota.
+/// The pool calls this function. The executor calls the full
+/// [`authorize_sponsorship`], which also reads block storage for the
+/// quota.
 pub fn precheck_sponsorship(signer: Address) -> Result<(), ZeroFeePolicyError> {
     if signer == ZEROFEE_ADDRESS {
         return Err(ZeroFeePolicyError::UnauthorizedSigner);
@@ -268,9 +269,9 @@ pub fn authorize_sponsorship(
 }
 
 /// Convenience helper: persists the use of a sponsored free-tx after
-/// [`authorize_sponsorship`] succeeded. Called by the executor through
+/// [`authorize_sponsorship`] succeeded. The executor calls it through
 /// an outer `StorageHandle` whose write survives the inner tx's revert
-/// journal, so a `REVERT` cannot un-burn the daily slot.
+/// journal. So a `REVERT` cannot un-burn the daily slot.
 ///
 /// Emits a [`SponsorshipAuthorized`] log at [`ZEROFEE_ADDRESS`] with
 /// the post-write counter so off-chain tooling can observe sponsorship
@@ -309,7 +310,7 @@ mod tests {
     const SIGNER: Address = address!("0x1111111111111111111111111111111111111111");
     /// Block timestamp parked safely inside `2026-04-01 00:00:00 UTC` ->
     /// `date_key = 20260401`. The exact value is not important for the
-    /// tests; only the day-key derived from it.
+    /// tests. Only the day-key derived from it is important.
     const BLOCK_TS: u64 = 1_775_001_600;
     const BLOCK_DAY: u32 = 20_260_401;
 
@@ -543,8 +544,8 @@ mod tests {
     }
 
     fn sponsored_target() -> Address {
-        // First whitelisted address - value is incidental, only being
-        // a member of `SPONSORED_TARGET_WHITELIST` matters here.
+        // First whitelisted address. The value is incidental. Only
+        // membership in `SPONSORED_TARGET_WHITELIST` matters here.
         outbe_primitives::zero_fee::SPONSORED_TARGET_WHITELIST[0]
     }
 
@@ -702,7 +703,7 @@ mod tests {
     #[test]
     fn authorize_applies_lazy_reset_on_new_day() {
         with_storage(|storage| {
-            // Yesterday's count was 8 - should be treated as 0 today.
+            // Yesterday's count was 8. The policy should treat it as 0 today.
             {
                 let zerofee = ZeroFeeContract::new(storage.clone());
                 zerofee
@@ -775,7 +776,7 @@ mod tests {
 
     #[test]
     fn whitelist_membership_is_required_even_for_familiar_targets() {
-        // AGENT_REWARD_ADDRESS is in the whitelist, sanity-check the
+        // AGENT_REWARD_ADDRESS is in the whitelist. Sanity-check the
         // positive case so the test name reads consistently.
         let mut tx = ok_envelope(&[]);
         tx.to = Some(AGENT_REWARD_ADDRESS);
@@ -785,10 +786,10 @@ mod tests {
     // ----- rejection-precedence pins -----
     //
     // The order in which `classify_sponsorship` and `authorize_sponsorship`
-    // surface failures is consensus-visible: it lands in
+    // surface failures is consensus-visible. It lands in
     // `OutbeFailure(code, reason)` logs at `ZERO_FEE_POLICY_LOG_ADDRESS`.
-    // Off-chain UX builds on that code, and a future refactor that
-    // reorders checks would silently change the receipt - pin it.
+    // Off-chain UX builds on that code. A future refactor that reorders
+    // checks would silently change the receipt, so pin the order.
 
     #[test]
     fn classify_precedence_non_zero_value_beats_contract_creation() {
@@ -809,8 +810,8 @@ mod tests {
     fn classify_precedence_fee_shape_beats_target_whitelist() {
         // Non-zero priority fee on an otherwise-correct envelope to a
         // non-whitelisted target. FeeCapTooLow (105) wins over
-        // TargetNotWhitelisted (116) because the fee shape is checked
-        // earlier - keeps the receipt deterministic.
+        // TargetNotWhitelisted (116) because the policy checks the fee
+        // shape earlier. This order keeps the receipt deterministic.
         let mut tx = ok_envelope(&[]);
         tx.max_priority_fee_per_gas = Some(1);
         tx.to = Some(ZEROFEE_ADDRESS);
@@ -854,13 +855,13 @@ mod tests {
     fn counter_survives_storage_handle_checkpoint_revert() {
         // The executor pre-fee design commits the counter increment
         // through `DirectStorageProvider::flush` BEFORE the inner tx
-        // runs, so a `REVERT` inside the user's tx cannot un-burn the
-        // daily slot. At the storage-primitive level we prove the
-        // equivalent invariant: a write that happens BEFORE a
-        // `checkpoint_revert` is preserved; only writes after the
+        // runs. So a `REVERT` inside the user's tx cannot un-burn the
+        // daily slot. At the storage-primitive level, this test proves
+        // the equivalent invariant: a write that happens BEFORE a
+        // `checkpoint_revert` is preserved. Only writes after the
         // checkpoint are rolled back.
         with_storage(|storage| {
-            // Step 1: burn one slot for today, mimic flush() commit.
+            // Step 1: burn one slot for today. This mimics the flush() commit.
             let auth = authorize_sponsorship(storage.clone(), SIGNER, BLOCK_TS).unwrap();
             record_sponsorship_use(storage.clone(), SIGNER, auth.current_day).unwrap();
             let after_first = ZeroFeeContract::new(storage.clone())
@@ -877,7 +878,7 @@ mod tests {
             record_sponsorship_use(storage.clone(), SIGNER, BLOCK_DAY).unwrap();
             storage.checkpoint_revert(checkpoint);
 
-            // The reverted second increment is gone; the pre-checkpoint
+            // The reverted second increment is gone. The pre-checkpoint
             // write survives.
             let after_revert = ZeroFeeContract::new(storage.clone())
                 .effective_count(SIGNER, BLOCK_DAY)
@@ -900,7 +901,7 @@ mod tests {
             assert_eq!(new_count, 1);
         });
 
-        // The provider is the canonical event sink in tests; the event
+        // The provider is the canonical event sink in tests. The event
         // is recorded at ZEROFEE_ADDRESS so off-chain `eth_getLogs`
         // filtering can subscribe by address.
         let events = provider.get_events(ZEROFEE_ADDRESS);
@@ -910,9 +911,9 @@ mod tests {
             "exactly one SponsorshipAuthorized event per record_use"
         );
 
-        // Topic 0 must be the canonical event signature; signer is
-        // indexed in topic 1, day in topic 2. The new_count rides in
-        // the data body.
+        // Topic 0 must be the canonical event signature. Topic 1 holds
+        // the indexed signer. Topic 2 holds the day. The new_count rides
+        // in the data body.
         let log = &events[0];
         assert_eq!(
             log.topics()[0],
@@ -924,9 +925,9 @@ mod tests {
     #[test]
     fn record_use_persists_across_multiple_storage_handle_scopes() {
         // The executor's pre-fee path opens a fresh `DirectStorageProvider`
-        // scope per transaction. This test simulates the same shape:
-        // each authorize+record cycle re-enters the storage handle, and
-        // the counter must be observable in the next scope. If the
+        // scope per transaction. This test simulates the same shape.
+        // Each authorize+record cycle re-enters the storage handle. The
+        // counter must be observable in the next scope. If the
         // contract ever started caching state inside the facade, this
         // test would catch the regression.
         let mut provider = HashMapStorageProvider::new(1);

@@ -21,7 +21,8 @@ import {DeployProxy} from "../helpers/DeployProxy.sol";
  * @title OriginRouterTest
  * @notice Foundry tests for OriginRouter
  * @dev Tests message encoding/decoding and access control.
- *      Auction messages are keyed by `worldwideDay`; series (issuance/mark) by `seriesId`.
+ *      Auction messages are keyed by `worldwideDay`. Series messages (issuance/mark) are keyed by
+ *      `seriesId`.
  */
 contract OriginRouterTest is CrossChainTest {
     uint32 private constant BNB_CHAIN_ID = 1;
@@ -130,7 +131,7 @@ contract OriginRouterTest is CrossChainTest {
             callThreshold: 5,
             callPriceMinor: 25e6,
             recipients: recipients,
-            quantities: quantities
+            units: quantities
         });
     }
 

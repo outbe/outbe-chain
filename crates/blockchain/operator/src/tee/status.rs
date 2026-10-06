@@ -6,7 +6,7 @@ use eyre::Result;
 use outbe_primitives::tee_attestation_v1::AttestationMode;
 use serde::Serialize;
 
-use crate::rpc::RenewalRpc;
+use crate::rpc::RegistryRpc;
 
 use super::{
     registry::{read_finalized_bound_renewal_view_v1, NodeBindingSelectorV1},
@@ -39,7 +39,7 @@ pub struct RenewalStatusV1 {
 
 /// Inspect status without creating the journal directory, lock or scratch file.
 pub async fn read_renewal_status_v1(
-    rpc: &(impl RenewalRpc + Sync),
+    rpc: &(impl RegistryRpc + Sync),
     node_data_dir: &Path,
     selector: &NodeBindingSelectorV1,
     warning_blocks: u64,

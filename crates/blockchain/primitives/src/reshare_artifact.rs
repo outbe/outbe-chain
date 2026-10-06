@@ -1,10 +1,18 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 
 use crate::{
-    consensus::{DkgBoundaryArtifact, ReshareResult, OUTBE_MAX_EXTRA_DATA_SIZE},
+    consensus::{DkgBoundaryArtifact, OUTBE_MAX_EXTRA_DATA_SIZE},
     error::{PrecompileError, Result},
     validators::MAX_TEE_EXPIRED_TARGET_EXCLUSIONS,
 };
+
+mod consensus;
+mod fields;
+mod late_finalize;
+mod records;
+
+#[cfg(test)]
+mod regression;
 
 const MAGIC: &[u8; 4] = b"OART";
 /// Version 0x0B adds the bounded ordered `tee_expired_target_exclusions` list
@@ -12,8 +20,8 @@ const MAGIC: &[u8; 4] = b"OART";
 /// This pre-genesis hard fork makes the exact freeze-height expiry authority
 /// committee-notarized and replayable by execution.
 ///
-/// Version 0x06: the
-/// `DkgBoundaryArtifact` boundary payload (tag 0x02) is extended with
+/// Version 0x06 extends the
+/// `DkgBoundaryArtifact` boundary payload (tag 0x02) with
 /// the V2 `committee_set_hash` (32 bytes) and the raw encoded VRF group
 /// public key bytes (length-prefixed `u32`). Both fields are needed at
 /// boundary activation so the executor can populate the V2
@@ -21,32 +29,34 @@ const MAGIC: &[u8; 4] = b"OART";
 ///
 /// Version 0x05 (Ethereum-header-hash compatibility, see
 /// `feat/header-eth-compat-millis-in-extradata`): the sub-second
-/// `timestamp_millis_part` previously carried as a top-level RLP field
-/// on `OutbeHeader` now travels in `header.extra_data` under tag 0x05,
-/// so the block hash is `keccak256(rlp(standard_ethereum_header))`
+/// `timestamp_millis_part` was previously a top-level RLP field on
+/// `OutbeHeader`. It now travels in `header.extra_data` under tag 0x05.
+/// As a result, the block hash is `keccak256(rlp(standard_ethereum_header))`
 /// without any Outbe-specific extra fields.
 ///
-/// Version 0x04: the
-/// `total_emission_limit` field was dropped from
+/// Version 0x04 dropped the
+/// `total_emission_limit` field from
 /// `ExecutionSummaryArtifact` because per-block emission no longer
-/// exists; the daily cap is computed by the Cycle handler directly
+/// exists. The Cycle handler computes the daily cap directly
 /// from `outbe_emissionlimit::day_emission::day_emission_limit`.
 ///
-/// Version 0x08 adds tag 0x06 carrying
-/// `LateFinalizeCreditsArtifact` - a canonical batch of per-finalized-block
-/// late-finalize proofs (aggregate signature + signer bitmap + binding fields)
-/// gathered within the `K`-block inclusion window. Hard fork: the new mandatory
-/// begin-zone phase and this version bump both change the block hash.
+/// Version 0x08 adds tag 0x06, which carries
+/// `LateFinalizeCreditsArtifact`. This artifact is a canonical batch of
+/// per-finalized-block late-finalize proofs
+/// (aggregate signature + signer bitmap + binding fields)
+/// gathered within the `K`-block inclusion window. Hard fork:
+/// the new mandatory begin-zone phase and this version bump both change the
+/// block hash.
 ///
-/// Pre-genesis hard fork; nodes built before this change will reject
+/// Pre-genesis hard fork. Nodes built before this change will reject
 /// blocks carrying earlier artifact versions.
 const VERSION: u8 = 0x0B;
 const TEE_EXPIRED_TARGET_EXCLUSIONS_DOMAIN: &[u8] = b"outbe/tee-expired-target-exclusions/v1";
 const EXECUTION_SUMMARY_TAG: u8 = 0x01;
 const BOUNDARY_TAG: u8 = 0x02;
 const DEALER_LOG_TAG: u8 = 0x03;
-// Tag 0x04 is permanently retired (legacy finalized-parent cert metadata) and is
-// rejected by the active codec - do not reuse it (see CLAUDE.md).
+// Tag 0x04 is permanently retired (legacy finalized-parent cert metadata). The
+// active codec rejects it. Do not reuse it (see CLAUDE.md).
 const TIMESTAMP_MILLIS_PART_TAG: u8 = 0x05;
 const LATE_FINALIZE_CREDITS_TAG: u8 = 0x06;
 const COMMITTEE_PREANNOUNCE_TAG: u8 = 0x07;
@@ -62,8 +72,8 @@ const LATE_FINALIZE_SIG_LEN: usize = 96;
 /// Max signer-bitmap bytes = `ceil(MAX_VALIDATORS / 8)` = `ceil(256 / 8)`.
 ///
 /// Approved deviation: the codec enforces only this fixed
-/// upper bound because it is committee-agnostic - it cannot know the committee
-/// size of the block being decoded. The committee-exact `ceil(committee/8)`
+/// upper bound because it is committee-agnostic. It cannot know the committee
+/// size of the block that it decodes. The committee-exact `ceil(committee/8)`
 /// length check lives in `outbe_consensus::proof::late_finalize`
 /// (`verify_late_finalize_proof`), where the epoch `CommitteeSnapshot` is
 /// available. This split is intentional, not a missing check.
@@ -87,8 +97,8 @@ pub struct OutbeBlockArtifacts {
     pub consensus_header_artifact: Option<ConsensusHeaderArtifact>,
     /// Sub-second part of the consensus block timestamp (0..1000).
     /// Carried inside `extra_data` under tag 0x05 so that the block hash
-    /// is computed from a strictly Ethereum-spec-compliant header - no
-    /// extra top-level RLP fields. The integer-second part lives in
+    /// is computed from a strictly Ethereum-spec-compliant header. That header
+    /// has no extra top-level RLP fields. The integer-second part lives in
     /// `header.timestamp` as usual.
     pub timestamp_millis_part: u64,
     /// late-finalize credits (tag 0x06): a canonical batch of
@@ -96,8 +106,8 @@ pub struct OutbeBlockArtifacts {
     /// `K`-block inclusion window. `None`/empty when this block credits nothing.
     pub late_finalize_credits: Option<LateFinalizeCreditsArtifact>,
     /// Execution-computed post-state compressed-entity root (tag 0x08).
-    /// Structurally optional; mandatory presence for block 1+ is enforced by
-    /// block execution rather than this height-independent codec.
+    /// Structurally optional. Block execution, not this height-independent
+    /// codec, enforces mandatory presence for block 1+.
     pub compressed_entities_root: Option<CompressedEntitiesRootArtifact>,
 }
 
@@ -111,7 +121,7 @@ pub struct CompressedEntitiesRootArtifact {
 ///
 /// One block may credit several finalized blocks whose inclusion windows are
 /// still open. Batches are in **canonical order** (strictly ascending
-/// `(fb_number, fb_hash)`, one record per target); the codec rejects
+/// `(fb_number, fb_hash)`, one record per target). The codec rejects
 /// out-of-order or duplicate targets so the bytes are deterministic across the
 /// proposer and every validator.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -122,7 +132,7 @@ pub struct LateFinalizeCreditsArtifact {
 /// One finalized block's late-finalize proof: the BLS aggregate + signer bitmap
 /// plus the full binding set needed to rebuild the signed `proposal.encode()`
 /// and select the epoch committee. The signature and bitmap are
-/// raw bytes here (primitives layer); the consensus verifier parses them.
+/// raw bytes here (primitives layer). The consensus verifier parses them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PerBlockCredit {
     pub fb_number: u64,
@@ -137,8 +147,8 @@ pub struct PerBlockCredit {
 
 /// Finalized-parent consensus facts carried in Phase 1 system transaction input.
 ///
-/// V1 `finalize_votes` legacy field was removed; V2 participation
-/// accounting is driven entirely by the certificate's own signer bitmap.
+/// The V1 `finalize_votes` legacy field was removed. The certificate's own
+/// signer bitmap drives V2 participation accounting entirely.
 /// `missed_proposers: Vec<Address>` is retained for the V1 compatibility
 /// adapter (`FinalizedParentAttestation` <-> `CertifiedParentAccountingMetadata`)
 /// but is always empty under V2.
@@ -160,32 +170,32 @@ pub struct FinalizedParentAttestation {
 /// the consensus path needs: the validator fee sum that
 /// `on_finalized_metadata` distributes to voters and accumulates into
 /// `daily_fee_sum_raw`. The previous `total_emission_limit` field was
-/// removed - daily emission is computed by the Cycle
-/// handler from the closed-form formula and does not need to be
-/// transported in `extra_data`.
+/// removed. The Cycle handler computes daily emission from the closed-form
+/// formula. `extra_data` does not need to transport it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ExecutionSummaryArtifact {
     pub validator_fee_sum: U256,
 }
 
 // `BoundaryOutcome` is inherently larger than `DealerLog`. This is a consensus
-// wire artifact transported in `extra_data` and matched/constructed across the
-// codec and consensus paths; boxing the large variant would change those sites
-// for marginal stack savings on a low-frequency, deterministically-encoded type
-// (the encoded bytes are unaffected by the in-memory layout). Keep it inline.
+// wire artifact. `extra_data` transports it, and the codec and consensus paths
+// match and construct it. Boxing the large variant would change those sites
+// for marginal stack savings on a low-frequency, deterministically-encoded type.
+// The in-memory layout does not affect the encoded bytes. Keep it inline.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConsensusHeaderArtifact {
     BoundaryOutcome(DkgBoundaryArtifact),
     DealerLog(Bytes),
     /// Path A committee-chaining pre-announce: the full DKG `outcome` (players +
-    /// polynomial) for `epoch`, emitted in a block finalized by the OUTGOING
-    /// (`epoch-1`) committee - before epoch `epoch`'s own boundary block `epoch*L+1`,
-    /// which is finalized by `epoch` itself and so cannot self-authenticate. A
-    /// follower registers `epoch`'s committee from this via the existing
-    /// `register_epoch_from_outcome`, trusting it because the carrying block's cert
-    /// verifies against the already-trusted `epoch-1` committee. Does NOT activate -
-    /// activation stays on the `BoundaryOutcome` at `epoch*L+1`.
+    /// polynomial) for `epoch`. It is emitted in a block finalized by the OUTGOING
+    /// (`epoch-1`) committee, before epoch `epoch`'s own boundary block
+    /// `epoch*L+1`. Committee `epoch` itself finalizes that boundary block, so the
+    /// boundary block cannot self-authenticate. A follower registers `epoch`'s
+    /// committee from this via the existing `register_epoch_from_outcome`. The
+    /// follower trusts it because the carrying block's cert verifies against the
+    /// already-trusted `epoch-1` committee. Does NOT activate. Activation stays on
+    /// the `BoundaryOutcome` at `epoch*L+1`.
     CommitteePreAnnounce {
         epoch: u64,
         outcome: Bytes,
@@ -196,170 +206,30 @@ pub fn encode_outbe_block_artifacts(artifacts: &OutbeBlockArtifacts) -> Result<B
     let mut records = Vec::new();
 
     if let Some(summary) = artifacts.execution_summary {
-        let mut payload = Vec::with_capacity(EXECUTION_SUMMARY_LEN);
-        payload.extend_from_slice(&summary.validator_fee_sum.to_be_bytes::<32>());
-        records.push((EXECUTION_SUMMARY_TAG, payload));
+        records.push((
+            EXECUTION_SUMMARY_TAG,
+            fields::encode_execution_summary(summary),
+        ));
     }
-
     if let Some(artifact) = &artifacts.consensus_header_artifact {
-        match artifact {
-            ConsensusHeaderArtifact::BoundaryOutcome(result) => {
-                ensure_count_fits_u16("reshare active set", result.reshare.new_active_set.len())?;
-                ensure_len_fits_u32("boundary outcome", result.outcome.len())?;
-
-                ensure_len_fits_u32(
-                    "boundary vrf group public key",
-                    result.vrf_group_public_key_bytes.len(),
-                )?;
-                ensure_count_fits_u16("tee recipient pubkeys", result.tee_recipient_pubkeys.len())?;
-                validate_tee_expired_target_exclusions(&result.tee_expired_target_exclusions)?;
-                let exclusions_hash =
-                    tee_expired_target_exclusions_hash(&result.tee_expired_target_exclusions)?;
-                if exclusions_hash != result.tee_expired_target_exclusions_hash {
-                    return Err(PrecompileError::Fatal(
-                        "boundary TEE expiry exclusions commitment mismatch".into(),
-                    ));
-                }
-
-                let mut payload = Vec::with_capacity(
-                    8 + 8
-                        + 8
-                        + 8
-                        + 32
-                        + 8
-                        + 32
-                        + 32 // V2 committee_set_hash
-                        + 1
-                        + 1
-                        + 32
-                        + 2
-                        + (result.reshare.new_active_set.len() * 20)
-                        + 4
-                        + result.outcome.len()
-                        + 4 // V2 vrf_group_public_key_bytes length prefix
-                        + result.vrf_group_public_key_bytes.len()
-                        + 2 // V0.07 tee_recipient_pubkeys count
-                        + (result.tee_recipient_pubkeys.len() * (20 + 32))
-                        + 32 // V0.0B expiry exclusions commitment
-                        + 2 // V0.0B expiry exclusions count
-                        + (result.tee_expired_target_exclusions.len() * 20),
-                );
-                payload.extend_from_slice(&result.epoch.to_be_bytes());
-                payload.extend_from_slice(&result.dkg_cycle.to_be_bytes());
-                payload.extend_from_slice(&result.freeze_height.to_be_bytes());
-                payload.extend_from_slice(&result.planned_activation_height.to_be_bytes());
-                payload.extend_from_slice(result.target_set_hash.as_slice());
-                payload.extend_from_slice(&result.vrf_material_version.to_be_bytes());
-                payload.extend_from_slice(result.vrf_group_public_key.as_slice());
-                payload.extend_from_slice(result.committee_set_hash.as_slice());
-                payload.push(u8::from(result.is_validator_set_change));
-                payload.push(u8::from(result.is_full_dkg));
-                payload.extend_from_slice(result.reshare.active_set_hash.as_slice());
-                payload
-                    .extend_from_slice(&(result.reshare.new_active_set.len() as u16).to_be_bytes());
-                for address in &result.reshare.new_active_set {
-                    payload.extend_from_slice(address.as_slice());
-                }
-                payload.extend_from_slice(&(result.outcome.len() as u32).to_be_bytes());
-                payload.extend_from_slice(result.outcome.as_ref());
-                payload.extend_from_slice(
-                    &(result.vrf_group_public_key_bytes.len() as u32).to_be_bytes(),
-                );
-                payload.extend_from_slice(result.vrf_group_public_key_bytes.as_ref());
-                payload
-                    .extend_from_slice(&(result.tee_recipient_pubkeys.len() as u16).to_be_bytes());
-                for (address, recipient_pubkey) in &result.tee_recipient_pubkeys {
-                    payload.extend_from_slice(address.as_slice());
-                    payload.extend_from_slice(recipient_pubkey.as_slice());
-                }
-                // V0.0B: exact freeze-height TEE expiry exclusions. The explicit
-                // commitment is carried with the ordered unique list so proposal
-                // equality and execution bind the same authority.
-                payload.extend_from_slice(result.tee_expired_target_exclusions_hash.as_slice());
-                payload.extend_from_slice(
-                    &(result.tee_expired_target_exclusions.len() as u16).to_be_bytes(),
-                );
-                for address in &result.tee_expired_target_exclusions {
-                    payload.extend_from_slice(address.as_slice());
-                }
-                records.push((BOUNDARY_TAG, payload));
-            }
-            ConsensusHeaderArtifact::DealerLog(log) => {
-                ensure_payload_fits_u16("dealer log", log.len())?;
-                records.push((DEALER_LOG_TAG, log.to_vec()));
-            }
-            ConsensusHeaderArtifact::CommitteePreAnnounce { epoch, outcome } => {
-                let mut payload = Vec::with_capacity(8 + outcome.len());
-                payload.extend_from_slice(&epoch.to_be_bytes());
-                payload.extend_from_slice(outcome.as_ref());
-                ensure_payload_fits_u16("committee pre-announce", payload.len())?;
-                records.push((COMMITTEE_PREANNOUNCE_TAG, payload));
-            }
-        }
+        records.push(consensus::encode_record(artifact)?);
     }
-
     if let Some(credits) = &artifacts.late_finalize_credits {
         if !credits.batches.is_empty() {
-            ensure_count_fits_u16("late finalize batches", credits.batches.len())?;
-            if credits.batches.len() > LATE_FINALIZE_MAX_BATCHES {
-                return Err(PrecompileError::Fatal(format!(
-                    "too many late finalize batches: {} > {LATE_FINALIZE_MAX_BATCHES}",
-                    credits.batches.len()
-                )));
-            }
-            let mut payload = Vec::new();
-            payload.extend_from_slice(&(credits.batches.len() as u16).to_be_bytes());
-            let mut prev: Option<(u64, B256)> = None;
-            for credit in &credits.batches {
-                // Canonical order: strictly ascending (fb_number, fb_hash), one
-                // record per target - deterministic bytes across all nodes.
-                let key = (credit.fb_number, credit.fb_hash);
-                if let Some(prev_key) = prev {
-                    if key <= prev_key {
-                        return Err(PrecompileError::Fatal(
-                            "late finalize batches not in strictly ascending canonical order"
-                                .into(),
-                        ));
-                    }
-                }
-                prev = Some(key);
-                if credit.signer_bitmap.len() > LATE_FINALIZE_MAX_BITMAP_LEN {
-                    return Err(PrecompileError::Fatal(format!(
-                        "late finalize bitmap too long: {} > {LATE_FINALIZE_MAX_BITMAP_LEN}",
-                        credit.signer_bitmap.len()
-                    )));
-                }
-                payload.extend_from_slice(&credit.fb_number.to_be_bytes());
-                payload.extend_from_slice(credit.fb_hash.as_slice());
-                payload.extend_from_slice(&credit.epoch.to_be_bytes());
-                payload.extend_from_slice(&credit.view.to_be_bytes());
-                payload.extend_from_slice(&credit.parent_view.to_be_bytes());
-                payload.extend_from_slice(credit.committee_set_hash.as_slice());
-                payload.extend_from_slice(&(credit.signer_bitmap.len() as u16).to_be_bytes());
-                payload.extend_from_slice(&credit.signer_bitmap);
-                payload.extend_from_slice(&credit.aggregate_signature);
-            }
-            records.push((LATE_FINALIZE_CREDITS_TAG, payload));
+            records.push((
+                LATE_FINALIZE_CREDITS_TAG,
+                late_finalize::encode_payload(credits)?,
+            ));
         }
     }
-
     if artifacts.timestamp_millis_part != 0 {
-        // Range check (`< 1000`) is owned by the consensus header
-        // validator (`validate_header_timestamp_millis_part`); the
-        // codec is structural-only, so an out-of-range value flows
-        // through and is rejected at validation time. This keeps the
-        // codec's encode/decode round-trippable for adversarial inputs
-        // and lets validation tests construct invalid blocks.
-        let mut payload = Vec::with_capacity(TIMESTAMP_MILLIS_PART_LEN);
-        payload.extend_from_slice(&artifacts.timestamp_millis_part.to_be_bytes());
-        records.push((TIMESTAMP_MILLIS_PART_TAG, payload));
+        records.push((
+            TIMESTAMP_MILLIS_PART_TAG,
+            fields::encode_timestamp(artifacts.timestamp_millis_part),
+        ));
     }
-
     if let Some(root) = artifacts.compressed_entities_root {
-        let mut payload = Vec::with_capacity(COMPRESSED_ENTITIES_ROOT_PAYLOAD_LEN);
-        payload.extend_from_slice(&root.commitment_scheme_version.to_be_bytes());
-        payload.extend_from_slice(root.r_sealed.as_slice());
-        records.push((COMPRESSED_ENTITIES_ROOT_TAG, payload));
+        records.push((COMPRESSED_ENTITIES_ROOT_TAG, fields::encode_root(root)));
     }
 
     if records.is_empty() {
@@ -402,24 +272,7 @@ pub fn decode_outbe_block_artifacts(extra_data: &[u8]) -> Result<OutbeBlockArtif
         return Ok(OutbeBlockArtifacts::default());
     }
 
-    if extra_data.len() < 4 + 1 + 1 {
-        return Err(PrecompileError::Fatal("block artifacts too short".into()));
-    }
-
-    if &extra_data[..4] != MAGIC {
-        return Err(PrecompileError::Fatal(
-            "unknown non-empty extra_data block artifact".into(),
-        ));
-    }
-
-    if extra_data[4] != VERSION {
-        return Err(PrecompileError::Fatal(format!(
-            "unsupported block artifact version: {}",
-            extra_data[4]
-        )));
-    }
-
-    let record_count = extra_data[5] as usize;
+    let record_count = decode_block_artifact_record_count(extra_data)?;
     let mut offset = 6usize;
     let mut artifacts = OutbeBlockArtifacts::default();
 
@@ -443,107 +296,7 @@ pub fn decode_outbe_block_artifacts(extra_data: &[u8]) -> Result<OutbeBlockArtif
         };
         offset = end;
 
-        match tag {
-            EXECUTION_SUMMARY_TAG => {
-                if artifacts.execution_summary.is_some() {
-                    return Err(PrecompileError::Fatal(
-                        "duplicate execution summary artifact".into(),
-                    ));
-                }
-                artifacts.execution_summary = Some(decode_execution_summary(payload)?);
-            }
-            BOUNDARY_TAG => {
-                if artifacts.consensus_header_artifact.is_some() {
-                    return Err(PrecompileError::Fatal(
-                        "duplicate consensus header artifact".into(),
-                    ));
-                }
-                artifacts.consensus_header_artifact = Some(
-                    ConsensusHeaderArtifact::BoundaryOutcome(decode_boundary_payload(payload)?),
-                );
-            }
-            DEALER_LOG_TAG => {
-                if artifacts.consensus_header_artifact.is_some() {
-                    return Err(PrecompileError::Fatal(
-                        "duplicate consensus header artifact".into(),
-                    ));
-                }
-                artifacts.consensus_header_artifact = Some(ConsensusHeaderArtifact::DealerLog(
-                    Bytes::copy_from_slice(payload),
-                ));
-            }
-            COMMITTEE_PREANNOUNCE_TAG => {
-                if artifacts.consensus_header_artifact.is_some() {
-                    return Err(PrecompileError::Fatal(
-                        "duplicate consensus header artifact".into(),
-                    ));
-                }
-                if payload.len() < 8 {
-                    return Err(PrecompileError::Fatal(
-                        "committee pre-announce payload too short for epoch".into(),
-                    ));
-                }
-                let mut epoch_buf = [0u8; 8];
-                epoch_buf.copy_from_slice(&payload[..8]);
-                artifacts.consensus_header_artifact =
-                    Some(ConsensusHeaderArtifact::CommitteePreAnnounce {
-                        epoch: u64::from_be_bytes(epoch_buf),
-                        outcome: Bytes::copy_from_slice(&payload[8..]),
-                    });
-            }
-            TIMESTAMP_MILLIS_PART_TAG => {
-                if artifacts.timestamp_millis_part != 0 {
-                    return Err(PrecompileError::Fatal(
-                        "duplicate timestamp_millis_part".into(),
-                    ));
-                }
-                if payload.len() != TIMESTAMP_MILLIS_PART_LEN {
-                    return Err(PrecompileError::Fatal(format!(
-                        "timestamp_millis_part payload length: {} (expected {})",
-                        payload.len(),
-                        TIMESTAMP_MILLIS_PART_LEN
-                    )));
-                }
-                let mut buf = [0u8; TIMESTAMP_MILLIS_PART_LEN];
-                buf.copy_from_slice(payload);
-                // Range check (`< 1000`) is owned by the consensus
-                // header validator; the codec is structural-only.
-                artifacts.timestamp_millis_part = u64::from_be_bytes(buf);
-            }
-            LATE_FINALIZE_CREDITS_TAG => {
-                if artifacts.late_finalize_credits.is_some() {
-                    return Err(PrecompileError::Fatal(
-                        "duplicate late finalize credits artifact".into(),
-                    ));
-                }
-                artifacts.late_finalize_credits = Some(decode_late_finalize_credits(payload)?);
-            }
-            COMPRESSED_ENTITIES_ROOT_TAG => {
-                if artifacts.compressed_entities_root.is_some() {
-                    return Err(PrecompileError::Fatal(
-                        "duplicate compressed-entities root artifact".into(),
-                    ));
-                }
-                if payload.len() != COMPRESSED_ENTITIES_ROOT_PAYLOAD_LEN {
-                    return Err(PrecompileError::Fatal(format!(
-                        "compressed-entities root payload length: {} (expected {})",
-                        payload.len(),
-                        COMPRESSED_ENTITIES_ROOT_PAYLOAD_LEN
-                    )));
-                }
-                let mut scheme = [0_u8; 4];
-                scheme.copy_from_slice(&payload[..4]);
-                artifacts.compressed_entities_root = Some(CompressedEntitiesRootArtifact {
-                    commitment_scheme_version: u32::from_be_bytes(scheme),
-                    r_sealed: B256::from_slice(&payload[4..]),
-                });
-            }
-            _ => {
-                return Err(PrecompileError::Fatal(format!(
-                    "unsupported block artifact tag: {tag}"
-                )));
-            }
-        }
+        records::decode_into(&mut artifacts, tag, payload)?;
     }
 
     if offset != extra_data.len() {
@@ -557,7 +310,7 @@ pub fn decode_outbe_block_artifacts(extra_data: &[u8]) -> Result<OutbeBlockArtif
 
 /// Canonicalizes proposer-supplied artifact fragments before block execution.
 ///
-/// Execution-produced fields are never accepted from payload attributes. The
+/// This function never accepts execution-produced fields from payload attributes. The
 /// caller must insert the local execution summary, timestamp remainder, and CE
 /// root after compressed-entity sealing. The reduced size limit reserves the
 /// mandatory tag `0x08` record inside the unchanged 64 KiB final envelope.
@@ -604,7 +357,7 @@ pub fn decode_boundary_artifact(extra_data: &[u8]) -> Result<Option<DkgBoundaryA
         Some(ConsensusHeaderArtifact::BoundaryOutcome(result)) => Ok(Some(result)),
         Some(ConsensusHeaderArtifact::DealerLog(_)) => Ok(None),
         // A committee pre-announce carries an outcome for a follower to register a
-        // future epoch's committee; it is not an activating boundary.
+        // future epoch's committee. It is not an activating boundary.
         Some(ConsensusHeaderArtifact::CommitteePreAnnounce { .. }) => Ok(None),
     }
 }
@@ -651,8 +404,8 @@ fn validate_tee_expired_target_exclusions(addresses: &[Address]) -> Result<()> {
 
 /// Encode a standalone `LateFinalizeCreditsArtifact` for the `LateFinalizeCredits`
 /// system-transaction body (mirrors [`encode_boundary_artifact`]). An empty batch
-/// encodes to empty bytes - the mandatory system tx then carries an empty body
-/// and its execution still performs the matured-window close as a side effect.
+/// encodes to empty bytes. The mandatory system tx then carries an empty body,
+/// and its execution still closes the matured window as a side effect.
 pub fn encode_late_finalize_credits_artifact(
     artifact: &LateFinalizeCreditsArtifact,
 ) -> Result<Bytes> {
@@ -663,340 +416,11 @@ pub fn encode_late_finalize_credits_artifact(
 }
 
 /// Decode a standalone `LateFinalizeCreditsArtifact` from a system-tx body. Empty
-/// input decodes to `None`; callers treat that as an empty (no-op) artifact.
+/// input decodes to `None`. Callers treat that as an empty (no-op) artifact.
 pub fn decode_late_finalize_credits_artifact(
     extra_data: &[u8],
 ) -> Result<Option<LateFinalizeCreditsArtifact>> {
     Ok(decode_outbe_block_artifacts(extra_data)?.late_finalize_credits)
-}
-
-fn decode_execution_summary(payload: &[u8]) -> Result<ExecutionSummaryArtifact> {
-    if payload.len() != EXECUTION_SUMMARY_LEN {
-        return Err(PrecompileError::Fatal(format!(
-            "invalid execution summary artifact length: {}",
-            payload.len()
-        )));
-    }
-
-    Ok(ExecutionSummaryArtifact {
-        validator_fee_sum: U256::from_be_slice(&payload[0..32]),
-    })
-}
-
-fn decode_late_finalize_credits(payload: &[u8]) -> Result<LateFinalizeCreditsArtifact> {
-    if payload.len() < 2 {
-        return Err(PrecompileError::Fatal(
-            "late finalize credits payload too short".into(),
-        ));
-    }
-    let batch_count = u16::from_be_bytes([payload[0], payload[1]]) as usize;
-    if batch_count > LATE_FINALIZE_MAX_BATCHES {
-        return Err(PrecompileError::Fatal(format!(
-            "too many late finalize batches: {batch_count} > {LATE_FINALIZE_MAX_BATCHES}"
-        )));
-    }
-    let mut offset = 2usize;
-    let mut batches = Vec::with_capacity(batch_count);
-    let mut prev: Option<(u64, B256)> = None;
-
-    let read_u64 = |buf: &[u8]| -> u64 {
-        let mut b = [0u8; 8];
-        b.copy_from_slice(buf);
-        u64::from_be_bytes(b)
-    };
-
-    for _ in 0..batch_count {
-        // Fixed prefix + the 2-byte bitmap length must be present before reading.
-        if offset + PER_BLOCK_CREDIT_FIXED_LEN + 2 > payload.len() {
-            return Err(PrecompileError::Fatal(
-                "truncated late finalize credit prefix".into(),
-            ));
-        }
-        let fb_number = read_u64(&payload[offset..offset + 8]);
-        offset += 8;
-        let fb_hash = B256::from_slice(&payload[offset..offset + 32]);
-        offset += 32;
-        let epoch = read_u64(&payload[offset..offset + 8]);
-        offset += 8;
-        let view = read_u64(&payload[offset..offset + 8]);
-        offset += 8;
-        let parent_view = read_u64(&payload[offset..offset + 8]);
-        offset += 8;
-        let committee_set_hash = B256::from_slice(&payload[offset..offset + 32]);
-        offset += 32;
-        let bitmap_len = u16::from_be_bytes([payload[offset], payload[offset + 1]]) as usize;
-        offset += 2;
-        if bitmap_len > LATE_FINALIZE_MAX_BITMAP_LEN {
-            return Err(PrecompileError::Fatal(format!(
-                "late finalize bitmap too long: {bitmap_len} > {LATE_FINALIZE_MAX_BITMAP_LEN}"
-            )));
-        }
-        let body_end = offset
-            .checked_add(bitmap_len)
-            .and_then(|o| o.checked_add(LATE_FINALIZE_SIG_LEN))
-            .ok_or_else(|| PrecompileError::Fatal("late finalize credit overflow".into()))?;
-        if body_end > payload.len() {
-            return Err(PrecompileError::Fatal(
-                "truncated late finalize credit body".into(),
-            ));
-        }
-        let signer_bitmap = payload[offset..offset + bitmap_len].to_vec();
-        offset += bitmap_len;
-        let mut aggregate_signature = [0u8; LATE_FINALIZE_SIG_LEN];
-        aggregate_signature.copy_from_slice(&payload[offset..offset + LATE_FINALIZE_SIG_LEN]);
-        offset += LATE_FINALIZE_SIG_LEN;
-
-        // Canonical order: strictly ascending (fb_number, fb_hash); reject
-        // out-of-order or duplicate targets for byte-deterministic decoding.
-        let key = (fb_number, fb_hash);
-        if let Some(prev_key) = prev {
-            if key <= prev_key {
-                return Err(PrecompileError::Fatal(
-                    "late finalize batches not in strictly ascending canonical order".into(),
-                ));
-            }
-        }
-        prev = Some(key);
-
-        batches.push(PerBlockCredit {
-            fb_number,
-            fb_hash,
-            epoch,
-            view,
-            parent_view,
-            committee_set_hash,
-            signer_bitmap,
-            aggregate_signature,
-        });
-    }
-
-    if offset != payload.len() {
-        return Err(PrecompileError::Fatal(
-            "trailing bytes in late finalize credits payload".into(),
-        ));
-    }
-
-    Ok(LateFinalizeCreditsArtifact { batches })
-}
-
-fn decode_boundary_payload(payload: &[u8]) -> Result<DkgBoundaryArtifact> {
-    // Minimum boundary payload: epoch+dkg_cycle+freeze+planned (4*u64) + target_set_hash (32)
-    // + vrf_material_version (u64) + vrf_group_public_key (32) + committee_set_hash (32)
-    // + is_validator_set_change (1) + is_full_dkg (1) + active_set_hash (32) + count (u16)
-    // + outcome_len (u32) + vrf_group_pk_len (u32).
-    if payload.len() < 8 + 8 + 8 + 8 + 32 + 8 + 32 + 32 + 1 + 1 + 32 + 2 + 4 + 4 {
-        return Err(PrecompileError::Fatal(
-            "boundary header artifact payload too short".into(),
-        ));
-    }
-
-    let mut offset = 0usize;
-    let epoch = read_u64(payload, &mut offset, "boundary epoch")?;
-    let dkg_cycle = read_u64(payload, &mut offset, "boundary dkg cycle")?;
-    let freeze_height = read_u64(payload, &mut offset, "boundary freeze height")?;
-    let planned_activation_height =
-        read_u64(payload, &mut offset, "boundary planned activation height")?;
-
-    let target_set_hash = B256::from_slice(&payload[offset..offset + 32]);
-    offset += 32;
-
-    let vrf_material_version = read_u64(payload, &mut offset, "boundary vrf material version")?;
-
-    let vrf_group_public_key = B256::from_slice(&payload[offset..offset + 32]);
-    offset += 32;
-
-    let committee_set_hash = B256::from_slice(&payload[offset..offset + 32]);
-    offset += 32;
-
-    let is_validator_set_change = match payload[offset] {
-        0 => false,
-        1 => true,
-        other => {
-            return Err(PrecompileError::Fatal(format!(
-                "invalid boundary is_validator_set_change flag: {other}"
-            )));
-        }
-    };
-    offset += 1;
-
-    let is_full_dkg = match payload[offset] {
-        0 => false,
-        1 => true,
-        other => {
-            return Err(PrecompileError::Fatal(format!(
-                "invalid boundary is_full_dkg flag: {other}"
-            )));
-        }
-    };
-    offset += 1;
-
-    let active_set_hash = B256::from_slice(&payload[offset..offset + 32]);
-    offset += 32;
-
-    let count = u16::from_be_bytes([payload[offset], payload[offset + 1]]) as usize;
-    offset += 2;
-    let addresses_len = count
-        .checked_mul(20)
-        .ok_or_else(|| PrecompileError::Fatal("boundary address list length overflow".into()))?;
-    let needed_before_outcome = offset + addresses_len + 4;
-    if payload.len() < needed_before_outcome {
-        return Err(PrecompileError::Fatal(format!(
-            "invalid boundary header artifact payload length: {} < {needed_before_outcome}",
-            payload.len()
-        )));
-    }
-
-    let new_active_set = (0..count)
-        .map(|index| {
-            let start = offset + index * 20;
-            Address::from_slice(&payload[start..start + 20])
-        })
-        .collect();
-    offset += addresses_len;
-
-    let outcome_len = u32::from_be_bytes(
-        payload[offset..offset + 4]
-            .try_into()
-            .map_err(|_| PrecompileError::Fatal("invalid outcome length bytes".into()))?,
-    ) as usize;
-    offset += 4;
-    let needed_after_outcome = offset
-        .checked_add(outcome_len)
-        .and_then(|v| v.checked_add(4))
-        .ok_or_else(|| PrecompileError::Fatal("boundary payload length overflow".into()))?;
-    if payload.len() < needed_after_outcome {
-        return Err(PrecompileError::Fatal(format!(
-            "invalid boundary header artifact payload length: {} < {needed_after_outcome}",
-            payload.len()
-        )));
-    }
-    let outcome = Bytes::copy_from_slice(&payload[offset..offset + outcome_len]);
-    offset += outcome_len;
-
-    let vrf_group_pk_len = u32::from_be_bytes(
-        payload[offset..offset + 4]
-            .try_into()
-            .map_err(|_| PrecompileError::Fatal("invalid vrf group pk length bytes".into()))?,
-    ) as usize;
-    offset += 4;
-    let needed_after_vrf = offset + vrf_group_pk_len;
-    if payload.len() < needed_after_vrf {
-        return Err(PrecompileError::Fatal(format!(
-            "invalid boundary header artifact payload length: {} < {needed_after_vrf}",
-            payload.len()
-        )));
-    }
-    let vrf_group_public_key_bytes =
-        Bytes::copy_from_slice(&payload[offset..offset + vrf_group_pk_len]);
-    offset += vrf_group_pk_len;
-
-    // V0.07: tee_recipient_pubkeys (u16 count + entries of Address(20)+B256(32)).
-    if payload.len() < offset + 2 {
-        return Err(PrecompileError::Fatal(
-            "invalid boundary header artifact: missing tee recipient count".into(),
-        ));
-    }
-    let tee_count = u16::from_be_bytes([payload[offset], payload[offset + 1]]) as usize;
-    offset += 2;
-    let tee_bytes = tee_count
-        .checked_mul(20 + 32)
-        .ok_or_else(|| PrecompileError::Fatal("tee recipient pubkeys length overflow".into()))?;
-    let needed_after_recipients = offset
-        .checked_add(tee_bytes)
-        .and_then(|v| v.checked_add(32 + 2))
-        .ok_or_else(|| PrecompileError::Fatal("boundary payload length overflow".into()))?;
-    if payload.len() < needed_after_recipients {
-        return Err(PrecompileError::Fatal(format!(
-            "invalid boundary header artifact payload length: {} < {needed_after_recipients}",
-            payload.len()
-        )));
-    }
-    let mut tee_recipient_pubkeys = Vec::with_capacity(tee_count);
-    for _ in 0..tee_count {
-        let address = Address::from_slice(&payload[offset..offset + 20]);
-        offset += 20;
-        let recipient_pubkey = B256::from_slice(&payload[offset..offset + 32]);
-        offset += 32;
-        tee_recipient_pubkeys.push((address, recipient_pubkey));
-    }
-
-    // V0.0B: domain-separated commitment plus bounded ordered unique list.
-    let carried_tee_expired_target_exclusions_hash =
-        B256::from_slice(&payload[offset..offset + 32]);
-    offset += 32;
-    let exclusions_count = u16::from_be_bytes([payload[offset], payload[offset + 1]]) as usize;
-    offset += 2;
-    if exclusions_count > MAX_TEE_EXPIRED_TARGET_EXCLUSIONS {
-        return Err(PrecompileError::Fatal(format!(
-            "TEE expiry exclusions exceed protocol cap: {exclusions_count} > {MAX_TEE_EXPIRED_TARGET_EXCLUSIONS}"
-        )));
-    }
-    let exclusions_bytes = exclusions_count
-        .checked_mul(20)
-        .ok_or_else(|| PrecompileError::Fatal("TEE expiry exclusions length overflow".into()))?;
-    let needed_after_exclusions = offset
-        .checked_add(exclusions_bytes)
-        .ok_or_else(|| PrecompileError::Fatal("boundary payload length overflow".into()))?;
-    if payload.len() < needed_after_exclusions {
-        return Err(PrecompileError::Fatal(format!(
-            "invalid boundary header artifact payload length: {} < {needed_after_exclusions}",
-            payload.len()
-        )));
-    }
-    let mut tee_expired_target_exclusions = Vec::with_capacity(exclusions_count);
-    for _ in 0..exclusions_count {
-        tee_expired_target_exclusions.push(Address::from_slice(&payload[offset..offset + 20]));
-        offset += 20;
-    }
-    let expected_exclusions_hash =
-        tee_expired_target_exclusions_hash(&tee_expired_target_exclusions)?;
-    if expected_exclusions_hash != carried_tee_expired_target_exclusions_hash {
-        return Err(PrecompileError::Fatal(
-            "boundary TEE expiry exclusions commitment mismatch".into(),
-        ));
-    }
-
-    if payload.len() != offset {
-        return Err(PrecompileError::Fatal(format!(
-            "invalid boundary header artifact payload length: {} != {offset}",
-            payload.len()
-        )));
-    }
-
-    Ok(DkgBoundaryArtifact {
-        epoch,
-        dkg_cycle,
-        freeze_height,
-        planned_activation_height,
-        target_set_hash,
-        vrf_material_version,
-        vrf_group_public_key,
-        vrf_group_public_key_bytes,
-        committee_set_hash,
-        is_validator_set_change,
-        outcome,
-        is_full_dkg,
-        reshare: ReshareResult {
-            new_active_set,
-            active_set_hash,
-        },
-        tee_recipient_pubkeys,
-        tee_expired_target_exclusions,
-        tee_expired_target_exclusions_hash: carried_tee_expired_target_exclusions_hash,
-    })
-}
-
-fn read_u64(payload: &[u8], offset: &mut usize, name: &str) -> Result<u64> {
-    let end = offset.saturating_add(8);
-    let Some(bytes) = payload.get(*offset..end) else {
-        return Err(PrecompileError::Fatal(format!(
-            "unexpected EOF reading {name}"
-        )));
-    };
-    *offset = end;
-    Ok(u64::from_be_bytes(bytes.try_into().map_err(|_| {
-        PrecompileError::Fatal(format!("invalid {name} bytes"))
-    })?))
 }
 
 fn ensure_count_fits_u16(name: &str, count: usize) -> Result<()> {
@@ -1024,6 +448,27 @@ fn ensure_payload_fits_u16(name: &str, len: usize) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+fn decode_block_artifact_record_count(extra_data: &[u8]) -> Result<usize> {
+    if extra_data.len() < 4 + 1 + 1 {
+        return Err(PrecompileError::Fatal("block artifacts too short".into()));
+    }
+
+    if &extra_data[..4] != MAGIC {
+        return Err(PrecompileError::Fatal(
+            "unknown non-empty extra_data block artifact".into(),
+        ));
+    }
+
+    if extra_data[4] != VERSION {
+        return Err(PrecompileError::Fatal(format!(
+            "unsupported block artifact version: {}",
+            extra_data[4]
+        )));
+    }
+
+    Ok(extra_data[5] as usize)
 }
 
 #[cfg(test)]
@@ -1123,9 +568,8 @@ mod tests {
         assert!(decode_boundary_artifact(&encoded).is_err());
     }
 
-    #[test]
-    fn roundtrip_block_artifacts_with_execution_summary_and_boundary() {
-        let boundary = DkgBoundaryArtifact {
+    fn roundtrip_boundary_fixture() -> DkgBoundaryArtifact {
+        DkgBoundaryArtifact {
             epoch: 7,
             dkg_cycle: 1,
             freeze_height: 100,
@@ -1148,7 +592,12 @@ mod tests {
                 ],
                 active_set_hash: B256::with_last_byte(0x41),
             },
-        };
+        }
+    }
+
+    #[test]
+    fn roundtrip_block_artifacts_with_execution_summary_and_boundary() {
+        let boundary = roundtrip_boundary_fixture();
         let summary = ExecutionSummaryArtifact {
             validator_fee_sum: U256::from(3u64),
         };
@@ -1174,30 +623,7 @@ mod tests {
 
     #[test]
     fn roundtrip_boundary_header_artifact_wrapper() {
-        let result = DkgBoundaryArtifact {
-            epoch: 7,
-            dkg_cycle: 1,
-            freeze_height: 100,
-            planned_activation_height: 200,
-            target_set_hash: B256::with_last_byte(0x41),
-            vrf_material_version: 1,
-            vrf_group_public_key: B256::with_last_byte(0x42),
-            vrf_group_public_key_bytes: Bytes::from_static(b"\x22\x22\x22"),
-            committee_set_hash: B256::with_last_byte(0x4F),
-            is_validator_set_change: true,
-            outcome: Bytes::from_static(b"dkg-outcome"),
-            is_full_dkg: true,
-            tee_recipient_pubkeys: Vec::new(),
-            tee_expired_target_exclusions: Vec::new(),
-            tee_expired_target_exclusions_hash: B256::ZERO,
-            reshare: ReshareResult {
-                new_active_set: vec![
-                    address!("0x1111111111111111111111111111111111111111"),
-                    address!("0x2222222222222222222222222222222222222222"),
-                ],
-                active_set_hash: B256::with_last_byte(0x41),
-            },
-        };
+        let result = roundtrip_boundary_fixture();
 
         let encoded = encode_boundary_artifact(&result).unwrap();
         let decoded = decode_boundary_artifact(&encoded).unwrap();
@@ -1231,7 +657,7 @@ mod tests {
             decode_consensus_header_artifact(&encoded).unwrap(),
             Some(artifact)
         );
-        // A pre-announce carries a committee for a follower; it is NOT an
+        // A pre-announce carries a committee for a follower. It is NOT an
         // activating boundary.
         assert_eq!(decode_boundary_artifact(&encoded).unwrap(), None);
     }
@@ -1504,7 +930,7 @@ mod tests {
         // u16 cap (65535) but whose total framed length (6-byte envelope +
         // 3-byte record header + payload) exceeds OUTBE_MAX_EXTRA_DATA_SIZE.
         //
-        // Fixed boundary payload prefix is 216 bytes; the rest is the outcome
+        // Fixed boundary payload prefix is 216 bytes. The rest is the outcome
         // blob. We size the outcome so the total framed length is just over the
         // 64 KiB budget while the record payload stays <= 65535.
         // (180 base fields + 2-byte tee_recipient_pubkeys count + 32-byte
@@ -1688,10 +1114,10 @@ mod tests {
 
     #[test]
     fn late_credits_decode_rejects_more_than_k_batches() {
-        // the wire cap is the inclusion window `K`, so a count
-        // header above `K` is rejected before any per-credit body is parsed -
-        // bounding adversarial decode/snapshot/BLS-verify work to the protocol
-        // window. An honest proposer never emits more than `K` batches.
+        // The wire cap is the inclusion window `K`. The decoder rejects a count
+        // header above `K` before it parses any per-credit body. This bounds
+        // adversarial decode/snapshot/BLS-verify work to the protocol window.
+        // An honest proposer never emits more than `K` batches.
         assert_eq!(
             super::LATE_FINALIZE_MAX_BATCHES as u64,
             crate::consensus::LATE_FINALIZE_WINDOW_K,
@@ -1700,7 +1126,7 @@ mod tests {
         let over_k = (crate::consensus::LATE_FINALIZE_WINDOW_K + 1) as u16;
         let payload = over_k.to_be_bytes().to_vec();
         assert!(
-            super::decode_late_finalize_credits(&payload).is_err(),
+            super::late_finalize::decode_payload(&payload).is_err(),
             "a batch count above K must be rejected at decode before body parsing"
         );
     }

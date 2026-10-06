@@ -6,8 +6,8 @@
 //! newly added validators can join as player-only until they receive a share.
 //! Reshare ceremonies complete from >= 2f+1 chain-finalized dealer logs.
 //! Interactive bootstrap without a chain carrier waits for every genesis
-//! participant's dealer log, because threshold P2P subsets are not canonical and
-//! may otherwise produce different public polynomials on different validators.
+//! participant's dealer log. This is because threshold P2P subsets are not canonical
+//! and may otherwise produce different public polynomials on different validators.
 //!
 //! Protocol:
 //! 1. Each validator calls `Dealer::start()` -> gets `DealerPubMsg` + per-player `DealerPrivMsg`
@@ -20,10 +20,10 @@
 //!
 //! Local threshold finalization is not the activation source of truth. The
 //! commonware `select()` function deterministically picks the first
-//! `required_commitments` valid logs from the logs it is given, but different
+//! `required_commitments` valid logs from the logs it is given. But different
 //! nodes can receive different P2P subsets. Live reshare activation therefore
 //! uses the canonical output reconstructed from finalized chain-carried dealer
-//! logs; initial bootstrap waits for all genesis logs before block production.
+//! logs. Initial bootstrap waits for all genesis logs before block production.
 
 use alloy_primitives::Bytes;
 use commonware_cryptography::bls12381;
@@ -47,8 +47,8 @@ pub struct DkgComplete {
 /// Result of a dealer-only reshare participant.
 ///
 /// A removed validator that still owns a previous threshold share remains a
-/// dealer for the reshare, but is not a player in the target participant set
-/// and therefore does not receive a fresh share.
+/// dealer for the reshare. But it is not a player in the target participant set.
+/// Therefore it does not receive a fresh share.
 #[derive(Clone, Debug)]
 pub struct DkgDealerOnlyComplete {
     /// The participant set that receives fresh shares in this DKG round.
@@ -78,10 +78,10 @@ const RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Once a dealer has the Byzantine-liveness quorum, keep accepting ACKs through
 /// a bounded node+enclave restart window before sealing its log.
-/// Feldman-Desmedt deliberately publishes the evaluations of non-acking players;
-/// ending grace before a healthy SGX node can restart can therefore turn a
+/// Feldman-Desmedt deliberately publishes the evaluations of non-acking players.
+/// Therefore, ending grace before a healthy SGX node can restart can turn a
 /// recoverable crash into permanent share disclosure. Healthy ceremonies still
-/// finalize immediately once every player ACKs; this longer bound affects only
+/// finalize immediately once every player ACKs. This longer bound affects only
 /// missing-player recovery and remains below the configured prepare window.
 #[cfg(not(test))]
 const ACK_COLLECTION_GRACE: Duration = Duration::from_secs(30);
@@ -103,7 +103,9 @@ mod tests;
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]
-pub use test_support::{run_initial_dkg, run_reshare_dealer_only};
+pub use test_support::{
+    run_initial_dkg, run_reshare_dealer_only, DealerOnlyDkgFixture, InitialDkgFixture,
+};
 
 mod messaging;
 use messaging::{
@@ -114,8 +116,15 @@ use messaging::{
     take_restart_replay_shares,
 };
 
+mod ceremony;
+
 mod dealer_only;
 pub use dealer_only::run_reshare_dealer_only_durable;
 
 mod round;
 pub use round::run_initial_dkg_durable;
+
+mod inputs;
+pub use inputs::{
+    DkgDealerParameters, DkgParticipantParameters, DkgProgressChannels, DkgTransport,
+};

@@ -5,9 +5,11 @@
 
 pub mod actor;
 pub(crate) mod ancestry;
+mod certification;
 pub(crate) mod epoch_boundary;
 pub mod handler;
 pub mod ingress;
+pub mod publication;
 pub(crate) mod validation;
 pub(crate) mod verify_resolution;
 

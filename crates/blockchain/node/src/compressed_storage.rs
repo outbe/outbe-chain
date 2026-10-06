@@ -35,6 +35,13 @@ pub enum CompressedStorageConfigError {
 pub fn validate_compressed_storage_runtime_config(
     config: CompressedStorageRuntimeConfig,
 ) -> Result<(), CompressedStorageConfigError> {
+    validate_per_block_persistence(config)?;
+    validate_recovery_pruning(config)
+}
+
+fn validate_per_block_persistence(
+    config: CompressedStorageRuntimeConfig,
+) -> Result<(), CompressedStorageConfigError> {
     if config.persistence_threshold != 0 {
         return Err(CompressedStorageConfigError::PersistenceThreshold {
             actual: config.persistence_threshold,
@@ -50,6 +57,12 @@ pub fn validate_compressed_storage_runtime_config(
             actual: config.max_pending_acks,
         });
     }
+    Ok(())
+}
+
+fn validate_recovery_pruning(
+    config: CompressedStorageRuntimeConfig,
+) -> Result<(), CompressedStorageConfigError> {
     if config.receipts_pruning_enabled {
         return Err(CompressedStorageConfigError::ReceiptsPruningEnabled);
     }

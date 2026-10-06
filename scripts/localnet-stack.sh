@@ -48,7 +48,7 @@ network_env() {
   export OUTBE_TEE_ENCLAVE=1
   export OUTBE_TEE_ENCLAVE_MOCK=1
   # Persist each validator's permanent offer key across a whole-stack restart.
-  # A missing/corrupt sealed key is terminal for that identity; localnet never
+  # A missing/corrupt sealed key is terminal for that identity. Localnet never
   # invokes a peer recovery or replacement path.
   export OUTBE_TEE_SEAL=1
   export OUTBE_TEE_ENCLAVE_BINARY="$ROOT_DIR/target/release/outbe-tee-enclave-mock"

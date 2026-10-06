@@ -11,8 +11,8 @@
 //! 4. Sends `Finalized` to the [`FinalizationActor`](crate::finalization::actor),
 //!    which durably writes the exact-parent certificate record consumed by the
 //!    proposer-side Phase 1 system transaction.
-//! 5. Uses an unbounded mailbox - the voter task can never block on this edge.
-//!    A closed mailbox is logged + counted but does not panic; the supervisor
+//! 5. Uses an unbounded mailbox. The voter task can never block on this edge.
+//!    A closed mailbox is logged + counted but does not panic. The supervisor
 //!    handles actor exit through `FinalizationActor::run`'s `Result`.
 
 use crate::metrics::EquivocationKind;
@@ -66,8 +66,8 @@ pub struct OutbeReporter {
     /// FinalizationActor mailbox for sending finalization notifications.
     /// `unbounded_send` keeps this edge non-blocking from the voter task.
     finalization_mailbox: FinalizationMailbox,
-    /// Bridge - Half C-parlia step 11 removed the legacy
-    /// `refresh_pending_finalized_certificate` call; the field is kept
+    /// Bridge. Half C-parlia step 11 removed the legacy
+    /// `refresh_pending_finalized_certificate` call. The field stays
     /// for the surviving status / cache surface and for follow-up
     /// metrics emission.
     #[allow(dead_code)]
@@ -83,23 +83,24 @@ pub struct OutbeReporter {
     view_state: ReporterViewState,
     /// Off-thread finalize-vote verifier. `handle_finalize_vote`
     /// enqueues raw votes here instead of verifying `O(committee)` BLS pairings
-    /// inline on the Simplex voter task; the actor verifies and admits the
-    /// verified votes to `late_sig_store`.
+    /// inline on the Simplex voter task. The actor verifies the votes and admits
+    /// the verified votes to `late_sig_store`.
     finalize_verify_mailbox: FinalizeVerifyMailbox,
-    /// Narrow, write-only capability onto the certified-parent proof store: the
+    /// Narrow, write-only capability onto the certified-parent proof store. The
     /// reporter records the `local_certification_witness` mark for each observed
-    /// `Activity::Certification`, but structurally cannot durably write - durable
-    /// persistence goes off-thread through the FinalizationActor mailbox (see
-    /// `handle_certification`), which stays the single durable writer.
+    /// `Activity::Certification`. Structurally, the reporter cannot durably
+    /// write. Durable persistence goes off-thread through the FinalizationActor
+    /// mailbox (see `handle_certification`). The FinalizationActor stays the
+    /// single durable writer.
     witness_sink: Arc<dyn CertificationWitnessSink>,
 }
 
 /// Mutable per-view state owned by a single `OutbeReporter` instance, separated
 /// from the immutable epoch wiring. Holds the finalization cursor (the lower
 /// bound for view-gap missed-proposer attribution) and the byzantine-evidence
-/// buffer drained on each finalization. Its operations are unit-tested in
-/// isolation, so byzantine buffering and the finalization cursor are no longer
-/// loose fields threaded through the handlers.
+/// buffer that each finalization drains. Its operations are unit-tested in
+/// isolation. Thus byzantine buffering and the finalization cursor are no
+/// longer loose fields threaded through the handlers.
 #[derive(Clone, Default)]
 struct ReporterViewState {
     last_finalized_view: u64,
@@ -172,23 +173,44 @@ impl ReporterContinuity {
     }
 }
 
+/// Immutable authority for one reporter epoch. Address order matches participant indices.
+pub struct ReporterCommittee {
+    pub validator_addresses: Vec<Address>,
+    pub verifier_scheme: HybridScheme<MinSig>,
+    pub elector: HybridRandomElector<MinSig>,
+    pub epoch: Epoch,
+}
+
+/// Capabilities required to deliver finalized facts and record certification witnesses.
+pub struct ReporterDependencies {
+    pub finalization_mailbox: FinalizationMailbox,
+    pub bridge: Option<ConsensusExecutionBridge>,
+    pub witness_sink: Arc<dyn CertificationWitnessSink>,
+    pub finalize_verify_mailbox: FinalizeVerifyMailbox,
+}
+
 /// Type alias for our Simplex activity type - uses HybridScheme<MinSig>.
 type OutbeActivity = Activity<HybridScheme<MinSig>, Digest>;
 
 impl OutbeReporter {
-    /// Create a new reporter.
-    #[allow(clippy::too_many_arguments)]
+    /// Construct from epoch authority and required downstream capabilities.
     pub fn new(
         continuity: ReporterContinuity,
-        validator_addresses: Vec<Address>,
-        finalization_mailbox: FinalizationMailbox,
-        bridge: Option<ConsensusExecutionBridge>,
-        verifier_scheme: HybridScheme<MinSig>,
-        elector: HybridRandomElector<MinSig>,
-        epoch: Epoch,
-        witness_sink: Arc<dyn CertificationWitnessSink>,
-        finalize_verify_mailbox: FinalizeVerifyMailbox,
+        committee: ReporterCommittee,
+        dependencies: ReporterDependencies,
     ) -> Self {
+        let ReporterCommittee {
+            validator_addresses,
+            verifier_scheme,
+            elector,
+            epoch,
+        } = committee;
+        let ReporterDependencies {
+            finalization_mailbox,
+            bridge,
+            witness_sink,
+            finalize_verify_mailbox,
+        } = dependencies;
         let persisted = continuity.snapshot();
         Self {
             continuity,
@@ -216,16 +238,16 @@ impl Reporter for OutbeReporter {
     ///
     /// As of commonware 2026.5.0 this method is SYNC and returns
     /// [`commonware_actor::Feedback`]. The only activity that previously
-    /// required `.await` was `Activity::Finalization`, whose handler
-    /// (`handle_finalization`) does all of its work synchronously and then
-    /// hands the finalization off to the [`FinalizationActor`] through an
+    /// required `.await` was `Activity::Finalization`. Its handler
+    /// (`handle_finalization`) does all of its work synchronously. Then it
+    /// passes the finalization to the [`FinalizationActor`] through an
     /// unbounded mailbox (`unbounded_send`). No async work runs on this path,
-    /// so the migration does NOT spawn a task or block: the finalization is
-    /// enqueued into the actor mailbox deterministically, preserving the
-    /// single-writer `FinalizedParentCertStore` semantics.
+    /// so the migration does NOT spawn a task or block. The handler enqueues
+    /// the finalization into the actor mailbox deterministically. This
+    /// preserves the single-writer `FinalizedParentCertStore` semantics.
     ///
     /// We return `Feedback::Closed` only when the downstream FinalizationActor
-    /// mailbox is gone (finalization could not be delivered); all other paths
+    /// mailbox is gone (finalization could not be delivered). All other paths
     /// return `Feedback::Ok`.
     fn report(&mut self, activity: Self::Activity) -> commonware_actor::Feedback {
         match activity {
@@ -235,13 +257,13 @@ impl Reporter for OutbeReporter {
             }
             Activity::Finalization(finalization) => self.handle_finalization(finalization),
             Activity::Notarization(notarization) => {
-                // track the current view so the stall gap
+                // Track the current view so the stall gap
                 // (current - finalized) is observable even before finalization.
                 crate::metrics::record_current_view(notarization.view().get());
                 commonware_actor::Feedback::Ok
             }
             Activity::Nullification(nullification) => {
-                // a view was nullified (leader timed out / view skipped).
+                // A view was nullified (leader timed out / view skipped).
                 // The current-view gauge advances on nullifications so it keeps
                 // moving during a stall where nothing finalizes.
                 crate::metrics::record_view_nullified();
@@ -249,7 +271,7 @@ impl Reporter for OutbeReporter {
                 commonware_actor::Feedback::Ok
             }
             Activity::Certification(notarization) => {
-                // marshal's mailbox drops `Activity::Certification`
+                // Marshal's mailbox drops `Activity::Certification`
                 // via its `_ => return;` arm, so Outbe is the only persistent
                 // consumer. Verify before write per the test contract
                 // `proof_store_ingestion_verifies_certification_activity_before_write`.
@@ -293,19 +315,19 @@ impl Reporter for OutbeReporter {
 
 impl OutbeReporter {
     fn handle_finalize_vote(&mut self, finalize: Finalize<HybridScheme<MinSig>, Digest>) {
-        // do NOT verify the vote inline on the Simplex voter task. The
-        // batcher reports `Activity::Finalize` BEFORE batch-verifying it
-        // (monorepo batcher `round.rs::add_network`), so the vote here is
+        // Do NOT verify the vote inline on the Simplex voter task. The
+        // batcher reports `Activity::Finalize` BEFORE it batch-verifies the vote
+        // (monorepo batcher `round.rs::add_network`). Thus the vote here is
         // unverified and MUST be verified before it can feed the proposer's
-        // late-credit aggregate - but verifying `O(committee)` BLS pairings per
-        // view on the voter critical path inflated block time. Enqueue the raw
-        // vote to the off-thread `FinalizeVerifyActor`, which verifies it and
-        // admits only the verified votes to `late_sig_store`. The former
+        // late-credit aggregate. But verification of `O(committee)` BLS pairings
+        // per view on the voter critical path inflated block time. Enqueue the
+        // raw vote to the off-thread `FinalizeVerifyActor`. That actor verifies
+        // it and admits only the verified votes to `late_sig_store`. The former
         // synchronous `build_finalized_certificate` re-augmentation here was a
-        // V2 no-op (it discarded its result; the canonical bitmap comes from the
-        // certificate in `handle_finalization`), so it is dropped with the
+        // V2 no-op. It discarded its result, and the canonical bitmap comes from
+        // the certificate in `handle_finalization`. So it is dropped with the
         // vestigial `observed_finalizes` / `pending_finalizations` state.
-        // finalize votes are the most frequent per-view signal; track the
+        // Finalize votes are the most frequent per-view signal. Track the
         // current view so the stall gap stays fresh during normal progress.
         crate::metrics::record_current_view(finalize.view().get());
         self.finalize_verify_mailbox.verify(self.epoch, finalize);
@@ -316,8 +338,8 @@ impl OutbeReporter {
         proposal: &Proposal<Digest>,
         certificate: &HybridCertificate<MinSig>,
     ) -> FinalizedParentCertificateData {
-        // V2 contract uses the certificate's own signer bitmap as
-        // the authoritative participation accounting input; the V1
+        // The V2 contract uses the certificate's own signer bitmap as
+        // the authoritative participation accounting input. The V1
         // supplemental-finalize-vote bitmap extension is dropped.
         // `observed_finalizes` is still maintained for future byzantine
         // equivocation detection but no longer feeds the wire.
@@ -346,10 +368,10 @@ impl OutbeReporter {
     ///
     /// Emits a structured signal for an external slashing watcher and records a
     /// metric. The conflicting signed votes themselves are NOT accessible from
-    /// the commonware evidence type (its inner votes are private), so the node
-    /// signals the attributable facts (signer pubkey + epoch + view + class) and
-    /// the watcher - which observes the gossiped votes - packs the two
-    /// `EvidenceBlock`s and submits to the SlashIndicator
+    /// the commonware evidence type (its inner votes are private). Thus the node
+    /// signals the attributable facts (signer pubkey + epoch + view + class).
+    /// The watcher observes the gossiped votes. It packs the two
+    /// `EvidenceBlock`s and submits them to the SlashIndicator
     /// `submitConflicting{Notarize,Finalize}Evidence` / `submitNullifyFinalizeEvidence`
     /// precompiles. The node does NOT auto-slash (no in-node tx injection), so
     /// the log must not claim it does.
@@ -393,12 +415,15 @@ impl OutbeReporter {
 
     /// Handle a finalization event from the Simplex engine.
     ///
-    /// SYNC in 2026.5.0: the handler builds the finalized-parent certificate
-    /// artifact, detects missed proposers, updates reporter-local continuity,
-    /// and routes the finalization to the [`FinalizationActor`] through its
-    /// unbounded mailbox (`notify_finalized` is a non-blocking `unbounded_send`).
+    /// SYNC in 2026.5.0. The handler:
+    /// - builds the finalized-parent certificate artifact;
+    /// - detects missed proposers;
+    /// - updates reporter-local continuity;
+    /// - routes the finalization to the [`FinalizationActor`] through its
+    ///   unbounded mailbox (`notify_finalized` is a non-blocking `unbounded_send`).
+    ///
     /// No `.await` happens here. Returns [`commonware_actor::Feedback::Closed`]
-    /// when the actor mailbox is gone (finalization dropped); otherwise
+    /// when the actor mailbox is gone (finalization dropped). Otherwise returns
     /// [`commonware_actor::Feedback::Ok`].
     fn handle_finalization(
         &mut self,
@@ -431,10 +456,11 @@ impl OutbeReporter {
         // Defense-in-depth alarm: a finalized certificate must never carry a
         // VRF proof that fails to verify against the committee group key for
         // its own round. Atomic vote-plus-partial admission during attestation
-        // verification guarantees recovery only runs over verified partials, so this is unreachable
-        // in correct operation. If it ever fires, an unverifiable proof has
-        // reached the finalized certificate and will fail the next height's
-        // mandatory V2 verify - surface it loudly rather than silently halting.
+        // verification guarantees that recovery only runs over verified partials.
+        // Thus this is unreachable in correct operation. If it ever fires, an
+        // unverifiable proof reached the finalized certificate and will fail the
+        // next height's mandatory V2 verify. Surface it loudly rather than halt
+        // silently.
         if vrf_seed.is_none() {
             crate::metrics::record_finalized_cert_invalid_vrf_proof();
             error!(
@@ -470,13 +496,14 @@ impl OutbeReporter {
         let missed_proposers = self.detect_missed_proposers(view);
 
         // 4. Drain the per-finalization buffer of locally-attributed byzantine
-        // signers - operator observability ONLY, not a transport stage. On-chain
-        // slashing is carried by the external watcher (which observes the raw
-        // gossiped votes the node cannot reach - commonware hides the inner votes)
-        // submitting the two conflicting `EvidenceBlock`s to the SlashIndicator
-        // `submitConflicting{Notarize,Finalize}` / `submitNullifyFinalize`
-        // precompile, where both signatures are re-verified on-chain (reproducible
-        // from chain state). This drain does NOT put evidence on-chain.
+        // signers. This is operator observability ONLY, not a transport stage.
+        // The external watcher carries on-chain slashing. It observes the raw
+        // gossiped votes that the node cannot reach (commonware hides the inner
+        // votes). It submits the two conflicting `EvidenceBlock`s to the
+        // SlashIndicator `submitConflicting{Notarize,Finalize}` /
+        // `submitNullifyFinalize` precompile. The precompile re-verifies both
+        // signatures on-chain (reproducible from chain state). This drain does
+        // NOT put evidence on-chain.
         let attributed_byzantine = self.view_state.drain_byzantine_sorted();
 
         if !attributed_byzantine.is_empty() {
@@ -500,9 +527,9 @@ impl OutbeReporter {
 
         // 7. Send full finalization payload to the FinalizationActor.
         // `unbounded_send` cannot back-pressure the voter task. A closed
-        // mailbox is logged + counted but not panicked: graceful shutdown
-        // closes the receiver before the voter task winds down, and a
-        // non-graceful exit is surfaced through `FinalizationActor::run`.
+        // mailbox is logged + counted but not panicked. Graceful shutdown
+        // closes the receiver before the voter task stops.
+        // `FinalizationActor::run` surfaces a non-graceful exit.
         let mailbox_feedback =
             match self
                 .finalization_mailbox
@@ -545,12 +572,12 @@ impl OutbeReporter {
     ///
     /// Verify-before-write is the test contract
     /// `proof_store_ingestion_verifies_certification_activity_before_write`.
-    /// Failure modes are exhaustive and never panic; each is metered.
+    /// Failure modes are exhaustive and never panic. Each failure mode is metered.
     fn handle_certification(&self, notarization: Notarization<HybridScheme<MinSig>, Digest>) {
         // Step 1 - verify the notarization certificate against the active
-        // committee verifier scheme. Simplex already verified before
-        // emission, so this is defence in depth, but the
-        // requires explicit re-verification before write.
+        // committee verifier scheme. Simplex already verified it before
+        // emission, so this is defence in depth. But explicit
+        // re-verification before write is required.
         let mut rng = bls_batch_verification_rng();
         if !notarization.verify(&mut rng, &self.verifier_scheme, &Sequential) {
             crate::metrics::record_certification_dropped(
@@ -566,19 +593,19 @@ impl OutbeReporter {
             return;
         }
 
-        // Step 2 - derive V2 canonical fields. `committee_set_hash_v2` and
-        // `vrf_material_version` are populated here so 's V2 selector
-        // can read them directly via `get_best_parent_proof` without
+        // Step 2 - derive V2 canonical fields. This step populates
+        // `committee_set_hash_v2` and `vrf_material_version` here so the V2
+        // selector can read them directly via `get_best_parent_proof` without
         // recomputing from the encoded blob.
         //
         // The canonical (PLAN A4) formula binds the **full** committee snapshot
         // (address + 48-byte MinPk pubkey per validator + raw encoded VRF group
         // public key bytes), not just addresses and a pre-hashed VRF pk. Build
-        // the snapshot from the verifier scheme so the proposer-side hash
-        // matches what `apply_boundary_outcome` writes to `CommitteeSnapshotStore`
-        // and what the executor Phase 1 verifier recomputes.
+        // the snapshot from the verifier scheme. Then the proposer-side hash
+        // matches what `apply_boundary_outcome` writes to `CommitteeSnapshotStore`.
+        // It also matches what the executor Phase 1 verifier recomputes.
         // Defence-in-depth path: a snapshot build failure is an encode-invariant
-        // violation; drop the certification deterministically (metered, never
+        // violation. Drop the certification deterministically (metered, never
         // panic) rather than write a record whose committee_set_hash would
         // diverge from the writer's.
         let prelude = match crate::finalization::committee_prelude::build_committee_prelude(
@@ -603,7 +630,7 @@ impl OutbeReporter {
         let signer_bitmap = self.build_signer_bitmap(&notarization.certificate);
         let encoded_proof: Bytes = notarization.encode().into();
         // The notarization carries no block-number context. Store `0` so this
-        // record can serve as an exact-key local witness, but the Phase 1
+        // record can serve as an exact-key local witness. But the Phase 1
         // selector will not promote it without a real block number. Use the
         // proposal view as a monotone retention proxy so the age-based prune in
         // `actor.rs` keeps the slot bounded.
@@ -632,11 +659,11 @@ impl OutbeReporter {
         };
 
         // Step 3 - enqueue the durable write to the FinalizationActor.
-        // The synchronous MDBX commit moves off the Simplex voter task; the
-        // record (including the parity-critical `committee_set_hash`) was built
-        // and verified above and is byte-identical to the inline-written one -
-        // only the write moves, and the actor remains the single durable writer
-        // to `FinalizedParentCertStore`. The in-memory
+        // The synchronous MDBX commit moves off the Simplex voter task. The code
+        // above built and verified the record (including the parity-critical
+        // `committee_set_hash`). The record is byte-identical to the
+        // inline-written one. Only the write moves, and the actor remains the
+        // single durable writer to `FinalizedParentCertStore`. The in-memory
         // `mark_local_certification_witness` above stays on-thread (a cheap
         // locked insert). The `record_certification_persisted` metric now fires
         // in the actor on a successful commit. A closed mailbox is metered +
@@ -670,11 +697,11 @@ impl OutbeReporter {
 
     /// Build a stable one-byte-per-participant signer bitmap from the certificate.
     ///
-    /// Producer-side guard with diagnostics; the fill delegates to the canonical
+    /// Producer-side guard with diagnostics. The fill delegates to the canonical
     /// core in [`crate::finalization::util::build_signer_bitmap`]. On a
-    /// committee/cert size skew this emits the empty sentinel, matching
+    /// committee/cert size skew this emits the empty sentinel, which matches
     /// [`crate::finalization::util::build_signer_bitmap_guarded`] (the resolver
-    /// path); the verify-side structural check rejects that sentinel by length.
+    /// path). The verify-side structural check rejects that sentinel by length.
     fn build_signer_bitmap(&self, certificate: &HybridCertificate<MinSig>) -> Vec<u8> {
         let n = certificate.signers.len();
         if n != self.validator_addresses.len() {
@@ -705,7 +732,7 @@ impl OutbeReporter {
     ///
     /// Important: this is an event list, not a deduplicated validator set.
     /// The same address may appear multiple times if the same proposer missed
-    /// multiple distinct views in a row, and post-execution slashing should
+    /// multiple distinct views in a row. Post-execution slashing should
     /// account for each missed view separately.
     fn detect_missed_proposers(&self, current_view: u64) -> Vec<Address> {
         let last_finalized_view = self.view_state.last_finalized_view();
@@ -715,42 +742,22 @@ impl OutbeReporter {
 
         let gap = current_view - last_finalized_view - 1;
 
-        // Single source of truth for the view-gap election sequence, shared with
-        // the verify-side recompute in `finalization::util` so proposer and
-        // validator never disagree on who was the expected leader.
+        // Single source of truth for the view-gap election sequence. The
+        // verify-side recompute in `finalization::util` shares it, so proposer
+        // and validator never disagree on who was the expected leader.
         let leaders = crate::missed_proposers::elected_leaders_for_gap(
             self.epoch,
             &self.elector,
             self.view_state.last_certificate(),
-            last_finalized_view,
-            current_view,
-            MAX_MISSED_PROPOSERS,
+            crate::missed_proposers::SkippedViewRange {
+                last_view: last_finalized_view,
+                current_view,
+                cap: MAX_MISSED_PROPOSERS,
+            },
         );
         let dropped = gap.saturating_sub(leaders.len() as u64);
 
-        let mut missed = Vec::with_capacity(leaders.len());
-        for (offset, leader) in leaders.iter().enumerate() {
-            let v = last_finalized_view + 1 + offset as u64;
-            let leader_idx = leader.get() as usize;
-
-            if leader_idx < self.validator_addresses.len() {
-                let addr = self.validator_addresses[leader_idx];
-                debug!(
-                    view = v,
-                    leader_idx,
-                    %addr,
-                    "missed proposer detected"
-                );
-                missed.push(addr);
-            } else {
-                warn!(
-                    view = v,
-                    leader_idx,
-                    total = self.validator_addresses.len(),
-                    "leader index out of bounds"
-                );
-            }
-        }
+        let missed = self.missed_proposer_addresses(last_finalized_view, &leaders);
 
         if !missed.is_empty() {
             info!(
@@ -773,6 +780,38 @@ impl OutbeReporter {
 
             // Record skipped views metric.
             crate::metrics::record_views_skipped(gap);
+        }
+
+        missed
+    }
+
+    fn missed_proposer_addresses(
+        &self,
+        last_finalized_view: u64,
+        leaders: &[commonware_utils::Participant],
+    ) -> Vec<Address> {
+        let mut missed = Vec::with_capacity(leaders.len());
+        for (offset, leader) in leaders.iter().enumerate() {
+            let v = last_finalized_view + 1 + offset as u64;
+            let leader_idx = leader.get() as usize;
+
+            if leader_idx < self.validator_addresses.len() {
+                let addr = self.validator_addresses[leader_idx];
+                debug!(
+                    view = v,
+                    leader_idx,
+                    %addr,
+                    "missed proposer detected"
+                );
+                missed.push(addr);
+            } else {
+                warn!(
+                    view = v,
+                    leader_idx,
+                    total = self.validator_addresses.len(),
+                    "leader index out of bounds"
+                );
+            }
         }
 
         missed
@@ -802,7 +841,10 @@ mod tests {
     };
     use futures::channel::mpsc;
 
-    use super::{FinalizeVerifyMailbox, OutbeReporter, ReporterContinuity};
+    use super::{
+        FinalizeVerifyMailbox, OutbeReporter, ReporterCommittee, ReporterContinuity,
+        ReporterDependencies,
+    };
     use crate::{
         bls::bootstrap_dkg,
         finalization::{
@@ -827,21 +869,15 @@ mod tests {
     fn sample_certificate() -> crate::hybrid::HybridCertificate<MinSig> {
         let (keys, participants) = test_participants(3);
         let dkg = bootstrap_dkg(3).unwrap();
-        let schemes: Vec<HybridScheme<MinSig>> = keys
-            .iter()
-            .map(|key| {
-                let pk = bls12381::PublicKey::from(key.clone());
-                let idx = participants.index(&pk).unwrap();
-                HybridScheme::signer(
-                    b"reporter-test",
-                    participants.clone(),
-                    key.clone(),
-                    dkg.polynomial.clone(),
-                    dkg.shares[idx.get() as usize].clone(),
-                )
-                .unwrap()
-            })
-            .collect();
+        let schemes: Vec<HybridScheme<MinSig>> = crate::test_harness::fixture_signer_schemes(
+            b"reporter-test",
+            &keys,
+            &participants,
+            crate::test_harness::FixtureSignerSharing {
+                polynomial: &dkg.polynomial,
+                shares: &dkg.shares,
+            },
+        );
         let verifier =
             HybridScheme::<MinSig>::verifier(b"reporter-test", participants, dkg.polynomial)
                 .unwrap();
@@ -871,9 +907,26 @@ mod tests {
         HybridScheme::<MinSig>::verifier(b"reporter-test", participants, dkg.polynomial).unwrap()
     }
 
-    /// Build signer schemes AND a matching verifier from ONE DKG, so individual
-    /// finalize votes signed by the signers verify against the verifier (required
-    /// now that the reporter verifies before recording).
+    fn gap_detection_reporter(
+        continuity: ReporterContinuity,
+        committee: ReporterCommittee,
+        finalization_mailbox: FinalizationMailbox,
+    ) -> OutbeReporter {
+        OutbeReporter::new(
+            continuity,
+            committee,
+            ReporterDependencies {
+                finalization_mailbox,
+                bridge: None,
+                witness_sink: std::sync::Arc::new(FinalizedParentCertStore::new()),
+                finalize_verify_mailbox: FinalizeVerifyMailbox::disconnected(),
+            },
+        )
+    }
+
+    /// Build signer schemes AND a matching verifier from ONE DKG. Then individual
+    /// finalize votes signed by the signers verify against the verifier. This is
+    /// required now that the reporter verifies before recording.
     fn signer_schemes_and_verifier() -> (Vec<HybridScheme<MinSig>>, HybridScheme<MinSig>) {
         let (keys, participants) = test_participants(3);
         let dkg = bootstrap_dkg(3).unwrap();
@@ -898,9 +951,9 @@ mod tests {
         (signers, verifier)
     }
 
-    /// wiring: an observed `Activity::Finalize` is buffered into the
-    /// shared late-finalize store (keyed by view, pending number resolution),
-    /// proving the reporter extracts the signer's individual MinPk vote.
+    /// Wiring: an observed `Activity::Finalize` is buffered into the
+    /// shared late-finalize store (keyed by view, pending number resolution).
+    /// This proves that the reporter extracts the signer's individual MinPk vote.
     #[test]
     fn reporter_records_observed_finalize_vote_into_shared_store() {
         use crate::finalization::finalize_verify::FinalizeVerifyActor;
@@ -914,9 +967,9 @@ mod tests {
         // (the off-thread verify actor verifies before recording).
         let (schemes, verifier) = signer_schemes_and_verifier();
 
-        // register the epoch-0 verifier in the scheme provider and build
+        // Register the epoch-0 verifier in the scheme provider and build
         // the off-thread verify actor + mailbox. The reporter enqueues votes to
-        // the mailbox; admission happens in the actor.
+        // the mailbox. Admission happens in the actor.
         let provider: HybridSchemeProvider<MinSig> = HybridSchemeProvider::new();
         assert!(provider.register(Epoch::new(0), verifier.clone()));
         let (mut verify_actor, verify_mailbox) = FinalizeVerifyActor::new(provider, store.clone());
@@ -925,18 +978,22 @@ mod tests {
         let participants = test_participants(3).1;
         let mut reporter = OutbeReporter::new(
             ReporterContinuity::default(),
-            vec![
-                address!("0x1111111111111111111111111111111111111111"),
-                address!("0x2222222222222222222222222222222222222222"),
-                address!("0x3333333333333333333333333333333333333333"),
-            ],
-            FinalizationMailbox::from_sender(tx),
-            None,
-            verifier,
-            HybridRandom::default().build(&participants),
-            Epoch::new(0),
-            std::sync::Arc::new(FinalizedParentCertStore::new()),
-            verify_mailbox,
+            ReporterCommittee {
+                validator_addresses: vec![
+                    address!("0x1111111111111111111111111111111111111111"),
+                    address!("0x2222222222222222222222222222222222222222"),
+                    address!("0x3333333333333333333333333333333333333333"),
+                ],
+                verifier_scheme: verifier,
+                elector: HybridRandom::default().build(&participants),
+                epoch: Epoch::new(0),
+            },
+            ReporterDependencies {
+                finalization_mailbox: FinalizationMailbox::from_sender(tx),
+                bridge: None,
+                witness_sink: std::sync::Arc::new(FinalizedParentCertStore::new()),
+                finalize_verify_mailbox: verify_mailbox,
+            },
         );
 
         let view = 7u64;
@@ -982,18 +1039,22 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded::<FinalizationMessage>();
         let reporter = OutbeReporter::new(
             continuity,
-            vec![
-                address!("0x1111111111111111111111111111111111111111"),
-                address!("0x2222222222222222222222222222222222222222"),
-                address!("0x3333333333333333333333333333333333333333"),
-            ],
-            FinalizationMailbox::from_sender(tx),
-            None,
-            sample_verifier_scheme(),
-            HybridRandom::default().build(&test_participants(3).1),
-            Epoch::new(1),
-            std::sync::Arc::new(FinalizedParentCertStore::new()),
-            FinalizeVerifyMailbox::disconnected(),
+            ReporterCommittee {
+                validator_addresses: vec![
+                    address!("0x1111111111111111111111111111111111111111"),
+                    address!("0x2222222222222222222222222222222222222222"),
+                    address!("0x3333333333333333333333333333333333333333"),
+                ],
+                verifier_scheme: sample_verifier_scheme(),
+                elector: HybridRandom::default().build(&test_participants(3).1),
+                epoch: Epoch::new(1),
+            },
+            ReporterDependencies {
+                finalization_mailbox: FinalizationMailbox::from_sender(tx),
+                bridge: None,
+                witness_sink: std::sync::Arc::new(FinalizedParentCertStore::new()),
+                finalize_verify_mailbox: FinalizeVerifyMailbox::disconnected(),
+            },
         );
 
         assert_eq!(reporter.view_state.last_finalized_view, 17);
@@ -1057,16 +1118,15 @@ mod tests {
             .collect();
 
         let (tx, _rx) = mpsc::unbounded::<FinalizationMessage>();
-        let reporter = OutbeReporter::new(
+        let reporter = gap_detection_reporter(
             continuity,
-            ordered_addresses,
+            ReporterCommittee {
+                validator_addresses: ordered_addresses,
+                verifier_scheme: sample_verifier_scheme(),
+                elector,
+                epoch: Epoch::new(1),
+            },
             FinalizationMailbox::from_sender(tx),
-            None,
-            sample_verifier_scheme(),
-            elector,
-            Epoch::new(1),
-            std::sync::Arc::new(FinalizedParentCertStore::new()),
-            FinalizeVerifyMailbox::disconnected(),
         );
 
         assert_eq!(reporter.detect_missed_proposers(8), expected);
@@ -1100,16 +1160,15 @@ mod tests {
             .collect();
 
         let (tx, _rx) = mpsc::unbounded::<FinalizationMessage>();
-        let reporter = OutbeReporter::new(
+        let reporter = gap_detection_reporter(
             continuity,
-            ordered_addresses,
+            ReporterCommittee {
+                validator_addresses: ordered_addresses,
+                verifier_scheme: sample_verifier_scheme(),
+                elector,
+                epoch: Epoch::new(1),
+            },
             FinalizationMailbox::from_sender(tx),
-            None,
-            sample_verifier_scheme(),
-            elector,
-            Epoch::new(1),
-            std::sync::Arc::new(FinalizedParentCertStore::new()),
-            FinalizeVerifyMailbox::disconnected(),
         );
 
         assert_eq!(reporter.detect_missed_proposers(400), expected);

@@ -26,9 +26,9 @@ pub(in crate::stack) fn epoch_length_blocks_from_genesis(node: &OutbeFullNode) -
 }
 
 /// Read a `u64` millisecond timing value from genesis `config`, falling back to
-/// `default` when the key is absent. Generic over the deserialize error so the
-/// engine crate needs no direct `serde_json` dependency and the helper stays
-/// unit-testable with a plain string error.
+/// `default` when the key is absent. It is generic over the deserialize error.
+/// So the engine crate needs no direct `serde_json` dependency, and the helper
+/// stays unit-testable with a plain string error.
 pub(in crate::stack) fn read_ms<E: std::fmt::Display>(
     parsed: Option<Result<u64, E>>,
     key: &str,
@@ -42,8 +42,8 @@ pub(in crate::stack) fn read_ms<E: std::fmt::Display>(
 }
 
 /// Startup invariants for the consensus-sync timing trio (structured error, no
-/// panic): `0 < min < leader <= cert`. A `minBlockTimeMs` of `0` is rejected -
-/// the proposer floor cannot be disabled.
+/// panic): `0 < min < leader <= cert`. This function rejects a `minBlockTimeMs`
+/// of `0`. The proposer floor cannot be disabled.
 pub(in crate::stack) fn validate_timing(min_ms: u64, leader_ms: u64, cert_ms: u64) -> Result<()> {
     if min_ms == 0 {
         return Err(eyre::eyre!(
@@ -73,7 +73,8 @@ pub(in crate::stack) fn validate_timing(min_ms: u64, leader_ms: u64, cert_ms: u6
 
 /// Consensus-sync block-timing knobs, resolved from genesis with `timing.rs`
 /// fallbacks. There is no CLI override for any of these (see
-/// `outbe_consensus::timing`). In-memory only; never written to EVM storage.
+/// `outbe_consensus::timing`). The values are in-memory only. The node never
+/// writes them to EVM storage.
 #[derive(Clone, Copy, Debug)]
 pub(in crate::stack) struct BlockTiming {
     pub(in crate::stack) min_block_time: std::time::Duration,
@@ -126,7 +127,7 @@ pub(in crate::stack) fn require_genesis_hash(hash: Option<B256>) -> Result<B256>
 ///
 /// commonware 2026.5.0 replaced the removed `Automaton::genesis` call with an
 /// explicit `marshal::Config.start`. Marshal's `Start::Genesis` anchor must be
-/// the real height-0 block (the actor asserts `anchor.height() == 0`), so we
+/// the real height-0 block (the actor asserts `anchor.height() == 0`). So we
 /// read the canonical genesis block straight from the execution DB rather than
 /// synthesizing one. Sealing comes from the provider's stored block, so the
 /// anchor's `block_hash()` is byte-identical to the chain `genesis_hash`.
@@ -156,11 +157,15 @@ pub(in crate::stack) fn nonzero_u64(value: u64, name: &str) -> Result<NonZeroU64
 }
 
 /// Map `marshal::core::Actor::init`'s `Option<Height>` to the executor/startup
-/// finalized height: `None` (no durable consensus finalization yet) means a
-/// fresh genesis node, mapped to height 0; `Some(n)` resumes from the durable
-/// finalized height `n` (finalization is monotonic). A restarted node that
-/// already finalized must NOT be reset toward genesis. Extracted so the
-/// regression test exercises this exact mapping rather than stdlib `unwrap_or`.
+/// finalized height:
+/// - `None` (no durable consensus finalization yet) means a fresh genesis node.
+///   It maps to height 0.
+/// - `Some(n)` resumes from the durable finalized height `n` (finalization is
+///   monotonic).
+///
+/// A restarted node that already finalized must NOT be reset toward genesis.
+/// This mapping is a separate function so that the regression test exercises
+/// this exact mapping rather than stdlib `unwrap_or`.
 pub(crate) fn map_marshal_init_height(opt: Option<Height>) -> Height {
     opt.unwrap_or(Height::zero())
 }
@@ -229,9 +234,9 @@ pub(in crate::stack) fn ocomp_p2p_namespace(install_hash: Option<B256>) -> Vec<u
 
 /// Build a P2P peer map from a validator set and bootnode entries.
 ///
-/// Registry/config P2P address takes priority; bootnodes fill missing gaps.
-/// Invalid registry entries are excluded and never replaced with static
-/// bootstrap addresses.
+/// Registry/config P2P address takes priority. Bootnodes fill missing gaps.
+/// This function excludes invalid registry entries and never replaces them with
+/// static bootstrap addresses.
 pub(crate) fn build_peer_map(
     validator_set: &validators::ValidatorSet,
     bootnode_map: &BTreeMap<Vec<u8>, SocketAddr>,

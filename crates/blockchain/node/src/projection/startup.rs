@@ -7,21 +7,16 @@ use super::ReadyOffchainDataProjection;
 use eyre::bail;
 use eyre::Context;
 use metrics::gauge;
-use outbe_nod::NodRepositoryWriter;
-use outbe_offchain_data::DayDatabaseRoute;
 use outbe_offchain_data::OffchainDataProjection;
 use outbe_offchain_data::ProjectionConfig;
-use outbe_offchain_data::ProjectionError;
 use outbe_offchain_data::ProjectionStatus;
 use outbe_offchain_data::TributeRetentionSelector;
-use outbe_offchain_storage::DayDatabases;
 use outbe_offchain_storage::OpenedStorage;
 use outbe_offchain_storage::PendingOverlayStorage;
-use outbe_offchain_storage::StorageBackend;
 use outbe_offchain_storage::StorageProvider;
 use outbe_offchain_storage::StorageReaderHandle;
+use outbe_offchain_storage::StorageWriterHandle;
 use outbe_primitives::projection::ProjectionCheckpoint;
-use outbe_tribute::TributeRepositoryWriter;
 use reth_provider::BlockHashReader;
 use reth_provider::BlockIdReader;
 use std::sync::Arc;
@@ -30,6 +25,7 @@ use tracing::info;
 pub(super) fn prepare_projection_attempt(
     config: &OffchainDataProjectionConfig,
     selector: Option<Arc<dyn TributeRetentionSelector>>,
+    observe_completion: Option<super::StorageCompletionObserver>,
 ) -> Result<
     (
         OpenedStorage,
@@ -44,72 +40,58 @@ pub(super) fn prepare_projection_attempt(
         start_block: config.storage.start_block,
     };
     let storage = StorageProvider::new(config.storage.clone())
+        .and_then(|provider| {
+            outbe_offchain_data::entity_partition_routing()
+                .map(|routing| provider.with_partition_routing(routing))
+        })
         .and_then(|provider| provider.open_writer())
         .map_err(PrepareProjectionError::Storage)?;
-    let reader = storage.reader.clone();
-    match selector.as_ref() {
-        Some(selector) => OffchainDataProjection::open_with_retention_selector(
-            projection_config,
-            reader.clone(),
-            storage.writer.clone(),
-            Arc::clone(selector),
-        ),
-        None => {
-            OffchainDataProjection::open(projection_config, reader.clone(), storage.writer.clone())
-        }
+    // Register ownership before preflight can fail, including retry attempts.
+    if let Some(observe) = observe_completion {
+        observe(storage.ownership.completion());
     }
-    .map_err(PrepareProjectionError::Projection)?;
+    let reader = storage.reader.clone();
+    let writer = storage.writer.clone();
     storage
-        .writer
-        .verify_transaction_capability()
-        .map_err(PrepareProjectionError::Storage)?;
+        .ownership
+        .preflight(|reader, writer| {
+            match selector.as_ref() {
+                Some(selector) => OffchainDataProjection::open_with_retention_selector(
+                    projection_config,
+                    reader,
+                    writer.clone(),
+                    Arc::clone(selector),
+                ),
+                None => OffchainDataProjection::open(projection_config, reader, writer.clone()),
+            }
+            .map_err(PrepareProjectionError::Projection)?;
+            writer
+                .verify_transaction_capability()
+                .map_err(PrepareProjectionError::Storage)
+        })
+        .map_err(PrepareProjectionError::Storage)??;
     gauge!("outbe_projection_storage_write_capable", "backend" => config.storage.backend_name())
         .set(1.0);
     info!(
         backend = config.storage.backend_name(),
         "offchain storage opened"
     );
-    let (overlay, mut projector) = open_logical_projection(projection_config, reader, selector)
+    let (overlay, projector) = open_logical_projection(projection_config, reader, writer, selector)
         .map_err(PrepareProjectionError::Projection)?;
-    if let StorageBackend::RocksDb(rocks) = &config.storage.backend {
-        let databases =
-            Arc::new(DayDatabases::open(&rocks.path).map_err(PrepareProjectionError::Storage)?);
-        let route = DayDatabaseRoute {
-            databases: Arc::clone(&databases),
-            durable_reader: storage.reader.clone(),
-            durable_writer: storage.writer.clone(),
-        };
-        TributeRepositoryWriter::with_days(
-            route.durable_reader.clone(),
-            route.durable_writer.clone(),
-            Arc::clone(&databases),
-        )
-        .migrate_legacy_keys()
-        .map_err(|error| PrepareProjectionError::Projection(ProjectionError::from(error)))?;
-        NodRepositoryWriter::with_days(
-            route.durable_reader.clone(),
-            route.durable_writer.clone(),
-            databases,
-        )
-        .migrate_legacy_keys()
-        .map_err(|error| PrepareProjectionError::Projection(ProjectionError::from(error)))?;
-        projector
-            .set_day_route(route)
-            .map_err(PrepareProjectionError::Projection)?;
-    }
     Ok((storage, overlay, projector))
 }
 
 pub(super) fn open_logical_projection(
     projection_config: ProjectionConfig,
     durable_reader: StorageReaderHandle,
+    durable_writer: StorageWriterHandle,
     selector: Option<Arc<dyn TributeRetentionSelector>>,
 ) -> Result<
     (Arc<PendingOverlayStorage>, OffchainDataProjection),
     outbe_offchain_data::ProjectionError,
 > {
-    let overlay = Arc::new(PendingOverlayStorage::new(durable_reader));
-    let projector = match selector {
+    let overlay = Arc::new(PendingOverlayStorage::new(durable_reader, durable_writer));
+    let mut projector = match selector {
         Some(selector) => OffchainDataProjection::open_with_retention_selector(
             projection_config,
             overlay.clone(),
@@ -118,6 +100,7 @@ pub(super) fn open_logical_projection(
         )?,
         None => OffchainDataProjection::open(projection_config, overlay.clone(), overlay.clone())?,
     };
+    projector.enable_partition_retirement();
     Ok((overlay, projector))
 }
 
@@ -147,39 +130,38 @@ where
         .finalized_block_num_hash()
         .wrap_err("read local Reth finalized checkpoint for offchain-data validation")?
         .map(|block| FinalizedTarget::new(block.number, block.hash));
-    if let Some(checkpoint) = projector.state().checkpoint {
+    let (status, target) = if let Some(checkpoint) = projector.state().checkpoint {
         let reconciled = require_finalized_checkpoint(checkpoint, local_finalized)?;
         match canonical_hashes
             .block_hash(checkpoint.block_number)
             .wrap_err("read canonical Reth hash for offchain-data checkpoint validation")?
         {
             Some(canonical_hash) if canonical_hash == checkpoint.block_hash => {}
-            Some(canonical_hash) => return Err(eyre::eyre!(
-                "offchain-data offchain storage checkpoint identity mismatch at block {}: stored {}, canonical {}",
+            Some(canonical_hash) => {
+                return Err(eyre::eyre!(
+                "offchain-data checkpoint identity mismatch at block {}: stored {}, canonical {}",
                 checkpoint.block_number,
                 checkpoint.block_hash,
                 canonical_hash
-            )),
-            None => return Err(eyre::eyre!(
-                "canonical block {} for Mongo checkpoint {} is unavailable locally",
-                checkpoint.block_number,
-                checkpoint.block_hash
-            )),
+            ))
+            }
+            None => {
+                return Err(eyre::eyre!(
+                    "canonical block {} for offchain storage checkpoint {} is unavailable locally",
+                    checkpoint.block_number,
+                    checkpoint.block_hash
+                ))
+            }
         }
         if reconciled.is_some_and(|target| checkpoint.block_number == target.number) {
-            publish_status(
-                &readiness_publisher,
-                ProjectionStatus::Ready { checkpoint },
-                local_finalized,
-            );
+            (ProjectionStatus::Ready { checkpoint }, local_finalized)
         } else {
-            publish_status(
-                &readiness_publisher,
+            (
                 ProjectionStatus::CatchingUp {
                     checkpoint: Some(checkpoint),
                 },
                 local_finalized,
-            );
+            )
         }
     } else {
         let target = local_finalized.map(|block| FinalizedTarget::new(block.number, block.hash));
@@ -194,8 +176,12 @@ where
             }
             _ => ProjectionStatus::CatchingUp { checkpoint: None },
         };
-        publish_status(&readiness_publisher, status, target);
-    }
+        (status, target)
+    };
+    writer_lease
+        .activate()
+        .wrap_err("complete validated offchain partition recovery")?;
+    publish_status(&readiness_publisher, status, target);
     let projection_state = projector.state();
     info!(
         chain_id = projection_state.chain_id,
@@ -231,7 +217,7 @@ pub(super) fn require_finalized_checkpoint(
         && checkpoint.block_hash != local_finalized.hash
     {
         bail!(
-            "offchain-data offchain storage checkpoint {} ({}) does not match local Reth finalized {} ({})",
+            "offchain-data checkpoint {} ({}) does not match local Reth finalized {} ({})",
             checkpoint.block_number,
             checkpoint.block_hash,
             local_finalized.number,

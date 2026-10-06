@@ -250,7 +250,7 @@ fn test_two_fi_groups() {
 
     assert_eq!(result.len(), 2);
 
-    // All fractions non-negative
+    // All fractions are non-negative.
     for (i, &frac) in result.iter().enumerate() {
         assert!(
             !frac.is_zero(),
@@ -258,7 +258,7 @@ fn test_two_fi_groups() {
         );
     }
 
-    // Bounded by 2*fmax (reasonable bound for fixed-point)
+    // Each fraction is at most 2*fmax (a reasonable bound for fixed-point).
     let bound = F_MAX_FP * U256::from(2u64);
     for (i, &frac) in result.iter().enumerate() {
         assert!(frac <= bound, "fraction[{i}] too large: {frac}");
@@ -366,7 +366,7 @@ fn test_large_nominal_distribution() {
 
 /// Assert the post-condition `sum(f1[i] * y_fp[i]) / SCALE <= f_fp` for the
 /// output of `calc_fraction_distribution_fp`. Small round-down error is
-/// acceptable; overshoot is not.
+/// acceptable. Overshoot is not acceptable.
 fn assert_weighted_within_target(result: &[U256], y_fp: &[U256], f_fp: U256) {
     let weighted: U256 = result
         .iter()
@@ -407,8 +407,8 @@ fn test_normalized_f1_respects_limit_many_groups() {
 
 #[test]
 fn test_single_group_returns_f_without_normalization() {
-    // The single-group fast path bypasses the normalization loop; `f_fp` is
-    // returned as-is. Weighted total = f_fp * SCALE / SCALE = f_fp == target.
+    // The single-group fast path bypasses the normalization loop and returns
+    // `f_fp` as-is. Weighted total = f_fp * SCALE / SCALE = f_fp == target.
     let y_fp = vec![SCALE];
     let p = vec![10];
     let f_fp = F_FP_DEFAULT;
@@ -419,8 +419,8 @@ fn test_single_group_returns_f_without_normalization() {
 
 #[test]
 fn test_normalized_f1_preserves_ratios_when_scaled_down() {
-    // When raw output overshoots and is scaled down, pairwise ratios between
-    // groups should remain ~constant.
+    // When the raw output overshoots and the algorithm scales it down, pairwise
+    // ratios between groups should remain ~constant.
     let half = SCALE / U256::from(2u64);
     let y_fp = vec![half, half];
     let p = vec![50u64, 5];
@@ -429,7 +429,7 @@ fn test_normalized_f1_preserves_ratios_when_scaled_down() {
     let result = calc_fraction_distribution_fp(&y_fp, &p, 55, f_fp, fmax_fp).unwrap();
     assert_eq!(result.len(), 2);
     assert_weighted_within_target(&result, &y_fp, f_fp);
-    // Both fractions should still be positive (not obliterated by scale-down).
+    // Both fractions should still be positive (the scale-down did not reduce them to zero).
     for &frac in &result {
         assert!(
             !frac.is_zero(),
@@ -442,10 +442,10 @@ fn test_normalized_f1_preserves_ratios_when_scaled_down() {
 // I256 precision - no silent zero-collapse on small FI groups
 // ---------------------------------------------------------------------------
 
-/// Input with a dominant group and one tiny-interest group. Under the
-/// pre- i128 pipeline with `/1_000_000` scale-down the small group's
-/// `f1` could collapse to 0 (up to 10^6 SCALE units of precision lost per
-/// term). After I256 refactor the distribution must preserve the signal.
+/// Input with a dominant group and one tiny-interest group. In the earlier
+/// i128 pipeline, the `/1_000_000` scale-down could collapse the small group's
+/// `f1` to 0. Each term could lose up to 10^6 SCALE units of precision. After the
+/// I256 refactor, the distribution must preserve the signal.
 #[test]
 fn test_small_fi_group_survives_i256_precision() {
     let tiny = U256::from(1_000_000u64);
@@ -465,9 +465,9 @@ fn test_small_fi_group_survives_i256_precision() {
     );
 }
 
-/// When mass of Y is concentrated on the high end, `beta_num = f/fmax - E[Y]`
-/// is negative and the algorithm must still produce a well-defined, bounded
-/// distribution. Pre- the `/1_000_000` rounding could obliterate the
+/// When the mass of Y is concentrated on the high end, `beta_num = f/fmax - E[Y]`
+/// is negative. The algorithm must still produce a well-defined, bounded
+/// distribution. Earlier, the `/1_000_000` rounding could remove the
 /// signed contribution for the lower-Y group.
 #[test]
 fn test_negative_beta_branch_produces_bounded_distribution() {
@@ -490,9 +490,9 @@ fn test_negative_beta_branch_produces_bounded_distribution() {
 // Scale invariant: settlement_cost_minor must be in 10^6-minor units, not 10^12
 // ---------------------------------------------------------------------------
 
-/// 15 distinct-amount tributes, all bearing fidelity index 1. Sum is a clean
-/// 1200 COEN so the percentage scenarios (5%/30%/32%) divide exactly with no
-/// integer truncation in the deficit derivation - the assertions can use
+/// 15 tributes with distinct amounts, all with fidelity index 1. The sum is a clean
+/// 1200 COEN, so the percentage scenarios (5%/30%/32%) divide exactly with no
+/// integer truncation in the deficit derivation. Thus the assertions can use
 /// strict equality rather than tolerance bands.
 fn uniform_fi_one_population_15() -> (Vec<U256>, Vec<u16>, U256) {
     let nominal_amounts: Vec<U256> = (1u64..=15).map(|i| coen(10u64 * i)).collect();
@@ -533,7 +533,7 @@ fn test_compute_fi_fraction_map_single_fi_five_percent_allocation() {
 #[test]
 fn test_compute_fi_fraction_map_single_fi_thirty_percent_allocation() {
     let (nominal_amounts, tribute_fis, total_interest) = uniform_fi_one_population_15();
-    // 30% deficit - well above the historical 8%/16% range; the new logic
+    // 30% deficit - well above the historical 8%/16% range. The new logic
     // must not silently cap the fraction at 16%.
     let lysis_limit_minor = total_interest * U256::from(30u64) / U256::from(100u64);
 
@@ -584,10 +584,10 @@ fn test_compute_fi_fraction_map_single_fi_thirtytwo_percent_allocation() {
 fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation() {
     use std::collections::BTreeMap;
 
-    // Distinct nominals 1..=100 COEN. Sum = 5050 COEN; 32% = 1616 COEN exactly.
+    // Distinct nominals 1..=100 COEN. Sum = 5050 COEN. 32% = 1616 COEN exactly.
     let nominal_amounts: Vec<U256> = (1u64..=100).map(coen).collect();
     // Round-robin FI assignment over 1..=15: FIs 1..=10 each get 7 tributes,
-    // FIs 11..=15 each get 6 - covers every bucket with uneven population.
+    // FIs 11..=15 each get 6. This covers every bucket with uneven population.
     let tribute_fis: Vec<u16> = (0u16..100).map(|i| (i % 15) + 1).collect();
     let total_interest: U256 = nominal_amounts
         .iter()
@@ -616,9 +616,9 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
         assert!(map.contains_key(&fi), "FI {fi} missing from fraction map");
     }
 
-    // 2. Every fraction must be positive - the I256 pipeline must not collapse
-    //    any group to zero, and the moment solver must not produce a negative
-    //    that clamps to 0 (would starve a whole FI bucket).
+    // 2. Every fraction must be positive. The I256 pipeline must not collapse
+    //    any group to zero. The moment solver must not produce a negative
+    //    value that clamps to 0 (that would starve a whole FI bucket).
     for (fi, frac) in &map {
         assert!(
             !frac.is_zero(),
@@ -627,8 +627,8 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
     }
 
     // 3. Algorithm-level limit invariant. Reconstruct the y_fp vector exactly
-    //    as the runtime does (BTreeMap-ordered group share with the truncation
-    //    delta absorbed into the last entry) and assert the normalized
+    //    as the runtime does: BTreeMap-ordered group shares, with the last entry
+    //    absorbing the truncation delta. Then assert the normalized
     //    `sum(f_g * y_fp_g)/SCALE <= f_fp` post-condition. This is the
     //    `assert_weighted_within_target` invariant lifted to multi-FI inputs.
     let mut group_interest: BTreeMap<u16, U256> = BTreeMap::new();

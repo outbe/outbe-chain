@@ -96,11 +96,25 @@ impl OffchainDataProjection {
                 }
                 if self.day_route.is_none() {
                     if let ProjectionEvent::TributePartitionRetired { worldwide_day } = event {
-                        super::retirement::collect_ids_for_retired_day(
-                            &tribute_reader,
-                            *worldwide_day,
-                            &mut tribute_ids,
-                        )?;
+                        let needs_copy = !self.partition_retirement
+                            || self
+                                .tribute_retention_selector
+                                .as_ref()
+                                .map(|selector| selector.active_pin_for(*worldwide_day))
+                                .transpose()
+                                .map_err(|reason| ProjectionError::RetentionSelector {
+                                    worldwide_day: *worldwide_day,
+                                    reason,
+                                })?
+                                .flatten()
+                                .is_some();
+                        if needs_copy {
+                            super::retirement::collect_ids_for_retired_day(
+                                &tribute_reader,
+                                *worldwide_day,
+                                &mut tribute_ids,
+                            )?;
+                        }
                     }
                 }
             }
@@ -138,10 +152,21 @@ impl OffchainDataProjection {
                         previous_commitment,
                     } => {
                         reject_tribute_after_retirement(
-                            self.day_route.is_some(),
+                            self.day_route.is_some() || self.partition_retirement,
                             &retired_days,
                             tribute_id,
                         )?;
+                        if self.partition_retirement
+                            && outbe_tribute::read_tribute_day_mark(
+                                self.reader.as_ref(),
+                                tribute_id.worldwide_day().value(),
+                            )?
+                            .is_some()
+                        {
+                            return Err(ProjectionError::TributeStoredAfterDayRetirement {
+                                tribute_id,
+                            });
+                        }
                         let old = tributes.current(tribute_id)?;
                         validate_tribute_transition(
                             tribute_id,
@@ -161,10 +186,21 @@ impl OffchainDataProjection {
                         previous_commitment,
                     } => {
                         reject_tribute_after_retirement(
-                            self.day_route.is_some(),
+                            self.day_route.is_some() || self.partition_retirement,
                             &retired_days,
                             tribute_id,
                         )?;
+                        if self.partition_retirement
+                            && outbe_tribute::read_tribute_day_mark(
+                                self.reader.as_ref(),
+                                tribute_id.worldwide_day().value(),
+                            )?
+                            .is_some()
+                        {
+                            return Err(ProjectionError::TributeStoredAfterDayRetirement {
+                                tribute_id,
+                            });
+                        }
                         let old = tributes.current(tribute_id)?;
                         validate_tribute_transition(
                             tribute_id,
@@ -194,13 +230,23 @@ impl OffchainDataProjection {
                                 });
                             }
                         }
-                        if self.day_route.is_some() {
+                        if self.day_route.is_some() || self.partition_retirement {
                             record_day_retirement(
                                 &mut day_retirements,
                                 &mut retired_days,
                                 worldwide_day.value(),
                                 retention_pin,
                             );
+                            if self.partition_retirement && retention_pin.is_some() {
+                                super::retirement::plan_retired_partition(
+                                    &mut tributes,
+                                    &retained_tribute_reader,
+                                    &tribute_ids,
+                                    worldwide_day,
+                                    retention_pin,
+                                    &mut batch,
+                                )?;
+                            }
                         } else {
                             super::retirement::plan_retired_partition(
                                 &mut tributes,

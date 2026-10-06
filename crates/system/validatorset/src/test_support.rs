@@ -1,5 +1,5 @@
-//! Shared test setup that reaches ACTIVE state only through the production
-//! certified-boundary hook.
+//! Shared schema assertions and test setup that reaches ACTIVE state only
+//! through the production certified-boundary hook.
 //!
 //! This module is deliberately feature-gated. Production callers must use the
 //! named lifecycle commands in [`crate::runtime`], while cross-crate tests use
@@ -133,7 +133,7 @@ pub fn admit_validator_for_boundary(
 
 /// Promote one registered test validator by running the same atomic boundary
 /// hook used by production. Existing active validators remain in the incoming
-/// set; participant order is the canonical BLS-public-key order.
+/// set. Participant order is the canonical BLS-public-key order.
 pub fn activate_validator_via_boundary(
     validators: &mut ValidatorSet<'_>,
     validator: Address,
@@ -213,8 +213,8 @@ impl ValidatorSet<'_> {
 impl ValidatorSet<'_> {
     /// Registers a fixture through the explicit bootstrap-only no-PoP seam.
     ///
-    /// The underlying registration path is unavailable in production builds;
-    /// ordinary callers must submit a valid proof of possession.
+    /// The underlying registration path is unavailable in production builds.
+    /// Ordinary callers must submit a valid proof of possession.
     pub fn test_register_validator_without_pop(
         &mut self,
         validator: Address,
@@ -226,9 +226,9 @@ impl ValidatorSet<'_> {
 
     /// Moves a registered fixture through the canonical typed join path.
     ///
-    /// This intentionally does not expose constructors for lifecycle payloads:
-    /// identity, P2P data and history are carried forward from the current
-    /// registered state by the real transition functions.
+    /// This intentionally does not expose constructors for lifecycle payloads.
+    /// The real transition functions carry identity, P2P data and history
+    /// forward from the current registered state.
     pub fn test_activate_validator_canonically(
         &mut self,
         address: Address,
@@ -295,7 +295,7 @@ impl ValidatorSet<'_> {
         )
     }
 
-    /// Replaces the ValidatorSet stake mirror; Staking remains authoritative.
+    /// Replaces the ValidatorSet stake mirror. Staking remains authoritative.
     pub fn test_set_stake_projection(
         &mut self,
         address: Address,
@@ -349,4 +349,43 @@ impl ValidatorSet<'_> {
             .get_bytes(&address)
             .write(payload)
     }
+}
+
+/// Pin the committee snapshot schema independently to its storage ABI slots.
+pub fn assert_committee_snapshot_schema_slots(vs: &ValidatorSet<'_>) {
+    assert_eq!(vs.committee_snapshot_exists.base_slot(), U256::from(31u64));
+    assert_eq!(vs.committee_snapshot_len.base_slot(), U256::from(32u64));
+    assert_eq!(
+        vs.committee_snapshot_address_at.base_slot(),
+        U256::from(33u64)
+    );
+    assert_eq!(
+        vs.committee_snapshot_pubkey_lo_at.base_slot(),
+        U256::from(34u64)
+    );
+    assert_eq!(
+        vs.committee_snapshot_pubkey_hi_at.base_slot(),
+        U256::from(35u64)
+    );
+    assert_eq!(
+        vs.committee_snapshot_vrf_material_version.base_slot(),
+        U256::from(36u64)
+    );
+    assert_eq!(
+        vs.committee_snapshot_vrf_group_public_key_hash.base_slot(),
+        U256::from(37u64)
+    );
+    assert_eq!(
+        vs.committee_snapshot_vrf_group_public_key_len.base_slot(),
+        U256::from(38u64)
+    );
+    assert_eq!(
+        vs.committee_snapshot_vrf_group_public_key_chunk_at
+            .base_slot(),
+        U256::from(39u64)
+    );
+    assert_eq!(
+        vs._reserved_committee_snapshot_slot_40.slot(),
+        U256::from(40u64),
+    );
 }

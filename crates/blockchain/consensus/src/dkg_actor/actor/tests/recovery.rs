@@ -44,8 +44,8 @@ fn test_ack_hashset_dedup() {
 // -----------------------------------------------------------------------
 
 /// Verify that self-ack is counted only when self-dealing succeeds.
-/// The acked_players HashSet starts empty and self-ack is inserted only
-/// after successful receive_player_ack.
+/// The acked_players HashSet starts empty. Self-ack goes into it only
+/// after receive_player_ack succeeds.
 #[test]
 fn test_self_ack_starts_empty() {
     let acked_players: std::collections::BTreeSet<commonware_cryptography::bls12381::PublicKey> =
@@ -255,18 +255,22 @@ fn duplicate_dealer_bundle_reuses_cached_ack() {
         &mut player,
         &mut accepted,
         None,
-        dealer_pk.clone(),
-        pub_msg.clone(),
-        priv_msg.clone(),
+        crate::dkg_actor::recovery::PlayerDealerBundle {
+            dealer: dealer_pk.clone(),
+            pub_msg: pub_msg.clone(),
+            priv_msg: priv_msg.clone(),
+        },
     )
     .unwrap();
     let second = handle_player_bundle(
         &mut player,
         &mut accepted,
         None,
-        dealer_pk,
-        pub_msg,
-        priv_msg,
+        crate::dkg_actor::recovery::PlayerDealerBundle {
+            dealer: dealer_pk,
+            pub_msg,
+            priv_msg,
+        },
     )
     .unwrap();
 
@@ -334,18 +338,22 @@ fn conflicting_dealer_bundle_is_not_acknowledged() {
         &mut player,
         &mut accepted,
         None,
-        dealer_pk.clone(),
-        pub_msg,
-        priv_msg,
+        crate::dkg_actor::recovery::PlayerDealerBundle {
+            dealer: dealer_pk.clone(),
+            pub_msg,
+            priv_msg,
+        },
     )
     .unwrap();
     let second = handle_player_bundle(
         &mut player,
         &mut accepted,
         None,
-        dealer_pk,
-        conflicting_pub_msg,
-        conflicting_priv_msg,
+        crate::dkg_actor::recovery::PlayerDealerBundle {
+            dealer: dealer_pk,
+            pub_msg: conflicting_pub_msg,
+            priv_msg: conflicting_priv_msg,
+        },
     )
     .unwrap();
 

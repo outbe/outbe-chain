@@ -46,3 +46,9 @@ mod finalization;
 mod scheduling;
 
 mod backfill;
+
+mod verification;
+
+fn valid_forkchoice_response() -> OnForkChoiceUpdated {
+    OnForkChoiceUpdated::valid(PayloadStatus::from_status(PayloadStatusEnum::Valid))
+}

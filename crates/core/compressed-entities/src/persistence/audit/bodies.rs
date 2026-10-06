@@ -10,7 +10,7 @@ use crate::{
 };
 
 /// Compares canonical primary bodies with the complete leaf stream from `audit_exact`.
-/// Catalog and live leaf populations are separate; empty materialized collections
+/// Catalog and live leaf populations are separate. Empty materialized collections
 /// legitimately have a catalog entry without primary bodies.
 pub struct CeBodyAudit<'a> {
     expected: RecordSorter<'a, 101>,

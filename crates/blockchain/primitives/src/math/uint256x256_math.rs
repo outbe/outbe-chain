@@ -4,10 +4,10 @@
 //! - `src/pool-bin/libraries/math/Uint256x256Math.sol`
 //!
 //! Function names mirror the Solidity verbatim so the port is auditable
-//! line-for-line. Solidity `revert` becomes Outbe `Err(PrecompileError)`;
+//! line-for-line. Solidity `revert` becomes Outbe `Err(PrecompileError)`.
 //! Solidity assembly becomes deterministic U256 ops with explicit widening
 //! through limb-based 512-bit multiplication. No floats, no randomness,
-//! no time - safe on consensus paths.
+//! no time. The port is safe on consensus paths.
 
 use alloy_primitives::U256;
 
@@ -27,7 +27,7 @@ fn get_mul_prods(x: U256, y: U256) -> (U256, U256) {
     let ys = y.as_limbs();
     let mut product: [u64; 8] = [0u64; 8];
 
-    // Standard schoolbook: O(16) inner mults; 64-bit outputs accumulate via u128.
+    // Standard schoolbook: O(16) inner mults. 64-bit outputs accumulate via u128.
     for i in 0..4 {
         let mut carry: u128 = 0;
         for j in 0..4 {
@@ -49,8 +49,8 @@ fn get_mul_prods(x: U256, y: U256) -> (U256, U256) {
 fn mul_mod_512(x: U256, y: U256, denom: U256) -> U256 {
     debug_assert!(!denom.is_zero(), "mul_mod_512: zero denominator");
     let (prod0, prod1) = get_mul_prods(x, y);
-    // Bit-by-bit long division of [prod1, prod0] by denom; we only need the
-    // remainder. 512 iterations; each is U256 ops only.
+    // Bit-by-bit long division of [prod1, prod0] by denom. We only need the
+    // remainder. 512 iterations. Each iteration uses only U256 ops.
     let mut rem = U256::ZERO;
     // High half first, then low half.
     for word in [prod1, prod0] {
@@ -100,7 +100,7 @@ fn get_end_of_div_round_down(
     let prod0_adj = prod0_in.wrapping_sub(remainder);
 
     // Factor powers of two out of denominator.
-    // lpotdod = denom & -denom - largest power-of-two divisor of denom.
+    // lpotdod = denom & -denom, the largest power-of-two divisor of denom.
     let lpotdod = denom & denom.wrapping_neg();
     let denom_odd = denom / lpotdod;
     let prod0_shifted = prod0_adj / lpotdod;
@@ -119,7 +119,8 @@ fn get_end_of_div_round_down(
     let combined = prod0_shifted | prod1_adj.wrapping_mul(lpotdod_inv);
 
     // Newton-Raphson modular inverse of denom_odd (mod 2^256).
-    // Seed exact for 4 bits; doubles each iteration (Hensel lifting).
+    // The seed is exact for 4 bits. The exact bits double each iteration
+    // (Hensel lifting).
     let two = U256::from(2u64);
     let mut inverse = (U256::from(3u64).wrapping_mul(denom_odd)) ^ two;
     for _ in 0..6 {
@@ -148,7 +149,7 @@ pub fn mul_shift_round_down(x: U256, y: U256, offset: u8) -> Result<U256> {
                 "lb_math: mul_shift overflow".into(),
             ));
         }
-        // (256 - offset) is in (0, 256] - guard offset == 0.
+        // (256 - offset) is in (0, 256]. Guard offset == 0.
         if off > 0 {
             result = result.wrapping_add(prod1 << (256 - off));
         }
@@ -168,7 +169,7 @@ pub fn shift_div_round_down(x: U256, offset: u8, denom: U256) -> Result<U256> {
     };
     // y = 1 << offset (used by mul_mod_512 inside _getEndOfDivRoundDown).
     let y = if off >= 256 {
-        U256::ZERO // unreachable; offset is always < 256 by precondition.
+        U256::ZERO // unreachable: offset is always < 256 by precondition.
     } else {
         U256::ONE << off
     };

@@ -1,8 +1,8 @@
 //! Prometheus metrics for SlashIndicator state transitions.
 //!
-//! These gauges and counters are emitted from the corresponding
-//! mutation paths in `runtime.rs` so operators can alert on miss-count
-//! growth before the felony threshold is reached, and observe
+//! The corresponding mutation paths in `runtime.rs` emit these gauges
+//! and counters. With them, operators can alert on miss-count growth
+//! before the felony threshold is reached. Operators can also observe
 //! cumulative slash/felony events over time.
 //!
 //! Per-validator labels: `addr` is the validator address rendered as

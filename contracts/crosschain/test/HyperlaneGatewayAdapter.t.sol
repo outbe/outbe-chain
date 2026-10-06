@@ -13,15 +13,16 @@ import {GasLimitAttribute} from "src/libs/GasLimitAttribute.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
-/// @dev Accepts any inbound delivery so adapter-direct sends complete and we can inspect the recorded metadata.
+/// @dev Accepts any inbound delivery so adapter-direct sends complete and we can inspect the
+/// recorded metadata.
 contract PermissiveRecipient is IERC7786Recipient {
     function receiveMessage(bytes32, bytes calldata, bytes calldata) external payable returns (bytes4) {
         return IERC7786Recipient.receiveMessage.selector;
     }
 }
 
-/// @dev Full-stack test: facade (ERC7786Bridge) -> HyperlaneGatewayAdapter -> mock mailbox, both sides on
-/// `block.chainid` but distinguished by Hyperlane domain.
+/// @dev Full-stack test: facade (ERC7786Bridge) -> HyperlaneGatewayAdapter -> mock mailbox.
+/// Both sides are on `block.chainid`, and the Hyperlane domain distinguishes them.
 contract HyperlaneGatewayAdapterTest is Test {
     address internal owner = makeAddr("owner");
     address internal app = makeAddr("app");
@@ -53,7 +54,8 @@ contract HyperlaneGatewayAdapterTest is Test {
         mailboxB.setRemoteMailbox(domainA, mailboxA);
 
         vm.startPrank(owner);
-        // Both logical chains share block.chainid here; each adapter binds it to the peer's Hyperlane domain.
+        // Both logical chains share block.chainid here. Each adapter binds it to the peer's
+        // Hyperlane domain.
         adapterA.setRouterWithChain(domainB, _b32(address(adapterB)), block.chainid);
         adapterB.setRouterWithChain(domainA, _b32(address(adapterA)), block.chainid);
         facadeA.registerRemoteBridge(_interop(address(facadeB)));
@@ -165,8 +167,9 @@ contract HyperlaneGatewayAdapterTest is Test {
         adapterA.sendMessage{value: 100}(recipientAddr, "p", _gasAttrs(999_999));
         assertTrue(keccak256(mailboxA.lastMetadata()) != defaultMeta, "executionGasLimit must change the hook metadata");
 
-        // A gas value equal to the adapter default produces the same metadata as the no-attribute path.
-        // Read the default before the prank so the external getter doesn't consume it (metadata carries msg.sender).
+        // A gas value equal to the adapter default produces the same metadata as the no-attribute
+        // path. Read the default before the prank so the external getter doesn't consume it
+        // (metadata carries msg.sender).
         uint128 dflt = adapterA.defaultGasLimit();
         vm.prank(app);
         adapterA.sendMessage{value: 100}(recipientAddr, "p", _gasAttrs(dflt));

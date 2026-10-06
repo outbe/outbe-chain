@@ -1,24 +1,17 @@
 use crate::*;
-use std::sync::OnceLock;
-
-/// Keep the process alive until the native primary DB destructor has returned.
-struct OffchainRocksDbExitGuard(Arc<OnceLock<outbe_offchain_storage::RocksDbCloseWaiter>>);
-
-impl Drop for OffchainRocksDbExitGuard {
-    fn drop(&mut self) {
-        if let Some(waiter) = self.0.get() {
-            while !waiter.wait_timeout(Duration::from_secs(5)) {
-                tracing::warn!("waiting for offchain RocksDB to finish closing");
-            }
-        }
-    }
-}
+mod consensus;
+mod ocomp;
+mod radicle;
+mod storage;
+mod tee;
+use storage::StorageExitGuard;
+type LaunchConfig = reth_node_builder::NodeConfig<ChainSpec<OutbeHeader>>;
 
 /// Run the main node (Reth execution + Commonware consensus).
 pub(crate) fn run_node() -> eyre::Result<()> {
     // TEE offer decryption routes exclusively through the enclave sidecar
-    // (`--tee-enclave-socket` -> persistent production NodeHost authorization);
-    // the offer-decryption key exists only inside the enclave (single path, no
+    // (`--tee-enclave-socket` -> persistent production NodeHost authorization).
+    // The offer-decryption key exists only inside the enclave (single path, no
     // in-process key material).
 
     // Pool lifetime hardening. Must run BEFORE CLI parsing: clap reads these as
@@ -50,221 +43,26 @@ pub(crate) fn run_node() -> eyre::Result<()> {
 
     // Channels for validator-mode consensus thread.
     // For full-node mode, no thread is spawned and these are unused.
-    let (node_tx, node_rx) = oneshot::channel::<(
-        OutbeFullNode,
-        ConsensusArgs,
-        ProjectionReadinessHandle,
-        Option<ProjectionReadinessHandle>,
-        Arc<RetainedTributeWriter>,
-        Arc<ProjectionRetentionFence>,
-        Arc<SharedOcompRetentionSelector>,
-        Arc<dyn FinalizedCeCommitter>,
-        Arc<dyn CeStartupRecovery>,
-        Option<(
-            outbe_radicle::integration::EndpointNetworkService,
-            outbe_radicle::integration::LocalEndpointIdentityHandle,
-            outbe_radicle::integration::RadicleStatusHandle,
-            outbe_radicle::integration::EndpointTaskOwner,
-        )>,
-        Option<oneshot::Receiver<()>>,
-    )>();
+    let (node_tx, node_rx) = oneshot::channel::<consensus::ConsensusLaunch>();
     let (consensus_dead_tx, mut consensus_dead_rx) = oneshot::channel::<()>();
     let shutdown_token = tokio_util::sync::CancellationToken::new();
     // A terminal protocol outcome must drain Radicle without racing the main
     // signal branch into aborting the stack before it returns its primary error.
     let radicle_shutdown_token = shutdown_token.child_token();
 
-    // Consensus thread is spawned conditionally - see inside run_with_components
-    // where `args.is_validator` is known. For now, prepare the closure.
+    // The launcher spawns the consensus thread conditionally. See inside
+    // run_with_components, where `args.is_validator` is known. For now, prepare the closure.
     let shutdown_token_clone = shutdown_token.clone();
     let radicle_shutdown_for_consensus = radicle_shutdown_token.clone();
     let bridge_for_consensus = bridge.clone();
-    let consensus_thread_fn = move || -> eyre::Result<()> {
-        let (
-            node,
-            mut args,
-            projection_readiness,
-            ocomp_readiness,
-            retained_tribute_writer,
-            projection_retention_fence,
-            retention_selector,
-            finalized_ce_committer,
-            ce_startup_recovery,
-            radicle,
-            radicle_drained,
-        ) = match node_rx.blocking_recv() {
-            Ok(v) => v,
-            Err(_) => return Ok(()),
-        };
-
-        args.validate()?;
-
-        let data_dir = node
-            .config
-            .datadir
-            .clone()
-            .resolve_datadir(reth_ethereum::chainspec::EthChainSpec::chain(
-                &*node.chain_spec(),
-            ))
-            .data_dir()
-            .to_path_buf();
-
-        let consensus_storage = args
-            .storage_dir
-            .clone()
-            .unwrap_or_else(|| data_dir.join("consensus"));
-
-        // Write back effective storage_dir so the consensus stack sees it
-        // even when the CLI did not provide --consensus.storage-dir.
-        if args.storage_dir.is_none() {
-            args.storage_dir = Some(consensus_storage.clone());
-        }
-
-        let keys_dir = args
-            .keys_dir
-            .clone()
-            .unwrap_or_else(|| data_dir.join("keys"));
-
-        if args.keys_dir.is_none() {
-            args.keys_dir = Some(keys_dir.clone());
-        }
-
-        let chain_id = reth_ethereum::chainspec::EthChainSpec::chain(&*node.chain_spec()).id();
-        outbe_consensus::proof::init_consensus_chain_id(chain_id)
-            .wrap_err("bind consensus process to the selected chain id")?;
-        outbe_consensus::storage_identity::bind_consensus_storage_identity(
-            &consensus_storage,
-            chain_id,
-            node.chain_spec().genesis_hash(),
+    let consensus_thread_fn = move || {
+        consensus::run(
+            node_rx,
+            consensus_dead_tx,
+            shutdown_token_clone,
+            radicle_shutdown_for_consensus,
+            bridge_for_consensus,
         )
-        .wrap_err("validate consensus restart storage identity")?;
-
-        // Migrate DKG files from legacy location (consensus/) to keys/.
-        outbe_engine::stack::migrate_dkg_keys_if_needed(&consensus_storage, &keys_dir)?;
-
-        info!(
-            path = %consensus_storage.display(),
-            "starting consensus runtime"
-        );
-
-        // initialize the append-only slashing journal at
-        // `<consensus_storage>/slashing-journal.jsonl`. The journal
-        // captures every SlashIndicator/ValidatorSet state transition
-        // in JSONL form and is independent of reth log rotation. If
-        // initialization fails, log a warning and continue - the
-        // journal is best-effort observability and must not block node
-        // startup.
-        if let Err(error) = outbe_primitives::slashing_journal::init(&consensus_storage) {
-            tracing::warn!(
-                target: "outbe::slashing::journal",
-                %error,
-                "failed to initialize slashing journal - events will not be persisted to a sidecar file",
-            );
-        }
-
-        if let Err(error) = outbe_primitives::governance_journal::init(&consensus_storage) {
-            tracing::warn!(
-                target: "outbe::governance::journal",
-                %error,
-                "failed to initialize governance journal - events will not be persisted to a sidecar file",
-            );
-        }
-
-        let runtime_config = commonware_runtime::tokio::Config::default()
-            .with_tcp_nodelay(Some(true))
-            .with_worker_threads(args.worker_threads)
-            .with_storage_directory(consensus_storage)
-            .with_catch_panics(true);
-
-        let runner = commonware_runtime::tokio::Runner::new(runtime_config);
-        let node_lifetime_pin = node.clone();
-
-        let ret: eyre::Result<()> = run_with_lifetime_pin(node_lifetime_pin, || {
-            runner.start(async move |ctx| {
-                let graceful_shutdown = ctx.child("shutdown");
-                let application_shutdown = radicle_shutdown_for_consensus;
-                let application_drain = outbe_engine::application_shutdown::ApplicationDrain::new(async move {
-                    application_shutdown.cancel();
-                    await_radicle_drain(radicle_drained, RADICLE_DRAIN_DEADLINE).await
-                });
-                let stack_application_drain = application_drain.clone();
-                let (follower_drain, follower_shutdown) =
-                    outbe_engine::follower_shutdown::follower_drain_pair();
-                let mut stack_handle = ctx.child("consensus_stack").spawn(move |stack_ctx| {
-                    outbe_engine::run_consensus_stack(
-                        stack_ctx,
-                        args,
-                        node,
-                        bridge_for_consensus,
-                        {
-                            let mut services = outbe_engine::ConsensusStackServices::new(
-                                projection_readiness,
-                                retained_tribute_writer,
-                                projection_retention_fence,
-                                retention_selector,
-                                finalized_ce_committer,
-                                ce_startup_recovery,
-                            )
-                            .with_follower_shutdown(follower_shutdown)
-                            .with_application_drain(stack_application_drain);
-                            if let Some(readiness) = ocomp_readiness {
-                                services = services.with_ocomp_readiness(readiness);
-                            }
-                            if let Some((endpoint, local, status, owner)) = radicle {
-                                services = services.with_radicle(status, endpoint, local, owner);
-                            }
-                            services
-                        },
-                    )
-                });
-                commonware_macros::select! {
-                    _ = shutdown_token_clone.cancelled() => {
-                        info!("consensus stack shutting down");
-                        // The manager may still be using endpoint discovery. Keep
-                        // Commonware transport alive until both owners have drained.
-                        let radicle_result = application_drain.drain().await;
-                        if let Err(error) = &radicle_result {
-                            tracing::error!(%error, "Radicle drain failed before transport shutdown");
-                        }
-                        // Close follower delivery ingress and persist all accepted
-                        // proofs while Marshal can still answer certificate reads.
-                        let follower_result = follower_drain.drain(Duration::from_secs(5)).await;
-                        if let Err(error) = &follower_result {
-                            tracing::error!(%error, "follower drain failed before Marshal shutdown");
-                        }
-                        let stop_result = graceful_shutdown
-                            .stop(0, Some(Duration::from_secs(5)))
-                            .await;
-                        let stack_result = await_consensus_stack_shutdown(
-                            &mut stack_handle, Duration::from_secs(5),
-                        ).await;
-                        if let Err(error) = &stack_result {
-                            tracing::error!(%error, "consensus stack failed during shutdown");
-                        }
-                        let stack_result = match (stack_result, follower_result) {
-                            (Err(error), Err(drain)) => Err(error.wrap_err(format!("follower drain also failed: {drain:#}"))),
-                            (Err(error), _) | (_, Err(error)) => Err(error),
-                            (Ok(()), Ok(())) => Ok(()),
-                        };
-                        outbe_engine::application_shutdown::combine(
-                            consensus_shutdown_result(stop_result, stack_result), radicle_result,
-                        )
-                    },
-                    result = &mut stack_handle => {
-                        let result = result.map_err(|error| {
-                            eyre::eyre!("consensus stack task failed: {error:?}")
-                        })?;
-                        if let Err(e) = &result {
-                            tracing::error!(%e, "consensus stack failed");
-                        }
-                        result
-                    },
-                }
-            })
-        });
-
-        let _ = consensus_dead_tx.send(());
-        ret
     };
 
     // Thread 1 (main): Reth execution layer.
@@ -293,8 +91,8 @@ pub(crate) fn run_node() -> eyre::Result<()> {
     // This owner outlives cancellation of the launcher and Reth runtime teardown.
     let process_shutdown = outbe_node::shutdown::NodeShutdown::default();
     let launcher_shutdown = process_shutdown.clone();
-    let offchain_close = OffchainRocksDbExitGuard(Arc::new(OnceLock::new()));
-    let offchain_close_registration = Arc::clone(&offchain_close.0);
+    let offchain_close = StorageExitGuard::default();
+    let offchain_close_registration = offchain_close.observer();
     // Preserve the pool overrides normally applied by Reth's default CLI runner.
     let runtime_config = match &cli.command {
         reth_ethereum::cli::interface::Commands::Node(command) => {
@@ -316,39 +114,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
         let result: eyre::Result<()> = async move {
         let _cancel_on_launcher_drop = shutdown_token.clone().drop_guard();
         args.validate()?;
-        let (radicle_preflight, radicle_status) = if args.is_validator {
-            let socket = args
-                .radicle_control_socket
-                .as_ref()
-                .expect("validated Radicle control socket");
-            let sidecar = outbe_radicle::integration::query_sidecar(
-                socket,
-                std::time::Duration::from_secs(5),
-            )
-            .await
-            .wrap_err("Radicle sidecar preflight failed")?;
-            let evm_key = args
-                .effective_validator_evm_key()?
-                .ok_or_else(|| eyre::eyre!("validator EVM key is required for Radicle identity"))?;
-            let validator = outbe_primitives::signer::OutbeEvmSigner::from_file(&evm_key)
-                .wrap_err("load validator EVM key for Radicle identity")?
-                .address();
-            let (publisher, status) =
-                outbe_radicle::integration::RadicleStatusChannel::enabled(
-                    validator,
-                    sidecar.node_id,
-                );
-            (Some((validator, sidecar, publisher)), status)
-        } else {
-            (
-                None,
-                outbe_radicle::integration::RadicleStatusChannel::disabled(),
-            )
-        };
-        if radicle_preflight.is_none() {
-            let mut metrics = outbe_radicle::integration::RadicleMetrics::default();
-            metrics.record(&radicle_status.snapshot());
-        }
+        let (radicle_preflight, radicle_status) = radicle::preflight(&args).await?;
         info!(
             target: "outbe::protocol",
             formingPeriodSeconds = outbe_chain_constants::get_metadosis_forming_period_seconds(),
@@ -436,275 +202,13 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             ))
             .data_dir()
             .to_path_buf();
-        let ocomp_domain_root = node_data_dir
-            .parent()
-            .ok_or_else(|| eyre::eyre!("node data directory has no OCOMP domain parent"))?
-            .join("ocomp")
-            .join("domain-v1");
-        let ocomp_bundle_bytes = ocomp_fork_install
-            .protocol_bundle
-            .encode_canonical(&ocomp_limits)?;
-        let ocomp_bundle = outbe_ocomp::bundle::PinnedProtocolBundle::decode(
-            &ocomp_bundle_bytes,
-            ocomp_fork_install.request_profile.protocol_bundle_hash,
-            &ocomp_limits,
-        )?;
-        let configured_ocomp_bundle_hashes =
-            std::env::var("OCOMP_PROTOCOL_BUNDLE_HASHES").ok();
-        let ocomp_bundles = load_installed_ocomp_bundles(
-            &ocomp_domain_root,
-            ocomp_bundle,
-            configured_ocomp_bundle_hashes.as_deref(),
-            &ocomp_limits,
-        )?;
-        let ocomp_worker_base_port = args
-            .listen_address
-            .port()
-            .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("consensus port leaves no OCOMP Worker endpoint port"))?;
-        let mut ocomp_runtime_bundles = Vec::with_capacity(ocomp_bundles.len());
-        let ocomp_lane_port_stride = u16::try_from(
-            outbe_ocomp::worker_transport::MAX_REGISTERED_WORKERS,
-        )
-        .map_err(|_| eyre::eyre!("OCOMP worker limit exceeds u16"))?
-        .checked_add(2)
-        .ok_or_else(|| eyre::eyre!("OCOMP bundle lane port stride overflow"))?;
-        for (index, bundle) in ocomp_bundles.into_iter().enumerate() {
-            let lane = u16::try_from(index)
-                .map_err(|_| eyre::eyre!("OCOMP bundle lane count exceeds u16"))?;
-            let port_offset = lane
-                .checked_mul(ocomp_lane_port_stride)
-                .ok_or_else(|| eyre::eyre!("OCOMP bundle lane port offset overflow"))?;
-            let worker_port = ocomp_worker_base_port
-                .checked_add(port_offset)
-                .ok_or_else(|| eyre::eyre!("OCOMP bundle lane leaves no Worker endpoint port"))?;
-            let worker_address = std::net::SocketAddr::new(
-                std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
-                worker_port,
-            );
-            info!(
-                bundle_hash = %bundle.hash(),
-                lane = index,
-                %worker_address,
-                "loaded pinned OCOMP runtime bundle lane"
-            );
-            ocomp_runtime_bundles.push(ocomp_exex::OcompExExBundleConfigV1 {
-                worker_address,
-                identity: outbe_ocomp_protocol::local_control::EndpointIdentity {
-                    chain_id: builder.config().chain.chain().id(),
-                    genesis_hash: builder.config().chain.genesis_hash(),
-                    boot_nonce: ocomp_install_hash,
-                    protocol_bundle_hash: bundle.hash(),
-                },
-                protocol_bundle: bundle,
-            });
-        }
-        let ocomp_policy = if args.is_validator {
-            outbe_ocomp::embedded_runtime::EmbeddedNodePolicyV1::Validator
-        } else {
-            outbe_ocomp::embedded_runtime::EmbeddedNodePolicyV1::FullNode
-        };
-        let ocomp_validator_rpc_url = if args.is_validator {
-            if !builder.config().rpc.http {
-                eyre::bail!("validator OCOMP requires the local HTTP RPC server");
-            }
-            Some(format!(
-                "http://127.0.0.1:{}",
-                builder.config().rpc.http_port
-            ))
-        } else {
-            None
-        };
-        let retention_selector = Arc::new(SharedOcompRetentionSelector::new());
-        let discovery_spool_root = ocomp_domain_root.join("exporter-v1/discovery");
-        let ocomp_exex_config = ocomp_exex::OcompExExConfigV1 {
-            domain_root: ocomp_domain_root,
-            discovery_spool_root,
-            bundles: ocomp_runtime_bundles,
-            policy: ocomp_policy,
-            validator_rpc_url: ocomp_validator_rpc_url,
-            chain_id: builder.config().chain.chain().id(),
-            genesis_hash: builder.config().chain.genesis_hash(),
-            retention_selector: Arc::clone(&retention_selector),
-            retention_required: args.is_validator || args.upstream.is_some(),
-        };
-        let ocomp_baseline = ProjectionCheckpoint {
-            block_number: 0,
-            block_hash: builder.config().chain.genesis_hash(),
-        };
-        let (ocomp_readiness_publisher, ocomp_readiness) = projection_readiness(
-            ocomp_baseline,
-            ProjectionStatus::Ready {
-                checkpoint: ocomp_baseline,
-            },
-        );
+        let ocomp::OcompBootstrap { config: ocomp_exex_config, retention_selector, readiness_publisher: ocomp_readiness_publisher, readiness: ocomp_readiness } =
+            ocomp::prepare(builder.config(), &args, &node_data_dir, &ocomp_fork_install, ocomp_install_hash)?;
         let ocomp_readiness_for_consensus =
             args.upstream.is_some().then(|| ocomp_readiness.clone());
         let (ocomp_exit_tx, mut ocomp_exit_rx) = tokio::sync::mpsc::unbounded_channel();
-        let evm_signer = if args.is_validator {
-            let evm_key_path = args
-                .effective_validator_evm_key()?
-                .ok_or_else(|| eyre::eyre!("validator mode requires an EVM signer key"))?;
-            let signer =
-                Arc::new(OutbeEvmSigner::from_file(&evm_key_path).wrap_err_with(|| {
-                    format!(
-                        "failed to load validator EVM key from {}",
-                        evm_key_path.display()
-                    )
-                })?);
-            info!(
-                address = %signer.address(),
-                path = %evm_key_path.display(),
-                "loaded validator EVM signer"
-            );
-            Some(signer)
-        } else {
-            None
-        };
-        let validator_evm_address = evm_signer.as_ref().map(|signer| signer.address());
-        // Every network declares exactly one attestation policy in genesis. The
-        // local session protocol is an independent, explicit operator choice:
-        // GramineDirectDev may use either the development transport or a real
-        // SGX, production NodeHost session. There is no connection fallback.
-        let socket = args.tee_enclave_socket.clone().ok_or_else(|| {
-            eyre::eyre!(
-                "mandatory {:?} ChainSpec requires --tee-enclave-socket before node startup",
-                initial_tee_policy.attestation_mode
-            )
-        })?;
-        let endpoint = socket
-            .to_str()
-            .ok_or_else(|| eyre::eyre!("TEE enclave endpoint is not valid UTF-8"))?;
-        let tee_session = args
-            .tee_session_mode
-            .resolve(initial_tee_policy.attestation_mode)
-            .map_err(eyre::Report::msg)?;
-        let (node_host_signing, reth_p2p_public) = load_reth_p2p_node_host_signer(
-            &builder.config().network,
-            builder.config().datadir().p2p_secret(),
-        )?;
-        outbe_tee::call_context::set_snapshot(outbe_tee::call_context::EnclaveCallContextV1 {
-            chain_id: builder.config().chain.chain().id(),
-            genesis_hash: builder.config().chain.genesis_hash(),
-            ..Default::default()
-        })
-        .map_err(eyre::Report::msg)?;
-        let expected_enclave_id = match tee_session {
-            outbe_engine::args::ResolvedTeeSession::ProductionNodeHost => {
-                use k256::ecdsa::signature::hazmat::PrehashSigner as _;
-
-                let client = outbe_tee::connect_or_initialize_node_host_enclave(
-                    endpoint,
-                    &node_data_dir,
-                    outbe_tee::NodeHostIdentityV1 {
-                        network_binding: initial_tee_policy.network_binding(),
-                        reth_p2p_public,
-                    },
-                    |hash| {
-                        let (signature, recovery): (
-                            k256::ecdsa::Signature,
-                            k256::ecdsa::RecoveryId,
-                        ) = node_host_signing
-                            .sign_prehash(hash.as_slice())
-                            .map_err(|error| error.to_string())?;
-                        let mut bytes = [0_u8; 65];
-                        bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
-                        bytes[64] = recovery.to_byte();
-                        Ok(bytes)
-                    },
-                )
-                .wrap_err("NodeHost enclave initialization failed")?;
-                // Session material for reconnect-with-identity-revalidation:
-                // loaded once here (takes the NodeHost file lock), never in the
-                // request hot path.
-                let (manifest, node_host) =
-                    outbe_tee::node_host::committed_node_host_session_material(&node_data_dir)
-                        .wrap_err("committed NodeHost session material load failed")?;
-                let enclave_id = manifest
-                    .enclave_id()
-                    .map_err(|error| eyre::eyre!("derive committed enclave identity: {error}"))?;
-                outbe_tee::install_authorized_enclave_client(
-                    client,
-                    endpoint.to_owned(),
-                    node_data_dir.clone(),
-                    manifest,
-                    node_host,
-                )
-                .wrap_err("enclave session install failed")?;
-                Some(enclave_id)
-            }
-            outbe_engine::args::ResolvedTeeSession::Development => {
-                let client = outbe_tee::EnclaveClient::connect_endpoint(endpoint)
-                    .wrap_err("development enclave connection failed")?;
-                outbe_tee::install_enclave_client(client, endpoint.to_owned())
-                    .wrap_err("enclave session install failed")?;
-                None
-            }
-        };
-        let local_tee_identity = outbe_engine::validators::LocalTeeRuntimeIdentityV1 {
-            reth_p2p_public,
-            expected_enclave_id,
-            validator: validator_evm_address,
-        };
-        info!(
-            socket = %socket.display(),
-            node_host_identity = "reth-p2p-secp256k1",
-            attestation_mode = ?initial_tee_policy.attestation_mode,
-            session_mode = ?tee_session,
-            "mandatory TEE enclave sidecar connected before execution launch",
-        );
-
-        let tee_admission_anchor = if args.is_validator {
-            if expected_enclave_id.is_some() {
-                outbe_tee::load_finalized_join_admission_anchor(&node_data_dir)
-                    .wrap_err("load durable validator join admission anchor")?
-                    .map(|durable| {
-                        validator_admission_anchor_from_durable_v1(
-                            durable,
-                            builder.config().chain.chain().id(),
-                            builder.config().chain.genesis_hash(),
-                            local_tee_identity,
-                        )
-                    })
-                    .transpose()?
-            } else {
-                None
-            }
-        } else {
-            // A follower re-executes every protected transaction and therefore must
-            // already hold the exact permanent offer key committed by the running
-            // chain. Prove that invariant before Reth opens networking, RPC, sync or
-            // execution. Losing the key is terminal for this node identity: startup
-            // never invokes recovery, replacement or another bootstrap path.
-            let upstream = args.upstream.as_deref().ok_or_else(|| {
-                eyre::eyre!(
-                    "full-node startup requires --upstream to authenticate the chain offer key"
-                )
-            })?;
-            let admission_anchor =
-                require_upstream_fullnode_tee_admission(upstream, local_tee_identity).await?;
-            let expected_offer = outbe_engine::read_upstream_tribute_offer_public_key(upstream)
-                .await
-                .wrap_err("failed to read mandatory offer key from the selected upstream")?;
-            if expected_offer.is_zero() {
-                return Err(eyre::eyre!(
-                    "selected upstream has no mandatory OST3 offer key; refusing full-node startup"
-                ));
-            }
-            let resident_offer = outbe_tee::resident_offer_public_key_v1()
-                .wrap_err("failed to read the local enclave resident offer key")?;
-            if resident_offer != expected_offer {
-                return Err(eyre::eyre!(
-                    "local enclave does not hold the selected chain's exact offer key; refusing execution startup (no recovery or fallback)"
-                ));
-            }
-            info!(
-                offer_public_key = %resident_offer,
-                %upstream,
-                "full-node resident offer key matched upstream before execution launch"
-            );
-            Some(admission_anchor)
-        };
+        let (evm_signer, local_tee_identity, tee_admission_anchor) =
+            tee::prepare(builder.config(), &args, node_data_dir.clone(), initial_tee_policy).await?;
 
         let offchain_data = args.offchain_data()?;
         validate_adr005_node_mode(args.is_validator, args.upstream.is_some())?;
@@ -718,15 +222,11 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             prepare_offchain_data_projection_with_retention(
                 projection_config,
                 projection_retention_selector,
+                offchain_close_registration,
             )
         })
         .await
         .wrap_err("offchain-data startup validation worker failed")??;
-        if let Some(waiter) = prepared_projection.rocksdb_close_waiter() {
-            offchain_close_registration
-                .set(waiter)
-                .map_err(|_| eyre::eyre!("offchain RocksDB close barrier was registered twice"))?;
-        }
         let runtime_body_readers = prepared_projection.runtime_body_readers();
         let proof_body_readers = runtime_body_readers.clone();
         let proof_chain_id = builder.config().chain.chain().id();
@@ -790,8 +290,8 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             .with_shutdown(shutdown.clone());
         let projection_readiness_for_rpc = projection_readiness.clone();
         let radicle_status_for_rpc = radicle_status.clone();
-        // Canary-fed enclave health: published by the tee-canary worker (spawned
-        // after node launch), read by `outbe_consensusStatus.enclave`.
+        // Canary-fed enclave health. The tee-canary worker (spawned after node launch)
+        // publishes it, and `outbe_consensusStatus.enclave` reads it.
         let tee_canary_status = outbe_tee::TeeEnclaveHealthChannel::disabled();
         let tee_canary_status_for_rpc = tee_canary_status.clone();
 
@@ -831,7 +331,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
                 // path (RUSTSEC-2025 NSEC3 unbounded-loop DoS, no upstream fix)
                 // is unreachable. outbe peers via discv5 + static bootnodes and
                 // configures no DNS ENR tree, so DNS discovery provided nothing
-                // here anyway; disabling it removes the attack surface.
+                // here anyway. Disabling it removes the attack surface.
                 discovery.disable_dns_discovery = true;
                 builder
             })
@@ -859,7 +359,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
                     // Validators get the full bridge-backed handler.
                     // `--upstream` followers also run a marshal and CAN serve
                     // `outbe_getFinalization` (chaining followers), but must NOT
-                    // report validator status; they get a follower-scoped handler
+                    // report validator status. They get a follower-scoped handler
                     // that exposes only the finalization-serving capability.
                     let outbe_api = (if is_validator {
                         outbe_rpc::OutbeApiHandler::with_bridge(
@@ -995,10 +495,14 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             tokio::sync::mpsc::unbounded_channel();
         let lease_check = run_tee_lease_guard_v1(
             node.provider.clone(),
-            proof_chain_id,
-            genesis_hash,
-            local_tee_identity,
-            tee_lease_guard_gate,
+            super::admission::TeeLeaseGuardConfigV1 {
+                chain: outbe_node::tee_remote_session::RegistryChainIdentity {
+                    chain_id: proof_chain_id,
+                    genesis_hash,
+                },
+                identity: local_tee_identity,
+                gate: tee_lease_guard_gate,
+            },
             shutdown_token.clone(),
         );
         let lease_outcome = shutdown.clone();
@@ -1014,202 +518,10 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             let _ = tee_lease_exit_tx.send(Ok(reason));
         }));
 
-        let (radicle_consensus, radicle_observer, radicle_drained) = if let Some((
-            validator,
-            sidecar,
-            publisher,
-        )) = radicle_preflight
-        {
-            use outbe_radicle::manager::SnapshotReader as _;
-
-            let exact = node
-                .provider
-                .finalized_block_num_hash()
-                .wrap_err("read finalized head for Radicle startup")?
-                .map(|block| outbe_radicle::manager::FinalizedBlock {
-                    number: block.number,
-                    hash: block.hash,
-                })
-                .unwrap_or(outbe_radicle::manager::FinalizedBlock {
-                    number: 0,
-                    hash: genesis_hash,
-                });
-            let raw_snapshots: Arc<dyn outbe_radicle::manager::SnapshotReader> = Arc::new(
-                outbe_radicle::manager::RethSnapshotReader::new(
-                    node.provider.clone(),
-                    proof_chain_id,
-                    genesis_hash,
-                ),
-            );
-            let observed_snapshots = Arc::new(
-                outbe_radicle::integration::ObservedSnapshotReader::new(
-                    raw_snapshots,
-                    publisher.clone(),
-                ),
-            );
-            let initial = observed_snapshots
-                .read_exact(exact)
-                .wrap_err("read exact Radicle startup snapshot")?;
-            match initial
-                .validators
-                .iter()
-                .find(|candidate| candidate.address == validator)
-            {
-                None => {}
-                Some(candidate) if candidate.node_id.is_none() => {
-                    eyre::bail!("active validator has no Radicle NodeId binding");
-                }
-                Some(candidate) if candidate.node_id != Some(sidecar.node_id) => {
-                    eyre::bail!("local Radicle NodeId does not match finalized validator binding");
-                }
-                Some(_) => publisher.mark_startup_ready(),
-            }
-
-            let (endpoint, resolver, evidence) =
-                outbe_radicle::integration::EndpointNetwork::build(
-                    outbe_radicle::endpoint::ChainIdentity {
-                        chain_id: proof_chain_id,
-                        genesis_hash,
-                    },
-                    radicle_status.clone(),
-                );
-            let (local_endpoint_publisher, local_endpoint) =
-                outbe_radicle::integration::LocalEndpointIdentityChannel::create(
-                    outbe_radicle::integration::LocalEndpointIdentity {
-                        validator,
-                        node_id: sidecar.node_id,
-                        addresses: sidecar.addresses,
-                    },
-                );
-            let pinned_node_id = sidecar.node_id;
-            let radicle_control_socket = args
-                .radicle_control_socket
-                .clone()
-                .expect("validated Radicle control socket");
-            let repository_status: Arc<dyn outbe_radicle::manager::RepositoryStatus> = Arc::new(
-                outbe_radicle::manager::HttpRepositoryStatus::new(
-                    args.radicle_status_address
-                        .expect("validated Radicle status address"),
-                    std::time::Duration::from_secs(5),
-                )?,
-            );
-            let repository_status = Arc::new(
-                outbe_radicle::integration::ObservedRepositoryStatus::new(
-                    repository_status,
-                    publisher.clone(),
-                ),
-            );
-            let manager = outbe_radicle::manager::RadicleManager::start(
-                outbe_radicle::manager::ManagerConfig {
-                    self_validator: validator,
-                    local_node_id: sidecar.node_id,
-                    repair_interval: outbe_radicle::integration::PRODUCTION_REPAIR_INTERVAL,
-                    retry: outbe_radicle::manager::RetryPolicy::default(),
-                },
-                outbe_radicle::manager::ManagerDependencies {
-                    finality: Arc::new(
-                        outbe_radicle::integration::GenesisFallbackFinalizedFeed::new(
-                            Arc::new(outbe_radicle::manager::RethFinalizedFeed::new(
-                                node.provider.clone(),
-                            )),
-                            exact,
-                        ),
-                    ),
-                    snapshots: observed_snapshots,
-                    endpoints: Arc::new(resolver.clone()),
-                    control: Arc::new(outbe_radicle::manager::NativeHeartwoodControl::new(
-                        radicle_control_socket.clone(),
-                        std::time::Duration::from_secs(5),
-                    )),
-                    repository_status,
-                },
-            );
-            let observer_shutdown = radicle_shutdown_token.clone();
-            let endpoint_owner = outbe_radicle::integration::EndpointTaskOwner::default();
-            let observer_endpoint_owner = endpoint_owner.clone();
-            let observer_publisher = publisher.clone();
-            let observer_resolver = resolver.clone();
-            let observer_status = radicle_status.clone();
-            let observer_outcome = shutdown.clone();
-            let observer_tracker = shutdown.clone();
-            let (drained_tx, drained_rx) = oneshot::channel();
-            // Register with Reth's graceful drain before returning to its
-            // cancellable launcher. Dropping the launcher must not abort cleanup.
-            let observer = node.task_executor.spawn_with_graceful_shutdown_signal(async move |guard| {
-                observer_tracker.track_task("Radicle observer", async move {
-                let manager = manager;
-                let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
-                let mut local_endpoint_interval = tokio::time::interval(
-                    outbe_radicle::integration::PRODUCTION_REPAIR_INTERVAL,
-                );
-                local_endpoint_interval.set_missed_tick_behavior(
-                    tokio::time::MissedTickBehavior::Skip,
-                );
-                let mut metrics = outbe_radicle::integration::RadicleMetrics::default();
-                loop {
-                    tokio::select! {
-                        _ = observer_shutdown.cancelled() => {
-                            if let Err(error) = outbe_radicle::integration::shutdown_bounded(
-                                std::time::Duration::from_secs(5),
-                                manager,
-                                observer_endpoint_owner.shutdown(&observer_resolver),
-                            ).await {
-                                tracing::error!(%error, "Radicle integration shutdown failed");
-                                observer_outcome.record_failure(eyre::eyre!(error).wrap_err("Radicle integration shutdown failed"));
-                            }
-                            break;
-                        }
-                        _ = interval.tick() => {
-                            observer_publisher.observe_manager(manager.status());
-                            observer_publisher.observe_evidence(evidence.snapshot());
-                            metrics.record(&observer_status.snapshot());
-                        }
-                        _ = local_endpoint_interval.tick() => {
-                            let sidecar = tokio::select! {
-                                _ = observer_shutdown.cancelled() => continue,
-                                result = outbe_radicle::integration::query_sidecar(
-                                    &radicle_control_socket,
-                                    std::time::Duration::from_secs(5),
-                                ) => result,
-                            };
-                            match sidecar {
-                                Ok(sidecar) if sidecar.node_id == pinned_node_id => {
-                                    let _ = local_endpoint_publisher.update(
-                                        sidecar.node_id,
-                                        sidecar.addresses,
-                                    );
-                                }
-                                Ok(sidecar) => {
-                                    local_endpoint_publisher.unavailable();
-                                    tracing::error!(
-                                        expected_node_id = ?pinned_node_id,
-                                        actual_node_id = ?sidecar.node_id,
-                                        "Radicle sidecar NodeId changed; endpoint publication suppressed"
-                                    );
-                                }
-                                Err(error) => {
-                                    local_endpoint_publisher.unavailable();
-                                    tracing::warn!(
-                                        %error,
-                                        "Radicle sidecar identity refresh failed; endpoint publication suppressed"
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-                    let _ = drained_tx.send(());
-                }).await;
-                drop(guard);
-            });
-            (
-                Some((endpoint, local_endpoint, radicle_status.clone(), endpoint_owner)),
-                Some(observer),
-                Some(drained_rx),
-            )
-        } else {
-            (None, None, None)
-        };
+        let (radicle_consensus, radicle_observer, radicle_drained) = radicle::start(
+            &node, &args, radicle_preflight, radicle_status.clone(),
+            radicle_shutdown_token.clone(), shutdown.clone(),
+        )?;
 
         // Periodic enclave canary (signal only): known-plaintext decrypt +
         // Health telemetry through the process-global session. `0` disables.
@@ -1224,8 +536,8 @@ pub(crate) fn run_node() -> eyre::Result<()> {
                 shutdown_token.clone(),
             )))
         });
-        // Pending staleness eviction. Node-local pool policy, so it runs in
-        // every mode - full nodes are the public RPC ingress and shed stuck
+        // Pending staleness eviction. This is node-local pool policy, so it runs in
+        // every mode. Full nodes are the public RPC ingress. They shed stuck
         // transactions that would otherwise be re-gossiped to validators.
         let txpool_maintenance_handle = tokio::spawn(shutdown.track_task("txpool maintenance task", outbe_txpool::maintain::maintain_outbe_pool(
             node.provider.clone(),
@@ -1279,7 +591,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
                 info!("outbe node launched in VALIDATOR mode");
             }
 
-            // Spawn the consensus thread for validator OR follower mode; the
+            // Spawn the consensus thread for validator OR follower mode. The
             // follower branch inside `run_consensus_stack` selects the lightweight
             // follow stack (no consensus engine).
             let consensus_lifecycle = ConsensusThreadGuard::new(
@@ -1445,7 +757,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
         }.await;
         if let Err(error) = result {
             // Enter Reth's normal graceful teardown even on launcher failure.
-            // The process result below retains the error; this is not success.
+            // The process result below retains the error. This is not success.
             launcher_shutdown.record_failure(error);
         }
         Ok(())
@@ -1467,32 +779,4 @@ pub(crate) fn ocomp_job_available_for_calculation(
         outbe_ocomp_protocol::state::OcompJobStatus::VotingOpen
             | outbe_ocomp_protocol::state::OcompJobStatus::Completed
     )
-}
-
-#[cfg(test)]
-mod offchain_close_tests {
-    use super::*;
-    use std::sync::mpsc;
-
-    #[test]
-    fn node_exit_guard_waits_for_native_rocksdb_close() {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("offchain");
-        let storage = outbe_offchain_storage::RocksDbStorage::open(&path).unwrap();
-        let guard = OffchainRocksDbExitGuard(Arc::new(OnceLock::new()));
-        guard.0.set(storage.close_waiter()).ok().unwrap();
-        let (exited, exit_observed) = mpsc::channel();
-        let closing = thread::spawn(move || {
-            drop(guard);
-            exited.send(()).unwrap();
-        });
-
-        assert!(exit_observed
-            .recv_timeout(Duration::from_millis(50))
-            .is_err());
-        drop(storage);
-        exit_observed.recv_timeout(Duration::from_secs(5)).unwrap();
-        drop(outbe_offchain_storage::RocksDbStorage::open(&path).unwrap());
-        closing.join().unwrap();
-    }
 }

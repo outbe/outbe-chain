@@ -35,9 +35,9 @@ pub async fn eth_call<P: Provider>(
 }
 
 /// Submits `calldata` to `to` as a signed EIP-1559 transaction and returns
-/// its hash without waiting for inclusion. With `gasless` the transaction is
-/// shaped for the ZeroFee txpool policy: zero priority fee, fee cap at the
-/// protocol minimum so Reth's public txpool checks still pass.
+/// its hash without waiting for inclusion. With `gasless`, the function shapes
+/// the transaction for the ZeroFee txpool policy. The priority fee is zero. The
+/// fee cap is at the protocol minimum, so Reth's public txpool checks still pass.
 pub async fn send_tx(
     rpc_endpoint: &str,
     wallet: &EthereumWallet,

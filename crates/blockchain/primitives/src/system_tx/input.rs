@@ -14,13 +14,13 @@ use super::{
 
 /// Versioned calldata body system transactions.
 ///
-/// completed the wire-format swap: Phase 1 system-tx input now
+/// The wire-format swap is complete: Phase 1 system-tx input now
 /// carries the V2 slim
 /// [`crate::consensus_metadata::CertifiedParentAccountingMetadata`]
 /// instead of the V1 `ConsensusMetadataEnvelope`. The V2 payload omits the
-/// dead `encoded_finalize_votes` field (V2 signer bitmap is authoritative)
-/// and carries the V2 `committee_set_hash`, `vrf_material_version`,
-/// `vrf_group_public_key_hash`, and `proof_kind` fields the verifier needs.
+/// dead `encoded_finalize_votes` field (the V2 signer bitmap is authoritative).
+/// It carries the V2 `committee_set_hash`, `vrf_material_version`,
+/// `vrf_group_public_key_hash`, and `proof_kind` fields that the verifier needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SystemTxInputV2 {
     CertifiedParentAccounting {
@@ -81,7 +81,7 @@ impl SystemTxInputV2 {
             | Self::HookEvents
             | Self::OcompTerminalRequest => {}
             Self::LateFinalizeCredits { artifact } => {
-                // Empty batches encode to empty bytes - the mandatory tx then
+                // Empty batches encode to empty bytes. The mandatory tx then
                 // carries an empty body and still drives the window-close settle.
                 out.extend_from_slice(
                     encode_late_finalize_credits_artifact(artifact)
@@ -97,8 +97,7 @@ impl SystemTxInputV2 {
                 );
             }
             Self::TeeBootstrap { payload } => out.extend_from_slice(
-                payload
-                    .encode_canonical()
+                crate::tee_bootstrap_v2::codec::encode_canonical(payload)
                     .map_err(|error| SystemTxError::Codec(error.to_string()))?
                     .as_ref(),
             ),
@@ -123,65 +122,25 @@ impl SystemTxInputV2 {
                     .map_err(SystemTxError::from_precompile)?,
             }),
             SystemTxKind::LateFinalizeCredits => Ok(Self::LateFinalizeCredits {
-                // Empty body => empty (no-op) artifact; the matured-window close
+                // Empty body => empty (no-op) artifact. The matured-window close
                 // still runs on execution.
                 artifact: decode_late_finalize_credits_artifact(body)
                     .map_err(SystemTxError::from_precompile)?
                     .unwrap_or_default(),
             }),
             SystemTxKind::OcompLifecycleBegin => {
-                if !body.is_empty() {
-                    return Err(SystemTxError::UnexpectedBody {
-                        kind,
-                        len: body.len(),
-                    });
-                }
-                Ok(Self::OcompLifecycleBegin)
+                Self::decode_empty_body(kind, body, Self::OcompLifecycleBegin)
             }
-            SystemTxKind::CycleTick => {
-                if !body.is_empty() {
-                    return Err(SystemTxError::UnexpectedBody {
-                        kind,
-                        len: body.len(),
-                    });
-                }
-                Ok(Self::CycleTick)
-            }
+            SystemTxKind::CycleTick => Self::decode_empty_body(kind, body, Self::CycleTick),
             SystemTxKind::RewardsGemDelivery => {
-                if !body.is_empty() {
-                    return Err(SystemTxError::UnexpectedBody {
-                        kind,
-                        len: body.len(),
-                    });
-                }
-                Ok(Self::RewardsGemDelivery)
+                Self::decode_empty_body(kind, body, Self::RewardsGemDelivery)
             }
             SystemTxKind::OracleSlashWindow => {
-                if !body.is_empty() {
-                    return Err(SystemTxError::UnexpectedBody {
-                        kind,
-                        len: body.len(),
-                    });
-                }
-                Ok(Self::OracleSlashWindow)
+                Self::decode_empty_body(kind, body, Self::OracleSlashWindow)
             }
-            SystemTxKind::HookEvents => {
-                if !body.is_empty() {
-                    return Err(SystemTxError::UnexpectedBody {
-                        kind,
-                        len: body.len(),
-                    });
-                }
-                Ok(Self::HookEvents)
-            }
+            SystemTxKind::HookEvents => Self::decode_empty_body(kind, body, Self::HookEvents),
             SystemTxKind::OcompTerminalRequest => {
-                if !body.is_empty() {
-                    return Err(SystemTxError::UnexpectedBody {
-                        kind,
-                        len: body.len(),
-                    });
-                }
-                Ok(Self::OcompTerminalRequest)
+                Self::decode_empty_body(kind, body, Self::OcompTerminalRequest)
             }
             SystemTxKind::BoundaryOutcome => {
                 let Some(artifact) =
@@ -192,9 +151,23 @@ impl SystemTxInputV2 {
                 Ok(Self::BoundaryOutcome { artifact })
             }
             SystemTxKind::TeeBootstrap => Ok(Self::TeeBootstrap {
-                payload: crate::tee_bootstrap_v2::TeeBootstrapV2::decode_canonical(body)
+                payload: crate::tee_bootstrap_v2::codec::decode_canonical(body)
                     .map_err(|error| SystemTxError::Codec(error.to_string()))?,
             }),
+        }
+    }
+    fn decode_empty_body(
+        kind: SystemTxKind,
+        body: &[u8],
+        value: Self,
+    ) -> Result<Self, SystemTxError> {
+        if body.is_empty() {
+            Ok(value)
+        } else {
+            Err(SystemTxError::UnexpectedBody {
+                kind,
+                len: body.len(),
+            })
         }
     }
 }

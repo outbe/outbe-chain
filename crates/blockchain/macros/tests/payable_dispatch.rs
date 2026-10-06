@@ -78,8 +78,9 @@ fn payable_selector_receives_the_value() {
 }
 
 /// The trap this guards: a contract with one payable method used to drop its
-/// value check for every other selector, so a funded call to a sibling was
-/// silently accepted and stranded at the address.
+/// value check for every other selector. As a result, the contract silently
+/// accepted a funded call to a sibling, and the value stayed stranded at the
+/// address.
 #[test]
 fn non_payable_siblings_still_refuse_value() {
     let mutating = __VaultAbi::noteCall {

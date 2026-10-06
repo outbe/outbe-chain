@@ -83,7 +83,7 @@ impl L2RegistryVotePayloadV1 {
                             length: encoded.len() / 2,
                         }
                     })?;
-                    // `None` is the all-zero sentinel; malformed keys keep the
+                    // `None` is the all-zero sentinel. Malformed keys keep the
                     // pre-existing error.
                     decode_optional_public_key(&key)
                         .map_err(|_| L2RegistryError::InvalidPublicKey)?;
@@ -257,9 +257,9 @@ mod tests {
             Err(L2RegistryError::InvalidPublicKeyLength { length: 1 })
         ));
 
-        // No compressed-96 compatibility: the legacy encoding is rejected on
-        // length, and a 256-byte blob that is not an EIP-2537 G2 point is
-        // rejected on the point check.
+        // No compressed-96 compatibility. The decoder rejects the legacy encoding
+        // on length. The point check rejects a 256-byte blob that is not an
+        // EIP-2537 G2 point.
         let (_, compressed) = ops::keypair::<_, MinSig>(&mut rand_core_commonware::UnwrapErr(
             rand_commonware::rngs::SysRng,
         ));

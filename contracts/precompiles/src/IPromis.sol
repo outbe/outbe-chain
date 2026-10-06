@@ -12,7 +12,7 @@ interface IPromis {
     // Confidential balance: returns the account's ciphertext blob, a fixed
     // 56 bytes = version(8, big-endian) || ChaCha20Poly1305 ct (32-byte U256
     // amount + 16-byte tag). The length is constant regardless of the balance,
-    // so it never leaks magnitude; a never-written account returns empty bytes.
+    // so it never leaks magnitude. A never-written account returns empty bytes.
     // Decrypt off-chain with the account's Promis view key (outbe_deriveKeys).
     function balanceOf(address account) external view returns (bytes memory);
 

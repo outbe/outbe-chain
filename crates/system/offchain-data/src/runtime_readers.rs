@@ -217,8 +217,8 @@ impl StorageReader for BudgetedStorageReader {
 
 /// Cloneable runtime authority for typed Tribute and Nod body reads.
 ///
-/// The underlying storage capability is accepted only during construction and
-/// is deliberately not exposed. Runtime consumers receive domain-owned typed
+/// This bundle accepts the underlying storage capability only during construction
+/// and deliberately does not expose it. Runtime consumers receive domain-owned typed
 /// readers and cannot acquire projection write authority through this bundle.
 #[derive(Clone)]
 pub struct RuntimeBodyReaders {

@@ -1,3 +1,4 @@
+pub(crate) mod lifecycle;
 use std::{
     fmt,
     sync::{
@@ -54,8 +55,8 @@ const RETRYABLE_READ_CODES: &[i32] = &[
 pub struct MongoStorageConfig {
     /// MongoDB connection string.
     ///
-    /// Read/write consistency options may be omitted or set to the required
-    /// primary/majority contract. Conflicting URI options are rejected.
+    /// The URI may omit read/write consistency options or set them to the required
+    /// primary/majority contract. `MongoStorage::connect` rejects conflicting URI options.
     pub uri: String,
     /// Database containing the namespace collections.
     pub database: String,
@@ -91,6 +92,7 @@ pub struct MongoWriterLease {
     lost: Arc<AtomicBool>,
     stop: Option<mpsc::Sender<()>>,
     renewer: Option<JoinHandle<()>>,
+    released: bool,
 }
 
 impl fmt::Debug for MongoStorage {
@@ -146,6 +148,24 @@ impl MongoStorage {
         self.database.collection(namespace.as_str())
     }
 
+    pub(crate) fn namespace_names(&self) -> Result<Vec<String>, StorageError> {
+        self.database
+            .list_collection_names()
+            .run()
+            .map_err(map_operation_error)
+    }
+
+    pub(crate) fn reject_legacy_entity_layout(&self) -> Result<(), StorageError> {
+        if self
+            .namespace_names()?
+            .iter()
+            .any(|name| name != WRITER_LEASE_COLLECTION && !name.contains("__"))
+        {
+            return Err(StorageError::Corruption("unscoped MongoDB layout: use a fresh database for schema 3; automatic migration is disabled".into()));
+        }
+        Ok(())
+    }
+
     /// Verifies that the server exposes sessions and a transaction-capable topology.
     pub fn verify_transaction_support(&self) -> Result<(), StorageError> {
         self.client
@@ -185,7 +205,7 @@ impl MongoStorage {
             .max_commit_time(EXECUTION_READ_TIMEOUT)
             .and_run(|session| {
                 self.database
-                    .collection::<Document>("projection_state")
+                    .collection::<Document>(WRITER_LEASE_COLLECTION)
                     .update_one(
                         doc! { "_id": { "$exists": false } },
                         doc! { "$set": { "_outbe_transaction_probe": true } },
@@ -254,12 +274,16 @@ impl MongoStorage {
             lost,
             stop: Some(stop_tx),
             renewer: Some(renewer),
+            released: false,
         })
     }
 }
 
 impl Drop for MongoWriterLease {
     fn drop(&mut self) {
+        if self.released {
+            return;
+        }
         if let Some(stop) = self.stop.take() {
             let _ = stop.send(());
         }
@@ -365,10 +389,12 @@ fn renew_writer_lease(database: &Database, owner: &str) -> Result<bool, StorageE
         .map_err(map_operation_error)
 }
 
-fn release_writer_lease(database: &Database, owner: &str) {
-    let _ = writer_lease_collection(database)
+fn release_writer_lease(database: &Database, owner: &str) -> Result<(), StorageError> {
+    writer_lease_collection(database)
         .delete_one(doc! { "_id": WRITER_LEASE_ID, "owner": owner })
-        .run();
+        .run()
+        .map(|_| ())
+        .map_err(map_operation_error)
 }
 
 fn release_writer_lease_detached(database: Database, owner: String) {
@@ -409,574 +435,10 @@ fn transaction_topology_supported(hello: &Document) -> bool {
     has_sessions && (replica_set || sharded)
 }
 
-impl StorageReader for MongoStorage {
-    fn get_record(
-        &self,
-        namespace: Namespace,
-        key: &Key,
-    ) -> Result<Option<StoredValue>, StorageError> {
-        let encoded_key = hex::encode(key.as_bytes());
-        self.collection(&namespace)
-            .find_one(doc! { "_id": &encoded_key })
-            .collation(simple_binary_collation())
-            .max_time(EXECUTION_READ_TIMEOUT)
-            .run()
-            .map_err(map_operation_error)?
-            .map(|document| {
-                decode_document(document, Some(key)).map(|entry| StoredValue {
-                    value: entry.value,
-                    metadata: entry.metadata,
-                })
-            })
-            .transpose()
-    }
-
-    fn get_records(
-        &self,
-        namespace: Namespace,
-        keys: &[Key],
-    ) -> Result<Vec<Option<StoredValue>>, StorageError> {
-        if keys.is_empty() {
-            return Ok(Vec::new());
-        }
-        let encoded_keys: Vec<_> = keys
-            .iter()
-            .map(|key| Bson::String(hex::encode(key.as_bytes())))
-            .collect();
-        let cursor = self
-            .collection(&namespace)
-            .find(doc! { "_id": { "$in": encoded_keys } })
-            .collation(simple_binary_collation())
-            .max_time(EXECUTION_READ_TIMEOUT)
-            .run()
-            .map_err(map_operation_error)?;
-        let mut records = std::collections::HashMap::new();
-        for result in cursor {
-            let entry = decode_document(result.map_err(map_operation_error)?, None)?;
-            let record = StoredValue {
-                value: entry.value,
-                metadata: entry.metadata,
-            };
-            if records.insert(entry.key, record).is_some() {
-                return Err(StorageError::Corruption(
-                    "MongoDB returned a duplicate storage key".to_owned(),
-                ));
-            }
-        }
-        Ok(keys.iter().map(|key| records.get(key).cloned()).collect())
-    }
-
-    fn scan_prefix(
-        &self,
-        namespace: Namespace,
-        request: ScanRequest<'_>,
-    ) -> Result<ScanPage, StorageError> {
-        request.validate()?;
-        let filter = prefix_filter(request);
-        let internal_limit = i64::try_from(request.limit() + 1)
-            .map_err(|_| StorageError::invalid_argument("scan limit does not fit i64"))?;
-        let cursor = self
-            .collection(&namespace)
-            .find(filter)
-            .sort(doc! { "_id": 1 })
-            .collation(simple_binary_collation())
-            .limit(internal_limit)
-            .max_time(EXECUTION_READ_TIMEOUT)
-            .run()
-            .map_err(map_operation_error)?;
-
-        let mut entries = Vec::new();
-        let mut value_bytes = 0_usize;
-        let mut has_more = false;
-        for result in cursor {
-            let entry = decode_document(result.map_err(map_operation_error)?, None)?;
-            if !entry.key.as_bytes().starts_with(request.prefix()) {
-                return Err(StorageError::Corruption(
-                    "MongoDB prefix query returned an out-of-range key".to_owned(),
-                ));
-            }
-            if entries.len() == request.limit()
-                || value_bytes
-                    + entry.value.as_bytes().len()
-                    + entry
-                        .metadata
-                        .as_ref()
-                        .map_or(0, |metadata| metadata.encoded_len())
-                    > MAX_SCAN_PAGE_VALUE_BYTES
-            {
-                has_more = true;
-                break;
-            }
-            value_bytes += entry.value.as_bytes().len()
-                + entry
-                    .metadata
-                    .as_ref()
-                    .map_or(0, |metadata| metadata.encoded_len());
-            entries.push(entry);
-        }
-
-        let next_after = if has_more {
-            Some(
-                entries
-                    .last()
-                    .ok_or_else(|| {
-                        StorageError::Corruption(
-                            "stored record exceeds the scan page byte bound".to_owned(),
-                        )
-                    })?
-                    .key
-                    .clone(),
-            )
-        } else {
-            None
-        };
-        Ok(ScanPage {
-            entries,
-            next_after,
-        })
-    }
-}
-
-impl StorageWriter for MongoStorage {
-    fn verify_transaction_capability(&self) -> Result<(), StorageError> {
-        MongoStorage::verify_acknowledged_transaction(self)
-    }
-
-    fn apply_atomic(&self, batch: &AtomicWriteBatch) -> Result<(), StorageError> {
-        batch.validate()?;
-        if batch.is_empty() {
-            return Ok(());
-        }
-        let writer_lease = self.writer_lease.lock().clone();
-        if writer_lease
-            .as_ref()
-            .is_some_and(|lease| lease.lost.load(Ordering::Acquire))
-        {
-            return Err(StorageError::WriterLeaseLost);
-        }
-        let operations = batch
-            .operations()
-            .iter()
-            .map(PreparedMongoOperation::try_from)
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut session = self
-            .client
-            .start_session()
-            .run()
-            .map_err(map_operation_error)?;
-        session
-            .start_transaction()
-            .selection_criteria(primary_selection())
-            .read_concern(ReadConcern::majority())
-            .write_concern(majority_write_concern())
-            .max_commit_time(EXECUTION_READ_TIMEOUT)
-            .and_run(|session| {
-                if let Some(lease) = &writer_lease {
-                    let result = writer_lease_collection(&self.database)
-                        .update_one(
-                            doc! { "_id": WRITER_LEASE_ID, "owner": &lease.owner },
-                            writer_lease_update(&lease.owner),
-                        )
-                        .session(&mut *session)
-                        .run()?;
-                    if result.matched_count != 1 {
-                        lease.lost.store(true, Ordering::Release);
-                        return Err(MongoError::custom(WriterLeaseLost));
-                    }
-                }
-                for operation in &operations {
-                    match operation {
-                        PreparedMongoOperation::Put {
-                            namespace,
-                            encoded_key,
-                            document,
-                        } => {
-                            self.collection(namespace)
-                                .replace_one(doc! { "_id": encoded_key }, document.clone())
-                                .upsert(true)
-                                .collation(simple_binary_collation())
-                                .session(&mut *session)
-                                .run()?;
-                        }
-                        PreparedMongoOperation::Delete {
-                            namespace,
-                            encoded_key,
-                        } => {
-                            self.collection(namespace)
-                                .delete_one(doc! { "_id": encoded_key })
-                                .collation(simple_binary_collation())
-                                .session(&mut *session)
-                                .run()?;
-                        }
-                    }
-                }
-                Ok(())
-            })
-            .map_err(map_operation_error)
-    }
-}
-
-fn execution_database_options() -> DatabaseOptions {
-    DatabaseOptions::builder()
-        .selection_criteria(primary_selection())
-        .read_concern(ReadConcern::majority())
-        .write_concern(majority_write_concern())
-        .build()
-}
-
-fn primary_selection() -> SelectionCriteria {
-    SelectionCriteria::ReadPreference(ReadPreference::Primary)
-}
-
-fn majority_write_concern() -> WriteConcern {
-    WriteConcern::builder()
-        .w(Acknowledgment::Majority)
-        .w_timeout(EXECUTION_READ_TIMEOUT)
-        .build()
-}
-
-enum PreparedMongoOperation {
-    Put {
-        namespace: Namespace,
-        encoded_key: String,
-        document: Document,
-    },
-    Delete {
-        namespace: Namespace,
-        encoded_key: String,
-    },
-}
-
-impl TryFrom<&AtomicWriteOperation> for PreparedMongoOperation {
-    type Error = StorageError;
-
-    fn try_from(operation: &AtomicWriteOperation) -> Result<Self, Self::Error> {
-        Ok(match operation {
-            AtomicWriteOperation::Put {
-                namespace,
-                key,
-                record,
-            } => {
-                let encoded_key = hex::encode(key.as_bytes());
-                Self::Put {
-                    namespace: namespace.clone(),
-                    document: encode_document(&encoded_key, record),
-                    encoded_key,
-                }
-            }
-            AtomicWriteOperation::Delete { namespace, key } => Self::Delete {
-                namespace: namespace.clone(),
-                encoded_key: hex::encode(key.as_bytes()),
-            },
-        })
-    }
-}
-
-fn encode_document(encoded_key: &str, record: &StoredValue) -> Document {
-    let mut document = doc! {
-        "_id": encoded_key,
-        "value": Bson::Binary(Binary {
-            subtype: BinarySubtype::Generic,
-            bytes: record.value.as_bytes().to_vec(),
-        }),
-    };
-    if let Some(metadata) = &record.metadata {
-        let projection: Document = metadata
-            .iter()
-            .map(|(key, value)| (key.to_owned(), Bson::String(value.to_owned())))
-            .collect();
-        document.insert("_projection", projection);
-    }
-    document
-}
-
-fn simple_binary_collation() -> Collation {
-    Collation::builder().locale("simple").build()
-}
-
-fn prefix_filter(request: ScanRequest<'_>) -> Document {
-    let mut bounds = Document::new();
-    if let Some(after) = request.after() {
-        bounds.insert("$gt", hex::encode(after.as_bytes()));
-    } else if !request.prefix().is_empty() {
-        bounds.insert("$gte", hex::encode(request.prefix()));
-    }
-    if let Some(upper_bound) = raw_prefix_upper_bound(request.prefix()) {
-        bounds.insert("$lt", hex::encode(upper_bound));
-    }
-
-    let range = if bounds.is_empty() {
-        Document::new()
-    } else {
-        doc! { "_id": bounds }
-    };
-
-    if range.is_empty() {
-        range
-    } else {
-        // MongoDB range comparisons are type-bracketed. Explicitly include
-        // non-string identifiers so a damaged document remains visible to the
-        // adapter and is classified as corruption instead of disappearing
-        // from a prefix scan.
-        doc! {
-            "$or": [
-                range,
-                { "_id": { "$not": { "$type": "string" } } },
-            ]
-        }
-    }
-}
-
-fn raw_prefix_upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
-    let mut upper_bound = prefix.to_vec();
-    let index = upper_bound.iter().rposition(|byte| *byte != u8::MAX)?;
-    upper_bound[index] += 1;
-    upper_bound.truncate(index + 1);
-    Some(upper_bound)
-}
-
-fn decode_document(
-    mut document: Document,
-    expected_key: Option<&Key>,
-) -> Result<ScanEntry, StorageError> {
-    if !(2..=3).contains(&document.len()) {
-        return Err(StorageError::Corruption(
-            "MongoDB storage document must contain _id, value, and optional _projection".to_owned(),
-        ));
-    }
-    let metadata = document
-        .remove("_projection")
-        .map(decode_metadata)
-        .transpose()?;
-    let encoded_key = document
-        .remove("_id")
-        .and_then(|id| match id {
-            Bson::String(id) => Some(id),
-            _ => None,
-        })
-        .ok_or_else(|| {
-            StorageError::Corruption("MongoDB storage document has a non-string _id".to_owned())
-        })?;
-    let raw_key = hex::decode(&encoded_key).map_err(|_| {
-        StorageError::Corruption("MongoDB storage document has invalid key encoding".to_owned())
-    })?;
-    if hex::encode(&raw_key) != encoded_key {
-        return Err(StorageError::Corruption(
-            "MongoDB storage document key is not canonical lowercase hex".to_owned(),
-        ));
-    }
-    let key = Key::new(raw_key).map_err(|_| {
-        StorageError::Corruption("MongoDB storage document contains an invalid key".to_owned())
-    })?;
-    if expected_key.is_some_and(|expected| expected != &key) {
-        return Err(StorageError::Corruption(
-            "MongoDB storage document key does not match its lookup key".to_owned(),
-        ));
-    }
-
-    let binary = document
-        .remove("value")
-        .and_then(|value| match value {
-            Bson::Binary(binary) => Some(binary),
-            _ => None,
-        })
-        .ok_or_else(|| {
-            StorageError::Corruption("MongoDB storage document has a non-binary value".to_owned())
-        })?;
-    if binary.subtype != BinarySubtype::Generic {
-        return Err(StorageError::Corruption(
-            "MongoDB storage document uses an unexpected binary subtype".to_owned(),
-        ));
-    }
-    let value = Value::new(binary.bytes).map_err(|_| {
-        StorageError::Corruption("MongoDB storage document contains an oversized value".to_owned())
-    })?;
-    if !document.is_empty() {
-        return Err(StorageError::Corruption(
-            "MongoDB storage document contains unexpected fields".to_owned(),
-        ));
-    }
-    Ok(ScanEntry {
-        key,
-        value,
-        metadata,
-    })
-}
-
-fn decode_metadata(value: Bson) -> Result<StorageMetadata, StorageError> {
-    let Bson::Document(document) = value else {
-        return Err(StorageError::Corruption(
-            "MongoDB _projection field is not a document".to_owned(),
-        ));
-    };
-    let mut entries = std::collections::BTreeMap::new();
-    for (key, value) in document {
-        let Bson::String(value) = value else {
-            return Err(StorageError::Corruption(
-                "MongoDB _projection values must be strings".to_owned(),
-            ));
-        };
-        entries.insert(key, value);
-    }
-    StorageMetadata::new(entries).map_err(|error| {
-        StorageError::Corruption(format!("invalid MongoDB _projection metadata: {error}"))
-    })
-}
-
-fn map_configuration_error(error: MongoError) -> StorageError {
-    match error.kind.as_ref() {
-        MongoErrorKind::InvalidArgument { .. } => StorageError::InvalidArgument(error.to_string()),
-        _ => map_operation_error(error),
-    }
-}
-
-fn map_operation_error(error: MongoError) -> StorageError {
-    if error.get_custom::<WriterLeaseLost>().is_some() {
-        return StorageError::WriterLeaseLost;
-    }
-    match error.kind.as_ref() {
-        MongoErrorKind::DnsResolve { .. }
-        | MongoErrorKind::Io(_)
-        | MongoErrorKind::ConnectionPoolCleared { .. }
-        | MongoErrorKind::ServerSelection { .. }
-        | MongoErrorKind::Write(WriteFailure::WriteConcernError(_)) => {
-            StorageError::unavailable(error)
-        }
-        MongoErrorKind::Command(command)
-            if matches!(
-                command.code,
-                WRITE_CONCERN_FAILED_CODE | MAX_TIME_MS_EXPIRED_CODE
-            ) || RETRYABLE_READ_CODES.contains(&command.code) =>
-        {
-            StorageError::unavailable(error)
-        }
-        _ => StorageError::backend(error),
-    }
-}
+mod codec;
+mod read;
+mod write;
+use codec::*;
 
 #[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use mongodb::{
-        bson::{doc, from_document},
-        error::{CommandError, Error as MongoError, ErrorKind, WriteConcernError, WriteFailure},
-        options::ClientOptions,
-    };
-
-    use super::{
-        cap_execution_timeouts, map_operation_error, transaction_topology_supported,
-        MongoStorageConfig, EXECUTION_READ_TIMEOUT,
-    };
-    use crate::StorageErrorKind;
-
-    #[test]
-    fn topology_capability_rejects_standalone_and_accepts_supported_deployments() {
-        assert!(!transaction_topology_supported(&doc! {
-            "isWritablePrimary": true,
-            "logicalSessionTimeoutMinutes": 30,
-        }));
-        assert!(transaction_topology_supported(&doc! {
-            "setName": "rs0",
-            "logicalSessionTimeoutMinutes": 30,
-        }));
-        assert!(transaction_topology_supported(&doc! {
-            "msg": "isdbgrid",
-            "logicalSessionTimeoutMinutes": 30,
-        }));
-        assert!(!transaction_topology_supported(&doc! {
-            "setName": "rs0",
-        }));
-    }
-
-    #[test]
-    fn configuration_debug_redacts_mongodb_credentials() {
-        let config = MongoStorageConfig {
-            uri: "mongodb://user:secret@localhost:27017".to_owned(),
-            database: "projection".to_owned(),
-        };
-
-        let debug = format!("{config:?}");
-        assert!(!debug.contains("user:secret"));
-        assert!(debug.contains("uri: \"<redacted>\""));
-        assert!(debug.contains("database: \"projection\""));
-    }
-
-    #[test]
-    fn unsatisfied_majority_concerns_are_unavailable() {
-        let read_concern_error: CommandError = from_document(doc! {
-            "code": 134,
-            "codeName": "ReadConcernMajorityNotAvailableYet",
-            "errmsg": "majority read concern is temporarily unavailable",
-        })
-        .unwrap();
-        let read_concern_error: MongoError = ErrorKind::Command(read_concern_error).into();
-        assert_eq!(
-            map_operation_error(read_concern_error).kind(),
-            StorageErrorKind::Unavailable
-        );
-
-        let write_concern_error: WriteConcernError = from_document(doc! {
-            "code": 64,
-            "codeName": "WriteConcernFailed",
-            "errmsg": "majority acknowledgement timed out",
-        })
-        .unwrap();
-        let write_concern_error: MongoError =
-            ErrorKind::Write(WriteFailure::WriteConcernError(write_concern_error)).into();
-        assert_eq!(
-            map_operation_error(write_concern_error).kind(),
-            StorageErrorKind::Unavailable
-        );
-    }
-
-    #[test]
-    fn transient_command_failures_are_unavailable() {
-        for (code, code_name) in [
-            (50, "MaxTimeMSExpired"),
-            (91, "ShutdownInProgress"),
-            (10_107, "NotWritablePrimary"),
-            (11_602, "InterruptedDueToReplStateChange"),
-        ] {
-            let command: CommandError = from_document(doc! {
-                "code": code,
-                "codeName": code_name,
-                "errmsg": "temporary topology or operation failure",
-            })
-            .unwrap();
-            let error: MongoError = ErrorKind::Command(command).into();
-            assert_eq!(
-                map_operation_error(error).kind(),
-                StorageErrorKind::Unavailable,
-                "MongoDB command code {code} must enter recovery",
-            );
-        }
-    }
-
-    #[test]
-    fn deterministic_command_failure_remains_backend_failure() {
-        let command: CommandError = from_document(doc! {
-            "code": 13,
-            "codeName": "Unauthorized",
-            "errmsg": "not authorized",
-        })
-        .unwrap();
-        let error: MongoError = ErrorKind::Command(command).into();
-        assert_eq!(map_operation_error(error).kind(), StorageErrorKind::Backend,);
-    }
-
-    #[test]
-    fn execution_connection_attempts_cannot_exceed_the_one_second_read_budget() {
-        let mut options = ClientOptions::default();
-        options.server_selection_timeout = Some(Duration::from_secs(30));
-        options.connect_timeout = Some(Duration::from_secs(15));
-
-        cap_execution_timeouts(&mut options);
-
-        assert_eq!(
-            options.server_selection_timeout,
-            Some(EXECUTION_READ_TIMEOUT)
-        );
-        assert_eq!(options.connect_timeout, Some(EXECUTION_READ_TIMEOUT));
-    }
-}
+mod tests;

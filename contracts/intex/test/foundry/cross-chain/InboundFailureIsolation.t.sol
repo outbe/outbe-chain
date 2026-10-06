@@ -12,10 +12,12 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
 /// @title InboundFailureIsolationTest
 /// @notice Behavioural coverage Pattern B on `IntexNFT1155Bridge`: a per-item
-///         `token.crosschainMint` revert no longer reverts the whole batch - the failure is recorded as
-///         a `FailedCrosschainMint` snapshot, `CrosschainMintFailed` is emitted, and `retryCrosschainMint` re-attempts
-///         the crosschainMint after the upstream issue is fixed. This is the Critical funds-lock fix
-///         from the contract review (R-04).
+///         `token.crosschainMint` revert no longer reverts the whole batch. Instead:
+///         - the bridge records the failure as a `FailedCrosschainMint` snapshot,
+///         - the bridge emits `CrosschainMintFailed`,
+///         - `retryCrosschainMint` re-attempts the crosschainMint after the upstream issue is
+///           fixed.
+///         This is the Critical funds-lock fix from the contract review (R-04).
 contract InboundFailureIsolationTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
@@ -72,7 +74,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         amounts[1] = 75;
         return IntexNFT1155BridgeCodec.encodeBatch(
             IntexNFT1155BridgeCodec.BatchPayload({
-                to: bytes32(uint256(uint160(recipient))), tokenIds: tokenIds, amounts: amounts
+                to: bytes32(uint256(uint160(recipient))), tokenIds: tokenIds, units: amounts
             })
         );
     }
@@ -89,7 +91,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         amounts[0] = 50;
         amounts[1] = 75;
         return IntexNFT1155BridgeCodec.encodeMulti(
-            IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts})
+            IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, units: amounts})
         );
     }
 
@@ -156,7 +158,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         intex.createSeries(CreateSeriesLib.params(SERIES_BAD_DAY, 10_000, 0));
         nftBridgeBnb.retryCrosschainMint(receiveId, 1);
 
-        // Second retry must revert - slot has been deleted.
+        // Second retry must revert, because the slot has been deleted.
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.NoSuchFailedCrosschainMint.selector, receiveId, 1));
         nftBridgeBnb.retryCrosschainMint(receiveId, 1);
     }
@@ -243,7 +245,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         amounts[0] = 100;
         bytes memory packet = IntexNFT1155BridgeCodec.encodeBatch(
             IntexNFT1155BridgeCodec.BatchPayload({
-                to: bytes32(uint256(uint160(recipient))), tokenIds: tokenIds, amounts: amounts
+                to: bytes32(uint256(uint160(recipient))), tokenIds: tokenIds, units: amounts
             })
         );
         _deliverInbound(packet);

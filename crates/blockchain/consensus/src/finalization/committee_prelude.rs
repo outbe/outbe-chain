@@ -8,18 +8,18 @@
 //! - the resolver's remote-fetch witness (`fetch_parent_proof`), and
 //! - the resolver's recovered-record builder.
 //!
-//! They MUST agree byte-for-byte: `committee_set_hash` is consensus-visible, and
-//! `vrf_group_public_key_hash` is bound by the Phase 1 verifier (Rule 6,
-//! `proof::verifier`). Hand-replicating the prelude at four sites risked drift;
-//! it also let one site (`fetch_parent_proof`) skip the
-//! `vrf_group_public_key_hash` computation, leaving `B256::ZERO` on records that
-//! `to_v2_metadata` promotes into Phase 1 - which Rule 6 then rejects. Sharing
-//! one builder removes the drift risk and guarantees the hash is populated on
-//! every write.
+//! They MUST agree byte-for-byte. `committee_set_hash` is consensus-visible, and
+//! the Phase 1 verifier (Rule 6, `proof::verifier`) binds
+//! `vrf_group_public_key_hash`. Hand-replicating the prelude at four sites risked
+//! drift. It also let one site (`fetch_parent_proof`) skip the
+//! `vrf_group_public_key_hash` computation. That site left `B256::ZERO` on records
+//! that `to_v2_metadata` promotes into Phase 1, and Rule 6 then rejects them.
+//! Sharing one builder removes the drift risk and guarantees that every write
+//! populates the hash.
 //!
-//! The DKG boundary writer (`dkg_manager`) is intentionally NOT a caller: it
-//! passes a real `vrf_public_polynomial_hash` (not `B256::ZERO`) derived from the
-//! full DKG polynomial, a distinct computation.
+//! The DKG boundary writer (`dkg_manager`) is intentionally NOT a caller. It
+//! passes a real `vrf_public_polynomial_hash` (not `B256::ZERO`) that it derives
+//! from the full DKG polynomial. That is a distinct computation.
 
 use alloy_primitives::{keccak256, Address, B256};
 use commonware_codec::Encode as _;
@@ -40,7 +40,7 @@ pub struct CommitteePrelude {
     /// Active VRF material version for the epoch.
     pub vrf_material_version: u64,
     /// `keccak256` of the encoded VRF group public key (`B256::ZERO` when the
-    /// scheme has no identity yet). Bound by Phase 1 verifier Rule 6, so every
+    /// scheme has no identity yet). Phase 1 verifier Rule 6 binds it, so every
     /// certified-parent record MUST carry it.
     pub vrf_group_public_key_hash: B256,
 }
@@ -49,9 +49,9 @@ pub struct CommitteePrelude {
 /// ordered `addresses`.
 ///
 /// The fifth `build_committee_snapshot` argument (`vrf_public_polynomial_hash`)
-/// is `B256::ZERO` for every non-DKG path and is excluded from
-/// `committee_set_hash_v2`, so the snapshot fingerprint depends only on the
-/// committee, `vrf_material_version`, and the raw VRF group-key bytes.
+/// is `B256::ZERO` for every non-DKG path. `committee_set_hash_v2` excludes it,
+/// so the snapshot fingerprint depends only on the committee,
+/// `vrf_material_version`, and the raw VRF group-key bytes.
 pub fn build_committee_prelude(
     scheme: &HybridScheme<MinSig>,
     addresses: &[Address],
@@ -113,9 +113,9 @@ mod tests {
     }
 
     /// Regression for the `fetch_parent_proof` `vrf_group_public_key_hash = ZERO`
-    /// bug: the prelude's hash MUST equal the value the Phase 1 verifier (Rule 6,
-    /// `proof::verifier`) recomputes as `keccak256(snapshot.vrf_group_public_key_bytes)`,
-    /// so any certified-parent record built from the prelude passes Rule 6. Before
+    /// bug. The prelude's hash MUST equal the value the Phase 1 verifier (Rule 6,
+    /// `proof::verifier`) recomputes as `keccak256(snapshot.vrf_group_public_key_bytes)`.
+    /// Thus any certified-parent record built from the prelude passes Rule 6. Before
     /// the unification, `fetch_parent_proof` left this `B256::ZERO`, and a promoted
     /// witness record would fail Rule 6.
     #[test]

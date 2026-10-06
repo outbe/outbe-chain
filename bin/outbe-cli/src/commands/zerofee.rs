@@ -6,7 +6,7 @@
 //! [`outbe_primitives::addresses::ZEROFEE_ADDRESS`].
 //!
 //! The signing path is deliberately *offline-friendly*: it does not
-//! contact the RPC node, so an operator can pre-sign authorizations
+//! contact the RPC node. Thus an operator can pre-sign authorizations
 //! on an air-gapped machine and forward them to a sponsor service
 //! over any transport.
 
@@ -33,11 +33,11 @@ pub enum ZeroFeeCmd {
     /// ZeroFee paymaster precompile so it can submit up to
     /// `FREE_TX_DAILY_LIMIT` free transactions per UTC day.
     ///
-    /// The output JSON is the inner `SignedAuthorization` body - embed
+    /// The output JSON is the inner `SignedAuthorization` body. Embed
     /// it in the `authorizationList` of a type-0x04 (Pectra) transaction.
     Eip7702Authorize {
         /// Target address the EOA delegates to. Defaults to the
-        /// canonical `ZEROFEE_ADDRESS` precompile; the override
+        /// canonical `ZEROFEE_ADDRESS` precompile. The override
         /// exists for local-testnet scenarios where someone might
         /// re-deploy the paymaster behind a different address.
         #[arg(
@@ -48,13 +48,13 @@ pub enum ZeroFeeCmd {
 
         /// Chain ID for the authorization. Set to 0 for the
         /// "any chain" form, which most production sponsors should
-        /// avoid; the default reads from the configured RPC.
+        /// avoid. The default reads from the configured RPC.
         #[arg(long)]
         chain_id: Option<u64>,
 
         /// EOA nonce to bind the authorization to. The signer's
-        /// current nonce on the configured RPC is the safe default -
-        /// override only if you know what you are doing.
+        /// current nonce on the configured RPC is the safe default.
+        /// Override it only if you know what you are doing.
         #[arg(long)]
         nonce: Option<u64>,
     },
@@ -134,10 +134,10 @@ fn build_bootstrap_raw_transaction(
     })
 }
 
-/// Wire-format payload that drops verbatim into the `authorizationList`
+/// Wire-format payload that goes verbatim into the `authorizationList`
 /// field of a Pectra transaction. Field names match the EIP-7702 JSON
-/// schema accepted by viem and `cast wallet sign-auth`. The recovered
-/// signer address is intentionally absent - see
+/// schema that viem and `cast wallet sign-auth` accept. The recovered
+/// signer address is intentionally absent. See
 /// [`sign_and_print_authorization`] for the rationale.
 #[derive(Serialize)]
 struct SignedAuthorizationOutput {
@@ -168,11 +168,11 @@ fn sign_and_print_authorization(
         s: signed.s(),
     };
 
-    // stdout carries the wire payload only - operators pipe it straight
+    // stdout carries the wire payload only. Operators pipe it straight
     // into an `authorizationList` entry. The recovered signer address
-    // goes to stderr so it cannot accidentally land in the JSON body
-    // (viem 2.x silently ignores unknown fields, which would mask a
-    // copy-paste mistake until the malformed tx hits the chain).
+    // goes to stderr so it cannot accidentally land in the JSON body.
+    // viem 2.x silently ignores unknown fields, which would mask a
+    // copy-paste mistake until the malformed tx hits the chain.
     eprintln!(
         "Signed EIP-7702 authorization for signer={} target={}",
         signer.address(),

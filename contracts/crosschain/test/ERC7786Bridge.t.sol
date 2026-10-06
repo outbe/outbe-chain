@@ -13,7 +13,8 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
-/// @dev Concrete instance of the abstract OZ loopback gateway, plus a fixed quote for the passthrough test.
+/// @dev Concrete instance of the abstract OZ loopback gateway, plus a fixed quote for the
+/// passthrough test.
 contract GatewayMock is ERC7786GatewayMock, IGatewayQuote {
     function quote(bytes calldata, bytes calldata) external pure returns (uint256) {
         return 4242;
@@ -24,8 +25,8 @@ contract GatewayMock is ERC7786GatewayMock, IGatewayQuote {
     }
 }
 
-/// @dev Gateway that interprets the executionGasLimit attribute (and rejects others), mirroring a real adapter,
-/// so the bridge's attribute forwarding / delegation can be checked in isolation.
+/// @dev Gateway that interprets the executionGasLimit attribute (and rejects others). It mirrors a
+/// real adapter, so a test can check the bridge's attribute forwarding / delegation in isolation.
 contract AttrAwareGatewayMock is IERC7786GatewaySource, IGatewayQuote {
     bool public sawGasAttribute;
 
@@ -190,7 +191,7 @@ contract ERC7786BridgeTest is Test {
 
         bytes[] memory attrs = new bytes[](1);
         attrs[0] = hex"12345678";
-        // The bridge forwards the attribute; the gateway rejects the unknown one.
+        // The bridge forwards the attribute. The gateway rejects the unknown one.
         vm.prank(app);
         vm.expectRevert(abi.encodeWithSelector(IERC7786GatewaySource.UnsupportedAttribute.selector, bytes4(0x12345678)));
         b.sendMessage(_interop(sourceBridge), "x", attrs);
@@ -310,7 +311,7 @@ contract ERC7786BridgeTest is Test {
         bridge.setGateway(gw2);
         assertEq(bridge.getGateway(), gw2, "active gateway updated");
 
-        // Old gateway is no longer trusted: its delivery reverts.
+        // The bridge no longer trusts the old gateway: the old gateway's delivery reverts.
         bytes memory p2 = _wrap(2, app, address(recipient), abi.encode("b"));
         vm.prank(gw);
         vm.expectRevert(abi.encodeWithSelector(ERC7786Bridge.ERC7786BridgeUnauthorizedGateway.selector, gw));
@@ -391,7 +392,7 @@ contract ERC7786BridgeTest is Test {
         bytes memory remoteSender = InteroperableAddress.formatEvmV1(1111, sourceBridge);
         bytes memory payload = _wrap(1, app, address(recipient), abi.encode("inner"));
 
-        // The default gateway is no longer trusted for the overridden source chain.
+        // The bridge no longer trusts the default gateway for the overridden source chain.
         vm.prank(gw);
         vm.expectRevert(abi.encodeWithSelector(ERC7786Bridge.ERC7786BridgeUnauthorizedGateway.selector, gw));
         bridge.receiveMessage(bytes32(0), remoteSender, payload);
@@ -410,8 +411,8 @@ contract ERC7786BridgeTest is Test {
         bridge.setGateway(uint256(1111), gwA);
         vm.stopPrank();
 
-        // The local-chain remote registered in setUp is served by the default gateway; the chain-1111 gateway
-        // must not be able to deliver on its behalf.
+        // The default gateway serves the local-chain remote registered in setUp. The chain-1111
+        // gateway must not be able to deliver on its behalf.
         bytes memory payload = _wrap(1, app, address(recipient), abi.encode("inner"));
         vm.prank(gwA);
         vm.expectRevert(abi.encodeWithSelector(ERC7786Bridge.ERC7786BridgeUnauthorizedGateway.selector, gwA));

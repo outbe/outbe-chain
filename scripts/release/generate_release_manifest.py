@@ -2,10 +2,13 @@
 """Generate the canonical v1 Outbe ReleaseManifest for reproducible ELF builds.
 
 The generator deliberately uses only the Python standard library so the pinned
-builder does not acquire a second package-manager dependency.  The v1 format
-contains integers only (no JSON floating-point values), sorts object keys by
-Unicode code point, emits the most compact RFC 8259 representation, escapes all
-non-ASCII code points, and terminates the document with one LF byte.
+builder does not acquire a second package-manager dependency.  The v1 format:
+
+- contains integers only (no JSON floating-point values)
+- sorts object keys by Unicode code point
+- emits the most compact RFC 8259 representation
+- escapes all non-ASCII code points
+- terminates the document with one LF byte
 """
 
 from __future__ import annotations

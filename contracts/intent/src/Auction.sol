@@ -48,7 +48,7 @@ contract Auction is IAuction, Ownable2Step {
     /// @notice Auction start time (set on first commit, 0 = no auction)
     mapping(bytes32 => uint256) internal _auctionStartedAt;
 
-    /// @notice Per-order auction epoch, incremented on every resetAuction so prior-round commits
+    /// @notice Per-order auction epoch. Every resetAuction increments it, so prior-round commits
     ///         become unreachable without enumerating the (non-enumerable) _commits mapping.
     mapping(bytes32 => uint256) internal _auctionEpoch;
 

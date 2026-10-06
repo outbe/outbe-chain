@@ -4,10 +4,16 @@
 //! These drive real EVM frames through `OutbeEvmFactory` rather than calling the
 //! classifier directly, so they exercise the opcode shapes an attacker actually
 //! emits. `CALLCODE` and `DELEGATECALL` reach a precompile with a
-//! `bytecode_address` that differs from the `target_address` revm credited: that
-//! is how forged value would be booked by a payable precompile that trusts
-//! `msg.value`, and how a contract would act under its own caller's identity
-//! against the precompile's global state.
+//! `bytecode_address` that differs from the `target_address` revm credited. In
+//! that shape, a payable precompile that trusts `msg.value` would book forged
+//! value. In that shape, a contract would also act under its own caller's
+//! identity against the precompile's global state.
+
+mod sub_call_support;
+
+#[path = "common/borrowed_precompile.rs"]
+mod borrow_code_fixture;
+use borrow_code_fixture::borrow_code;
 
 use alloy_evm::{Evm as _, EvmFactory as _};
 use alloy_primitives::{keccak256, Address, Bytes, U256};
@@ -55,43 +61,6 @@ fn funded(balance: u64) -> AccountInfo {
         balance: U256::from(balance),
         ..Default::default()
     }
-}
-
-/// Bytecode that copies its calldata into memory and forwards it to `target`
-/// through `opcode`, then returns the 32-byte success flag.
-///
-/// `CALLCODE` (`0xf2`) takes a value operand, which we source from `CALLVALUE`
-/// so the frame forwards exactly what the outer transaction sent.
-/// `DELEGATECALL` (`0xf4`) takes none - it inherits the frame's value.
-fn borrow_code(opcode: u8, target: Address) -> Bytes {
-    let mut code = vec![
-        0x36, // CALLDATASIZE          size
-        0x60, 0x00, // PUSH1 0         offset
-        0x60, 0x00, // PUSH1 0         destOffset
-        0x37, // CALLDATACOPY
-        0x60, 0x00, // PUSH1 0         retLength
-        0x60, 0x00, // PUSH1 0         retOffset
-        0x36, // CALLDATASIZE          argsLength
-        0x60, 0x00, // PUSH1 0         argsOffset
-    ];
-    if opcode == 0xf2 {
-        code.push(0x34); // CALLVALUE   value
-    }
-    code.push(0x73); // PUSH20         address
-    code.extend_from_slice(target.as_slice());
-    code.push(0x5a); // GAS
-    code.push(opcode);
-    code.extend_from_slice(&[
-        0x50, // POP                   drop the success flag
-        0x3d, // RETURNDATASIZE        size
-        0x60, 0x00, // PUSH1 0         offset
-        0x60, 0x00, // PUSH1 0         destOffset
-        0x3e, // RETURNDATACOPY
-        0x3d, // RETURNDATASIZE        size
-        0x60, 0x00, // PUSH1 0         offset
-        0xf3, // RETURN                bubble the inner frame's returndata up
-    ]);
-    Bytes::from(code)
 }
 
 fn stake_calldata(validator: Address, amount: u64) -> Bytes {
@@ -202,13 +171,13 @@ fn db_with_registered_validator(validator: Address) -> CacheDB<EmptyDB> {
 }
 
 /// CALLCODE hands the boundary a `CallValue::Transfer` whose amount came off the
-/// stack, but caller and target are the same account, so revm's journal performs a
+/// stack. But caller and target are the same account, so revm's journal performs a
 /// balance check and moves nothing. Crediting it would let `staking.stake` book
 /// stake `STAKING_ADDRESS` never received - repeatable at no cost.
 #[test]
 fn callcode_to_staking_with_value_cannot_credit_stake() {
     // CALLCODE sets `caller` to the executing account, so the borrower stakes to
-    // itself and the self-stake gate passes: only the value boundary stands
+    // itself and the self-stake gate passes. Only the value boundary stands
     // between this frame and a credited stake.
     let outcome = run(
         db_with_borrower(0xf2),
@@ -240,8 +209,8 @@ fn callcode_to_staking_with_value_cannot_credit_stake() {
 #[test]
 fn delegatecall_to_staking_with_value_cannot_credit_stake() {
     // DELEGATECALL keeps the inherited `caller`, which is the EOA that funded
-    // the borrower, so the stake must name the EOA for the self-stake gate to
-    // pass and leave the value boundary as the only remaining check.
+    // the borrower. So the stake must name the EOA for the self-stake gate to
+    // pass. Then the value boundary is the only remaining check.
     let outcome = run(
         db_with_borrower(0xf4),
         BORROWER,
@@ -274,8 +243,8 @@ fn zero_value_callcode_is_refused_too() {
         stake_calldata(BORROWER, STAKE_VALUE),
     );
 
-    // A delegated frame is refused whether or not it carries value: dispatch
-    // would otherwise run against the precompile's own storage while `caller`
+    // A delegated frame is refused whether or not it carries value. Otherwise
+    // dispatch would run against the precompile's own storage while `caller`
     // stays the frame's inherited caller.
     assert_eq!(
         revert_reason(&outcome.result).as_deref(),
@@ -286,7 +255,7 @@ fn zero_value_callcode_is_refused_too() {
 }
 
 /// Gratis has no payable selector, so value sent to it has no accounting entry and
-/// no withdrawal path; it must be refused before any state is touched.
+/// no withdrawal path. It must be refused before any state is touched.
 #[test]
 fn plain_call_with_value_to_non_payable_precompile_is_rejected() {
     let mut db = CacheDB::new(EmptyDB::default());
@@ -337,12 +306,12 @@ fn plain_call_with_value_credits_a_payable_precompile() {
     );
 }
 
-/// Reserving the `0x53c0...` class must not make native value unspendable there: an
-/// empty-calldata send is an ordinary transfer the class dispatch returns from
-/// without touching token state.
+/// Reserving the `0x53c0...` class must not make native value unspendable there.
+/// An empty-calldata send is an ordinary transfer. The class dispatch returns
+/// from it without touching token state.
 ///
 /// This address is unissued, which is the branch that also existed before the
-/// class narrowing, so the test guards against over-restricting rather than
+/// class narrowing. So the test guards against over-restricting rather than
 /// proving the narrowing. The issued-token half is
 /// `precompile_routes::tests::registered_stablecoin_token_refuses_a_plain_native_transfer`.
 #[test]
@@ -386,10 +355,11 @@ fn native_transfer_to_stablecoin_class_address_succeeds() {
 /// The impersonation the delegated-frame refusal closes, independent of value.
 ///
 /// `DELEGATECALL` keeps the frame's inherited caller, and dispatch keys the
-/// precompile's storage on the borrowed address, so before the refusal a
+/// precompile's storage on the borrowed address. So before the refusal, a
 /// contract could run any caller-authenticated selector - here `unstake` - as
-/// whoever called it, against real staking state. Without the guard this reaches
-/// staking and fails on staking's own accounting; with it, the frame never runs.
+/// whoever called it, against real staking state. Without the guard, this
+/// reaches staking and fails on staking's own accounting. With the guard, the
+/// frame never runs.
 #[test]
 fn delegatecall_cannot_act_under_the_inherited_caller() {
     let mut db = CacheDB::new(EmptyDB::default());
@@ -422,7 +392,7 @@ fn delegatecall_cannot_act_under_the_inherited_caller() {
 
 /// The stranding bug R-02 names, at execution level.
 ///
-/// Oracle put its value check on mutating selectors only, so a funded call to a
+/// Oracle put its value check on mutating selectors only. So a funded call to a
 /// view like `getPairCount` used to **succeed**: revm had already credited the
 /// precompile account, the view ignored the value, and the frame committed. The
 /// value then sat at an address with no accounting entry and no way out. The
@@ -498,14 +468,19 @@ fn delegation_db(marker: bool) -> CacheDB<EmptyDB> {
         .unwrap();
     db
 }
-fn execute_delegation_call(
-    db: CacheDB<EmptyDB>,
+struct DelegationCall {
     to: Address,
     value: u64,
     data: Bytes,
+}
+
+fn execute_delegation_call(
+    db: CacheDB<EmptyDB>,
+    call: DelegationCall,
     inspect: bool,
     normalize: bool,
 ) -> ResultAndState {
+    let DelegationCall { to, value, data } = call;
     use revm::inspector::InspectorHandler;
     let tx = TxEnv::builder()
         .caller(EOA)
@@ -560,169 +535,265 @@ fn execution_code_normalization_controls() {
     let forwarder = Address::new([0xbb; 20]);
     let ordinary = Address::new([0xdd; 20]);
     for inspect in [false, true] {
+        assert_native_transfer_identity(inspect);
+        assert_nested_delegation_opcodes(inspect, forwarder)
+            .expect("delegation result matches independent baseline");
+        assert_outer_delegation_revert(inspect, forwarder);
+        assert_ordinary_delegation(inspect, ordinary)
+            .expect("delegation result matches independent baseline");
+        assert_single_delegation_hop(inspect, ordinary);
+        assert_ethereum_precompile(inspect);
+        assert_direct_native_value_rejection(inspect);
+    }
+}
+
+fn assert_native_transfer_identity(inspect: bool) {
+    let actual = execute_delegation_call(
+        delegation_db(true),
+        DelegationCall {
+            to: BORROWER,
+            value: 10,
+            data: Bytes::new(),
+        },
+        inspect,
+        true,
+    );
+    let empty = execute_delegation_call(
+        delegation_db(false),
+        DelegationCall {
+            to: BORROWER,
+            value: 10,
+            data: Bytes::new(),
+        },
+        inspect,
+        false,
+    );
+    assert_eq!(
+        actual.result, empty.result,
+        "gas and output must match the normal empty-code path"
+    );
+    assert_eq!(balance_of(&actual, BORROWER), U256::from(11));
+    assert_eq!(balance_of(&actual, EOA), balance_of(&empty, EOA));
+    assert_eq!(actual.state[&BORROWER].info.nonce, 2);
+    assert_eq!(
+        actual.state[&BORROWER].info.code_hash,
+        Bytecode::new_eip7702(ZEROFEE_ADDRESS).hash_slow()
+    );
+    assert_eq!(
+        actual.state[&ZEROFEE_ADDRESS].info.code_hash,
+        Bytecode::new_legacy([0xef].into()).hash_slow()
+    );
+    assert_eq!(storage_writes(&actual, ZEROFEE_ADDRESS), 0);
+    eprintln!("normalization_control inspect={inspect} case=transfer_gas_marker_identity passed");
+}
+
+fn assert_nested_delegation_opcodes(inspect: bool, forwarder: Address) -> eyre::Result<()> {
+    for opcode in [0xf1, 0xf2, 0xf4, 0xfa] {
+        let mut db = delegation_db(true);
+        insert_code(
+            &mut db,
+            forwarder,
+            forward_call(BORROWER, opcode, false),
+            0,
+            0,
+        );
         let actual = execute_delegation_call(
-            delegation_db(true),
-            BORROWER,
-            10,
-            Bytes::new(),
+            db,
+            DelegationCall {
+                to: forwarder,
+                value: 10,
+                data: Bytes::new(),
+            },
             inspect,
             true,
         );
-        let empty = execute_delegation_call(
-            delegation_db(false),
-            BORROWER,
-            10,
-            Bytes::new(),
+        let mut baseline_db = delegation_db(false);
+        insert_code(
+            &mut baseline_db,
+            forwarder,
+            forward_call(BORROWER, opcode, false),
+            0,
+            0,
+        );
+        let baseline = execute_delegation_call(
+            baseline_db,
+            DelegationCall {
+                to: forwarder,
+                value: 10,
+                data: Bytes::new(),
+            },
             inspect,
             false,
         );
         assert_eq!(
-            actual.result, empty.result,
-            "gas and output must match the normal empty-code path"
+            actual.result, baseline.result,
+            "nested CALL result and gas must match empty delegation: opcode={opcode:x}"
         );
-        assert_eq!(balance_of(&actual, BORROWER), U256::from(11));
-        assert_eq!(balance_of(&actual, EOA), balance_of(&empty, EOA));
-        assert_eq!(actual.state[&BORROWER].info.nonce, 2);
-        assert_eq!(
-            actual.state[&BORROWER].info.code_hash,
-            Bytecode::new_eip7702(ZEROFEE_ADDRESS).hash_slow()
-        );
-        assert_eq!(
-            actual.state[&ZEROFEE_ADDRESS].info.code_hash,
-            Bytecode::new_legacy([0xef].into()).hash_slow()
-        );
-        assert_eq!(storage_writes(&actual, ZEROFEE_ADDRESS), 0);
-        eprintln!(
-            "normalization_control inspect={inspect} case=transfer_gas_marker_identity passed"
-        );
-
-        for opcode in [0xf1, 0xf2, 0xf4, 0xfa] {
-            let mut db = delegation_db(true);
-            insert_code(
-                &mut db,
-                forwarder,
-                forward_call(BORROWER, opcode, false),
-                0,
-                0,
-            );
-            let actual = execute_delegation_call(db, forwarder, 10, Bytes::new(), inspect, true);
-            let mut baseline_db = delegation_db(false);
-            insert_code(
-                &mut baseline_db,
-                forwarder,
-                forward_call(BORROWER, opcode, false),
-                0,
-                0,
-            );
-            let baseline =
-                execute_delegation_call(baseline_db, forwarder, 10, Bytes::new(), inspect, false);
-            assert_eq!(
-                actual.result, baseline.result,
-                "nested CALL result and gas must match empty delegation: opcode={opcode:x}"
-            );
-            assert_eq!(balance_of(&actual, EOA), balance_of(&baseline, EOA));
-            match &actual.result {
-                ExecutionResult::Success {
-                    output: Output::Call(data),
-                    ..
-                } => assert_eq!(U256::from_be_slice(data), U256::from(1)),
-                other => panic!("call scheme {opcode:x}: {other:?}"),
-            }
-            assert_eq!(
-                balance_of(&actual, BORROWER),
-                U256::from(if opcode == 0xf1 { 11 } else { 1 })
-            );
-            assert_eq!(storage_writes(&actual, ZEROFEE_ADDRESS), 0);
-            eprintln!("normalization_control inspect={inspect} case=opcode_{opcode:x} passed");
-        }
-        let mut db = delegation_db(true);
-        insert_code(&mut db, forwarder, forward_call(BORROWER, 0xf1, true), 0, 0);
-        let actual = execute_delegation_call(db, forwarder, 10, Bytes::new(), inspect, true);
-        assert!(matches!(actual.result, ExecutionResult::Revert { .. }));
-        assert_eq!(balance_of(&actual, BORROWER), U256::from(1));
-        assert_eq!(balance_of(&actual, forwarder), U256::ZERO);
-        eprintln!("normalization_control inspect={inspect} case=outer_revert passed");
-
-        let mut db = delegation_db(true);
-        insert_code(&mut db, BORROWER, Bytecode::new_eip7702(ordinary), 1, 2);
-        insert_code(
-            &mut db,
-            ordinary,
-            Bytecode::new_legacy(vec![0x60, 42, 0x60, 0, 0x52, 0x60, 32, 0x60, 0, 0xf3].into()),
-            0,
-            0,
-        );
-        let baseline =
-            execute_delegation_call(db.clone(), BORROWER, 10, Bytes::new(), inspect, false);
-        let actual = execute_delegation_call(db, BORROWER, 10, Bytes::new(), inspect, true);
-        assert_eq!(actual.result, baseline.result);
-        match actual.result {
+        assert_eq!(balance_of(&actual, EOA), balance_of(&baseline, EOA));
+        match &actual.result {
             ExecutionResult::Success {
                 output: Output::Call(data),
                 ..
-            } => assert_eq!(U256::from_be_slice(&data), U256::from(42)),
-            other => panic!("ordinary delegation: {other:?}"),
+            } => assert_eq!(U256::from_be_slice(data), U256::from(1)),
+            other => eyre::bail!("call scheme {opcode:x}: {other:?}"),
         }
-        eprintln!("normalization_control inspect={inspect} case=ordinary_delegation passed");
-
-        let mut db = delegation_db(true);
-        insert_code(&mut db, BORROWER, Bytecode::new_eip7702(ordinary), 1, 2);
-        insert_code(
-            &mut db,
-            ordinary,
-            Bytecode::new_eip7702(ZEROFEE_ADDRESS),
-            0,
-            0,
+        assert_eq!(
+            balance_of(&actual, BORROWER),
+            U256::from(if opcode == 0xf1 { 11 } else { 1 })
         );
-        let baseline =
-            execute_delegation_call(db.clone(), BORROWER, 10, Bytes::new(), inspect, false);
-        let actual = execute_delegation_call(db, BORROWER, 10, Bytes::new(), inspect, true);
-        assert_eq!(actual.result, baseline.result);
-        assert!(format!("{:?}", actual.result).contains("OpcodeNotFound"));
-        eprintln!("normalization_control inspect={inspect} case=one_hop_only passed");
-
-        let identity = Address::with_last_byte(4);
-        let baseline = execute_delegation_call(
-            delegation_db(true),
-            identity,
-            0,
-            Bytes::from_static(b"identity"),
-            inspect,
-            false,
-        );
-        let actual = execute_delegation_call(
-            delegation_db(true),
-            identity,
-            0,
-            Bytes::from_static(b"identity"),
-            inspect,
-            true,
-        );
-        assert_eq!(actual.result, baseline.result);
-        eprintln!("normalization_control inspect={inspect} case=ethereum_precompile passed");
-
-        let baseline = execute_delegation_call(
-            delegation_db(true),
-            ZEROFEE_ADDRESS,
-            10,
-            Bytes::new(),
-            inspect,
-            false,
-        );
-        let actual = execute_delegation_call(
-            delegation_db(true),
-            ZEROFEE_ADDRESS,
-            10,
-            Bytes::new(),
-            inspect,
-            true,
-        );
-        assert_eq!(actual.result, baseline.result);
-        assert!(matches!(actual.result, ExecutionResult::Revert { .. }));
-        eprintln!(
-            "normalization_control inspect={inspect} case=direct_native_value_rejection passed"
-        );
+        assert_eq!(storage_writes(&actual, ZEROFEE_ADDRESS), 0);
+        eprintln!("normalization_control inspect={inspect} case=opcode_{opcode:x} passed");
     }
+    Ok(())
+}
+
+fn assert_outer_delegation_revert(inspect: bool, forwarder: Address) {
+    let mut db = delegation_db(true);
+    insert_code(&mut db, forwarder, forward_call(BORROWER, 0xf1, true), 0, 0);
+    let actual = execute_delegation_call(
+        db,
+        DelegationCall {
+            to: forwarder,
+            value: 10,
+            data: Bytes::new(),
+        },
+        inspect,
+        true,
+    );
+    assert!(matches!(actual.result, ExecutionResult::Revert { .. }));
+    assert_eq!(balance_of(&actual, BORROWER), U256::from(1));
+    assert_eq!(balance_of(&actual, forwarder), U256::ZERO);
+    eprintln!("normalization_control inspect={inspect} case=outer_revert passed");
+}
+
+fn assert_ordinary_delegation(inspect: bool, ordinary: Address) -> eyre::Result<()> {
+    let mut db = delegation_db(true);
+    insert_code(&mut db, BORROWER, Bytecode::new_eip7702(ordinary), 1, 2);
+    insert_code(
+        &mut db,
+        ordinary,
+        Bytecode::new_legacy(vec![0x60, 42, 0x60, 0, 0x52, 0x60, 32, 0x60, 0, 0xf3].into()),
+        0,
+        0,
+    );
+    let baseline = execute_delegation_call(
+        db.clone(),
+        DelegationCall {
+            to: BORROWER,
+            value: 10,
+            data: Bytes::new(),
+        },
+        inspect,
+        false,
+    );
+    let actual = execute_delegation_call(
+        db,
+        DelegationCall {
+            to: BORROWER,
+            value: 10,
+            data: Bytes::new(),
+        },
+        inspect,
+        true,
+    );
+    assert_eq!(actual.result, baseline.result);
+    match actual.result {
+        ExecutionResult::Success {
+            output: Output::Call(data),
+            ..
+        } => assert_eq!(U256::from_be_slice(&data), U256::from(42)),
+        other => eyre::bail!("ordinary delegation: {other:?}"),
+    }
+    eprintln!("normalization_control inspect={inspect} case=ordinary_delegation passed");
+
+    Ok(())
+}
+
+fn assert_single_delegation_hop(inspect: bool, ordinary: Address) {
+    let mut db = delegation_db(true);
+    insert_code(&mut db, BORROWER, Bytecode::new_eip7702(ordinary), 1, 2);
+    insert_code(
+        &mut db,
+        ordinary,
+        Bytecode::new_eip7702(ZEROFEE_ADDRESS),
+        0,
+        0,
+    );
+    let baseline = execute_delegation_call(
+        db.clone(),
+        DelegationCall {
+            to: BORROWER,
+            value: 10,
+            data: Bytes::new(),
+        },
+        inspect,
+        false,
+    );
+    let actual = execute_delegation_call(
+        db,
+        DelegationCall {
+            to: BORROWER,
+            value: 10,
+            data: Bytes::new(),
+        },
+        inspect,
+        true,
+    );
+    assert_eq!(actual.result, baseline.result);
+    assert!(format!("{:?}", actual.result).contains("OpcodeNotFound"));
+    eprintln!("normalization_control inspect={inspect} case=one_hop_only passed");
+}
+
+fn assert_ethereum_precompile(inspect: bool) {
+    let identity = Address::with_last_byte(4);
+    let baseline = execute_delegation_call(
+        delegation_db(true),
+        DelegationCall {
+            to: identity,
+            value: 0,
+            data: Bytes::from_static(b"identity"),
+        },
+        inspect,
+        false,
+    );
+    let actual = execute_delegation_call(
+        delegation_db(true),
+        DelegationCall {
+            to: identity,
+            value: 0,
+            data: Bytes::from_static(b"identity"),
+        },
+        inspect,
+        true,
+    );
+    assert_eq!(actual.result, baseline.result);
+    eprintln!("normalization_control inspect={inspect} case=ethereum_precompile passed");
+}
+
+fn assert_direct_native_value_rejection(inspect: bool) {
+    let baseline = execute_delegation_call(
+        delegation_db(true),
+        DelegationCall {
+            to: ZEROFEE_ADDRESS,
+            value: 10,
+            data: Bytes::new(),
+        },
+        inspect,
+        false,
+    );
+    let actual = execute_delegation_call(
+        delegation_db(true),
+        DelegationCall {
+            to: ZEROFEE_ADDRESS,
+            value: 10,
+            data: Bytes::new(),
+        },
+        inspect,
+        true,
+    );
+    assert_eq!(actual.result, baseline.result);
+    assert!(matches!(actual.result, ExecutionResult::Revert { .. }));
+    eprintln!("normalization_control inspect={inspect} case=direct_native_value_rejection passed");
 }
 
 #[test]
@@ -749,54 +820,15 @@ fn system_call_to_native_delegation_executes_empty_code() {
 
 #[test]
 fn borrowed_native_subcalls_normalize_initial_and_nested_delegations() {
-    use outbe_primitives::storage::{SubCallInput, SubCallStatus};
-    use revm::context_interface::{ContextTr, JournalTr};
     for nested in [false, true] {
         for is_static in [false, true] {
             let forwarder = Address::new([0xbb; 20]);
             let mut outcomes = Vec::new();
             for marker in [false, true] {
-                let mut db = delegation_db(marker);
-                insert_code(
-                    &mut db,
-                    forwarder,
-                    forward_call(BORROWER, if is_static { 0xfa } else { 0xf1 }, false),
-                    0,
-                    0,
+                outcomes.push(
+                    borrowed_delegation_outcome(nested, is_static, marker, forwarder)
+                        .expect("borrowed delegation outcome fixture succeeds"),
                 );
-                let mut evm = OutbeEvmFactory::new().create_evm(db, test_env());
-                // A native caller is already loaded by its enclosing frame.
-                evm.ctx_mut()
-                    .journal_mut()
-                    .load_account_with_code(EOA)
-                    .unwrap();
-                let outcome = outbe_evm::sub_call::run(
-                    evm.ctx_mut(),
-                    EOA,
-                    false,
-                    SpecId::PRAGUE,
-                    None,
-                    std::sync::Arc::new(outbe_compressed_entities::ExecutionScope::new()),
-                    SubCallInput {
-                        target: if nested { forwarder } else { BORROWER },
-                        value: U256::from(if is_static { 0 } else { 10 }),
-                        calldata: Bytes::new(),
-                        gas_limit: 100_000,
-                        is_static,
-                    },
-                )
-                .unwrap();
-                assert!(matches!(outcome.status, SubCallStatus::Success));
-                assert_eq!(
-                    evm.ctx_mut()
-                        .journal_mut()
-                        .load_account_with_code(BORROWER)
-                        .unwrap()
-                        .info
-                        .balance,
-                    U256::from(if is_static { 1 } else { 11 })
-                );
-                outcomes.push((outcome.gas_used, outcome.gas_refunded, outcome.returndata));
             }
             assert_eq!(
                 outcomes[0], outcomes[1],
@@ -804,4 +836,47 @@ fn borrowed_native_subcalls_normalize_initial_and_nested_delegations() {
             );
         }
     }
+}
+
+fn borrowed_delegation_outcome(
+    nested: bool,
+    is_static: bool,
+    marker: bool,
+    forwarder: Address,
+) -> eyre::Result<(u64, i64, Bytes)> {
+    use outbe_primitives::storage::{SubCallInput, SubCallStatus};
+    use revm::context_interface::{ContextTr, JournalTr};
+    let mut db = delegation_db(marker);
+    insert_code(
+        &mut db,
+        forwarder,
+        forward_call(BORROWER, if is_static { 0xfa } else { 0xf1 }, false),
+        0,
+        0,
+    );
+    let mut evm = OutbeEvmFactory::new().create_evm(db, test_env());
+    // A native caller is already loaded by its enclosing frame.
+    evm.ctx_mut().journal_mut().load_account_with_code(EOA)?;
+    let outcome = outbe_evm::sub_call::run(
+        evm.ctx_mut(),
+        sub_call_support::fresh_environment(EOA, SpecId::PRAGUE),
+        SubCallInput {
+            target: if nested { forwarder } else { BORROWER },
+            value: U256::from(if is_static { 0 } else { 10 }),
+            calldata: Bytes::new(),
+            gas_limit: 100_000,
+            is_static,
+        },
+    )?;
+    assert!(matches!(outcome.status, SubCallStatus::Success));
+    assert_eq!(
+        evm.ctx_mut()
+            .journal_mut()
+            .load_account_with_code(BORROWER)
+            .unwrap()
+            .info
+            .balance,
+        U256::from(if is_static { 1 } else { 11 })
+    );
+    Ok((outcome.gas_used, outcome.gas_refunded, outcome.returndata))
 }

@@ -1,27 +1,27 @@
 //! Daily call scan: force-calls Nod buckets off the Oracle's finalized
 //! per-UTC-day VWAPs, then forfeit-burns the Nods of a bucket whose notice
 //! period lapsed. The Cycle daily trigger pins the closed UTC day and runs the
-//! first slice; later CycleTicks continue the same day.
+//! first slice. Later CycleTicks continue the same day.
 //!
 //! One pass applies at most one transition per bucket, in lifecycle order, over
 //! two arms sharing one visit budget:
 //!
 //! - *not called* -> *called*, walking each currency's call-price trie, when
 //!   the reference price exceeded the bucket's call price on at least its
-//!   `call_threshold` of the trailing `call_window`.
+//!   `call_threshold_seconds` of the trailing `call_window_seconds`.
 //! - *called* -> *forfeited*, walking the called-bucket list, when the bucket's
-//!   `call_notice_period` has lapsed with Nods still unpaid. The two can never
+//!   `call_notice_period_seconds` has lapsed with Nods still unpaid. The two can never
 //!   fire in one pass, since a bucket called now cannot also be a notice period
 //!   past its call.
 //!
-//! All four terms are sealed onto the bucket at issuance and read back from it
-//! here, so retuning a constant leaves every issued bucket on the terms it was
-//! issued with. Gem and intex give the same guarantee.
+//! Issuance seals all four terms onto the bucket, and this scan reads them back
+//! from it. Retuning a constant therefore leaves every issued bucket on the
+//! terms it was issued with. Gem and intex give the same guarantee.
 //!
-//! The breach rule needs no per-bucket streak state: the daily series is global
+//! The breach rule needs no per-bucket streak state. The daily series is global
 //! per currency, so one trailing window per currency decides every bucket
-//! denominated in it, and the count is recomputed from oracle history on every
-//! run rather than carried. Mirrors `outbe_gem::hooks::scan_and_call` and
+//! denominated in it. Every run recomputes the count from oracle history rather
+//! than carrying it. Mirrors `outbe_gem::hooks::scan_and_call` and
 //! `outbe_credisfactory::called::scan_and_call`, which evaluate the same shape.
 //!
 //! Calls count only days from `first_full_day` of the bucket's sealed `issued_at`.
@@ -34,10 +34,10 @@ use outbe_oracle::{api::get_all_reference_currencies, schema::OracleContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     daily_sweep::{Scheduled, SweepDays},
-    error::Result,
+    error::{PrecompileError, Result, SweepFailure},
     math::{constants::MAX_BIN_ID, tree_math},
     storage::StorageHandle,
-    time::{first_full_day, previous_date_key, timestamp_to_date_key},
+    time::{first_full_day, previous_date_key, timestamp_to_date_key, WorldwideDay},
 };
 
 use crate::{
@@ -57,13 +57,13 @@ pub(crate) const CALL_ARM_DONE: u32 = u32::MAX;
 /// `None` marks a day the pair published no reference price.
 type VwapWindow = Vec<(u32, Option<U256>)>;
 
-/// Schedule the day the Oracle has just finalized: open a Called sweep over it
+/// Schedule the day the Oracle has just finalized. Open a Called sweep over it
 /// and run its first slice, or queue it behind the sweep still in flight.
 ///
-/// Never returns `Err` for missing market data: the Cycle dispatcher propagates
+/// Never returns `Err` for missing market data. The Cycle dispatcher propagates
 /// a handler error out of the `CycleTick` system transaction, which fails the
-/// block, so an unregistered pair, an unpriced currency or an unfinalized day
-/// each degrade to "no transition" instead.
+/// block. An unregistered pair, an unpriced currency or an unfinalized day
+/// therefore each degrade to "no transition" instead.
 pub fn scan_and_call(
     ctx: &BlockRuntimeContext,
     scope: &ExecutionScope,
@@ -303,9 +303,17 @@ pub(crate) fn call_currency(
             let bucket_key = nod
                 .call_bin_buckets
                 .read(&NodContract::bin_index_key(iso_code, bin_id, remaining))?;
-            if try_call(ctx, nod, window, bucket_key, now)? {
-                called = called.saturating_add(1);
-                called_days.insert(nod.bucket_worldwide_day.read(&bucket_key)?.value());
+            match try_call(ctx, nod, window, bucket_key, now)? {
+                Some(true) => {
+                    called = called.saturating_add(1);
+                    called_days.insert(nod.bucket_worldwide_day.read(&bucket_key)?.value());
+                }
+                Some(false) => {}
+                None => {
+                    nod.call_bin_cursor
+                        .write(&iso_code, pack_cursor(bin_id, remaining + 1))?;
+                    return Ok((called, false));
+                }
             }
         }
         from_bin = match bin_id.checked_add(1) {
@@ -318,27 +326,37 @@ pub(crate) fn call_currency(
     }
 }
 
+/// Whether the bucket was called, or `None` when the gas ran out before it.
 fn try_call(
     ctx: &BlockRuntimeContext,
     nod: &mut NodContract<'_>,
     window: &[(u32, Option<U256>)],
     bucket_key: B256,
     now: u64,
-) -> Result<bool> {
+) -> Result<Option<bool>> {
     if nod.bucket_nod_count.read(&bucket_key)? == 0 || nod.bucket_called_at.read(&bucket_key)? != 0
     {
-        return Ok(false);
+        return Ok(Some(false));
     }
     let issued_at = nod.callable_bucket_issued_at.read(&bucket_key)?;
     let terms = nod.read_call_terms(bucket_key)?;
     if !breached_enough(window, &terms, first_full_day(issued_at)) {
-        return Ok(false);
+        return Ok(Some(false));
     }
-    // A failing bucket rolls back alone, so it never halts the scan.
-    Ok(ctx
+    if materializing(nod, bucket_key)? {
+        return Ok(Some(false));
+    }
+    match ctx
         .storage
-        .with_checkpoint(|| mark_called(nod, bucket_key, now, terms.call_notice_period))
-        .is_ok())
+        .with_checkpoint(|| mark_called(nod, bucket_key, now, terms.call_notice_period_seconds))
+    {
+        Ok(()) => Ok(Some(true)),
+        Err(error) => match sweep_failure(&error) {
+            SweepFailure::Skip => Ok(Some(false)),
+            SweepFailure::Stop => Ok(None),
+            SweepFailure::Propagate => Err(error),
+        },
+    }
 }
 
 /// Returns the Nods burned and whether the walk reached the bottom.
@@ -362,9 +380,9 @@ fn forfeit_arm(
     let now = ctx.block.timestamp;
     let mut forfeited: u32 = 0;
 
-    // Descending walk: removing a bucket swap-pops the tail into the hole, and
-    // the tail is already behind a descending cursor, so no live entry is
-    // skipped and none is visited twice.
+    // Descending walk: removing a bucket swap-pops the tail into the hole. The
+    // tail is already behind a descending cursor, so the walk skips no live
+    // entry and visits none twice.
     let completed = loop {
         if *visits >= MAX_NOD_CALL_VISITS_PER_BLOCK {
             break false;
@@ -374,8 +392,10 @@ fn forfeit_arm(
             let called_at = nod.bucket_called_at.read(&bucket_key)?;
             // Paid entitlements retain their bucket terms, but cannot be forfeited.
             let has_unpaid = nod.bucket_nod_count.read(&bucket_key)? != 0;
+            // A bucket whose Nods are still landing stays listed for a later pass.
             if has_unpaid
                 && now > api::settlement_deadline_of(called_at, notice_period(nod, bucket_key)?)
+                && !materializing(nod, bucket_key)?
             {
                 let budget = MAX_NOD_FORFEITS_PER_BLOCK.saturating_sub(forfeited);
                 if budget == 0 {
@@ -384,12 +404,19 @@ fn forfeit_arm(
                 let res = ctx.storage.with_checkpoint(|| {
                     forfeit_members(&ctx.storage, nod, scope, parent, bucket_key, budget)
                 });
-                if let Ok(burned) = res {
-                    forfeited = forfeited.saturating_add(burned);
-                    // The next slice resumes on this bucket.
-                    if burned == budget && nod.bucket_nod_count.read(&bucket_key)? != 0 {
-                        break false;
+                match res {
+                    Ok(burned) => {
+                        forfeited = forfeited.saturating_add(burned);
+                        // Members left: the budget or the gas ran out, so the next slice resumes here.
+                        if nod.bucket_nod_count.read(&bucket_key)? != 0 {
+                            break false;
+                        }
                     }
+                    Err(error) => match sweep_failure(&error) {
+                        SweepFailure::Skip => {}
+                        SweepFailure::Stop => break false,
+                        SweepFailure::Propagate => return Err(error),
+                    },
                 }
             }
         }
@@ -426,23 +453,32 @@ const fn unpack_cursor(packed: u64) -> (u32, u32) {
     ((packed >> 32) as u32, packed as u32)
 }
 
-/// True when the bucket's trailing `call_window` carries at least its
-/// `call_threshold` of days strictly above its `call_price`.
+/// Nod's own index checks revert, so a body corruption reaching a sweep is this
+/// node's body store.
+pub(crate) fn sweep_failure(error: &PrecompileError) -> SweepFailure {
+    match error {
+        PrecompileError::BodyReadCorruption(_) => SweepFailure::Propagate,
+        other => other.sweep_failure(),
+    }
+}
+
+/// True when the bucket's trailing `call_window_seconds` carries at least its
+/// `call_threshold_seconds` of days strictly above its `call_price_minor`.
 ///
 /// Every term comes off the bucket, not from the constants, so a retune cannot
 /// re-term a bucket that is already armed. `window` is sized for the widest
 /// window in the currency, so this takes only its own prefix.
 ///
 /// Days at or below the call price, and days with no published price, both
-/// simply fail to count, so the window absorbs up to `window - threshold` of
-/// either. The walk stops at the first UTC day preceding `first_full_day` of
-/// the bucket's sealed `issued_at`, so a delayed materialization cannot inherit
-/// a breach run from before the right existed, and a partial issuance UTC day
-/// does not count. The window is newest-first, so everything beyond that point
-/// is older still.
+/// simply fail to count. The window therefore absorbs up to `window - threshold`
+/// of either. The walk stops at the first UTC day preceding `first_full_day` of
+/// the bucket's sealed `issued_at`. That `issued_at` is the logical issuance
+/// time, however late the right materializes. Days before issuance and the
+/// partial issuance UTC day therefore do not count. The window is newest-first,
+/// so everything beyond that point is older still.
 fn breached_enough(window: &[(u32, Option<U256>)], terms: &CallTerms, start_day: u32) -> bool {
-    let window_days = terms.call_window / SECS_PER_DAY;
-    let threshold_days = terms.call_threshold / SECS_PER_DAY;
+    let window_days = terms.call_window_seconds / SECS_PER_DAY;
+    let threshold_days = terms.call_threshold_seconds / SECS_PER_DAY;
     if threshold_days > window_days {
         return false;
     }
@@ -451,7 +487,7 @@ fn breached_enough(window: &[(u32, Option<U256>)], terms: &CallTerms, start_day:
         if *day < start_day {
             break;
         }
-        if vwap.is_some_and(|value| value > terms.call_price) {
+        if vwap.is_some_and(|value| value > terms.call_price_minor) {
             breaches += 1;
             if breaches >= threshold_days {
                 return true;
@@ -461,10 +497,17 @@ fn breached_enough(window: &[(u32, Option<U256>)], terms: &CallTerms, start_day:
     false
 }
 
+/// Whether the certified generation of the bucket's Worldwide Day still has Nods to land.
+fn materializing(nod: &NodContract<'_>, bucket_key: B256) -> Result<bool> {
+    let worldwide_day = nod.bucket_worldwide_day.read(&bucket_key)?;
+    Ok(nod.ocomp_target_generation.read(&worldwide_day)? != 0)
+}
+
 /// The bucket's sealed notice period. Read on its own in the forfeit arm, which
 /// needs no other term.
 fn notice_period(nod: &NodContract<'_>, bucket_key: B256) -> Result<u32> {
-    nod.callable_bucket_call_notice_period.read(&bucket_key)
+    nod.callable_bucket_call_notice_period_seconds
+        .read(&bucket_key)
 }
 
 /// Stamps the call and opens the settlement window the bucket sealed.
@@ -487,14 +530,17 @@ fn mark_called(
 /// Forfeit-burns up to `budget` of a lapsed bucket's remaining unpaid Nods, newest
 /// first. Returns how many were burned.
 ///
-/// A bucket holding more members than the budget resumes on the next run, which
-/// cannot change an outcome: the deadline has already passed and settlement is
+/// A bucket holding more members than the budget resumes on the next run. The
+/// resume cannot change an outcome. The deadline has already passed and settlement is
 /// closed, so nothing can rescue the remainder. Removing the last member deletes
 /// the bucket body and drops it from the called list.
 ///
+/// Each member burns in its own checkpoint, so running out of gas stops the batch
+/// early and keeps the members already burned.
+///
 /// Each burned load returns to the Promis Reserve. Lysis drew it out of the day
-/// limit and only mining converts it into Gratis, so a load that is destroyed
-/// unmined would otherwise leave the reserve with nothing minted against it.
+/// limit, and only mining converts it into Gratis. Without this return, a load
+/// destroyed unmined would leave the reserve with nothing minted against it.
 /// The credit is one accumulated write per pass, and the caller's checkpoint
 /// makes it atomic with the burns it accounts for.
 pub(crate) fn forfeit_members(
@@ -509,46 +555,15 @@ pub(crate) fn forfeit_members(
     let mut burned: u32 = 0;
     let mut credit = U256::ZERO;
     while burned < budget {
-        let count = nod.bucket_nod_count.read(&bucket_key)?;
-        let Some(last) = count.checked_sub(1) else {
-            break;
+        let member = storage.with_checkpoint(|| {
+            forfeit_last_member(storage, nod, scope, parent, bucket_key, worldwide_day)
+        });
+        let gratis_load_minor = match member {
+            Ok(Some(load)) => load,
+            Ok(None) => break,
+            Err(error) if sweep_failure(&error) == SweepFailure::Stop => break,
+            Err(error) => return Err(error),
         };
-        let nod_id = nod
-            .bucket_nods
-            .read(&NodContract::bucket_nod_key(bucket_key, last))?;
-        if nod_id.is_zero() {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "Nod bucket {bucket_key} member slot {last} is empty during forfeit"
-                )),
-            );
-        }
-        let item = api::load_item(storage, scope, parent, nod_id)?.ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                "Nod bucket {bucket_key} member {nod_id} has no body during forfeit"
-            ))
-        })?;
-        if item.body().is_settled || item.body().bucket_key != bucket_key {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "Nod bucket {bucket_key} indexes an ineligible member {nod_id}"
-                )),
-            );
-        }
-        let owner = item.body().owner;
-        let gratis_load_minor = item.body().gratis_load_minor;
-        let bucket_id = WwdEntityId::from_day_and_digest(worldwide_day, bucket_key.0);
-        let bucket = api::load_bucket(storage, scope, parent, bucket_id)?.ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                "Nod bucket {bucket_key} has no body during forfeit"
-            ))
-        })?;
-        api::remove_nod(storage, scope, item, bucket)?;
-        nod.emit(INod::NodForfeited {
-            owner,
-            nodId: nod_id.to_u256(),
-            gratisLoadMinor: gratis_load_minor,
-        })?;
         credit = credit.checked_add(gratis_load_minor).ok_or_else(|| {
             outbe_primitives::error::PrecompileError::Revert(
                 "Nod forfeit Promis Reserve credit overflow".into(),
@@ -561,6 +576,54 @@ pub(crate) fn forfeit_members(
             .add_to_total_unallocated(credit)?;
     }
     Ok(burned)
+}
+
+/// Burns the bucket's newest unpaid member and returns its load, or `None` when none is left.
+fn forfeit_last_member(
+    storage: &StorageHandle<'_>,
+    nod: &mut NodContract<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    bucket_key: B256,
+    worldwide_day: WorldwideDay,
+) -> Result<Option<U256>> {
+    let count = nod.bucket_nod_count.read(&bucket_key)?;
+    let Some(last) = count.checked_sub(1) else {
+        return Ok(None);
+    };
+    let nod_id = nod
+        .bucket_nods
+        .read(&NodContract::bucket_nod_key(bucket_key, last))?;
+    if nod_id.is_zero() {
+        return Err(outbe_primitives::error::PrecompileError::Revert(format!(
+            "Nod bucket {bucket_key} member slot {last} is empty during forfeit"
+        )));
+    }
+    let item = api::load_item(storage, scope, parent, nod_id)?.ok_or_else(|| {
+        outbe_primitives::error::PrecompileError::Revert(format!(
+            "Nod bucket {bucket_key} member {nod_id} has no body during forfeit"
+        ))
+    })?;
+    if item.body().is_settled || item.body().bucket_key != bucket_key {
+        return Err(outbe_primitives::error::PrecompileError::Revert(format!(
+            "Nod bucket {bucket_key} indexes an ineligible member {nod_id}"
+        )));
+    }
+    let owner = item.body().owner;
+    let gratis_load_minor = item.body().gratis_load_minor;
+    let bucket_id = WwdEntityId::from_day_and_digest(worldwide_day, bucket_key.0);
+    let bucket = api::load_bucket(storage, scope, parent, bucket_id)?.ok_or_else(|| {
+        outbe_primitives::error::PrecompileError::Revert(format!(
+            "Nod bucket {bucket_key} has no body during forfeit"
+        ))
+    })?;
+    api::remove_nod(storage, scope, item, bucket)?;
+    nod.emit(INod::NodForfeited {
+        owner,
+        nodId: nod_id.to_u256(),
+        gratisLoadMinor: gratis_load_minor,
+    })?;
+    Ok(Some(gratis_load_minor))
 }
 
 /// Index into `cache` of the trailing finalized-VWAP window for `COEN/<iso>`,
@@ -581,10 +644,14 @@ fn window_for(
     }
     let mut window = Vec::new();
     if let Some(pair_index) = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso_code)? {
-        // Widest of the current constant and anything ever armed: a bucket keeps
+        // Widest of the current constant and anything ever armed. A bucket keeps
         // the window it was armed with, so a narrowed constant must not shorten
         // the span the scan collects for it.
-        let window_days = nod.max_call_window.read(&iso_code)?.max(CALL_WINDOW) / SECS_PER_DAY;
+        let window_days = nod
+            .max_call_window_seconds
+            .read(&iso_code)?
+            .max(CALL_WINDOW)
+            / SECS_PER_DAY;
         window.reserve(window_days as usize);
         let mut day = last_closed_day;
         for _ in 0..window_days {

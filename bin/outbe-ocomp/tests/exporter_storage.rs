@@ -106,14 +106,24 @@ fn rocks_input() -> (Vec<AuthenticatedTributeRecord>, TributeStreamSummary) {
         "version=1\nbackend='rocksdb'\n[rocksdb]\npath='primary'\nsecondary_path='secondary'\n",
     )
     .unwrap();
-    let provider = StorageProvider::new(StorageConfig::load(&path).unwrap()).unwrap();
+    let provider = StorageProvider::new(StorageConfig::load(&path).unwrap())
+        .unwrap()
+        .with_partition_routing(outbe_offchain_data::entity_partition_routing().unwrap());
     {
         let storage = provider.open_writer().unwrap();
+        storage.ownership.activate().unwrap();
+        let completion = storage.ownership.completion();
         populate(storage.reader.clone(), storage.writer.clone());
+        drop(storage);
+        completion
+            .wait_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
     }
-    // Node reopens its writer; the exporter independently loads the same TOML.
+    // Node reopens its writer. The exporter independently loads the same TOML.
     let _primary = provider.open_writer().unwrap();
-    let exporter = StorageProvider::new(StorageConfig::load(&path).unwrap()).unwrap();
+    let exporter = StorageProvider::new(StorageConfig::load(&path).unwrap())
+        .unwrap()
+        .with_partition_routing(outbe_offchain_data::entity_partition_routing().unwrap());
     collect(
         exporter
             .read_source("exporter-v1")
@@ -124,8 +134,8 @@ fn rocks_input() -> (Vec<AuthenticatedTributeRecord>, TributeStreamSummary) {
 }
 
 // This checks actual CAS bytes, including manifest roots and chunk ordering. Chain
-// opening proofs are fixed fixtures: proof validation and result execution belong
-// to the separate full-network E2E, not this storage/publisher integration test.
+// opening proofs are fixed fixtures. Proof validation and result execution belong
+// to the separate full-network E2E, not to this storage/publisher integration test.
 fn artifact_bytes(records: &[AuthenticatedTributeRecord]) -> (Vec<u8>, Vec<Vec<u8>>) {
     let limits = poc_schema_limits();
     let bundle = support::protocol_bundle();
@@ -243,10 +253,15 @@ fn mongodb_toml_provider_produces_identical_canonical_inputs_and_artifacts_to_ro
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("offchain-storage.toml");
     std::fs::write(&path, config.to_toml().unwrap()).unwrap();
-    let provider = StorageProvider::new(StorageConfig::load(&path).unwrap()).unwrap();
+    let provider = StorageProvider::new(StorageConfig::load(&path).unwrap())
+        .unwrap()
+        .with_partition_routing(outbe_offchain_data::entity_partition_routing().unwrap());
     let storage = provider.open_writer().unwrap();
+    storage.ownership.activate().unwrap();
     populate(storage.reader.clone(), storage.writer.clone());
-    let exporter = StorageProvider::new(StorageConfig::load(&path).unwrap()).unwrap();
+    let exporter = StorageProvider::new(StorageConfig::load(&path).unwrap())
+        .unwrap()
+        .with_partition_routing(outbe_offchain_data::entity_partition_routing().unwrap());
     let memory = Arc::new(MemoryStorage::new());
     populate(memory.clone(), memory.clone());
     let mongo = collect(

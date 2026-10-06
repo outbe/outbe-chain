@@ -1,9 +1,14 @@
 //! Persistent host-side authorization for one production node enclave.
 //!
-//! The private NodeHost Noise key is write-once. A canonical public manifest is
-//! first written as `pending`, committed by the enclave, then promoted to the
-//! restart record. A crash after enclave commit but before promotion is closed
-//! by reconnecting with the pending record and promoting it only on success.
+//! The private NodeHost Noise key is write-once. A canonical public manifest
+//! goes through these steps:
+//!
+//! 1. It is first written as `pending`.
+//! 2. The enclave commits it.
+//! 3. It is promoted to the restart record.
+//!
+//! A crash can occur after enclave commit but before promotion. Reconnecting
+//! with the pending record, and promoting it only on success, closes that gap.
 
 use crate::TransportError;
 

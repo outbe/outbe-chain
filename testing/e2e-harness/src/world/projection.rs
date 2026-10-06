@@ -1,4 +1,4 @@
-//! RocksDB projection fixture. Runtime processes consume only the generated TOML.
+//! Projection datasource fixture. Runtime processes consume only the generated TOML.
 
 use std::fs;
 use std::io::Write;
@@ -9,11 +9,11 @@ use std::time::{Duration, Instant};
 
 use eyre::{bail, eyre, Result, WrapErr};
 use outbe_compressed_entities::{decode_stored_tribute_v1, WwdEntityId};
-#[cfg(test)]
 use outbe_offchain_storage::StorageProvider;
+mod mongo;
 use outbe_offchain_storage::{
-    DayDirectory, Key, Namespace, RocksDbConfig, RocksDbReader, ScanEntry, ScanRequest,
-    StorageBackend, StorageConfig, StorageReader, StorageReaderHandle,
+    Key, Namespace, RocksDbConfig, ScanEntry, ScanRequest, StorageBackend, StorageConfig,
+    StorageReader, StorageReaderHandle,
 };
 
 #[cfg(test)]
@@ -78,17 +78,26 @@ pub(crate) fn ensure_node_config(cfg: &Config, index: usize) -> Result<()> {
     let path = cfg.projection_storage_config(index);
     reject_symlink_path(&path)?;
     if path.exists() {
-        rocksdb_config(cfg, index)?;
+        storage_config(cfg, index)?;
+        if cfg.projection_backend == crate::env::ProjectionBackend::Mongodb {
+            mongo::ensure(cfg)?;
+        }
         return Ok(());
     }
     fs::create_dir_all(cfg.validator_dir(index))?;
     let directory = cfg.validator_dir(index).canonicalize()?;
     reject_symlink_path(&directory.join("data/offchain"))?;
     reject_symlink_path(&directory.join("ocomp/rocksdb-secondary"))?;
-    let backend = StorageBackend::RocksDb(RocksDbConfig {
-        path: directory.join("data/offchain"),
-        secondary_path: directory.join("ocomp/rocksdb-secondary"),
-    });
+    let backend = match cfg.projection_backend {
+        crate::env::ProjectionBackend::Rocksdb => StorageBackend::RocksDb(RocksDbConfig {
+            path: directory.join("data/offchain"),
+            secondary_path: directory.join("ocomp/rocksdb-secondary"),
+        }),
+        crate::env::ProjectionBackend::Mongodb => {
+            mongo::ensure(cfg)?;
+            StorageBackend::MongoDb(mongo::config(cfg, index)?)
+        }
+    };
     let document = StorageConfig {
         start_block: 1,
         backend,
@@ -100,11 +109,11 @@ pub(crate) fn ensure_node_config(cfg: &Config, index: usize) -> Result<()> {
     match file.persist_noclobber(&path) {
         Ok(_) => {}
         Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
-            rocksdb_config(cfg, index)?;
+            storage_config(cfg, index)?;
         }
         Err(error) => return Err(error.error.into()),
     }
-    rocksdb_config(cfg, index)?;
+    storage_config(cfg, index)?;
     Ok(())
 }
 
@@ -145,11 +154,19 @@ pub(crate) fn configure_node_command(
     Ok(())
 }
 
-/// Validate again at each consumer: a persisted Mongo config must never start a service
-/// or silently redirect a restarted node/exporter to another storage identity.
-pub(crate) fn rocksdb_config(cfg: &Config, index: usize) -> Result<StorageConfig> {
+/// Validate the exact scenario-owned storage identity at each consumer.
+/// This read-only check starts no service and changes no configuration.
+pub(crate) fn storage_config(cfg: &Config, index: usize) -> Result<StorageConfig> {
     reject_symlink_path(&cfg.projection_storage_config(index))?;
     let config = StorageConfig::load(cfg.projection_storage_config(index))?;
+    if cfg.projection_backend == crate::env::ProjectionBackend::Mongodb {
+        if config.start_block != 1
+            || config.backend != StorageBackend::MongoDb(mongo::config(cfg, index)?)
+        {
+            bail!("validator-{index}: E2E MongoDB storage identity changed");
+        }
+        return Ok(config);
+    }
     let StorageBackend::RocksDb(ref rocks) = config.backend else {
         bail!("E2E requires RocksDB storage for validator-{index}");
     };
@@ -185,10 +202,10 @@ fn reject_symlink_path(path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
 fn session(cfg: &Config, index: usize) -> Result<StorageReaderHandle> {
-    let config = rocksdb_config(cfg, index)?;
+    let config = storage_config(cfg, index)?;
     Ok(StorageProvider::new(config)?
+        .with_partition_routing(outbe_offchain_data::entity_partition_routing()?)
         .read_source("e2e-observer")?
         .open_session()?)
 }
@@ -201,22 +218,31 @@ impl ProjectionFixture {
     /// The caller must stop all nodes before deliberate re-bootstrap.
     pub fn reset_projection_state(&self) -> Result<()> {
         let mut targets = Vec::new();
+        let mut databases = Vec::new();
         for index in 0..self.cfg.validators {
             let path = self.cfg.projection_storage_config(index);
             if !path.exists() {
                 continue;
             }
-            if let StorageBackend::RocksDb(config) = rocksdb_config(&self.cfg, index)?.backend {
-                for path in [config.path, config.secondary_path] {
-                    if path.exists() {
-                        let canonical = path.canonicalize()?;
-                        if !canonical.starts_with(self.cfg.dir.canonicalize()?) {
-                            bail!("refusing to reset storage outside this scenario");
+            match storage_config(&self.cfg, index)?.backend {
+                StorageBackend::MongoDb(config) => {
+                    databases.push(config);
+                }
+                StorageBackend::RocksDb(config) => {
+                    for path in [config.path, config.secondary_path] {
+                        if path.exists() {
+                            let canonical = path.canonicalize()?;
+                            if !canonical.starts_with(self.cfg.dir.canonicalize()?) {
+                                bail!("refusing to reset storage outside this scenario");
+                            }
+                            targets.push(path);
                         }
-                        targets.push(path);
                     }
                 }
             }
+        }
+        for config in databases {
+            mongo::reset(&self.cfg, &config)?;
         }
         for path in targets {
             fs::remove_dir_all(path)?;
@@ -277,7 +303,7 @@ impl ProjectionFixture {
         self.run(move |cfg| projected_from_readers(&tribute_readers(&cfg, validator)?, &tx_hash))
     }
 
-    /// Read one Tribute from the day databases under an off-chain root.
+    /// Read one Tribute from all entity partitions under an off-chain root.
     pub fn observe_offchain_tribute(
         offchain_root: &Path,
         tx_hash: &str,
@@ -326,39 +352,23 @@ fn projected_from_readers(
 }
 
 fn tribute_readers(cfg: &Config, index: usize) -> Result<Vec<StorageReaderHandle>> {
-    let config = rocksdb_config(cfg, index)?;
-    let StorageBackend::RocksDb(rocks) = config.backend else {
-        bail!("E2E requires RocksDB storage for validator-{index}");
-    };
-    open_tribute_readers(&rocks.path, &rocks.secondary_path)
+    Ok(vec![session(cfg, index)?])
 }
 
-/// Shared database first, then each Tribute day. A secondary directory keeps the
-/// node primary lock free.
 fn open_tribute_readers(
     offchain_root: &Path,
     secondary_root: &Path,
 ) -> Result<Vec<StorageReaderHandle>> {
-    let directory = DayDirectory::open(offchain_root)?;
-    fs::create_dir_all(secondary_root)?;
-    let mut readers = Vec::new();
-    let shared = directory.shared_path();
-    if shared.join("CURRENT").is_file() {
-        readers.push(Arc::new(RocksDbReader::open(
-            &shared,
-            &secondary_root.join("shared"),
-        )?) as StorageReaderHandle);
-    }
-    for day in directory.list_tribute_days()? {
-        let path = directory.tribute_day_path(day);
-        if path.join("CURRENT").is_file() {
-            readers.push(Arc::new(RocksDbReader::open(
-                &path,
-                &secondary_root.join(format!("tribute-day-{day}")),
-            )?) as StorageReaderHandle);
-        }
-    }
-    Ok(readers)
+    let source = outbe_offchain_storage::partitioned::adapters::RocksPartitionReadView::open(
+        offchain_root,
+        secondary_root,
+    )?;
+    Ok(vec![Arc::new(
+        outbe_offchain_storage::PartitionedStorage::read_only(
+            Arc::new(source),
+            outbe_offchain_data::entity_partition_routing()?,
+        ),
+    )])
 }
 
 fn find_primary(readers: &[StorageReaderHandle], tx_hash: &str) -> Result<(usize, ScanEntry)> {
@@ -449,6 +459,12 @@ fn snapshot(reader: &dyn StorageReader, tx_hash: &str) -> Result<TributeProjecti
             index(COLLECTIONS[2], day_key)?,
         ],
     })
+}
+
+impl Drop for ProjectionFixture {
+    fn drop(&mut self) {
+        mongo::stop(&self.cfg);
+    }
 }
 
 #[cfg(test)]
@@ -655,7 +671,12 @@ mod tests {
         ensure_node_config(&cfg, 4).unwrap();
         assert_eq!(fs::read(&path).unwrap(), original);
         let config = StorageConfig::load(&path).unwrap();
-        let writer = StorageProvider::new(config).unwrap().open_writer().unwrap();
+        let writer = StorageProvider::new(config)
+            .unwrap()
+            .with_partition_routing(outbe_offchain_data::entity_partition_routing().unwrap())
+            .open_writer()
+            .unwrap();
+        writer.ownership.activate().unwrap();
         let ns = Namespace::new("fixture").unwrap();
         let key = Key::new([1]).unwrap();
         writer

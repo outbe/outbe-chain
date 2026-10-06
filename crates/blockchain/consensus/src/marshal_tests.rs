@@ -61,7 +61,7 @@ mod tests {
     /// Raw unsolicited block payload cannot be a primary source for verify/finalize.
     /// The Message enum has exactly 3 variants - no BlockReceived/BlockRequested.
     /// (The `Finalized` variant moved to `crate::finalization::ingress::Message`
-    /// in step 21; the `Broadcast` variant was removed when proposer
+    /// in step 21. The `Broadcast` variant was removed when proposer
     /// dissemination moved to a direct `marshal.forward` from `Relay::broadcast`.)
     /// If someone adds raw-block admission back, this test will fail to compile.
     #[test]
@@ -377,8 +377,8 @@ mod tests {
     }
 
     /// Regression: a never-completing marshal future must not wedge the helper.
-    /// Without the per-attempt timeout the inner helper would hang on the pending
-    /// future; the `Runner::timed` wedge guard aborts the test if that happens. With
+    /// Without the per-attempt timeout, the inner helper would hang on the pending
+    /// future. The `Runner::timed` wedge guard aborts the test if that happens. With
     /// the per-attempt timeout, exhaustion fires deterministically via the runtime
     /// clock and `retry_with_backoff` returns promptly in virtual time.
     #[test]
@@ -394,9 +394,10 @@ mod tests {
 
                 // The per-attempt `Clock::timeout` inside `retry_with_backoff` must make
                 // the helper terminate even on a never-completing future. Under the
-                // deterministic runtime the clock-driven per-attempt timeouts and backoff
-                // advance virtual time, so the helper returns promptly; the `Runner::timed`
-                // wedge guard aborts the test if the fix is missing and it hangs instead.
+                // deterministic runtime, the clock-driven per-attempt timeouts and backoff
+                // advance virtual time, so the helper returns promptly. If the fix is
+                // missing and the helper hangs instead, the `Runner::timed` wedge guard
+                // aborts the test.
                 let result = retry_with_backoff::<(), _, _>(
                     &context,
                     move || {

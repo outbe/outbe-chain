@@ -77,7 +77,7 @@ where
     }
 
     /// Encodes all execution-produced header artifacts from the single stored
-    /// CE seal. Payload building calls this before either state-root path; the
+    /// CE seal. Payload building calls this before either state-root path. The
     /// final `finish` call repeats it idempotently as a defensive invariant.
     pub fn finalize_header_artifacts(&mut self) -> Result<(), BlockExecutionError> {
         let compressed_seal_output = self
@@ -149,14 +149,14 @@ where
         // finalized-parent metadata travels through payload
         // attributes into the begin-zone Phase 1 system transaction body.
         // Header `extra_data` here carries only execution summary,
-        // timestamp millis, and DKG/header artifacts; the legacy header
-        // attestation tag is not produced by the proposer path.
+        // timestamp millis, and DKG/header artifacts. The proposer path does
+        // not produce the legacy header attestation tag.
         let execution_summary = self.executor.current_execution_summary();
         // Sub-second timestamp travels in `extra_data` under tag 0x05 so
         // the block hash stays Ethereum-spec-compliant
         // (`keccak256(rlp(standard_header))`). The execution-context
-        // value is the canonical source for this block; whatever the
-        // proposer placed in `extra_data` earlier is overwritten here.
+        // value is the canonical source for this block. This code overwrites
+        // whatever the proposer placed in `extra_data` earlier.
         self.finalize_header_artifacts()?;
         let compressed_seal_output = self
             .executor
@@ -891,18 +891,20 @@ mod tests {
     // A "base block" carries NO consensus-header artifact. Under V2 that is
     // only a `block_number >= 2` block: block 0 has no begin-zone txs, and
     // block 1 mandatorily carries a `BoundaryOutcome` (genesis DKG boundary).
-    // So this test builds a valid block 2 whose begin-zone is the standard
-    // `CertifiedParentAccounting` (Phase 1) + `CycleTick` + `OracleSlashWindow`
-    // sequence, proposer-builds it through `builder_for_next_block` + `finish`,
-    // then re-executes it on the validator path via `batch_executor` /
-    // `execute_one`, and asserts the two state roots match.
+    // So this test:
+    // 1. builds a valid block 2 whose begin-zone is the standard
+    //    `CertifiedParentAccounting` (Phase 1) + `CycleTick` + `OracleSlashWindow`
+    //    sequence.
+    // 2. proposer-builds it through `builder_for_next_block` + `finish`.
+    // 3. re-executes it on the validator path via `batch_executor` / `execute_one`.
+    // 4. asserts the two state roots match.
     //
-    // The parent (block 1) summary is recorded into the consensus bridge so the
-    // executor's `AccountedParentArtifactProvider` resolves the
-    // `CertifiedParentAccounting` finalized-summary on both paths. The Phase 1
-    // `verify_v2_proof` preflight is opted out via the crate-only test escape
-    // hatch (`with_phase1_verify_disabled`): this fixture exercises base-block
-    // begin-zone determinism, not the certificate verifier itself, and so does
+    // The test records the parent (block 1) summary into the consensus bridge, so
+    // the executor's `AccountedParentArtifactProvider` resolves the
+    // `CertifiedParentAccounting` finalized-summary on both paths. The test opts
+    // out of the Phase 1 `verify_v2_proof` preflight via the crate-only test escape
+    // hatch (`with_phase1_verify_disabled`). This fixture exercises base-block
+    // begin-zone determinism, not the certificate verifier itself. So it does
     // not seed a matching `(epoch, committee_set_hash)` committee snapshot. The
     // opt-out wraps every execution entry point (proposer
     // `apply_pre_execution_changes` and validator `execute_one`) so both paths
@@ -916,11 +918,11 @@ mod tests {
         // Parent is block 1 with a non-zero hash; Phase 1 metadata targets it.
         let parent = test_parent_at(1);
 
-        // Record the parent (block 1) execution summary into the bridge so the
+        // Record the parent (block 1) execution summary into the bridge. Then the
         // cache-backed `AccountedParentArtifactProvider` (installed by
-        // `new_with_bridge`) resolves the finalized-parent summary that the
-        // `CertifiedParentAccounting` system tx requires on both build and
-        // re-execute paths.
+        // `new_with_bridge`) resolves the finalized-parent summary. The
+        // `CertifiedParentAccounting` system tx requires that summary on both build
+        // and re-execute paths.
         let bridge = test_bridge();
         bridge.record_execution_summary_with_state_root(
             1,
@@ -1052,9 +1054,9 @@ mod tests {
 
         let bridge = test_bridge();
 
-        // The seeded active set is `[GENESIS_OWNER]`; the boundary artifact must
+        // The seeded active set is `[GENESIS_OWNER]`. The boundary artifact must
         // carry the canonical hashes the executor recomputes in
-        // `apply_boundary_outcome`, otherwise the begin-zone BoundaryOutcome
+        // `apply_boundary_outcome`. Otherwise the begin-zone BoundaryOutcome
         // system tx is rejected (active_set_hash / VRF / committee_set_hash
         // checks). Derive each value from the same canonical layout the executor
         // uses rather than stubbing magic bytes.

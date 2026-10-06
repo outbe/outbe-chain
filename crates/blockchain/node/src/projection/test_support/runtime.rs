@@ -106,19 +106,39 @@ where
 }
 
 #[cfg(test)]
+pub(in super::super) struct ProjectionLoopInputs<N, F> {
+    pub(in super::super) notifications: N,
+    pub(in super::super) finalized_blocks: F,
+    pub(in super::super) events: tokio::sync::mpsc::UnboundedSender<ExExEvent>,
+    pub(in super::super) projection_exit: tokio::sync::mpsc::UnboundedSender<ProjectionExit>,
+}
+
+#[cfg(test)]
+pub(in super::super) struct ProjectionProgressSenders<'a> {
+    pub(in super::super) logical_checkpoint:
+        &'a tokio::sync::mpsc::UnboundedSender<FinalizedTarget>,
+    pub(in super::super) durable_write:
+        &'a tokio::sync::mpsc::UnboundedSender<DurableProjectionWrite>,
+    pub(in super::super) recovery_ack: &'a tokio::sync::mpsc::UnboundedSender<()>,
+}
+
+#[cfg(test)]
 pub(in super::super) async fn run_projection_loop<P, N, F>(
     provider: P,
-    mut notifications: N,
-    mut finalized_blocks: F,
-    events: tokio::sync::mpsc::UnboundedSender<ExExEvent>,
+    inputs: ProjectionLoopInputs<N, F>,
     runtime: ProjectionRuntime,
-    projection_exit: tokio::sync::mpsc::UnboundedSender<ProjectionExit>,
 ) -> eyre::Result<()>
 where
     P: BlockIdReader + BlockReader + Clone + Send + 'static,
     N: Stream<Item = Result<(), String>> + Unpin,
     F: Stream<Item = FinalizedTarget> + Unpin,
 {
+    let ProjectionLoopInputs {
+        mut notifications,
+        mut finalized_blocks,
+        events,
+        projection_exit,
+    } = inputs;
     let mut runtime = runtime;
     let start_block = runtime.projector.state().start_block;
     let durable_startup_checkpoint = runtime
@@ -137,11 +157,17 @@ where
     let (logical_checkpoint_tx, mut logical_checkpoint_rx) = tokio::sync::mpsc::unbounded_channel();
     let (durable_checkpoint_tx, mut durable_checkpoint_rx) = tokio::sync::mpsc::unbounded_channel();
     let (durable_write_tx, durable_write_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (durable_error_tx, mut durable_error_rx) = tokio::sync::mpsc::unbounded_channel();
     let (recovery_ack_tx, mut recovery_ack_rx) = tokio::sync::mpsc::unbounded_channel();
     std::thread::Builder::new()
         .name("offchain-storage-writer".to_owned())
         .spawn(move || {
-            run_durable_projection_writer(durable_writer, durable_write_rx, durable_checkpoint_tx);
+            run_durable_projection_writer(
+                durable_writer,
+                durable_write_rx,
+                durable_checkpoint_tx,
+                durable_error_tx,
+            );
         })
         .wrap_err("spawn offchain-data offchain storage writer")?;
 
@@ -168,6 +194,7 @@ where
     let mut notifications_open = true;
     let mut finalized_stream_open = true;
     let mut runtime_failures_open = true;
+    let mut durable_errors_open = true;
     let mut storage_unavailable_since: Option<tokio::time::Instant> = None;
     let mut immediate_recovery_used = false;
 
@@ -188,9 +215,11 @@ where
                         provider,
                         &projector,
                         target,
-                        &logical_checkpoint_tx,
-                        &durable_write_tx,
-                        &recovery_ack_tx,
+                        ProjectionProgressSenders {
+                            logical_checkpoint: &logical_checkpoint_tx,
+                            durable_write: &durable_write_tx,
+                            recovery_ack: &recovery_ack_tx,
+                        },
                     )
                 }) {
                     Ok(result_rx) => {
@@ -481,6 +510,21 @@ where
                 can_start_attempt = false;
             }
 
+            durable_error = durable_error_rx.recv(), if durable_errors_open && !finality_stalled => {
+                durable_errors_open = false;
+                if let Some(error) = durable_error {
+                    error!(%error, "fatal finalized offchain-data durable write");
+                    publish_fatal(
+                        &readiness_publisher,
+                        &projection_exit,
+                        projection_failure_class(&error),
+                        error.to_string(),
+                    );
+                    finality_stalled = true;
+                    can_start_attempt = false;
+                }
+            }
+
             _ = retry.tick(), if projection_attempt.is_none() && !finality_stalled => {
                 if pending_target.is_some() {
                     can_start_attempt = true;
@@ -530,7 +574,7 @@ where
             }
 
             // Keep the critical ExEx task alive even if its input channels have closed. A normal
-            // return from an installed ExEx is treated as a critical task failure by Reth.
+            // return from an installed ExEx is a critical task failure for Reth.
             () = std::future::pending::<()>() => {}
         }
     }
@@ -541,13 +585,16 @@ pub(in super::super) fn project_through_target<P>(
     provider: P,
     runtime: &Mutex<ProjectionRuntime>,
     target: FinalizedTarget,
-    logical_checkpoint_tx: &tokio::sync::mpsc::UnboundedSender<FinalizedTarget>,
-    durable_write_tx: &tokio::sync::mpsc::UnboundedSender<DurableProjectionWrite>,
-    recovery_ack_tx: &tokio::sync::mpsc::UnboundedSender<()>,
+    progress: ProjectionProgressSenders<'_>,
 ) -> eyre::Result<Option<FinalizedTarget>>
 where
     P: BlockReader,
 {
+    let ProjectionProgressSenders {
+        logical_checkpoint: logical_checkpoint_tx,
+        durable_write: durable_write_tx,
+        recovery_ack: recovery_ack_tx,
+    } = progress;
     // Only one worker is launched at a time. The mutex also makes that ownership explicit and
     // keeps the mutable projector state available across retry attempts.
     let mut runtime = runtime
@@ -568,36 +615,15 @@ where
             .verify_transaction_capability()
             .wrap_err("probe offchain storage before acknowledging runtime-body recovery")?;
     }
-    let overlay = runtime.overlay.clone();
+    let overlay = runtime.overlay.clone().ok_or_else(|| {
+        eyre::eyre!("offchain projection overlay is required before a durable write")
+    })?;
     let projector = &mut runtime.projector;
     let state = projector.state();
     let checkpoint = state.checkpoint;
     let start_block = state.start_block;
 
-    if let Some(checkpoint) = checkpoint {
-        let canonical_hash = provider
-            .block_hash(checkpoint.block_number)
-            .wrap_err_with(|| {
-                format!(
-                    "load canonical hash for restored projection checkpoint {}",
-                    checkpoint.block_number
-                )
-            })?
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "canonical block {} for restored projection checkpoint is unavailable",
-                    checkpoint.block_number
-                )
-            })?;
-        if canonical_hash != checkpoint.block_hash {
-            bail!(
-                "projection checkpoint hash {} conflicts with canonical hash {} at height {}",
-                checkpoint.block_hash,
-                canonical_hash,
-                checkpoint.block_number
-            );
-        }
-    }
+    validate_restored_projection_checkpoint(&provider, checkpoint)?;
     recovery_ack_tx
         .send(())
         .map_err(|_| eyre::eyre!("projection recovery acknowledgement receiver is closed"))?;
@@ -644,55 +670,14 @@ where
 
     let mut durable_checkpoint = None;
     for block_number in first_block..=target.number {
-        let canonical_hash = provider
-            .block_hash(block_number)
-            .wrap_err_with(|| format!("load canonical hash for block {block_number}"))?
-            .ok_or(HistoricalProjectionDataError::CanonicalBlock { block_number })?;
-        let block = provider
-            .block_by_hash(canonical_hash)
-            .wrap_err_with(|| format!("load canonical block {block_number} ({canonical_hash})"))?
-            .ok_or(HistoricalProjectionDataError::CanonicalBlockByHash {
-                block_number,
-                block_hash: canonical_hash,
-            })?;
-
-        if block.header().number() != block_number {
-            bail!(
-                "provider returned block {} while canonical block {} was requested",
-                block.header().number(),
-                block_number
-            );
-        }
-        let block_hash = block.header().hash_slow();
-        if block_hash != canonical_hash {
-            bail!(
-                "block loaded for canonical hash {} recomputed to {} at height {}",
-                canonical_hash,
-                block_hash,
-                block_number
-            );
-        }
-        if block_number == target.number && block_hash != target.hash {
-            bail!(
-                "canonical block hash {} conflicts with finalized hash {} at height {}",
-                block_hash,
-                target.hash,
-                block_number
-            );
-        }
-
-        let receipts = provider
-            .receipts_by_block(block_hash.into())
-            .wrap_err_with(|| format!("load receipts for canonical block {block_number}"))?
-            .ok_or(HistoricalProjectionDataError::Receipts { block_number })?;
-        let normalized = normalize_finalized_block(block_number, block_hash, &block, &receipts)?;
+        let (block_hash, normalized) = load_projection_block(&provider, block_number, target)?;
 
         let prepared = projector
             .prepare_block(&normalized)
             .wrap_err_with(|| format!("project finalized block {block_number}"))?;
-        let (projected, durable_batch) = projector
-            .apply_prepared_with_batch(prepared)
-            .wrap_err_with(|| format!("apply logical finalized block {block_number}"))?;
+        let (projected, durable_write) =
+            DurableProjectionWrite::prepare(projector, prepared, &overlay)
+                .wrap_err_with(|| format!("apply logical finalized block {block_number}"))?;
         let projected = match projected {
             ProjectionOutcome::Applied { checkpoint, .. }
             | ProjectionOutcome::AlreadyApplied(checkpoint) => checkpoint,
@@ -710,15 +695,8 @@ where
             projected.block_number,
             projected.block_hash,
         ));
-        let overlay_ack = overlay
-            .as_ref()
-            .map(|overlay| (Arc::clone(overlay), overlay.current_generation()));
         durable_write_tx
-            .send(DurableProjectionWrite {
-                checkpoint: FinalizedTarget::new(projected.block_number, projected.block_hash),
-                batch: durable_batch,
-                overlay_ack,
-            })
+            .send(durable_write)
             .map_err(|_| eyre::eyre!("durable offchain storage writer queue is closed"))?;
         logical_checkpoint_tx
             .send(FinalizedTarget::new(
@@ -729,4 +707,87 @@ where
     }
 
     Ok(durable_checkpoint)
+}
+
+#[cfg(test)]
+fn validate_restored_projection_checkpoint<P: BlockReader>(
+    provider: &P,
+    checkpoint: Option<ProjectionCheckpoint>,
+) -> eyre::Result<()> {
+    if let Some(checkpoint) = checkpoint {
+        let canonical_hash = provider
+            .block_hash(checkpoint.block_number)
+            .wrap_err_with(|| {
+                format!(
+                    "load canonical hash for restored projection checkpoint {}",
+                    checkpoint.block_number
+                )
+            })?
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "canonical block {} for restored projection checkpoint is unavailable",
+                    checkpoint.block_number
+                )
+            })?;
+        if canonical_hash != checkpoint.block_hash {
+            bail!(
+                "projection checkpoint hash {} conflicts with canonical hash {} at height {}",
+                checkpoint.block_hash,
+                canonical_hash,
+                checkpoint.block_number
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn load_projection_block<P: BlockReader>(
+    provider: &P,
+    block_number: u64,
+    target: FinalizedTarget,
+) -> eyre::Result<(B256, outbe_offchain_data::FinalizedBlock)> {
+    let canonical_hash = provider
+        .block_hash(block_number)
+        .wrap_err_with(|| format!("load canonical hash for block {block_number}"))?
+        .ok_or(HistoricalProjectionDataError::CanonicalBlock { block_number })?;
+    let block = provider
+        .block_by_hash(canonical_hash)
+        .wrap_err_with(|| format!("load canonical block {block_number} ({canonical_hash})"))?
+        .ok_or(HistoricalProjectionDataError::CanonicalBlockByHash {
+            block_number,
+            block_hash: canonical_hash,
+        })?;
+
+    if block.header().number() != block_number {
+        bail!(
+            "provider returned block {} while canonical block {} was requested",
+            block.header().number(),
+            block_number
+        );
+    }
+    let block_hash = block.header().hash_slow();
+    if block_hash != canonical_hash {
+        bail!(
+            "block loaded for canonical hash {} recomputed to {} at height {}",
+            canonical_hash,
+            block_hash,
+            block_number
+        );
+    }
+    if block_number == target.number && block_hash != target.hash {
+        bail!(
+            "canonical block hash {} conflicts with finalized hash {} at height {}",
+            block_hash,
+            target.hash,
+            block_number
+        );
+    }
+
+    let receipts = provider
+        .receipts_by_block(block_hash.into())
+        .wrap_err_with(|| format!("load receipts for canonical block {block_number}"))?
+        .ok_or(HistoricalProjectionDataError::Receipts { block_number })?;
+    let normalized = normalize_finalized_block(block_number, block_hash, &block, &receipts)?;
+    Ok((block_hash, normalized))
 }

@@ -164,7 +164,8 @@ impl Rpc {
         &self,
         port: u16,
         private_key: &str,
-        pay_note_proof: &[u8],
+        asset: Address,
+        snapshot_id: U256,
     ) -> Result<()> {
         let owner = self
             .address_of(private_key)
@@ -182,16 +183,15 @@ impl Rpc {
             &self.url(port),
             addresses::NOD_FACTORY_ADDR,
             private_key,
-            &INodFactory::settleNodWithPayNoteCall {
+            &INodFactory::settleNodCall {
                 nodId: U256::from_be_slice(&nod_id),
-                payNoteProof: Bytes::copy_from_slice(pay_note_proof),
+                asset,
+                snapshotId: snapshot_id,
             },
             None,
         )?;
         if eth::receipt_success(&self.url(port), &settlement_hash) != Some(true) {
-            return Err(eyre!(
-                "post-completion settleNodWithPayNote transaction failed"
-            ));
+            return Err(eyre!("post-completion settleNod transaction failed"));
         }
         let entity = outbe_compressed_entities::WwdEntityId::try_from(nod_id.as_slice())?;
         let nonce = (0_u64..100_000)

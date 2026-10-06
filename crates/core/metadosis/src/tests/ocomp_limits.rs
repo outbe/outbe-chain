@@ -8,7 +8,8 @@ use outbe_ocomp_protocol::{
 use outbe_primitives::error::PrecompileError;
 
 use crate::ocomp_limits::{
-    apply_auction_brief, apply_fresh_request_limit_effect, RequestLimitEffect, RequestLimitSplit,
+    apply_auction_brief, apply_fresh_request_limit_effect, desis_reservation, reserve_desis_limit,
+    RequestLimitEffect, RequestLimitSplit,
 };
 
 #[test]
@@ -52,8 +53,8 @@ fn request_limit_split_is_exact_at_zero_max_and_rejects_over_limit() {
 
 #[test]
 fn request_limit_split_auctions_the_day_nominal_and_leaves_limit_headroom_unbriefed() {
-    // A day that earned less than the limit auctions the rest of what it earned; the headroom is
-    // not briefed and goes back to the warehouse instead.
+    // A day that earned less than the limit auctions the rest of what it earned. The headroom is
+    // not briefed and returns to the warehouse instead.
     let weak = RequestLimitSplit::derive(
         U256::from(1_000),
         U256::from(32),
@@ -238,8 +239,8 @@ fn strict_desis_refusal_leaves_the_existing_brief_and_carry_over_unchanged() {
             logical_anchor: 1_699_920_005,
         };
 
-        // The request itself only credits; the refusal comes when the auction tries to brief a day
-        // Desis already holds.
+        // The request credits and reserves without touching Desis. The refusal comes when the
+        // auction tries to brief a day Desis already holds.
         let receipt = apply_fresh_request_limit_effect(storage.clone(), request.clone())
             .expect("the request credits without touching Desis");
         let credited = PromisLimitContract::new(storage.clone())
@@ -372,6 +373,53 @@ fn a_weak_red_day_credits_its_base_together_with_the_headroom() {
 }
 
 #[test]
+fn a_red_receipt_with_a_desis_limit_fails_the_day_without_drawing() {
+    with_storage(|storage| {
+        PromisLimitContract::new(storage.clone())
+            .checked_add_carry_over(U256::from(500))
+            .unwrap();
+        let request = RequestLimitEffect {
+            protocol_bundle_hash: B256::repeat_byte(0x41),
+            wwd: 20_260_112,
+            pending_nonce: 1,
+            day_type: DayType::Red,
+            day_limit: U256::from(1_000),
+            lysis_limit_minor: U256::from(4),
+            nominal_total: U256::from(100),
+            logical_anchor: 1_699_920_005,
+        };
+        let mut receipt = apply_fresh_request_limit_effect(storage.clone(), request.clone())
+            .expect("a RED day commits its limit split");
+        assert_eq!(desis_reservation(&receipt).unwrap(), U256::ZERO);
+        let credited = PromisLimitContract::new(storage.clone())
+            .get_total_unallocated()
+            .unwrap();
+
+        receipt.desis_limit_minor = U256::from(7);
+        let error = desis_reservation(&receipt).unwrap_err();
+        assert!(crate::errors::is_business_failure(&error), "{error}");
+        let error = apply_auction_brief(storage.clone(), &receipt).unwrap_err();
+        assert!(crate::errors::is_business_failure(&error), "{error}");
+        assert_eq!(
+            PromisLimitContract::new(storage.clone())
+                .get_total_unallocated()
+                .unwrap(),
+            credited
+        );
+        assert_eq!(
+            DesisContract::new(storage)
+                .auction_stage
+                .read(&request.wwd.into())
+                .unwrap(),
+            0
+        );
+
+        receipt.day_type = DayType::Green;
+        assert_eq!(desis_reservation(&receipt).unwrap(), U256::from(7));
+    });
+}
+
+#[test]
 fn a_day_reaches_past_its_own_emission_into_the_accumulator() {
     with_storage(|storage| {
         // What earlier days did not issue.
@@ -457,4 +505,117 @@ fn an_auction_takes_what_the_accumulator_holds_when_demand_exceeds_it() {
             "the accumulator serves what it has and is left empty"
         );
     });
+}
+
+#[test]
+fn overlapping_requests_size_their_auctions_from_what_earlier_requests_left() {
+    with_storage(|storage| {
+        PromisLimitContract::new(storage.clone())
+            .checked_add_carry_over(U256::from(5_000))
+            .unwrap();
+        let first = RequestLimitEffect {
+            protocol_bundle_hash: B256::repeat_byte(0x41),
+            wwd: 20_260_115,
+            pending_nonce: 1,
+            day_type: DayType::Green,
+            day_limit: U256::from(1_000),
+            lysis_limit_minor: U256::from(320),
+            nominal_total: U256::from(5_000),
+            logical_anchor: 1_699_920_005,
+        };
+        let second = RequestLimitEffect {
+            wwd: 20_260_116,
+            ..first.clone()
+        };
+        let total = || {
+            PromisLimitContract::new(storage.clone())
+                .get_total_unallocated()
+                .unwrap()
+        };
+
+        let first_receipt = apply_fresh_request_limit_effect(storage.clone(), first)
+            .expect("the first day commits its limit split");
+        assert_eq!(first_receipt.desis_limit_minor, U256::from(4_680));
+        assert_eq!(
+            total(),
+            U256::from(1_000),
+            "the request reserves its auction before any brief"
+        );
+
+        let second_receipt = apply_fresh_request_limit_effect(storage.clone(), second)
+            .expect("the second day commits its limit split");
+        assert_eq!(
+            second_receipt.desis_limit_minor,
+            U256::from(1_680),
+            "the second auction is sized without what the first one reserved"
+        );
+        assert_eq!(total(), U256::ZERO);
+
+        for receipt in [&first_receipt, &second_receipt] {
+            apply_auction_brief(storage.clone(), receipt).expect("a reserved auction briefs");
+            assert_eq!(
+                DesisContract::new(storage.clone())
+                    .pending_desis_limit_minor
+                    .read(&receipt.wwd.into())
+                    .unwrap(),
+                receipt.desis_limit_minor
+            );
+        }
+        assert_eq!(total(), U256::ZERO, "a brief draws nothing more");
+    });
+}
+
+#[test]
+fn a_reservation_the_accumulator_cannot_cover_is_a_business_failure_and_takes_nothing() {
+    with_storage(|storage| {
+        PromisLimitContract::new(storage.clone())
+            .checked_add_carry_over(U256::from(5))
+            .unwrap();
+        let request = RequestLimitEffect {
+            protocol_bundle_hash: B256::repeat_byte(0x41),
+            wwd: 20_260_117,
+            pending_nonce: 1,
+            day_type: DayType::Green,
+            day_limit: U256::from(100),
+            lysis_limit_minor: U256::from(40),
+            nominal_total: U256::from(100),
+            logical_anchor: 1_699_920_005,
+        };
+        let mut receipt = apply_fresh_request_limit_effect(storage.clone(), request)
+            .expect("the day commits its limit split");
+        let held = PromisLimitContract::new(storage.clone())
+            .get_total_unallocated()
+            .unwrap();
+        assert_eq!(held, U256::from(5));
+
+        receipt.desis_limit_minor = held + U256::from(1);
+        let error = reserve_desis_limit(storage.clone(), &receipt).unwrap_err();
+        assert!(crate::errors::is_business_failure(&error), "{error}");
+        assert_eq!(
+            PromisLimitContract::new(storage)
+                .get_total_unallocated()
+                .unwrap(),
+            held
+        );
+    });
+}
+
+#[test]
+fn activation_briefs_the_reserved_desis_limit_without_taking_it_again() {
+    let mut fixture = crate::fixture_kernel::ActivationFixture::new(20, 1_010, true);
+    let unused = fixture.result.unused_lysis_limit_minor;
+    let accumulator = |fixture: &mut crate::fixture_kernel::ActivationFixture| {
+        StorageHandle::enter(&mut fixture.provider, |storage| {
+            PromisLimitContract::new(storage)
+                .get_total_unallocated()
+                .unwrap()
+        })
+    };
+    let before = accumulator(&mut fixture);
+    fixture.apply().unwrap();
+    assert_eq!(
+        accumulator(&mut fixture),
+        before + unused,
+        "activation returns the unused Lysis Limit and takes nothing for the auction"
+    );
 }

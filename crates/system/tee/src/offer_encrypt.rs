@@ -1,13 +1,17 @@
-//! Client-side tribute-offer encryption - the single shared implementation used
-//! by `outbe-cli`, the enclave throughput bench and the node's canary probe.
+//! Client-side tribute-offer encryption. This is the single shared implementation.
+//! `outbe-cli`, the enclave throughput bench and the node's canary probe use it.
 //!
-//! Recipe (byte-compatible with the enclave decrypt path
-//! `outbe_tee_enclave::crypto::ecdhe_tribute_offer_decrypt`): ephemeral X25519 ->
-//! ECDHE with the offer public key -> `HKDF-SHA256(salt = OFFER_HKDF_SALT, ikm =
-//! shared, info = b"tribute-factory-encryption")` -> ChaCha20Poly1305 with empty
-//! AAD. This is client-side crypto over an ephemeral secret and the PUBLIC offer
-//! key - no enclave-resident secret material is involved (the crate rule that
-//! secret-bearing cryptography lives only in `bin/outbe-tee-enclave` holds).
+//! The recipe is byte-compatible with the enclave decrypt path
+//! `outbe_tee_enclave::crypto::ecdhe_tribute_offer_decrypt`:
+//! 1. Ephemeral X25519.
+//! 2. ECDHE with the offer public key.
+//! 3. `HKDF-SHA256(salt = OFFER_HKDF_SALT, ikm = shared, info =
+//!    b"tribute-factory-encryption")`.
+//! 4. ChaCha20Poly1305 with empty AAD.
+//!
+//! This is client-side crypto over an ephemeral secret and the PUBLIC offer key.
+//! It uses no enclave-resident secret material. Thus the crate rule holds:
+//! secret-bearing cryptography lives only in `bin/outbe-tee-enclave`.
 
 use crate::OFFER_HKDF_SALT;
 
@@ -25,9 +29,9 @@ pub fn encrypt_tribute_offer(
 ) -> Result<EncryptedOfferParts, String> {
     use ring::rand::SecureRandom as _;
     let rng = ring::rand::SystemRandom::new();
-    // Cryptographic randomness for an offer-encryption ephemeral + nonce; never
-    // consensus randomness (the ciphertext is request DATA, decrypted
-    // deterministically by every validator's enclave).
+    // Cryptographic randomness for an offer-encryption ephemeral + nonce. This is
+    // never consensus randomness: the ciphertext is request DATA, and every
+    // validator's enclave decrypts it deterministically.
     let mut eph_sk = [0u8; 32];
     rng.fill(&mut eph_sk)
         .map_err(|_| "offer encryption rng failure".to_string())?;
@@ -39,8 +43,8 @@ pub fn encrypt_tribute_offer(
     Ok((cipher_text, nonce, eph_pub.to_bytes()))
 }
 
-/// Deterministic variant with an explicit ephemeral secret and nonce - for the
-/// bench, tests, and any caller that manages its own randomness.
+/// Deterministic variant with an explicit ephemeral secret and nonce. Use it for
+/// the bench, tests, and any caller that manages its own randomness.
 pub fn encrypt_tribute_offer_with(
     offer_pub: &[u8; 32],
     eph_sk: [u8; 32],

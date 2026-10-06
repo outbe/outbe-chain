@@ -674,8 +674,8 @@ fn run_accounting_lifecycle(world: &mut World) {
     }
     expect_felony_guard_shutdown(world, &owned, &slash, "accounting_felony_guard_shutdown", 2);
 
-    // Keep all four accounting observers. The jailed identity remains jailed;
-    // its preserved node resumes only certified follower execution, never
+    // Keep all four accounting observers. The jailed identity remains jailed.
+    // Its preserved node resumes only certified follower execution, never
     // validator authority. No readiness, unjail or fresh TEE lease is needed.
     let follower = world
         .localnet

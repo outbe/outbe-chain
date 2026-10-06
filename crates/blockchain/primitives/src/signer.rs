@@ -1,8 +1,8 @@
 //! Validator EVM signer system transaction artifacts.
 //!
 //! This signer is intentionally separate from the BLS consensus key and from
-//! `header.beneficiary`. It signs deterministic unsigned transaction artifacts;
-//! system tx EVM execution still runs with `SYSTEM_ADDRESS` as caller.
+//! `header.beneficiary`. It signs deterministic unsigned transaction artifacts.
+//! System tx EVM execution still runs with `SYSTEM_ADDRESS` as caller.
 
 use std::{
     path::{Path, PathBuf},
@@ -15,17 +15,39 @@ use k256::ecdsa::{signature::hazmat::PrehashSigner, SigningKey};
 use reth_ethereum::TransactionSigned;
 use zeroize::Zeroizing;
 
+pub mod load;
+
 /// Validator EVM signer backed by a zeroizing secp256k1 secret.
 #[derive(Clone)]
 pub struct OutbeEvmSigner {
+    identity: EvmSigningIdentity,
+}
+
+#[derive(Clone)]
+struct EvmSigningIdentity {
     secret: Zeroizing<[u8; 32]>,
     address: Address,
+}
+
+impl EvmSigningIdentity {
+    fn new(secret: [u8; 32]) -> Result<Self, SignerError> {
+        let signing_key = signing_key_from_bytes(&secret)?;
+        let address = address_from_signing_key(&signing_key);
+        Ok(Self {
+            secret: Zeroizing::new(secret),
+            address,
+        })
+    }
+
+    fn signing_key(&self) -> Result<SigningKey, SignerError> {
+        signing_key_from_bytes(&self.secret)
+    }
 }
 
 impl std::fmt::Debug for OutbeEvmSigner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OutbeEvmSigner")
-            .field("address", &self.address)
+            .field("address", &self.address())
             .field("secret", &"<redacted>")
             .finish()
     }
@@ -33,11 +55,8 @@ impl std::fmt::Debug for OutbeEvmSigner {
 
 impl OutbeEvmSigner {
     pub fn from_secret_bytes(secret: [u8; 32]) -> Result<Self, SignerError> {
-        let signing_key = signing_key_from_bytes(&secret)?;
-        let address = address_from_signing_key(&signing_key);
         Ok(Self {
-            secret: Zeroizing::new(secret),
-            address,
+            identity: EvmSigningIdentity::new(secret)?,
         })
     }
 
@@ -52,161 +71,59 @@ impl OutbeEvmSigner {
         Self::from_secret_bytes(secret)
     }
 
-    pub fn from_file(path: impl AsRef<Path>) -> Result<Self, SignerError> {
-        let path = path.as_ref();
-        ensure_safe_key_file_permissions(path)?;
-        let secret = std::fs::read_to_string(path).map_err(|source| SignerError::ReadKey {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        Self::from_hex(&secret)
-    }
-
-    /// Loads a role-custody key from one canonical owner-bound file.
-    ///
-    /// Unlike [`Self::from_file`], this rejects symlinks, non-regular files,
-    /// unexpected owners, modes other than `0600`, hard links, non-canonical
-    /// lowercase 32-byte hex payloads, and path replacement during open.
-    /// Surrounding ASCII whitespace is ignored and is not part of the key.
-    #[cfg(unix)]
-    pub fn from_strict_file(
-        path: impl AsRef<Path>,
-        expected_owner_uid: u32,
-    ) -> Result<Self, SignerError> {
-        use std::{fs::File, io::Read as _, os::unix::fs::MetadataExt as _};
-
-        const MIN_ENCODED_KEY_BYTES: u64 = 64;
-        const MAX_ENCODED_KEY_BYTES: u64 = 128;
-        let path = path.as_ref();
-        let path_metadata =
-            std::fs::symlink_metadata(path).map_err(|source| SignerError::InspectPermissions {
-                path: path.to_path_buf(),
-                source,
-            })?;
-        validate_strict_key_metadata(
-            path,
-            &path_metadata,
-            expected_owner_uid,
-            MIN_ENCODED_KEY_BYTES,
-            MAX_ENCODED_KEY_BYTES,
-        )?;
-
-        let mut file = File::open(path).map_err(|source| SignerError::ReadKey {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        let opened_metadata =
-            file.metadata()
-                .map_err(|source| SignerError::InspectPermissions {
-                    path: path.to_path_buf(),
-                    source,
-                })?;
-        validate_strict_key_metadata(
-            path,
-            &opened_metadata,
-            expected_owner_uid,
-            MIN_ENCODED_KEY_BYTES,
-            MAX_ENCODED_KEY_BYTES,
-        )?;
-        if path_metadata.dev() != opened_metadata.dev()
-            || path_metadata.ino() != opened_metadata.ino()
-        {
-            return Err(SignerError::UnsafeKeyFile {
-                path: path.to_path_buf(),
-                reason: "key path changed while opening",
-            });
-        }
-
-        let mut encoded = Zeroizing::new(String::new());
-        file.read_to_string(&mut encoded)
-            .map_err(|source| SignerError::ReadKey {
-                path: path.to_path_buf(),
-                source,
-            })?;
-        let hex = encoded.trim_ascii();
-        if hex.len() != 64
-            || !hex
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
-            return Err(SignerError::NonCanonicalKeyFile {
-                path: path.to_path_buf(),
-            });
-        }
-        Self::from_hex(hex)
-    }
-
-    #[cfg(not(unix))]
-    pub fn from_strict_file(
-        path: impl AsRef<Path>,
-        _expected_owner_uid: u32,
-    ) -> Result<Self, SignerError> {
-        Self::from_file(path)
-    }
-
     pub const fn address(&self) -> Address {
-        self.address
+        self.identity.address
     }
 
     pub fn sign_unsigned(&self, tx: TxLegacy) -> Result<TransactionSigned, SignerError> {
-        let signing_key = signing_key_from_bytes(&self.secret)?;
-        let hash = tx.signature_hash();
-        let (signature, recovery_id): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =
-            signing_key
-                .sign_prehash(hash.as_slice())
-                .map_err(|error| SignerError::SigningFailed(error.to_string()))?;
-
-        let signature_bytes = signature.to_bytes();
-        let bytes = signature_bytes.as_slice();
-        if bytes.len() != 64 {
-            return Err(SignerError::SignatureEncoding { len: bytes.len() });
-        }
-        let signature =
-            Signature::from_bytes_and_parity(bytes, recovery_id.to_byte() != 0).normalized_s();
+        let signature = self.transaction_signature(&tx)?;
         Ok(tx.into_signed(signature).into())
     }
 
     /// Signs the restricted EIP-1559 envelope used by validator result votes.
     pub fn sign_eip1559(&self, tx: TxEip1559) -> Result<TransactionSigned, SignerError> {
-        let signing_key = signing_key_from_bytes(&self.secret)?;
-        let hash = tx.signature_hash();
-        let (signature, recovery_id): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =
-            signing_key
-                .sign_prehash(hash.as_slice())
-                .map_err(|error| SignerError::SigningFailed(error.to_string()))?;
-
-        let signature_bytes = signature.to_bytes();
-        let bytes = signature_bytes.as_slice();
-        if bytes.len() != 64 {
-            return Err(SignerError::SignatureEncoding { len: bytes.len() });
-        }
-        let signature =
-            Signature::from_bytes_and_parity(bytes, recovery_id.to_byte() != 0).normalized_s();
+        let signature = self.transaction_signature(&tx)?;
         Ok(tx.into_signed(signature).into())
     }
 
-    /// Sign a raw 32-byte prehash, returning a recoverable secp256k1 signature in
-    /// `r(32) || s(32) || v(1)` form (`v` = recovery id 0/1) - the exact format
-    /// [`crate::tee_signatures::recover_signer`] consumes. Used by the consensus
-    /// thread to sign the TEE bootstrap payload's `signing_hash` with this
-    /// validator's EVM key.
-    pub fn sign_hash(&self, hash: &alloy_primitives::B256) -> Result<[u8; 65], SignerError> {
-        let signing_key = signing_key_from_bytes(&self.secret)?;
-        let (signature, recovery_id): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =
-            signing_key
-                .sign_prehash(hash.as_slice())
-                .map_err(|error| SignerError::SigningFailed(error.to_string()))?;
-        let sig_bytes = signature.to_bytes();
-        if sig_bytes.len() != 64 {
-            return Err(SignerError::SignatureEncoding {
-                len: sig_bytes.len(),
-            });
-        }
-        let mut out = [0u8; 65];
-        out[..64].copy_from_slice(sig_bytes.as_slice());
-        out[64] = recovery_id.to_byte();
-        Ok(out)
+    fn transaction_signature<T: alloy_consensus::SignableTransaction<Signature>>(
+        &self,
+        tx: &T,
+    ) -> Result<Signature, SignerError> {
+        let signing_key = self.identity.signing_key()?;
+        let hash = tx.signature_hash();
+        let bytes = sign_recoverable_hash(&signing_key, &hash)?;
+        Ok(Signature::from_bytes_and_parity(&bytes[..64], bytes[64] != 0).normalized_s())
     }
+
+    /// Sign a raw 32-byte prehash and return a recoverable secp256k1 signature in
+    /// `r(32) || s(32) || v(1)` form (`v` = recovery id 0/1). This is the exact
+    /// format that [`crate::tee_signatures::recover_signer`] consumes. The
+    /// consensus thread uses it to sign the TEE bootstrap payload's `signing_hash`
+    /// with this validator's EVM key.
+    pub fn sign_hash(&self, hash: &alloy_primitives::B256) -> Result<[u8; 65], SignerError> {
+        let signing_key = self.identity.signing_key()?;
+        sign_recoverable_hash(&signing_key, hash)
+    }
+}
+
+fn sign_recoverable_hash(
+    signing_key: &SigningKey,
+    hash: &alloy_primitives::B256,
+) -> Result<[u8; 65], SignerError> {
+    let (signature, recovery_id): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = signing_key
+        .sign_prehash(hash.as_slice())
+        .map_err(|error| SignerError::SigningFailed(error.to_string()))?;
+    let sig_bytes = signature.to_bytes();
+    if sig_bytes.len() != 64 {
+        return Err(SignerError::SignatureEncoding {
+            len: sig_bytes.len(),
+        });
+    }
+    let mut out = [0u8; 65];
+    out[..64].copy_from_slice(sig_bytes.as_slice());
+    out[64] = recovery_id.to_byte();
+    Ok(out)
 }
 
 pub type SharedOutbeEvmSigner = Arc<OutbeEvmSigner>;
@@ -262,64 +179,6 @@ fn address_from_signing_key(signing_key: &SigningKey) -> Address {
     Address::from_slice(&hash[12..])
 }
 
-#[cfg(unix)]
-fn ensure_safe_key_file_permissions(path: &Path) -> Result<(), SignerError> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let metadata = std::fs::metadata(path).map_err(|source| SignerError::InspectPermissions {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    let mode = metadata.permissions().mode() & 0o777;
-    if mode & 0o077 != 0 {
-        return Err(SignerError::UnsafeFilePermissions {
-            path: path.to_path_buf(),
-            mode,
-        });
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-fn validate_strict_key_metadata(
-    path: &Path,
-    metadata: &std::fs::Metadata,
-    expected_owner_uid: u32,
-    min_len: u64,
-    max_len: u64,
-) -> Result<(), SignerError> {
-    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
-
-    let unsafe_reason = if !metadata.file_type().is_file() {
-        Some("key is not a regular file")
-    } else if metadata.uid() != expected_owner_uid {
-        Some("key has the wrong owner")
-    } else if metadata.permissions().mode() & 0o777 != 0o600 {
-        Some("key mode is not 0600")
-    } else if metadata.nlink() != 1 {
-        Some("key has an unexpected hard-link count")
-    } else {
-        None
-    };
-    if let Some(reason) = unsafe_reason {
-        return Err(SignerError::UnsafeKeyFile {
-            path: path.to_path_buf(),
-            reason,
-        });
-    }
-    if !(min_len..=max_len).contains(&metadata.len()) {
-        return Err(SignerError::NonCanonicalKeyFile {
-            path: path.to_path_buf(),
-        });
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn ensure_safe_key_file_permissions(_path: &Path) -> Result<(), SignerError> {
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -329,6 +188,43 @@ mod tests {
     use reth_primitives_traits::SignedTransaction as _;
 
     const CHAIN_ID: u64 = 2026;
+    #[test]
+    fn raw_signature_matches_fixed_prehash_vector() {
+        let signer = OutbeEvmSigner::from_secret_bytes([1; 32]).unwrap();
+        let signature = signer
+            .sign_hash(&alloy_primitives::B256::with_last_byte(42))
+            .unwrap();
+        assert_eq!(
+            hex::encode(signature),
+            "85374ecb6e0ea7cb84429448bf06ca12ea17d9ff80d8fe910f25f2f4fead5b3442c30ba1656842a610ff1da4bf1823604bf15d3493b9043af65b7dced9bbed4400"
+        );
+    }
+
+    #[test]
+    fn eip1559_signature_matches_fixed_transaction_vector() {
+        let signer = OutbeEvmSigner::from_secret_bytes([1; 32]).unwrap();
+        let tx = TxEip1559 {
+            chain_id: 2026,
+            nonce: 7,
+            gas_limit: 21000,
+            max_fee_per_gas: 42,
+            max_priority_fee_per_gas: 1,
+            to: TxKind::Call(Address::repeat_byte(9)),
+            value: U256::from(3),
+            input: Bytes::from_static(b"OCOMP"),
+            ..Default::default()
+        };
+        let signed = signer.sign_eip1559(tx).unwrap();
+        assert_eq!(
+            signed.hash().to_string(),
+            "0x0c8ad4662e428cce0650561d5f26c3e35a7629d730ef5ea37d64692fefdcc919"
+        );
+        assert_eq!(
+            signed.signature().to_string(),
+            "0x5d337ec1c2a263805fd0e7103530a1001b913fbbb60245427649ec1fea3af9fc673acb064b85220c02d3bd213b63d7ef4e21d827562c03e4a283190223668ada1c"
+        );
+        assert_eq!(signed.try_recover().unwrap(), signer.address());
+    }
 
     #[test]
     fn derives_expected_address_from_known_secret() {
@@ -381,93 +277,6 @@ mod tests {
     fn rejects_wrong_secret_length() {
         let err = OutbeEvmSigner::from_hex("0x1234").expect_err("length rejected");
         assert!(matches!(err, SignerError::InvalidSecretLength { len: 2 }));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn strict_role_key_loader_enforces_canonical_owner_bound_file() {
-        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
-
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("ocomp-evm-key.hex");
-        std::fs::write(
-            &path,
-            b"0000000000000000000000000000000000000000000000000000000000000001",
-        )
-        .unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-        let owner_uid = std::fs::metadata(&path).unwrap().uid();
-
-        let signer = OutbeEvmSigner::from_strict_file(&path, owner_uid).unwrap();
-        assert_eq!(
-            signer.address(),
-            address!("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
-        );
-
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
-        assert!(matches!(
-            OutbeEvmSigner::from_strict_file(&path, owner_uid),
-            Err(SignerError::UnsafeKeyFile { .. })
-        ));
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-
-        let hard_link = root.path().join("hard-link.hex");
-        std::fs::hard_link(&path, &hard_link).unwrap();
-        assert!(matches!(
-            OutbeEvmSigner::from_strict_file(&path, owner_uid),
-            Err(SignerError::UnsafeKeyFile { .. })
-        ));
-        std::fs::remove_file(hard_link).unwrap();
-
-        let symlink = root.path().join("symlink.hex");
-        std::os::unix::fs::symlink(&path, &symlink).unwrap();
-        assert!(matches!(
-            OutbeEvmSigner::from_strict_file(&symlink, owner_uid),
-            Err(SignerError::UnsafeKeyFile { .. })
-        ));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn strict_role_key_loader_rejects_noncanonical_hex() {
-        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
-
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("ocomp-evm-key.hex");
-        std::fs::write(
-            &path,
-            b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-        let owner_uid = std::fs::metadata(&path).unwrap().uid();
-
-        assert!(matches!(
-            OutbeEvmSigner::from_strict_file(&path, owner_uid),
-            Err(SignerError::NonCanonicalKeyFile { .. })
-        ));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn strict_role_key_loader_ignores_surrounding_ascii_whitespace() {
-        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
-
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("ocomp-evm-key.hex");
-        std::fs::write(
-            &path,
-            b" \t0000000000000000000000000000000000000000000000000000000000000001\r\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-        let owner_uid = std::fs::metadata(&path).unwrap().uid();
-
-        let signer = OutbeEvmSigner::from_strict_file(&path, owner_uid).unwrap();
-        assert_eq!(
-            signer.address(),
-            address!("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
-        );
     }
 
     #[test]

@@ -1,5 +1,6 @@
-//! What a Nod supplies to the shared lifecycle: five Nods in one bucket, issued straight
-//! to five owners, two paid while qualified, two inside the call notice, one forfeited.
+//! What a Nod supplies to the shared lifecycle. One bucket holds five Nods, issued straight
+//! to five owners. Two are paid while qualified, two are inside the call notice, and one is
+//! forfeited.
 
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -53,9 +54,9 @@ const SETTLED: u8 = 3;
 const ISSUANCE_TIMEOUT: Duration = Duration::from_secs(120);
 /// How long a Nod view may trail the block that wrote it.
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
-/// Once the notice has lapsed the next sweep burns the unpaid Nod.
+/// After the notice lapses, the next sweep burns the unpaid Nod.
 const FORFEIT_TIMEOUT: Duration = Duration::from_secs(300);
-/// A DEV notice is minutes long; anything longer means the profile is not active.
+/// A DEV notice is minutes long. Anything longer means the profile is not active.
 const MAX_DEV_NOTICE_SECS: u32 = 3_600;
 /// Slack past the deadline so the sweep has a block to run in.
 const NOTICE_MARGIN_SECS: u64 = 5;
@@ -154,7 +155,11 @@ impl Lifecycle for NodLifecycle {
             );
             assert_eq!(
                 (data.callRate, data.callWindow, data.callThreshold),
-                (dev.call_rate, dev.call_window, dev.call_threshold),
+                (
+                    dev.call_rate,
+                    dev.call_window_seconds,
+                    dev.call_threshold_seconds
+                ),
                 "the bucket did not seal the DEV call terms"
             );
             assert!(
@@ -346,7 +351,7 @@ fn read_nod(world: &World, id: U256) -> eth::INod::NodData {
     read_nod_view(world, &eth::INod::nodDataCall { nodId: id }, "Nod data")
 }
 
-/// Nod views read through the compressed-body projection, which trails the block
+/// Nod views read through the compressed-body projection. The projection trails the block
 /// that wrote the body, so a fresh write can answer an error for a moment.
 fn read_nod_view<C>(world: &World, call: &C, what: &str) -> C::Return
 where

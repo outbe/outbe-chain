@@ -2,7 +2,7 @@
 //! parity. These back the `Given`/`Then` lines that every flow reuses.
 //!
 //! Environment choices (validator count, TEE mode) come from the CLI, not the
-//! feature text - the setup step reads them off the `World` handles, and the
+//! feature text. The setup step reads them from the `World` handles. The
 //! requirements themselves are declared as tags (see [`crate::env`]).
 
 use std::thread::sleep;
@@ -15,7 +15,7 @@ use crate::world::World;
 
 /// Localnet setup shared by every flow. The committee size and TEE mode come
 /// from the environment (`--validators` / `--tee`, gated by the scenario's
-/// `@min-validators-N` / `@tee` tags); the voting window is a step parameter
+/// `@min-validators-N` / `@tee` tags). The voting window is a step parameter
 /// (lib.sh:106-139, update_operator_flow.sh:48-69).
 #[given(expr = "a fresh localnet with a {int}-block voting window")]
 fn fresh_localnet(world: &mut World, window: u64) {
@@ -74,10 +74,14 @@ pub(crate) fn boot_bounded_tribute_localnet(
     start_bootstrapped_localnet(world, &StartOpts::with_voting_window(window));
 }
 
-/// Shared localnet setup used by every flow: cleanup, bootstrap N (with optional
-/// `TESTNET_*` tuning), start with the environment's TEE mode, and prove the
-/// chain is up with its mandatory enclave. Also captures the
-/// chain's worldwide-day so tribute-offer steps target the OFFERING day.
+/// Shared localnet setup used by every flow:
+/// - cleanup,
+/// - bootstrap N (with optional `TESTNET_*` tuning),
+/// - start with the environment's TEE mode,
+/// - prove the chain is up with its mandatory enclave.
+///
+/// It also captures the chain's worldwide-day so tribute-offer steps target the
+/// OFFERING day.
 pub(crate) fn boot_localnet(world: &mut World, window: u64, tuning: &[(&str, String)]) {
     boot_localnet_with_opts(world, window, tuning, StartOpts::with_voting_window(window));
 }

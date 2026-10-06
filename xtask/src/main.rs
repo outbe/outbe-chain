@@ -208,7 +208,8 @@ enum SgxCommand {
     Prepare {
         #[arg(long, value_enum)]
         network: sgx::SgxReleaseNetwork,
-        /// Approved seeded ChainSpec. Its chain identity and epoch-0 committee are measured into the enclave.
+        /// Approved seeded ChainSpec. Its chain identity and epoch-0 committee are measured into
+        /// the enclave.
         #[arg(long)]
         genesis: PathBuf,
         #[arg(long)]
@@ -246,7 +247,7 @@ enum SgxCommand {
         /// Signed SGX bundle whose measurements become the block-1 policy.
         #[arg(long)]
         bundle: PathBuf,
-        /// New final genesis; an existing path is never overwritten.
+        /// New final genesis. The command never overwrites an existing path.
         #[arg(long)]
         output: PathBuf,
         /// Canonical evidence for the seeded-to-final transformation.

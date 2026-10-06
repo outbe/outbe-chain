@@ -64,18 +64,7 @@ fn validate_phase1_envelope_shape(
     chain_id: u64,
     block_number: u64,
 ) -> Result<B256, SystemTxError> {
-    if tx.to() != Some(OUTBE_SYSTEM_TX_ADDRESS) {
-        return Err(SystemTxError::Phase1WrongRecipient);
-    }
-    if tx.value() != U256::ZERO {
-        return Err(SystemTxError::Phase1NonZeroValue);
-    }
-    if tx.chain_id() != Some(chain_id) {
-        return Err(SystemTxError::Phase1ChainIdMismatch {
-            expected: chain_id,
-            actual: tx.chain_id(),
-        });
-    }
+    validate_phase1_recipient_and_chain(tx, chain_id)?;
     let expected_nonce = system_tx_nonce(block_number, 0)?;
     if tx.nonce() != expected_nonce {
         return Err(SystemTxError::Phase1NonceMismatch {
@@ -90,16 +79,7 @@ fn validate_phase1_envelope_shape(
             actual: tx.gas_limit(),
         });
     }
-    if tx.input().as_ref() != calldata {
-        return Err(SystemTxError::Phase1CalldataMismatch);
-    }
-    let actual = SystemTxInputV2::decode(calldata)?.kind();
-    if actual != SystemTxKind::CertifiedParentAccounting {
-        return Err(SystemTxError::CalldataKindMismatch {
-            expected: SystemTxKind::CertifiedParentAccounting,
-            actual,
-        });
-    }
+    validate_phase1_calldata(tx, calldata)?;
     let expected_unsigned = build_unsigned_system_tx(
         SystemTxKind::CertifiedParentAccounting,
         0,
@@ -111,4 +91,37 @@ fn validate_phase1_envelope_shape(
         return Err(SystemTxError::Phase1SignatureHashMismatch);
     }
     Ok(tx.signature_hash())
+}
+
+fn validate_phase1_recipient_and_chain(
+    tx: &TransactionSigned,
+    chain_id: u64,
+) -> Result<(), SystemTxError> {
+    if tx.to() != Some(OUTBE_SYSTEM_TX_ADDRESS) {
+        return Err(SystemTxError::Phase1WrongRecipient);
+    }
+    if tx.value() != U256::ZERO {
+        return Err(SystemTxError::Phase1NonZeroValue);
+    }
+    if tx.chain_id() != Some(chain_id) {
+        return Err(SystemTxError::Phase1ChainIdMismatch {
+            expected: chain_id,
+            actual: tx.chain_id(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_phase1_calldata(tx: &TransactionSigned, calldata: &[u8]) -> Result<(), SystemTxError> {
+    if tx.input().as_ref() != calldata {
+        return Err(SystemTxError::Phase1CalldataMismatch);
+    }
+    let actual = SystemTxInputV2::decode(calldata)?.kind();
+    if actual != SystemTxKind::CertifiedParentAccounting {
+        return Err(SystemTxError::CalldataKindMismatch {
+            expected: SystemTxKind::CertifiedParentAccounting,
+            actual,
+        });
+    }
+    Ok(())
 }

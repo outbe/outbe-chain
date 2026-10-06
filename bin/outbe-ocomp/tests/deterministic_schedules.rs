@@ -1,5 +1,6 @@
 // OCOMP-TEST-ID: OCM-DET-001
 
+mod finality_fixture;
 mod support;
 
 use std::env;
@@ -7,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 use alloy_primitives::{Address, B256, U256};
+use finality_fixture::{finalized_intent_proof_fixture, fixture_league};
 use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
-use outbe_e2e_harness::ocomp_finality_fixture::{finalized_intent_proof_fixture, fixture_league};
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
 };
@@ -615,8 +616,8 @@ fn raw_fidelity_opening(
     wwd: u32,
 ) -> RawContractOpeningProofV1 {
     // One per-owner league word in Metadosis storage, in owner order (the node's
-    // canonical slot plan). `fixture_league` fabricates an opaque valid value;
-    // the real league derivation lives in `outbe_fidelity`.
+    // canonical slot plan). `fixture_league` fabricates an opaque valid value.
+    // The real league derivation lives in `outbe_fidelity`.
     let ordered_slots = subjects
         .owners
         .iter()

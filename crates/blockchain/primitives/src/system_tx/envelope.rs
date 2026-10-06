@@ -8,6 +8,17 @@ use super::{
     MAX_SYSTEM_TXS_PER_BLOCK, OUTBE_SYSTEM_TX_ADDRESS,
 };
 
+/// Ordered system-transaction envelope inputs with an explicit visible gas limit.
+#[derive(Debug)]
+pub struct SystemTxEnvelopeInput {
+    pub kind: SystemTxKind,
+    pub ordinal: u8,
+    pub block_number: u64,
+    pub chain_id: u64,
+    pub calldata: Bytes,
+    pub gas_limit: u64,
+}
+
 pub fn system_tx_nonce(block_number: u64, ordinal: u8) -> Result<u64, SystemTxError> {
     if ordinal >= MAX_SYSTEM_TXS_PER_BLOCK {
         return Err(SystemTxError::OrdinalTooLarge {
@@ -32,24 +43,28 @@ pub fn build_unsigned_system_tx(
     calldata: Bytes,
 ) -> Result<TxLegacy, SystemTxError> {
     let gas_limit = system_tx_intrinsic_gas(calldata.as_ref())?;
-    build_unsigned_system_tx_with_gas_limit(
+    build_unsigned_system_tx_with_gas_limit(SystemTxEnvelopeInput {
         kind,
         ordinal,
         block_number,
         chain_id,
         calldata,
         gas_limit,
-    )
+    })
 }
 
 pub fn build_unsigned_system_tx_with_gas_limit(
-    kind: SystemTxKind,
-    ordinal: u8,
-    block_number: u64,
-    chain_id: u64,
-    calldata: Bytes,
-    gas_limit: u64,
+    input: SystemTxEnvelopeInput,
 ) -> Result<TxLegacy, SystemTxError> {
+    let SystemTxEnvelopeInput {
+        kind,
+        ordinal,
+        block_number,
+        chain_id,
+        calldata,
+        gas_limit,
+    } = input;
+
     let actual = SystemTxInputV2::decode(calldata.as_ref())?.kind();
     if actual != kind {
         return Err(SystemTxError::CalldataKindMismatch {

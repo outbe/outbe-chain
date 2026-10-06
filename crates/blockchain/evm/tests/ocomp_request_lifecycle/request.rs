@@ -64,14 +64,23 @@ pub(super) fn open_voting_with_pre_open_state() -> (VotingOpenScenario, PreOpenS
     assert_provider_activated_ocomp_inputs(&provider, prepared.wwd, prepared.nominal);
     let body_storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
     let runtime_body_readers = RuntimeBodyReaders::new(body_storage);
-    let evm_config = canonical_evm_config(
-        chain_spec.clone(),
-        provider.inner.clone(),
-        runtime_body_readers.clone(),
-        signer.clone(),
-        prepared.tree_service.clone(),
-        fork_install.clone(),
-    );
+    let fixture = OcompSuccessorFixture {
+        chain_spec: &chain_spec,
+        tree_service: &prepared.tree_service,
+        signer: &signer,
+        runtime_body_readers: &runtime_body_readers,
+        fork_install: &fork_install,
+        dkg: &dkg,
+        snapshot: &snapshot,
+    };
+    let evm_config = canonical_evm_config(CanonicalEvmConfigInput {
+        chain_spec: chain_spec.clone(),
+        accounted_parent: provider.inner.clone(),
+        runtime_body_readers: runtime_body_readers.clone(),
+        signer: signer.clone(),
+        tree_service: prepared.tree_service.clone(),
+        fork_install: fork_install.clone(),
+    });
     let phase1 = evm_config
         .build_signed_phase1_tx(
             REQUEST_HEIGHT,
@@ -100,15 +109,15 @@ pub(super) fn open_voting_with_pre_open_state() -> (VotingOpenScenario, PreOpenS
         evm_config.clone(),
         EthereumBuilderConfig::new().with_gas_limit(BLOCK_GAS_LIMIT),
     );
-    let attributes = OutbePayloadAttributes::new(
-        REWARDS_ADDRESS,
-        prepared.request_time * 1_000,
-        B256::repeat_byte(0x44),
-        Some(B256::repeat_byte(0x45)),
-        Bytes::new(),
-        Some(metadata),
-        Some(proposer),
-    )
+    let attributes = OutbePayloadAttributes::new(outbe_primitives::OutbePayloadAttributesInput {
+        suggested_fee_recipient: REWARDS_ADDRESS,
+        timestamp_millis: prepared.request_time * 1_000,
+        prev_randao: B256::repeat_byte(0x44),
+        parent_beacon_block_root: Some(B256::repeat_byte(0x45)),
+        extra_data: Bytes::new(),
+        parent_consensus_metadata: Some(metadata),
+        proposer_evm_address: Some(proposer),
+    })
     .with_execution_read_budget(ExecutionReadBudget::new());
     let payload = payload_builder
         .build_empty_payload(PayloadConfig::new(
@@ -157,7 +166,7 @@ pub(super) fn open_voting_with_pre_open_state() -> (VotingOpenScenario, PreOpenS
     );
     assert_eq!(accumulation.data.date, expected_cycle_day);
     assert!(
-        !accumulation.data.dayMetadosisLimitAmount.is_zero(),
+        !accumulation.data.metadosisLimitMinor.is_zero(),
         "production CycleTick must route a non-zero allocation"
     );
     let terminal_receipt = receipts.last().expect("terminal request receipt");
@@ -271,7 +280,7 @@ pub(super) fn open_voting_with_pre_open_state() -> (VotingOpenScenario, PreOpenS
         let base_limit = outbe_metadosis::api::worldwide_day(storage.clone(), prepared.wwd)
             .unwrap()
             .unwrap()
-            .metadosis_limit_amount;
+            .metadosis_limit_minor;
         // The effective ceiling is the day's own emission plus what it drew from the accumulator.
         assert_eq!(
             frozen.day_limit,
@@ -341,7 +350,7 @@ pub(super) fn open_voting_with_pre_open_state() -> (VotingOpenScenario, PreOpenS
         assert_eq!(tribute.total_supply().unwrap(), 1);
         let totals = tribute.get_day_totals(prepared.wwd).unwrap();
         assert_eq!(totals.tribute_count, 1);
-        assert_eq!(totals.tribute_nominal_amount, prepared.nominal);
+        assert_eq!(totals.tribute_nominal_total_minor, prepared.nominal);
     });
 
     let request_hash = payload.block().hash();
@@ -363,16 +372,17 @@ pub(super) fn open_voting_with_pre_open_state() -> (VotingOpenScenario, PreOpenS
         evm_config.clone(),
         EthereumBuilderConfig::new().with_gas_limit(BLOCK_GAS_LIMIT),
     );
-    let successor_attributes = OutbePayloadAttributes::new(
-        REWARDS_ADDRESS,
-        (prepared.request_time + 1) * 1_000,
-        B256::repeat_byte(0x54),
-        Some(B256::repeat_byte(0x55)),
-        Bytes::new(),
-        Some(successor_metadata),
-        Some(proposer),
-    )
-    .with_execution_read_budget(ExecutionReadBudget::new());
+    let successor_attributes =
+        OutbePayloadAttributes::new(outbe_primitives::OutbePayloadAttributesInput {
+            suggested_fee_recipient: REWARDS_ADDRESS,
+            timestamp_millis: (prepared.request_time + 1) * 1_000,
+            prev_randao: B256::repeat_byte(0x54),
+            parent_beacon_block_root: Some(B256::repeat_byte(0x55)),
+            extra_data: Bytes::new(),
+            parent_consensus_metadata: Some(successor_metadata),
+            proposer_evm_address: Some(proposer),
+        })
+        .with_execution_read_budget(ExecutionReadBudget::new());
     let successor = successor_builder
         .build_empty_payload(PayloadConfig::new(
             request_parent,
@@ -441,20 +451,16 @@ pub(super) fn open_voting_with_pre_open_state() -> (VotingOpenScenario, PreOpenS
     let mut two_blocks_before = None;
     for height in (REQUEST_HEIGHT + 2)..open_height {
         let built = build_canonical_ocomp_successor(
-            &chain_spec,
-            &prepared.tree_service,
-            &signer,
-            &runtime_body_readers,
-            &fork_install,
-            &dkg,
-            &snapshot,
-            proposer,
-            canonical_parent,
-            &canonical_storage,
-            height,
-            prepared.request_time + (height - REQUEST_HEIGHT),
-            requested.data.intentId,
-            Vec::new(),
+            fixture,
+            OcompSuccessorBlock {
+                proposer,
+                parent: canonical_parent,
+                parent_storage: &canonical_storage,
+                height,
+                timestamp: prepared.request_time + (height - REQUEST_HEIGHT),
+                intent_id: requested.data.intentId,
+                user_transactions: Vec::new(),
+            },
         );
         assert_eq!(
             built.record.status,
@@ -475,20 +481,16 @@ pub(super) fn open_voting_with_pre_open_state() -> (VotingOpenScenario, PreOpenS
         one_block_before: canonical_storage.clone(),
     };
     let voting_open = build_canonical_ocomp_successor(
-        &chain_spec,
-        &prepared.tree_service,
-        &signer,
-        &runtime_body_readers,
-        &fork_install,
-        &dkg,
-        &snapshot,
-        proposer,
-        canonical_parent,
-        &canonical_storage,
-        open_height,
-        prepared.request_time + (open_height - REQUEST_HEIGHT),
-        requested.data.intentId,
-        Vec::new(),
+        fixture,
+        OcompSuccessorBlock {
+            proposer,
+            parent: canonical_parent,
+            parent_storage: &canonical_storage,
+            height: open_height,
+            timestamp: prepared.request_time + (open_height - REQUEST_HEIGHT),
+            intent_id: requested.data.intentId,
+            user_transactions: Vec::new(),
+        },
     );
     assert_eq!(voting_open.record.status, OcompJobStatus::VotingOpen);
 
@@ -511,18 +513,22 @@ pub(super) fn open_voting_with_pre_open_state() -> (VotingOpenScenario, PreOpenS
 
     (
         VotingOpenScenario {
-            chain_spec,
-            prepared,
-            signer,
-            runtime_body_readers,
-            fork_install,
-            dkg,
-            snapshot,
-            proposer,
-            open_height,
-            intent_id: requested.data.intentId,
-            finalized_record,
-            voting_open,
+            environment: OcompSuccessorEnvironment {
+                chain_spec,
+                signer,
+                runtime_body_readers,
+                fork_install,
+                dkg,
+                snapshot,
+            },
+            state: VotingOpenState {
+                prepared,
+                proposer,
+                open_height,
+                intent_id: requested.data.intentId,
+                finalized_record,
+                voting_open,
+            },
         },
         pre_open_states,
     )

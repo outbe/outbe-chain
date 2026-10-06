@@ -30,9 +30,9 @@ pub fn issue_gem_position(
     storage: &StorageHandle<'_>,
     caller: Address,
     source_intex_id: SeriesId,
-    amount: U256,
+    units: U256,
 ) -> Result<U256> {
-    runtime::issue_gem_position(storage, caller, source_intex_id, amount)
+    runtime::issue_gem_position(storage, caller, source_intex_id, units)
 }
 
 pub fn issue_merchant_gem(
@@ -53,15 +53,6 @@ pub fn settle_gem(
     snapshot_id: U256,
 ) -> Result<()> {
     runtime::settle_gem(storage, caller, gem_id, asset, snapshot_id)
-}
-
-pub fn settle_gem_with_paynote(
-    storage: &StorageHandle<'_>,
-    caller: Address,
-    gem_id: U256,
-    paynote_proof: &[u8],
-) -> Result<()> {
-    runtime::settle_gem_with_paynote(storage, caller, gem_id, paynote_proof)
 }
 
 pub fn mine_promis(

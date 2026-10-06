@@ -9,14 +9,14 @@ use commonware_cryptography::bls12381;
 use commonware_utils::ordered::Set;
 use outbe_primitives::error::{PrecompileError, Result};
 
-/// The ordered committee (BLS MinPk public keys) the evidence's epoch ran. The
-/// vote namespaces are committee-bound, so evidence verification must use
-/// the SAME committee the Simplex signer used - supplied by the runtime from the
-/// epoch's on-chain `CommitteeSnapshot`. Both the chain
-/// (`outbe_app_namespace()`,) and the committee are thus bound,
-/// so a vote from another chain OR another committee can no longer be replayed as
-/// fabricated double-sign evidence here. The committee-bound namespaces come from
-/// `outbe_consensus::proof` - the single source of truth shared with the signer.
+/// The ordered committee (BLS MinPk public keys) that ran the evidence's epoch. The
+/// vote namespaces are committee-bound. Evidence verification must therefore use
+/// the SAME committee that the Simplex signer used. The runtime supplies it from the
+/// epoch's on-chain `CommitteeSnapshot`. The namespaces thus bind both the chain
+/// (`outbe_app_namespace()`) and the committee. As a result, a vote from another chain
+/// OR another committee can no longer be replayed here as fabricated double-sign
+/// evidence. The committee-bound namespaces come from `outbe_consensus::proof`. That
+/// module is the single source of truth, and the signer uses it too.
 pub(crate) type EvidenceCommittee = Set<bls12381::PublicKey>;
 
 /// Parsed evidence block containing signer identity, signature, and proposal data.
@@ -38,8 +38,8 @@ impl EvidenceBlock {
                 "evidence block too short: need at least 145 bytes".into(),
             ));
         }
-        // The length guard above proves these fixed slices are exactly sized, so
-        // the conversions are infallible; map to a structured error rather than
+        // The length guard above proves that these fixed slices have the exact size,
+        // so the conversions cannot fail. Map to a structured error instead of
         // `unwrap()` on the precompile path.
         let pubkey: [u8; 48] = data[..48]
             .try_into()
@@ -127,9 +127,9 @@ fn build_signed_payload_with_ns(namespace: &[u8], payload_bytes: &[u8]) -> Vec<u
 }
 
 // Vote namespaces (notarize/nullify/finalize) come from
-// `outbe_consensus::proof::*_namespace(committee)` - the single committee-bound
-// derivation shared with the signer. No local namespace builders remain,
-// so signer and evidence verifier cannot drift.
+// `outbe_consensus::proof::*_namespace(committee)`. That is the single committee-bound
+// derivation, and the signer uses it too. No local namespace builders remain,
+// so the signer and the evidence verifier cannot drift.
 
 /// Encodes a u64 as LEB128 varint (matching commonware_codec::varint::UInt).
 fn write_leb128(buf: &mut Vec<u8>, mut value: u64) {

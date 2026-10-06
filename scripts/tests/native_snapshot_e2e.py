@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Local four-validator snapshot workflow, optionally with a separate FullNode donor.
-No SGX hardware claim; fixtures use the ordinary authenticated enclave transport.
+No SGX hardware claim. Fixtures use the ordinary authenticated enclave transport.
 """
 import argparse
 import hashlib
@@ -190,7 +190,8 @@ class SnapshotNetwork(Network):
         self.start_enclave(4)
         time.sleep(1)
         expiry=int(self.rpc('eth_getBlockByNumber',['finalized',False])['timestamp'],16)+7200
-        # Fund a fresh recipient wallet; neither validator association nor donor identity is reused.
+        # Fund a fresh recipient wallet. The test reuses neither validator association
+        # nor donor identity.
         private=secrets.token_hex(32)
         address=subprocess.check_output(['cast','wallet','address','--private-key',private],text=True).strip()
         funder=(self.node_dir(0)/'evm-key.hex').read_text().strip()

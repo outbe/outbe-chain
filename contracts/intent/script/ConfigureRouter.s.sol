@@ -8,8 +8,9 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {Router} from "../src/router/Router.sol";
 
-/// @dev Registers the matching Router on each remote chain. Routers share one CREATE3 address across chains, so the
-///      remote address equals the local (computed here) - env only lists chain ids.
+/// @dev Registers the matching Router on each remote chain. Routers share one CREATE3 address
+///      across chains, so the remote address equals the local address (computed here). The env
+///      only lists chain ids.
 ///
 /// Required env vars (DEPLOYER_PK must be the Router owner):
 ///   DEPLOYER_PK      - owner private key

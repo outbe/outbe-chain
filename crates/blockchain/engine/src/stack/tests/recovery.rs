@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(feature = "snapshot-integration")]
+mod validator_history;
 use crate::stack::recovery::anchor::validate_certified_follower_recovery_record;
 
 #[test]
@@ -172,10 +174,14 @@ fn certified_follower_recovery_anchor_requires_matching_verified_records() {
     let (provider, finalization) = recovery_finalization_fixture(&block, round);
 
     let anchor = validate_certified_follower_recovery_record(
-        358,
-        block.block_hash(),
+        crate::stack::recovery::anchor::FollowerRecoveryBlock {
+            checkpoint: ProjectionCheckpoint {
+                block_number: 358,
+                block_hash: block.block_hash(),
+            },
+            block: &block,
+        },
         &finalization,
-        &block,
         &finalization,
         &block,
         &provider,
@@ -186,10 +192,14 @@ fn certified_follower_recovery_anchor_requires_matching_verified_records() {
 
     let wrong_block = recovery_block(359);
     let error = validate_certified_follower_recovery_record(
-        358,
-        block.block_hash(),
+        crate::stack::recovery::anchor::FollowerRecoveryBlock {
+            checkpoint: ProjectionCheckpoint {
+                block_number: 358,
+                block_hash: block.block_hash(),
+            },
+            block: &wrong_block,
+        },
         &finalization,
-        &wrong_block,
         &finalization,
         &block,
         &provider,
@@ -218,10 +228,14 @@ fn certified_follower_recovers_executed_ancestor_without_inventing_a_certificate
     };
     let epocher = outbe_consensus::follow::FollowerEpocher::new(500, 0);
     let recovered = validate_ancestor_follower_recovery_record(
-        358,
-        parent.block_hash(),
+        crate::stack::recovery::anchor::FollowerRecoveryBlock {
+            checkpoint: ProjectionCheckpoint {
+                block_number: 358,
+                block_hash: parent.block_hash(),
+            },
+            block: &parent,
+        },
         None,
-        &parent,
         &proof,
         &schemes,
         &epocher,
@@ -231,10 +245,14 @@ fn certified_follower_recovers_executed_ancestor_without_inventing_a_certificate
     assert_eq!(recovered.checkpoint.block_hash, parent.block_hash());
     assert!(recovered.finalization.is_none());
     assert!(validate_ancestor_follower_recovery_record(
-        358,
-        B256::ZERO,
+        crate::stack::recovery::anchor::FollowerRecoveryBlock {
+            checkpoint: ProjectionCheckpoint {
+                block_number: 358,
+                block_hash: B256::ZERO
+            },
+            block: &parent
+        },
         None,
-        &parent,
         &proof,
         &schemes,
         &epocher
@@ -244,10 +262,14 @@ fn certified_follower_recovers_executed_ancestor_without_inventing_a_certificate
     let (_, wrong_signature) = recovery_finalization_fixture(&parent, round);
     forged.certified.finalization.certificate = wrong_signature.certificate;
     assert!(validate_ancestor_follower_recovery_record(
-        358,
-        parent.block_hash(),
+        crate::stack::recovery::anchor::FollowerRecoveryBlock {
+            checkpoint: ProjectionCheckpoint {
+                block_number: 358,
+                block_hash: parent.block_hash()
+            },
+            block: &parent
+        },
         None,
-        &parent,
         &forged,
         &schemes,
         &epocher
@@ -256,10 +278,14 @@ fn certified_follower_recovers_executed_ancestor_without_inventing_a_certificate
     let mut omitted = proof;
     omitted.ancestors.clear();
     assert!(validate_ancestor_follower_recovery_record(
-        358,
-        parent.block_hash(),
+        crate::stack::recovery::anchor::FollowerRecoveryBlock {
+            checkpoint: ProjectionCheckpoint {
+                block_number: 358,
+                block_hash: parent.block_hash()
+            },
+            block: &parent
+        },
         None,
-        &parent,
         &omitted,
         &schemes,
         &epocher
@@ -417,9 +443,11 @@ fn recovered_fcu_releases_projection_wait_without_running_executor_heartbeat() {
         let (actor, _mailbox) = ExecutorActor::new(
             context.child("executor"),
             ConsensusEngineHandle::new(engine_tx),
-            genesis,
-            anchor.block_number,
-            anchor.block_hash,
+            outbe_consensus::executor::actor::RecoveredFinalizedState {
+                genesis_hash: genesis,
+                last_finalized_height: anchor.block_number,
+                last_finalized_hash: anchor.block_hash,
+            },
             readiness,
             None,
         );
@@ -457,7 +485,7 @@ fn recovered_fcu_releases_projection_wait_without_running_executor_heartbeat() {
         assert_eq!(waiting_parent.await, WaitOutcome::Ready);
         engine_task.await.unwrap();
         drop(publisher_keepalive);
-        // actor.start() is deliberately never called: no live heartbeat is
+        // The test deliberately never calls actor.start(). No live heartbeat is
         // available to rescue an incorrectly ordered startup barrier.
     });
 }
@@ -768,8 +796,8 @@ fn test_recovered_boundary_addresses_survive_latest_state_removal() {
 // T-3 / behavioural counterpart of the removed source-grep test in
 // `crates/blockchain/evm/tests/genesis.rs`. `validate_recovered_vrf_material`
 // must reject when the locally-recovered VRF group public key disagrees with
-// the finalized boundary artifact, and must accept when they match (or when
-// no boundary is supplied - bootstrap path).
+// the finalized boundary artifact. It must accept when they match, or when
+// the caller supplies no boundary (bootstrap path).
 #[test]
 fn validate_recovered_vrf_material_accepts_matching_boundary_rejects_mismatch() {
     let (_keys, _participants, _output, _share, polynomial) = run_test_dkg_complete();
@@ -804,7 +832,7 @@ fn validate_recovered_vrf_material_accepts_matching_boundary_rejects_mismatch() 
 // `select_recovery_participants` is the pure decision the recovery path now
 // uses at stack.rs section 7. The output's `players()` is already a sorted/deduped
 // `commonware_utils::ordered::Set`, so participant indices derive from it
-// canonically - the test asserts membership and the explicit drift error.
+// canonically. The test asserts membership and the explicit drift error.
 // =============================================================================
 
 /// Build a `DkgBoundaryArtifact` whose `reshare.new_active_set` records `n`
@@ -842,7 +870,7 @@ fn recovery_uses_recovered_committee_not_latest() {
     );
 
     // Subcase 2: the recovered boundary records a 4-validator active set while the
-    // restored DKG output has only 3 players - the consensus material does not
+    // restored DKG output has only 3 players. The consensus material does not
     // match the recovered chain boundary. Recovery must fail fast with an explicit
     // drift error rather than build the scheme against the wrong committee.
     let boundary_drift = test_boundary_with_active_set_len(4);
@@ -1017,7 +1045,7 @@ mod copied_genesis_validator_history {
     use super::super::restart_recovery::copied_native::{open_native, DiskFixture, H};
     use crate::validators::read_consensus_validators_at_block;
     use alloy_consensus::Sealable;
-    use alloy_primitives::{Address, B256, U256};
+    use alloy_primitives::{Address, B256};
     use commonware_codec::Encode as _;
     use commonware_cryptography::{bls12381, Signer as _};
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
@@ -1025,16 +1053,11 @@ mod copied_genesis_validator_history {
         database::Database,
         init_db,
         mdbx::DatabaseArguments,
-        models::ShardedKey,
-        table::Table,
         tables,
         transaction::{DbTx, DbTxMut},
     };
     use std::{collections::BTreeSet, path::Path};
 
-    type StorageWord = <tables::PlainStorageState as Table>::Value;
-    type HistoryKey = <tables::StoragesHistory as Table>::Key;
-    type HistoryBlocks = <tables::StoragesHistory as Table>::Value;
     const OWNER: Address = Address::repeat_byte(0xa0);
     const FOUNDER: Address = Address::with_last_byte(0x11);
     const JOINER: Address = Address::with_last_byte(0x22);
@@ -1073,64 +1096,21 @@ mod copied_genesis_validator_history {
         contract.set_block_number(1);
         activate(&mut contract, JOINER, 22);
         let current = contract.storage;
-        let keys: BTreeSet<_> = genesis.keys().chain(current.keys()).copied().collect();
-        let addresses: BTreeSet<_> = keys.iter().map(|(address, _)| *address).collect();
-        let mut changed_addresses = BTreeSet::new();
-        let db = init_db(root.join("db"), DatabaseArguments::test()).unwrap();
-        let tx = db.tx_mut().unwrap();
-        for &address in &addresses {
-            tx.put::<tables::PlainAccountState>(address, Default::default())
-                .unwrap();
-        }
-        for (address, slot) in keys {
-            let before = genesis.get(&(address, slot)).copied().unwrap_or_default();
-            let after = current.get(&(address, slot)).copied().unwrap_or_default();
-            let key = B256::from(slot.to_be_bytes::<32>());
-            if !after.is_zero() {
-                tx.put::<tables::PlainStorageState>(address, StorageWord { key, value: after })
-                    .unwrap();
-            }
-            let mut writes = Vec::new();
-            if !before.is_zero() {
-                writes.push(0);
-                tx.put::<tables::StorageChangeSets>(
-                    (0, address).into(),
-                    StorageWord {
-                        key,
-                        value: U256::ZERO,
-                    },
-                )
-                .unwrap();
-            }
-            if before != after {
-                changed_addresses.insert(address);
-                writes.push(1);
-                tx.put::<tables::StorageChangeSets>(
-                    (1, address).into(),
-                    StorageWord { key, value: before },
-                )
-                .unwrap();
-            }
-            if !writes.is_empty() {
-                tx.put::<tables::StoragesHistory>(
-                    HistoryKey {
-                        address,
-                        sharded_key: ShardedKey {
-                            key,
-                            highest_block_number: u64::MAX,
-                        },
-                    },
-                    HistoryBlocks::new(writes).unwrap(),
-                )
-                .unwrap();
-            }
-        }
-        assert!(
-            !changed_addresses.is_empty(),
-            "the genesis/current distinction must require native history"
-        );
-        tx.commit().unwrap();
-        changed_addresses
+        super::validator_history::persist(
+            root,
+            super::validator_history::Snapshots {
+                before: &genesis,
+                after: &current,
+                change_height: 1,
+            },
+            |changed_addresses| {
+                assert!(
+                    !changed_addresses.is_empty(),
+                    "the genesis/current distinction must require native history"
+                );
+            },
+        )
+        .expect("native distinct validator history")
     }
 
     fn assert_genesis_and_current(root: &Path, genesis_hash: B256, current_hash: B256) {
@@ -1241,8 +1221,6 @@ mod copied_native_dkg_prerequisites {
             database::Database,
             init_db,
             mdbx::DatabaseArguments,
-            models::ShardedKey,
-            table::Table,
             tables,
             transaction::{DbTx, DbTxMut},
             DatabaseEnv,
@@ -1261,9 +1239,6 @@ mod copied_native_dkg_prerequisites {
 
     type Native = RethFullAdapter<DatabaseEnv, OutbeNode>;
     type AddOns = <OutbeNode as Node<Native>>::AddOns;
-    type StorageWord = <tables::PlainStorageState as Table>::Value;
-    type HistoryKey = <tables::StoragesHistory as Table>::Key;
-    type HistoryBlocks = <tables::StoragesHistory as Table>::Value;
     const FREEZE: u64 = 1;
     const CHANGE: u64 = 2;
     const OWNER: Address = Address::repeat_byte(0xa0);
@@ -1314,65 +1289,46 @@ mod copied_native_dkg_prerequisites {
             &bls12381::PrivateKey::from_seed(44).public_key(),
         );
         let current = contract.storage;
-        let keys: BTreeSet<_> = frozen.keys().chain(current.keys()).copied().collect();
-        let addresses: BTreeSet<_> = keys.iter().map(|(address, _)| *address).collect();
-        let mut changed_addresses = BTreeSet::new();
-        let db = init_db(root.join("db"), DatabaseArguments::test()).unwrap();
-        let tx = db.tx_mut().unwrap();
-        for address in addresses {
-            tx.put::<tables::PlainAccountState>(address, Default::default())
-                .unwrap();
-        }
-        for (address, slot) in keys {
-            let before = frozen.get(&(address, slot)).copied().unwrap_or_default();
-            let after = current.get(&(address, slot)).copied().unwrap_or_default();
-            let key = B256::from(slot.to_be_bytes::<32>());
-            if !after.is_zero() {
-                tx.put::<tables::PlainStorageState>(address, StorageWord { key, value: after })
-                    .unwrap();
-            }
-            let mut writes = Vec::new();
-            if !before.is_zero() {
-                writes.push(0);
-                tx.put::<tables::StorageChangeSets>(
-                    (0, address).into(),
-                    StorageWord {
-                        key,
-                        value: U256::ZERO,
-                    },
-                )
-                .unwrap();
-            }
-            if before != after {
-                changed_addresses.insert(address);
-                writes.push(CHANGE);
-                tx.put::<tables::StorageChangeSets>(
-                    (CHANGE, address).into(),
-                    StorageWord { key, value: before },
-                )
-                .unwrap();
-            }
-            if !writes.is_empty() {
-                tx.put::<tables::StoragesHistory>(
-                    HistoryKey {
-                        address,
-                        sharded_key: ShardedKey {
-                            key,
-                            highest_block_number: u64::MAX,
-                        },
-                    },
-                    HistoryBlocks::new(writes).unwrap(),
-                )
-                .unwrap();
-            }
-        }
-        assert!(!changed_addresses.is_empty());
-        tx.commit().unwrap();
-        changed_addresses
+        super::validator_history::persist(
+            root,
+            super::validator_history::Snapshots {
+                before: &frozen,
+                after: &current,
+                change_height: CHANGE,
+            },
+            |changed_addresses| {
+                assert!(!changed_addresses.is_empty());
+            },
+        )
+        .expect("native freeze validator history")
     }
 
-    // All services belong to this invocation. The copied provider is installed
-    // initially; no execution, peer loop, consensus engine or process is started.
+    fn offline_component_config(
+        root: &Path,
+        chain: Arc<reth_ethereum::chainspec::ChainSpec<OutbeHeader>>,
+    ) -> eyre::Result<NodeConfig<reth_ethereum::chainspec::ChainSpec<OutbeHeader>>> {
+        let mut config = NodeConfig::new(chain)
+            .with_unused_ports()
+            .with_datadir_args(DatadirArgs {
+                datadir: root.join("test-components").into(),
+                ..Default::default()
+            });
+        config.rpc.http = false;
+        config.rpc.ws = false;
+        config.rpc.ipcdisable = true;
+        config.rpc.disable_auth_server = true;
+        config.network.bootnodes = Some(Vec::new());
+        config.network.discovery.disable_discovery = true;
+        config.txpool.disable_blobs_support = true;
+        config.txpool.additional_validation_tasks = 0;
+        config.txpool.disable_transactions_backup = true;
+        std::fs::create_dir_all(config.datadir().data_dir())?;
+        Ok(config)
+    }
+
+    // All services belong to this invocation. This function installs the copied
+    // provider initially. It starts no execution, peer loop, consensus engine or
+    // process.
     fn with_native_components(
         root: &Path,
         check: impl FnOnce(&OutbeFullNode) -> eyre::Result<()>,
@@ -1398,22 +1354,7 @@ mod copied_native_dkg_prerequisites {
                 let header = provider
                     .sealed_header(H)?
                     .ok_or_else(|| eyre::eyre!("missing copied head"))?;
-                let mut config = NodeConfig::new(chain.clone())
-                    .with_unused_ports()
-                    .with_datadir_args(DatadirArgs {
-                        datadir: root.join("test-components").into(),
-                        ..Default::default()
-                    });
-                config.rpc.http = false;
-                config.rpc.ws = false;
-                config.rpc.ipcdisable = true;
-                config.rpc.disable_auth_server = true;
-                config.network.bootnodes = Some(Vec::new());
-                config.network.discovery.disable_discovery = true;
-                config.txpool.disable_blobs_support = true;
-                config.txpool.additional_validation_tasks = 0;
-                config.txpool.disable_transactions_backup = true;
-                std::fs::create_dir_all(config.datadir().data_dir())?;
+                let config = offline_component_config(root, chain.clone())?;
                 let head = Head {
                     number: H,
                     hash: header.hash(),
@@ -1601,11 +1542,12 @@ mod copied_native_dkg_prerequisites {
             let own = recipient.join("own-dkg");
             std::fs::create_dir_all(&own).unwrap();
             save_pending_dkg_state(
-                &own,
-                &self.share,
-                &self.polynomial,
-                &self.output,
-                &bls::KeyBackend::Plaintext,
+                DkgStateStore::new(&own, &bls::KeyBackend::Plaintext),
+                DkgStateMaterial {
+                    share: &self.share,
+                    polynomial: &self.polynomial,
+                    output: &self.output,
+                },
             )
             .unwrap();
             save_pending_dkg_boundary(&own, &self.snapshot).unwrap();
@@ -1690,6 +1632,146 @@ mod copied_native_dkg_prerequisites {
         StorageChangeset,
     }
 
+    fn damage_prerequisite(fixture: &PendingFixture, root: &Path, missing: MissingPrerequisite) {
+        match missing {
+            MissingPrerequisite::HeaderSegment => remove_native_header(root, FREEZE),
+            MissingPrerequisite::CorruptHeaderNumber => {
+                let mut invalid = fixture.disk.headers[FREEZE as usize].clone();
+                invalid.inner.number = FREEZE + 1;
+                replace_native_header(
+                    root,
+                    FREEZE,
+                    &invalid,
+                    fixture.disk.headers[FREEZE as usize].hash_slow(),
+                );
+            }
+            MissingPrerequisite::StorageChangeset => {
+                let db = init_db(root.join("db"), DatabaseArguments::test()).unwrap();
+                let tx = db.tx_mut().unwrap();
+                for &address in &fixture.changed_addresses {
+                    assert!(tx
+                        .delete::<tables::StorageChangeSets>((CHANGE, address).into(), None)
+                        .unwrap());
+                }
+                tx.commit().unwrap();
+            }
+        }
+    }
+
+    fn assert_freeze_refresh_rejected(
+        node: &OutbeFullNode,
+        missing: MissingPrerequisite,
+    ) -> eyre::Result<()> {
+        match missing {
+            MissingPrerequisite::HeaderSegment => {
+                ensure!(matches!(
+                    refresh_validator_set_at_height(node, FREEZE)?,
+                    FrozenValidatorSetRefresh::PendingBlockHash
+                ));
+            }
+            MissingPrerequisite::CorruptHeaderNumber => {
+                let error = refresh_validator_set_at_height(node, FREEZE)
+                    .err()
+                    .expect("native invalid freeze header must fail");
+                ensure!(format!("{error:#}").contains("canonical freeze header number mismatch"));
+            }
+            MissingPrerequisite::StorageChangeset => {
+                let error = refresh_validator_set_at_height(node, FREEZE)
+                    .err()
+                    .expect("native missing history must fail");
+                ensure!(format!("{error:#}").contains("storage change set"));
+            }
+        }
+        Ok(())
+    }
+
+    fn assert_missing_prerequisite_rejected(
+        fixture: &PendingFixture,
+        root: &Path,
+        node: &OutbeFullNode,
+        missing: MissingPrerequisite,
+    ) -> eyre::Result<()> {
+        ensure!(node.provider.block_hash(H)? == Some(fixture.disk.headers[H as usize].hash_slow()));
+        let current_state = node
+            .provider
+            .state_by_block_hash(fixture.disk.headers[H as usize].hash_slow())?;
+        let current =
+            validators::read_reshare_target_with_empty_tee_exclusions_from_state(&current_state)?;
+        ensure!(current.validator_set.addresses == vec![MEMBERS[1], MEMBERS[2], JOINER]);
+        assert_freeze_refresh_rejected(node, missing)?;
+        let own = root.join("own-dkg");
+        let snapshot = load_pending_dkg_boundary(&own)?.expect("pending boundary still exists");
+        let error = restore_pending_dkg_activation(
+            snapshot,
+            &own,
+            &bls::KeyBackend::Plaintext,
+            &fixture.keys[0].public_key(),
+            node,
+        )
+        .err()
+        .expect("ordinary restore must reject missing prerequisite");
+        let message = format!("{error:#}");
+        match missing {
+            MissingPrerequisite::HeaderSegment => {
+                ensure!(message.contains("pending DKG freeze-height state unavailable at height 1 during runtime restore"), "{message}");
+            }
+            MissingPrerequisite::CorruptHeaderNumber => {
+                ensure!(
+                    message.contains("canonical freeze header number mismatch"),
+                    "{message}"
+                );
+            }
+            MissingPrerequisite::StorageChangeset => {
+                ensure!(
+                    message.contains("storage change set")
+                        && message.contains("at block #2 does not exist"),
+                    "{message}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn assert_prerequisite_still_damaged(
+        fixture: &PendingFixture,
+        root: &Path,
+        missing: MissingPrerequisite,
+    ) {
+        let (provider, tree) = open_native(root);
+        assert_eq!(tree.finalized_marker().unwrap().height, H);
+        assert_eq!(
+            provider.block_hash(H).unwrap(),
+            Some(fixture.disk.headers[H as usize].hash_slow())
+        );
+        // Ordinary failure must not reconstruct the damaged prerequisite.
+        match missing {
+            MissingPrerequisite::HeaderSegment => {
+                assert!(provider.block_hash(FREEZE).unwrap().is_none());
+                assert!(provider.sealed_header(FREEZE).unwrap().is_none());
+            }
+            MissingPrerequisite::CorruptHeaderNumber => {
+                let header = provider.sealed_header(FREEZE).unwrap().unwrap();
+                assert_eq!(header.header().inner.number, FREEZE + 1);
+                assert_eq!(
+                    header.hash(),
+                    fixture.disk.headers[FREEZE as usize].hash_slow()
+                );
+            }
+            MissingPrerequisite::StorageChangeset => {
+                drop(provider);
+                drop(tree);
+                let db = init_db(root.join("db"), DatabaseArguments::test()).unwrap();
+                let tx = db.tx().unwrap();
+                for &address in &fixture.changed_addresses {
+                    assert!(tx
+                        .get::<tables::StorageChangeSets>((CHANGE, address).into())
+                        .unwrap()
+                        .is_none());
+                }
+            }
+        }
+    }
+
     #[test]
     fn copied_native_dkg_restore_rejects_missing_freeze_segment_corrupt_header_or_required_history()
     {
@@ -1706,108 +1788,17 @@ mod copied_native_dkg_prerequisites {
             })
             .unwrap();
             let before = pending_files(recipient.path());
-            match missing {
-                MissingPrerequisite::HeaderSegment => {
-                    remove_native_header(recipient.path(), FREEZE)
-                }
-                MissingPrerequisite::CorruptHeaderNumber => {
-                    let mut invalid = fixture.disk.headers[FREEZE as usize].clone();
-                    invalid.inner.number = FREEZE + 1;
-                    replace_native_header(
-                        recipient.path(),
-                        FREEZE,
-                        &invalid,
-                        fixture.disk.headers[FREEZE as usize].hash_slow(),
-                    );
-                }
-                MissingPrerequisite::StorageChangeset => {
-                    let db =
-                        init_db(recipient.path().join("db"), DatabaseArguments::test()).unwrap();
-                    let tx = db.tx_mut().unwrap();
-                    for &address in &fixture.changed_addresses {
-                        assert!(tx
-                            .delete::<tables::StorageChangeSets>((CHANGE, address).into(), None)
-                            .unwrap());
-                    }
-                    tx.commit().unwrap();
-                }
-            }
+            damage_prerequisite(&fixture, recipient.path(), missing);
             with_native_components(recipient.path(), |node| {
-                ensure!(node.provider.block_hash(H)? == Some(fixture.disk.headers[H as usize].hash_slow()));
-                let current_state = node.provider.state_by_block_hash(fixture.disk.headers[H as usize].hash_slow())?;
-                let current = validators::read_reshare_target_with_empty_tee_exclusions_from_state(&current_state)?;
-                ensure!(current.validator_set.addresses == vec![MEMBERS[1], MEMBERS[2], JOINER]);
-                match missing {
-                    MissingPrerequisite::HeaderSegment => {
-                        ensure!(matches!(refresh_validator_set_at_height(node, FREEZE)?, FrozenValidatorSetRefresh::PendingBlockHash));
-                    }
-                    MissingPrerequisite::CorruptHeaderNumber => {
-                        let error = refresh_validator_set_at_height(node, FREEZE).err()
-                            .expect("native invalid freeze header must fail");
-                        ensure!(format!("{error:#}").contains("canonical freeze header number mismatch"));
-                    }
-                    MissingPrerequisite::StorageChangeset => {
-                        let error = refresh_validator_set_at_height(node, FREEZE).err().expect("native missing history must fail");
-                        ensure!(format!("{error:#}").contains("storage change set"));
-                    }
-                }
-                let own = recipient.path().join("own-dkg");
-                let snapshot = load_pending_dkg_boundary(&own)?.expect("pending boundary still exists");
-                let error = restore_pending_dkg_activation(snapshot, &own, &bls::KeyBackend::Plaintext, &fixture.keys[0].public_key(), node)
-                    .err().expect("ordinary restore must reject missing prerequisite");
-                let message = format!("{error:#}");
-                match missing {
-                    MissingPrerequisite::HeaderSegment => {
-                        ensure!(message.contains("pending DKG freeze-height state unavailable at height 1 during runtime restore"), "{message}");
-                    }
-                    MissingPrerequisite::CorruptHeaderNumber => {
-                        ensure!(message.contains("canonical freeze header number mismatch"), "{message}");
-                    }
-                    MissingPrerequisite::StorageChangeset => {
-                        ensure!(message.contains("storage change set") && message.contains("at block #2 does not exist"), "{message}");
-                    }
-                }
-                Ok(())
-            }).unwrap();
+                assert_missing_prerequisite_rejected(&fixture, recipient.path(), node, missing)
+            })
+            .unwrap();
             assert_eq!(
                 pending_files(recipient.path()),
                 before,
                 "{missing:?} changed pending material"
             );
-            let (provider, tree) = open_native(recipient.path());
-            assert_eq!(tree.finalized_marker().unwrap().height, H);
-            assert_eq!(
-                provider.block_hash(H).unwrap(),
-                Some(fixture.disk.headers[H as usize].hash_slow())
-            );
-            // Ordinary failure must not reconstruct the damaged prerequisite.
-            match missing {
-                MissingPrerequisite::HeaderSegment => {
-                    assert!(provider.block_hash(FREEZE).unwrap().is_none());
-                    assert!(provider.sealed_header(FREEZE).unwrap().is_none());
-                }
-                MissingPrerequisite::CorruptHeaderNumber => {
-                    let header = provider.sealed_header(FREEZE).unwrap().unwrap();
-                    assert_eq!(header.header().inner.number, FREEZE + 1);
-                    assert_eq!(
-                        header.hash(),
-                        fixture.disk.headers[FREEZE as usize].hash_slow()
-                    );
-                }
-                MissingPrerequisite::StorageChangeset => {
-                    drop(provider);
-                    drop(tree);
-                    let db =
-                        init_db(recipient.path().join("db"), DatabaseArguments::test()).unwrap();
-                    let tx = db.tx().unwrap();
-                    for &address in &fixture.changed_addresses {
-                        assert!(tx
-                            .get::<tables::StorageChangeSets>((CHANGE, address).into())
-                            .unwrap()
-                            .is_none());
-                    }
-                }
-            }
+            assert_prerequisite_still_damaged(&fixture, recipient.path(), missing);
         }
     }
 }

@@ -23,7 +23,7 @@ pub struct NonEmptyWithdrawalsError;
 
 /// Accepts an absent or empty EIP-4895 list and rejects every non-empty list.
 ///
-/// The Ethereum wire shape remains intact; callers adapt this protocol verdict
+/// The Ethereum wire shape remains intact. Callers adapt this protocol verdict
 /// into their local Engine, consensus, or execution error domain.
 pub fn validate_outbe_withdrawals(
     withdrawals: Option<&[Withdrawal]>,
@@ -48,16 +48,30 @@ pub struct OutbePayloadAttributes {
     execution_read_budget: Option<ExecutionReadBudget>,
 }
 
+/// Owned inputs for payload construction. RPC serialization belongs to the resulting attributes.
+#[derive(Debug)]
+pub struct OutbePayloadAttributesInput {
+    pub suggested_fee_recipient: Address,
+    pub timestamp_millis: u64,
+    pub prev_randao: B256,
+    pub parent_beacon_block_root: Option<B256>,
+    pub extra_data: Bytes,
+    pub parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
+    pub proposer_evm_address: Option<Address>,
+}
+
 impl OutbePayloadAttributes {
-    pub fn new(
-        suggested_fee_recipient: Address,
-        timestamp_millis: u64,
-        prev_randao: B256,
-        parent_beacon_block_root: Option<B256>,
-        extra_data: Bytes,
-        parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
-        proposer_evm_address: Option<Address>,
-    ) -> Self {
+    pub fn new(input: OutbePayloadAttributesInput) -> Self {
+        let OutbePayloadAttributesInput {
+            suggested_fee_recipient,
+            timestamp_millis,
+            prev_randao,
+            parent_beacon_block_root,
+            extra_data,
+            parent_consensus_metadata,
+            proposer_evm_address,
+        } = input;
+
         let (timestamp, timestamp_millis_part) =
             OutbeHeader::split_timestamp_millis(timestamp_millis);
         Self {
@@ -197,7 +211,7 @@ impl BuiltPayload for OutbeBuiltPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutbeExecutionData {
     pub block: Arc<SealedBlock<OutbeBlock>>,
-    /// Local-only request budget; it is never encoded into block bytes.
+    /// Local-only request budget. It is never encoded into block bytes.
     #[serde(skip)]
     pub execution_read_budget: Option<ExecutionReadBudget>,
 }
@@ -319,7 +333,7 @@ fn outbe_payload_id(parent: &B256, attributes: &OutbePayloadAttributes) -> Paylo
             Err(error) => {
                 // `payload_id` cannot return a fallible result through Reth's
                 // trait. Hash the deterministic error text instead of
-                // panicking; valid consensus-produced metadata always takes
+                // panicking. Valid consensus-produced metadata always takes
                 // the `Ok` branch.
                 let error = error.to_string();
                 hasher.update(&[0xFF]);
@@ -373,15 +387,15 @@ mod tests {
 
     #[test]
     fn payload_attributes_split_millis() {
-        let attrs = OutbePayloadAttributes::new(
-            Address::ZERO,
-            42_123,
-            B256::ZERO,
-            None,
-            Bytes::new(),
-            None,
-            None,
-        );
+        let attrs = OutbePayloadAttributes::new(OutbePayloadAttributesInput {
+            suggested_fee_recipient: Address::ZERO,
+            timestamp_millis: 42_123,
+            prev_randao: B256::ZERO,
+            parent_beacon_block_root: None,
+            extra_data: Bytes::new(),
+            parent_consensus_metadata: None,
+            proposer_evm_address: None,
+        });
         assert_eq!(attrs.timestamp(), 42);
         assert_eq!(attrs.timestamp_millis_part(), 123);
         assert_eq!(attrs.timestamp_millis(), 42_123);
@@ -412,33 +426,33 @@ mod tests {
     #[test]
     fn payload_id_changes_with_millis_and_extra_data() {
         let parent = B256::repeat_byte(0x11);
-        let base = OutbePayloadAttributes::new(
-            Address::ZERO,
-            42_123,
-            B256::ZERO,
-            None,
-            Bytes::new(),
-            None,
-            None,
-        );
-        let different_millis = OutbePayloadAttributes::new(
-            Address::ZERO,
-            42_124,
-            B256::ZERO,
-            None,
-            Bytes::new(),
-            None,
-            None,
-        );
-        let different_extra = OutbePayloadAttributes::new(
-            Address::ZERO,
-            42_123,
-            B256::ZERO,
-            None,
-            Bytes::from_static(b"dkg"),
-            None,
-            None,
-        );
+        let base = OutbePayloadAttributes::new(OutbePayloadAttributesInput {
+            suggested_fee_recipient: Address::ZERO,
+            timestamp_millis: 42_123,
+            prev_randao: B256::ZERO,
+            parent_beacon_block_root: None,
+            extra_data: Bytes::new(),
+            parent_consensus_metadata: None,
+            proposer_evm_address: None,
+        });
+        let different_millis = OutbePayloadAttributes::new(OutbePayloadAttributesInput {
+            suggested_fee_recipient: Address::ZERO,
+            timestamp_millis: 42_124,
+            prev_randao: B256::ZERO,
+            parent_beacon_block_root: None,
+            extra_data: Bytes::new(),
+            parent_consensus_metadata: None,
+            proposer_evm_address: None,
+        });
+        let different_extra = OutbePayloadAttributes::new(OutbePayloadAttributesInput {
+            suggested_fee_recipient: Address::ZERO,
+            timestamp_millis: 42_123,
+            prev_randao: B256::ZERO,
+            parent_beacon_block_root: None,
+            extra_data: Bytes::from_static(b"dkg"),
+            parent_consensus_metadata: None,
+            proposer_evm_address: None,
+        });
 
         assert_ne!(
             base.payload_id(&parent),
@@ -453,33 +467,33 @@ mod tests {
     #[test]
     fn payload_id_changes_with_parent_metadata_and_proposer() {
         let parent = B256::repeat_byte(0x11);
-        let base = OutbePayloadAttributes::new(
-            Address::ZERO,
-            42_123,
-            B256::ZERO,
-            None,
-            Bytes::new(),
-            None,
-            None,
-        );
-        let with_metadata = OutbePayloadAttributes::new(
-            Address::ZERO,
-            42_123,
-            B256::ZERO,
-            None,
-            Bytes::new(),
-            Some(sample_metadata()),
-            None,
-        );
-        let with_proposer = OutbePayloadAttributes::new(
-            Address::ZERO,
-            42_123,
-            B256::ZERO,
-            None,
-            Bytes::new(),
-            None,
-            Some(Address::repeat_byte(0x33)),
-        );
+        let base = OutbePayloadAttributes::new(OutbePayloadAttributesInput {
+            suggested_fee_recipient: Address::ZERO,
+            timestamp_millis: 42_123,
+            prev_randao: B256::ZERO,
+            parent_beacon_block_root: None,
+            extra_data: Bytes::new(),
+            parent_consensus_metadata: None,
+            proposer_evm_address: None,
+        });
+        let with_metadata = OutbePayloadAttributes::new(OutbePayloadAttributesInput {
+            suggested_fee_recipient: Address::ZERO,
+            timestamp_millis: 42_123,
+            prev_randao: B256::ZERO,
+            parent_beacon_block_root: None,
+            extra_data: Bytes::new(),
+            parent_consensus_metadata: Some(sample_metadata()),
+            proposer_evm_address: None,
+        });
+        let with_proposer = OutbePayloadAttributes::new(OutbePayloadAttributesInput {
+            suggested_fee_recipient: Address::ZERO,
+            timestamp_millis: 42_123,
+            prev_randao: B256::ZERO,
+            parent_beacon_block_root: None,
+            extra_data: Bytes::new(),
+            parent_consensus_metadata: None,
+            proposer_evm_address: Some(Address::repeat_byte(0x33)),
+        });
 
         assert_ne!(base.payload_id(&parent), with_metadata.payload_id(&parent));
         assert_ne!(base.payload_id(&parent), with_proposer.payload_id(&parent));
@@ -487,15 +501,15 @@ mod tests {
 
     #[test]
     fn payload_attributes_json_roundtrip_with_parent_metadata_and_proposer() {
-        let attrs = OutbePayloadAttributes::new(
-            Address::repeat_byte(0x44),
-            42_123,
-            B256::repeat_byte(0x55),
-            Some(B256::repeat_byte(0x66)),
-            Bytes::from_static(b"extra"),
-            Some(sample_metadata()),
-            Some(Address::repeat_byte(0x33)),
-        );
+        let attrs = OutbePayloadAttributes::new(OutbePayloadAttributesInput {
+            suggested_fee_recipient: Address::repeat_byte(0x44),
+            timestamp_millis: 42_123,
+            prev_randao: B256::repeat_byte(0x55),
+            parent_beacon_block_root: Some(B256::repeat_byte(0x66)),
+            extra_data: Bytes::from_static(b"extra"),
+            parent_consensus_metadata: Some(sample_metadata()),
+            proposer_evm_address: Some(Address::repeat_byte(0x33)),
+        });
         let encoded = serde_json::to_string(&attrs).expect("payload attrs serialize");
         let decoded: OutbePayloadAttributes =
             serde_json::from_str(&encoded).expect("payload attrs deserialize");

@@ -46,4 +46,18 @@ impl PromisLimitContract<'_> {
             after,
         })
     }
+
+    /// Take exactly `amount`, or nothing when the accumulator holds less.
+    pub fn checked_take_carry_over(&mut self, amount: U256) -> Result<Option<CarryOverTake>> {
+        let before = self.get_total_unallocated()?;
+        let Some(after) = before.checked_sub(amount) else {
+            return Ok(None);
+        };
+        self.set_total_unallocated(after)?;
+        Ok(Some(CarryOverTake {
+            before,
+            taken: amount,
+            after,
+        }))
+    }
 }

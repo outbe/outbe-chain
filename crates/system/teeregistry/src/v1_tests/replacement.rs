@@ -1,4 +1,5 @@
 use super::*;
+use crate::v1::VerifiedIntentV1;
 
 #[test]
 fn candidate_generated_quote_intent_reaches_registry_replacement_exactly() {
@@ -223,12 +224,12 @@ fn candidate_generated_quote_intent_reaches_registry_replacement_exactly() {
         .unwrap();
         assert_eq!(
             registry
-                .replace_enclave_binding_after_verifier_for_test(
-                    &submitted.intent,
-                    submission.node_signature(),
-                    submission.enclave_signature(),
-                    PostVerifierDcapCapabilityV1::new(accepted),
-                )
+                .replace_enclave_binding_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &submitted.intent,
+                    node_signature: submission.node_signature(),
+                    enclave_signature: submission.enclave_signature(),
+                    capability: PostVerifierDcapCapabilityV1::new(accepted)
+                })
                 .unwrap(),
             V1RegistrationOutcome::Created
         );
@@ -305,23 +306,23 @@ fn replacement_candidate_intent_reaches_registry_unchanged_and_never_reuses_cons
         .unwrap();
         assert_eq!(
             registry
-                .replace_enclave_binding_after_verifier_for_test(
-                    &replacement,
-                    &replacement_node,
-                    &replacement_enclave,
-                    PostVerifierDcapCapabilityV1::new(accepted.clone()),
-                )
+                .replace_enclave_binding_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &replacement,
+                    node_signature: &replacement_node,
+                    enclave_signature: &replacement_enclave,
+                    capability: PostVerifierDcapCapabilityV1::new(accepted.clone())
+                })
                 .unwrap(),
             V1RegistrationOutcome::Created
         );
         assert_eq!(
             registry
-                .replace_enclave_binding_after_verifier_for_test(
-                    &replacement,
-                    &replacement_node,
-                    &replacement_enclave,
-                    PostVerifierDcapCapabilityV1::new(accepted.clone()),
-                )
+                .replace_enclave_binding_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &replacement,
+                    node_signature: &replacement_node,
+                    enclave_signature: &replacement_enclave,
+                    capability: PostVerifierDcapCapabilityV1::new(accepted.clone())
+                })
                 .unwrap(),
             V1RegistrationOutcome::Idempotent
         );
@@ -346,12 +347,12 @@ fn replacement_candidate_intent_reaches_registry_unchanged_and_never_reuses_cons
             .unwrap();
         assert!(revert_message(
             registry
-                .renew_enclave_after_verifier_for_test(
-                    &old_renewal,
-                    &old_node,
-                    &old_enclave_signature,
-                    PostVerifierDcapCapabilityV1::new(accepted.clone()),
-                )
+                .renew_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &old_renewal,
+                    node_signature: &old_node,
+                    enclave_signature: &old_enclave_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(accepted.clone())
+                })
                 .unwrap_err()
         )
         .contains("superseded"));
@@ -361,12 +362,12 @@ fn replacement_candidate_intent_reaches_registry_unchanged_and_never_reuses_cons
         let (reuse_node, reuse_enclave) = signatures(&attempted_reuse, &node_signer, &old_enclave);
         assert!(revert_message(
             registry
-                .replace_enclave_binding_after_verifier_for_test(
-                    &attempted_reuse,
-                    &reuse_node,
-                    &reuse_enclave,
-                    PostVerifierDcapCapabilityV1::new(accepted),
-                )
+                .replace_enclave_binding_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &attempted_reuse,
+                    node_signature: &reuse_node,
+                    enclave_signature: &reuse_enclave,
+                    capability: PostVerifierDcapCapabilityV1::new(accepted)
+                })
                 .unwrap_err()
         )
         .contains("already been used"));

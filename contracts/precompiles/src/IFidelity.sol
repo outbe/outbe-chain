@@ -10,9 +10,9 @@ interface IFidelity {
     /// timestamp) before decrypting. Intended for `eth_call`.
     function getFidelityIndex(address account, uint64 expiry, bytes calldata signature) external view returns (uint256);
 
-    /// Fidelity Index for `account` evaluated at `timestamp` (same
-    /// authorization as `getFidelityIndex`; the curve is pure, so any
-    /// timestamp is answerable).
+    /// Fidelity Index for `account` evaluated at `timestamp`. It uses the same
+    /// authorization as `getFidelityIndex`. The curve is pure, so any
+    /// timestamp is answerable.
     function getFidelityIndexAt(address account, uint64 timestamp, uint64 expiry, bytes calldata signature)
         external
         view
@@ -22,7 +22,7 @@ interface IFidelity {
     function decimals() external view returns (uint8);
 
     /// Synthetic maximum Fidelity Index (saturating RCFI) at `timestamp`.
-    /// Derived from the plaintext global anchor - no authorization needed.
+    /// Derived from the plaintext global anchor. No authorization is needed.
     function maxFidelityIndexAt(uint64 timestamp) external view returns (uint256);
 
     /// Lowest league (inclusive).

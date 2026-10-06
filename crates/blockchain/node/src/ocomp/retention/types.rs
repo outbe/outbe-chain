@@ -107,8 +107,8 @@ pub struct PinRecordV1 {
     pub state: PinStateV1,
 }
 
-/// Read-only decoded view of one durable retention journal. This is used by
-/// operational diagnostics and behavioral evidence; it shares the production
+/// Read-only decoded view of one durable retention journal. Operational
+/// diagnostics and behavioral evidence use this view. It shares the production
 /// decoder and never creates, repairs or rewrites journal state.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RetentionJournalSnapshotV1 {

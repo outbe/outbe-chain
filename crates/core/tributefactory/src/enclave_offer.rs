@@ -1,23 +1,24 @@
 //! Host-side TEE enclave client for tribute-offer decryption.
 //!
-//! When the node is started with `--tee-enclave-socket`, [`init_enclave_client`]
-//! connects to the enclave sidecar (validating quote/key bindings and pinning its
-//! Noise-IK static key) and installs a process-global client. Every offer decryption then
-//! routes through the enclave via [`process_tribute_offer_batch_via_enclave`] - the offer
-//! key exists only inside the enclave, and there is no in-process key path. The L1<->L2 linkage
-//! (`creator`, `tribute_draft_id`) is parsed
-//! and validated inside the enclave but withheld from the host (Enclave Return
-//! Rule); the public draft fields are returned and used to issue the tribute.
+//! When the node starts with `--tee-enclave-socket`, [`init_enclave_client`] connects to
+//! the enclave sidecar and installs a process-global client. The connect step validates
+//! the quote/key bindings and pins the Noise-IK static key of the sidecar. After that,
+//! every offer decryption routes through the enclave via
+//! [`process_tribute_offer_batch_via_enclave`]. The offer key exists only inside the
+//! enclave, and there is no in-process key path. The enclave parses and validates the
+//! L1<->L2 linkage (`creator`, `tribute_draft_id`), but withholds it from the host
+//! (Enclave Return Rule). The enclave returns the public draft fields, and the host uses
+//! them to issue the tribute.
 //!
 //! Determinism: every node's enclave holds the same shared offer key, so the same
 //! ciphertext decrypts identically on all validators (re-execution agrees). The
-//! enclave call is a **blocking** UDS round-trip made straight from the precompile
-//! path - it never holds a `StorageHandle` across an await and never spawns a
+//! enclave call is a **blocking** UDS round-trip that the precompile path makes
+//! directly. It never holds a `StorageHandle` across an await and never spawns a
 //! thread (the `StorageHandle` `!Send` constraint). A dead sidecar (after the
 //! session's one bounded reconnect + retry) surfaces as `PrecompileError::Fatal`
-//! (`tee_sidecar_unavailable`) - a node-local fault, never a deterministic
-//! revert, matching the gratis/promis/fidelity enclave paths. Only per-offer
-//! rejections reported by the enclave inside the results are deterministic and
+//! (`tee_sidecar_unavailable`). This is a node-local fault, never a deterministic
+//! revert, and it matches the gratis/promis/fidelity enclave paths. Only per-offer
+//! rejections that the enclave reports inside the results are deterministic and
 //! revert.
 
 use std::path::Path;
@@ -30,7 +31,7 @@ use outbe_tee::protocol::{
 use outbe_tee::{verify_tribute_offer_attestation, EnclaveClient};
 
 /// True once an enclave client is installed. Offers always route through the
-/// enclave (single path); when no client is configured, `offerTribute` reverts
+/// enclave (single path). When no client is configured, `offerTribute` reverts
 /// with a typed `tee_sidecar_unavailable` error. Delegates to the process-global
 /// enclave client in `outbe-tee` (shared with the TEE registry seal).
 pub fn is_enclave_configured() -> bool {
@@ -39,8 +40,8 @@ pub fn is_enclave_configured() -> bool {
 
 /// Connect to the enclave sidecar at `socket`, validate its structural key
 /// bindings, verify it answers an encrypted request, and install the global
-/// offer-decryption client. Production enclave identity and DCAP admission are
-/// enforced by the authorized manifest and enclave-resident native QVL paths.
+/// offer-decryption client. The authorized manifest and enclave-resident native QVL
+/// paths enforce production enclave identity and DCAP admission.
 pub fn init_enclave_client(socket: &Path) -> eyre::Result<()> {
     // A `host:port` endpoint connects over TCP (enclave under Gramine); a path
     // connects over the Unix domain socket (native sidecar).
@@ -60,7 +61,7 @@ pub fn init_enclave_client(socket: &Path) -> eyre::Result<()> {
         Err(e) => return Err(eyre::eyre!("enclave GetPublicKeys failed: {e}")),
     }
     // Report the enclave's declared attestation mode. This connect-time path does
-    // not verify DCAP; production admission is enforced by native QVL + TeeRegistry.
+    // not verify DCAP. Native QVL + TeeRegistry enforce production admission.
     let mode = client.attestation_label();
     if client.is_hardware_attested() {
         let (mrenclave, mrsigner, isv_svn) = client.measurements();
@@ -79,28 +80,32 @@ pub fn init_enclave_client(socket: &Path) -> eyre::Result<()> {
     Ok(())
 }
 
-/// Process a batch of offers through the enclave: it decrypts (offer key stays in
-/// SGX), applies each offer's node-resolved price, computes economics + Poseidon
-/// `token_id`, and returns the public `TributeOfferResult[]`. The host then issues
-/// the Tributes from those fields plus its own request inputs (no host recompute
-/// of the private economics).
+/// Process a batch of offers through the enclave. The enclave decrypts the offers
+/// (the offer key stays in SGX) and applies each offer's node-resolved price. It
+/// computes economics + Poseidon `token_id` and returns the public `TributeOfferResult[]`.
+/// The host then issues the Tributes from those fields plus its own request inputs
+/// (no host recompute of the private economics).
 ///
 /// The host recomputes `inputs_canonical_hash` from the request it sent and
-/// compares it to the enclave's - a mismatch is enclave non-determinism
-/// (`tee_enclave_nondeterminism`). It then verifies the per-offer `attestation_tag`
-/// (an Ed25519 signature over the inputs hash + results) against the attestation
-/// key pinned for the enclave session, binding the results to that peer
-/// (`tee_offer_attestation_invalid` on failure); the tag is
-/// then discarded (never written to chain state). Both checks live in
+/// compares it to the enclave's hash. A mismatch is enclave non-determinism
+/// (`tee_enclave_nondeterminism`). The host then verifies the per-offer
+/// `attestation_tag` (an Ed25519 signature over the inputs hash + results) against
+/// the attestation key pinned for the enclave session. This check binds the results
+/// to that peer (`tee_offer_attestation_invalid` on failure). The host then discards
+/// the tag and never writes it to chain state. Both checks live in
 /// [`validate_tribute_offer_batch_response`] so they are unit-testable without a sidecar.
 ///
 /// Failure classification (aligned with `gratis::enclave_client::apply_gratis_op`):
-/// every failure of THIS function is a node-local fault (`PrecompileError::Fatal`) -
-/// dead sidecar, transport error after the session's bounded reconnect+retry,
-/// enclave authorization denial (keyless enclave), non-determinism, bad
-/// attestation. Executing the tx differently from healthy validators would
-/// diverge state, so the node fails the block instead. Deterministic per-offer
-/// rejections ride inside the returned results and are handled by the caller.
+/// every failure of THIS function is a node-local fault (`PrecompileError::Fatal`):
+/// - dead sidecar
+/// - transport error after the session's bounded reconnect+retry
+/// - enclave authorization denial (keyless enclave)
+/// - non-determinism
+/// - bad attestation
+///
+/// Executing the tx differently from healthy validators would diverge state, so the
+/// node fails the block instead. Deterministic per-offer rejections ride inside the
+/// returned results, and the caller handles them.
 pub fn process_tribute_offer_batch_via_enclave(
     offers: &[EncryptedTributeOffer],
 ) -> Result<Vec<TributeOfferResult>, PrecompileError> {
@@ -139,10 +144,12 @@ pub fn process_tribute_offer_batch_via_enclave(
     }
 }
 
-/// Validate the enclave's `TributeOfferBatch` response: (1) the canonical-inputs hash
-/// equals the host's recompute over the exact request it sent (non-determinism
-/// detector -> `tee_enclave_nondeterminism`); (2) the per-offer attestation tag
-/// verifies against the pinned attestation key (-> `tee_offer_attestation_invalid`).
+/// Validate the enclave's `TributeOfferBatch` response:
+/// 1. The canonical-inputs hash equals the host's recompute over the exact request it
+///    sent (non-determinism detector -> `tee_enclave_nondeterminism`).
+/// 2. The per-offer attestation tag verifies against the pinned attestation key
+///    (-> `tee_offer_attestation_invalid`).
+///
 /// Both failures are node-local (`Fatal`), never deterministic reverts.
 /// Returns the results on success. Pure (no transport) so it is unit-testable.
 fn validate_tribute_offer_batch_response(
@@ -241,7 +248,7 @@ mod tests {
 
     /// Regression (2026-08-22 testnet incident): a dead/unconfigured sidecar is
     /// a NODE-LOCAL fault. It must surface as `PrecompileError::Fatal`, never as
-    /// a deterministic revert - reverting a tx that healthy validators execute
+    /// a deterministic revert. Reverting a tx that healthy validators execute
     /// diverges state.
     #[test]
     fn transport_unavailability_is_fatal_not_revert() {
@@ -280,7 +287,7 @@ mod tests {
     }
 
     /// The day, currency and price are request inputs the node resolved, so a
-    /// response hashed over different values must not validate - otherwise they
+    /// response hashed over different values must not validate. Otherwise they
     /// ride to the enclave unattested.
     #[test]
     fn validate_binds_the_priced_request_fields() {

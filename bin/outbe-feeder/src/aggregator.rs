@@ -1,11 +1,12 @@
 //! Price aggregation with TVWAP and VWAP computation and deviation filtering.
 //!
 //! Each configured provider market first produces one observation using candle
-//! TVWAP when available and its ticker otherwise. Those source observations are
-//! deviation-filtered, then combined into one on-chain pair observation.
+//! TVWAP when available and its ticker otherwise. The aggregator filters those
+//! source observations by deviation, then combines them into one on-chain pair
+//! observation.
 //!
-//! Provider decimals are ingested and aggregated entirely as deterministic FP18
-//! integers. The final pair-specific conversion emits COEN/ISO at `1e6` and
+//! The aggregator ingests and aggregates provider decimals entirely as
+//! deterministic FP18 integers. The final pair-specific conversion emits COEN/ISO at `1e6` and
 //! leaves generic pairs at `1e18`.
 
 use crate::config::{CurrencyPairSource, FeederConfig};
@@ -38,8 +39,8 @@ fn is_coen_iso_pair(base: Address, quote: Address) -> bool {
 const SCALE_1E12: U256 = U256::from_limbs([1_000_000_000_000u64, 0, 0, 0]);
 
 /// Convert one FP18 aggregate to the pair's wire scale. A positive COEN/ISO
-/// price below one `1e6` minor unit is rejected. Real zero volume remains zero;
-/// a positive sub-minor COEN volume becomes one minor unit.
+/// price below one `1e6` minor unit is rejected. Real zero volume remains zero.
+/// A positive sub-minor COEN volume becomes one minor unit.
 fn finalize_pair_value(is_coen_iso: bool, price: U256, volume: U256) -> Option<(U256, U256)> {
     if !is_coen_iso {
         return (!price.is_zero()).then_some((price, volume));
@@ -57,7 +58,7 @@ fn finalize_pair_value(is_coen_iso: bool, price: U256, volume: U256) -> Option<(
 }
 
 /// FP18 weighted average. A zero-volume observation uses one whole unit only
-/// as an internal weight; its published volume remains zero.
+/// as an internal weight. Its published volume remains zero.
 fn compute_weighted(prices: &[(FixedValue, FixedValue)]) -> Result<Option<(U256, U256)>> {
     let mut price_volume_sum = U1024::ZERO;
     let mut weight_sum = U512::ZERO;
@@ -241,7 +242,7 @@ fn source_observation(
 
 /// Filters prices that deviate more than `threshold` standard deviations from
 /// the median. Prices, threshold, mean, variance and square root are all
-/// deterministic integers; the threshold is dimensionless FP18.
+/// deterministic integers. The threshold is dimensionless FP18.
 fn filter_deviations(
     prices: &[(FixedValue, FixedValue)],
     threshold: FixedValue,

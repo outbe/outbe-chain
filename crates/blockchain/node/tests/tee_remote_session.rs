@@ -1,3 +1,7 @@
+use outbe_ocomp_protocol::test_utils::{proof_nodes_for_target, storage_trie};
+#[path = "../../../../testing/support/block_num_reader.rs"]
+mod block_num_reader;
+
 use alloy_consensus::{Header, Sealable as _};
 use alloy_eips::{BlockNumHash, BlockNumberOrTag};
 use alloy_primitives::{keccak256, Address, BlockHash, BlockNumber, Bytes, B256, U256};
@@ -8,8 +12,8 @@ use outbe_node::tee_remote_session::{
     authorize_local_finalized_remote_session_v1,
     construct_local_finalized_replacement_authorization_v1,
     construct_local_finalized_replacement_authorization_with_view_v1,
-    ExternalRegistryAdmissionError, LocalRegistryAdmissionError,
-    TrustedFinalizedRegistryCheckpointV1,
+    ExternalRegistryAdmissionError, LocalRegistryAdmissionError, RegistryChainIdentity,
+    RemoteSessionRequest, ReplacementAuthorizationRequest, TrustedFinalizedRegistryCheckpointV1,
 };
 use outbe_primitives::{
     header::{OutbeHeader, OutbePrimitives},
@@ -73,26 +77,26 @@ fn current_finalized_registry_admits_role_neutral_nodes_and_rejects_superseded_s
             seed_binding(
                 &registry,
                 &source_node,
-                SeedBindingIds {
+                SeedBinding {
                     enclave_id: B256::repeat_byte(0x42),
                     binding_id: B256::repeat_byte(0x43),
                     intent_hash: B256::repeat_byte(0x44),
+                    valid_until: 1_700_000_500,
+                    noise_responder_x25519: [0x45; 32],
+                    node_host_authorization_hash: source_host_hash,
                 },
-                1_700_000_500,
-                [0x45; 32],
-                source_host_hash,
             );
             seed_binding(
                 &registry,
                 &target_node,
-                SeedBindingIds {
+                SeedBinding {
                     enclave_id: B256::repeat_byte(0x52),
                     binding_id: B256::repeat_byte(0x53),
                     intent_hash: B256::repeat_byte(0x54),
+                    valid_until: 1_700_000_400,
+                    noise_responder_x25519: [0x55; 32],
+                    node_host_authorization_hash: B256::repeat_byte(0x56),
                 },
-                1_700_000_400,
-                [0x55; 32],
-                B256::repeat_byte(0x56),
             );
         });
 
@@ -138,16 +142,20 @@ fn current_finalized_registry_admits_role_neutral_nodes_and_rejects_superseded_s
         finalized_source.override_state(next_block_hash, empty_next_state);
         let admitted = admit_local_finalized_remote_session_v1(
             &finalized_source,
-            CHAIN_ID,
-            genesis_hash,
-            RemoteSessionExpectationV1 {
-                chain_id: chain_id_word(CHAIN_ID),
+            RegistryChainIdentity {
+                chain_id: CHAIN_ID,
                 genesis_hash,
-                source_node_id_hash: source_hash,
-                target_node_id_hash: target_hash,
             },
-            &source_witness,
-            &target_node,
+            RemoteSessionRequest {
+                expected: RemoteSessionExpectationV1 {
+                    chain_id: chain_id_word(CHAIN_ID),
+                    genesis_hash,
+                    source_node_id_hash: source_hash,
+                    target_node_id_hash: target_hash,
+                },
+                source_witness: &source_witness,
+                target_node: &target_node,
+            },
         )
         .unwrap();
 
@@ -163,10 +171,14 @@ fn current_finalized_registry_admits_role_neutral_nodes_and_rejects_superseded_s
         assert!(matches!(
             construct_local_finalized_replacement_authorization_v1(
                 &finalized_source,
-                CHAIN_ID,
-                genesis_hash,
-                missing_candidate_dir.path(),
-                &source_node,
+                RegistryChainIdentity {
+                    chain_id: CHAIN_ID,
+                    genesis_hash,
+                },
+                ReplacementAuthorizationRequest {
+                    node_data_dir: missing_candidate_dir.path(),
+                    node_id: &source_node,
+                },
             ),
             Err(LocalRegistryAdmissionError::ReplacementAuthorization(_))
         ));
@@ -175,26 +187,34 @@ fn current_finalized_registry_admits_role_neutral_nodes_and_rejects_superseded_s
         assert!(matches!(
             admit_local_finalized_remote_session_v1(
                 &finalized_source,
-                CHAIN_ID,
-                genesis_hash,
-                RemoteSessionExpectationV1 {
-                    chain_id: chain_id_word(CHAIN_ID),
+                RegistryChainIdentity {
+                    chain_id: CHAIN_ID,
                     genesis_hash,
-                    source_node_id_hash: source_hash,
-                    target_node_id_hash: target_hash,
                 },
-                &source_witness,
-                &target_node,
+                RemoteSessionRequest {
+                    expected: RemoteSessionExpectationV1 {
+                        chain_id: chain_id_word(CHAIN_ID),
+                        genesis_hash,
+                        source_node_id_hash: source_hash,
+                        target_node_id_hash: target_hash,
+                    },
+                    source_witness: &source_witness,
+                    target_node: &target_node,
+                },
             ),
             Err(LocalRegistryAdmissionError::SourceBindingMissing)
         ));
         assert!(matches!(
             construct_local_finalized_replacement_authorization_v1(
                 &finalized_source,
-                CHAIN_ID,
-                genesis_hash,
-                missing_candidate_dir.path(),
-                &source_node,
+                RegistryChainIdentity {
+                    chain_id: CHAIN_ID,
+                    genesis_hash,
+                },
+                ReplacementAuthorizationRequest {
+                    node_data_dir: missing_candidate_dir.path(),
+                    node_id: &source_node,
+                },
             ),
             Err(LocalRegistryAdmissionError::ReplacementBindingMissing)
         ));
@@ -204,16 +224,20 @@ fn current_finalized_registry_admits_role_neutral_nodes_and_rejects_superseded_s
         assert!(matches!(
             admit_local_finalized_remote_session_v1(
                 &unfinalized,
-                CHAIN_ID,
-                genesis_hash,
-                RemoteSessionExpectationV1 {
-                    chain_id: chain_id_word(CHAIN_ID),
+                RegistryChainIdentity {
+                    chain_id: CHAIN_ID,
                     genesis_hash,
-                    source_node_id_hash: source_hash,
-                    target_node_id_hash: target_hash,
                 },
-                &source_witness,
-                &target_node,
+                RemoteSessionRequest {
+                    expected: RemoteSessionExpectationV1 {
+                        chain_id: chain_id_word(CHAIN_ID),
+                        genesis_hash,
+                        source_node_id_hash: source_hash,
+                        target_node_id_hash: target_hash,
+                    },
+                    source_witness: &source_witness,
+                    target_node: &target_node,
+                },
             ),
             Err(LocalRegistryAdmissionError::FinalizedBlockUnavailable)
         ));
@@ -314,26 +338,28 @@ fn production_facade_installs_current_finalized_ticket_in_live_enclave() {
         seed_binding(
             &registry,
             &source_node,
-            SeedBindingIds {
+            SeedBinding {
                 enclave_id: B256::repeat_byte(0x95),
                 binding_id: B256::repeat_byte(0x96),
                 intent_hash: B256::repeat_byte(0x97),
+                valid_until: now + 600,
+                noise_responder_x25519: [0x98; 32],
+                node_host_authorization_hash: source_witness.authorization_hash().unwrap(),
             },
-            now + 600,
-            [0x98; 32],
-            source_witness.authorization_hash().unwrap(),
         );
         seed_binding(
             &registry,
             &target_node,
-            SeedBindingIds {
+            SeedBinding {
                 enclave_id: target_manifest.enclave_id().unwrap(),
                 binding_id: B256::repeat_byte(0x99),
                 intent_hash: B256::repeat_byte(0x9A),
+                valid_until: now + 500,
+                noise_responder_x25519: target_manifest.noise_responder_x25519,
+                node_host_authorization_hash: target_manifest
+                    .node_host_authorization_hash()
+                    .unwrap(),
             },
-            now + 500,
-            target_manifest.noise_responder_x25519,
-            target_manifest.node_host_authorization_hash().unwrap(),
         );
     });
     let chain_spec = ChainSpecBuilder::mainnet()
@@ -367,16 +393,20 @@ fn production_facade_installs_current_finalized_ticket_in_live_enclave() {
     let ticket = authorize_local_finalized_remote_session_v1(
         &finalized,
         &mut target_client,
-        chain_id,
-        genesis_hash,
-        RemoteSessionExpectationV1 {
-            chain_id: chain_id_word(chain_id),
+        RegistryChainIdentity {
+            chain_id,
             genesis_hash,
-            source_node_id_hash: source_hash,
-            target_node_id_hash: target_hash,
         },
-        &source_witness,
-        &target_node,
+        RemoteSessionRequest {
+            expected: RemoteSessionExpectationV1 {
+                chain_id: chain_id_word(chain_id),
+                genesis_hash,
+                source_node_id_hash: source_hash,
+                target_node_id_hash: target_hash,
+            },
+            source_witness: &source_witness,
+            target_node: &target_node,
+        },
     )
     .unwrap();
     assert_eq!(ticket.finalized_block_hash(), block_hash);
@@ -495,14 +525,14 @@ fn current_finalized_registry_constructs_exact_replacement_authorization() {
         seed_binding(
             &registry,
             &node_id,
-            SeedBindingIds {
+            SeedBinding {
                 enclave_id: intent.enclave_id,
                 binding_id: intent.binding_id,
                 intent_hash,
+                valid_until: intent.requested_valid_until,
+                noise_responder_x25519: intent.noise_responder_x25519,
+                node_host_authorization_hash: intent.node_host_authorization_hash,
             },
-            intent.requested_valid_until,
-            intent.noise_responder_x25519,
-            intent.node_host_authorization_hash,
         );
         let node_hash = node_id.node_id_hash().unwrap();
         registry
@@ -552,10 +582,14 @@ fn current_finalized_registry_constructs_exact_replacement_authorization() {
 
     let authorized = construct_local_finalized_replacement_authorization_with_view_v1(
         &finalized,
-        chain_id,
-        genesis_hash,
-        &node_data_dir,
-        &node_id,
+        RegistryChainIdentity {
+            chain_id,
+            genesis_hash,
+        },
+        ReplacementAuthorizationRequest {
+            node_data_dir: &node_data_dir,
+            node_id: &node_id,
+        },
     )
     .unwrap();
     assert_eq!(authorized.view.block_number, 90);
@@ -563,10 +597,14 @@ fn current_finalized_registry_constructs_exact_replacement_authorization() {
     assert_eq!(authorized.successor_activation_height, None);
     let authorization = construct_local_finalized_replacement_authorization_v1(
         &finalized,
-        chain_id,
-        genesis_hash,
-        &node_data_dir,
-        &node_id,
+        RegistryChainIdentity {
+            chain_id,
+            genesis_hash,
+        },
+        ReplacementAuthorizationRequest {
+            node_data_dir: &node_data_dir,
+            node_id: &node_id,
+        },
     )
     .unwrap();
     assert_eq!(authorization, authorized.authorization);
@@ -596,26 +634,26 @@ fn external_light_client_checkpoint_authenticates_the_exact_registry_storage_pro
         seed_binding(
             &registry,
             &source_node,
-            SeedBindingIds {
+            SeedBinding {
                 enclave_id: B256::repeat_byte(0x72),
                 binding_id: B256::repeat_byte(0x73),
                 intent_hash: B256::repeat_byte(0x74),
+                valid_until: 1_700_000_600,
+                noise_responder_x25519: [0x75; 32],
+                node_host_authorization_hash: source_witness.authorization_hash().unwrap(),
             },
-            1_700_000_600,
-            [0x75; 32],
-            source_witness.authorization_hash().unwrap(),
         );
         seed_binding(
             &registry,
             &target_node,
-            SeedBindingIds {
+            SeedBinding {
                 enclave_id: B256::repeat_byte(0x82),
                 binding_id: B256::repeat_byte(0x83),
                 intent_hash: B256::repeat_byte(0x84),
+                valid_until: 1_700_000_450,
+                noise_responder_x25519: [0x85; 32],
+                node_host_authorization_hash: B256::repeat_byte(0x86),
             },
-            1_700_000_450,
-            [0x85; 32],
-            B256::repeat_byte(0x86),
         );
         let mut slots = registry
             .node_enclave_binding_storage_slots_v1(&source_node)
@@ -692,9 +730,11 @@ fn external_light_client_checkpoint_authenticates_the_exact_registry_storage_pro
     let admitted = admit_anchored_remote_session_v1(
         checkpoint,
         &proof,
-        expected,
-        &source_witness,
-        &target_node,
+        RemoteSessionRequest {
+            expected,
+            source_witness: &source_witness,
+            target_node: &target_node,
+        },
     )
     .unwrap();
 
@@ -714,9 +754,11 @@ fn external_light_client_checkpoint_authenticates_the_exact_registry_storage_pro
         admit_anchored_remote_session_v1(
             checkpoint,
             &tampered,
-            expected,
-            &source_witness,
-            &target_node,
+            RemoteSessionRequest {
+                expected,
+                source_witness: &source_witness,
+                target_node: &target_node,
+            },
         ),
         Err(ExternalRegistryAdmissionError::Proof(_))
     ));
@@ -781,25 +823,24 @@ fn full_node(seed: u8) -> NodeIdV1 {
     NodeIdV1 { reth_p2p_public }
 }
 
-struct SeedBindingIds {
+struct SeedBinding {
     enclave_id: B256,
     binding_id: B256,
     intent_hash: B256,
-}
-
-fn seed_binding(
-    registry: &TeeRegistry<'_>,
-    node: &NodeIdV1,
-    ids: SeedBindingIds,
     valid_until: u64,
     noise_responder_x25519: [u8; 32],
     node_host_authorization_hash: B256,
-) {
-    let SeedBindingIds {
+}
+
+fn seed_binding(registry: &TeeRegistry<'_>, node: &NodeIdV1, binding: SeedBinding) {
+    let SeedBinding {
         enclave_id,
         binding_id,
         intent_hash,
-    } = ids;
+        valid_until,
+        noise_responder_x25519,
+        node_host_authorization_hash,
+    } = binding;
     let node_hash = node.node_id_hash().unwrap();
     registry
         .v1_node_enclave_id
@@ -870,23 +911,7 @@ impl BlockHashReader for FinalizedMockProvider {
     }
 }
 
-impl BlockNumReader for FinalizedMockProvider {
-    fn chain_info(&self) -> ProviderResult<ChainInfo> {
-        self.inner.chain_info()
-    }
-
-    fn best_block_number(&self) -> ProviderResult<u64> {
-        self.inner.best_block_number()
-    }
-
-    fn last_block_number(&self) -> ProviderResult<u64> {
-        self.inner.last_block_number()
-    }
-
-    fn block_number(&self, hash: B256) -> ProviderResult<Option<u64>> {
-        self.inner.block_number(hash)
-    }
-}
+block_num_reader::delegate_block_num_reader!(FinalizedMockProvider, inner);
 
 impl BlockIdReader for FinalizedMockProvider {
     fn pending_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
@@ -976,37 +1001,6 @@ impl StateProviderFactory for FinalizedMockProvider {
     }
 }
 
-fn storage_trie(slots: &[(U256, U256)]) -> (B256, Vec<Vec<Bytes>>) {
-    let targets = slots
-        .iter()
-        .map(|(slot, _)| Nibbles::unpack(keccak256(slot.to_be_bytes::<32>())))
-        .collect::<Vec<_>>();
-    let mut leaves = std::collections::BTreeMap::new();
-    for ((_, word), target) in slots.iter().zip(&targets) {
-        if !word.is_zero() {
-            leaves.insert(*target, alloy_rlp::encode_fixed_size(word).to_vec());
-        }
-    }
-    let mut builder =
-        HashBuilder::default().with_proof_retainer(ProofRetainer::from_iter(targets.clone()));
-    for (path, value) in leaves {
-        builder.add_leaf(path, &value);
-    }
-    let root = builder.root();
-    let retained = builder.take_proof_nodes();
-    let proofs = targets
-        .iter()
-        .map(|target| {
-            retained
-                .matching_nodes_sorted(target)
-                .into_iter()
-                .map(|(_, node)| node)
-                .collect()
-        })
-        .collect();
-    (root, proofs)
-}
-
 fn account_trie(
     accounts: &[(Address, TrieAccount)],
 ) -> (B256, std::collections::BTreeMap<Address, Vec<Bytes>>) {
@@ -1028,16 +1022,7 @@ fn account_trie(
     let retained = builder.take_proof_nodes();
     let proofs = targets
         .into_iter()
-        .map(|(address, target)| {
-            (
-                address,
-                retained
-                    .matching_nodes_sorted(&target)
-                    .into_iter()
-                    .map(|(_, node)| node)
-                    .collect(),
-            )
-        })
+        .map(|(address, target)| (address, proof_nodes_for_target(&retained, &target)))
         .collect();
     (root, proofs)
 }

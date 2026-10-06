@@ -128,12 +128,9 @@ impl TrustedFinalizedRegistryCheckpointV1 {
     pub fn from_light_client(
         view: FinalizedRegistryViewV1,
     ) -> Result<Self, ExternalRegistryAdmissionError> {
-        if view.chain_id == [0; 32]
-            || view.genesis_hash.is_zero()
-            || view.block_number == 0
-            || view.block_hash.is_zero()
-            || view.state_root.is_zero()
-            || view.consensus_timestamp == 0
+        if !valid_checkpoint_chain(&view)
+            || !valid_checkpoint_position(&view)
+            || !valid_checkpoint_state(&view)
         {
             return Err(ExternalRegistryAdmissionError::MalformedCheckpoint);
         }
@@ -166,34 +163,29 @@ pub enum ExternalRegistryAdmissionError {
 
 /// Production node-local route for authorizing one remote session.
 ///
-/// This deep module owns the complete authority sequence: it resolves the
-/// node's current consensus-finalized head, reads both exact Registry bindings,
-/// validates the source witness and lease, and installs one bounded one-use
-/// ticket in the local enclave. Transporting that ticket to the already chosen
-/// peer is deliberately outside this interface and carries no authority.
+/// This deep module owns the complete authority sequence. It:
+/// 1. Resolves the node's current consensus-finalized head.
+/// 2. Reads both exact Registry bindings.
+/// 3. Validates the source witness and lease.
+/// 4. Installs one bounded one-use ticket in the local enclave.
+///
+/// Transporting that ticket to the already chosen peer is deliberately outside
+/// this interface and carries no authority.
 pub fn authorize_local_finalized_remote_session_v1<P>(
     provider: &P,
     local_enclave: &mut AuthorizedEnclaveClient,
-    chain_id: u64,
-    genesis_hash: B256,
-    expected: RemoteSessionExpectationV1,
-    source_witness: &NodeHostAuthorizationWitnessV1,
-    target_node: &NodeIdV1,
+    chain: RegistryChainIdentity,
+    request: RemoteSessionRequest<'_>,
 ) -> Result<RemoteSessionTicketV1, LocalRegistryAdmissionError>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
-    let admission = admit_local_finalized_remote_session_v1(
+    LocalRemoteSessionOperation {
         provider,
-        chain_id,
-        genesis_hash,
-        expected,
-        source_witness,
-        target_node,
-    )?;
-    local_enclave
-        .authorize_remote_session(&admission)
-        .map_err(Into::into)
+        chain,
+        request,
+    }
+    .authorize(local_enclave)
 }
 
 /// Low-level inspection seam used by the production authorization facade and
@@ -202,47 +194,113 @@ where
 #[doc(hidden)]
 pub fn admit_local_finalized_remote_session_v1<P>(
     provider: &P,
-    chain_id: u64,
-    genesis_hash: B256,
-    expected: RemoteSessionExpectationV1,
-    source_witness: &NodeHostAuthorizationWitnessV1,
-    target_node: &NodeIdV1,
+    chain: RegistryChainIdentity,
+    request: RemoteSessionRequest<'_>,
 ) -> Result<RemoteSessionAdmissionV1, LocalRegistryAdmissionError>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
-    with_local_finalized_registry(provider, chain_id, genesis_hash, |view, registry| {
-        let source = registry
-            .node_enclave_binding_for_identity_v1(&source_witness.node_id)
-            .map_err(registry_error)?
-            .ok_or(LocalRegistryAdmissionError::SourceBindingMissing)?;
-        let target = registry
-            .node_enclave_binding_for_identity_v1(target_node)
-            .map_err(registry_error)?
-            .ok_or(LocalRegistryAdmissionError::TargetBindingMissing)?;
+    LocalRemoteSessionOperation {
+        provider,
+        chain,
+        request,
+    }
+    .admit()
+}
 
-        if !registry
-            .binding_code_admitted_at_v1(&source, view.block_number)
-            .map_err(registry_error)?
-            || !registry
-                .binding_code_admitted_at_v1(&target, view.block_number)
+/// Chain identity used to read and validate Registry state.
+#[derive(Clone, Copy)]
+pub struct RegistryChainIdentity {
+    pub chain_id: u64,
+    pub genesis_hash: B256,
+}
+
+/// Expected session identity and the borrowed source/target authorization inputs.
+pub struct RemoteSessionRequest<'a> {
+    pub expected: RemoteSessionExpectationV1,
+    pub source_witness: &'a NodeHostAuthorizationWitnessV1,
+    pub target_node: &'a NodeIdV1,
+}
+
+/// Durable replacement candidate location and the node whose binding must match.
+pub struct ReplacementAuthorizationRequest<'a> {
+    pub node_data_dir: &'a Path,
+    pub node_id: &'a NodeIdV1,
+}
+struct LocalRemoteSessionOperation<'a, P> {
+    provider: &'a P,
+    chain: RegistryChainIdentity,
+    request: RemoteSessionRequest<'a>,
+}
+impl<P> LocalRemoteSessionOperation<'_, P>
+where
+    P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
+{
+    fn authorize(
+        self,
+        local_enclave: &mut AuthorizedEnclaveClient,
+    ) -> Result<RemoteSessionTicketV1, LocalRegistryAdmissionError> {
+        let admission = self.admit()?;
+        local_enclave
+            .authorize_remote_session(&admission)
+            .map_err(Into::into)
+    }
+    fn admit(self) -> Result<RemoteSessionAdmissionV1, LocalRegistryAdmissionError> {
+        with_local_finalized_registry(
+            self.provider,
+            self.chain.chain_id,
+            self.chain.genesis_hash,
+            |view, registry| {
+                let source = registry
+                    .node_enclave_binding_for_identity_v1(&self.request.source_witness.node_id)
+                    .map_err(registry_error)?
+                    .ok_or(LocalRegistryAdmissionError::SourceBindingMissing)?;
+                let target = registry
+                    .node_enclave_binding_for_identity_v1(self.request.target_node)
+                    .map_err(registry_error)?
+                    .ok_or(LocalRegistryAdmissionError::TargetBindingMissing)?;
+
+                if !binding_codes_admitted(
+                    registry,
+                    view.block_number,
+                    SessionBindings {
+                        source: &source,
+                        target: &target,
+                    },
+                )
                 .map_err(registry_error)?
-        {
-            return Err(RemoteSessionAdmissionError::RetiredEnclave.into());
-        }
+                {
+                    return Err(RemoteSessionAdmissionError::RetiredEnclave.into());
+                }
 
-        let retirement_height = registry
-            .last_enclave_retirement_height_v1()
-            .map_err(registry_error)?;
-        admit_remote_session_v1(
-            expected,
-            source_witness,
-            registry_binding(view, source),
-            registry_binding(view, target),
+                let retirement_height = registry
+                    .last_enclave_retirement_height_v1()
+                    .map_err(registry_error)?;
+                admit_remote_session_v1(
+                    self.request.expected,
+                    self.request.source_witness,
+                    registry_binding(view, source),
+                    registry_binding(view, target),
+                )
+                .map(|admission| admission.with_retirement_height(retirement_height))
+                .map_err(Into::into)
+            },
         )
-        .map(|admission| admission.with_retirement_height(retirement_height))
-        .map_err(Into::into)
-    })
+    }
+}
+struct SessionBindings<'a> {
+    source: &'a NodeEnclaveBindingV1,
+    target: &'a NodeEnclaveBindingV1,
+}
+fn binding_codes_admitted(
+    registry: &TeeRegistry<'_>,
+    block_number: u64,
+    bindings: SessionBindings<'_>,
+) -> outbe_primitives::error::Result<bool> {
+    if !registry.binding_code_admitted_at_v1(bindings.source, block_number)? {
+        return Ok(false);
+    }
+    registry.binding_code_admitted_at_v1(bindings.target, block_number)
 }
 
 /// Issues the I5 opaque promotion capability from this node's exact
@@ -250,22 +308,14 @@ where
 /// counterpart: replacement promotion is a local node authority decision.
 pub fn construct_local_finalized_replacement_authorization_v1<P>(
     provider: &P,
-    chain_id: u64,
-    genesis_hash: B256,
-    node_data_dir: &Path,
-    node_id: &NodeIdV1,
+    chain: RegistryChainIdentity,
+    request: ReplacementAuthorizationRequest<'_>,
 ) -> Result<FinalizedReplacementAuthorizationV1, LocalRegistryAdmissionError>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
-    construct_local_finalized_replacement_authorization_with_view_v1(
-        provider,
-        chain_id,
-        genesis_hash,
-        node_data_dir,
-        node_id,
-    )
-    .map(|result| result.authorization)
+    construct_local_finalized_replacement_authorization_with_view_v1(provider, chain, request)
+        .map(|result| result.authorization)
 }
 
 /// Same authority constructor as
@@ -273,62 +323,23 @@ where
 /// finalized marker needed by the node-owned durable promotion watcher.
 pub fn construct_local_finalized_replacement_authorization_with_view_v1<P>(
     provider: &P,
-    chain_id: u64,
-    genesis_hash: B256,
-    node_data_dir: &Path,
-    node_id: &NodeIdV1,
+    chain: RegistryChainIdentity,
+    request: ReplacementAuthorizationRequest<'_>,
 ) -> Result<LocalFinalizedReplacementAuthorizationV1, LocalRegistryAdmissionError>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
+    let RegistryChainIdentity {
+        chain_id,
+        genesis_hash,
+    } = chain;
+    let ReplacementAuthorizationRequest {
+        node_data_dir,
+        node_id,
+    } = request;
     with_local_finalized_registry(provider, chain_id, genesis_hash, |view, registry| {
-        let binding = registry
-            .node_enclave_binding_for_identity_v1(node_id)
-            .map_err(registry_error)?
-            .ok_or(LocalRegistryAdmissionError::ReplacementBindingMissing)?;
-        let submission = load_replacement_candidate_submission(node_data_dir).map_err(|error| {
-            LocalRegistryAdmissionError::ReplacementAuthorization(error.to_string())
-        })?;
-        let submission = submission.ok_or_else(|| {
-            LocalRegistryAdmissionError::ReplacementAuthorization(
-                "durable replacement submission is missing".into(),
-            )
-        })?;
-        let AttestationEvidenceV1::Dcap(dcap) =
-            AttestationEvidenceV1::decode_canonical(submission.evidence()).map_err(|error| {
-                LocalRegistryAdmissionError::ReplacementAuthorization(error.to_string())
-            })?
-        else {
-            return Err(LocalRegistryAdmissionError::ReplacementAuthorization(
-                "durable replacement evidence is not DCAP".into(),
-            ));
-        };
-        let intent_hash = dcap.intent.intent_hash().map_err(|error| {
-            LocalRegistryAdmissionError::ReplacementAuthorization(error.to_string())
-        })?;
-        if binding.intent_hash != intent_hash
-            || binding.enclave_id != dcap.intent.enclave_id
-            || binding.binding_id != dcap.intent.binding_id
-            || binding.binding_version != dcap.intent.binding_version
-            || binding.registration_version != dcap.intent.registration_version
-            || binding.transition_nonce != dcap.intent.transition_nonce
-        {
-            return Err(LocalRegistryAdmissionError::ReplacementBindingMissing);
-        }
-        let finalized_binding = FinalizedReplacementBindingV1 {
-            view,
-            node_id_hash: binding.node_id_hash,
-            enclave_id: binding.enclave_id,
-            binding_id: binding.binding_id,
-            intent_hash: binding.intent_hash,
-            binding_version: binding.binding_version,
-            registration_version: binding.registration_version,
-            valid_until: binding.valid_until,
-            recipient_x25519: binding.recipient_x25519.into(),
-            attestation_ed25519: binding.attestation_ed25519.into(),
-            noise_responder_x25519: binding.noise_responder_x25519.into(),
-            node_host_authorization_hash: binding.node_host_authorization_hash,
-        };
+        let finalized_binding =
+            read_finalized_replacement_binding(view, registry, node_data_dir, node_id)?;
         let authorization =
             construct_finalized_replacement_authorization_v1(node_data_dir, &finalized_binding)
                 .map_err(|error| {
@@ -346,17 +357,95 @@ where
     })
 }
 
+fn valid_checkpoint_chain(view: &FinalizedRegistryViewV1) -> bool {
+    view.chain_id != [0; 32] && !view.genesis_hash.is_zero()
+}
+fn valid_checkpoint_position(view: &FinalizedRegistryViewV1) -> bool {
+    view.block_number != 0 && !view.block_hash.is_zero()
+}
+fn valid_checkpoint_state(view: &FinalizedRegistryViewV1) -> bool {
+    !view.state_root.is_zero() && view.consensus_timestamp != 0
+}
+fn read_finalized_replacement_binding(
+    view: FinalizedRegistryViewV1,
+    registry: &TeeRegistry<'_>,
+    node_data_dir: &Path,
+    node_id: &NodeIdV1,
+) -> Result<FinalizedReplacementBindingV1, LocalRegistryAdmissionError> {
+    let binding = registry
+        .node_enclave_binding_for_identity_v1(node_id)
+        .map_err(registry_error)?
+        .ok_or(LocalRegistryAdmissionError::ReplacementBindingMissing)?;
+    let submission = load_replacement_candidate_submission(node_data_dir).map_err(|error| {
+        LocalRegistryAdmissionError::ReplacementAuthorization(error.to_string())
+    })?;
+    let submission = submission.ok_or_else(|| {
+        LocalRegistryAdmissionError::ReplacementAuthorization(
+            "durable replacement submission is missing".into(),
+        )
+    })?;
+    let AttestationEvidenceV1::Dcap(dcap) =
+        AttestationEvidenceV1::decode_canonical(submission.evidence()).map_err(|error| {
+            LocalRegistryAdmissionError::ReplacementAuthorization(error.to_string())
+        })?
+    else {
+        return Err(LocalRegistryAdmissionError::ReplacementAuthorization(
+            "durable replacement evidence is not DCAP".into(),
+        ));
+    };
+    let intent_hash = dcap.intent.intent_hash().map_err(|error| {
+        LocalRegistryAdmissionError::ReplacementAuthorization(error.to_string())
+    })?;
+    if !replacement_intent_matches(&binding, &dcap.intent, intent_hash) {
+        return Err(LocalRegistryAdmissionError::ReplacementBindingMissing);
+    }
+    let finalized_binding = FinalizedReplacementBindingV1 {
+        view,
+        node_id_hash: binding.node_id_hash,
+        enclave_id: binding.enclave_id,
+        binding_id: binding.binding_id,
+        intent_hash: binding.intent_hash,
+        binding_version: binding.binding_version,
+        registration_version: binding.registration_version,
+        valid_until: binding.valid_until,
+        recipient_x25519: binding.recipient_x25519.into(),
+        attestation_ed25519: binding.attestation_ed25519.into(),
+        noise_responder_x25519: binding.noise_responder_x25519.into(),
+        node_host_authorization_hash: binding.node_host_authorization_hash,
+    };
+
+    Ok(finalized_binding)
+}
+fn replacement_intent_matches(
+    binding: &NodeEnclaveBindingV1,
+    intent: &outbe_primitives::tee_attestation_v1::RegistrationIntentV1,
+    intent_hash: B256,
+) -> bool {
+    if binding.intent_hash != intent_hash {
+        return false;
+    }
+    if binding.enclave_id != intent.enclave_id || binding.binding_id != intent.binding_id {
+        return false;
+    }
+    binding.binding_version == intent.binding_version
+        && binding.registration_version == intent.registration_version
+        && binding.transition_nonce == intent.transition_nonce
+}
+
 /// Inspect only node-local consensus-finalized rollout state. This supplies
-/// deadline alerts and terminal-cutoff decisions; it cannot authorize
+/// deadline alerts and terminal-cutoff decisions. It cannot authorize
 /// candidate promotion.
 pub fn inspect_local_finalized_successor_status_v1<P>(
     provider: &P,
-    chain_id: u64,
-    genesis_hash: B256,
+    chain: RegistryChainIdentity,
 ) -> Result<LocalFinalizedSuccessorStatusV1, LocalRegistryAdmissionError>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
+    let RegistryChainIdentity {
+        chain_id,
+        genesis_hash,
+    } = chain;
     with_local_finalized_registry(provider, chain_id, genesis_hash, |view, registry| {
         let staged = registry
             .staged_successor_policy_v1()
@@ -405,9 +494,8 @@ where
         .map_err(provider_error)?
         .ok_or(LocalRegistryAdmissionError::FinalizedHeaderUnavailable)?;
     if header.hash() != finalized.hash
-        || header.number() != finalized.number
-        || header.state_root().is_zero()
-        || header.timestamp() == 0
+        || !finalized_header_identity_matches(&header, finalized)
+        || !finalized_header_state_is_usable(&header)
     {
         return Err(LocalRegistryAdmissionError::FinalizedHeaderMismatch);
     }
@@ -431,41 +519,31 @@ where
     inspect(view, &registry)
 }
 
+fn finalized_header_identity_matches(
+    header: &OutbeHeader,
+    finalized: ConsensusFinalizedBlockV1,
+) -> bool {
+    // Hash is checked by the sealed-header caller before this helper's number check.
+    header.number() == finalized.number
+}
+fn finalized_header_state_is_usable(header: &OutbeHeader) -> bool {
+    !header.state_root().is_zero() && header.timestamp() != 0
+}
+
 /// Verifies one exact Registry account/storage proof against a state root the
 /// caller's light client has already recognized as finalized.
 pub fn admit_anchored_remote_session_v1(
     checkpoint: TrustedFinalizedRegistryCheckpointV1,
     proof: &PublicAccountProofV1,
-    expected: RemoteSessionExpectationV1,
-    source_witness: &NodeHostAuthorizationWitnessV1,
-    target_node: &NodeIdV1,
+    request: RemoteSessionRequest<'_>,
 ) -> Result<RemoteSessionAdmissionV1, ExternalRegistryAdmissionError> {
     let chain_id = chain_id_u64(checkpoint.view.chain_id)?;
-    let mut layout_storage = ReadOnlyStorageProvider::new_with_chain_identity(
-        ProofStorageReader {
-            values: BTreeMap::new(),
-        },
-        chain_id,
-        checkpoint.view.genesis_hash,
-    );
-    let layout_registry = TeeRegistry::new(StorageHandle::new(&mut layout_storage));
-    let mut slots = layout_registry
-        .node_enclave_binding_storage_slots_v1(&source_witness.node_id)
-        .map_err(|error| ExternalRegistryAdmissionError::SlotPlan(error.to_string()))?;
-    slots.extend(
-        layout_registry
-            .node_enclave_binding_storage_slots_v1(target_node)
-            .map_err(|error| ExternalRegistryAdmissionError::SlotPlan(error.to_string()))?,
-    );
-    slots.sort_unstable();
-    slots.dedup();
-    verify_public_account_proof(
-        proof,
-        outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
-        &slots,
-        checkpoint.view.state_root,
-    )
-    .map_err(|error| ExternalRegistryAdmissionError::Proof(error.to_string()))?;
+    verify_registry_binding_proof(checkpoint, proof, &request, chain_id)?;
+    let RemoteSessionRequest {
+        expected,
+        source_witness,
+        target_node,
+    } = request;
 
     let values = proof
         .storage_proofs
@@ -487,12 +565,15 @@ pub fn admit_anchored_remote_session_v1(
         .node_enclave_binding_for_identity_v1(target_node)
         .map_err(|error| ExternalRegistryAdmissionError::Registry(error.to_string()))?
         .ok_or(ExternalRegistryAdmissionError::TargetBindingMissing)?;
-    if !registry
-        .binding_code_admitted_at_v1(&source, checkpoint.view.block_number)
-        .map_err(registry_error_external)?
-        || !registry
-            .binding_code_admitted_at_v1(&target, checkpoint.view.block_number)
-            .map_err(registry_error_external)?
+    if !binding_codes_admitted(
+        &registry,
+        checkpoint.view.block_number,
+        SessionBindings {
+            source: &source,
+            target: &target,
+        },
+    )
+    .map_err(registry_error_external)?
     {
         return Err(RemoteSessionAdmissionError::RetiredEnclave.into());
     }
@@ -507,6 +588,41 @@ pub fn admit_anchored_remote_session_v1(
     )
     .map(|admission| admission.with_retirement_height(retirement_height))
     .map_err(Into::into)
+}
+
+fn verify_registry_binding_proof(
+    checkpoint: TrustedFinalizedRegistryCheckpointV1,
+    proof: &PublicAccountProofV1,
+    request: &RemoteSessionRequest<'_>,
+    chain_id: u64,
+) -> Result<(), ExternalRegistryAdmissionError> {
+    let mut layout_storage = ReadOnlyStorageProvider::new_with_chain_identity(
+        ProofStorageReader {
+            values: BTreeMap::new(),
+        },
+        chain_id,
+        checkpoint.view.genesis_hash,
+    );
+    let layout_registry = TeeRegistry::new(StorageHandle::new(&mut layout_storage));
+    let mut slots = layout_registry
+        .node_enclave_binding_storage_slots_v1(&request.source_witness.node_id)
+        .map_err(|error| ExternalRegistryAdmissionError::SlotPlan(error.to_string()))?;
+    slots.extend(
+        layout_registry
+            .node_enclave_binding_storage_slots_v1(request.target_node)
+            .map_err(|error| ExternalRegistryAdmissionError::SlotPlan(error.to_string()))?,
+    );
+    slots.sort_unstable();
+    slots.dedup();
+    verify_public_account_proof(
+        proof,
+        outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
+        &slots,
+        checkpoint.view.state_root,
+    )
+    .map_err(|error| ExternalRegistryAdmissionError::Proof(error.to_string()))?;
+
+    Ok(())
 }
 
 fn registry_binding(

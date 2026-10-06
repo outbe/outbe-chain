@@ -18,7 +18,7 @@ use crate::world::state::TeeLeaseShutdownV1;
 
 impl Localnet {
     /// At least one current committee process must actually reject the update.
-    /// A rejected local payload is not executed by every replica.
+    /// Not every replica executes a rejected local payload.
     pub(crate) fn unsupported_activation_reported(&mut self, version: u64) -> Result<bool> {
         let fragment = unsupported_version_fragment(version);
         let mut found = false;

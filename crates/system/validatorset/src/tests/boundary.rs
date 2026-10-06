@@ -281,7 +281,7 @@ fn post_freeze_exit_is_retained_then_excluded_at_a_later_boundary() {
         ));
 
         // The height-10 frozen target still contains the validator. Retaining it
-        // is required: excluding it here would apply post-freeze state to a
+        // is required. Excluding it here would apply post-freeze state to a
         // historical target and make honest nodes disagree about the boundary.
         let retained_hash = B256::with_last_byte(0xE1);
         vs.test_activate_validated_boundary_set(&[survivor, exiting], retained_hash, 10)

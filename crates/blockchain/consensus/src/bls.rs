@@ -48,8 +48,8 @@ pub enum KeyBackend {
     /// AES-256-GCM encryption with passphrase-derived key (Argon2id KDF).
     Encrypted(String),
     /// OS keychain (macOS Keychain / Linux Secret Service via `keyring` crate).
-    /// Key material is stored in the OS secret store; a marker file on disk
-    /// points to the keychain entry.
+    /// This backend stores key material in the OS secret store. A marker file
+    /// on disk points to the keychain entry.
     OsLevel,
 }
 
@@ -67,7 +67,7 @@ const KEYCHAIN_MARKER: &str = "OUTBE_KEYCHAIN\n";
 fn derive_key(passphrase: &str, salt: &[u8; 32]) -> Result<[u8; 32]> {
     use argon2::Argon2;
     let mut key = [0u8; 32];
-    // Argon2id into a fixed 32-byte buffer cannot fail in practice; return a
+    // Argon2id into a fixed 32-byte buffer cannot fail in practice. Return a
     // structured error instead of `expect` on the key-load/startup path.
     Argon2::default()
         .hash_password_into(passphrase.as_bytes(), salt, &mut key)
@@ -150,9 +150,9 @@ fn save_plaintext(path: &Path, data: &[u8]) -> Result<()> {
 
 /// Crash-consistently replace one secret file.
 ///
-/// The new bytes reach a fresh owner-only file first, then the file is renamed
-/// over the old version and the parent directory is synced so the rename itself
-/// survives power loss. Callers never expose a partially-written target.
+/// The new bytes reach a fresh owner-only file first. Then this function renames
+/// the file over the old version and syncs the parent directory, so the rename
+/// itself survives power loss. Callers never expose a partially-written target.
 fn atomic_write_secret(path: &Path, data: &[u8], kind: &str) -> Result<()> {
     let file_name = path
         .file_name()
@@ -302,10 +302,10 @@ pub(crate) fn load_raw(path: &Path, backend: &KeyBackend) -> Result<Vec<u8>> {
 
 /// Remove backend-owned raw secret material after its protocol lifecycle ends.
 ///
-/// For keychain storage the marker is removed and synced first, so a crash can
-/// only leave an unreachable orphaned keychain entry, never a marker that points
-/// at a secret already deleted. Orphans are safe and may be garbage-collected by
-/// operator tooling.
+/// For keychain storage, this function removes and syncs the marker first. Thus
+/// a crash can only leave an unreachable orphaned keychain entry. It can never
+/// leave a marker that points at a secret already deleted. Orphans are safe and
+/// may be garbage-collected by operator tooling.
 pub(crate) fn remove_raw(path: &Path, backend: &KeyBackend) -> Result<()> {
     if !path.exists() {
         return Ok(());
@@ -464,9 +464,9 @@ pub struct ParticipantDkgBootstrapResult {
 /// Generates a random polynomial and `n` shares with `N3f1` fault tolerance
 /// (requires 2f+1 of 3f+1 participants for threshold recovery).
 ///
-/// This is used for genesis setup - each validator receives its share via
-/// a secure offline channel. For production use, a distributed DKG protocol
-/// should be used instead.
+/// Genesis setup uses this function. Each validator receives its share via
+/// a secure offline channel. Production use should use a distributed DKG
+/// protocol instead.
 pub fn bootstrap_dkg(n: u32) -> Result<DkgBootstrapResult> {
     let n = NonZeroU32::new(n).ok_or_else(|| eyre::eyre!("validator count must be > 0"))?;
     let mut rng = rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng);
@@ -486,9 +486,9 @@ pub fn bootstrap_dkg(n: u32) -> Result<DkgBootstrapResult> {
 /// Perform a centralized DKG bootstrap bound to a concrete ordered validator set.
 ///
 /// The returned shares are ordered identically to `participants`. The full
-/// output artifact binds the same public keys as dealers/players, allowing fresh
-/// runtime bootstrap to skip the interactive round-0 DKG ceremony while still
-/// producing a canonical genesis DKG boundary.
+/// output artifact binds the same public keys as dealers/players. This lets a
+/// fresh runtime bootstrap skip the interactive round-0 DKG ceremony and still
+/// produce a canonical genesis DKG boundary.
 pub fn bootstrap_dkg_for_participants(
     participants: Set<bls12381::PublicKey>,
 ) -> Result<ParticipantDkgBootstrapResult> {
@@ -766,7 +766,8 @@ mod tests {
     }
 
     /// Runtime-level test: save and load full threshold material (share + polynomial)
-    /// through encrypted backend - the same flow as save_dkg_state() / obtain_threshold_material().
+    /// through the encrypted backend. This is the same flow as save_dkg_state() /
+    /// obtain_threshold_material().
     #[test]
     fn test_encrypted_threshold_material_full_flow() {
         let result = bootstrap_dkg(3).unwrap();

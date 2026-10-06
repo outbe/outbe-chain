@@ -1,3 +1,4 @@
+use super::fixtures::begin_scope_with_persisted_parent;
 use super::*;
 
 fn run_missed_offering_command(
@@ -48,7 +49,7 @@ fn missed_offering_routes_the_formed_limit_once_and_exposes_a_durable_receipt() 
     let base_limit = U256::from(100);
     let formation_carry = U256::from(9);
     let later_carry = U256::from(7);
-    // Formation no longer folds the accumulator in, so the day is formed against its own base.
+    // Formation no longer includes the accumulator, so the day is formed against its own base.
     let formed_limit = base_limit;
     let carried = formation_carry + later_carry;
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
@@ -106,9 +107,9 @@ fn missed_offering_routes_the_formed_limit_once_and_exposes_a_durable_receipt() 
         let decoded =
             IMetadosis::getWorldwideDayTerminalReceiptCall::abi_decode_returns(&output).unwrap();
         assert_eq!(decoded.outcome, 1);
-        assert_eq!(decoded.valueRouted, formed_limit);
-        assert_eq!(decoded.carryOverBefore, carried);
-        assert_eq!(decoded.carryOverAfter, carried + formed_limit);
+        assert_eq!(decoded.promisLimitReturnedMinor, formed_limit);
+        assert_eq!(decoded.promisLimitBeforeMinor, carried);
+        assert_eq!(decoded.promisLimitAfterMinor, carried + formed_limit);
         assert_eq!(
             decoded.retirementOutcome,
             crate::schema::terminal_retirement::NOT_PRESENT
@@ -343,7 +344,7 @@ fn limit_settled_earlier_in_the_opening_tick_opens_the_offering() {
             metadosis
                 .worldwide_days
                 .entry(wwd)
-                .metadosis_limit_amount()
+                .metadosis_limit_minor()
                 .read()
                 .unwrap(),
             settled_limit
@@ -358,14 +359,12 @@ fn malformed_missed_offering_receipt_is_fatal() {
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0801);
     with_contract(|metadosis| {
         metadosis
-            .worldwide_day_terminal_receipts
-            .create(&crate::schema::WorldwideDayTerminalReceiptState {
-                wwd,
-                outcome: crate::schema::terminal_outcome::MISSED_OFFERING,
+            .write_missed_offering_receipt(crate::terminal::MissedOfferingReceipt {
+                worldwide_day: wwd,
                 value_routed: U256::from(10),
                 carry_over_before: U256::from(3),
                 carry_over_after: U256::from(12),
-                retirement: crate::schema::terminal_retirement::NOT_PRESENT,
+                retirement: outbe_compressed_entities::RetirementOutcome::NotPresent,
                 block_number: 1,
             })
             .unwrap();
@@ -388,16 +387,13 @@ fn missed_receipt_value_drift_is_fatal_in_reader_and_aggregate() {
 
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
-        let mut receipt = metadosis
-            .worldwide_day_terminal_receipts
-            .get(wwd)
-            .unwrap()
-            .unwrap();
-        receipt.value_routed += U256::from(1);
-        receipt.carry_over_after += U256::from(1);
+        let mut receipt = metadosis.read_terminal_receipt(wwd).unwrap().unwrap();
+        receipt.common_mut().value_routed += U256::from(1);
+        receipt.common_mut().carry_over_after += U256::from(1);
         metadosis
             .worldwide_day_terminal_receipts
-            .update(&receipt)
+            .get_bytes(&wwd)
+            .write(&crate::terminal::codec::encode(&receipt))
             .unwrap();
 
         assert!(matches!(
@@ -412,7 +408,7 @@ fn missed_receipt_value_drift_is_fatal_in_reader_and_aggregate() {
 }
 
 #[test]
-fn missed_receipt_with_capacity_detail_is_fatal_in_reader_and_aggregate() {
+fn missed_receipt_with_trailing_capacity_payload_is_fatal_in_reader_and_aggregate() {
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0803);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let offering_end =
@@ -422,30 +418,10 @@ fn missed_receipt_with_capacity_detail_is_fatal_in_reader_and_aggregate() {
 
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
-        let receipt = metadosis
-            .worldwide_day_terminal_receipts
-            .get(wwd)
-            .unwrap()
-            .unwrap();
-        metadosis
-            .capacity_forfeiture_receipts
-            .create(&crate::schema::CapacityForfeitureReceiptState {
-                wwd,
-                outcome: crate::schema::terminal_outcome::CAPACITY_FORFEITURE,
-                max_retained_wwds: MAX_RETAINED_WWDS as u32,
-                retained_count_before: MAX_RETAINED_WWDS as u32,
-                value_routed: receipt.value_routed,
-                carry_over_before: receipt.carry_over_before,
-                carry_over_after: receipt.carry_over_after,
-                sealed_collection_root: B256::ZERO,
-                forfeited_count: 0,
-                forfeited_nominal: U256::ZERO,
-                source_generation: 0,
-                retired_generation: 1,
-                retirement: receipt.retirement,
-                block_number: receipt.block_number,
-            })
-            .unwrap();
+        let bytes = metadosis.worldwide_day_terminal_receipts.get_bytes(&wwd);
+        let mut malformed = bytes.read().unwrap();
+        malformed.extend_from_slice(&[0; 92]);
+        bytes.write(&malformed).unwrap();
 
         assert!(matches!(
             metadosis.read_missed_offering_receipt(wwd),
@@ -549,9 +525,11 @@ fn missed_offering_rejects_a_populated_partition_without_any_partial_effect() {
             &storage,
             &scope,
             &parent,
-            address!("7600000000000000000000000000000000000076"),
-            wwd,
-            U256::from(10),
+            FixtureTribute {
+                owner: address!("7600000000000000000000000000000000000076"),
+                wwd,
+                nominal: U256::from(10),
+            },
         );
     });
 
@@ -703,23 +681,7 @@ fn missed_offering_rolls_back_a_ce_lookup_failure_after_promis_then_retries_once
         tree.clone(),
         outbe_compressed_entities::CeWorkConfig::new(0, 0, u64::MAX),
     );
-    StorageHandle::enter(&mut provider, |storage| {
-        storage
-            .sstore(
-                outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-                U256::ZERO,
-                U256::from(4),
-            )
-            .unwrap();
-        storage
-            .sstore(
-                outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-                U256::from(1),
-                U256::from_be_slice(parent_root.as_slice()),
-            )
-            .unwrap();
-        begin_block(storage, &scope).unwrap();
-    });
+    begin_scope_with_persisted_parent(&mut provider, &scope, parent_root);
 
     let storage_before = provider.storage.clone();
     let events_before = provider.events.clone();
@@ -812,7 +774,7 @@ fn missed_offering_rejects_a_day_limit_with_no_formation() {
         MetadosisContract::new(storage)
             .worldwide_days
             .entry(wwd)
-            .metadosis_limit_amount()
+            .metadosis_limit_minor()
             .write(U256::from(5))
             .unwrap();
     });

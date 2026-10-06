@@ -28,10 +28,10 @@ import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {BidPackLib} from "../helpers/BidPackLib.sol";
 
-/// @dev The origin buys destination gas from `IntexGas` before it knows what the target will spend, and
-///      the budgets were last sized by estimate rather than measurement. These pin each formula against
-///      the real consumption of a realistic message: a budget below actual cost strands the delivery in
-///      redelivery, and one far above it just overpays every send.
+/// @dev The origin buys destination gas from `IntexGas` before it knows what the target will spend.
+///      The budgets were last sized by estimate rather than measurement. These tests pin each
+///      formula against the real consumption of a realistic message. A budget below actual cost
+///      strands the delivery in redelivery, and one far above it just overpays every send.
 contract GasBudgetTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant WORLDWIDE_DAY = 20260501;
@@ -173,7 +173,7 @@ contract GasBudgetTest is CrossChainTest {
                     callThreshold: 0,
                     callPriceMinor: 200e6,
                     recipients: to,
-                    quantities: qty
+                    units: qty
                 })
             )
         );
@@ -217,7 +217,7 @@ contract GasBudgetTest is CrossChainTest {
                 callThreshold: 0,
                 callPriceMinor: 200e6,
                 recipients: to,
-                quantities: qty
+                units: qty
             });
         }
 
@@ -248,7 +248,7 @@ contract GasBudgetTest is CrossChainTest {
         // `multiSend` burns the whole batch from its caller and fans it out to `recipients`.
         address sender = address(0x3000);
         uint256 tokenId = intex.issuedTokenId(SERIES_PREFIX);
-        intex.issue(sender, items, SERIES_PREFIX);
+        intex.issueIntex(sender, items, SERIES_PREFIX);
 
         bytes32[] memory to = new bytes32[](items);
         uint256[] memory ids = new uint256[](items);
@@ -261,7 +261,7 @@ contract GasBudgetTest is CrossChainTest {
 
         vm.prank(sender);
         src.multiSend(
-            MultiRecipientSendParam({dstChainId: OUTBE_CHAIN_ID, recipients: to, tokenIds: ids, amounts: amounts})
+            MultiRecipientSendParam({dstChainId: OUTBE_CHAIN_ID, recipients: to, tokenIds: ids, units: amounts})
         );
 
         bytes memory payload = bridge.lastPayload();
@@ -273,9 +273,10 @@ contract GasBudgetTest is CrossChainTest {
         assertLt(spent, IntexGas.nftMint(items), "the widest bridge mint must fit the quote");
     }
 
-    /// @dev The costly path is not the mint but its failure: every item that a recipient rejects is
-    ///      recorded with its revert bytes so the owner can retry. Tokens are already burned on the
-    ///      source, so a budget that only covers the happy path strands them.
+    /// @dev The costly path is not the mint but its failure. The destination adapter records
+    ///      every item that a recipient rejects, with its revert bytes, so the owner can retry.
+    ///      Tokens are already burned on the source, so a budget that only covers the happy path
+    ///      strands them.
     function test_TheQuoteCoversABridgeMintWhereEveryItemIsRejected() public {
         uint256 items = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE;
         IntexNFT1155 dstToken = DeployProxy.intexNFT1155(admin, admin);
@@ -291,7 +292,7 @@ contract GasBudgetTest is CrossChainTest {
 
         address sender = address(0x3000);
         uint256 tokenId = intex.issuedTokenId(SERIES_PREFIX);
-        intex.issue(sender, items, SERIES_PREFIX);
+        intex.issueIntex(sender, items, SERIES_PREFIX);
 
         // One receiver that rejects every mint, so every item takes the recording path.
         RevertingReceiver rejecting = new RevertingReceiver();
@@ -306,7 +307,7 @@ contract GasBudgetTest is CrossChainTest {
 
         vm.prank(sender);
         src.multiSend(
-            MultiRecipientSendParam({dstChainId: OUTBE_CHAIN_ID, recipients: to, tokenIds: ids, amounts: amounts})
+            MultiRecipientSendParam({dstChainId: OUTBE_CHAIN_ID, recipients: to, tokenIds: ids, units: amounts})
         );
 
         bytes memory payload = bridge.lastPayload();
@@ -318,8 +319,8 @@ contract GasBudgetTest is CrossChainTest {
         assertLt(spent, IntexGas.nftMint(items), "the rejecting path must fit the quote too");
     }
 
-    // The delivery runs inside the gas the quote buys: uncapped, one runaway series spends it all before
-    // the parking write and the whole message reverts into redelivery.
+    // The delivery runs inside the gas the quote buys. Uncapped, one runaway series spends it all
+    // before the parking write, and the whole message reverts into redelivery.
     function test_ARunawaySeriesIsParkedAndTheBatchContinues() public {
         GasBurningIntex poisoned = new GasBurningIntex(POISON);
         TargetRouter mocked = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
@@ -351,7 +352,7 @@ contract GasBurningIntex {
         poison = _poison;
     }
 
-    /// @dev The inbound path asks before it marks; every series here is live.
+    /// @dev The inbound path asks before it marks. Every series here is live.
     function seriesExists(bytes14) external pure returns (bool) {
         return true;
     }
@@ -511,12 +512,13 @@ contract AuctionGasBudgetTest is CrossChainTest {
     }
 }
 
-/// @dev These readings go through the mock, which stores the message body and so inflates a chunk about
-///      twelvefold; the budgets are sized on `ClearingRelayMailboxGas.t.sol` instead. What is pinned here
-///      is the behaviour: a day within a round finishes, a day beyond one stops and resumes.
-///      CLEARING's cost is dominated by the bids relay it fires: the day's revealed bids leave as
-///      chunks of `MAX_PAYLOAD_ARRAY_LEN`, and every chunk is an outbound send paid from this same
-///      delivery. A stub auction supplies the bids so the slope is measurable without the reveal flow.
+/// @dev These readings go through the mock, which stores the message body and so inflates a chunk
+///      about twelvefold. The budgets are sized on `ClearingRelayMailboxGas.t.sol` instead. What is
+///      pinned here is the behaviour: a day within a round finishes, a day beyond one stops and
+///      resumes. The bids relay that CLEARING fires dominates the cost of CLEARING. The day's
+///      revealed bids leave as chunks of `MAX_PAYLOAD_ARRAY_LEN`, and every chunk is an outbound
+///      send paid from this same delivery. A stub auction supplies the bids so the slope is
+///      measurable without the reveal flow.
 contract ClearingRelayGasTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant WORLDWIDE_DAY = 20250101;
@@ -570,10 +572,11 @@ contract ClearingRelayGasTest is CrossChainTest {
     }
 
     /// @dev A day too heavy for one delivery keeps the stage flip and stops mid-relay, so the next round
-    ///      carries on from the chunk it left rather than starting the day over.
+    ///      continues from the chunk it left rather than starting the day over.
     function test_ADayTooHeavyToRelayStopsPartWayThrough() public {
-        // Through the mock a chunk costs about 2.4M - it stores the whole body - so a round of this size
-        // buys a couple of chunks. The real cost lives in `ClearingRelayMailboxGas.t.sol`.
+        // Through the mock a chunk costs about 2.4M, as the mock stores the whole body. So a round
+        // of this size buys a couple of chunks. The real cost lives in
+        // `ClearingRelayMailboxGas.t.sol`.
         assertTrue(_clearingWithin(16 * BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN, 6_000_000), "the delivery must survive");
 
         (uint16 nextBatch, uint16 totalBatches, bool done) = router.bidsRelay(WORLDWIDE_DAY);
@@ -583,14 +586,14 @@ contract ClearingRelayGasTest is CrossChainTest {
         assertGt(nextBatch, 0, "the round sent what it could afford");
         assertLt(nextBatch, totalBatches, "and left the rest");
 
-        // The next round picks the day up where this one stopped.
+        // The next round resumes the day where this one stopped.
         router.relayBids(WORLDWIDE_DAY);
         (uint16 after_,, bool doneAfter) = router.bidsRelay(WORLDWIDE_DAY);
         assertTrue(after_ > nextBatch || doneAfter, "the second round carried on");
     }
 }
 
-/// @dev Supplies a settable number of revealed bids; the stage flip itself is a no-op.
+/// @dev Supplies a settable number of revealed bids. The stage flip itself is a no-op.
 contract BidStub {
     uint256 public bidCount;
 

@@ -13,8 +13,9 @@ interface IERC7786TokenBridge {
         uint256 gasLimit
     ) external payable returns (bytes32 sendId);
 
-    /// @notice Quote the native fee a `sendAndCall` with the same arguments requires. The bridge exposes only
-    ///         `quoteSend`; its payload (from, to, amount, extraData) and gas attribute match `sendAndCall`.
+    /// @notice Quote the native fee a `sendAndCall` with the same arguments requires. The bridge
+    ///         exposes only `quoteSend`. Its payload (from, to, amount, extraData) and gas
+    ///         attribute match `sendAndCall`.
     function quoteSend(uint32 destinationDomain, address to, uint256 amount, bytes calldata extraData, uint256 gasLimit)
         external
         view

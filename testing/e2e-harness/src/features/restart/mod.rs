@@ -1,7 +1,8 @@
-//! Restart steps used by `features/validator_lifecycle.feature`. An ACTIVE validator's DKG share lives on
-//! disk (keys-dir), not the enclave. Killing and restarting ONLY the node (the
-//! enclave container stays up) must resume signing from the persisted share
-//! WITHOUT a fresh DKG ceremony.
+//! Restart steps used by `features/validator_lifecycle.feature`. An ACTIVE
+//! validator's DKG share lives on disk (keys-dir), not in the enclave. When the
+//! test kills and restarts ONLY the node (the enclave container stays up), the
+//! node must resume signing from the persisted share WITHOUT a fresh DKG
+//! ceremony.
 
 use cucumber::given;
 

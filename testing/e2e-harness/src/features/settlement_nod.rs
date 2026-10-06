@@ -1,4 +1,4 @@
-//! The successor public Nod pays through ERC20; the original retains PayNote coverage.
+//! A third party pays the successor public Nod by ERC20. Its owner paid the original.
 use super::*;
 use alloy_sol_types::{SolCall as _, SolError as _, SolValue as _};
 use outbe_compressed_entities::{
@@ -81,7 +81,7 @@ fn third_party_settles_and_mines(world: &mut World) {
             index: U256::ZERO,
         },
     )
-    .expect("PayNote scenario registered USD reserve");
+    .expect("the owner's Nod settlement registered the USD reserve");
     assert_ne!(vault, Address::ZERO);
     let asset =
         eth::read_call(&url, vault, &ISettlementVault::assetCall {}).expect("reserve asset");
@@ -124,8 +124,7 @@ fn third_party_settles_and_mines(world: &mut World) {
             owner,
             nodId: id.to_u256(),
             asset,
-            nullifier: B256::ZERO,
-            amountCovered: body.settlementCostMinor,
+            paymentMinor: body.settlementCostMinor,
         },
     );
     for &peer in &ports {
@@ -430,7 +429,7 @@ fn third_party_settles_and_mines(world: &mut World) {
             compressed_body(world, peer, 2, id, minted_height).is_none(),
             "mined Nod must have authenticated absence"
         );
-        // The V2 fixture issued a singleton bucket; mining its one paid right
+        // The V2 fixture issued a singleton bucket. Mining its one paid right
         // must remove the bucket instead of leaving an orphan settled counter.
         assert_eq!(paid.1.settled_nods, 1);
         assert!(
@@ -543,7 +542,7 @@ pub(super) fn qualify_public_nod(
     let mut first_boundary_day = None;
     // The first closed day can be the partial issuance day or contain earlier
     // low-price samples. The next entire UTC day uses only the declared quote.
-    // Two transitions are sufficient; no Nod state or Oracle history is injected.
+    // Two transitions are sufficient. No Nod state or Oracle history is injected.
     for boundary in 0..2 {
         crate::features::price_oracle::publish_controlled_quote(world, rate);
         let publication = world
@@ -744,8 +743,9 @@ struct NodSnapshot {
     body: Option<eth::INod::NodData>,
 }
 
-/// Read live CE views without mixing blocks. Observations that straddle a head change
-/// or that the node answers as not yet readable are retried; other failures remain fatal.
+/// Read live CE views without mixing blocks. This function retries observations that
+/// straddle a head change and reads that the node answers as not yet readable. Other
+/// failures remain fatal.
 fn stable_live_read<T>(world: &World, port: u16, minimum: u64, read: impl Fn() -> Option<T>) -> T {
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {
@@ -833,7 +833,7 @@ fn assert_live_nod_revert<C: alloy_sol_types::SolCall>(
 }
 
 /// Observe an actual failed transaction without assigning it a revert reason.
-/// Wrong-MAC authorization is established separately by the controlled retry.
+/// The controlled retry establishes wrong-MAC authorization separately.
 fn assert_mined_nod_rejection<C: alloy_sol_types::SolCall>(
     world: &World,
     call: &C,
@@ -1115,7 +1115,10 @@ fn assert_snapshot_bodies(snapshot: &NodSnapshot, bodies: &(NodItemBodyV1, NodBu
     assert_eq!(body.owner, item.owner);
     assert_eq!(body.worldwideDay, item.worldwide_day.value());
     assert_eq!(body.leagueId, item.league_id);
-    assert_eq!(body.floorPriceMinor, item.floor_price_minor);
+    assert_eq!(
+        Some(body.floorPriceMinor),
+        outbe_nod::NodContract::floor_price_minor(bodies.1.entry_price_minor)
+    );
     assert_eq!(body.gratisLoadMinor, item.gratis_load_minor);
     assert_eq!(body.issuanceCurrency, item.issuance_currency);
     assert_eq!(body.referenceCurrency, item.reference_currency);
@@ -1349,7 +1352,6 @@ mod tests {
             gratis_load_minor: U256::from(100),
             worldwide_day: day,
             league_id: 0,
-            floor_price_minor: U256::from(10),
             bucket_key,
             issuance_currency: 840,
             reference_currency: 840,
@@ -1359,7 +1361,6 @@ mod tests {
         let bucket = NodBucketBodyV1 {
             bucket_key,
             worldwide_day: day,
-            floor_price_minor: U256::from(10),
             entry_price_minor: U256::from(9),
             reference_currency: 840,
             settled_nods: 0,

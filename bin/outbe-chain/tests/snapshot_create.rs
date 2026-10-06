@@ -23,7 +23,7 @@ fn snapshot_create_help_and_required_signing_key_are_dispatched_offline() {
         assert!(transcript(&help).contains(option), "{}", transcript(&help));
     }
 
-    let temp = tempfile::tempdir().unwrap();
+    let temp = snapshot::physical_tempdir();
     let output = temp.path().join("unsigned.tar");
     let missing_key = run(binary()
         .args(["snapshot", "create", "--output"])
@@ -39,8 +39,12 @@ fn snapshot_create_help_and_required_signing_key_are_dispatched_offline() {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "snapshot creation requires Linux openat2"
+)]
 fn stopped_native_files_create_a_portable_signed_archive_without_rewriting_progress() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = snapshot::physical_tempdir();
     let fixture = stopped_fixture(&temp.path().join("donor"));
     let before = fingerprint(&fixture.donor);
     let key_before = fs::read(&fixture.signing_key).unwrap();
@@ -69,7 +73,7 @@ fn stopped_native_files_create_a_portable_signed_archive_without_rewriting_progr
     assert!(!fixture.donor.join("secondary").exists());
     assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 2);
 
-    let recipient = tempfile::tempdir().unwrap();
+    let recipient = snapshot::physical_tempdir();
     let relocated = recipient.path().join("received.tar");
     fs::rename(&output, &relocated).unwrap();
     fs::remove_dir_all(&fixture.donor).unwrap();
@@ -148,4 +152,33 @@ fn stopped_native_files_create_a_portable_signed_archive_without_rewriting_progr
             .unwrap(),
         fixture.public_key
     );
+}
+
+#[test]
+#[cfg(not(target_os = "linux"))]
+fn unsupported_platform_rejects_creation_after_valid_schema_three_inspection() {
+    let temp = snapshot::physical_tempdir();
+    let fixture = stopped_fixture(&temp.path().join("donor"));
+    let before = fingerprint(&fixture.donor);
+    let output = temp.path().join("unsupported.tar");
+    let result = run(binary()
+        .args(["snapshot", "create", "--output"])
+        .arg(&output)
+        .arg("--signing-key")
+        .arg(&fixture.signing_key)
+        .args(["--", "--chain"])
+        .arg(&fixture.genesis)
+        .arg("--datadir")
+        .arg(&fixture.chain)
+        .arg("--projection.storage-config")
+        .arg(&fixture.projection_config));
+    assert!(!result.status.success());
+    assert!(
+        transcript(&result)
+            .contains("snapshot creation requires Linux openat2 path-resolution guarantees"),
+        "{}",
+        transcript(&result)
+    );
+    assert!(!output.exists());
+    assert_eq!(fingerprint(&fixture.donor), before);
 }

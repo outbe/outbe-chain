@@ -5,11 +5,12 @@
 //!
 //! The benchmark never starts a node, network, Docker, SGX, or a TEE sidecar.
 //! It executes both the canonical TributeFactory state transition and the
-//! canonical enclave offer processor in-process. Issuance is ZK-only, so the
-//! single scenario uses the frozen Demo Tribute proof fixture, a registered L2,
-//! and a valid BLS MinSig signature over the proof's Merkle root.
+//! canonical enclave offer processor in-process. Issuance is ZK-only. Thus the
+//! single scenario uses these inputs:
+//! - the frozen Demo Tribute proof fixture
+//! - a registered L2
+//! - a valid BLS MinSig signature over the proof's Merkle root
 
-use std::collections::BTreeMap;
 use std::hint::black_box;
 use std::time::Instant;
 
@@ -22,10 +23,7 @@ use commonware_cryptography::bls12381::primitives::{
     ops::{self, sign_message},
     variant::MinSig,
 };
-use outbe_compressed_entities::{
-    begin_block, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
-    ParentBodySourceError, QueryRef, StoredBody,
-};
+use outbe_compressed_entities::{begin_block, ExecutionScope};
 use outbe_l2registry::L2RegistryContract;
 use outbe_metadosis::{
     genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay},
@@ -43,7 +41,7 @@ use outbe_primitives::{
         ORACLE_ADDRESS, TRIBUTE_ADDRESS, TRIBUTE_FACTORY_ADDRESS,
     },
     storage::{
-        hashmap::{HashMapStorageProvider, StorageTraceKind, StorageTraceOperation},
+        hashmap::{HashMapStorageProvider, StorageTraceKind},
         StorageHandle,
     },
     time::date_key_to_utc_timestamp,
@@ -54,9 +52,9 @@ use outbe_protocol::protocol::imt::Imt;
 use outbe_protocol::protocol::key::{NftSecret, Signer};
 use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
 use outbe_protocol::protocol::zkproof::decode_public_words;
-use outbe_protocol_derive::Entity;
 use outbe_tee::protocol::TributePublicInputs as DemoTributePublicInputs;
 use outbe_tee::OFFER_HKDF_SALT;
+use outbe_tee_enclave::zk_claim::TributeDraftClaim;
 use outbe_tee_enclave::{
     crypto::ecdhe_tribute_offer_decrypt,
     process::{process_tribute_offer_batch, TributeOfferKeyMaterial},
@@ -79,20 +77,24 @@ use revm::precompile::bn254::{
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
 use crate::{
-    BenchmarkScenario, CalldataStats, CryptoMode, EventCount, ExecutionClass, GasComponent,
-    GasLedger, Observation, Profile, ScenarioMetadata, ScenarioReport, StorageOperationKind,
-    StorageTraceEntry,
+    BenchmarkScenario, CalldataStats, CryptoMode, ExecutionClass, GasComponent, GasLedger,
+    Observation, Profile, ScenarioMetadata, ScenarioReport,
+};
+
+use super::support::{
+    aggregate_events, aggregate_storage_trace_with_modules, elapsed_ns,
+    storage_gas_components_with_modules, EmptyParentBodies,
 };
 
 const CHAIN_ID: u64 = outbe_primitives::chain::DEVNET_CHAIN_ID;
-/// L2 chain id the bench registers and selects; it is the ABI `uint32` selector
+/// L2 chain id the bench registers and selects. It is the ABI `uint32` selector
 /// and the registry key, so a single type keeps both in sync.
 const L2_CHAIN_ID: u32 = 0xdead;
-/// Circuit version enabled for `L2_CHAIN_ID` in the canonical circuit registry;
-/// the frozen Demo Tribute fixture verifies under it.
+/// Circuit version enabled for `L2_CHAIN_ID` in the canonical circuit registry.
+/// The frozen Demo Tribute fixture verifies under it.
 ///
-/// Proving uses the active `demo_tribute` marker (1.2.0) while the registry
-/// enables 1.1.0 for this chain: the frozen `circuit.vk` files of both versions
+/// Proving uses the active `demo_tribute` marker (1.2.0), but the registry
+/// enables 1.1.0 for this chain. The frozen `circuit.vk` files of both versions
 /// are byte-identical, so one proof verifies under either entry's key.
 const L2_CIRCUIT_VERSION: &str = "1.1.0";
 const BLOCK_GAS_LIMIT: u64 = 30_000_000;
@@ -132,43 +134,6 @@ mod abi {
             bytes zkMerkleRoot,
             bytes signature
         ) external returns (uint256 tributeId);
-    }
-}
-
-#[derive(Entity)]
-struct TributeDraftFixture {
-    #[outbe(id_seed)]
-    id: B256,
-    #[outbe(body, owner, pos = 0)]
-    derived_owner: B256,
-    #[outbe(body, pos = 1)]
-    worldwide_day: u64,
-    #[outbe(body, pos = 2)]
-    currency: u16,
-    #[outbe(body, pos = 3)]
-    base: u64,
-    #[outbe(body, pos = 4)]
-    atto: u64,
-    #[outbe(body, pos = 5)]
-    su_ids: Vec<B256>,
-}
-
-struct NoParentBodies;
-
-impl ParentBodySource for NoParentBodies {
-    fn get(&self, _entity: EntityRef) -> Result<Option<StoredBody>, ParentBodySourceError> {
-        Ok(None)
-    }
-
-    fn list(
-        &self,
-        _query: QueryRef,
-        _request: IdPageRequest,
-    ) -> Result<IdPage, ParentBodySourceError> {
-        Ok(IdPage {
-            ids: Vec::new(),
-            next_after: None,
-        })
     }
 }
 
@@ -242,7 +207,7 @@ fn build_fixture() -> Fixture {
         let owner_nonce = Fr::rand(&mut proof_rng);
         let derived_owner = derive_owner(&public_key, owner_nonce).unwrap();
         let draft_id = B256::with_last_byte(0x11);
-        let draft = TributeDraftFixture {
+        let draft = TributeDraftClaim {
             id: draft_id,
             derived_owner: B256::from(field_bytes(&derived_owner)),
             worldwide_day: u64::from(TARGET_WWD.value()),
@@ -398,7 +363,7 @@ fn seed_offer_world(storage: StorageHandle<'_>) {
             lookback_end: 3,
             offering_end: 4,
             scheduled_process_time: 5,
-            metadosis_limit_amount: U256::from(100),
+            metadosis_limit_minor: U256::from(100),
             previous_vwap: U256::from(90),
             current_vwap: U256::from(100),
         })
@@ -612,7 +577,7 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
         let tribute_id = execute_offer_with_processor(
             storage.clone(),
             &scope,
-            &NoParentBodies,
+            &EmptyParentBodies,
             input,
             |offers| {
                 let enclave_started = Instant::now();
@@ -653,7 +618,7 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
 
     let stored = StorageHandle::enter(&mut provider, |storage| {
         TributeContract::new(storage)
-            .get_tribute(&scope, &NoParentBodies, tribute_id)
+            .get_tribute(&scope, &EmptyParentBodies, tribute_id)
             .map_err(|error| error.to_string())
     })?
     .ok_or_else(|| "created Tribute is not readable through the canonical contract".to_owned())?;
@@ -706,7 +671,11 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
             1,
         ),
     ];
-    gas_components.extend(storage_gas_components(&trace));
+    gas_components.extend(storage_gas_components_with_modules(
+        &trace,
+        GasLedger::UserTransaction,
+        module_name,
+    ));
     gas_components.extend([
         GasComponent::new(
             GasLedger::UserTransaction,
@@ -782,7 +751,7 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
                     alloy_primitives::keccak256(&fixture.proof)
                 ),
             );
-    observation.storage = aggregate_storage_trace(&trace);
+    observation.storage = aggregate_storage_trace_with_modules(&trace, module_name);
     observation.events = aggregate_events(&ordered_events);
     observation.postconditions.insert(
         "fixture.plaintext_bytes".to_owned(),
@@ -799,87 +768,6 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
     Ok(observation)
 }
 
-fn storage_gas_components(trace: &[StorageTraceOperation]) -> Vec<GasComponent> {
-    let mut grouped = BTreeMap::<(&'static str, StorageTraceKind), u64>::new();
-    for operation in trace {
-        *grouped
-            .entry((module_name(operation.address), operation.kind))
-            .or_default() += 1;
-    }
-    grouped
-        .into_iter()
-        .map(|((module, kind), count)| {
-            let (suffix, per_operation) = match kind {
-                StorageTraceKind::Read => ("read", WARM_STORAGE_READ_COST),
-                StorageTraceKind::Write => ("write", SSTORE_RESET),
-            };
-            GasComponent::new(
-                GasLedger::UserTransaction,
-                format!("storage.{module}.{suffix}"),
-                count.saturating_mul(per_operation),
-                count,
-            )
-            .attributed_to(module)
-        })
-        .collect()
-}
-
-fn aggregate_storage_trace(trace: &[StorageTraceOperation]) -> Vec<StorageTraceEntry> {
-    let mut grouped = BTreeMap::<(String, String, String, StorageOperationKind), u64>::new();
-    for operation in trace {
-        let kind = match operation.kind {
-            StorageTraceKind::Read => StorageOperationKind::Read,
-            StorageTraceKind::Write => StorageOperationKind::Write,
-        };
-        *grouped
-            .entry((
-                module_name(operation.address).to_owned(),
-                format!("{:#x}", operation.address),
-                format!("{:#x}", operation.slot),
-                kind,
-            ))
-            .or_default() += 1;
-    }
-    grouped
-        .into_iter()
-        .map(
-            |((module, address, slot, operation), count)| StorageTraceEntry {
-                module,
-                address,
-                slot,
-                operation,
-                count,
-                gas: count.saturating_mul(match operation {
-                    StorageOperationKind::Read => WARM_STORAGE_READ_COST,
-                    StorageOperationKind::Write => SSTORE_RESET,
-                }),
-            },
-        )
-        .collect()
-}
-
-fn aggregate_events(events: &[alloy_primitives::Log]) -> Vec<EventCount> {
-    let mut grouped = BTreeMap::<(String, String), u64>::new();
-    for event in events {
-        let topic = event
-            .data
-            .topics()
-            .first()
-            .map_or_else(|| "none".to_owned(), |topic| format!("{topic:#x}"));
-        *grouped
-            .entry((format!("{:#x}", event.address), topic))
-            .or_default() += 1;
-    }
-    grouped
-        .into_iter()
-        .map(|((emitter, event), count)| EventCount {
-            emitter,
-            event,
-            count,
-        })
-        .collect()
-}
-
 fn module_name(address: Address) -> &'static str {
     match address {
         COMPRESSED_ENTITIES_ADDRESS => "compressed_entities",
@@ -893,20 +781,17 @@ fn module_name(address: Address) -> &'static str {
     }
 }
 
-fn elapsed_ns(started: Instant) -> u64 {
-    u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)
-}
-
 fn ms_to_ns(milliseconds: f64) -> u64 {
     (milliseconds * 1_000_000.0).round() as u64
 }
 
-/// Summarizes the ZK issuance cost decomposition of the Tribute creation
-/// scenario: the frozen verifier charge actually configured for `offerTribute`
-/// against the benchmark-calibrated alternative, both inside one ZK transaction.
+/// Summarizes how the Tribute creation scenario splits the ZK issuance cost.
+/// The summary compares the frozen verifier charge actually configured for
+/// `offerTribute` against the benchmark-calibrated alternative. Both charges
+/// are inside one ZK transaction.
 ///
-/// Issuance is ZK-only, so no cross-scenario comparison is possible or wanted;
-/// the calibration only re-prices the verifier charge within the same run.
+/// Issuance is ZK-only, so no cross-scenario comparison is possible or wanted.
+/// The calibration only re-prices the verifier charge within the same run.
 #[must_use]
 pub fn render_gas_policy(reports: &[ScenarioReport]) -> Option<String> {
     let zk = reports

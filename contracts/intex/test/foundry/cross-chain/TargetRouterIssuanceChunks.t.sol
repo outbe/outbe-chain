@@ -12,8 +12,11 @@ import {InboundReason} from "@contracts/shared/libs/InboundReason.sol";
 import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 
 /// A day's issuance reaches a chain as numbered chunks. Each winner is issued once per series whatever
-/// the chunks say; a repeated chunk, a chunk disagreeing with the day's run and a series named under other
-/// terms are acknowledged without effect; the last chunk completes the day.
+/// the chunks say. The router acknowledges these without effect:
+/// - a repeated chunk
+/// - a chunk that disagrees with the day's run
+/// - a series named under other terms
+/// The last chunk completes the day.
 contract TargetRouterIssuanceChunksTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant DAY = 20_250_101;
@@ -58,9 +61,9 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         payload.callPriceMinor = 200e6;
         if (recipient != address(0)) {
             payload.recipients = new address[](1);
-            payload.quantities = new uint256[](1);
+            payload.units = new uint256[](1);
             payload.recipients[0] = recipient;
-            payload.quantities[0] = quantity;
+            payload.units[0] = quantity;
         }
     }
 
@@ -111,8 +114,9 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
 
     function test_ABurnDoesNotReopenAWinnersAllocation() public {
         _deliver(0, 2, IssuanceBatchLib.one(_series(USD, alice, 7)));
-        // Parking frees supply-cap room; the per-winner record is what keeps a later chunk from re-minting
-        // (a repeat of the same chunk index never gets this far - the chunk guard drops it first).
+        // Parking frees supply-cap room. The per-winner record is what keeps a later chunk from
+        // re-minting. (A repeat of the same chunk index never gets this far. The chunk guard drops
+        // it first.)
         intex.sendToGemFactory(alice, USD, 7);
         assertEq(_balance(USD, alice), 0, "parked");
 
@@ -224,11 +228,11 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
     function test_ARecipientNamedTwiceInOnePayloadIsIssuedOnce() public {
         BridgeMsgCodec.IssuanceInstructionsPayload memory p = _series(USD, address(0), 0);
         p.recipients = new address[](2);
-        p.quantities = new uint256[](2);
+        p.units = new uint256[](2);
         p.recipients[0] = alice;
         p.recipients[1] = alice;
-        p.quantities[0] = 7;
-        p.quantities[1] = 3;
+        p.units[0] = 7;
+        p.units[1] = 3;
         vm.recordLogs();
         _deliver(0, 1, IssuanceBatchLib.one(p));
         assertEq(_balance(USD, alice), 7, "only the first naming mints");

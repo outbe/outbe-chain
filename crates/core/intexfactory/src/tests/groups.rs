@@ -199,7 +199,7 @@ mod group_scans {
     const EXPECTED_TRIGGER: u64 = 2_280_000;
     const WWD: u32 = 20260212;
 
-    /// Issuance currencies of one day's series; they share every decision input.
+    /// Issuance currencies of one day's series. They share every decision input.
     const ISSUANCES: [u16; 3] = [840, 978, 392];
 
     fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
@@ -238,7 +238,7 @@ mod group_scans {
             issuance_currency,
             reference_currency: REFERENCE_ISO,
             recipients: vec![],
-            quantities: vec![],
+            units: vec![],
             recipient_chains: vec![],
             snapshot_chains: vec![1],
         }
@@ -276,7 +276,7 @@ mod group_scans {
         assert!(!budget.admits_actions(MAX_SERIES_ACTIONS_PER_BLOCK - 1));
 
         // A group wider than the whole allowance would stall forever, so an
-        // untouched budget takes it on.
+        // untouched budget accepts it.
         assert!(ScanBudget::for_call().admits_actions(MAX_SERIES_ACTIONS_PER_BLOCK + 1));
     }
 

@@ -89,7 +89,7 @@ impl PreparedReceipt {
     }
 }
 
-/// A fully decoded and simulated block. Constructed only after prepare succeeds.
+/// A fully decoded and simulated block. Only a successful prepare constructs it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreparedBlock {
     checkpoint: ProjectionCheckpoint,
@@ -144,6 +144,7 @@ pub struct OffchainDataProjection {
     state: ProjectionState,
     tribute_retention_selector: Option<Arc<dyn TributeRetentionSelector>>,
     day_route: Option<DayDatabaseRoute>,
+    partition_retirement: bool,
 }
 
 impl OffchainDataProjection {
@@ -176,7 +177,13 @@ impl OffchainDataProjection {
             state,
             tribute_retention_selector: None,
             day_route: None,
+            partition_retirement: false,
         })
+    }
+
+    /// Uses datasource-neutral physical partition retirement in finalized batches.
+    pub fn enable_partition_retirement(&mut self) {
+        self.partition_retirement = true;
     }
 
     /// Routes Tribute and Nod bodies into one database per worldwide day.
@@ -226,15 +233,27 @@ impl OffchainDataProjection {
         &mut self,
         prepared: PreparedBlock,
     ) -> Result<(ProjectionOutcome, AtomicWriteBatch), ProjectionError> {
+        let writer = self.writer.clone();
+        self.apply_prepared_with(prepared, move |batch| {
+            writer.apply_atomic(&batch)?;
+            Ok(batch)
+        })
+        .map(|(outcome, batch)| (outcome, batch.unwrap_or_else(AtomicWriteBatch::new)))
+    }
+
+    /// Applies the exact prepared batch through an injected consumer, retaining its result.
+    /// The logical checkpoint advances only after that consumer succeeds.
+    pub fn apply_prepared_with<T>(
+        &mut self,
+        prepared: PreparedBlock,
+        apply: impl FnOnce(AtomicWriteBatch) -> Result<T, outbe_offchain_storage::StorageError>,
+    ) -> Result<(ProjectionOutcome, Option<T>), ProjectionError> {
         match self.validate_next_block(
             prepared.checkpoint.block_number,
             prepared.checkpoint.block_hash,
         )? {
             NextBlock::AlreadyApplied(checkpoint) => {
-                return Ok((
-                    ProjectionOutcome::AlreadyApplied(checkpoint),
-                    AtomicWriteBatch::new(),
-                ));
+                return Ok((ProjectionOutcome::AlreadyApplied(checkpoint), None));
             }
             NextBlock::Apply => {}
         }
@@ -253,19 +272,33 @@ impl OffchainDataProjection {
                 day_lifecycle::finish_retirements(route, &prepared.day_retirements, shared, state)?
             }
             None => {
+                if self.partition_retirement {
+                    for retirement in &prepared.day_retirements {
+                        let (day, mark) = match retirement {
+                            DayRetirement::Drop(day) => {
+                                (*day, outbe_tribute::TributeDayMark::Retired)
+                            }
+                            DayRetirement::Retain { day, lease } => {
+                                (*day, outbe_tribute::TributeDayMark::Retained(*lease))
+                            }
+                        };
+                        block_batch.push(outbe_tribute::tribute_day_mark_operation(day, mark)?);
+                        block_batch.retire_scope(outbe_tribute::partitioning::day_scope(day)?);
+                    }
+                }
                 block_batch.extend(state.operations().iter().cloned());
                 block_batch.validate()?;
                 block_batch
             }
         };
-        self.writer.apply_atomic(&block_batch)?;
+        let applied = apply(block_batch)?;
         self.state = next_state;
         Ok((
             ProjectionOutcome::Applied {
                 checkpoint: prepared.checkpoint,
                 receipt_batches: prepared.receipts.len(),
             },
-            block_batch,
+            Some(applied),
         ))
     }
 
@@ -329,7 +362,7 @@ enum NextBlock {
     AlreadyApplied(ProjectionCheckpoint),
 }
 
-/// Stable projector failures; no backend-specific type crosses this boundary.
+/// Stable projector failures. No backend-specific type crosses this boundary.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum ProjectionError {
@@ -410,4 +443,18 @@ pub enum ProjectionError {
     },
     #[error("tribute {tribute_id} changes after its worldwide day was retired in the same block")]
     TributeStoredAfterDayRetirement { tribute_id: WwdEntityId },
+}
+
+/// Composition of domain-owned entity routing, shared by node and exporters.
+pub fn entity_partition_routing() -> Result<
+    std::sync::Arc<dyn outbe_offchain_storage::PartitionRouting>,
+    outbe_offchain_storage::StorageError,
+> {
+    use outbe_offchain_storage::partitioned::routing::{RoutingRegistry, SharedRouting};
+    let mut registry = RoutingRegistry::new(std::sync::Arc::new(SharedRouting(
+        outbe_offchain_storage::StorageScope::shared("system")?,
+    )));
+    outbe_nod::partitioning::register(&mut registry)?;
+    outbe_tribute::partitioning::register(&mut registry)?;
+    Ok(std::sync::Arc::new(registry))
 }

@@ -1,5 +1,5 @@
 //! Registers Outbe precompiles and preserves their public execution interface.
-//! Domain admission and EVM outcome translation are kept behind this facade.
+//! This facade keeps domain admission and EVM outcome translation behind it.
 
 use crate::{precompile_routes, tee_attestation_activation::TeeAttestationChainSpecStateV1};
 use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap};
@@ -55,6 +55,10 @@ impl OutbePrecompileExecutionContext {
         }
     }
 
+    pub(crate) const fn spec_id(&self) -> SpecId {
+        self.spec
+    }
+
     #[must_use]
     pub fn with_tee_attestation_v1(mut self, state: TeeAttestationChainSpecStateV1) -> Self {
         self.tee_attestation_v1 = state;
@@ -90,12 +94,14 @@ impl OutbePrecompileRuntime {
 /// via the `set_ctx_dispatch_hook` fork extension.
 ///
 /// The hook receives a raw pointer to the unbroken `&mut EthEvmContext<DB>`
-/// before revm destructures it into `EvmInternals`. The dispatch closure
-/// casts the pointer back to `&mut EthEvmContext<DB>` (safe because the
-/// `EvmFactory` impl that called us is specialised for the same DB), builds a
-/// [`crate::storage::CtxStorageProvider`] borrowing that context, and dispatches the outbe
-/// precompile through a [`StorageHandle`]. Sub-call from precompile body
-/// reaches `sub_call::run` through the provider's `sub_call` method.
+/// before revm destructures it into `EvmInternals`. The dispatch closure then:
+/// - casts the pointer back to `&mut EthEvmContext<DB>`. This is safe because the
+///   `EvmFactory` impl that called us is specialised for the same DB.
+/// - builds a [`crate::storage::CtxStorageProvider`] that borrows that context.
+/// - dispatches the outbe precompile through a [`StorageHandle`].
+///
+/// A sub-call from a precompile body reaches `sub_call::run` through the provider's
+/// `sub_call` method.
 /// Registers Outbe precompiles with an executor-owned compressed-entity scope.
 pub fn extend_outbe_precompiles<DB>(
     precompiles: &mut PrecompilesMap,

@@ -3,14 +3,16 @@ pragma solidity ^0.8.30;
 
 import {IMessageRecipient} from "src/interfaces/IHyperlane.sol";
 
-/// @dev Minimal self-contained Hyperlane Mailbox mock for local two-chain simulation. NOT for production.
-/// On `dispatch` it routes the message to the remote mailbox, which delivers it to the recipient's `handle`.
+/// @dev Minimal self-contained Hyperlane Mailbox mock for local two-chain simulation. NOT for
+/// production. On `dispatch` it routes the message to the remote mailbox, which delivers it to the
+/// recipient's `handle`.
 contract MockHyperlaneMailbox {
     uint32 public immutable localDomain;
 
     mapping(uint32 => MockHyperlaneMailbox) public remoteMailboxes;
 
-    /// @dev Records the hook metadata of the most recent metadata-carrying dispatch, for inspecting per-message gas.
+    /// @dev Records the hook metadata of the most recent metadata-carrying dispatch, for inspecting
+    /// per-message gas.
     bytes public lastMetadata;
 
     error RemoteMailboxNotSet(uint32 domain);
@@ -86,7 +88,8 @@ contract MockHyperlaneMailbox {
         return keccak256(abi.encode(localDomain, destinationDomain, recipientAddress, messageBody));
     }
 
-    /// @notice Delivery hook invoked by the source mailbox; calls the recipient's `handle` as the local mailbox.
+    /// @notice Delivery hook that the source mailbox invokes. Calls the recipient's `handle` as the
+    /// local mailbox.
     function deliver(uint32 _origin, bytes32 _sender, bytes32 _recipient, bytes calldata _message) external {
         address target = address(uint160(uint256(_recipient)));
         IMessageRecipient(target).handle(_origin, _sender, _message);

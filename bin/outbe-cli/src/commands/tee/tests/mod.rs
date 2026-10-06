@@ -25,8 +25,6 @@ use alloy_primitives::Address;
 use alloy_primitives::B256;
 use alloy_primitives::U256;
 
-use outbe_operator::tee::RenewalBindingV1;
-
 use outbe_primitives::tee_attestation_v1::AttestationMode;
 
 use outbe_tee::protocol::EnclaveResponse;
@@ -47,3 +45,5 @@ mod admission;
 mod identity;
 
 mod join_policy;
+
+mod lifecycle_args;

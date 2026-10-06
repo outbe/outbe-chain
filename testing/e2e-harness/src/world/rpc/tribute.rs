@@ -63,17 +63,17 @@ impl Rpc {
             .then_some(tx_hash)
     }
 
-    /// Submit a tribute offer for worldwide-day `wwd` from `key`; returns tx hash if any.
+    /// Submit a tribute offer for worldwide-day `wwd` from `key`. Returns the tx hash if any.
     pub fn tribute_offer(&self, key: &str, wwd: &str) -> Option<String> {
         self.tribute_offer_with_params(key, wwd, "100", "0", 840, false)
     }
 
-    /// Submit a Tribute offer with explicit business fields. This is used by
-    /// duplicate-identity tests to prove that `(owner, worldwide_day)`, rather
-    /// than the rest of the encrypted payload, is the uniqueness boundary.
+    /// Submit a Tribute offer with explicit business fields. Duplicate-identity
+    /// tests use this to prove that `(owner, worldwide_day)`, rather than the
+    /// rest of the encrypted payload, is the uniqueness boundary.
     ///
     /// The offer carries a real proof for exactly these fields, its caller, this
-    /// chain's id and its own draft; the encrypted payload the CLI builds uses
+    /// chain's id and its own draft. The encrypted payload the CLI builds uses
     /// the same draft fields, so the enclave's `nft_hash` matches the proof.
     pub fn tribute_offer_with_params(
         &self,
@@ -169,7 +169,7 @@ impl Rpc {
 
     /// Submit one real encrypted Tribute whose enclave result attributes one
     /// WAA and one SRA beneficiary. This is a harness-only producer for the
-    /// existing public ABI; production reward accounting remains unchanged.
+    /// existing public ABI. Production reward accounting remains unchanged.
     ///
     /// The offer is ZK-verified: the proof is bound to the caller, this chain,
     /// the day, the issuance currency, the declared amounts and exactly the
@@ -265,7 +265,7 @@ impl Rpc {
 
     /// Submit one real encrypted Tribute while keeping issuance and reference
     /// currencies independent. The product CLI intentionally remains the
-    /// same-currency operator path; this narrow E2E helper exercises the
+    /// same-currency operator path. This narrow E2E helper exercises the
     /// already-public ABI axis without adding a new product surface.
     ///
     /// The proof binds the issuance currency (the reference currency is not part
@@ -371,9 +371,9 @@ impl Rpc {
     }
 
     /// Prove one real Demo Tribute offer for `caller`'s registered L2 fixture
-    /// network: the proof is bound to `caller`, this host chain's id, the
-    /// selected L2 chain id, the offer's day, currency, amounts and draft, and
-    /// its Merkle root is signed with the key that network registered.
+    /// network. The proof is bound to `caller`, this host chain's id, the
+    /// selected L2 chain id, and the offer's day, currency, amounts and draft.
+    /// Its Merkle root is signed with the key that network registered.
     fn prove_offer(
         &self,
         caller: Address,
@@ -517,7 +517,7 @@ impl Rpc {
             // an identical-fee retry is rejected as `replacement transaction
             // underpriced` and only adds noise to an otherwise healthy lifecycle
             // run. A failed receipt is terminal for that attempt and permits a
-            // fresh logical offer; a pending or successful receipt is given the
+            // fresh logical offer. A pending or successful receipt gets the
             // remainder of the polling budget to become visible in state.
             if pending_tx
                 .as_deref()

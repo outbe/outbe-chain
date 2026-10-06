@@ -80,8 +80,10 @@ pub(super) const VALIDATOR_OWNER: Address = address!("0xffffffffffffffffffffffff
 
 mod bond;
 mod characterization;
+mod error_bond;
 mod guards;
 mod precompile;
+mod targets;
 
 fn dummy_pubkey(seed: u8) -> [u8; 48] {
     let mut pk = [0u8; 48];
@@ -152,7 +154,7 @@ pub(super) fn with_vote<F: FnOnce(StorageHandle)>(f: F) {
 pub(super) fn test_provider() -> HashMapStorageProvider {
     // Runtime voting reads immutable genesis parameters, including when this
     // test binary is built with test-protocol-overrides. Each process uses the
-    // default profile; custom profiles are covered by isolated replay tests.
+    // default profile. Isolated replay tests cover custom profiles.
     static INITIALIZE: std::sync::Once = std::sync::Once::new();
     INITIALIZE.call_once(|| {
         outbe_chain_constants::initialize(None).expect("initialize vote test protocol parameters");
@@ -186,7 +188,7 @@ fn proposal_status_storage_roundtrip() {
     );
     assert!(ProposalStatus::Approved.is_terminal());
     assert!(!ProposalStatus::Pending.is_terminal());
-    assert!(!ProposalStatus::Error.is_terminal());
+    assert!(ProposalStatus::Error.is_terminal());
     assert_eq!(ProposalStatus::from_u8(4).unwrap(), ProposalStatus::Error);
     assert!(ProposalStatus::from_u8(5).is_err());
 }
@@ -512,7 +514,7 @@ fn list_proposals_oversized_index_does_not_panic() {
         )
         .unwrap();
 
-        // U256::MAX used to panic in clamp_page via to::<u64>(); must saturate.
+        // U256::MAX used to panic in clamp_page via to::<u64>(). The value must saturate.
         assert_eq!(
             list_proposals(storage.clone(), U256::MAX, U256::from(1)).unwrap(),
             Vec::<U256>::new()

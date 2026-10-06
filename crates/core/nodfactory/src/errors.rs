@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use outbe_common::pow::PowError;
 use outbe_common::settlement::RoundingError;
 use outbe_primitives::error::PrecompileError;
@@ -16,8 +16,8 @@ pub enum NodFactoryError {
     #[error("nod not found")]
     NodNotFound,
 
-    #[error("nod floor price overflows")]
-    FloorPriceOverflow,
+    #[error("nod entry price is out of bounds")]
+    EntryPriceOutOfBounds,
 
     #[error("nod is not qualified")]
     NodNotQualified,
@@ -27,9 +27,6 @@ pub enum NodFactoryError {
 
     #[error("nod is not settled")]
     NodNotSettled,
-
-    #[error("PayNote context {actual} does not match settlement {expected}")]
-    PayNoteContextMismatch { expected: B256, actual: B256 },
 
     #[error("settlement asset {asset} has no registered vault")]
     SettlementAssetNotRegistered { asset: Address },
@@ -42,9 +39,6 @@ pub enum NodFactoryError {
 
     #[error("ERC20 payment did not move the exact Nod cost")]
     SettlementAmountMismatch,
-
-    #[error("PayNote spends {covered}, nod cost is {required}")]
-    PayNoteCostMismatch { covered: U256, required: U256 },
 
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,

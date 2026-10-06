@@ -86,8 +86,6 @@ fn certified_action(index: usize) -> NodActionV1 {
     let ordinal = u32::try_from(index).expect("benchmark cardinality fits u32");
     let owner = Address::from_word(B256::from(U256::from(ordinal + 1)));
     let entry_price_minor = U256::from(510);
-    let floor_price_minor =
-        NodContract::floor_price_minor(entry_price_minor).expect("benchmark floor fits U256");
     let tribute_id =
         WwdEntityId::from_day_and_digest(TARGET_WWD, B256::from(U256::from(ordinal + 1_000)));
     let nod_id = NodContract::generate_nod_id(owner, TARGET_WWD)
@@ -99,14 +97,11 @@ fn certified_action(index: usize) -> NodActionV1 {
         owner,
         wwd: TARGET_WWD.value(),
         league_id: 1,
-        floor_price_minor,
         gratis_load_minor: U256::from(1_000),
         entry_price_minor,
         settlement_cost_minor: U256::ZERO,
         issuance_currency: 840,
         reference_currency: 840,
-        issued_at: 1_600_000_000,
-        bucket_key: NodContract::bucket_key(TARGET_WWD, floor_price_minor, 840),
     }
 }
 
@@ -326,7 +321,7 @@ impl BenchmarkScenario for NodScenario {
             NodPath::Certified => Some(certified_fixture(count)?),
         };
         StorageHandle::enter(&mut provider, |storage| {
-            seed_compressed_entities_genesis(&storage)?;
+            seed_compressed_entities_genesis(&storage).map_err(|error| error.to_string())?;
             if let Some(fixture) = &certified {
                 seed_certified_world(&storage, fixture)?;
             }

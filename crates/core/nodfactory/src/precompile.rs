@@ -1,8 +1,9 @@
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{SolCall, SolInterface};
+#[cfg(feature = "e2e-test")]
+use alloy_sol_types::SolCall;
+use alloy_sol_types::SolInterface;
 use outbe_primitives::dispatch::{dispatch_call, mutate, view};
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 
 use crate::runtime;
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
@@ -22,7 +23,7 @@ mod abi {
 }
 pub use abi::INodFactory;
 
-// A Nod is issued out of Lysis over a certified generation: only a throwaway build may
+// Lysis issues a Nod over a certified generation. Only a throwaway build may
 // skip that.
 #[cfg(feature = "e2e-test")]
 alloy_sol_types::sol! {
@@ -62,24 +63,16 @@ fn issue_for_test(
     };
     runtime::issue_nod(storage, scope, parent, &params)?;
     if call.issuedAt != 0 {
-        let floor = NodContract::floor_price_minor(call.entryPriceMinor)
-            .ok_or_else(|| PrecompileError::Revert("issueForTest: floor overflow".into()))?;
-        let bucket_key =
-            NodContract::bucket_key(params.worldwide_day, floor, params.reference_currency);
+        let bucket_key = NodContract::bucket_key(
+            params.worldwide_day,
+            call.entryPriceMinor,
+            params.reference_currency,
+        );
         NodContract::new(storage.clone())
             .callable_bucket_issued_at
             .write(&bucket_key, call.issuedAt)?;
     }
     Ok(())
-}
-
-pub fn base_gas(input: &[u8]) -> u64 {
-    match input.first_chunk::<4>() {
-        Some(&INodFactory::settleNodWithPayNoteCall::SELECTOR) => {
-            outbe_primitives::storage::gas::ZK_VERIFY_GAS
-        }
-        _ => PRECOMPILE_BASE_GAS,
-    }
 }
 
 /// Dispatches NodFactory calls through the block-scoped compressed-body lifecycle.
@@ -117,16 +110,6 @@ pub fn dispatch(
                 )?;
                 Ok(INodFactory::settleNodReturn {})
             }),
-            settleNodWithPayNote(c) => mutate(c, caller, |_, c| {
-                runtime::settle_nod_with_paynote(
-                    &storage,
-                    scope,
-                    parent,
-                    WwdEntityId::from(c.nodId),
-                    &c.payNoteProof,
-                )?;
-                Ok(INodFactory::settleNodWithPayNoteReturn {})
-            }),
             quoteSettlement(c) => view(c, |c| {
                 let (settlement_currency, amount, snapshot_id) = runtime::quote_settlement(
                     &storage,
@@ -137,7 +120,7 @@ pub fn dispatch(
                 )?;
                 Ok(INodFactory::quoteSettlementReturn {
                     settlementCurrency: settlement_currency,
-                    payableUnits: amount,
+                    paymentMinor: amount,
                     snapshotId: snapshot_id,
                 })
             }),

@@ -74,7 +74,7 @@ mod tests {
             volume: U256::from(10_000_000_000u64),
         }];
         let calldata = encode_vote(&prices);
-        // submitVote selector is first 4 bytes
+        // The submitVote selector is the first 4 bytes.
         assert!(calldata.len() > 4);
         let decoded = IOracle::submitVoteCall::abi_decode(&calldata).unwrap();
         let expected_quote: Address = AssetType::IsoCurrency(840).into();

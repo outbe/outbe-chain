@@ -21,8 +21,8 @@ abstract contract OriginSettler is OriginSettlerBase {
     // ========== MESSAGE HANDLERS ==========
 
     /**
-     * @dev Handles settling an individual order, should be called by the inheriting contract when receiving a setting
-     * instruction from a remote chain.
+     * @dev Settles an individual order. The inheriting contract should call this when it receives a
+     * setting instruction from a remote chain.
      * @param _messageOrigin The domain from which the message originates.
      * @param _messageSender The address of the sender on the origin domain.
      * @param _orderId The ID of the order to settle.
@@ -49,14 +49,14 @@ abstract contract OriginSettler is OriginSettlerBase {
             escrow.distributeReward(inputToken, orderData.amountIn, receiver);
         }
 
-        // Terminal status reached: the stored order bytes are dead weight; reclaim the slot.
+        // Terminal status reached: the stored order bytes are dead weight. Reclaim the slot.
         delete openOrders[_orderId];
 
         emit Settled(_orderId, receiver);
     }
 
     /**
-     * @dev Handles refunding an individual order, should be called by the inheriting contract when receiving a
+     * @dev Refunds an individual order. The inheriting contract should call this when it receives a
      * refunding instruction from a remote chain.
      * @param _messageOrigin The domain from which the message originates.
      * @param _messageSender The address of the sender on the origin domain.
@@ -74,35 +74,19 @@ abstract contract OriginSettler is OriginSettlerBase {
 
         _allocatedTransfer(inputToken, orderSender, orderData.amountIn, _orderId, "refund");
 
-        // Terminal status reached: the stored order bytes are dead weight; reclaim the slot.
+        // Terminal status reached: the stored order bytes are dead weight. Reclaim the slot.
         delete openOrders[_orderId];
 
         emit Refunded(_orderId, orderSender);
-    }
-
-    /// @dev TEMPORARY: releases an open order's input when a remote chain is down and no delivery
-    ///      can trigger the normal refund. Expose behind the inheriting contract's access control.
-    ///      TODO: remove before production, with `Router.emergencyWithdraw`.
-    function _emergencyWithdraw(bytes32 _orderId, address _to) internal {
-        require(orderStatus[_orderId] == OPENED, "order not open");
-
-        (, bytes memory raw) = abi.decode(openOrders[_orderId], (bytes32, bytes));
-        OrderData memory orderData = OrderEncoder.decode(raw);
-
-        orderStatus[_orderId] = REFUNDED;
-        _allocatedTransfer(
-            TypeCasts.bytes32ToAddress(orderData.inputToken), _to, orderData.amountIn, _orderId, "refund"
-        );
-        delete openOrders[_orderId];
     }
 
     // ========== INTERNAL FUNCTIONS ==========
 
     /**
      * @notice Releases tokens from The Compact resource lock to a recipient.
-     * @dev claimant = uint256(uint160(recipient)) - zero lockTag triggers withdrawal
-     *      (underlying tokens sent directly, not ERC6909).
-     *      Nonce derived from orderId + label to ensure uniqueness without extra storage.
+     * @dev claimant = uint256(uint160(recipient)). A zero lockTag triggers withdrawal
+     *      (underlying tokens go out directly, not ERC6909).
+     *      The nonce comes from orderId + label. This makes it unique without extra storage.
      * @param _token    The underlying token address (address(0) for native ETH).
      * @param _to       The recipient address.
      * @param _amount   The amount to release.
@@ -116,11 +100,11 @@ abstract contract OriginSettler is OriginSettlerBase {
         // For native ETH, token = address(0) so lockId = uint256(bytes32(lockTag))
         uint256 lockId = uint256(bytes32(_lockTag())) | uint160(_token);
 
-        // claimant with zero lockTag = withdrawal: underlying tokens sent to _to directly
+        // claimant with zero lockTag = withdrawal: underlying tokens go to _to directly
         Component[] memory recipients = new Component[](1);
         recipients[0] = Component({claimant: uint256(uint160(_to)), amount: _amount});
 
-        // Nonce derived from orderId + label - unique per operation, no extra storage needed
+        // Derive the nonce from orderId + label. It is unique per operation and needs no extra storage.
         uint256 nonce = uint256(keccak256(abi.encode(_orderId, _label)));
 
         _compact()

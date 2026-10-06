@@ -19,6 +19,17 @@ pub struct BlockContext {
     pub validators: Vec<Address>,
 }
 
+/// Canonical block, chain and validator state used to construct a runtime context.
+#[derive(Debug)]
+pub struct BlockContextInput {
+    pub block_number: u64,
+    pub timestamp: u64,
+    pub chain_id: u64,
+    pub genesis_hash: B256,
+    pub proposer: Address,
+    pub validators: Vec<Address>,
+}
+
 impl BlockContext {
     pub fn new(
         block_number: u64,
@@ -27,14 +38,14 @@ impl BlockContext {
         proposer: Address,
         validators: Vec<Address>,
     ) -> Self {
-        Self::new_with_genesis_hash(
+        Self::new_with_genesis_hash(BlockContextInput {
             block_number,
             timestamp,
             chain_id,
-            B256::ZERO,
+            genesis_hash: B256::ZERO,
             proposer,
             validators,
-        )
+        })
     }
 
     /// Creates an execution context bound to the immutable chain identity.
@@ -42,14 +53,16 @@ impl BlockContext {
     /// Production execution must source `genesis_hash` from the canonical
     /// `ChainSpec`; transaction calldata and mutable storage are not
     /// authorities for this value.
-    pub fn new_with_genesis_hash(
-        block_number: u64,
-        timestamp: u64,
-        chain_id: u64,
-        genesis_hash: B256,
-        proposer: Address,
-        validators: Vec<Address>,
-    ) -> Self {
+    pub fn new_with_genesis_hash(input: BlockContextInput) -> Self {
+        let BlockContextInput {
+            block_number,
+            timestamp,
+            chain_id,
+            genesis_hash,
+            proposer,
+            validators,
+        } = input;
+
         Self {
             block_number,
             timestamp,

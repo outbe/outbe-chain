@@ -9,13 +9,14 @@
 //!     handshake), or
 //!   - a raw Noise handshake message.
 //!
-//! Messages are serialized with `postcard` - a compact binary serde format. The
-//! offer ciphertext rides as a length-prefixed raw byte string (1x) rather than a
-//! JSON number array (~4x under `serde_json`), and alloy `U256`/`Address`/`B256`
-//! serialize as raw bytes (non-human-readable serde) instead of hex strings, so
-//! many more offers fit under the 64 KiB Noise frame per `ProcessTributeOfferBatch`.
-//! Both binaries are built from this crate, so encoder and decoder always agree;
-//! the chain is from-genesis, so there is no legacy wire to stay compatible with.
+//! This codec serializes messages with `postcard`, a compact binary serde format.
+//! The offer ciphertext rides as a length-prefixed raw byte string (1x) rather
+//! than a JSON number array (~4x under `serde_json`). Alloy
+//! `U256`/`Address`/`B256` serialize as raw bytes (non-human-readable serde)
+//! instead of hex strings. As a result, many more offers fit under the 64 KiB
+//! Noise frame per `ProcessTributeOfferBatch`.
+//! Both binaries are built from this crate, so encoder and decoder always agree.
+//! The chain is from-genesis, so there is no legacy wire to stay compatible with.
 
 use std::io::{Read, Write};
 
@@ -24,7 +25,7 @@ use crate::errors::TransportError;
 use crate::protocol::{EnclaveRequest, EnclaveResponse};
 
 // Outside the legacy enum's postcard discriminants. Existing requests retain
-// their exact wire indices; the common envelope can evolve independently.
+// their exact wire indices. The common envelope can evolve independently.
 const CALL_V1: &[u8] = b"\xff\xff\x00OUTBE-CTX\x01";
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -234,11 +235,14 @@ mod tests {
     /// Postcard encodes an enum as a varint of its variant declaration index, so
     /// the on-wire index of every existing variant is part of the protocol. New
     /// variants may be appended ONLY at the tail of `EnclaveRequest` /
-    /// `EnclaveResponse`; inserting, reordering or removing a variant - or
-    /// changing the fields of an existing wire struct - breaks a node and an
-    /// enclave built from different revisions. These fixtures pin the indices of
-    /// representative existing variants; if this test fails, the wire layout
-    /// changed and the change must be reverted, not the fixture updated.
+    /// `EnclaveResponse`. These changes break a node and an enclave built from
+    /// different revisions:
+    /// - inserting, reordering or removing a variant.
+    /// - changing the fields of an existing wire struct.
+    ///
+    /// These fixtures pin the indices of representative existing variants. If
+    /// this test fails, the wire layout changed. Revert the change. Do not update
+    /// the fixture.
     #[test]
     fn request_wire_indices_are_pinned() {
         // Variant 0, unit-adjacent shape: GetQuote { nonce: [u8; 32] }.

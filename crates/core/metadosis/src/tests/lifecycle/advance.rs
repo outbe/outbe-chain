@@ -1,3 +1,4 @@
+use super::fixtures::begin_scope_with_persisted_parent;
 use super::*;
 
 pub(super) fn run_advance_command(
@@ -148,23 +149,7 @@ fn cycle_command_restores_all_prior_ce_work_when_a_later_wwd_fails() {
         tree.clone(),
         outbe_compressed_entities::CeWorkConfig::new(0, 0, u64::MAX),
     );
-    StorageHandle::enter(&mut provider, |storage| {
-        storage
-            .sstore(
-                outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-                U256::ZERO,
-                U256::from(4),
-            )
-            .unwrap();
-        storage
-            .sstore(
-                outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-                U256::from(1),
-                U256::from_be_slice(parent_root.as_slice()),
-            )
-            .unwrap();
-        begin_block(storage, &scope).unwrap();
-    });
+    begin_scope_with_persisted_parent(&mut provider, &scope, parent_root);
     let storage_before = provider.storage.clone();
     let events_before = provider.events.clone();
     let ordered_before = provider.get_ordered_events().to_vec();
@@ -233,11 +218,11 @@ fn cycle_command_restores_all_prior_ce_work_when_a_later_wwd_fails() {
     });
 }
 
-/// `advance_active_worldwide_days` (the 12:00 UTC `wwd_advance_noon` Cycle
-/// trigger handler) must walk the status machine forward exactly like the
-/// midnight path - including the FORMING->OFFERING side effects (tribute day
-/// unseal) - but must NOT create a new worldwide day and must NOT settle a
-/// READY one; day creation and settlement stay midnight-owned in
+/// `advance_active_worldwide_days` is the 12:00 UTC `wwd_advance_noon` Cycle
+/// trigger handler. It must walk the status machine forward exactly like the
+/// midnight path, including the FORMING->OFFERING side effects (tribute day
+/// unseal). But it must NOT create a new worldwide day and must NOT settle a
+/// READY one. Day creation and settlement stay midnight-owned in
 /// `start_metadosis`.
 #[test]
 fn advance_active_worldwide_days_advances_status_without_creating_or_settling() {
@@ -277,7 +262,7 @@ fn advance_active_worldwide_days_advances_status_without_creating_or_settling() 
         };
 
         // At the offering-entry edge the day opens and the tribute day
-        // unseals - offers stop reverting `not in OFFERING status`.
+        // unseals. Offers stop reverting `not in OFFERING status`.
         advance(2, offering_entry);
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::OFFERING);
@@ -413,8 +398,8 @@ fn test_terminal_day_leaves_active_set() {
         run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
 
         let metadosis = MetadosisContract::new(storage);
-        // The day completed and was retired out of the active set into the
-        // bounded delete-queue, but stays readable while under the cap.
+        // The day completed. Metadosis retired it out of the active set into the
+        // bounded delete-queue, but it stays readable while under the cap.
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::COMPLETED);
         assert!(!metadosis.active_wwd.read_all().unwrap().contains(&wwd));
         assert!(metadosis

@@ -1,4 +1,5 @@
 use super::*;
+use crate::v1::{NodeHostAssociationV1, VerifiedIntentV1};
 
 sol! {
     interface IRegisterEnclaveV1Test {
@@ -295,13 +296,17 @@ pub(super) fn register_same_key_node_for_lifecycle_test(
     let (binding, validator_signature, node_binding_signature) =
         validator_node_binding_authorization_for_evm_node(intent, node_signer, node_signer);
     registry.register_enclave_and_bind_after_verifier_for_test(
-        intent,
-        node_signature,
-        enclave_signature,
-        &binding,
-        &validator_signature,
-        &node_binding_signature,
-        capability,
+        VerifiedIntentV1 {
+            intent,
+            node_signature,
+            enclave_signature,
+            capability,
+        },
+        NodeHostAssociationV1 {
+            binding: &binding,
+            validator_signature: &validator_signature,
+            node_binding_signature: &node_binding_signature,
+        },
     )
 }
 

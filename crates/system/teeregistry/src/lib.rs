@@ -1,8 +1,8 @@
 //! `TeeRegistry` - storage-backed KV precompile (`0x...EE0A`).
 //!
 //! Records role-neutral V1 NodeHost enclave bindings and the global
-//! `tribute_offer_public_key`, written once by the OST3 block-1 system
-//! transaction. [`v1_precompile`] is the only public ABI; there is no
+//! `tribute_offer_public_key`. The OST3 block-1 system transaction writes this
+//! key once. [`v1_precompile`] is the only public ABI. There is no
 //! caller-authorized registration dispatcher or fallback admission path.
 
 pub mod runtime;

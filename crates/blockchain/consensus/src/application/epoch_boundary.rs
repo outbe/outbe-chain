@@ -3,12 +3,13 @@
 //!
 //! Owns the whole epoch-boundary concern lifted out of `handler.rs`:
 //! - [`ApplicationEpochFence`] - the activation-boundary state machine (active
-//!   epoch + an optional armed boundary) consulted on every propose/verify so a
-//!   stale Simplex epoch cannot submit Engine work past a DKG activation.
+//!   epoch + an optional armed boundary). The handler consults it on every
+//!   propose/verify, so a stale Simplex epoch cannot submit Engine work past a
+//!   DKG activation.
 //! - [`resolve_epoch_boundary_parent`] - the anchor-based parent resolver for
 //!   the first proposal of `epoch > 0`. It takes the finalization-view and
-//!   marshal seams as explicit parameters instead of `&self`, so the resolution
-//!   logic reads and tests independently of the handler.
+//!   marshal seams as explicit parameters instead of `&self`. Thus you can read
+//!   and test the resolution logic independently of the handler.
 
 use std::sync::{Arc, Mutex as StdMutex};
 
@@ -43,8 +44,8 @@ struct EpochBoundaryFence {
 
 /// epoch continuity anchor for the first proposal of `epoch > 0`.
 ///
-/// Built by [`resolve_epoch_boundary_parent`] and consumed
-/// by both `handle_propose` and `handle_verify` to bypass the `parent_view = 0`
+/// [`resolve_epoch_boundary_parent`] builds it. Both `handle_propose` and
+/// `handle_verify` consume it to bypass the `parent_view = 0`
 /// chain-genesis path for non-zero epochs.
 #[derive(Debug, Clone)]
 pub(crate) struct EpochBoundaryParent {
@@ -58,9 +59,9 @@ pub(crate) struct EpochBoundaryParent {
 /// The variants distinguish *invalid proposal* (the proposer chose a parent
 /// that does not match the canonical anchor) from *local infrastructure issue*
 /// (the validator cannot decide locally because the finalization view or the
-/// marshal store has not caught up). Verify path votes `false` only in the
-/// first case; the rest bubble up as `Err` and drop the response channel, to
-/// match the existing `resolve_for_verify` semantics for local timeouts.
+/// marshal store is not yet up to date). The verify path votes `false` only in
+/// the first case. The rest bubble up as `Err` and drop the response channel.
+/// This matches the existing `resolve_for_verify` semantics for local timeouts.
 #[derive(Debug)]
 pub(crate) enum EpochBoundaryParentError {
     /// Simplex parent does not match the committed continuity anchor.
@@ -69,8 +70,8 @@ pub(crate) enum EpochBoundaryParentError {
         got: B256,
         epoch: u64,
     },
-    /// `FinalizationView` has no anchor for `epoch > 0`. Caller waited as long
-    /// as it could; this is a local-infrastructure failure, not a vote.
+    /// `FinalizationView` has no anchor for `epoch > 0`. The caller waited as
+    /// long as it could. This is a local-infrastructure failure, not a vote.
     MissingAnchor { epoch: u64 },
     /// Marshal store cannot return the anchor block.
     MissingMarshalBlock { height: u64 },
@@ -181,48 +182,39 @@ impl ApplicationEpochFence {
     }
 }
 
+pub(crate) struct EpochBoundaryParentRequest {
+    pub(crate) round: Round,
+    pub(crate) parent_view: View,
+    pub(crate) parent_digest: Digest,
+}
+
 pub(crate) async fn resolve_epoch_boundary_parent(
     finalization_view: &FinalizationViewHandle,
     marshal_mailbox: &MarshalMailbox,
     clock: &impl commonware_runtime::Clock,
-    round: Round,
-    parent_view: View,
-    parent_digest: Digest,
+    request: EpochBoundaryParentRequest,
 ) -> Result<Option<EpochBoundaryParent>, EpochBoundaryParentError> {
+    let EpochBoundaryParentRequest {
+        round,
+        parent_view,
+        parent_digest,
+    } = request;
     if round.epoch().get() == 0 || parent_view != View::new(0) {
         return Ok(None);
     }
 
-    let anchor = finalization_view.finalized_anchor();
     let (expected_height, expected_hash, finalized_round) =
-        (anchor.number, anchor.finalized_head_hash, anchor.round);
-    let Some(finalized_round) = finalized_round else {
-        return Err(EpochBoundaryParentError::MissingAnchor {
-            epoch: round.epoch().get(),
-        });
-    };
-    if expected_height == 0 || expected_hash == B256::ZERO {
-        return Err(EpochBoundaryParentError::MissingAnchor {
-            epoch: round.epoch().get(),
-        });
-    }
-    if parent_digest.0 != expected_hash {
-        return Err(EpochBoundaryParentError::ParentMismatch {
-            expected: expected_hash,
-            got: parent_digest.0,
-            epoch: round.epoch().get(),
-        });
-    }
+        validate_epoch_boundary_anchor(finalization_view, round, parent_digest)?;
 
-    // Marshal exposes only digest-based lookup. Since we just confirmed
-    // `parent_digest == expected_hash`, looking up by digest yields the
-    // committed anchor block; we then sanity-check the height to catch
+    // Marshal exposes only digest-based lookup. We just confirmed
+    // `parent_digest == expected_hash`, so a lookup by digest yields the
+    // committed anchor block. We then sanity-check the height to catch
     // a corrupted local store.
     let block_future = marshal_mailbox.clone().subscribe_by_digest(
         parent_digest,
         commonware_consensus::marshal::core::DigestFallback::Wait,
     );
-    // `Clock::timeout` returns `Err(Error::Timeout)` on expiry; the inner
+    // `Clock::timeout` returns `Err(Error::Timeout)` on expiry. The inner
     // `Ok`/`Err` is the marshal waiter's own result, unchanged.
     let block = match clock
         .timeout(PROPOSE_RESOLUTION_TIMEOUT, block_future)
@@ -251,6 +243,35 @@ pub(crate) async fn resolve_epoch_boundary_parent(
             expected_hash,
         ),
     }))
+}
+
+fn validate_epoch_boundary_anchor(
+    finalization_view: &FinalizationViewHandle,
+    round: Round,
+    parent_digest: Digest,
+) -> Result<(u64, B256, Round), EpochBoundaryParentError> {
+    let anchor = finalization_view.finalized_anchor();
+    let (expected_height, expected_hash, finalized_round) =
+        (anchor.number, anchor.finalized_head_hash, anchor.round);
+    let Some(finalized_round) = finalized_round else {
+        return Err(EpochBoundaryParentError::MissingAnchor {
+            epoch: round.epoch().get(),
+        });
+    };
+    if expected_height == 0 || expected_hash == B256::ZERO {
+        return Err(EpochBoundaryParentError::MissingAnchor {
+            epoch: round.epoch().get(),
+        });
+    }
+    if parent_digest.0 != expected_hash {
+        return Err(EpochBoundaryParentError::ParentMismatch {
+            expected: expected_hash,
+            got: parent_digest.0,
+            epoch: round.epoch().get(),
+        });
+    }
+
+    Ok((expected_height, expected_hash, finalized_round))
 }
 
 #[cfg(test)]

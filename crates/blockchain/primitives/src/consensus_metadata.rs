@@ -3,11 +3,11 @@ use alloy_rlp::{Decodable as RlpDecodable, Encodable as RlpEncodable};
 
 use crate::error::{PrecompileError, Result};
 
-// V1 `ConsensusMetadataEnvelope` removed in favour of the V2 slim
-// [`CertifiedParentAccountingMetadata`] below. The V1 magic + version are
-// dropped; V1 wire bytes are rejected at the system-tx codec boundary
-// (`SystemTxInputV2::decode` uses `CertifiedParentAccountingMetadata::decode`,
-// which has its own `OAV3` magic).
+// The V2 slim [`CertifiedParentAccountingMetadata`] below replaced the V1
+// `ConsensusMetadataEnvelope`. The V1 magic + version are dropped. The
+// system-tx codec boundary rejects V1 wire bytes: `SystemTxInputV2::decode`
+// uses `CertifiedParentAccountingMetadata::decode`, which has its own `OAV3`
+// magic.
 const CERTIFIED_PARENT_ACCOUNTING_MAGIC: &[u8; 4] = b"OAV3";
 const CERTIFIED_PARENT_ACCOUNTING_VERSION: u8 = 1;
 
@@ -17,9 +17,11 @@ const CERTIFIED_PARENT_ACCOUNTING_VERSION: u8 = 1;
 
 /// Which Activity the V2 parent-participation proof came from.
 ///
-/// Phase 1 of block `B+1` always carries an exact-parent proof for block `B`:
-/// either the Simplex `Finalization` certificate or, when finalization is
-/// pending, the proposer-selected `Activity::Certification` notarization.
+/// Phase 1 of block `B+1` always carries an exact-parent proof for block `B`.
+/// The proof is one of these:
+/// - the Simplex `Finalization` certificate.
+/// - when finalization is pending, the proposer-selected
+///   `Activity::Certification` notarization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ParentParticipationProof {
@@ -50,10 +52,10 @@ impl ParentParticipationProof {
 
 /// One missed-proposer event between the carried parent and its predecessor.
 ///
-/// Under V2 the V1 reconstruction of missed proposers from view gaps is
-/// removed, so this list is empty in every Phase 1 metadata
-/// produced under V2. The type and codec are still defined so that future
-/// hard forks can re-introduce the event without a wire change.
+/// V2 removes the V1 reconstruction of missed proposers from view gaps. Thus
+/// this list is empty in every Phase 1 metadata produced under V2. The type
+/// and codec stay defined so that future hard forks can re-introduce the event
+/// without a wire change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MissedProposerEvent {
@@ -66,10 +68,10 @@ pub struct MissedProposerEvent {
 /// V2 Phase 1 system-tx metadata.
 ///
 /// Carries the exact-parent participation proof for block `B-1` (the parent
-/// of the block this metadata is included in). Contains **no** money fields
-/// and **no** raw consensus public keys - only the canonical
+/// of the block that includes this metadata). Contains **no** money fields
+/// and **no** raw consensus public keys. It contains only the canonical
 /// `committee_set_hash` and `vrf_group_public_key_hash` (keccak of the
-/// encoded BLS group key) so the on-chain footprint stays minimal.
+/// encoded BLS group key), so the on-chain footprint stays minimal.
 ///
 /// Wire layout: see [`CertifiedParentAccountingMetadata::encode`].
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -103,7 +105,7 @@ pub struct CertifiedParentAccountingMetadata {
     /// Which Activity the proof came from.
     pub proof_kind: ParentParticipationProof,
     /// Missed-proposer events between this parent and its predecessor.
-    /// Always empty under V2; defined for forward-compat.
+    /// Always empty under V2. Defined for forward-compat.
     #[serde(default)]
     pub missed_proposers: Vec<MissedProposerEvent>,
 }
@@ -327,10 +329,10 @@ fn encode_addresses(buf: &mut Vec<u8>, addrs: &[Address]) {
 }
 
 fn encode_bytes_u16(buf: &mut Vec<u8>, data: &[u8]) -> Result<()> {
-    // Callers already guard with `ensure_count_fits_u16`; re-check here and return
-    // a structured error instead of panicking (no `unreachable!` on a consensus
-    // codec path) so an oversized payload can never silently truncate the u16
-    // length prefix.
+    // Callers already guard with `ensure_count_fits_u16`. Re-check here and
+    // return a structured error instead of a panic (no `unreachable!` on a
+    // consensus codec path). Thus an oversized payload can never silently
+    // truncate the u16 length prefix.
     ensure_count_fits_u16("bytes payload", data.len())?;
     buf.extend_from_slice(&(data.len() as u16).to_be_bytes());
     buf.extend_from_slice(data);
@@ -395,41 +397,29 @@ fn read_addresses(data: &[u8], offset: &mut usize) -> Result<Vec<Address>> {
 }
 
 fn read_bytes_u16(data: &[u8], offset: &mut usize) -> Result<Vec<u8>> {
-    let count_end = offset.saturating_add(2);
-    let Some(count_bytes) = data.get(*offset..count_end) else {
-        return Err(PrecompileError::Fatal(
-            "unexpected EOF reading byte length".into(),
-        ));
-    };
-    *offset = count_end;
-    let len = u16::from_be_bytes(
-        count_bytes
-            .try_into()
-            .map_err(|_| PrecompileError::Fatal("invalid byte length slice".into()))?,
-    ) as usize;
-    let end = offset.saturating_add(len);
-    let Some(bytes) = data.get(*offset..end) else {
-        return Err(PrecompileError::Fatal(
-            "unexpected EOF reading bytes".into(),
-        ));
-    };
-    *offset = end;
-    Ok(bytes.to_vec())
+    let len = u16::from_be_bytes(read_byte_length(data, offset)?) as usize;
+    read_byte_payload(data, offset, len)
 }
 
 fn read_bytes_u32(data: &[u8], offset: &mut usize) -> Result<Vec<u8>> {
-    let count_end = offset.saturating_add(4);
+    let len = u32::from_be_bytes(read_byte_length(data, offset)?) as usize;
+    read_byte_payload(data, offset, len)
+}
+
+fn read_byte_length<const WIDTH: usize>(data: &[u8], offset: &mut usize) -> Result<[u8; WIDTH]> {
+    let count_end = offset.saturating_add(WIDTH);
     let Some(count_bytes) = data.get(*offset..count_end) else {
         return Err(PrecompileError::Fatal(
             "unexpected EOF reading byte length".into(),
         ));
     };
     *offset = count_end;
-    let len = u32::from_be_bytes(
-        count_bytes
-            .try_into()
-            .map_err(|_| PrecompileError::Fatal("invalid byte length slice".into()))?,
-    ) as usize;
+    count_bytes
+        .try_into()
+        .map_err(|_| PrecompileError::Fatal("invalid byte length slice".into()))
+}
+
+fn read_byte_payload(data: &[u8], offset: &mut usize, len: usize) -> Result<Vec<u8>> {
     let end = offset.saturating_add(len);
     let Some(bytes) = data.get(*offset..end) else {
         return Err(PrecompileError::Fatal(
@@ -440,8 +430,38 @@ fn read_bytes_u32(data: &[u8], offset: &mut usize) -> Result<Vec<u8>> {
     Ok(bytes.to_vec())
 }
 
-// legacy `ConsensusMetadataEnvelope` test module dropped along
+// The legacy `ConsensusMetadataEnvelope` test module was dropped together
 // with the V1 envelope itself. Coverage for the V2
 // [`CertifiedParentAccountingMetadata`] codec lives in
-// `crates/blockchain/primitives/tests/consensus_metadata.rs` and exercises
-// the canonical `OAV3` wire layout end-to-end.
+// `crates/blockchain/primitives/tests/consensus_metadata.rs`. Those tests
+// exercise the canonical `OAV3` wire layout end-to-end.
+
+#[cfg(test)]
+mod reader_tests {
+    use super::*;
+
+    #[test]
+    fn byte_readers_preserve_cursor_at_prefix_and_payload_failures() {
+        type Reader = fn(&[u8], &mut usize) -> Result<Vec<u8>>;
+        for (width, read) in [(2, read_bytes_u16 as Reader), (4, read_bytes_u32 as Reader)] {
+            let mut offset = 1;
+            let short_prefix = vec![0; width];
+            assert!(
+                matches!(read(&short_prefix, &mut offset), Err(PrecompileError::Fatal(message)) if message == "unexpected EOF reading byte length")
+            );
+            assert_eq!(offset, 1);
+
+            let mut short_payload = vec![0; width + 1];
+            short_payload[width] = 2;
+            assert!(
+                matches!(read(&short_payload, &mut offset), Err(PrecompileError::Fatal(message)) if message == "unexpected EOF reading bytes")
+            );
+            assert_eq!(offset, width + 1);
+
+            offset = 1;
+            short_payload.extend_from_slice(&[0xab, 0xcd, 0xef]);
+            assert_eq!(read(&short_payload, &mut offset).unwrap(), [0xab, 0xcd]);
+            assert_eq!(offset, width + 3);
+        }
+    }
+}

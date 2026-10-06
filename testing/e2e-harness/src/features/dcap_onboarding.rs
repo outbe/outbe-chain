@@ -97,8 +97,8 @@ fn validator_joins_and_restarts(world: &mut World) {
     );
 
     // A fresh validator datadir cannot start authority at height zero merely
-    // because its enclave has a finalized admission. First catch the exact same
-    // NodeHost/datadir up through a certified, non-authority follower path.
+    // because its enclave has a finalized admission. First sync the exact same
+    // NodeHost/datadir through a certified, non-authority follower path.
     let catchup_name = format!("validator-{index}");
     world
         .localnet

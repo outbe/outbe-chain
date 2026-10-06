@@ -1,11 +1,16 @@
-//! Finalized daily VWAPs for the target chains' registries: each closed UTC day goes out once, in order.
+//! Finalized daily VWAPs for the target chains' registries: each closed UTC day goes out once,
+//! in order.
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS;
 use outbe_primitives::time::next_date_key;
-use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::StorageHandle};
+use outbe_primitives::{
+    block::BlockRuntimeContext,
+    error::{Result, SweepFailure},
+    storage::StorageHandle,
+};
 
 use crate::constants::{MAX_VWAP_DAYS_PER_FIRING, MAX_VWAP_ROWS};
 use crate::schema::IntexFactoryContract;
@@ -32,7 +37,7 @@ pub fn run(ctx: &BlockRuntimeContext) -> Result<()> {
             break;
         }
         let rows = day_rows(&storage, day)?;
-        if !rows.is_empty() && !send(&storage, day, rows) {
+        if !rows.is_empty() && !send(&storage, day, rows)? {
             break;
         }
         factory.vwap_sent_day.write(day)?;
@@ -41,7 +46,8 @@ pub fn run(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
-/// The day's priced reference currencies. A price past the wire type saturates: it stays above every floor.
+/// The day's priced reference currencies. A price past the wire type saturates: it stays above
+/// every floor.
 pub(crate) fn day_rows(
     storage: &StorageHandle<'_>,
     day: u32,
@@ -65,8 +71,13 @@ pub(crate) fn day_rows(
     Ok(rows)
 }
 
-/// Whether the router took the day and answered with its legs; anything else leaves it for the next firing.
-fn send(storage: &StorageHandle<'_>, day: u32, rows: Vec<IOriginRouter::DailyVwap>) -> bool {
+/// Whether the router took the day and answered with its legs. A refusal leaves the day for the
+/// next firing, and a node-local failure fails the block.
+fn send(
+    storage: &StorageHandle<'_>,
+    day: u32,
+    rows: Vec<IOriginRouter::DailyVwap>,
+) -> Result<bool> {
     let call = IOriginRouter::sendDailyVwapCall { utcDay: day, rows };
     let sent = storage.with_checkpoint(|| {
         let out = storage.call(ORIGIN_ROUTER_ADDRESS, U256::ZERO, call.abi_encode().into())?;
@@ -75,8 +86,12 @@ fn send(storage: &StorageHandle<'_>, day: u32, rows: Vec<IOriginRouter::DailyVwa
         })?;
         Ok(())
     });
-    if let Err(error) = &sent {
-        tracing::warn!(target: "outbe::intexfactory", day, error = ?error, "daily vwap: router refused, retrying next firing");
+    match sent {
+        Ok(()) => Ok(true),
+        Err(error) if error.sweep_failure() == SweepFailure::Propagate => Err(error),
+        Err(error) => {
+            tracing::warn!(target: "outbe::intexfactory", day, error = ?error, "daily vwap: router refused, retrying next firing");
+            Ok(false)
+        }
     }
-    sent.is_ok()
 }

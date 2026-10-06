@@ -7,10 +7,10 @@ import {IOriginRouter} from "../../origin/interfaces/IOriginRouter.sol";
 /// @title BridgeMsgCodec
 /// @author Outbe
 /// @notice Library for encoding and decoding bridge messages between the target chains and Outbe.
-/// @dev Auction messages (stages, bids, result, refunds) are keyed by `worldwideDay`; series messages
-///      (issuance, mark) are keyed by `seriesId` and carry their day alongside it.
+/// @dev Auction messages (stages, bids, result, refunds) are keyed by `worldwideDay`. Series
+///      messages (issuance, mark) are keyed by `seriesId` and carry their day alongside it.
 /// @dev Wire layout: `[bodyVersion(1)][msgType(1)][body]`. `bodyVersion` lets the format
-///      evolve independently of `msgType`; decoders reject unknown versions.
+///      evolve independently of `msgType`. Decoders reject unknown versions.
 library BridgeMsgCodec {
     /// @notice Active body version emitted by every `encode*` and required by every `decode*`.
     uint8 internal constant BODY_VERSION_V1 = 1;
@@ -26,7 +26,7 @@ library BridgeMsgCodec {
     uint8 internal constant MSG_ISSUANCE_INSTRUCTIONS = 6;
     uint8 internal constant MSG_REFUND_INSTRUCTIONS = 7;
     uint8 internal constant MSG_MARK_CALLED = 8;
-    // 9 was MARK_QUALIFIED; not to be reused.
+    // 9 was MARK_QUALIFIED. It must not be reused.
     /// @dev Target -> origin: the day's relay stopped with chunks left, so the origin sends another round.
     uint8 internal constant MSG_BIDS_REMAINING = 10;
     /// @dev Origin -> target: one finalized UTC day's VWAPs.
@@ -36,10 +36,10 @@ library BridgeMsgCodec {
     ///         (`BIDS_BATCH`, `ISSUANCE_INSTRUCTIONS`, `REFUND_INSTRUCTIONS`).
     /// @dev One system-wide cap (unified with the bridge `MAX_BATCH_SIZE`). Derived from the binding
     ///      `maxMessageSize = 10_000` byte ceiling (bids ~128 B/item caps near 78) with
-    ///      destination-gas headroom. Enforced OUTBOUND inside every `encode*` function (fail-fast
-    ///      at the source) AND re-checked INBOUND inside the variable-length `decode*` functions
-    ///      (defence-in-depth against a peer compromise or future encoder change). An inbound
-    ///      over-cap revert is caught by the drop-don't-block handler so the ORDERED lane stays
+    ///      destination-gas headroom. Every `encode*` function enforces it OUTBOUND (fail-fast at
+    ///      the source). The variable-length `decode*` functions re-check it INBOUND
+    ///      (defence-in-depth against a peer compromise or future encoder change). The
+    ///      drop-don't-block handler catches an inbound over-cap revert, so the ORDERED lane stays
     ///      live.
     uint16 internal constant MAX_PAYLOAD_ARRAY_LEN = 64;
 
@@ -51,10 +51,11 @@ library BridgeMsgCodec {
     ///         `MAX_PAYLOAD_ARRAY_LEN`: a recipient costs a mint, so a wider day spans several messages.
     uint16 internal constant MAX_RECIPIENTS_PER_ISSUANCE = 24;
 
-    /// @notice Series one MARK_CALLED message may carry; a batch is one day's series called together.
+    /// @notice Series one MARK_CALLED message may carry. A batch is one day's series called
+    ///         together.
     uint16 internal constant MAX_SERIES_PER_MARK = 8;
 
-    /// @notice Chunks one day's fan-out may span; keeps a receiver's arrival set in one word.
+    /// @notice Chunks one day's fan-out may span. This keeps a receiver's arrival set in one word.
     uint16 internal constant MAX_CHUNKS = 256;
 
     /// @notice Numeric fixed-point scale for bid/clearing rates (`1e6` = 100%).
@@ -63,9 +64,10 @@ library BridgeMsgCodec {
     /// @notice 18-decimal wCOEN units in one six-decimal protocol unit.
     uint256 internal constant NATIVE_UNITS_PER_PROTOCOL_UNIT = 1e12;
 
-    /// @notice `quantity` Intexes at `rate` of the six-decimal `basis`, in 18-decimal payment units: the lock a bid
-    ///         takes and the payment a winner makes. Mirrors the clearing side's `rate_lock` bit for bit - the
-    ///         six-decimal product is floored before it is scaled.
+    /// @notice `quantity` Intexes at `rate` of the six-decimal `basis`, in 18-decimal payment
+    ///         units: the lock a bid takes and the payment a winner makes. Mirrors the clearing
+    ///         side's `rate_lock` bit for bit. The six-decimal product is floored before it is
+    ///         scaled.
     function escrowAmount(uint256 quantity, uint256 basis, uint256 rate) internal pure returns (uint256) {
         return quantity * basis * rate / SCALE_1E6 * NATIVE_UNITS_PER_PROTOCOL_UNIT;
     }
@@ -78,11 +80,11 @@ library BridgeMsgCodec {
     uint16 internal constant MIN_LEN_AUCTION_STAGE_START = 70;
     /// @notice Bytes per reference-price row: [iso(2)][entry(8)][floor(8)][call(8)].
     uint16 internal constant REFERENCE_PRICE_LEN = 26;
-    /// @notice The oracle's reference list is short; a day may not exceed this.
+    /// @notice The oracle's reference list is short. A day may not exceed this.
     uint8 internal constant MAX_REFERENCE_PRICES = 6;
     uint16 internal constant MIN_LEN_AUCTION_STAGE_CLEARING = 6;
     uint16 internal constant MIN_LEN_AUCTION_RESULT = 22;
-    // MARK_CALLED: header + abi.encode(worldwideDay, calledAt, seriesIds); one series is 5 words.
+    // MARK_CALLED: header + abi.encode(worldwideDay, calledAt, seriesIds). One series is 5 words.
     uint16 internal constant MIN_LEN_MARK_CALLED = HEADER_LEN + 160;
     // BIDS_DONE: [ver(1)][type(1)][worldwideDay(4)][srcChainId(4)][totalBatches(2)][totalBids(4)]
     uint16 internal constant MIN_LEN_BIDS_DONE = 16;
@@ -108,12 +110,12 @@ library BridgeMsgCodec {
 
     /// @notice Per-message cap on inbound BIDS_BATCH entries. Bounds the crosschainMint/storage loop the
     ///         receiver runs so one oversized batch cannot exceed the inbound gas limit and stall
-    ///         the ordered lane; larger bid sets are chunked into multiple batches by the sender.
-    /// @dev Unified with the outbound `MAX_PAYLOAD_ARRAY_LEN` so inbound and outbound
-    ///      agree on one number. The earlier value of 256 was the original ticket figure and is
-    ///      physically unsendable: a bids batch is ~128 B/item, so 256 items is ~32 KB - over 3x
+    ///         the ordered lane. The sender chunks larger bid sets into multiple batches.
+    /// @dev Unified with the outbound `MAX_PAYLOAD_ARRAY_LEN` so inbound and outbound agree on one
+    ///      number. The earlier value of 256 was the original ticket figure and is physically
+    ///      unsendable. A bids batch is ~128 B/item, so 256 items is ~32 KB. That is over 3x
     ///      ERC-7786's send-side `maxMessageSize = 10_000` byte cap (an over-cap send reverts on
-    ///      the source chain). The real byte ceiling lands near 78 items; 64 sits under it with gas
+    ///      the source chain). The real byte ceiling lands near 78 items. 64 sits under it with gas
     ///      headroom, and the outbound encoder already rejects anything larger.
     uint256 internal constant MAX_BIDS_BATCH = MAX_PAYLOAD_ARRAY_LEN;
 
@@ -132,7 +134,7 @@ library BridgeMsgCodec {
     error UnknownMsgType(uint8 got);
 
     /// @notice A `bytes32` interpreted as an address has non-zero high bits.
-    /// @dev The Solidity address ABI uses the low 20 bytes; high 12 bytes must be zero.
+    /// @dev The Solidity address ABI uses the low 20 bytes. The high 12 bytes must be zero.
     /// @param got The malformed `bytes32` slot.
     error MalformedAddress(bytes32 got);
 
@@ -153,15 +155,15 @@ library BridgeMsgCodec {
 
     /// @notice ISSUANCE_INSTRUCTIONS parallel arrays decoded to unequal lengths.
     /// @param recipients Length of the recipients array.
-    /// @param quantities Length of the quantities array.
-    error IssuanceArrayLengthMismatch(uint256 recipients, uint256 quantities);
+    /// @param units Length of the units array.
+    error IssuanceArrayLengthMismatch(uint256 recipients, uint256 units);
 
     /// @notice Inbound ISSUANCE_INSTRUCTIONS exceeds the per-message recipient cap.
     /// @param count Decoded number of recipients.
     /// @param max Maximum permitted recipients per message.
     error IssuanceBatchTooLarge(uint256 count, uint256 max);
 
-    /// @notice A mark message carries no series; there is nothing for the target to apply.
+    /// @notice A mark message carries no series. There is nothing for the target to apply.
     error EmptyMarkBatch();
 
     /// @notice A mark message exceeds the per-message series cap.
@@ -186,7 +188,8 @@ library BridgeMsgCodec {
     /// @notice The issuance chunk header is inconsistent: no chunks claimed, more than
     ///         `MAX_CHUNKS`, or an index outside the claimed count.
     error InvalidIssuanceChunk(uint16 chunkIndex, uint16 totalChunks);
-    /// @notice A series in an ISSUANCE_INSTRUCTIONS message belongs to a different day than the message header.
+    /// @notice A series in an ISSUANCE_INSTRUCTIONS message belongs to a different day than the
+    ///         message header.
     error IssuanceDayMismatch(bytes14 seriesId, uint32 seriesDay, uint32 messageDay);
 
     /// @notice An outbound payload array exceeds `MAX_PAYLOAD_ARRAY_LEN`.
@@ -220,9 +223,9 @@ library BridgeMsgCodec {
     }
 
     /// @notice Encodes BIDS_BATCH message.
-    /// @dev A bid set larger than `MAX_PAYLOAD_ARRAY_LEN` is relayed as multiple batches; the receiver collects
-    ///      all `_totalBatches` (in any order) before finalizing. Reverts `PayloadArrayTooLong` if
-    ///      `_bidderAddresses` exceeds `MAX_PAYLOAD_ARRAY_LEN`.
+    /// @dev A bid set larger than `MAX_PAYLOAD_ARRAY_LEN` is relayed as multiple batches. The
+    ///      receiver collects all `_totalBatches` (in any order) before finalizing. Reverts
+    ///      `PayloadArrayTooLong` if `_bidderAddresses` exceeds `MAX_PAYLOAD_ARRAY_LEN`.
     /// @param _worldwideDay The worldwide day (yyyymmdd).
     /// @param _srcChainId The source chainId the bids originated from.
     /// @param _batchIndex Index of this batch within the relay (0-based).
@@ -238,8 +241,8 @@ library BridgeMsgCodec {
         address[] memory _bidderAddresses,
         uint256[] memory _packedBids
     ) internal pure returns (bytes memory) {
-        // Decoder rejects parallel-array mismatch with BidsArrayLengthMismatch; fail-fast at the
-        // source so a sender-side bug aborts before paying the bridge fee.
+        // The decoder rejects a parallel-array mismatch with BidsArrayLengthMismatch. The encoder
+        // fails fast at the source so a sender-side bug aborts before paying the bridge fee.
         if (_bidderAddresses.length != _packedBids.length) {
             revert BidsArrayLengthMismatch(_bidderAddresses.length, _packedBids.length);
         }
@@ -295,7 +298,8 @@ library BridgeMsgCodec {
     /// @param _callWindow The call-trigger observation window in seconds.
     /// @param _callThreshold The call-trigger threshold in seconds.
     /// @param _minIntexBidQuantity The minimum acceptable intex bid quantity.
-    /// @param _commitBondMinor The commit-entry bond (payment-token minor units); 0 disables the bond.
+    /// @param _commitBondMinor The commit-entry bond (payment-token minor units). 0 disables the
+    ///        bond.
     /// @param _dayState The final worldwide-day state (1 = Green, 2 = Red).
     /// @return The wire-encoded AUCTION_STAGE_START message.
     function encodeAuctionStageStart(
@@ -316,7 +320,7 @@ library BridgeMsgCodec {
         if (_prices.length > MAX_REFERENCE_PRICES) {
             revert PayloadArrayTooLong(_prices.length, MAX_REFERENCE_PRICES);
         }
-        // A live day must price something to bid against; a cancelled one is a closed record.
+        // A live day must price something to bid against. A cancelled one is a closed record.
         if (_prices.length == 0 && _dayState != uint8(IIntexAuction.WorldwideDayState.Red)) {
             revert MissingReferencePrices();
         }
@@ -380,14 +384,15 @@ library BridgeMsgCodec {
         );
     }
 
-    /// @notice Issuance instructions payload - grouped into a struct to keep the
+    /// @notice Issuance instructions payload. It is grouped into a struct to keep the
     ///         encoder/decoder API resilient against EVM stack depth limits.
-    /// @dev `issuedUnits` mirrors the auction-cleared count; the destination chain
-    ///      pins it on `SeriesData` and `IntexNFT1155.issue` rejects any issue
+    /// @dev `issuedUnits` mirrors the auction-cleared count. The destination chain
+    ///      pins it on `SeriesData`, and `IntexNFT1155.issueIntex` rejects any issue
     ///      that would push `totalSupply` past it.
     struct IssuanceInstructionsPayload {
         bytes14 seriesId;
-        /// @notice Worldwide day the series was derived from - carried so the destination records real provenance.
+        /// @notice Worldwide day the series was derived from. It is carried so the destination
+        ///         records real provenance.
         uint32 worldwideDay;
         /// @notice When the origin created the series, so every chain dates it from the same moment.
         uint32 issuedAt;
@@ -395,7 +400,7 @@ library BridgeMsgCodec {
         uint128 promisLoadMinor;
         uint64 entryPriceMinor;
         uint64 floorPriceMinor;
-        /// @notice Duration in seconds between Called and the settlement deadline; 0 uses default.
+        /// @notice Duration in seconds between Called and the settlement deadline. 0 uses default.
         uint32 callNoticePeriod;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
@@ -403,7 +408,7 @@ library BridgeMsgCodec {
         uint32 callThreshold;
         uint64 callPriceMinor;
         address[] recipients;
-        uint256[] quantities;
+        uint256[] units;
     }
 
     /// @notice Decode AUCTION_STAGE_START straight into the auction schedule + params structs.
@@ -481,8 +486,8 @@ library BridgeMsgCodec {
     }
 
     /// @notice Encodes one chunk of the ISSUANCE_INSTRUCTIONS a chain receives from one day.
-    /// @dev Capped at `MAX_SERIES_PER_ISSUANCE` series and `MAX_RECIPIENTS_PER_ISSUANCE` recipients;
-    ///      a larger set is split by the sender into `_totalChunks` numbered messages.
+    /// @dev Capped at `MAX_SERIES_PER_ISSUANCE` series and `MAX_RECIPIENTS_PER_ISSUANCE`
+    ///      recipients. The sender splits a larger set into `_totalChunks` numbered messages.
     /// @param _worldwideDay The worldwide day (yyyymmdd) every series in the message belongs to.
     /// @param _chunkIndex Position of this chunk in the chain-day's run of issuance messages.
     /// @param _totalChunks How many chunks the chain-day's issuance spans.
@@ -519,8 +524,8 @@ library BridgeMsgCodec {
             if (_series[i].worldwideDay != _worldwideDay) {
                 revert IssuanceDayMismatch(_series[i].seriesId, _series[i].worldwideDay, _worldwideDay);
             }
-            if (_series[i].recipients.length != _series[i].quantities.length) {
-                revert IssuanceArrayLengthMismatch(_series[i].recipients.length, _series[i].quantities.length);
+            if (_series[i].recipients.length != _series[i].units.length) {
+                revert IssuanceArrayLengthMismatch(_series[i].recipients.length, _series[i].units.length);
             }
             recipients += _series[i].recipients.length;
         }
@@ -537,8 +542,9 @@ library BridgeMsgCodec {
     /// @param _clearingRate The day's clearing rate (`1e6` fixed-point).
     /// @param _basis The day's escrow basis (`promisLoadMinor`).
     /// @param _winners Winners on the chain in this chunk.
-    /// @param _partialIndex Index of the partially filled winner; read only when `_partialWon` is non-zero.
-    /// @param _partialWon Units the partially filled winner received; zero when the chunk has none.
+    /// @param _partialIndex Index of the partially filled winner. Read only when `_partialWon` is
+    ///        non-zero.
+    /// @param _partialWon Units the partially filled winner received. Zero when the chunk has none.
     /// @return The wire-encoded REFUND_INSTRUCTIONS message.
     function encodeRefundInstructions(
         uint32 _worldwideDay,
@@ -567,8 +573,8 @@ library BridgeMsgCodec {
     }
 
     /// @notice Encodes MARK_CALLED message for one day's batch of series.
-    /// @dev Layout: [bodyVersion(1)][msgType(1)] ++ abi.encode(worldwideDay, calledAt, seriesIds); the
-    ///      origin's stamp travels so every chain derives the same deadline.
+    /// @dev Layout: [bodyVersion(1)][msgType(1)] ++ abi.encode(worldwideDay, calledAt, seriesIds).
+    ///      The origin's stamp travels so every chain derives the same deadline.
     /// @param _worldwideDay The worldwide day the series were derived from.
     /// @param _calledAt Unix time the origin marked the series Called.
     /// @param _seriesIds The auction series identifiers, 1..`MAX_SERIES_PER_MARK` of them.
@@ -699,7 +705,7 @@ library BridgeMsgCodec {
         return uint8(_msg[1]);
     }
 
-    /// @dev Validates `_msg[0] == BODY_VERSION_V1`; reverts `UnsupportedBodyVersion` otherwise.
+    /// @dev Validates `_msg[0] == BODY_VERSION_V1`. Reverts `UnsupportedBodyVersion` otherwise.
     function _assertBodyVersion(bytes calldata _msg) private pure {
         uint8 v = uint8(_msg[0]);
         if (v != BODY_VERSION_V1) revert UnsupportedBodyVersion(v);
@@ -714,16 +720,17 @@ library BridgeMsgCodec {
         if (_msg.length != _expected) revert InvalidPayloadLength(_msgType, _msg.length, _expected);
     }
 
-    /// @dev Asserts a variable-width payload carries at least its fixed head; the
+    /// @dev Asserts a variable-width payload carries at least its fixed head. The
     ///      exact length is checked against the row count once that head is read.
     function _assertMinLength(bytes calldata _msg, uint8 _msgType, uint16 _minimum) private pure {
         if (_msg.length < _minimum) revert InvalidPayloadLength(_msgType, _msg.length, _minimum);
     }
 
     /// @notice Decodes BIDS_BATCH message.
-    /// @dev Reverts `UnsupportedBodyVersion` on a stale version byte,
-    ///      `BidsArrayLengthMismatch` if the four parallel arrays differ in length, and
-    ///      `BidsBatchTooLarge` if the batch exceeds `MAX_BIDS_BATCH`.
+    /// @dev Reverts:
+    ///      - `UnsupportedBodyVersion` on a stale version byte.
+    ///      - `BidsArrayLengthMismatch` if the four parallel arrays differ in length.
+    ///      - `BidsBatchTooLarge` if the batch exceeds `MAX_BIDS_BATCH`.
     /// @param _msg The wire-encoded BIDS_BATCH message.
     /// @return worldwideDay The worldwide day (yyyymmdd).
     /// @return srcChainId The source chainId the bids originated from.
@@ -750,12 +757,13 @@ library BridgeMsgCodec {
         _assertBodyVersion(_msg);
         (worldwideDay, srcChainId, batchIndex, totalBatches, bidderAddresses, packedBids) =
             abi.decode(_msg[2:], (uint32, uint32, uint16, uint16, address[], uint256[]));
-        // The two arrays are indexed in lockstep downstream; unequal lengths would index out of
+        // The two arrays are indexed in lockstep downstream. Unequal lengths would index out of
         // bounds and panic inside the ordered lane. Reject with a typed error instead.
         if (bidderAddresses.length != packedBids.length) {
             revert BidsArrayLengthMismatch(bidderAddresses.length, packedBids.length);
         }
-        // Cap the batch so the receiver's crosschainMint/storage loop cannot exceed the inbound gas limit.
+        // Cap the batch so the receiver's crosschainMint/storage loop cannot exceed the inbound gas
+        // limit.
         if (bidderAddresses.length > MAX_BIDS_BATCH) revert BidsBatchTooLarge(bidderAddresses.length, MAX_BIDS_BATCH);
     }
 
@@ -793,10 +801,12 @@ library BridgeMsgCodec {
     }
 
     /// @notice Decodes ISSUANCE_INSTRUCTIONS message.
-    /// @dev Reverts `UnsupportedBodyVersion` on a stale version byte, `InvalidIssuanceChunk` on a bad chunk
-    ///      header, `IssuanceDayMismatch` if a series names another day, `IssuanceArrayLengthMismatch` if
-    ///      `recipients` and `quantities` differ in length, and `IssuanceBatchTooLarge` if `recipients`
-    ///      exceeds `MAX_RECIPIENTS_PER_ISSUANCE`.
+    /// @dev Reverts:
+    ///      - `UnsupportedBodyVersion` on a stale version byte.
+    ///      - `InvalidIssuanceChunk` on a bad chunk header.
+    ///      - `IssuanceDayMismatch` if a series names another day.
+    ///      - `IssuanceArrayLengthMismatch` if `recipients` and `units` differ in length.
+    ///      - `IssuanceBatchTooLarge` if `recipients` exceeds `MAX_RECIPIENTS_PER_ISSUANCE`.
     /// @param _msg The wire-encoded ISSUANCE_INSTRUCTIONS message.
     /// @return worldwideDay The worldwide day (yyyymmdd) every series in the message belongs to.
     /// @return chunkIndex Position of this chunk in the chain-day's run of issuance messages.
@@ -817,7 +827,7 @@ library BridgeMsgCodec {
         }
         _assertBodyVersion(_msg);
         // Decode in a dedicated frame so the struct ABI-decoder's locals don't share this
-        // function's stack - keeps the 14-field payload within bounds under via_ir.
+        // function's stack. This keeps the 14-field payload within bounds under via_ir.
         (worldwideDay, chunkIndex, totalChunks, series) = _decodeIssuancePayload(_msg[2:]);
         // Re-checked inbound against a bad peer, as every variable-length decode here is.
         _assertIssuanceLimits(worldwideDay, chunkIndex, totalChunks, series);
@@ -841,8 +851,9 @@ library BridgeMsgCodec {
     /// @return clearingRate The day's clearing rate (`1e6` fixed-point).
     /// @return basis The day's escrow basis.
     /// @return winners Winners on the chain in this chunk.
-    /// @return partialIndex Index of the partially filled winner; meaningful only when `partialWon` is non-zero.
-    /// @return partialWon Units the partially filled winner received; zero when the chunk has none.
+    /// @return partialIndex Index of the partially filled winner. Meaningful only when `partialWon`
+    ///         is non-zero.
+    /// @return partialWon Units the partially filled winner received. Zero when the chunk has none.
     function decodeRefundInstructions(bytes calldata _msg)
         external
         pure
@@ -866,8 +877,9 @@ library BridgeMsgCodec {
         if (totalChunks == 0 || totalChunks > MAX_CHUNKS || chunkIndex >= totalChunks) {
             revert InvalidRefundChunk(chunkIndex, totalChunks);
         }
-        // A peer compromise or a future encoder change could deliver an over-cap REFUND that exhausts the
-        // receiver's gas in the per-winner loop. The drop-don't-block handler catches this typed revert.
+        // A peer compromise or a future encoder change could deliver an over-cap REFUND that
+        // exhausts the receiver's gas in the per-winner loop. The drop-don't-block handler catches
+        // this typed revert.
         if (winners.length > MAX_PAYLOAD_ARRAY_LEN) {
             revert RefundBatchTooLarge(winners.length, MAX_PAYLOAD_ARRAY_LEN);
         }
@@ -899,8 +911,8 @@ library BridgeMsgCodec {
     // --- Validation helpers ---
 
     /// @notice Returns the minimum encoded length for the given `msgType`, or 0 if not recognised.
-    /// @dev Caller is expected to validate `msgType in allowedSet` separately via
-    ///      `UnknownMsgType` - a 0 return here means "unknown to the codec".
+    /// @dev The caller is expected to validate `msgType in allowedSet` separately via
+    ///      `UnknownMsgType`. A 0 return here means "unknown to the codec".
     /// @param _msgType The message-type byte to look up.
     /// @return The minimum encoded length for `_msgType`, or 0 if unknown to the codec.
     function minLengthFor(uint8 _msgType) internal pure returns (uint16) {
@@ -918,7 +930,7 @@ library BridgeMsgCodec {
     }
 
     /// @notice Reverts `InvalidPayloadLength` if `_msg.length < minLengthFor(msgType)`.
-    /// @dev Must be called *after* msgType validation; assumes `_msg.length >= 2`.
+    /// @dev Must be called *after* msgType validation. Assumes `_msg.length >= 2`.
     /// @param _msg The wire-encoded bridge message.
     /// @param _msgType The message-type byte governing the minimum length.
     function assertMinLength(bytes calldata _msg, uint8 _msgType) internal pure {
@@ -928,8 +940,8 @@ library BridgeMsgCodec {
 
     /// @notice Validates the 2-byte header and returns the `msgType` byte.
     /// @dev Reverts `InvalidPayloadLength(0, got, HEADER_LEN)` if shorter than the header.
-    ///      Does NOT validate the `msgType` is in any particular handler's accepted set -
-    ///      that check is the caller's responsibility (revert `UnknownMsgType` on mismatch).
+    ///      Does NOT validate the `msgType` is in any particular handler's accepted set.
+    ///      That check is the caller's responsibility (revert `UnknownMsgType` on mismatch).
     /// @param _msg The wire-encoded bridge message.
     /// @return _msgType The message-type byte read from offset 1.
     function readHeader(bytes calldata _msg) internal pure returns (uint8 _msgType) {
@@ -938,7 +950,7 @@ library BridgeMsgCodec {
     }
 
     /// @notice Reverts `MalformedAddress(got)` if `_value` cannot be losslessly cast to `address`.
-    /// @dev The Solidity address ABI uses the low 20 bytes; the high 12 bytes must be zero.
+    /// @dev The Solidity address ABI uses the low 20 bytes. The high 12 bytes must be zero.
     /// @param _value The `bytes32` slot interpreted as an address.
     function assertAddress(bytes32 _value) internal pure {
         if (uint256(_value) >> 160 != 0) revert MalformedAddress(_value);

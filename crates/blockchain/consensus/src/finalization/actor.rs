@@ -11,10 +11,10 @@
 //! - DKG header artifact recording
 //! - Block-cache eviction below the new finalized height
 //!
-//! The actor writes the parent certificate store before publishing the finalized
-//! view, so a proposer that can observe the new finalized parent can also recover
-//! the exact-parent certificate needed for the successor block's Phase 1 system
-//! transaction.
+//! The actor writes the parent certificate store before it publishes the finalized
+//! view. Thus a proposer that can observe the new finalized parent can also recover
+//! the exact-parent certificate. The Phase 1 system transaction of the successor
+//! block needs that certificate.
 
 use crate::finalization::committee_prelude::build_committee_prelude;
 use commonware_runtime::{Clock, Spawner};
@@ -29,6 +29,7 @@ use crate::block::ConsensusBlock;
 use crate::config::{FINALIZE_MAX_RETRIES, FINALIZE_RESOLUTION_TIMEOUT, FINALIZE_RETRY_DELAY};
 use crate::digest::Digest;
 use crate::finalization::ingress::{Finalized, Mailbox, Message};
+use crate::finalization::late_sig_store::{FinalizeVoteTarget, LateFinalizeCommittee};
 use crate::finalization::parent_cert_store::{
     CertifiedParentProofRecord, CertifiedParentProofStore, FinalizedParentCertStore, ProofKind,
     CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
@@ -38,11 +39,11 @@ use crate::finalization::util::{
     classify_finalization, extract_header_artifact_from_block, retry_with_backoff,
     ReplayClassification,
 };
-use commonware_consensus::marshal::core::DigestFallback;
+use commonware_consensus::{marshal::core::DigestFallback, types::Round};
 
 /// Bound on consensus-owned exact-parent certificate handoff retention.
 ///
-/// The store is keyed by finalized block hash and only the Simplex context
+/// The store uses the finalized block hash as its key. Only the Simplex context
 /// parent is eligible for Phase 1. Retention remains bounded so stale local
 /// recovery data cannot grow unbounded across restarts or missed slots.
 pub const PARENT_CERT_KEEP_DEPTH: u64 = 256;
@@ -51,53 +52,53 @@ use crate::vrf_safety::VrfSafetyGate;
 
 use crate::finalization::block_cache::BlockCache;
 
-/// Constructor inputs for the finalization actor. Bundled into a
-/// single struct so the spawn site in `stack.rs` can be ergonomic.
+/// Constructor inputs for the finalization actor. One struct holds them
+/// so the spawn site in `stack.rs` stays ergonomic.
 pub struct FinalizationActorDeps {
     pub view: FinalizationViewHandle,
     pub block_cache: BlockCache,
     /// Marshal mailbox for resolving a finalized block not in the local cache.
-    /// `Some` in production; only the rekey unit test (which calls
-    /// `process_finalization` directly with an already-resolved block, never
-    /// touching marshal) constructs the actor with `None`.
+    /// `Some` in production. Only the rekey unit test constructs the actor with
+    /// `None`. That test calls `process_finalization` directly with an
+    /// already-resolved block and never touches marshal.
     pub marshal_mailbox: Option<MarshalMailbox>,
     pub bridge: Option<ConsensusExecutionBridge>,
     pub dkg_manager: crate::dkg_manager::Mailbox,
     pub vrf_safety: VrfSafetyGate,
     /// Hash-keyed per-finalized-block exact-parent certificate store.
     ///
-    /// The actor writes one record per finalized block; the proposer waits only
+    /// The actor writes one record per finalized block. The proposer waits only
     /// for the record whose hash equals the Simplex context parent.
     pub parent_cert_store: FinalizedParentCertStore,
     /// Per-epoch verifier scheme provider. The actor uses this to recompute
     /// canonical `committee_set_hash_v2` / `vrf_material_version` /
-    /// `vrf_group_public_key_hash` for the finalized epoch's signer set so the
-    /// finalization-slot record carries the same canonical fields that
+    /// `vrf_group_public_key_hash` for the signer set of the finalized epoch.
+    /// Thus the finalization-slot record carries the same canonical fields that
     /// `OutbeReporter::handle_certification` writes on the certified-notarization
     /// slot. Without this, `get_best_parent_proof` would hand Phase 1 a record
     /// with `committee_set_hash = ZERO`, and snapshot lookup would miss.
     pub certificate_scheme_provider: crate::hybrid::HybridSchemeProvider<
         commonware_cryptography::bls12381::primitives::variant::MinSig,
     >,
-    /// shared late-finalize signature store. On each finalization
+    /// Shared late-finalize signature store. On each finalization
     /// the actor rekeys the reporter-buffered (view-keyed) votes to the now-known
     /// block number and prunes targets that have left the inclusion window. The
-    /// reporter records into it; the application handler reads it to pack the
-    /// proposer artifact. Best-effort, process-local - never consensus state.
+    /// reporter records into it. The application handler reads it to pack the
+    /// proposer artifact. Best-effort and process-local. It is never consensus state.
     pub late_sig_store: crate::finalization::late_sig_store::SharedLateFinalizeStore,
 }
 
 /// FinalizationActor itself. Owns the receiver end of an unbounded
-/// channel; the matching `Mailbox` is given to `OutbeReporter` so
-/// finalization events flow voter -> reporter -> actor without ever
-/// passing through the application handler's bounded mailbox.
+/// channel. `OutbeReporter` gets the matching `Mailbox`, so
+/// finalization events flow voter -> reporter -> actor and never
+/// pass through the bounded mailbox of the application handler.
 pub struct FinalizationActor {
     rx: mpsc::UnboundedReceiver<Message>,
     deps: FinalizationActorDeps,
 }
 
 impl FinalizationActor {
-    /// Construct an actor + paired mailbox. Both halves are returned
+    /// Construct an actor + paired mailbox. The function returns both halves
     /// so the caller (typically `stack.rs`) can hand the mailbox to
     /// the reporter and spawn the actor onto the supervisor's runtime.
     pub fn new(deps: FinalizationActorDeps) -> (Self, Mailbox) {
@@ -129,14 +130,14 @@ impl FinalizationActor {
                         )));
                     }
                 }
-                // durable certified-notarization persistence, moved off the
-                // Simplex voter task. The reporter built and verified the record
-                // (including the parity-critical committee_set_hash) inline; this
-                // actor performs only the synchronous MDBX commit. A write error
-                // is metered + logged but NOT fatal - the certified-notarization
-                // is a best-effort fallback witness (the proposer prefers the
-                // finalization record and can recover from marshal), so dropping
-                // one must not crash the single durable writer.
+                // Durable certified-notarization persistence. This work moved off
+                // the Simplex voter task. The reporter built and verified the record
+                // (including the parity-critical committee_set_hash) inline. This
+                // actor does only the synchronous MDBX commit. The actor meters and
+                // logs a write error, but the error is NOT fatal. The
+                // certified-notarization is a best-effort fallback witness (the
+                // proposer prefers the finalization record and can recover from
+                // marshal). Thus dropping one must not crash the single durable writer.
                 Message::CertifiedNotarization(record) => {
                     match self
                         .deps
@@ -162,17 +163,7 @@ impl FinalizationActor {
         Ok(())
     }
 
-    /// Handle a production finalization notification by resolving the finalized
-    /// block through marshal and then applying all finalization side effects in
-    /// actor order.
-    async fn handle_finalized(&self, clock: &impl Clock, finalized: Finalized) -> eyre::Result<()> {
-        let digest = finalized.digest;
-        let round = finalized.round;
-        let view = round.view().get();
-        debug!(?round, view, %digest, "finalization received");
-
-        // Stale-round short-circuit (no marshal lookup needed for
-        // historical rounds).
+    fn should_drop_finalization(&self, round: Round, digest: Digest) -> eyre::Result<bool> {
         {
             let view_snapshot = self.deps.view.read();
             if let Some(last_round) = view_snapshot.last_finalized_round {
@@ -186,56 +177,87 @@ impl FinalizationActor {
                         %digest,
                         "dropping stale finalized round before marshal resolution"
                     );
-                    return Ok(());
+                    return Ok(true);
                 }
                 if round == last_round {
-                    if digest.0 != view_snapshot.forkchoice.finalized_block_hash {
-                        crate::metrics::record_finalization_dropped(
-                            crate::metrics::FinalizationDropReason::SameRoundInconsistency,
-                        );
-                        tracing::error!(
-                            ?round,
-                            %digest,
-                            finalized_hash = %view_snapshot.forkchoice.finalized_block_hash,
-                            "fatal same-round finalization inconsistency; stopping FinalizationActor"
-                        );
-                        return Err(eyre::eyre!(
-                            "same-round finalization inconsistency at {:?}: \
-                             new digest {digest} conflicts with finalized hash {}",
-                            round,
-                            view_snapshot.forkchoice.finalized_block_hash
-                        ));
-                    }
-
-                    let proof_key =
-                        crate::finalization::parent_cert_store::CertifiedParentProofKey::new(
-                            round.epoch().get(),
-                            round.view().get(),
-                            digest.0,
-                        );
-                    if self
-                        .deps
-                        .parent_cert_store
-                        .get_finalization(proof_key)
-                        .is_some()
-                    {
-                        crate::metrics::record_finalization_dropped(
-                            crate::metrics::FinalizationDropReason::DuplicateRound,
-                        );
-                        debug!(
-                            ?round,
-                            %digest,
-                            "dropping duplicate finalized round before marshal resolution"
-                        );
-                        return Ok(());
-                    }
-                    debug!(
-                        ?round,
-                        %digest,
-                        "replaying duplicate finalized round to repair missing parent certificate record"
+                    return self.should_drop_duplicate_finalization(
+                        round,
+                        digest,
+                        view_snapshot.forkchoice.finalized_block_hash,
                     );
                 }
             }
+        }
+
+        Ok(false)
+    }
+
+    fn should_drop_duplicate_finalization(
+        &self,
+        round: Round,
+        digest: Digest,
+        finalized_hash: alloy_primitives::B256,
+    ) -> eyre::Result<bool> {
+        if digest.0 != finalized_hash {
+            crate::metrics::record_finalization_dropped(
+                crate::metrics::FinalizationDropReason::SameRoundInconsistency,
+            );
+            tracing::error!(
+                ?round,
+                %digest,
+                finalized_hash = %finalized_hash,
+                "fatal same-round finalization inconsistency; stopping FinalizationActor"
+            );
+            return Err(eyre::eyre!(
+                "same-round finalization inconsistency at {:?}: \
+                 new digest {digest} conflicts with finalized hash {}",
+                round,
+                finalized_hash
+            ));
+        }
+
+        let proof_key = crate::finalization::parent_cert_store::CertifiedParentProofKey::new(
+            round.epoch().get(),
+            round.view().get(),
+            digest.0,
+        );
+        if self
+            .deps
+            .parent_cert_store
+            .get_finalization(proof_key)
+            .is_some()
+        {
+            crate::metrics::record_finalization_dropped(
+                crate::metrics::FinalizationDropReason::DuplicateRound,
+            );
+            debug!(
+                ?round,
+                %digest,
+                "dropping duplicate finalized round before marshal resolution"
+            );
+            return Ok(true);
+        }
+        debug!(
+            ?round,
+            %digest,
+            "replaying duplicate finalized round to repair missing parent certificate record"
+        );
+        Ok(false)
+    }
+
+    /// Handle a production finalization notification by resolving the finalized
+    /// block through marshal and then applying all finalization side effects in
+    /// actor order.
+    async fn handle_finalized(&self, clock: &impl Clock, finalized: Finalized) -> eyre::Result<()> {
+        let digest = finalized.digest;
+        let round = finalized.round;
+        let view = round.view().get();
+        debug!(?round, view, %digest, "finalization received");
+
+        // Stale-round short-circuit (no marshal lookup needed for
+        // historical rounds).
+        if self.should_drop_finalization(round, digest)? {
+            return Ok(());
         }
 
         // Fast path: proposer's own block in the shared cache.
@@ -251,13 +273,13 @@ impl FinalizationActor {
             ));
         };
 
-        // a finalized block is fetchable from any honest peer, so a full
-        // retry cycle exhausting means an all-peers P2P stall - which is
-        // transient. Keep retrying with a metric/alarm rather than returning the
+        // A finalized block is fetchable from any honest peer. Thus an exhausted
+        // full retry cycle means an all-peers P2P stall, and that stall is
+        // transient. Keep retrying with a metric/alarm. Do not return the
         // node-fatal error that downs an otherwise-healthy validator on a
         // ~1-minute correlated outage. The actor (correctly) cannot advance
-        // finalization past an unresolved block, so it stays parked here
-        // retrying until the block resolves; a sustained
+        // finalization past an unresolved block. Thus it stays parked here and
+        // retries until the block resolves. A sustained
         // `outbe_finalization_resolution_stalled_total` rate is the operator's
         // signal that the block is unavailable network-wide or local state has
         // diverged. Only a missing marshal mailbox (a config error, above)
@@ -274,7 +296,7 @@ impl FinalizationActor {
                     // digest first with an explicit `DigestFallback`. We have a
                     // trusted finalized round for this digest, so request the
                     // notarized proposal for `round` from peers when it is
-                    // missing locally. The returned oneshot receiver is awaited.
+                    // missing locally. This code awaits the returned oneshot receiver.
                     let waiter =
                         marshal.subscribe_by_digest(digest, DigestFallback::FetchByRound { round });
                     waiter.await.map_err(|_| ())
@@ -393,23 +415,24 @@ impl FinalizationActor {
         // crash window: any proposer that can observe the new finalized parent
         // can also recover its Phase 1 certificate record.
         //
-        // The V2 canonical fields `committee_set_hash`, `vrf_material_version`,
-        // and `vrf_group_public_key_hash` are computed here from the epoch's
-        // `HybridScheme` so the finalization-slot record carries the same
-        // canonical fields the certified-notarization writer
+        // This code computes the V2 canonical fields `committee_set_hash`,
+        // `vrf_material_version`, and `vrf_group_public_key_hash` from the
+        // `HybridScheme` of the epoch. Thus the finalization-slot record carries
+        // the same canonical fields that the certified-notarization writer
         // (`OutbeReporter::handle_certification`) writes via
         // `outbe_consensus::proof::committee_set_hash_v2`.
         // `ParentProofStore::get_best_parent_proof` returns the finalization
-        // record first; if `committee_set_hash` here defaulted to `ZERO`, Phase
+        // record first. If `committee_set_hash` here defaulted to `ZERO`, Phase
         // 1's snapshot lookup `committee_snapshot_key(epoch, ZERO)` would miss
-        // the snapshot written by `apply_boundary_outcome` under the canonical
-        // hash, even when the certified-notarization slot has the right value.
+        // the snapshot that `apply_boundary_outcome` wrote under the canonical
+        // hash. This miss occurs even when the certified-notarization slot has the
+        // right value.
         let consensus_data = finalized.consensus_data.clone();
 
         // Persist the canonical parent-proof record before publishing the view,
         // closing the post-finalize / pre-child-build crash window. The V2
-        // canonical fields match the certified-notarization writer. No `view`
-        // access, so this is safe to call while the write guard is held.
+        // canonical fields match the certified-notarization writer. This call has
+        // no `view` access, so it is safe to call while the write guard is held.
         let (committee_set_hash, committee_size) =
             self.persist_finalization_record(&finalized, &consensus_data, digest, block_number)?;
 
@@ -417,12 +440,17 @@ impl FinalizationActor {
         // number and prune those outside the K-block inclusion window. No `view`
         // access.
         self.rekey_late_finalize_votes(
-            &finalized,
-            &consensus_data,
-            digest,
+            FinalizeVoteTarget {
+                epoch: finalized.round.epoch().get(),
+                view: finalized.round.view().get(),
+                parent_view: consensus_data.finalized_certificate.parent_view,
+                fb_hash: digest.0,
+            },
             block_number,
-            committee_set_hash,
-            committee_size,
+            LateFinalizeCommittee {
+                set_hash: committee_set_hash,
+                size: committee_size,
+            },
         );
 
         // Prune old parent-cert records and record store metrics. No `view` access.
@@ -460,11 +488,12 @@ impl FinalizationActor {
 
     /// Build and persist the canonical V2 finalization parent-proof record, and
     /// return the `(committee_set_hash, committee_size)` the late-finalize rekey
-    /// needs. Does not touch the shared `view`. The V2 canonical fields are
-    /// derived from the epoch's `HybridScheme` so the finalization-slot record
-    /// matches the certified-notarization writer; a snapshot-build failure is an
-    /// encode-invariant violation and fails the finalization deterministically
-    /// rather than writing a record whose `committee_set_hash` would diverge.
+    /// needs. Does not touch the shared `view`. The function derives the V2
+    /// canonical fields from the `HybridScheme` of the epoch, so the
+    /// finalization-slot record matches the certified-notarization writer. A
+    /// snapshot-build failure is an encode-invariant violation. It fails the
+    /// finalization deterministically and does not write a record whose
+    /// `committee_set_hash` would diverge.
     fn persist_finalization_record(
         &self,
         finalized: &Finalized,
@@ -490,10 +519,11 @@ impl FinalizationActor {
             .scoped(finalized.round.epoch())
         {
             Some(scheme) => {
-                // Single canonical builder (shared with the resolver and reporter;
-                // the DKG proposer is distinct - it carries a real polynomial hash).
-                // Reconstructed from finalized metadata, so the snapshot's unused
-                // `vrf_public_polynomial_hash` is `B256::ZERO` inside the helper.
+                // Single canonical builder, shared with the resolver and reporter.
+                // The DKG proposer is distinct: it carries a real polynomial hash.
+                // This path reconstructs the snapshot from finalized metadata. Thus the
+                // unused `vrf_public_polynomial_hash` of the snapshot is `B256::ZERO`
+                // inside the helper.
                 let prelude = build_committee_prelude(&scheme, &ordered_committee, finalized_epoch)
                     .map_err(|e| {
                         eyre::eyre!(
@@ -552,26 +582,12 @@ impl FinalizationActor {
     /// (crediting nobody) and never stalls finalization. No `view` access.
     fn rekey_late_finalize_votes(
         &self,
-        finalized: &Finalized,
-        consensus_data: &ConsensusData,
-        digest: Digest,
+        target: FinalizeVoteTarget,
         block_number: u64,
-        committee_set_hash: alloy_primitives::B256,
-        committee_size: usize,
+        committee: LateFinalizeCommittee,
     ) {
         if let Ok(mut store) = self.deps.late_sig_store.lock() {
-            // Canonical (epoch, view, parent_view) from the finalized certificate
-            // so even a pure post-finalization vote (no pending entry) binds
-            // correctly.
-            store.resolve_finalized(
-                finalized.round.epoch().get(),
-                finalized.round.view().get(),
-                consensus_data.finalized_certificate.parent_view,
-                block_number,
-                digest.0,
-                committee_set_hash,
-                committee_size,
-            );
+            store.resolve_finalized_target(target, block_number, committee);
         }
     }
 
@@ -596,7 +612,7 @@ impl FinalizationActor {
     }
 
     /// Publish a fresh `ConsensusStatus` to the bridge for RPC after durable
-    /// persistence. The parent-cert store is the consensus handoff; this is only
+    /// persistence. The parent-cert store is the consensus handoff. This is only
     /// the RPC status view. Runs after the `view` write lock is released.
     fn publish_consensus_status(
         &self,
@@ -652,9 +668,9 @@ impl FinalizationActor {
         }
     }
 
-    /// Evict block-cache entries at or below the new finalized height; they can
-    /// no longer be needed by any future verify path. Re-reads the view under a
-    /// short read lock (the write lock was already released).
+    /// Evict block-cache entries at or below the new finalized height. No future
+    /// verify path can need them. Re-reads the view under a short read lock (the
+    /// write lock was already released).
     fn evict_finalized_block_cache(&self) {
         let finalized_num = self.deps.view.read().last_finalized_number;
         self.deps.block_cache.evict_at_or_below(finalized_num);
@@ -710,7 +726,7 @@ mod tests {
 
         // Shared store + a buffered (view-keyed) vote, as the reporter would have
         // recorded it before the block number was known. The signature value is
-        // arbitrary here - the rekey path never verifies it.
+        // arbitrary here. The rekey path never verifies it.
         let block = make_block(fb_number, 7);
         let digest = digest_of(&block);
         let fb_hash = digest.0;
@@ -720,11 +736,13 @@ mod tests {
             rand_commonware::rngs::SysRng,
         ));
         let sig = key.sign(b"x", b"y");
-        store.lock().expect("store").record_individual_vote(
-            epoch,
-            view,
-            parent_view,
-            fb_hash,
+        store.lock().expect("store").record_bound_individual_vote(
+            late_sig_store::FinalizeVoteTarget {
+                epoch,
+                view,
+                parent_view,
+                fb_hash,
+            },
             0,
             &sig,
         );

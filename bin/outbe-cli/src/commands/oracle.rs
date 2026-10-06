@@ -11,9 +11,12 @@ use outbe_primitives::asset_type::AssetType;
 
 /// Parses an oracle asset from the operator-facing shorthand.
 ///
-/// `COEN`/`native` is the native asset, a 1-3 digit number is an ISO 4217
-/// currency code, and anything else must be a 0x address. Keeps runbooks that
-/// say `oracle rate COEN 840` working now that the ABI takes addresses.
+/// - `COEN`/`native` is the native asset.
+/// - A 1-3 digit number is an ISO 4217 currency code.
+/// - Anything else must be a 0x address.
+///
+/// This keeps runbooks that say `oracle rate COEN 840` working now that the ABI
+/// takes addresses.
 fn parse_asset(spec: &str) -> Result<Address> {
     let text = spec.trim();
     if text.eq_ignore_ascii_case("COEN") || text.eq_ignore_ascii_case("native") {

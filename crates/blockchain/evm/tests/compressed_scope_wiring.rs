@@ -295,11 +295,13 @@ fn read_nod_owner(scope: Arc<ExecutionScope>) -> (String, Option<RuntimeBodyFail
     };
     let result: Result<SubCallOutput, _> = sub_call::run(
         &mut ctx,
-        Address::repeat_byte(0x11),
-        false,
-        SpecId::PRAGUE,
-        Some(readers),
-        scope,
+        sub_call::SubCallEnvironment {
+            self_address: Address::repeat_byte(0x11),
+            outer_is_static: false,
+            spec: SpecId::PRAGUE,
+            runtime_body_readers: Some(readers),
+            execution_scope: scope,
+        },
         SubCallInput {
             target: NOD_ADDRESS,
             value: U256::ZERO,

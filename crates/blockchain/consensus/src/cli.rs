@@ -264,7 +264,7 @@ fn write_validator_identity_bundle(
             .wrap_err_with(|| format!("failed to write EVM key: {}", evm_key_path.display()))?;
 
         // Generate a stable Reth RLPx identity for localnet bootnode wiring.
-        // This key is not consensus-critical; it only lets scripts know each
+        // This key is not consensus-critical. It only lets scripts know each
         // node's enode before the first Reth startup.
         let reth_p2p_key = SigningKey::random(&mut rand_core::OsRng);
         let reth_p2p_key_hex = hex::encode(reth_p2p_key.to_bytes());
@@ -346,54 +346,17 @@ pub fn execute_dkg_status(storage_dir: &Path, backend: &KeyBackend) -> Result<()
     let poly_path = storage_dir.join(DKG_POLYNOMIAL_FILE);
     let output_path = storage_dir.join(DKG_OUTPUT_FILE);
 
-    let share_ok = if share_path.exists() {
-        match bls::load_signing_share(&share_path, backend) {
-            Ok(_) => {
-                println!("  signing share:  OK  ({})", share_path.display());
-                true
-            }
-            Err(e) => {
-                println!("  signing share:  INVALID  ({e})");
-                false
-            }
-        }
-    } else {
-        println!("  signing share:  MISSING");
-        false
-    };
-
-    let poly_ok = if poly_path.exists() {
-        match bls::load_public_polynomial(&poly_path, backend) {
-            Ok(_) => {
-                println!("  polynomial:     OK  ({})", poly_path.display());
-                true
-            }
-            Err(e) => {
-                println!("  polynomial:     INVALID  ({e})");
-                false
-            }
-        }
-    } else {
-        println!("  polynomial:     MISSING");
-        false
-    };
+    let share_ok = report_dkg_file_status(&share_path, "  signing share:  ", || {
+        bls::load_signing_share(&share_path, backend)
+    });
+    let poly_ok = report_dkg_file_status(&poly_path, "  polynomial:     ", || {
+        bls::load_public_polynomial(&poly_path, backend)
+    });
 
     println!();
-    let output_ok = if output_path.exists() {
-        match bls::load_dkg_output(&output_path, backend) {
-            Ok(_) => {
-                println!("  DKG output:     OK  ({})", output_path.display());
-                true
-            }
-            Err(e) => {
-                println!("  DKG output:     INVALID  ({e})");
-                false
-            }
-        }
-    } else {
-        println!("  DKG output:     MISSING");
-        false
-    };
+    let output_ok = report_dkg_file_status(&output_path, "  DKG output:     ", || {
+        bls::load_dkg_output(&output_path, backend)
+    });
 
     let triplet_ok = if share_ok && poly_ok && output_ok {
         let share = bls::load_signing_share(&share_path, backend)
@@ -420,6 +383,23 @@ pub fn execute_dkg_status(storage_dir: &Path, backend: &KeyBackend) -> Result<()
     }
 
     Ok(())
+}
+
+fn report_dkg_file_status<T>(path: &Path, label: &str, load: impl FnOnce() -> Result<T>) -> bool {
+    if !path.exists() {
+        println!("{label}MISSING");
+        return false;
+    }
+    match load() {
+        Ok(_) => {
+            println!("{label}OK  ({})", path.display());
+            true
+        }
+        Err(error) => {
+            println!("{label}INVALID  ({error})");
+            false
+        }
+    }
 }
 
 /// Export the DKG signing share from the storage directory to a specified path.
@@ -488,7 +468,7 @@ pub fn execute_dkg_export_share(
 ///
 /// This maintenance command never touches enclave state or the permanent offer
 /// key. The next node startup still passes the normal founding or existing-chain
-/// gates; an existing identity without its exact offer key remains terminal.
+/// gates. An existing identity without its exact offer key remains terminal.
 pub fn execute_dkg_force_restart(storage_dir: &Path) -> Result<()> {
     let material_paths = [
         storage_dir.join(DKG_SHARE_FILE),

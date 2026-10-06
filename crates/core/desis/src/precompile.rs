@@ -1,7 +1,7 @@
 //! ABI dispatch for the Desis precompile at `DESIS_ADDRESS`.
 //!
 //! Routes bid ingestion and clearing calls from OriginRouter to the
-//! runtime. Encoding only; all logic lives in `runtime.rs`.
+//! runtime. Encoding only. All logic lives in `runtime.rs`.
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};

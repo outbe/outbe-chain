@@ -44,7 +44,7 @@ contract TargetRouterTest is CrossChainTest {
 
     function setUp() public {
         _setUpBridge();
-        // The quote test asserts a non-zero fee; give the loopback bridge a fixed fee to return.
+        // The quote test asserts a non-zero fee. Give the loopback bridge a fixed fee to return.
         bridge.setFee(0.001 ether);
 
         vm.deal(admin, 1000 ether);

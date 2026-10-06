@@ -12,7 +12,10 @@ use outbe_primitives::{
 use outbe_tee::FinalizedRegistryViewV1;
 use serde::{Deserialize, Serialize};
 
-use crate::rpc::RenewalRpc;
+use crate::rpc::{ChainRpc, FinalizedStateRpc, RegistryRpc as RegistryReadRpc};
+
+#[cfg(test)]
+mod abi_tests;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NodeBindingSelectorV1 {
@@ -50,33 +53,13 @@ impl NodeBindingSelectorV1 {
     }
 }
 
+outbe_primitives::define_tee_registry_binding_v1! {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct RenewalBindingV1 {
-    pub node_id_hash: B256,
-    pub enclave_id: B256,
-    pub binding_id: B256,
-    pub intent_hash: B256,
-    pub evidence_hash: B256,
-    pub policy_hash: B256,
-    pub binding_version: u64,
-    pub registration_version: u64,
-    pub renewal_nonce: u64,
-    pub transition_nonce: u64,
-    pub lease_started_at: u64,
-    pub valid_until: u64,
-    pub collateral_valid_until: u64,
-    pub recipient_x25519: B256,
-    pub attestation_ed25519: B256,
-    pub noise_responder_x25519: B256,
-    pub mrenclave: B256,
-    pub mrsigner: B256,
-    pub isv_prod_id: u16,
-    pub isv_svn: u16,
-    pub platform_tcb_status: u8,
-    pub verdict_hash: B256,
-    pub node_host_authorization_hash: B256,
+pub struct RenewalBindingV1
 }
+
+outbe_primitives::impl_tee_registry_binding_v1_mapping!(RenewalBindingV1, decode_fields);
 
 impl TryFrom<NodeEnclaveBindingV1View> for RenewalBindingV1 {
     type Error = eyre::Report;
@@ -85,31 +68,7 @@ impl TryFrom<NodeEnclaveBindingV1View> for RenewalBindingV1 {
         if !value.exists {
             eyre::bail!("finalized Registry has no enclave binding for this node");
         }
-        Ok(Self {
-            node_id_hash: value.nodeIdHash,
-            enclave_id: value.enclaveId,
-            binding_id: value.bindingId,
-            intent_hash: value.intentHash,
-            evidence_hash: value.evidenceHash,
-            policy_hash: value.policyHash,
-            binding_version: value.bindingVersion,
-            registration_version: value.registrationVersion,
-            renewal_nonce: value.renewalNonce,
-            transition_nonce: value.transitionNonce,
-            lease_started_at: value.leaseStartedAt,
-            valid_until: value.validUntil,
-            collateral_valid_until: value.collateralValidUntil,
-            recipient_x25519: value.recipientX25519,
-            attestation_ed25519: value.attestationEd25519,
-            noise_responder_x25519: value.noiseResponderX25519,
-            mrenclave: value.mrenclave,
-            mrsigner: value.mrsigner,
-            isv_prod_id: value.isvProdId,
-            isv_svn: value.isvSvn,
-            platform_tcb_status: value.platformTcbStatus,
-            verdict_hash: value.verdictHash,
-            node_host_authorization_hash: value.nodeHostAuthorizationHash,
-        })
+        Ok(Self::from_registry_binding_fields_v1(&value))
     }
 }
 
@@ -141,20 +100,20 @@ pub struct FinalizedStagedSuccessorPolicyV1 {
 /// Read the staged successor only at the RPC node's exact finalized block.
 /// Latest/pending state is deliberately never used for an upgrade decision.
 pub async fn read_finalized_staged_successor_policy_v1(
-    rpc: &(impl RenewalRpc + Sync),
+    rpc: &(impl ChainRpc + FinalizedStateRpc + Sync),
 ) -> Result<Option<FinalizedStagedSuccessorPolicyV1>> {
     read_finalized_upgrade_policy_inner_v1(rpc, false).await
 }
 
 /// Includes the activated strict successor, allowing a missed deadline to be repaired.
 pub async fn read_finalized_upgrade_policy_v1(
-    rpc: &(impl RenewalRpc + Sync),
+    rpc: &(impl ChainRpc + FinalizedStateRpc + Sync),
 ) -> Result<Option<FinalizedStagedSuccessorPolicyV1>> {
     read_finalized_upgrade_policy_inner_v1(rpc, true).await
 }
 
 async fn read_finalized_upgrade_policy_inner_v1(
-    rpc: &(impl RenewalRpc + Sync),
+    rpc: &(impl ChainRpc + FinalizedStateRpc + Sync),
     allow_activated: bool,
 ) -> Result<Option<FinalizedStagedSuccessorPolicyV1>> {
     let finalized = rpc
@@ -237,7 +196,7 @@ async fn read_finalized_upgrade_policy_inner_v1(
 }
 
 pub async fn read_finalized_renewal_view_v1(
-    rpc: &(impl RenewalRpc + Sync),
+    rpc: &(impl RegistryReadRpc + Sync),
     selector: &NodeBindingSelectorV1,
 ) -> Result<FinalizedRenewalChainViewV1> {
     let view = read_finalized_registry_view_v1(rpc, selector).await?;
@@ -248,7 +207,7 @@ pub async fn read_finalized_renewal_view_v1(
 /// Read the exact finalized policy and required binding for the shared manual
 /// renewal lifecycle, independent of the genesis-selected evidence mode.
 pub async fn read_finalized_bound_renewal_view_v1(
-    rpc: &(impl RenewalRpc + Sync),
+    rpc: &(impl RegistryReadRpc + Sync),
     selector: &NodeBindingSelectorV1,
 ) -> Result<FinalizedRenewalChainViewV1> {
     let view = read_finalized_registry_view_v1(rpc, selector).await?;
@@ -256,7 +215,7 @@ pub async fn read_finalized_bound_renewal_view_v1(
 }
 
 async fn resolve_bound_renewal_policy_v1(
-    rpc: &(impl RenewalRpc + Sync),
+    rpc: &(impl RegistryReadRpc + Sync),
     mut view: FinalizedRegistryChainViewV1,
 ) -> Result<FinalizedRenewalChainViewV1> {
     let active_hash = view
@@ -312,7 +271,7 @@ fn require_dcap_renewal_mode_v1(mode: AttestationMode) -> Result<()> {
 /// Read the exact finalized policy and optional node binding used by initial
 /// join, live-lease rejection, and expired rejoin recovery.
 pub async fn read_finalized_registry_view_v1(
-    rpc: &(impl RenewalRpc + Sync),
+    rpc: &(impl RegistryReadRpc + Sync),
     selector: &NodeBindingSelectorV1,
 ) -> Result<FinalizedRegistryChainViewV1> {
     let schedule = rpc
@@ -429,7 +388,7 @@ pub struct ExpectedOnboardingBindingV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rpc::FinalityRpc;
+
     use alloy_primitives::Bytes;
     use outbe_primitives::{
         chain::DEVNET_CHAIN_ID,
@@ -445,28 +404,7 @@ mod tests {
         schedule: TeeRenewalScheduleV1,
     }
 
-    impl FinalityRpc for RegistryRpc {
-        async fn transaction_receipt(
-            &self,
-            _transaction_hash: &str,
-        ) -> Result<Option<serde_json::Value>> {
-            eyre::bail!("unused transaction_receipt");
-        }
-
-        async fn logs(
-            &self,
-            _address: Address,
-            _topics: &[Option<String>],
-            _from_block: &str,
-            _to_block: &str,
-        ) -> Result<Vec<serde_json::Value>> {
-            eyre::bail!("unused logs");
-        }
-
-        async fn block_by_number(&self, _block: u64) -> Result<serde_json::Value> {
-            eyre::bail!("unused block_by_number");
-        }
-
+    impl FinalizedStateRpc for RegistryRpc {
         async fn finalized_block(&self) -> Result<serde_json::Value> {
             Ok(serde_json::json!({
                 "number": format!("0x{:x}", self.schedule.finalized_height),
@@ -512,27 +450,13 @@ mod tests {
         }
     }
 
-    impl RenewalRpc for RegistryRpc {
+    impl ChainRpc for RegistryRpc {
         async fn chain_id(&self) -> Result<u64> {
             Ok(DEVNET_CHAIN_ID)
         }
+    }
 
-        async fn gas_price(&self) -> Result<U256> {
-            eyre::bail!("unused gas_price");
-        }
-
-        async fn transaction_count(&self, _address: Address) -> Result<u64> {
-            eyre::bail!("unused transaction_count");
-        }
-
-        async fn balance(&self, _address: Address) -> Result<U256> {
-            eyre::bail!("unused balance");
-        }
-
-        async fn send_raw_transaction(&self, _raw_transaction: &[u8]) -> Result<String> {
-            eyre::bail!("unused send_raw_transaction");
-        }
-
+    impl crate::rpc::RegistryRpc for RegistryRpc {
         async fn tee_renewal_schedule_v1(&self) -> Result<TeeRenewalScheduleV1> {
             Ok(self.schedule)
         }

@@ -48,7 +48,7 @@ impl GemContract<'_> {
         let Some(mut item) = self.gem_items.get(gem_id)? else {
             return Ok(None);
         };
-        // A bucket member's record stays Issued; its Called state is the bucket's.
+        // A bucket member's record stays Issued. Its Called state is the bucket's.
         if is_callable(item.state) {
             let bucket = self.gem_bucket.read(&gem_id)?;
             if !bucket.is_zero() {
@@ -80,7 +80,8 @@ impl GemContract<'_> {
     pub fn token_uri(&self, gem_id: U256) -> Result<String> {
         let item = self.get_gem(gem_id)?.ok_or(GemError::GemNotFound)?;
         let qualified = is_callable(item.state) && crate::api::is_qualified(&self.storage, &item)?;
-        Ok(crate::metadata::token_uri(&item, qualified))
+        let now = self.storage.timestamp()?.to::<u64>();
+        Ok(crate::metadata::token_uri(&item, qualified, now))
     }
 
     pub(crate) fn owner_index_key(owner: Address, index: u32) -> B256 {
@@ -185,7 +186,7 @@ impl GemContract<'_> {
     }
 
     /// Put a called bucket or Called gem back in the queue at its own deadline, never
-    /// before the next hour; an entry that is neither leaves the queue instead.
+    /// before the next hour. An entry that is neither leaves the queue instead.
     pub(crate) fn requeue_or_drop(&mut self, entry: U256, now: u64) -> Result<bool> {
         let bucket = self.called_bucket(entry)?;
         let deadline = match bucket {
@@ -259,8 +260,8 @@ impl GemContract<'_> {
             self.expiry_bucket_len.clear(&day)?;
             self.expiry_bucket_live.clear(&day)?;
             tree_math::remove(&ExpiryDayTree(&*self), day)?;
-            // The cursor names a slot in a length that no longer exists; a refill of
-            // this day would otherwise resume past its new end.
+            // The cursor names a slot in a length that no longer exists. Otherwise, a
+            // refill of this day would resume past its new end.
             if self.expiry_sweep_day.read()? == day {
                 self.expiry_sweep_day.write(0)?;
                 self.expiry_cursor.write(0)?;
@@ -300,8 +301,8 @@ impl GemContract<'_> {
         Ok((!id.is_zero()).then_some(id))
     }
 
-    /// Retire a bucket the sweep has finished: a Called gem still in it moves on, a
-    /// stale entry goes. Returns how many were deferred and dropped.
+    /// Retire a bucket the sweep has finished: a Called gem still in it is requeued, and
+    /// a stale entry is dropped. Returns how many were deferred and dropped.
     pub(crate) fn force_retire_hour(&mut self, day: u32, now: u64) -> Result<(u32, u32)> {
         let len = self.expiry_bucket_len.read(&day)?;
         let (mut deferred, mut dropped) = (0u32, 0u32);
@@ -437,10 +438,10 @@ impl GemContract<'_> {
         Ok(BucketTerms {
             start_day: self.bucket_start_day.read(&bucket)?,
             reference_currency: self.bucket_currency.read(&bucket)?,
-            call_price: self.bucket_call_price.read(&bucket)?,
-            call_window: self.bucket_call_window.read(&bucket)?,
-            call_threshold: self.bucket_call_threshold.read(&bucket)?,
-            call_notice_period: self.bucket_call_notice_period.read(&bucket)?,
+            call_price_minor: self.bucket_call_price_minor.read(&bucket)?,
+            call_window_seconds: self.bucket_call_window_seconds.read(&bucket)?,
+            call_threshold_seconds: self.bucket_call_threshold_seconds.read(&bucket)?,
+            call_notice_period_seconds: self.bucket_call_notice_period_seconds.read(&bucket)?,
         })
     }
 
@@ -448,12 +449,14 @@ impl GemContract<'_> {
         self.bucket_start_day.write(&bucket, terms.start_day)?;
         self.bucket_currency
             .write(&bucket, terms.reference_currency)?;
-        self.bucket_call_price.write(&bucket, terms.call_price)?;
-        self.bucket_call_window.write(&bucket, terms.call_window)?;
-        self.bucket_call_threshold
-            .write(&bucket, terms.call_threshold)?;
-        self.bucket_call_notice_period
-            .write(&bucket, terms.call_notice_period)?;
+        self.bucket_call_price_minor
+            .write(&bucket, terms.call_price_minor)?;
+        self.bucket_call_window_seconds
+            .write(&bucket, terms.call_window_seconds)?;
+        self.bucket_call_threshold_seconds
+            .write(&bucket, terms.call_threshold_seconds)?;
+        self.bucket_call_notice_period_seconds
+            .write(&bucket, terms.call_notice_period_seconds)?;
         self.insert_bucket_bin(bucket, terms)
     }
 
@@ -467,7 +470,7 @@ impl GemContract<'_> {
     ) -> Result<()> {
         self.remove_bucket_bin(bucket, terms)?;
         self.bucket_called_at.write(&bucket, now)?;
-        let deadline = now + u64::from(terms.call_notice_period);
+        let deadline = now + u64::from(terms.call_notice_period_seconds);
         self.push_called(bucket_entry(bucket), deadline)?;
         self.emit(IGem::GemBucketCalled {
             bucketKey: bucket,
@@ -477,7 +480,7 @@ impl GemContract<'_> {
     }
 
     /// Take a member out of its called bucket and queue it on its own, as a Called gem,
-    /// no earlier than the next hour: one gem that cannot burn must not hold back the rest.
+    /// no earlier than the next hour. One gem that cannot burn must not block the rest.
     pub(crate) fn detach_called_member(&mut self, gem_id: U256, now: u64) -> Result<()> {
         let bucket = self.gem_bucket.read(&gem_id)?;
         let called_at = self.bucket_called_at.read(&bucket)?;
@@ -493,7 +496,7 @@ impl GemContract<'_> {
         Ok(())
     }
 
-    /// The called bucket an expiry-queue entry stands for; `None` for a gem id.
+    /// The called bucket that an expiry-queue entry stands for. Returns `None` for a gem id.
     pub(crate) fn called_bucket(&self, entry: U256) -> Result<Option<B256>> {
         let bucket = B256::from(entry.to_be_bytes::<32>());
         Ok((self.bucket_called_at.read(&bucket)? != 0).then_some(bucket))
@@ -502,7 +505,7 @@ impl GemContract<'_> {
     /// Settlement deadline of a called bucket.
     pub(crate) fn bucket_deadline(&self, bucket: B256) -> Result<u64> {
         Ok(self.bucket_called_at.read(&bucket)?
-            + u64::from(self.bucket_call_notice_period.read(&bucket)?))
+            + u64::from(self.bucket_call_notice_period_seconds.read(&bucket)?))
     }
 
     fn close_bucket(&mut self, bucket: B256) -> Result<()> {
@@ -511,10 +514,10 @@ impl GemContract<'_> {
         self.remove_called(bucket_entry(bucket))?;
         self.bucket_start_day.clear(&bucket)?;
         self.bucket_currency.clear(&bucket)?;
-        self.bucket_call_price.clear(&bucket)?;
-        self.bucket_call_window.clear(&bucket)?;
-        self.bucket_call_threshold.clear(&bucket)?;
-        self.bucket_call_notice_period.clear(&bucket)?;
+        self.bucket_call_price_minor.clear(&bucket)?;
+        self.bucket_call_window_seconds.clear(&bucket)?;
+        self.bucket_call_threshold_seconds.clear(&bucket)?;
+        self.bucket_call_notice_period_seconds.clear(&bucket)?;
         self.bucket_called_at.clear(&bucket)
     }
 
@@ -529,7 +532,7 @@ impl GemContract<'_> {
 
     fn insert_bucket_bin(&mut self, bucket: B256, terms: &BucketTerms) -> Result<()> {
         let iso = terms.reference_currency;
-        let bin = Self::price_to_bin(terms.call_price)?;
+        let bin = Self::price_to_bin(terms.call_price_minor)?;
         let scoped = Self::scoped(iso, bin);
         let index = self.bucket_bin_count.read(&scoped)?;
         self.bucket_bin_at
@@ -546,7 +549,7 @@ impl GemContract<'_> {
             return Ok(());
         };
         let iso = terms.reference_currency;
-        let bin = Self::price_to_bin(terms.call_price)?;
+        let bin = Self::price_to_bin(terms.call_price_minor)?;
         let scoped = Self::scoped(iso, bin);
         let last = self
             .bucket_bin_count
@@ -581,7 +584,7 @@ impl GemContract<'_> {
     /// Namespaces a bin-column key by the gem's reference currency.
     ///
     /// Mapping keys are left-padded to 32 bytes before hashing, so a wider
-    /// integer type alone namespaces nothing - the ISO has to occupy real high
+    /// integer type alone namespaces nothing. The ISO has to occupy real high
     /// bits. Bin ids are 24-bit and the trie's mid/leaf keys are 16-bit, so the
     /// low 32 bits always hold `key` unambiguously.
     pub(crate) const fn scoped(reference_currency: u16, key: u32) -> u64 {

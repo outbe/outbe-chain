@@ -4,8 +4,8 @@ pragma solidity 0.8.30;
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 
 /// @title RevertingERC1155Receiver
-/// @notice ERC-1155 receiver whose acceptance hook reverts while `reject` is set; used to exercise
-///         per-recipient issuance-mint isolation and the parked-mint flush path.
+/// @notice ERC-1155 receiver whose acceptance hook reverts while `reject` is set. Tests use it to
+///         exercise per-recipient issuance-mint isolation and the parked-mint flush path.
 contract RevertingERC1155Receiver is IERC1155Receiver {
     bool public reject = true;
 

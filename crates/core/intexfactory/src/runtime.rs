@@ -7,9 +7,9 @@ use outbe_common::settlement::floor_to_asset_units;
 use outbe_intex::{SeriesId, SERIES_ID_LEN};
 use outbe_oracle::api::{settlement_fx_rates, VwapSnapshotId};
 use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::{PrecompileError, Result, SweepFailure};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{first_full_day, WorldwideDay};
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::units::{PROTOCOL_AMOUNT_DECIMALS, SCALE_1E6_U256};
 
 use outbe_intex::payout::ContributorLeafData;
@@ -34,8 +34,8 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
 /// Capture series identity in Intex, enroll it in the call-price bin index, and send
 /// ISSUANCE_INSTRUCTIONS to every target chain of the day's snapshot. The
 /// canonical IntexNFT1155 createSeries now arrives per chain via the ISSUANCE
-/// broadcast (including a loopback leg on the origin), so there is no in-process
-/// NFT call here.
+/// broadcast. This includes a loopback leg on the origin. So there is no
+/// in-process NFT call here.
 pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<IssuanceLeg>> {
     if params.issued_units == 0 {
         // Whether the day distributes is the caller's decision: one empty group
@@ -43,7 +43,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
         return Ok(Vec::new());
     }
 
-    // u32 timestamp; bounded until 2106.
+    // u32 timestamp. It is bounded until 2106.
     let issued_at = u32::try_from(storage.timestamp()?.to::<u64>())
         .map_err(|_| PrecompileError::Revert("block timestamp exceeds u32".into()))?;
 
@@ -85,7 +85,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
     // travels in as few messages as the caps allow.
     let legs: Vec<IssuanceLeg> = issuance_legs(&params)
         .into_iter()
-        .map(|(chain_id, recipients, quantities)| IssuanceLeg {
+        .map(|(chain_id, recipients, units)| IssuanceLeg {
             chain_id,
             payload: IOriginRouter::IssuanceInstructionsParams {
                 seriesId: params.series_id.into(),
@@ -102,7 +102,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
                 callThreshold: cfg.call_threshold_seconds,
                 callPriceMinor: call_price_minor_u64,
                 recipients,
-                quantities,
+                units,
             },
         })
         .collect();
@@ -115,7 +115,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
     )?;
 
     // Arm the creator-reward proceeds fan-in: the winning chains are expected to
-    // route proceeds; creators are paid once all arrive or the deadline passes.
+    // route proceeds. Creators are paid once all arrive or the deadline passes.
     let deadline = storage
         .timestamp()?
         .to::<u64>()
@@ -132,7 +132,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
         crate::precompile::IIntexFactory::SeriesIssued {
             seriesId: params.series_id.into(),
             issuedUnits: params.issued_units,
-            entryPrice: params.entry_price_minor,
+            entryPriceMinor: params.entry_price_minor,
         },
     )?;
 
@@ -157,7 +157,7 @@ pub fn pack_issuance_messages(
     for leg in legs {
         for slice in split_recipients(leg.payload) {
             // Legs arrive series by series, so this chain's open message is not the last one
-            // built; matching on the tail alone would batch nothing.
+            // built. Matching on the tail alone would batch nothing.
             let open = per_chain
                 .iter_mut()
                 .rev()
@@ -178,7 +178,7 @@ pub fn pack_issuance_messages(
 }
 
 /// Send a day's packed issuance messages, each stamped with its position in the chain's run.
-/// Relay-float-funded: value 0, the router quotes and pays the bridge fee from its own float.
+/// Relay-float-funded: value 0. The router quotes and pays the bridge fee from its own float.
 pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<IssuanceLeg>) -> Result<()> {
     for ((chain_id, worldwide_day), messages) in
         chunk_issuance_messages(pack_issuance_messages(legs))
@@ -204,12 +204,13 @@ pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<IssuanceLeg>) -> Res
     Ok(())
 }
 
-/// One (chain, worldwide day) run of issuance messages, in send order: what the chunk header numbers.
+/// One (chain, worldwide day) run of issuance messages, in send order: what the chunk header
+/// numbers.
 pub(crate) type IssuanceRun = ((u32, u32), Vec<Vec<IssuanceInstructionsParams>>);
 
-/// Group packed messages into the runs the chunk header numbers: one per (chain, day), the pair the
-/// receiver counts chunks against. Callers pass one day's legs (clearing does), which is also what
-/// keeps `pack_issuance_messages` from batching two days into one message.
+/// Group packed messages into the runs the chunk header numbers: one per (chain, day), the pair
+/// the receiver counts chunks against. Callers pass one day's legs (clearing does). This is also
+/// what keeps `pack_issuance_messages` from batching two days into one message.
 pub(crate) fn chunk_issuance_messages(
     packed: Vec<(u32, Vec<IssuanceInstructionsParams>)>,
 ) -> Vec<IssuanceRun> {
@@ -228,7 +229,7 @@ fn recipient_count(message: &[IssuanceInstructionsParams]) -> usize {
     message.iter().map(|item| item.recipients.len()).sum()
 }
 
-/// One series' instructions cut into pieces a message can carry; only the winners differ.
+/// One series' instructions cut into pieces a message can carry. Only the winners differ.
 fn split_recipients(payload: IssuanceInstructionsParams) -> Vec<IssuanceInstructionsParams> {
     if payload.recipients.len() <= MAX_RECIPIENTS_PER_ISSUANCE {
         return vec![payload];
@@ -239,30 +240,30 @@ fn split_recipients(payload: IssuanceInstructionsParams) -> Vec<IssuanceInstruct
             let end = (start + MAX_RECIPIENTS_PER_ISSUANCE).min(payload.recipients.len());
             IssuanceInstructionsParams {
                 recipients: payload.recipients[start..end].to_vec(),
-                quantities: payload.quantities[start..end].to_vec(),
+                units: payload.units[start..end].to_vec(),
                 ..payload.clone()
             }
         })
         .collect()
 }
 
-/// One `(chain, recipients, quantities)` issuance leg per snapshot chain: winners land on their
-/// own chain and every other chain gets an empty leg, so the series is created there too (needed
-/// for user NFT bridging).
+/// One `(chain, recipients, units)` issuance leg per snapshot chain. Winners land on their
+/// own chain, and every other chain gets an empty leg. So the series is created there too
+/// (needed for user NFT bridging).
 pub(crate) fn issuance_legs(params: &IssuanceParams) -> Vec<(u32, Vec<Address>, Vec<U256>)> {
     params
         .snapshot_chains
         .iter()
         .map(|&chain_id| {
             let mut recipients = Vec::new();
-            let mut quantities = Vec::new();
+            let mut units = Vec::new();
             for (i, &c) in params.recipient_chains.iter().enumerate() {
                 if c == chain_id {
                     recipients.push(params.recipients[i]);
-                    quantities.push(params.quantities[i]);
+                    units.push(params.units[i]);
                 }
             }
-            (chain_id, recipients, quantities)
+            (chain_id, recipients, units)
         })
         .collect()
 }
@@ -285,39 +286,13 @@ pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
 /// on the six-decimal scale independently of native COEN denomination.
 const PRODUCT_DECIMALS: u32 = 2 * PROTOCOL_AMOUNT_DECIMALS as u32;
 
-/// Cost of `amount` units in payment-token minor units, floored once above the
-/// per-unit minimum of one reference-currency minor unit. `rate` is
-/// `(COEN/target, COEN/reference)` when the token is not in the reference currency.
-pub(crate) fn settlement_units(
-    product: U256,
-    amount: U256,
-    rate: Option<(U256, U256)>,
-    payment_decimals: u8,
-) -> Result<U256> {
-    let overflow = || PrecompileError::Revert("settlement cost overflow".into());
-    // Per unit, so units batched into one call cannot share a single minimum.
-    // A priceless series stays free.
-    let product = if product.is_zero() {
-        product
-    } else {
-        product.max(SCALE_1E6_U256)
-    };
-    let obligation = product.checked_mul(amount).ok_or_else(overflow)?;
-    let (numerator, denominator) = match rate {
-        Some((to, from)) => (obligation.checked_mul(to).ok_or_else(overflow)?, from),
-        None => (obligation, U256::ONE),
-    };
-    floor_to_asset_units(numerator, denominator, PRODUCT_DECIMALS, payment_decimals)
-        .map_err(|e| IntexFactoryError::from(e).into())
-}
-
 /// Credit auction proceeds (native COEN, arriving as `amount` = msg.value) from
 /// one target chain into the day's pot. Gated to the OriginRouter. The day's
 /// payout round opens once every winning chain has routed its proceeds (or the
-/// fan-in deadline passes); `payContributorBatch` pays it out. Because proceeds
-/// arrive once per winning chain (loopback same-block, remote minutes later),
-/// the credit only accumulates - it never reverts on a repeat or ownerless day,
-/// which would strand that chain's delivery.
+/// fan-in deadline passes). `payContributorBatch` pays it out. Proceeds arrive
+/// once per winning chain (loopback same-block, remote minutes later). So the
+/// credit only accumulates. It never reverts on a repeat or ownerless day: a
+/// revert there would strand that chain's delivery.
 pub fn distribute(
     storage: &StorageHandle<'_>,
     caller: Address,
@@ -358,7 +333,7 @@ pub(crate) fn try_settle_proceeds(
     now: u64,
 ) -> Result<()> {
     // Batches drain a certified round, not this sweep, and a day gets exactly
-    // one - anything arriving after it opened missed the window.
+    // one. Anything that arrives after it opened missed the window.
     if outbe_intex::api::certified_payout_round(storage, worldwide_day.value())?.is_some() {
         let late = outbe_intex::api::take_proceeds_pot(storage, worldwide_day)?;
         if !late.is_zero() {
@@ -395,7 +370,7 @@ pub(crate) fn try_settle_proceeds(
         // Nothing to pay, and nothing left to wait for: an incomplete fan-in only
         // reaches here past its deadline. Finalize either way, so a day no chain
         // ever paid into leaves the awaiting set instead of being re-swept forever.
-        // A later arrival is still caught, and burned, by the branches above.
+        // The branches above still catch and burn a later arrival.
         outbe_intex::api::finalize_proceeds(storage, worldwide_day)?;
         return Ok(());
     }
@@ -478,7 +453,7 @@ pub(crate) fn pay_contributor_batch(
                 .ok_or(IntexFactoryError::DistributionOverflow(worldwide_day))?;
             shares.push(share);
         }
-        // One balance serves every day; bounding before any transfer keeps a
+        // One balance serves every day. Bounding before any transfer keeps a
         // bad denominator from spending another day's proceeds and from
         // draining into an insufficient-balance Fatal mid-batch.
         let total_paid = round
@@ -525,7 +500,7 @@ fn close_round_if_complete(
     if round.paid_leaf_count != contributor_count {
         return Ok(());
     }
-    // The per-batch cap keeps the sum within `amount`; a shortfall here means
+    // The per-batch cap keeps the sum within `amount`. A shortfall here means
     // the round accounting is corrupt.
     let remainder = round.amount.checked_sub(round.paid_so_far).ok_or_else(|| {
         PrecompileError::Fatal("certified payout exceeded the round amount".into())
@@ -571,7 +546,33 @@ pub(crate) fn series_unit_counts(
     })
 }
 
-/// Progress of one day's payout round; all-zero when no round is open.
+/// One owner's units of `series_id`: its current balances, Issued ones only until the
+/// series expires, and its own exercise and Gem Factory history.
+pub(crate) fn owner_balances(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    owner: Address,
+) -> Result<crate::precompile::IIntexFactory::OwnerBalances> {
+    let series = outbe_intex::api::read_series(storage, series_id)?;
+    let now = storage.timestamp()?.to::<u64>();
+    let issued = if series.effective_state(now)? == IntexState::Expired {
+        0
+    } else {
+        nft_units_of(storage, owner, issued_token_id(series_id))?
+    };
+    let settled = nft_units_of(storage, owner, settled_token_id(series_id))?;
+    Ok(crate::precompile::IIntexFactory::OwnerBalances {
+        issuedUnits: issued,
+        settledUnits: settled,
+        exercisedUnits: outbe_intex::api::owner_exercised_units(storage, series_id, owner)?,
+        gemFactoryUnits: outbe_intex::api::owner_gem_factory_units(storage, series_id, owner)?,
+        ownerUnits: issued
+            .checked_add(settled)
+            .ok_or_else(|| PrecompileError::Revert("owner units exceed u32".into()))?,
+    })
+}
+
+/// Progress of one day's payout round. It is all-zero when no round is open.
 pub(crate) fn contributor_payout_round(
     storage: &StorageHandle<'_>,
     worldwide_day: u32,
@@ -623,6 +624,9 @@ pub(crate) fn sweep_proceeds_deadlines(storage: &StorageHandle<'_>, now: u64) ->
     for worldwide_day in worldwide_days {
         let res = storage.with_checkpoint(|| try_settle_proceeds(storage, worldwide_day, now));
         if let Err(e) = res {
+            if e.sweep_failure() == SweepFailure::Propagate {
+                return Err(e);
+            }
             tracing::warn!(target: "outbe::intexfactory", worldwide_day = worldwide_day.value(), error = ?e, "proceeds sweep: skipping series");
         }
     }
@@ -646,83 +650,23 @@ fn burn_ownerless_proceeds(
     )
 }
 
-/// Settle paying the cost from `settler` in `asset` by direct ERC20 transfer. An
-/// issuance-currency payment must name the VWAP snapshot required at this block.
+/// Settle paying the cost from `settler` in `asset` by ERC20 transfer. The settled
+/// units stay with `owner`. An issuance-currency payment must name the VWAP
+/// snapshot required at this block.
 pub fn settle_intex(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
-    intex_owner: Address,
+    owner: Address,
     settler: Address,
-    amount: U256,
+    units: U256,
     asset: Address,
     snapshot_id: U256,
 ) -> Result<()> {
-    let quote = |series: &outbe_intex::SeriesRecord| {
-        let currency = accept_payment_token(storage, asset, series)?;
-        let (cost, snapshot) = cost_in_token(storage, series, asset, currency, amount)?;
-        require_snapshot(snapshot, snapshot_id)?;
-        Ok(cost)
-    };
-    settle(
-        storage,
-        series_id,
-        intex_owner,
-        settler,
-        amount,
-        quote,
-        |_, cost| deposit_payment(storage, settler, asset, cost),
-    )
-}
-
-/// Rejects an issuance-rail payment authorized for any snapshot but the required one.
-fn require_snapshot(required: Option<VwapSnapshotId>, authorized: U256) -> Result<()> {
-    match required.map(VwapSnapshotId::to_u256) {
-        Some(required) if required != authorized => Err(IntexFactoryError::VwapSnapshotMismatch {
-            authorized,
-            required,
-        }
-        .into()),
-        _ => Ok(()),
-    }
-}
-
-/// Settle paying the cost by spending a PayNote bound to this series and unit count.
-pub fn settle_intex_with_paynote(
-    storage: &StorageHandle<'_>,
-    series_id: SeriesId,
-    intex_owner: Address,
-    settler: Address,
-    amount: U256,
-    paynote_proof: &[u8],
-) -> Result<()> {
-    settle(
-        storage,
-        series_id,
-        intex_owner,
-        settler,
-        amount,
-        |_| Ok(()),
-        |series, ()| discharge_cost(storage, series_id, series, amount, paynote_proof),
-    )
-}
-
-/// `settler` is the caller; the settled units stay with `intex_owner`. `quote`
-/// prices and authorizes the payment before any state changes; `pay` then moves
-/// it after the units, inside the same checkpoint.
-fn settle<Q>(
-    storage: &StorageHandle<'_>,
-    series_id: SeriesId,
-    intex_owner: Address,
-    settler: Address,
-    amount: U256,
-    quote: impl FnOnce(&outbe_intex::SeriesRecord) -> Result<Q>,
-    pay: impl FnOnce(&outbe_intex::SeriesRecord, Q) -> Result<()>,
-) -> Result<()> {
-    if intex_owner.is_zero() || settler.is_zero() {
+    if owner.is_zero() || settler.is_zero() {
         return Err(IntexFactoryError::ZeroAddress.into());
     }
-    if amount.is_zero() {
-        return Err(IntexFactoryError::ZeroAmount.into());
+    if units.is_zero() {
+        return Err(IntexFactoryError::ZeroUnits.into());
     }
 
     let series = outbe_intex::api::read_series(storage, series_id)?;
@@ -740,46 +684,59 @@ fn settle<Q>(
         _ => return Err(IntexFactoryError::NotSettleable(series.state).into()),
     }
 
-    let balance = nft_balance_of(storage, intex_owner, issued_token_id(series_id))?;
+    let balance = nft_balance_of(storage, owner, issued_token_id(series_id))?;
     if balance.is_zero() {
         return Err(IntexFactoryError::ZeroBalance.into());
     }
-    if amount > balance {
-        return Err(IntexFactoryError::AmountExceedsBalance.into());
+    if units > balance {
+        return Err(IntexFactoryError::UnitsExceedBalance.into());
     }
 
-    let quoted = quote(&series)?;
+    let currency = accept_payment_asset(storage, asset, &series)?;
+    let (cost, snapshot) = cost_in_asset(storage, &series, asset, currency, units)?;
+    require_snapshot(snapshot, snapshot_id)?;
     storage.clone().with_checkpoint(|| {
         // The units move before payment so a token callback cannot settle them
-        // twice; a failed payment rolls the move back.
+        // twice. A failed payment rolls the move back.
         storage.call(
             INTEX_NFT1155_ADDRESS,
             U256::ZERO,
             IIntexNFT1155::settleIntexCall {
                 seriesId: series_id.into(),
-                from: intex_owner,
-                to: intex_owner,
-                amount,
+                owner,
+                units,
             }
             .abi_encode()
             .into(),
         )?;
 
-        let settled_units = u32::try_from(amount)
-            .map_err(|_| PrecompileError::Revert("settled amount exceeds u32".into()))?;
+        let settled_units = u32::try_from(units)
+            .map_err(|_| PrecompileError::Revert("settled units exceed u32".into()))?;
         outbe_intex::api::record_settled_units(storage, series_id, settled_units)?;
 
-        pay(&series, quoted)?;
+        deposit_payment(storage, settler, asset, cost)?;
 
         emit_event(
             storage,
             crate::precompile::IIntexFactory::Settled {
                 seriesId: series_id.into(),
-                intexOwner: intex_owner,
-                amount,
+                owner,
+                units,
             },
         )
     })
+}
+
+/// Rejects an issuance-rail payment authorized for any snapshot but the required one.
+fn require_snapshot(required: Option<VwapSnapshotId>, authorized: U256) -> Result<()> {
+    match required.map(VwapSnapshotId::to_u256) {
+        Some(required) if required != authorized => Err(IntexFactoryError::VwapSnapshotMismatch {
+            authorized,
+            required,
+        }
+        .into()),
+        _ => Ok(()),
+    }
 }
 
 /// Pulls exactly `cost` of `asset` from `payer` and deposits it into the reserve
@@ -846,42 +803,12 @@ fn token_balance(storage: &StorageHandle<'_>, asset: Address) -> Result<U256> {
         .map_err(|_| IntexFactoryError::TokenOperationFailed.into())
 }
 
-/// Discharges the settlement cost by spending one PayNote.
-fn discharge_cost(
-    storage: &StorageHandle<'_>,
-    series_id: SeriesId,
-    series: &outbe_intex::SeriesRecord,
-    amount: U256,
-    paynote_proof: &[u8],
-) -> Result<()> {
-    let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
-    let currency = accept_payment_token(storage, claim.asset, series)?;
-    let (cost, snapshot) = cost_in_token(storage, series, claim.asset, currency, amount)?;
-    let expected = outbe_paynote::api::settlement_context(
-        outbe_paynote::api::SettlementDomain::Intex,
-        outbe_paynote::api::intex_series_target(series_id.as_bytes()),
-        amount,
-        snapshot.map_or(U256::ZERO, VwapSnapshotId::to_u256),
-    )?;
-    if claim.context != expected {
-        return Err(IntexFactoryError::PayNoteContextMismatch {
-            expected,
-            actual: claim.context,
-        }
-        .into());
-    }
-    // Exact: the surplus of an over-spend is already in the reserve vault.
-    if claim.spend_amount != cost {
-        return Err(IntexFactoryError::PayNoteCostMismatch {
-            covered: claim.spend_amount,
-            required: cost,
-        }
-        .into());
-    }
-    Ok(())
-}
-
 // --- storage.call helpers (localnet-exercised) ---
+
+fn nft_units_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Result<u32> {
+    u32::try_from(nft_balance_of(storage, account, id)?)
+        .map_err(|_| PrecompileError::Revert("NFT balance exceeds u32".into()))
+}
 
 fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Result<U256> {
     let ret = storage.staticcall(
@@ -892,254 +819,14 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
         .map_err(|_| PrecompileError::Revert("NFT balanceOf undecodable".into()))
 }
 
-/// Whether the series has qualified; derived from finalized daily VWAPs, never stored.
-pub fn is_qualified(
-    storage: &StorageHandle<'_>,
-    series: &outbe_intex::SeriesRecord,
-) -> Result<bool> {
-    outbe_oracle::api::closed_above_floor(
-        storage.clone(),
-        series.reference_currency,
-        series.floor_price_minor,
-        first_full_day(u64::from(series.issued_at)),
-    )
-}
+mod mining;
+mod pricing;
 
-pub fn is_series_qualified(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<bool> {
-    is_qualified(storage, &outbe_intex::api::read_series(storage, series_id)?)
-}
-
-/// What settling `amount` units of `series_id` with `payment_token` costs, which
-/// of the series' two currencies that token settles on, and the VWAP snapshot an
-/// issuance-currency payment must name (zero on the reference rail). Priced exactly
-/// as `settleIntex` charges it. Rejects a token the series does not accept.
-pub fn quote_settlement(
-    storage: &StorageHandle<'_>,
-    series_id: SeriesId,
-    payment_token: Address,
-    amount: U256,
-) -> Result<(u16, U256, U256)> {
-    let series = outbe_intex::api::read_series(storage, series_id)?;
-    let currency = accept_payment_token(storage, payment_token, &series)?;
-    let settlement_currency = match currency {
-        PaymentCurrency::Reference => series.reference_currency,
-        PaymentCurrency::Issuance => series.issuance_currency,
-    };
-    let (cost, snapshot) = cost_in_token(storage, &series, payment_token, currency, amount)?;
-    Ok((
-        settlement_currency,
-        cost,
-        snapshot.map_or(U256::ZERO, VwapSnapshotId::to_u256),
-    ))
-}
-
-/// Which of the series' two currencies a payment token is denominated in.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PaymentCurrency {
-    Reference,
-    Issuance,
-}
-
-/// Cost of `amount` units in `token`'s minor units and, on the issuance rail, the
-/// VWAP snapshot both COEN legs came from. The Cost Amount is denominated in the
-/// reference currency; an issuance-currency token is charged at the snapshot's
-/// COEN cross rate, folded into the same fraction so the conversion floors once.
-fn cost_in_token(
-    storage: &StorageHandle<'_>,
-    series: &outbe_intex::SeriesRecord,
-    token: Address,
-    currency: PaymentCurrency,
-    amount: U256,
-) -> Result<(U256, Option<VwapSnapshotId>)> {
-    let payment_decimals = erc20_decimals(storage, token)?;
-    let product = series
-        .entry_price_minor
-        .checked_mul(series.promis_load_minor)
-        .ok_or_else(|| PrecompileError::Revert("cost amount overflow".into()))?;
-    let target_iso = match currency {
-        PaymentCurrency::Reference => series.reference_currency,
-        PaymentCurrency::Issuance => series.issuance_currency,
-    };
-    let (rate, snapshot) = if target_iso == series.reference_currency {
-        (None, None)
-    } else {
-        let fx = settlement_fx_rates(storage.clone(), target_iso, series.reference_currency)?
-            .ok_or(IntexFactoryError::OracleUnavailable)?;
-        let rate = (
-            fx.issuance_currency_vwap_minor,
-            fx.reference_currency_vwap_minor,
-        );
-        (Some(rate), Some(fx.snapshot))
-    };
-    Ok((
-        settlement_units(product, amount, rate, payment_decimals)?,
-        snapshot,
-    ))
-}
-
-/// Rejects `token` unless the router holds a vault for it and the token reports
-/// one of the series' two currencies; returns which one. Registration is checked
-/// first: an unregistered token need not implement `isoCode()` at all.
-fn accept_payment_token(
-    storage: &StorageHandle<'_>,
-    token: Address,
-    series: &outbe_intex::SeriesRecord,
-) -> Result<PaymentCurrency> {
-    let ret = storage.staticcall(
-        VAULT_ROUTER_ADDRESS,
-        IVaultRouter::assetVaultsCountCall { asset: token }
-            .abi_encode()
-            .into(),
-    )?;
-    let vaults = IVaultRouter::assetVaultsCountCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("assetVaultsCount undecodable".into()))?;
-    if vaults.is_zero() {
-        return Err(IntexFactoryError::PaymentTokenNotRegistered(token).into());
-    }
-
-    let iso = asset_iso_code(storage, token)?;
-    if iso == series.reference_currency {
-        return Ok(PaymentCurrency::Reference);
-    }
-    if iso == series.issuance_currency {
-        return Ok(PaymentCurrency::Issuance);
-    }
-    Err(IntexFactoryError::SettlementCurrencyMismatch(iso).into())
-}
-
-fn asset_iso_code(storage: &StorageHandle<'_>, token: Address) -> Result<u16> {
-    let ret = storage.staticcall(
-        token,
-        IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
-    )?;
-    IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("isoCode undecodable".into()))
-}
-
-fn erc20_decimals(storage: &StorageHandle<'_>, token: Address) -> Result<u8> {
-    let ret = storage.staticcall(token, IERC20::decimalsCall {}.abi_encode().into())?;
-    IERC20::decimalsCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("ERC20 decimals undecodable".into()))
-}
-
-/// minePromis: PoW-gated burn of Settled then mint of Promis. `owner` is the
-/// caller.
-pub fn mine_promis(
-    storage: &StorageHandle<'_>,
-    series_id: SeriesId,
-    owner: Address,
-    amount: U256,
-    nonce: u64,
-    auth: outbe_promisfactory::api::ModifyAuth,
-) -> Result<U256> {
-    if owner.is_zero() {
-        return Err(IntexFactoryError::ZeroAddress.into());
-    }
-    if amount.is_zero() {
-        return Err(IntexFactoryError::ZeroAmount.into());
-    }
-
-    let series = outbe_intex::api::read_series(storage, series_id)?;
-    let settled = nft_balance_of(storage, owner, settled_token_id(series_id))?;
-    if settled < amount {
-        return Err(IntexFactoryError::InsufficientSettled.into());
-    }
-
-    let promis_amount = series
-        .promis_load_minor
-        .checked_mul(amount)
-        .ok_or_else(|| PrecompileError::Revert("promis amount overflow".into()))?;
-
-    // PoW over the per-(series, owner) sequence; bump it on success.
-    let mut factory = IntexFactoryContract::new(storage.clone());
-    let seq = factory.read_mine_seq(series_id, owner)?;
-    validate_pow(owner, promis_amount, series_id, seq, nonce)?;
-    let next_seq = seq
-        .checked_add(1)
-        .ok_or_else(|| PrecompileError::Revert("mining sequence overflow".into()))?;
-    // The sequence moves only together with the burn and the mint.
-    storage.clone().with_checkpoint(|| {
-        factory.write_mine_seq(series_id, owner, next_seq)?;
-
-        // Burn Settled from owner on the NFT.
-        storage.call(
-            INTEX_NFT1155_ADDRESS,
-            U256::ZERO,
-            IIntexNFT1155::burnSettledCall {
-                owner,
-                seriesId: series_id.into(),
-                amount,
-            }
-            .abi_encode()
-            .into(),
-        )?;
-
-        let exercised = u32::try_from(amount)
-            .map_err(|_| PrecompileError::Revert("exercised units exceed the series".into()))?;
-        outbe_intex::api::record_exercised_units(storage, series_id, owner, exercised)?;
-
-        // Promis is confidential: the mint runs inside the enclave, authorized by the
-        // owner's Promis modify key (the `mac`/`opNonce` must bind `promis_amount`).
-        outbe_promisfactory::api::mint(storage.clone(), owner, promis_amount, auth)?;
-
-        emit_event(
-            storage,
-            crate::precompile::IIntexFactory::PromisMined {
-                seriesId: series_id.into(),
-                owner,
-                amount,
-                promisAmount: promis_amount,
-            },
-        )?;
-        Ok(promis_amount)
-    })
-}
-
-/// Issued token id = `uint256(seriesId)`. Mirrors `IntexNFT1155._issuedTokenId`.
-pub(crate) fn issued_token_id(series_id: SeriesId) -> U256 {
-    U256::from_be_slice(series_id.as_bytes())
-}
-
-/// Settled token id = the series id with `SETTLED_TAG` set. A series id is 14 bytes, so the issued
-/// space ends at 2**112 and the bit above it distinguishes the classes without a hash. Mirrors
-/// `IntexNFT1155._settledTokenId`; the two derivations must stay identical.
-pub(crate) fn settled_token_id(series_id: SeriesId) -> U256 {
-    issued_token_id(series_id) | SETTLED_TAG
-}
-
-/// PoW hash: `SHA256(owner ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)`.
-///
-/// `owner` and `seq` earn their place here, unlike in the shared scheme: the
-/// owner arrives as a call argument, and the sequence rises with every
-/// successful partial mining, so one solved nonce cannot serve the next.
-pub(crate) fn compute_pow_hash(
-    owner: Address,
-    promis_amount: U256,
-    series_id: SeriesId,
-    seq: u32,
-    nonce: u64,
-) -> [u8; 32] {
-    let mut data = Vec::with_capacity(20 + 32 + SERIES_ID_LEN + 4 + 8);
-    data.extend_from_slice(owner.as_slice());
-    data.extend_from_slice(&promis_amount.to_be_bytes::<32>());
-    data.extend_from_slice(series_id.as_bytes());
-    data.extend_from_slice(&seq.to_be_bytes());
-    data.extend_from_slice(&nonce.to_be_bytes());
-
-    let digest = ring::digest::digest(&ring::digest::SHA256, &data);
-    let mut out = [0u8; 32];
-    out.copy_from_slice(digest.as_ref());
-    out
-}
-
-/// The preimage is Intex's own; the difficulty it must clear is the protocol's.
-pub(crate) fn validate_pow(
-    owner: Address,
-    promis_amount: U256,
-    series_id: SeriesId,
-    seq: u32,
-    nonce: u64,
-) -> Result<()> {
-    let hash = compute_pow_hash(owner, promis_amount, series_id, seq, nonce);
-    outbe_common::pow::meets_difficulty(&hash).map_err(|e| IntexFactoryError::from(e).into())
-}
+pub use mining::mine_promis;
+#[cfg(test)]
+pub(crate) use mining::{compute_pow_hash, validate_pow};
+pub(crate) use mining::{issued_token_id, settled_token_id};
+#[cfg(test)]
+pub(crate) use pricing::settlement_units;
+use pricing::{accept_payment_asset, cost_in_asset};
+pub use pricing::{is_qualified, is_series_qualified, quote_settlement};

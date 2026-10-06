@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """RCFI reference implementation - golden oracle for the Rust `outbe-fidelity` crate.
 
-This is the PDF "Retention component - time decay" reference (`decay.py`), trimmed
-to the pure model (no matplotlib/pandas/numpy) plus a stdlib-only golden-vector
-emitter. The Rust crate's cohort engine must reproduce these vectors.
+This is the PDF "Retention component - time decay" reference (`decay.py`). It is
+trimmed to the pure model (no matplotlib/pandas/numpy), plus a stdlib-only
+golden-vector emitter. The Rust crate's cohort engine must reproduce these vectors.
 
 Regenerate the committed fixture with:
 
     python3 reference/decay.py --emit-golden > tests/fixtures/rcfi_golden.json
 
-Amounts are emitted in six-decimal GRATIS units;
-timestamps are UTC unix seconds. RCFI / efficiency / d_age are the float-model
-reference values the Rust integer model is checked against (+/-1 day / +/-1e-3).
+The emitter writes amounts in six-decimal GRATIS units. Timestamps are UTC unix
+seconds. RCFI / efficiency / d_age are the float-model reference values. The Rust
+integer model is checked against them (+/-1 day / +/-1e-3).
 """
 
 import json
@@ -25,7 +25,7 @@ AMOUNT_SCALE = 10 ** 6               # GRATIS-unit per whole GRATIS
 
 
 def get_decayed_time(days_passed):
-    """Tdec = L * (1 - (1/2)^(T/H)); negative ages clamp to 0."""
+    """Tdec = L * (1 - (1/2)^(T/H)). Negative ages clamp to 0."""
     if days_passed < 0:
         return 0.0
     return L_CONST * (1 - math.pow(0.5, days_passed / H_DAYS))

@@ -41,7 +41,7 @@ const WCOEN_UNITS_PER_PROTOCOL_UNIT: u128 = 1_000_000_000_000;
 /// The launch decade: 100 000 PROMIS at COEN/USD = 0.001.
 const LAUNCH_EXPONENT: u32 = 11;
 
-/// The anchor a 0.001 launch captures; every deadband fixture below runs on it.
+/// The anchor a 0.001 launch captures. Every deadband fixture below runs on it.
 const ANCHOR_DIGITS: u32 = LAUNCH_EXPONENT + 4;
 
 fn ladder(current: Option<u32>, rate_minor: u128) -> u32 {
@@ -86,7 +86,7 @@ fn a_launch_anchor_below_the_stored_exponent_cannot_underflow_the_decade() {
     runtime::promis_load_exponent(27, Some(0), U256::from(1u8));
 }
 
-/// The override is an e2e affordance; a production build must run the ladder.
+/// The override is an e2e affordance. A production build must run the ladder.
 #[test]
 #[cfg(not(feature = "e2e-test"))]
 fn a_production_build_has_no_load_override() {
@@ -138,7 +138,7 @@ fn an_anchored_chain_takes_the_anchors_answer() {
 
 #[test]
 fn the_load_steps_down_only_past_the_widened_upper_edge() {
-    // The 0.01 boundary sits at 10_000; the band pushes the step to 10_200.
+    // The 0.01 boundary sits at 10_000. The band pushes the step to 10_200.
     assert_eq!(ladder(Some(LAUNCH_EXPONENT), 10_000), LAUNCH_EXPONENT);
     assert_eq!(ladder(Some(LAUNCH_EXPONENT), 10_199), LAUNCH_EXPONENT);
     assert_eq!(ladder(Some(LAUNCH_EXPONENT), 10_200), LAUNCH_EXPONENT - 1);
@@ -215,22 +215,22 @@ fn targets_stub(chains: &[u32]) -> Bytes {
 fn with_targets<R>(chains: &[u32], f: impl FnOnce(StorageHandle) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
-    // Stub OriginRouter: `targetsOf` returns the snapshot; send* returns are ignored by the runtime.
+    // Stub OriginRouter: `targetsOf` returns the snapshot. The runtime ignores send* returns.
     storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(chains));
-    // Stub IntexNFT1155: createSeries/settle/burnSettled are void; balanceOf returns 0 (32 bytes).
+    // Stub IntexNFT1155: createSeries/settle/burnSettled are void. balanceOf returns 0 (32 bytes).
     storage.stub_sub_call_at(
         outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
         Bytes::from(vec![0u8; 32]),
     );
     StorageHandle::enter(&mut storage, |handle| {
-        // These cases assert the PROD intex terms; an unset profile resolves by
+        // These cases assert the PROD intex terms. An unset profile resolves by
         // chain id, and the test chain is not mainnet.
         outbe_intexfactory::schema::IntexFactoryContract::new(handle.clone())
             .config_profile
             .write(outbe_intexfactory::config::PROFILE_PROD)
             .unwrap();
         // A day is priced when its auction starts, so every day a start can land on
-        // needs a price here - a day briefed later reads a later one.
+        // needs a price here. A day briefed later reads a later one.
         for day in 0..5 {
             seed_rate(&handle, NOW + day * 86_400, ENTRY_PRICE);
         }
@@ -300,7 +300,7 @@ fn brief_at_rate(
     brief_at_rate_from(s, worldwide_day, desis_limit_minor, rate, green, NOW)
 }
 
-/// The same, for a day briefed at `now` - which is what fixes both its schedule
+/// The same, for a day briefed at `now`. The brief time fixes both its schedule
 /// anchor and the UTC day its start will price from.
 fn brief_at_rate_from(
     s: &StorageHandle,
@@ -363,7 +363,7 @@ fn mark_done(s: &StorageHandle, chain: u32, total_batches: u16, total_bids: u32)
 }
 
 /// Relay `n` bids the way the codec does: batches no wider than one message, then
-/// the done marker. A single oversized batch is refused at the intake.
+/// the done marker. The intake refuses a single oversized batch.
 fn relay_bids(s: &StorageHandle, chain: u32, n: u8, rate: u32) {
     let cap = u8::try_from(crate::constants::MAX_BIDS_PER_BATCH).unwrap();
     let total_batches = u16::from(n.div_ceil(cap));
@@ -775,7 +775,7 @@ fn dispatch_auction_brief_oversized_limit_returns_typed_full_carry_over() {
             )
             .unwrap(),
             AuctionBriefReceipt::RejectedToCarryOver {
-                reason: AuctionBriefRejectionReason::SupplyExceedsAuctionDomain,
+                reason: AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
                 desis_limit_minor: U256::MAX,
                 max_accepted: U256::from(u128::MAX),
             }
@@ -793,11 +793,11 @@ fn dispatch_auction_brief_oversized_limit_returns_typed_full_carry_over() {
     assert_eq!(logs.len(), 1);
     let event = IDesis::AuctionBriefRejectedToCarryOver::decode_log_data(&logs[0]).unwrap();
     assert_eq!(event.worldwideDay, WORLDWIDE_DAY.value());
-    assert_eq!(event.supply, U256::MAX);
-    assert_eq!(event.maxAccepted, U256::from(u128::MAX));
+    assert_eq!(event.desisLimitMinor, U256::MAX);
+    assert_eq!(event.maxAcceptedMinor, U256::from(u128::MAX));
     assert_eq!(
         event.reasonCode,
-        AuctionBriefRejectionReason::SupplyExceedsAuctionDomain.code()
+        AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain.code()
     );
 }
 
@@ -832,7 +832,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
             )
             .unwrap(),
             AuctionBriefReceipt::RejectedToCarryOver {
-                reason: AuctionBriefRejectionReason::SupplyExceedsAuctionDomain,
+                reason: AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
                 desis_limit_minor: supply,
                 max_accepted: U256::from(u128::MAX),
             }
@@ -846,11 +846,11 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
         crate::precompile::IDesis::AuctionBriefRejectedToCarryOver::decode_log_data(&logs[0])
             .unwrap();
     assert_eq!(event.worldwideDay, WORLDWIDE_DAY.value());
-    assert_eq!(event.supply, supply);
-    assert_eq!(event.maxAccepted, U256::from(u128::MAX));
+    assert_eq!(event.desisLimitMinor, supply);
+    assert_eq!(event.maxAcceptedMinor, U256::from(u128::MAX));
     assert_eq!(
         event.reasonCode,
-        AuctionBriefRejectionReason::SupplyExceedsAuctionDomain.code()
+        AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain.code()
     );
 }
 
@@ -1064,8 +1064,8 @@ fn a_start_past_the_minimum_commit_window_cancels_the_day_and_returns_its_limit(
     );
 }
 
-/// A late day goes out as a red START, so a router that cannot take it keeps the
-/// day briefed for the next tick instead of cancelling it unannounced.
+/// A late day goes out as a red START. A router that cannot take it therefore keeps
+/// the day briefed for the next tick and does not cancel it unannounced.
 #[test]
 #[cfg(not(feature = "e2e-test"))]
 fn a_late_day_is_cancelled_only_once_its_red_start_is_sent() {
@@ -1089,8 +1089,9 @@ fn ocomp_brief_at_now(s: &StorageHandle) {
     .expect("strict request brief");
 }
 
-/// An OCOMP brief carries its request time, so a quorum that lands hours into the day
-/// still anchors to its midnight, and the start measures what is left of the window.
+/// An OCOMP brief carries its request time. A quorum that lands hours into the day
+/// therefore still anchors to its midnight. The start therefore measures what is left of
+/// the window.
 #[test]
 #[cfg(not(feature = "e2e-test"))]
 fn a_late_ocomp_brief_cancels_its_day() {
@@ -1102,7 +1103,7 @@ fn a_late_ocomp_brief_cancels_its_day() {
 }
 
 /// A day that never started is still a late start past its whole issuance window, so
-/// its targets hear of it; only a started day is retired as overdue.
+/// its targets hear of it. Only a started day is retired as overdue.
 #[test]
 #[cfg(not(feature = "e2e-test"))]
 fn a_brief_past_the_issuance_window_is_still_a_late_start() {
@@ -1113,8 +1114,8 @@ fn a_brief_past_the_issuance_window_is_still_a_late_start() {
     );
 }
 
-/// Past its issuance window a day whose START the router still refuses is retired as
-/// overdue, so its limit does not wait on the router forever.
+/// Past its issuance window, a day whose START the router still refuses is retired as
+/// overdue. Its limit therefore does not wait on the router forever.
 #[test]
 #[cfg(not(feature = "e2e-test"))]
 fn a_briefed_day_the_router_never_takes_is_retired_past_its_issuance_window() {
@@ -1220,7 +1221,10 @@ fn schedule_arms_the_clearing_gate_at_reveal_end() {
         );
         assert_eq!(contract.clearing_initiated.read(&WORLDWIDE_DAY).unwrap(), 1);
         assert_eq!(
-            contract.pending_supply_intex.read(&WORLDWIDE_DAY).unwrap(),
+            contract
+                .pending_desis_limit_units
+                .read(&WORLDWIDE_DAY)
+                .unwrap(),
             10
         );
         assert_eq!(contract.gate_active_count.read().unwrap(), 1);
@@ -1317,8 +1321,8 @@ fn schedule_retires_an_overdue_day() {
     assert!(found, "expected AuctionOverdue event");
 }
 
-/// One decade up the rate ladder the same PROMIS buys ten times the Intexes, and
-/// the bid floor has to be restated with it or it sits above the whole tirage.
+/// One decade up the rate ladder, the same PROMIS buys ten times the Intexes. The
+/// bid floor has to be restated with it, or it sits above the whole tirage.
 #[test]
 fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
     with_storage(|s| {
@@ -1327,8 +1331,8 @@ fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
         assert_eq!(clear(&s).issued_units, 100);
 
         // Ten times the rate of the fixture, which is past the deadband. The day
-        // is briefed a day later so its start reads a different closed UTC day,
-        // which is the only way the two days can be quoted differently at all.
+        // is briefed a day later so its start reads a different closed UTC day.
+        // That is the only way the two days can be quoted differently at all.
         brief_at_rate_from(
             &s,
             NEXT_WORLDWIDE_DAY,
@@ -1352,7 +1356,7 @@ fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
         );
         assert_eq!(
             contract
-                .pending_supply_intex
+                .pending_desis_limit_units
                 .read(&NEXT_WORLDWIDE_DAY)
                 .unwrap(),
             1_000,
@@ -1399,7 +1403,7 @@ fn process_bids_in_non_revealing_stage_fails() {
     with_storage(|s| {
         brief(&s, true);
         runtime::schedule_tick(&s, NOW).unwrap();
-        // Stage is Started, not Revealing - must be rejected.
+        // Stage is Started, not Revealing. The call must be rejected.
         assert!(runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
@@ -1468,7 +1472,7 @@ fn process_bids_accumulate_across_batches() {
         open_revealing(&s);
 
         // Two batches (total_batches=2) accumulate for the chain. Intake stays
-        // Revealing - nothing auto-transitions; the chain finalizes only on its BIDS_DONE marker.
+        // Revealing. Nothing auto-transitions. The chain finalizes only on its BIDS_DONE marker.
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
@@ -1660,8 +1664,8 @@ fn no_bids_clears_as_no_sale() {
         .unwrap();
         mark_done(&s, SRC_CHAIN, 1, 0);
 
-        // Clearing a zero-bid auction is a no-sale: Cleared with 0 issued and no winners (the
-        // AuctionResult(0,0,0) lets the target chain finalize to Completed instead of stalling).
+        // Clearing a zero-bid auction is a no-sale: Cleared with 0 issued and no winners. The
+        // AuctionResult(0,0,0) lets the target chain finalize to Completed instead of stalling.
         let result = clear(&s);
         assert_eq!(result.issued_units, 0);
         assert!(result.winners.is_empty());
@@ -1770,6 +1774,51 @@ fn a_limit_short_of_one_unit_is_cancelled_at_start() {
     let event = below_one_unit(&events).expect("AuctionCancelledBelowOneUnit");
     assert_eq!(event.desisLimitMinor, U256::from(LOAD_MINOR - 1));
     assert_eq!(event.promisLoadMinor, LOAD_MINOR);
+}
+
+fn allocation_records(
+    events: &[alloy_primitives::LogData],
+) -> Vec<crate::precompile::IDesis::DesisAllocationRecorded> {
+    use crate::precompile::IDesis::DesisAllocationRecorded;
+    use alloy_sol_types::SolEvent;
+    events
+        .iter()
+        .filter_map(|log| DesisAllocationRecorded::decode_log_data(log).ok())
+        .collect()
+}
+
+#[test]
+fn a_day_cancelled_at_start_records_a_zero_desis_allocation() {
+    let (stage, _, events) = start_day(LOAD_MINOR - 1, true);
+
+    assert_eq!(stage, AuctionStage::Cancelled);
+    let records = allocation_records(&events);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].worldwideDay, WORLDWIDE_DAY.value());
+    assert_eq!(records[0].desisLimitMinor, U256::from(LOAD_MINOR - 1));
+    assert_eq!(records[0].desisAllocationMinor, U256::ZERO);
+}
+
+#[test]
+fn an_overdue_day_records_a_zero_desis_allocation() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(NOW));
+    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+    storage.stub_sub_call_at(
+        outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
+        Bytes::from(vec![0u8; 32]),
+    );
+    StorageHandle::enter(&mut storage, |s| {
+        brief(&s, true);
+        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + 3 * 86_400).unwrap();
+    });
+
+    let records =
+        allocation_records(storage.get_events(outbe_primitives::addresses::DESIS_ADDRESS));
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].desisLimitMinor, U256::from(10 * LOAD_MINOR));
+    assert_eq!(records[0].desisAllocationMinor, U256::ZERO);
 }
 
 #[test]
@@ -2169,6 +2218,43 @@ fn force_clear_waits_then_fires_when_all_done() {
     });
 }
 
+/// A clearing names its Desis Allocation and returns the unused Desis Limit.
+#[test]
+fn clearing_reports_the_desis_allocation_and_the_unused_limit() {
+    use crate::precompile::IDesis;
+    use alloy_sol_types::SolEvent;
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(NOW));
+    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+    storage.stub_sub_call_at(
+        outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
+        Bytes::from(vec![0u8; 32]),
+    );
+    StorageHandle::enter(&mut storage, |s| {
+        open_clearing(&s, 3);
+        relay_bids(&s, SRC_CHAIN, 1, 200);
+        assert_eq!(clear(&s).issued_units, 1);
+    });
+
+    let logs = storage.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
+    let records = allocation_records(logs);
+    assert_eq!(
+        records.len(),
+        1,
+        "the clearing records its Desis Allocation once"
+    );
+    let allocation = &records[0];
+    assert_eq!(allocation.worldwideDay, WORLDWIDE_DAY.value());
+    assert_eq!(allocation.desisLimitMinor, U256::from(3 * LOAD_MINOR));
+    assert_eq!(allocation.desisAllocationMinor, U256::from(LOAD_MINOR));
+    let unused = logs
+        .iter()
+        .find_map(|log| IDesis::UnusedDesisLimitReported::decode_log_data(log).ok())
+        .expect("the clearing returns its unused Desis Limit");
+    assert_eq!(unused.unusedDesisLimitMinor, U256::from(2 * LOAD_MINOR));
+}
+
 /// After the deadline, clearing proceeds without the missing chain and reports it skipped.
 #[test]
 fn force_clear_skips_missing_chain_after_deadline() {
@@ -2270,9 +2356,10 @@ fn test_iface_id_matches_selector_xor() {
     use alloy_sol_types::SolCall;
 
     // `IDESIS_INTERFACE_ID` is what OriginRouter probes: `type(IDesis).interfaceId` of the
-    // router-facing interface (contracts/intex/src/origin/interfaces/IDesis.sol) - the four
-    // functions it declares. The precompile's extra diagnostic views (getChainBidsCount,
-    // isChainDone) are not part of that interface, so they are excluded from the XOR.
+    // router-facing interface (contracts/intex/src/origin/interfaces/IDesis.sol). It covers the
+    // four functions that interface declares. The precompile's extra diagnostic views
+    // (getChainBidsCount, isChainDone) are not part of that interface, so they are excluded from
+    // the XOR.
     let xor: [u8; 4] = [
         IDesis::processBidsBatchCall::SELECTOR,
         IDesis::processBidsDoneCall::SELECTOR,
@@ -2298,9 +2385,9 @@ fn test_iface_id_matches_selector_xor() {
 
 // --- Clearing: one series per currency pair ---
 
-/// Brief `units` of Desis Limit against a day that priced exactly `references` -
-/// the fixture's own currency included only when it is one of them - and drive the
-/// schedule until the clearing gate is armed.
+/// Brief `units` of Desis Limit against a day that priced exactly `references`, and
+/// drive the schedule until the clearing gate is armed. The fixture's own currency is
+/// included only when it is one of the `references`.
 fn open_clearing_priced(s: &StorageHandle, units: u128, references: &[u16]) {
     brief_at(s, WORLDWIDE_DAY, units * LOAD_MINOR, true);
     unprice_day(s, NOW);
@@ -2400,7 +2487,7 @@ fn a_reference_currency_whose_letter_is_taken_is_dropped_from_the_day() {
 
 #[test]
 fn escrow_basis_is_promis_load() {
-    // wCOEN escrow basis = promis_load per Intex; entry no longer drives it.
+    // wCOEN escrow basis = promis_load per Intex. Entry no longer drives it.
     let cfg = AuctionConfig::from_reference_prices(
         vec![crate::schema::ReferenceCurrencyPrice {
             iso_code: REFERENCE_ISO,
@@ -2426,7 +2513,7 @@ fn a_chains_winners_ship_in_chunks_the_encoder_can_carry() {
         2
     );
 
-    // The arrival set's ceiling; one winner more is refused rather than truncated.
+    // The arrival set's ceiling. One winner more is refused rather than truncated.
     let ceiling = REFUND_CHUNK_LEN * MAX_REFUND_CHUNKS;
     assert_eq!(
         runtime::refund_chunk_count(ceiling).unwrap(),
@@ -2575,7 +2662,7 @@ fn a_day_without_a_strike_price_carries_the_launch_load_and_anchors_nothing() {
 
 #[test]
 fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
-    // An oracle gap prices nothing - the same condition that makes a day red.
+    // An oracle gap prices nothing. That is the same condition that makes a day red.
     // Settlement still has to complete, so the day must reach a terminal stage
     // instead of failing the brief.
     with_storage(|s| {
@@ -2596,7 +2683,7 @@ fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
             0,
             "and leaves the schedule"
         );
-        // It was briefed green, so it holds the day's PROMIS - unlike a red day, which
+        // It was briefed green, so it holds the day's PROMIS. A red day, unlike it,
         // is briefed with none. Cancelling it must give that limit back.
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(s.clone())
@@ -2612,7 +2699,7 @@ fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
 
 #[test]
 fn a_relayed_bid_naming_an_unspellable_currency_is_refused_at_intake() {
-    // A code no series id can spell would otherwise surface at clearing, which is the
+    // A code no series id can spell would otherwise surface at clearing. Clearing is the
     // one place that cannot recover: the day would revert every block until it expired.
     let chain = 10u32;
     with_targets(&[chain], |s| {
@@ -2785,7 +2872,7 @@ fn a_repeated_marker_is_a_no_op_and_a_differing_one_is_reported() {
             bids(1, 200),
         )
         .unwrap();
-        // The marker claims 2 batches / 3 bids while the second batch is still missing; the repeat
+        // The marker claims 2 batches / 3 bids while the second batch is still missing. The repeat
         // is a no-op and the disagreeing marker loses to the first.
         for total_bids in [3u32, 3, 5] {
             runtime::process_bids_done(
@@ -2837,8 +2924,8 @@ fn dispatch_auction_brief_oversized_limit_rejects_under_the_reject_policy() {
         .is_empty());
 }
 
-/// A round is sized from the busiest of the chain's recent days, floored at a small day's worth: a miss
-/// only costs another round, so the estimate has to be close, not exact.
+/// A round is sized from the busiest of the chain's recent days, floored at a small day's worth.
+/// A miss only costs another round, so the estimate has to be close, not exact.
 #[test]
 fn a_clearing_round_is_sized_from_the_chains_recent_days() {
     let day = WorldwideDay::new(20260501);
@@ -2866,3 +2953,6 @@ fn a_clearing_round_is_sized_from_the_chains_recent_days() {
         );
     });
 }
+
+#[cfg(not(feature = "e2e-test"))]
+mod capacity_conservation;

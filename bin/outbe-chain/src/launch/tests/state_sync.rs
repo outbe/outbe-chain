@@ -6,8 +6,20 @@ use std::{fs, path::Path, sync::Arc};
 use alloy_primitives::B256;
 use outbe_node::projection::{prepare_offchain_data_projection, OffchainDataProjectionConfig};
 use outbe_offchain_data::{FinalizedBlock, OffchainDataProjection, ProjectionConfig};
-use outbe_offchain_storage::{RocksDbStorage, StorageBackend, StorageConfig};
+use outbe_offchain_storage::{PartitionedStorage, StorageBackend, StorageConfig};
 use outbe_primitives::projection::{ProjectionCheckpoint, ProjectionStatus};
+
+fn partition_fixture(root: &Path) -> Arc<PartitionedStorage> {
+    let source = Arc::new(
+        outbe_offchain_storage::partitioned::adapters::RocksPartitionDataSource::open(root)
+            .unwrap(),
+    );
+    source.complete_recovery().unwrap();
+    Arc::new(PartitionedStorage::new(
+        source,
+        outbe_offchain_data::entity_partition_routing().unwrap(),
+    ))
+}
 
 fn copy_stopped_directory(source: &Path, destination: &Path) {
     fs::create_dir_all(destination).unwrap();
@@ -33,7 +45,7 @@ fn copied_projection_uses_native_checkpoint_and_recipient_configuration_on_each_
     };
     let donor_storage = donor.path().join("projection");
     {
-        let storage = Arc::new(RocksDbStorage::open(&donor_storage).unwrap());
+        let storage = partition_fixture(&donor_storage);
         let mut projection =
             OffchainDataProjection::open(config, storage.clone(), storage).unwrap();
         for height in 1..=3 {
@@ -48,7 +60,7 @@ fn copied_projection_uses_native_checkpoint_and_recipient_configuration_on_each_
     }
     let recipient_storage = recipient.path().join("projection");
     copy_stopped_directory(&donor_storage, &recipient_storage);
-    assert!(recipient_storage.join("CURRENT").is_file());
+    assert!(recipient_storage.join("system/shared/CURRENT").is_file());
     donor.close().unwrap();
     assert!(!donor_storage.exists());
 
@@ -95,14 +107,18 @@ fn copied_projection_uses_native_checkpoint_and_recipient_configuration_on_each_
                 }),
             }
         );
+        let completion = prepared.storage_completion();
         drop(prepared);
+        completion
+            .wait_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
         let (_, public) =
             super::load_reth_p2p_node_host_signer(&network, default_secret.clone()).unwrap();
         assert_eq!(public, own_public);
         assert_eq!(fs::read(&secret).unwrap(), own_key_bytes);
         assert!(!default_secret.exists());
         if height == 3 {
-            let storage = Arc::new(RocksDbStorage::open(&recipient_storage).unwrap());
+            let storage = partition_fixture(&recipient_storage);
             let mut projection =
                 OffchainDataProjection::open(config, storage.clone(), storage).unwrap();
             projection
@@ -125,14 +141,27 @@ fn copied_projection_uses_native_checkpoint_and_recipient_configuration_on_each_
     .err()
     .expect("snapshot height is not a replacement for native start_block");
     assert!(error.to_string().contains("start_block 1"));
+    // A rejected preflight also owns an asynchronous storage close. Observe it
+    // before opening storage so the process cannot exit while RocksDB still closes.
+    let completions = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed = completions.clone();
     assert!(
-        prepare_offchain_data_projection(OffchainDataProjectionConfig {
-            chain_id: config.chain_id,
-            genesis_hash: B256::repeat_byte(0x72),
-            storage,
-        })
+        outbe_node::projection::prepare_offchain_data_projection_with_retention(
+            OffchainDataProjectionConfig {
+                chain_id: config.chain_id,
+                genesis_hash: B256::repeat_byte(0x72),
+                storage,
+            },
+            Arc::new(outbe_node::ocomp::retention::SharedOcompRetentionSelector::new()),
+            move |completion| observed.lock().unwrap().push(completion),
+        )
         .is_err()
     );
+    let completions = completions.lock().unwrap();
+    assert_eq!(completions.len(), 1);
+    completions[0]
+        .wait_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
     assert_eq!(fs::read(&secret).unwrap(), own_key_bytes);
 }
 
@@ -161,9 +190,6 @@ mod copied_unequal_ce_projection {
         addresses::COMPRESSED_ENTITIES_ADDRESS,
         chain::TESTNET_CHAIN_ID,
         projection::{ProjectionCheckpoint, ProjectionReadinessHandle, ProjectionStatus},
-        reshare_artifact::{
-            encode_outbe_block_artifacts, CompressedEntitiesRootArtifact, OutbeBlockArtifacts,
-        },
         OutbeHeader, OutbePrimitives,
     };
     use reth_ethereum::{
@@ -221,23 +247,12 @@ mod copied_unequal_ce_projection {
     }
 
     fn headers() -> Vec<OutbeHeader> {
-        let mut headers = vec![genesis_header()];
-        for height in 1..=H {
-            headers.push(OutbeHeader::new(Header {
-                number: height,
-                parent_hash: headers.last().unwrap().hash_slow(),
-                extra_data: encode_outbe_block_artifacts(&OutbeBlockArtifacts {
-                    compressed_entities_root: Some(CompressedEntitiesRootArtifact {
-                        commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                        r_sealed: genesis_marker().new_root,
-                    }),
-                    ..Default::default()
-                })
-                .unwrap(),
-                ..Default::default()
-            }));
-        }
-        headers
+        outbe_consensus::test_harness::linked_headers(
+            genesis_header(),
+            H,
+            ACTIVE_COMMITMENT_SCHEME,
+            || genesis_marker().new_root,
+        )
     }
 
     fn point(headers: &[OutbeHeader], height: u64) -> ProjectionCheckpoint {
@@ -315,8 +330,8 @@ mod copied_unequal_ce_projection {
         (FinalizedProjectionSink::new(ready), readiness)
     }
 
-    // Native empty-body storage fixture: no EVM execution/state-root proof is
-    // claimed. Actual CE roots, receipts and historical headers are read below.
+    // Native empty-body storage fixture: it claims no EVM execution/state-root proof.
+    // The code below reads the actual CE roots, receipts and historical headers.
     fn seed_reth(root: &Path, headers: &[OutbeHeader]) {
         let db = init_db(root.join("db"), DatabaseArguments::test()).unwrap();
         let tx = db.tx_mut().unwrap();
@@ -344,7 +359,7 @@ mod copied_unequal_ce_projection {
         tx.put::<tables::PlainAccountState>(COMPRESSED_ENTITIES_ADDRESS, Default::default())
             .unwrap();
         // CE never changes in these blocks, so the actual native root slot is
-        // identical at every queried historical height; no state-provider stub.
+        // identical at every queried historical height. No state-provider stub.
         tx.put::<tables::PlainStorageState>(
             COMPRESSED_ENTITIES_ADDRESS,
             StorageWord {
@@ -353,7 +368,7 @@ mod copied_unequal_ce_projection {
             },
         )
         .unwrap();
-        // A nonzero genesis slot must also be indexed as previously written.
+        // The history index must also record a nonzero genesis slot as previously written.
         // Otherwise native historical lookup classifies it as NotYetWritten.
         type HistoryKey = <tables::StoragesHistory as Table>::Key;
         type HistoryBlocks = <tables::StoragesHistory as Table>::Value;
@@ -482,7 +497,7 @@ mod copied_unequal_ce_projection {
                 .len()
                 > 0
         );
-        assert!(recipient.join("projection/CURRENT").is_file());
+        assert!(recipient.join("projection/system/shared/CURRENT").is_file());
     }
 
     fn assert_pair(root: &Path, headers: &[OutbeHeader], q: u64, p: u64) {
@@ -580,8 +595,8 @@ mod copied_unequal_ce_projection {
                 let tree = open_tree(recipient.path());
                 let marker = tree.finalized_marker().unwrap();
                 let source = Arc::new(RethDurableCeState::new(provider.clone()));
-                // Equal/header/root prerequisites survive; only H's replay body
-                // and receipt lookup was cut. No common marker is manufactured.
+                // Equal/header/root prerequisites survive. The test cut only H's replay
+                // body and receipt lookup. The test manufactures no common marker.
                 assert!(source.durable_checkpoint(H).unwrap().is_some());
                 assert_eq!(
                     provider.block_hash(H).unwrap(),

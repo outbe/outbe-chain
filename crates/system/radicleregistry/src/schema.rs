@@ -5,8 +5,12 @@ use outbe_primitives::addresses::RADICLE_REGISTRY_ADDRESS;
 /// Consensus storage layout for the V1 Radicle repository registry.
 ///
 /// Slots:
-/// 0 repository_count; 1 repository_by_index; 2 repository_index (index + 1);
-/// 3 repository_registrant; 4 registry_generation; 5 config_max_repositories.
+/// - 0 repository_count
+/// - 1 repository_by_index
+/// - 2 repository_index (index + 1)
+/// - 3 repository_registrant
+/// - 4 registry_generation
+/// - 5 config_max_repositories
 #[storage_schema]
 #[contract(addr = RADICLE_REGISTRY_ADDRESS)]
 pub struct RadicleRegistry {

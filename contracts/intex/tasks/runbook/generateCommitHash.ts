@@ -14,9 +14,10 @@ import { lazy, toOptional } from "../../scripts/shared/taskUtils.js";
 
 interface GenerateCommitHashTaskArgs {
   worldwideDay?: string;
-  bidder?: string;
-  quantity?: string;
+  units?: string;
   bidRate?: string;
+  issuanceCurrency?: string;
+  referenceCurrency?: string;
   chainId?: string;
   auctionContract?: string;
 }
@@ -38,13 +39,15 @@ const generateCommitHashAction = async (args: GenerateCommitHashTaskArgs) => {
   // Parse parameters. `--worldwide-day` (yyyymmdd) resolves to the uint32 worldwide day
   // that keys the auction; it falls back to today's date when omitted.
   const worldwideDay = resolveWorldwideDay(toOptional(args.worldwideDay));
-  const bidder = (toOptional(args.bidder) || account.address) as `0x${string}`;
-  const quantity = BigInt(toOptional(args.quantity) || "5");
+  const bidder = account.address;
+  const units = BigInt(toOptional(args.units) || "5");
   const bidRate = BigInt(toOptional(args.bidRate) || "800000");
+  const issuanceCurrency = Number(toOptional(args.issuanceCurrency) || "840");
+  const referenceCurrency = Number(toOptional(args.referenceCurrency) || "840");
   const chainId = BigInt(toOptional(args.chainId) || "97");
 
-  // EIP-712 domain binds the deployment address; signature is invalid against any other
-  // `IntexAuction` instance.
+  // The EIP-712 domain binds the deployment address. The signature is invalid against any
+  // other `IntexAuction` instance.
   const verifyingContract = (toOptional(args.auctionContract) ||
     process.env.INTEX_AUCTION_ADDRESS) as `0x${string}` | undefined;
   if (!verifyingContract || !isAddress(verifyingContract)) {
@@ -58,13 +61,15 @@ const generateCommitHashAction = async (args: GenerateCommitHashTaskArgs) => {
   console.log("\n=== Generating Commit Hash (EIP-712) ===");
   console.log("worldwideDay:", worldwideDay);
   console.log("bidder:", bidder);
-  console.log("quantity:", quantity.toString());
+  console.log("units:", units.toString());
   console.log("bidRate:", bidRate.toString());
+  console.log("issuanceCurrency:", issuanceCurrency);
+  console.log("referenceCurrency:", referenceCurrency);
   console.log("chainId:", chainId.toString());
   console.log("verifyingContract:", verifyingContract);
 
-  // EIP-712 typed data - must mirror `IntexAuction.REVEAL_BID_TYPEHASH` and the contract's
-  // EIP712("IntexAuction", "1") domain.
+  // EIP-712 typed data. It must mirror `IntexAuction.REVEAL_BID_TYPEHASH` and the
+  // contract's EIP712("IntexAuction", "1") domain.
   const signature = await account.signTypedData({
     domain: {
       name: "IntexAuction",
@@ -76,16 +81,20 @@ const generateCommitHashAction = async (args: GenerateCommitHashTaskArgs) => {
       RevealBid: [
         { name: "worldwideDay", type: "uint32" },
         { name: "bidder", type: "address" },
-        { name: "quantity", type: "uint16" },
+        { name: "units", type: "uint16" },
         { name: "bidRate", type: "uint32" },
+        { name: "issuanceCurrency", type: "uint16" },
+        { name: "referenceCurrency", type: "uint16" },
       ],
     },
     primaryType: "RevealBid",
     message: {
       worldwideDay,
       bidder,
-      quantity: Number(quantity),
+      units: Number(units),
       bidRate: Number(bidRate),
+      issuanceCurrency,
+      referenceCurrency,
     },
   });
   console.log("\nsignature:", signature);
@@ -96,8 +105,10 @@ const generateCommitHashAction = async (args: GenerateCommitHashTaskArgs) => {
 
   console.log("\n=== FOR REVEAL ===");
   console.log(`worldwideDay: ${worldwideDay}`);
-  console.log(`quantity: ${quantity}`);
+  console.log(`units: ${units}`);
   console.log(`bidRate: ${bidRate}`);
+  console.log(`issuanceCurrency: ${issuanceCurrency}`);
+  console.log(`referenceCurrency: ${referenceCurrency}`);
   console.log(`chainId: ${chainId}`);
   console.log(`signature: ${signature}`);
 };
@@ -115,9 +126,10 @@ const generateCommitHash = task(
     description: "Worldwide day in yyyymmdd format (e.g. 20260501). Resolves to the uint32 auction key; defaults to today.",
     defaultValue: "",
   })
-  .addOption({ name: "bidder", description: "Bidder address (default: from PRIVATE_KEY)", defaultValue: "" })
-  .addOption({ name: "quantity", description: "Intex quantity", defaultValue: "5" })
+  .addOption({ name: "units", description: "Intex units", defaultValue: "5" })
   .addOption({ name: "bidRate", description: "Bid rate (1e6 fixed-point, % of strike)", defaultValue: "800000" })
+  .addOption({ name: "issuanceCurrency", description: "Issuance ISO currency code", defaultValue: "840" })
+  .addOption({ name: "referenceCurrency", description: "Priced reference ISO currency code", defaultValue: "840" })
   .addOption({ name: "chainId", description: "Chain ID", defaultValue: "97" })
   .addOption({
     name: "auctionContract",

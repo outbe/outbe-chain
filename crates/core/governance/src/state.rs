@@ -96,7 +96,7 @@ impl GovernanceContract<'_> {
     }
 
     // --- proposal metadata projections (read only the fixed-width fields via the
-    //     per-field accessors; never load the text data-run) ---
+    //     per-field accessors, never the text data-run) ---
 
     fn oip_meta(&self, id: U256) -> Result<ProposalMeta> {
         let e = self.oips.entry(id);
@@ -123,7 +123,7 @@ impl GovernanceContract<'_> {
     }
 
     // --- index-backed listings (paginated: read only the [offset, offset+limit)
-    //     slice of the relevant bucket; counts let callers size the pages) ---
+    //     slice of the relevant bucket. The counts let callers size the pages) ---
 
     pub fn oip_count_by_author(&self, author: Address) -> Result<u32> {
         self.oip_author_count.read(&author)

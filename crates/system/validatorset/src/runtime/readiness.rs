@@ -13,7 +13,7 @@ impl ValidatorSet<'_> {
     /// Stale-join guard: a PENDING joiner confirms, on-chain, that its node has
     /// caught up to head and is ready to be frozen into the next DKG reshare
     /// target. The operator sends this only after `outbe_syncStatus` shows the
-    /// node at the finalized tip; until then the joiner stays PENDING and is
+    /// node at the finalized tip. Until then the joiner stays PENDING and is
     /// excluded from [`Self::get_reshare_target_set`]. Caller must be the
     /// validator itself and currently PENDING.
     pub fn confirm_validator_ready(
@@ -105,9 +105,9 @@ impl ValidatorSet<'_> {
     /// ACTIVE set. The manifest vector is not membership authority: it must
     /// cover the already-persisted ACTIVE ValidatorSet exactly and in order.
     ///
-    /// This is purpose-built for the one-time OCOMP lifecycle activation. A
-    /// byte-identical replay is accepted; partial or conflicting pre-existing
-    /// state is fatal rather than repaired.
+    /// This is purpose-built for the one-time OCOMP lifecycle activation. This
+    /// function accepts a byte-identical replay. Partial or conflicting
+    /// pre-existing state is fatal and is not repaired.
     pub fn initialize_founder_ocomp_registrations(
         &mut self,
         registrations: &[OcompKeyRegistrationV1],

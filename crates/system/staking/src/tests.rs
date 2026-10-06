@@ -18,8 +18,8 @@ const DEFAULT_BALANCE: u64 = 1_000_000;
 
 fn with_staking<R>(f: impl FnOnce(StorageHandle, &mut Staking) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    // Height zero is the persisted "not set" sentinel for lifecycle heights;
-    // ordinary staking transactions execute only after genesis.
+    // Height zero is the persisted "not set" sentinel for lifecycle heights.
+    // Ordinary staking transactions execute only after genesis.
     storage.set_block_number(1);
     StorageHandle::enter(&mut storage, |storage| {
         let mut s = Staking::new(storage.clone());
@@ -57,7 +57,7 @@ fn seed_balance(storage: StorageHandle, addr: Address, amount: u64) {
 }
 
 /// Registers a validator in ValidatorSet so cross-calls work correctly.
-/// Uses the explicit test-only bootstrap seam; production registration requires PoP.
+/// Uses the explicit test-only bootstrap seam. Production registration requires PoP.
 fn register_validator(storage: StorageHandle, validator: Address) {
     let owner = address!("0xffffffffffffffffffffffffffffffffffffffff");
     let mut val_set = ValidatorSet::new(storage.clone());
@@ -84,7 +84,7 @@ fn stake_registered(
 }
 
 /// Seeds STAKING_ADDRESS with balance (simulating EVM-level msg.value transfer).
-/// stake() no longer transfers; in production EVM does it.
+/// stake() no longer transfers. In production, the EVM does it.
 fn seed_staking_balance(storage: StorageHandle, amount: u64) {
     seed_staking_balance_u256(storage, U256::from(amount));
 }
@@ -106,7 +106,7 @@ fn test_stake() {
         let validator = address!("0x1111111111111111111111111111111111111111");
         let amount = U256::from(500u64);
 
-        // stake() doesn't transfer funds; in production EVM does it.
+        // stake() does not transfer funds. In production, the EVM does it.
         // Seed STAKING_ADDRESS to simulate EVM msg.value transfer.
         seed_staking_balance(storage.clone(), 500);
         stake_registered(storage.clone(), s, validator, amount).unwrap();
@@ -240,8 +240,8 @@ fn test_unstake_below_min_sets_exiting_status() {
         seed_staking_balance(storage.clone(), MIN_STAKE);
         stake_registered(storage.clone(), s, validator, U256::from(MIN_STAKE)).unwrap();
 
-        // Stake marks PENDING; simulate the reshare promotion to ACTIVE so the
-        // unstake-below-min ACTIVE->EXITING path is what is exercised here.
+        // Stake marks PENDING. Simulate the reshare promotion to ACTIVE so this
+        // test exercises the unstake-below-min ACTIVE->EXITING path.
         let mut val_set = ValidatorSet::new(storage.clone());
         assert!(matches!(
             val_set.validator_lifecycle(validator).unwrap(),
@@ -335,7 +335,7 @@ fn test_unjail_requires_min_stake_and_explicit_tx() {
         val_set.jail_validator(validator).unwrap();
 
         // Exclude the jailed validator at a validated boundary and slash its
-        // remaining bonded stake so the explicit unjail stake check is exercised.
+        // remaining bonded stake so the test exercises the explicit unjail stake check.
         val_set
             .test_activate_validated_boundary_set(&[], B256::ZERO, 1)
             .unwrap();
@@ -347,7 +347,7 @@ fn test_unjail_requires_min_stake_and_explicit_tx() {
             "unjail must require stake >= min_stake"
         );
 
-        // Top up to min_stake; this does NOT change the JAILED status by itself.
+        // Top up to min_stake. This does NOT change the JAILED status by itself.
         seed_staking_balance(storage.clone(), MIN_STAKE);
         stake_registered(storage.clone(), s, validator, U256::from(MIN_STAKE)).unwrap();
         let val_set = ValidatorSet::new(storage.clone());
@@ -907,12 +907,12 @@ fn test_claim_unbonded() {
         let validator = address!("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         s.claim_unbonded(validator).unwrap();
 
-        // Entry should be zeroed out
+        // Entry should be zeroed
         assert_eq!(s.unbonding_validator.read(&0u32).unwrap(), Address::ZERO);
         assert_eq!(s.unbonding_amount.read(&0u32).unwrap(), U256::ZERO);
 
         // Validator received native tokens back.
-        // stake() no longer deducts from caller; validator balance stays at DEFAULT_BALANCE
+        // stake() no longer deducts from caller. Validator balance stays at DEFAULT_BALANCE
         // and claim_unbonded adds the 500 back.
         let ctx = storage.clone();
         let expected = DEFAULT_BALANCE + 500;
@@ -943,14 +943,14 @@ fn test_process_unbonding_preserves_claimable() {
 
         assert_eq!(s.unbonding_count.read().unwrap(), 2);
 
-        // Process at any timestamp - entries are NOT zeroed (only compaction of
-        // already-claimed entries happens). Mature entries remain for claim_unbonded.
+        // Process at any timestamp. process_unbonding does NOT zero entries (it only
+        // compacts already-claimed entries). Mature entries remain for claim_unbonded.
         s.process_unbonding(100).unwrap();
         assert_eq!(s.unbonding_count.read().unwrap(), 2);
 
         s.process_unbonding(10_000).unwrap();
-        // Entries still present - process_unbonding only compacts zeroed entries,
-        // it does NOT zero mature entries. That is claim_unbonded's responsibility.
+        // Entries still present. process_unbonding only compacts zeroed entries.
+        // It does NOT zero mature entries. That is claim_unbonded's responsibility.
         assert_eq!(s.unbonding_count.read().unwrap(), 2);
     });
 }
@@ -994,7 +994,7 @@ fn test_process_unbonding_hook() {
         assert_eq!(s.unbonding_count.read().unwrap(), 1);
     });
 
-    // Call hook at timestamp 200 - process_unbonding only compacts zeroed entries,
+    // Call hook at timestamp 200. process_unbonding only compacts zeroed entries,
     // so the mature entry remains (it must be claimed via claim_unbonded).
     StorageHandle::enter(&mut storage, |storage| {
         hooks::process_unbonding(storage.clone(), 200).unwrap();
@@ -1074,7 +1074,7 @@ fn test_unbonding_full_flow() {
         assert_eq!(s.unbonding_validator.read(&0u32).unwrap(), Address::ZERO,);
 
         // Validator received the unstaked tokens.
-        // stake() no longer deducts from caller; validator balance stays at DEFAULT_BALANCE
+        // stake() no longer deducts from caller. Validator balance stays at DEFAULT_BALANCE
         // and claim_unbonded adds the unstaked amount back.
         let ctx = storage.clone();
         let expected_balance = DEFAULT_BALANCE + unstake_amount;
@@ -1185,7 +1185,7 @@ fn test_claim_unbonded_linked_list_basic() {
         assert_eq!(s.per_val_unbonding_head.read(&validator).unwrap(), 0);
 
         // Validator received 100 + 200 + 300 = 600.
-        // stake() no longer deducts from caller; validator stays at DEFAULT_BALANCE
+        // stake() no longer deducts from caller. Validator stays at DEFAULT_BALANCE
         // and claim_unbonded adds 600 back.
         let ctx = storage.clone();
         let expected = DEFAULT_BALANCE + 600;
@@ -1247,7 +1247,7 @@ fn test_claim_unbonded_partial_maturity() {
         assert_eq!(s.unbonding_next.read(&2u32).unwrap(), 0);
 
         // Validator received 100 + 200 = 300.
-        // stake() no longer deducts from caller; validator stays at DEFAULT_BALANCE
+        // stake() no longer deducts from caller. Validator stays at DEFAULT_BALANCE
         // and claim_unbonded adds 300 back.
         let ctx = storage.clone();
         let expected = DEFAULT_BALANCE + 300;
@@ -1306,11 +1306,12 @@ fn test_claim_unbonded_two_validators() {
         assert_eq!(s.per_val_unbonding_head.read(&v2).unwrap(), 2); // stored = 1+1
 
         // v1 got 100 + 300 = 400.
-        // stake() no longer deducts from caller; v1 stays at DEFAULT_BALANCE
+        // stake() no longer deducts from caller. v1 stays at DEFAULT_BALANCE
         // and claim_unbonded adds 400 back.
         let ctx = storage.clone();
         assert_eq!(ctx.balance(v1).unwrap(), U256::from(DEFAULT_BALANCE + 400));
-        // v2 balance unchanged (hasn't claimed); still at DEFAULT_BALANCE since stake() didn't deduct.
+        // v2 balance unchanged (v2 did not claim). It stays at DEFAULT_BALANCE because
+        // stake() did not deduct.
         assert_eq!(ctx.balance(v2).unwrap(), U256::from(DEFAULT_BALANCE));
     });
 }
@@ -1418,7 +1419,7 @@ fn test_slash_reduces_unbonding() {
         );
     });
 
-    // Normal maturity is not enough after slash; slashed entries use the
+    // Normal maturity is not enough after slash. Slashed entries use the
     // extended withdrawability delay.
     storage.set_timestamp(U256::from(base_time + unbonding_period + 1));
     StorageHandle::enter(&mut storage, |storage| {

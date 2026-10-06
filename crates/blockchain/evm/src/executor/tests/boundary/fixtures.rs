@@ -17,7 +17,7 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
     let active_key = dummy_pubkey(0xA2);
     let install = test_ocomp_fork_install(&chain_spec, &[(active, active_key)]);
     StorageHandle::enter(&mut seed_storage, |storage| {
-        seed_compressed_entities_genesis(storage.clone());
+        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
@@ -35,9 +35,9 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
         seed_test_committee_snapshot(storage.clone(), &[(active, active_key)]);
         // Seed the COEN/840 oracle pair + a 1.0 rate so begin-block
         // NOD/GEM/INTEX floor-price promotion resolves a live rate instead
-        // of soft-skipping the scan. 840 is also pushed onto the reference
-        // currency list, matching genesis: the Nod qualifier reads its ISO
-        // from there, not from a hard-coded constant.
+        // of soft-skipping the scan. Also push 840 onto the reference currency
+        // list to match genesis. The Nod qualifier reads its ISO from there, not
+        // from a hard-coded constant.
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
         outbe_oracle::schema::OracleContract::new(storage.clone())

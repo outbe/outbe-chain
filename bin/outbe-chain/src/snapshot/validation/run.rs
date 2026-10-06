@@ -138,7 +138,7 @@ fn artifact_io(error: std::io::Error) -> eyre::Report {
     }
 }
 
-/// Reports own their diagnostics; preserve the typed unavailable-input distinction.
+/// Reports own their diagnostics. Preserve the typed unavailable-input distinction.
 fn artifact_error(error: &eyre::Report) -> eyre::Report {
     if error.downcast_ref::<super::Incomplete>().is_some() {
         super::Incomplete(format!("{error:#}")).into()
@@ -287,7 +287,7 @@ pub(crate) fn audit_artifact(inputs: &ValidationInputs, files_requested: bool) -
                 .as_mut()
                 .ok_or_else(|| missing_artifact("archive"))?;
             let raw = raw.as_ref().map_err(artifact_error)?;
-            // Preserve unavailable metadata as Incomplete; the full archive
+            // Preserve unavailable metadata as Incomplete. The full archive
             // reader otherwise reports a missing signature as InvalidData.
             signature.as_ref().map_err(artifact_error)?;
             source.entry.file.seek(SeekFrom::Start(0))?;
@@ -921,7 +921,7 @@ fn run_native_checks(
         return;
     };
     // Retained structure was verified. Missing anchors remain explicit in the
-    // header report; each independent check requires its own exact header.
+    // header report. Each independent check requires its own exact header.
     let mut verified = None;
     if selection.checks.contains(&Evm) {
         if let Some(scratch) = scratch {
@@ -1014,7 +1014,7 @@ fn audit_ce_and_bodies(
             super::Incomplete(format!("missing CE marker header Q={}", marker.height))
         })?;
         let work = CeAuditWork::create(scratch.join("ce-audit"), CeAuditLimits::default())?;
-        // Keep work alive through the body comparator; a single CE traversal
+        // Keep work alive through the body comparator. A single CE traversal
         // populates its expected leaf stream. No duplicate CE root scan.
         if bodies_requested && projection_available {
             let mut expected = CeBodyAudit::create(&work)?;

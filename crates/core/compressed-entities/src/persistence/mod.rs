@@ -51,6 +51,6 @@ const LAST_APPLIED_KEY: &[u8] = b"last_applied";
 #[cfg(test)]
 mod adr010_tests;
 
-// ADR-009's flat-namespace fixtures are replaced by ADR-010 catalog fixtures below.
+// ADR-010 catalog fixtures below replace ADR-009's flat-namespace fixtures.
 #[cfg(test)]
 mod tests;

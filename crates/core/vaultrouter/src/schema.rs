@@ -9,7 +9,7 @@ use outbe_primitives::storage::types::{StorageKey, StorageSet};
 pub const UNKNOWN: u8 = 0;
 
 /// One CCA-held liquidity reservation. A zero `asset` means the slot is empty.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[storage_record(exists_field = asset)]
 pub struct LiquidityReservation {
     #[key]
@@ -26,13 +26,31 @@ pub struct LiquidityReservation {
     pub vault: Address,
     #[attribute(order = 5)]
     pub expires_at: u64,
+    #[attribute(order = 6)]
+    pub gratis_minor: U256,
+    #[attribute(order = 7)]
+    pub snapshot_id: U256,
+    #[attribute(order = 8)]
+    pub entry_price_minor: U256,
+    #[attribute(order = 9)]
+    pub valuation_price_minor: U256,
+    #[attribute(order = 10)]
+    pub policy_rate: U256,
+    #[attribute(order = 11)]
+    pub issuance_currency: u16,
+    #[attribute(order = 12)]
+    pub asset_decimals: u8,
+    #[attribute(order = 13)]
+    pub reference_currency: u16,
+    #[attribute(order = 14)]
+    pub call_anchor_price_minor: U256,
 }
 
 /// EVM storage layout for the vaultrouter precompile.
 #[storage_schema]
 #[contract(addr = VAULT_ROUTER_ADDRESS)]
 pub struct VaultRouterContract {
-    /// slot 0: owner (admin). Seeded at genesis; gates the `add*`/`remove*`
+    /// slot 0: owner (admin). Seeded at genesis. Gates the `add*`/`remove*`
     /// management methods. Replaces `OwnableUpgradeable`.
     #[attribute(order = 0)]
     pub owner: outbe_primitives::storage::dsl::Value<Address>,
@@ -41,8 +59,8 @@ pub struct VaultRouterContract {
     #[attribute(order = 1)]
     pub assets: outbe_primitives::storage::dsl::Set<Address>,
 
-    /// slot 3: base slot of the per-asset vault sets. The value mapping is
-    /// unused directly; `asset_vault_set(asset)` derives an enumerable
+    /// slot 3: base slot of the per-asset vault sets. No code uses the value
+    /// mapping directly. `asset_vault_set(asset)` derives an enumerable
     /// `Set<Address>` at this mapping's per-key slot.
     #[attribute(order = 2)]
     pub asset_vaults: outbe_primitives::storage::dsl::Map<Address, U256>,
@@ -76,8 +94,8 @@ pub struct VaultRouterContract {
     #[attribute(order = 9)]
     pub crosschain_operation_nonce: outbe_primitives::storage::dsl::Value<U256>,
 
-    /// slot 13: reserved legacy pause flag. Kept to preserve storage layout;
-    /// no VaultRouter function reads or writes it.
+    /// slot 13: reserved legacy pause flag. Kept to preserve storage layout.
+    /// No VaultRouter function reads or writes it.
     #[attribute(order = 10)]
     pub reserved_legacy_pause: outbe_primitives::storage::dsl::Value<bool>,
 
@@ -139,7 +157,7 @@ pub struct VaultRouterContract {
 
 impl<'storage> VaultRouterContract<'storage> {
     /// Returns the enumerable vault set for `asset`, laid out exactly as
-    /// Solidity's `mapping(address => EnumerableSet.AddressSet)` - the set's
+    /// Solidity's `mapping(address => EnumerableSet.AddressSet)`. The set's
     /// base slot is the `asset_vaults` mapping's per-key slot.
     pub fn asset_vault_set(&self, asset: Address) -> StorageSet<'storage, Address> {
         let base = asset.mapping_slot(self.asset_vaults.base_slot());
@@ -155,5 +173,27 @@ impl<'storage> VaultRouterContract<'storage> {
     /// First vault registered for `asset`, or `None` if the asset has no vault.
     pub fn first_vault(&self, asset: Address) -> outbe_primitives::error::Result<Option<Address>> {
         self.asset_vault_set(asset).at(0)
+    }
+}
+
+impl From<LiquidityReservation> for crate::api::IVaultRouter::LiquidityReservation {
+    fn from(r: LiquidityReservation) -> Self {
+        Self {
+            asset: r.asset,
+            amount: r.amount,
+            smartAccount: r.smart_account,
+            cca: r.cca,
+            vault: r.vault,
+            expiresAt: r.expires_at,
+            gratisMinor: r.gratis_minor,
+            snapshotId: r.snapshot_id,
+            entryPriceMinor: r.entry_price_minor,
+            valuationPriceMinor: r.valuation_price_minor,
+            policyRate: r.policy_rate,
+            issuanceCurrency: r.issuance_currency,
+            assetDecimals: r.asset_decimals,
+            referenceCurrency: r.reference_currency,
+            callAnchorPriceMinor: r.call_anchor_price_minor,
+        }
     }
 }

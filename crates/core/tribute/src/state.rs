@@ -18,7 +18,7 @@ pub struct TributePreAdmissionProjection {
     pub is_sealed: bool,
     pub sealed_collection_root: B256,
     pub tribute_count: u32,
-    pub tribute_nominal_amount: U256,
+    pub tribute_nominal_total_minor: U256,
     pub canonical_body_bytes: u64,
     pub distinct_owner_count: u32,
     pub distinct_reference_currency_count: u16,
@@ -134,13 +134,13 @@ impl TributeContract<'_> {
             .day_pre_admission
             .get(day)?
             .unwrap_or_else(|| DayPreAdmission::with_key(day));
-        let (tribute_count, tribute_nominal_amount) = if admission.is_sealed {
+        let (tribute_count, tribute_nominal_total_minor) = if admission.is_sealed {
             (
                 admission.sealed_tribute_count,
-                admission.sealed_tribute_nominal_amount,
+                admission.sealed_tribute_nominal_total_minor,
             )
         } else {
-            (totals.tribute_count, totals.tribute_nominal_amount)
+            (totals.tribute_count, totals.tribute_nominal_total_minor)
         };
         Ok(TributePreAdmissionProjection {
             worldwide_day: day,
@@ -149,7 +149,7 @@ impl TributeContract<'_> {
             is_sealed: admission.is_sealed,
             sealed_collection_root: admission.sealed_collection_root,
             tribute_count,
-            tribute_nominal_amount,
+            tribute_nominal_total_minor,
             canonical_body_bytes: admission.canonical_body_bytes,
             distinct_owner_count: admission.distinct_owner_count,
             distinct_reference_currency_count: admission.distinct_reference_currency_count,
@@ -332,8 +332,8 @@ impl TributeContract<'_> {
                         "Tribute day {day} count overflow"
                     ))
                 })?;
-            totals.tribute_nominal_amount = totals
-                .tribute_nominal_amount
+            totals.tribute_nominal_total_minor = totals
+                .tribute_nominal_total_minor
                 .checked_add(nominal_amount)
                 .ok_or_else(|| {
                     outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
@@ -347,8 +347,8 @@ impl TributeContract<'_> {
                     "Tribute day {day} count underflow"
                 ))
             })?;
-            totals.tribute_nominal_amount = totals
-                .tribute_nominal_amount
+            totals.tribute_nominal_total_minor = totals
+                .tribute_nominal_total_minor
                 .checked_sub(nominal_amount)
                 .ok_or_else(|| {
                     outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(

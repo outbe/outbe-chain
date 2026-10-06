@@ -5,15 +5,16 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 
 /// EVM storage layout for the Rewards precompile.
 ///
-/// Tracks the chain's genesis UTC-day anchor and the per-finalized-block +
-/// per-day accumulators used by the idempotent fee-distribution path and
-/// day-boundary settle formula and the FIFO of exact validator Gem obligations.
+/// The layout tracks:
+/// - the genesis UTC-day anchor of the chain.
+/// - the per-finalized-block and per-day accumulators for the idempotent fee-distribution path
+///   and the day-boundary settle formula.
+/// - the FIFO of exact validator Gem obligations.
 ///
 /// Per-block fees are escrowed (`pending_fees`) and settled at `N+K` over the
-/// inclusion-window voter set; daily emission top-ups are prepared by
-/// [`crate::api::prepare_daily_validator_gem_batch`] and delivered by
-/// [`crate::api::deliver_oldest_reward_gem_batch`] (validator emission is paid
-/// in gems, not a claimable native balance).
+/// inclusion-window voter set. [`crate::api::prepare_daily_validator_gem_batch`] prepares the
+/// daily emission top-ups, and [`crate::api::deliver_oldest_reward_gem_batch`] delivers them
+/// (validator emission is paid in gems, not a claimable native balance).
 ///
 /// Storage slots:
 ///   0:  genesis_utc_day                    - uint32 (yyyymmdd of block 0; 0 = uninit)
@@ -64,24 +65,21 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 /// 45: late_residue_dust_native - uint256
 #[contract(addr = REWARDS_ADDRESS)]
 pub struct Rewards {
-    /// UTC day of block 0 (yyyymmdd). 0 means uninitialized; written
-    /// exactly once at the first invocation of `RewardsLifecycle::begin_block`,
-    /// which is block 0 in any chain shipping this refactor. After
-    /// initialization the value is immutable and used by
+    /// UTC day of block 0 (yyyymmdd). 0 means uninitialized. `RewardsLifecycle::begin_block`
+    /// writes it exactly once at its first invocation, which is block 0 in any chain shipping
+    /// this refactor. After initialization the value is immutable.
     /// `day_emission_limit(day_number_since_genesis(...))` from
-    /// `outbe_emissionlimit::day_emission`.
+    /// `outbe_emissionlimit::day_emission` uses it.
     ///
-    /// Tamper-resistance: a node that boots with a different
-    /// `genesis.json` timestamp will lock in a different `genesis_utc_day`
-    /// here, causing all subsequent day-settle math to diverge from the
-    /// quorum's state root -> fall out of consensus on the first settle.
-    /// Reth's startup hash check is a complementary defense, not the only
-    /// one.
+    /// Tamper-resistance: a node that boots with a different `genesis.json` timestamp locks in
+    /// a different `genesis_utc_day` here. Then all subsequent day-settle math diverges from
+    /// the state root of the quorum, and the node falls out of consensus on the first settle.
+    /// Reth's startup hash check is a complementary defense, not the only one.
     pub genesis_utc_day: Slot<u32>,
 
     /// Per-(finalized_block_hash, voter) guard: voter participation has
     /// already been counted for this finalized block in the day's
-    /// emission top-up share. Kept separate from the fee guard for
+    /// emission top-up share. This guard is separate from the fee guard for
     /// audit clarity.
     pub participation_counted_for_block: Mapping<B256, Mapping<Address, bool>>,
 
@@ -110,15 +108,14 @@ pub struct Rewards {
     /// iterating the inner mapping (Mapping has no native iteration).
     pub daily_total_participation: Mapping<u32, u64>,
 
-    /// Per-day count of distinct voters seen - upper bound for index
+    /// Per-day count of distinct voters seen. It is the upper bound for index
     /// iteration over `daily_voter_at`.
     pub daily_voter_count: Mapping<u32, u32>,
 
     /// Per-(utc_day, index) voter address. The index is first-seen-order
-    /// of the voter for that day. Replay safety is maintained by
-    /// `participation_counted_for_block`, which ensures append happens
-    /// exactly once per `(finalized_block_hash, voter)` regardless of
-    /// replay order.
+    /// of the voter for that day. `participation_counted_for_block` maintains
+    /// replay safety. It ensures that the append happens exactly once per
+    /// `(finalized_block_hash, voter)`, regardless of replay order.
     pub daily_voter_at: Mapping<u32, Mapping<u32, Address>>,
 
     /// Per-day guard that the day has been settled exactly once.
@@ -127,16 +124,15 @@ pub struct Rewards {
     pub daily_settled: Mapping<u32, bool>,
 
     /// Highest UTC day observed among processed finalized blocks
-    /// (yyyymmdd; 0 = uninit). Used to gate the daily Cycle handler in
-    /// `outbe-cycle`: a day D is settle-eligible only when at least one
-    /// finalized block
-    /// from a strictly later UTC day has been observed, so we are
-    /// certain no further metadata for D will arrive.
+    /// (yyyymmdd, 0 = uninit). It gates the daily Cycle handler in
+    /// `outbe-cycle`. A day D is settle-eligible only when at least one
+    /// finalized block from a strictly later UTC day was observed. Then we
+    /// are certain that no further metadata for D will arrive.
     pub max_observed_finalized_day: Slot<u32>,
 
     /// Last UTC day successfully settled by `RewardsLifecycle`
-    /// (yyyymmdd; 0 = uninit). Initialized lazily on first observed
-    /// finalized day to `previous_date_key(fb_day)` so the first
+    /// (yyyymmdd, 0 = uninit). Initialized lazily on the first observed
+    /// finalized day to `previous_date_key(fb_day)`, so the first
     /// eligible day is exactly the first observed finalized day.
     pub last_settled_utc_day: Slot<u32>,
 
@@ -147,8 +143,8 @@ pub struct Rewards {
 
     /// Per-finalized-block fingerprint guard. The fingerprint is
     /// `keccak256("OUTBE_METADATA_FINGERPRINT_V1" || canonical-encoded
-    /// metadata economic fields)`. Same fingerprint observed twice for
-    /// the same `fb_hash` is a replay no-op; different fingerprint for
+    /// metadata economic fields)`. The same fingerprint observed twice for
+    /// the same `fb_hash` is a replay no-op. A different fingerprint for
     /// the same `fb_hash` is fatal (contradictory metadata for the same
     /// finalized block is a protocol violation).
     pub metadata_fingerprint_for_block: Mapping<B256, B256>,
@@ -167,18 +163,18 @@ pub struct Rewards {
     // -- per-block fee escrow + inclusion-window credits ----------
     /// Escrowed fees of a finalized block (key `fb_hash`), recorded instead of
     /// the eager per-voter transfer. Settled at `N+K` across the credited voter
-    /// set with a decay-weighted, fixed-denominator payout; residue burns.
+    /// set with a decay-weighted, fixed-denominator payout. Residue burns.
     pub pending_fees: Mapping<B256, U256>,
 
     /// Per-finalized-block guard: the escrowed fee has been settled exactly once.
     pub fee_settled: Mapping<B256, bool>,
 
     /// Per-(fb_hash, voter) smallest inclusion distance, stored as `k + 1`
-    /// (`0` = not yet credited) so the base 2f+1 seeded at `k=0` records `1` and
+    /// (`0` = not yet credited). Thus the base 2f+1 seeded at `k=0` records `1`, and
     /// a later re-inclusion at `k>=1` is a no-op.
     pub late_voter_k_plus1: Mapping<B256, Mapping<Address, u8>>,
 
-    /// Per-fb_hash count of distinct credited voters - bound for index iteration
+    /// Per-fb_hash count of distinct credited voters. It bounds the index iteration
     /// over `late_voter_at` at settle time.
     pub late_voter_count: Mapping<B256, u32>,
 
@@ -191,32 +187,32 @@ pub struct Rewards {
     /// by number (the mandatory window-close side effect). `B256::ZERO` = absent.
     pub pending_fb_hash_at: Mapping<u64, B256>,
 
-    /// Finalized block number -> committee size at its epoch - the fixed
+    /// Finalized block number -> committee size at its epoch. This is the fixed
     /// denominator basis (`D = committee_size * w_max`) for its settlement.
     pub pending_committee_size_at: Mapping<u64, u32>,
 
-    /// Finalized block number -> its canonical consensus epoch
+    /// Finalized block number -> its canonical consensus epoch.
     /// The `LateFinalizeCredits` phase verifies a credit's
     /// proposer-supplied `epoch`/`committee_set_hash`/`fb_hash` against the
-    /// canonical binding escrowed here, so `fb_number` cannot be spoofed to
+    /// canonical binding escrowed here. Thus `fb_number` cannot be spoofed to
     /// inflate the decay weight `k` or to reference a wrong committee.
     pub pending_epoch_at: Mapping<u64, u64>,
 
-    /// Finalized block number -> its canonical `committee_set_hash`
-    /// authentication; see `pending_epoch_at`).
+    /// Finalized block number -> its canonical `committee_set_hash`, for
+    /// authentication. See `pending_epoch_at`.
     pub pending_committee_set_hash_at: Mapping<u64, B256>,
 
-    /// Finalized block number -> its canonical consensus `view`
-    /// authentication). Together with `pending_parent_view_at` this pins the FULL
-    /// signed binding `{epoch, view, parent_view, fb_hash}` at the body, so a
+    /// Finalized block number -> its canonical consensus `view`, for
+    /// authentication. Together with `pending_parent_view_at`, this pins the FULL
+    /// signed binding `{epoch, view, parent_view, fb_hash}` at the body. Thus a
     /// proposer cannot record a credit whose aggregate is over a non-canonical
     /// view of the same `fb_hash` (cross-view equivocation). The pre-exec BLS
-    /// verify only ties the credit's view to its signatures; this ties it to the
+    /// verify only ties the credit's view to its signatures. This map ties it to the
     /// finalized certificate.
     pub pending_view_at: Mapping<u64, u64>,
 
-    /// Finalized block number -> its canonical `parent_view`
-    /// authentication; see `pending_view_at`).
+    /// Finalized block number -> its canonical `parent_view`, for
+    /// authentication. See `pending_view_at`.
     pub pending_parent_view_at: Mapping<u64, u64>,
 
     // -- prune ring for the per-finalized-block guard maps ----------
@@ -226,13 +222,13 @@ pub struct Rewards {
     /// finalized blocks. `on_finalized_metadata` records each finalized `fb_hash`
     /// here and clears the four guards of the block evicted `BLOCK_GUARD_RETAIN`
     /// records ago. Retention is far larger than the K-block late-finalize
-    /// window, so no guard is dropped while its block can still be replayed
+    /// window. Thus no guard is dropped while its block can still be replayed
     /// (re-counted) or settled. The nested `participation_counted_for_block` map
     /// is freed separately at settlement (`settle_window`), where the credited
     /// voter set is known. `B256::ZERO` = empty ring slot.
     pub block_guard_ring: Mapping<u64, B256>,
 
-    /// Monotonic write cursor for `block_guard_ring`; the live slot index is
+    /// Monotonic write cursor for `block_guard_ring`. The live slot index is
     /// `block_guard_ring_seq % BLOCK_GUARD_RETAIN`.
     pub block_guard_ring_seq: Slot<u64>,
 
@@ -276,7 +272,7 @@ pub struct Rewards {
     /// Reward Gem reference currency, frozen at preparation time.
     pub reward_gem_reference_currency: Mapping<u32, u16>,
 
-    /// Live FIFO batch count; must equal `queue_tail - queue_head`.
+    /// Live FIFO batch count. It must equal `queue_tail - queue_head`.
     pub reward_gem_pending_batch_count: Slot<u64>,
 
     /// Canonical UTC day of an open finalized-block window. Cleared with escrow.

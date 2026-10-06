@@ -9,13 +9,12 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {IIntexAuction} from "./interfaces/IIntexAuction.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
-import {IWhitelist, WhitelistUpdated, requireWhitelisted} from "@shared/Whitelist.sol";
 
 /// @title IntexAuction
 /// @author Outbe
 /// @notice Commit-reveal auction keyed by `worldwideDay` (uint32, yyyymmdd).
 /// @dev UUPS upgradeable: deployed behind an ERC1967 proxy, configured via `initialize`.
-///      The schedule is computed on the Outbe side and passed into `auctionStart`.
+///      The Outbe side computes the schedule and passes it into `auctionStart`.
 ///      Reveal signatures are EIP-712 typed data under the `IntexAuction` v1 domain,
 ///      binding both `chainId` and `verifyingContract` (the proxy) and so preventing
 ///      cross-chain and cross-instance replay.
@@ -32,13 +31,13 @@ contract IntexAuction is
 
     /// @notice Lock on the commit bond of a bidder who never revealed, anchored at `revealEnd`.
     ///         The bond stays locked until `revealEnd + UNREVEALED_BOND_LOCK_PERIOD` and is then
-    ///         reclaimable via `claimCommitBond`; reveal and cancel return it immediately.
+    ///         reclaimable via `claimCommitBond`. Reveal and cancel return it immediately.
     uint32 public constant UNREVEALED_BOND_LOCK_PERIOD = 24 hours;
 
-    /// @dev EIP-712 type hash for the revealed bid; the currency pair is part of the signed
+    /// @dev EIP-712 type hash for the revealed bid. The currency pair is part of the signed
     ///      struct, so a bidder cannot swap currencies between commit and reveal.
     bytes32 private constant REVEAL_BID_TYPEHASH = keccak256(
-        "RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
+        "RevealBid(uint32 worldwideDay,address bidder,uint16 units,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
     );
 
     /// @custom:storage-location erc7201:outbe.intex.IntexAuction
@@ -55,12 +54,10 @@ contract IntexAuction is
         mapping(uint32 worldwideDay => mapping(address bidder => bool revealed)) revealedBidsByBidder;
         /// @dev Revealed bids per series.
         mapping(uint32 worldwideDay => IIntexAuction.SubmittedBidData[]) revealedBids;
-        /// @dev Cleared marker per series. Set once by `executeAuctionClearing` and the sole
-        ///      `Completed`-stage signal - so a no-sale clearing (issuedUnits == 0,
+        /// @dev Cleared marker per series. `executeAuctionClearing` sets it once. It is the sole
+        ///      `Completed`-stage signal, so a no-sale clearing (issuedUnits == 0,
         ///      clearingRate may be 0) also reads as Completed, not just a positive-rate sale.
         mapping(uint32 worldwideDay => bool) cleared;
-        /// @dev Registry gating who may commit bids. Zero address leaves the gate open.
-        IWhitelist whitelist;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexAuction")) - 1)) & ~bytes32(uint256(0xff))
@@ -127,19 +124,6 @@ contract IntexAuction is
         return _s().revealedBidsByBidder[worldwideDay][bidder];
     }
 
-    // --- Admin ---
-    /// @inheritdoc IIntexAuction
-    function setWhitelist(address registry) external override onlyRole(DEFAULT_ADMIN_ROLE) {
-        IntexAuctionStorage storage $ = _s();
-        emit WhitelistUpdated(address($.whitelist), registry);
-        $.whitelist = IWhitelist(registry);
-    }
-
-    /// @inheritdoc IIntexAuction
-    function whitelist() external view override returns (address) {
-        return address(_s().whitelist);
-    }
-
     /// @inheritdoc IIntexAuction
     function wire(address _escrow) external override onlyRole(DEFAULT_ADMIN_ROLE) {
         if (_escrow == address(0)) revert ZeroAddress("escrowContract");
@@ -163,7 +147,7 @@ contract IntexAuction is
         if ($.auctions[worldwideDay].schedule.commitEnd != 0) revert AuctionAlreadyExists();
         if (dayState == IIntexAuction.WorldwideDayState.Unknown) revert InvalidDayState();
 
-        // Schedule timestamps must be strictly increasing; a live (green) auction's
+        // Schedule timestamps must be strictly increasing. A live (green) auction's
         // commit stage must end in the future. A red day is a cancelled record only.
         if (
             schedule.revealEnd <= schedule.commitEnd || schedule.issuanceEnd <= schedule.revealEnd
@@ -177,7 +161,7 @@ contract IntexAuction is
             schedule: schedule,
             params: params,
             result: IIntexAuction.AuctionResult({
-                issuedIntexLoadedPromis: 0, auctionClearingRate: 0, issuedUnits: 0, wonBidsCount: 0
+                issuedPromisLoadMinor: 0, auctionClearingRate: 0, issuedUnits: 0, wonBidsCount: 0
             })
         });
 
@@ -205,7 +189,7 @@ contract IntexAuction is
             revert StageRequired(IIntexAuction.AuctionStage.RevealingBids, currentStage);
         }
 
-        // Snap revealEnd forward only when the signal is early; issuanceEnd never moves.
+        // Snap revealEnd forward only when the signal is early. issuanceEnd never moves.
         uint32 nowTs = uint32(block.timestamp);
         if (nowTs < a.schedule.revealEnd) {
             a.schedule.revealEnd = nowTs;
@@ -228,14 +212,14 @@ contract IntexAuction is
             revert StageRequired(IIntexAuction.AuctionStage.Issuance, currentStage);
         }
 
-        // No-sale (issuedUnits == 0): supply was exhausted/zero, nothing is issued and every
-        // bidder is fully refunded via REFUND_INSTRUCTIONS. The clearing rate is then unconstrained
-        // - it may be 0 even when minIntexBidRate > 0 (no bid was allocated). A sale (issued > 0)
-        // must carry a real clearing rate at or above the floor.
+        // No-sale (issuedUnits == 0): supply was exhausted/zero, nothing is issued and every bidder
+        // is fully refunded via REFUND_INSTRUCTIONS. The clearing rate is then unconstrained. It
+        // may be 0 even when minIntexBidRate > 0 (no bid was allocated). A sale (issued > 0) must
+        // carry a real clearing rate at or above the floor.
         if (issuedUnits > 0 && auctionClearingRate == 0) revert ZeroValue("auctionClearingRate");
 
-        // Canonical clearing runs on Outbe; this only sanity-bounds the relayer-supplied result
-        // against on-chain counters - winners cannot exceed revealed bids, and a sale's clearing
+        // Canonical clearing runs on Outbe. This only sanity-bounds the relayer-supplied result
+        // against on-chain counters. Winners cannot exceed revealed bids, and a sale's clearing
         // rate cannot fall below the configured minimum. It is not a full re-computation.
         uint32 revealed = $.auctionRunningCounts[worldwideDay].revealedBidsCount;
         if (wonBidsCount > revealed) revert WonBidsExceedRevealed(wonBidsCount, revealed);
@@ -243,14 +227,14 @@ contract IntexAuction is
             revert ClearingRateBelowMin(auctionClearingRate, a.params.minIntexBidRate);
         }
 
-        // Final data provided by Outbe; `issuedIntexLoadedPromis` is derived on-chain.
+        // Outbe provides the final data. `issuedPromisLoadMinor` is derived on-chain.
         a.result.issuedUnits = issuedUnits;
         a.result.auctionClearingRate = auctionClearingRate;
         a.result.wonBidsCount = wonBidsCount;
         // 256-bit product: over-range reverts typed, not Panic(0x11).
         uint256 loadedPromis = uint256(issuedUnits) * a.params.promisLoadMinor;
         if (loadedPromis > type(uint128).max) revert IssuedPromisOverflow(issuedUnits, a.params.promisLoadMinor);
-        a.result.issuedIntexLoadedPromis = uint128(loadedPromis);
+        a.result.issuedPromisLoadMinor = uint128(loadedPromis);
         $.cleared[worldwideDay] = true;
 
         emit AuctionStageUpdated(worldwideDay, IIntexAuction.AuctionStage.Completed, uint32(block.timestamp), "");
@@ -260,7 +244,6 @@ contract IntexAuction is
     // --- User Actions ---
     /// @inheritdoc IIntexAuction
     function commitBid(uint32 worldwideDay, bytes32 commitHash) external override nonReentrant {
-        requireWhitelisted(_s().whitelist, msg.sender);
         if (commitHash == bytes32(0)) revert InvalidCommitHash();
 
         IntexAuctionStorage storage $ = _s();
@@ -277,8 +260,8 @@ contract IntexAuction is
 
         emit BidCommitted(worldwideDay, msg.sender, commitHash);
 
-        // Interactions: take the entry bond (CEI - commit state is already recorded; a lock
-        // revert rolls back the whole tx). Requires prior WCOEN approval on the escrow.
+        // Interactions: take the entry bond. CEI: the commit state is already recorded, and a
+        // lock revert reverts the whole tx. Requires prior WCOEN approval on the escrow.
         uint128 bond = a.params.commitBondMinor;
         if (bond > 0) {
             $.escrowContract.lockCommitBond(worldwideDay, msg.sender, bond);
@@ -301,7 +284,7 @@ contract IntexAuction is
 
         emit CommitCancelled(worldwideDay, msg.sender);
 
-        // Interactions: an un-committed bid owes no bond - return it immediately.
+        // Interactions: an un-committed bid owes no bond. Return it immediately.
         if (a.params.commitBondMinor > 0) {
             $.escrowContract.releaseCommitBond(worldwideDay, msg.sender);
         }
@@ -331,7 +314,7 @@ contract IntexAuction is
     /// @inheritdoc IIntexAuction
     function revealBid(
         uint32 worldwideDay,
-        uint16 quantity,
+        uint16 units,
         uint32 bidRate,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
@@ -350,11 +333,11 @@ contract IntexAuction is
 
         bytes32 committedHash = $.committedBidsByHash[worldwideDay][msg.sender];
         // Order matters: a re-reveal must report BidAlreadyRevealed, not BidNotFound, now that
-        // the commit slot is freed on first reveal.
+        // the first reveal frees the commit slot.
         if ($.revealedBidsByBidder[worldwideDay][msg.sender]) revert BidAlreadyRevealed();
         if (committedHash == bytes32(0)) revert BidNotFound();
-        if (quantity == 0 || bidRate == 0) revert ZeroValue("quantity/bidRate");
-        if (quantity < a.params.minIntexBidQuantity) revert BidBelowMinIntexBidQuantity();
+        if (units == 0 || bidRate == 0) revert ZeroValue("units/bidRate");
+        if (units < a.params.minIntexBidQuantity) revert BidBelowMinIntexBidQuantity();
         if (bidRate < a.params.minIntexBidRate) revert BidBelowMinIntexBidRate();
         if (bidRate > BridgeMsgCodec.SCALE_1E6) revert BidRateAboveMax(bidRate);
         // Issuance is the bidder's own label: only its range is checked, since the network keeps
@@ -365,18 +348,18 @@ contract IntexAuction is
         // Escrow basis and bid rate stay at six decimals. Convert their six-decimal
         // result exactly once into 18-decimal WCOEN before locking funds.
         // 256-bit math so an over-range product reverts typed, not via Panic(0x11).
-        uint256 lockAmount = BridgeMsgCodec.escrowAmount(quantity, a.params.promisLoadMinor, bidRate);
-        if (lockAmount > type(uint128).max) revert BidAmountOverflow(quantity, bidRate);
+        uint256 lockAmount = BridgeMsgCodec.escrowAmount(units, a.params.promisLoadMinor, bidRate);
+        if (lockAmount > type(uint128).max) revert BidAmountOverflow(units, bidRate);
 
         // Verify the signature against the stored commit hash.
         _verifyRevealSignature(
-            worldwideDay, quantity, bidRate, issuanceCurrency, referenceCurrency, signature, committedHash
+            worldwideDay, units, bidRate, issuanceCurrency, referenceCurrency, signature, committedHash
         );
 
         // Effects: record the reveal before the external lockFunds call (CEI).
-        // If lockFunds reverts the whole tx is rolled back, so atomicity is preserved.
+        // If lockFunds reverts, the whole tx reverts, so atomicity is preserved.
         $.revealedBidsByBidder[worldwideDay][msg.sender] = true;
-        // Free the consumed commit slot; commitBid already rejects any commit past commitEnd.
+        // Free the consumed commit slot. commitBid already rejects any commit past commitEnd.
         delete $.committedBidsByHash[worldwideDay][msg.sender];
 
         $.revealedBids[worldwideDay].push(
@@ -384,7 +367,7 @@ contract IntexAuction is
                 bidderAddress: msg.sender,
                 intexBidRate: bidRate,
                 timestamp: uint32(block.timestamp),
-                intexQuantity: quantity,
+                intexQuantity: units,
                 issuanceCurrency: issuanceCurrency,
                 referenceCurrency: referenceCurrency
             })
@@ -392,16 +375,16 @@ contract IntexAuction is
 
         $.auctionRunningCounts[worldwideDay].revealedBidsCount += 1;
 
-        emit BidRevealed(worldwideDay, msg.sender, quantity, bidRate, issuanceCurrency, referenceCurrency);
+        emit BidRevealed(worldwideDay, msg.sender, units, bidRate, issuanceCurrency, referenceCurrency);
 
         // Interactions
         // Return the commit bond first so it can fund the bid escrow in the same transaction.
         if (a.params.commitBondMinor > 0) {
             $.escrowContract.releaseCommitBond(worldwideDay, msg.sender);
         }
-        // A winner's payment is worked out with the same formula, so it never exceeds this lock.
+        // A winner's payment is computed with the same formula, so it never exceeds this lock.
         // forge-lint: disable-next-line(unsafe-typecast) -- bounded by the type(uint128).max check above
-        $.escrowContract.lockFunds(worldwideDay, msg.sender, uint128(lockAmount), bidRate, quantity);
+        $.escrowContract.lockFunds(worldwideDay, msg.sender, uint128(lockAmount), bidRate, units);
     }
 
     /// @inheritdoc IIntexAuction
@@ -410,14 +393,14 @@ contract IntexAuction is
         IIntexAuction.AuctionData storage a = $.auctions[worldwideDay];
         if (a.schedule.commitEnd == 0) revert AuctionNotFound();
 
-        // A bond that outlives its reveal window belongs to a no-reveal, and waits out the penalty
-        // window anchored at the (possibly snapped-forward) `revealEnd`.
+        // A bond that outlives its reveal window belongs to a no-reveal. It waits until the end of
+        // the penalty window anchored at the (possibly snapped-forward) `revealEnd`.
         uint32 claimableAt = a.schedule.revealEnd + UNREVEALED_BOND_LOCK_PERIOD;
         if (uint32(block.timestamp) < claimableAt) {
             revert CommitBondNotYetClaimable(claimableAt, uint32(block.timestamp));
         }
 
-        // Pays the stored bidder; reverts CommitBondNotFound in the escrow when no bond is live.
+        // Pays the stored bidder. Reverts CommitBondNotFound in the escrow when no bond is live.
         $.escrowContract.releaseCommitBond(worldwideDay, bidder);
     }
 
@@ -436,13 +419,13 @@ contract IntexAuction is
     /// @dev Reverts `RevealHashMismatch` when the recovered signer is not `msg.sender` or when
     ///      `keccak256(signature)` does not equal the stored commit hash.
     /// @param worldwideDay Worldwide day (yyyymmdd, uint32).
-    /// @param quantity Requested Intex quantity.
+    /// @param units Requested Intex units.
     /// @param bidRate Bid rate (`1e6` fixed-point, % of the escrow basis).
     /// @param signature 65-byte ECDSA signature over the EIP-712 typed data.
     /// @param committedHash The `keccak256(signature)` previously stored by `commitBid`.
     function _verifyRevealSignature(
         uint32 worldwideDay,
-        uint16 quantity,
+        uint16 units,
         uint32 bidRate,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
@@ -451,7 +434,7 @@ contract IntexAuction is
     ) internal view {
         bytes32 structHash = keccak256(
             abi.encode(
-                REVEAL_BID_TYPEHASH, worldwideDay, msg.sender, quantity, bidRate, issuanceCurrency, referenceCurrency
+                REVEAL_BID_TYPEHASH, worldwideDay, msg.sender, units, bidRate, issuanceCurrency, referenceCurrency
             )
         );
         bytes32 digest = _hashTypedDataV4(structHash);
@@ -515,10 +498,11 @@ contract IntexAuction is
 
     // --- Internal helpers ---
     /// @notice Compute the current auction stage from the schedule and worldwide-day state.
-    /// @dev Reverts `AuctionNotFound` when the series has no entry. Red day short-circuits to
-    ///      `Cancelled`; a cleared auction short-circuits to `Completed` (the `cleared` flag, set by
-    ///      `executeAuctionClearing` - covers a no-sale clearing whose rate is 0); otherwise the
-    ///      stage follows the stored schedule timestamps.
+    /// @dev Reverts `AuctionNotFound` when the series has no entry. Stage resolution:
+    ///      - A red day short-circuits to `Cancelled`.
+    ///      - A cleared auction short-circuits to `Completed`. The `cleared` flag, set by
+    ///        `executeAuctionClearing`, also covers a no-sale clearing whose rate is 0.
+    ///      - In all other cases the stage follows the stored schedule timestamps.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @return Current auction stage.
     function _getAuctionStage(uint32 worldwideDay) internal view returns (IIntexAuction.AuctionStage) {

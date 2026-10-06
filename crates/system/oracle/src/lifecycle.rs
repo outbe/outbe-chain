@@ -50,14 +50,17 @@ pub fn run_slash_window(ctx: &BlockRuntimeContext) -> Result<()> {
 
 /// Called from pre-execution hooks every block.
 ///
-/// At vote period boundaries: tallies votes, updates exchange rates, writes
-/// price snapshots, and counts miss/success/abstain per validator.
+/// At vote period boundaries, it:
+/// - tallies votes;
+/// - updates exchange rates;
+/// - writes price snapshots;
+/// - counts miss/success/abstain per validator.
 ///
 /// At UTC day boundaries: runs S-curve peak detection for each registered,
 /// active reference-currency COEN pair.
 ///
-/// Slash-window force-exits are deliberately deferred to the receipt-visible
-/// `OracleSlashWindow` system phase so a same-block `BoundaryOutcome` can
+/// It deliberately defers slash-window force-exits to the receipt-visible
+/// `OracleSlashWindow` system phase. This lets a same-block `BoundaryOutcome`
 /// activate its target set before Oracle penalties mark underperformers EXITING.
 fn run_begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
     let mut oracle = OracleContract::new(ctx.storage.clone());
@@ -71,8 +74,12 @@ fn run_begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
 
     let vote_period = oracle.config_vote_period.read()?;
 
+    if block_number > 0 {
+        oracle.record_hour_block(timestamp, block_number)?;
+    }
+
     // Tally at end of vote period (skip block 0)
-    // Block 0 is always skipped (no votes possible during genesis).
+    // Block 0 is always skipped (no votes are possible during genesis).
     // With vote_period=1, first tally runs at block 1 (one block delay).
     if vote_period > 0 && block_number > 0 && block_number.is_multiple_of(vote_period) {
         tally::run_tally(&mut oracle, block_number, timestamp)?;
@@ -102,22 +109,22 @@ fn run_begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
         let most_recent_closed = previous_date_key(current_utc_day);
         let last_finalized = oracle.utc_day_vwap_last_finalized.read()?;
 
-        // yyyymmdd keys order chronologically as integers; only step via the
+        // yyyymmdd keys order chronologically as integers. Only step via the
         // calendar-aware helpers (never `+1` on the key).
         if last_finalized < most_recent_closed {
-            // On the very first finalization (watermark 0) only close the single
-            // most-recent day - do not sweep backward into pre-genesis history
-            // that has no data. Otherwise resume from the watermark.
+            // On the very first finalization (watermark 0), close only the single
+            // most-recent day. Do not sweep backward into pre-genesis history
+            // that has no data. Otherwise, resume from the watermark.
             let lower_bound = if last_finalized == 0 {
                 previous_date_key(most_recent_closed)
             } else {
                 last_finalized
             };
 
-            // Collect up to the cap of most-recent unfinalized days walking
-            // backward, then finalize ascending so writes/events stay
-            // chronological. After a gap wider than the cap, the oldest days are
-            // skipped - their source aggregates are already evicted past
+            // Walk backward and collect the most-recent unfinalized days, up to
+            // the cap. Then finalize them in ascending order so writes/events
+            // stay chronological. After a gap wider than the cap, the loop skips
+            // the oldest days. Their source aggregates are already evicted past
             // retention, so they could not be recomputed anyway.
             let mut days: Vec<u32> = Vec::new();
             let mut day = most_recent_closed;

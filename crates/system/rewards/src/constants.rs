@@ -1,9 +1,8 @@
 //! Protocol constants for the inclusion-window reward mechanism.
 //!
-//! Block `N`'s fees are escrowed and, at `N+K`, split across the full voter set
-//! with a **distance-decayed, fixed-denominator** payout (residue burned). All
-//! weights are scaled-`U256` integers - **no `f32`/`f64`** (CLAUDE.md numeric
-//! rule).
+//! The protocol escrows the fees of block `N`. At `N+K`, it splits them across the full voter
+//! set with a **distance-decayed, fixed-denominator** payout. The residue is burned. All
+//! weights are scaled-`U256` integers. Do **not** use `f32`/`f64` (CLAUDE.md numeric rule).
 //!
 //! `K` itself lives in [`outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K`]
 //! because the executor also needs it for settle timing.
@@ -23,10 +22,10 @@ pub const LATE_FINALIZE_SLOTS: usize = LATE_FINALIZE_WINDOW_K as usize + 1;
 ///
 /// Flat full weight through the geo-latency band, hard cliff at `k = K`:
 /// `[100, 100, 100, 0]` for `K = 3`. `w(0) = w_max`. A voter first seen at
-/// `k = K` (the settle slot) earns nothing; a slow-but-honest validator that
-/// lands at `k = 1` earns full weight, so a proposer pushing a victim `k0->k1`
-/// (or `k1->k2`) inflicts ~0 - and under the fixed denominator earns nothing by
-/// excluding it anyway.
+/// `k = K` (the settle slot) earns nothing. A slow-but-honest validator that
+/// lands at `k = 1` earns full weight. Thus a proposer that pushes a victim `k0->k1`
+/// (or `k1->k2`) inflicts ~0 loss. Under the fixed denominator, the proposer also
+/// earns nothing when it excludes the victim.
 ///
 /// The literal length is checked against `K + 1` at compile time.
 pub const LATE_FINALIZE_DECAY: [U256; LATE_FINALIZE_SLOTS] = [
@@ -43,9 +42,8 @@ pub const LATE_FINALIZE_W_MAX: U256 = LATE_FINALIZE_DECAY[0];
 
 /// Decay weight for inclusion distance `k`.
 ///
-/// Returns `0` for `k > K` (out of window). Such a credit must already have been
-/// rejected FATAL upstream by the verifier; this is a defensive clamp, never a
-/// silent acceptance path.
+/// Returns `0` for `k > K` (out of window). The upstream verifier must already reject
+/// such a credit as FATAL. This is a defensive clamp, never a silent acceptance path.
 pub fn decay_weight(k: u64) -> U256 {
     LATE_FINALIZE_DECAY
         .get(k as usize)
@@ -90,9 +88,9 @@ mod tests {
         assert_eq!(decay_weight(u64::MAX), U256::ZERO);
     }
 
-    /// full attendance at `k <= 2` pays exactly the pool and never
-    /// more (`N*w_max / D = 1`); the fixed denominator means an absent voter's
-    /// share burns rather than redistributing.
+    /// Full attendance at `k <= 2` pays exactly the pool and never
+    /// more (`N*w_max / D = 1`). With the fixed denominator, the share of an absent
+    /// voter burns. It does not go to the other voters.
     #[test]
     fn w_max_solvency_full_attendance() {
         let committee_size: u64 = 16;
@@ -110,8 +108,8 @@ mod tests {
             "full k0 attendance pays exactly the pool"
         );
 
-        // Excluding one voter must not raise anyone else's share (fixed denom):
-        // the remaining payouts are unchanged and the missing share becomes residue.
+        // Excluding one voter must not raise anyone else's share (fixed denom).
+        // The remaining payouts stay unchanged and the missing share becomes residue.
         let mut distributed_minus_one = U256::ZERO;
         for _ in 0..(committee_size - 1) {
             distributed_minus_one += pool * decay_weight(0) / denom;

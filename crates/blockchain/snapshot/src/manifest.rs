@@ -21,7 +21,7 @@ pub struct UnwindProgress {
     pub partial_state_trie: u64,
 }
 
-/// Independent native observations; a tail above finalized is preserved.
+/// Independent native observations. A tail above finalized is preserved.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeProgress {
@@ -68,7 +68,7 @@ pub enum DomainKind {
     FatalEvidence,
 }
 
-/// Informational ordinary configuration root; never an extraction destination.
+/// Informational ordinary configuration root. It is never an extraction destination.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum NativeRoot {
@@ -94,7 +94,7 @@ pub struct FileEntry {
     pub kind: EntryKind,
     pub size: u64,
     pub sha256: Option<String>,
-    /// Native permission bits; ownership is handled by ordinary file placement.
+    /// Native permission bits. Ordinary file placement handles ownership.
     pub mode: u32,
 }
 
@@ -105,7 +105,7 @@ pub struct DomainInventory {
     pub id: String,
     pub kind: DomainKind,
     pub native_root: NativeRoot,
-    /// The recorded native location; file placement remains an operator action.
+    /// The recorded native location. File placement remains an operator action.
     pub native_path: String,
     pub mode: u32,
     /// Entries in their declared order, including explicit empty directories.

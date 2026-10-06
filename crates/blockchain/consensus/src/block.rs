@@ -18,15 +18,14 @@ use crate::digest::Digest;
 /// Wraps a sealed Ethereum block and implements Commonware's consensus traits
 /// so blocks can flow through the Simplex engine.
 ///
-/// the inner `SealedBlock` is `Arc`-backed so that cloning a
-/// `ConsensusBlock` - which happens on every propose/verify/finalize hop, in the
-/// shared block cache, and across mailbox channels - is a cheap refcount bump
-/// instead of a full deep block copy. `Clone`/`PartialEq`/`Eq`/`Debug` keep
-/// value semantics (`Arc`'s `PartialEq` compares the pointed-to value, and the
-/// codec encodes the inner block), so this is observationally identical to the
-/// previous by-value wrapper - only cheaper. A genuine owned `SealedBlock` is
-/// still recoverable via [`ConsensusBlock::into_inner`] (which clones only when
-/// the `Arc` is shared).
+/// The inner `SealedBlock` is `Arc`-backed. Cloning a `ConsensusBlock` happens on
+/// every propose/verify/finalize hop, in the shared block cache, and across mailbox
+/// channels. With the `Arc`, each clone is a cheap refcount bump instead of a full
+/// deep block copy. `Clone`/`PartialEq`/`Eq`/`Debug` keep value semantics: `Arc`'s
+/// `PartialEq` compares the pointed-to value, and the codec encodes the inner block.
+/// Thus this wrapper is observationally identical to the previous by-value wrapper,
+/// only cheaper. A genuine owned `SealedBlock` is still recoverable via
+/// [`ConsensusBlock::into_inner`]. That method clones only when the `Arc` is shared.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct ConsensusBlock(Arc<SealedBlock<OutbeBlock>>);
@@ -40,8 +39,8 @@ impl ConsensusBlock {
     /// Unwrap into the inner sealed block.
     ///
     /// Returns the owned `SealedBlock` without copying when this is the sole
-    /// holder of the `Arc`; otherwise clones the inner block once (the same deep
-    /// copy the old by-value wrapper always paid).
+    /// holder of the `Arc`. Otherwise it clones the inner block once (the same
+    /// deep copy the old by-value wrapper always paid).
     pub fn into_inner(self) -> SealedBlock<OutbeBlock> {
         Arc::try_unwrap(self.0).unwrap_or_else(|arc| (*arc).clone())
     }
@@ -95,8 +94,8 @@ impl Write for ConsensusBlock {
     fn write(&self, buf: &mut impl BufMut) {
         use alloy_rlp::Encodable as _;
         // Encode the inner SealedBlock explicitly (not the Arc wrapper) so the
-        // wire bytes are byte-identical to the pre-Arc wrapper - consensus codec
-        // determinism.
+        // wire bytes are byte-identical to the pre-Arc wrapper. This keeps
+        // consensus codec determinism.
         self.0.as_ref().encode(buf);
     }
 }
@@ -210,14 +209,15 @@ mod tests {
         ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
     }
 
-    /// marshal-2: the marshal genesis anchor is a `ConsensusBlock` whose
-    /// commitment the marshal re-derives via THIS codec round-trip (RLP encode
-    /// -> RLP decode -> `seal_slow`) and compares in `ensure_genesis_anchor`,
-    /// which panics on mismatch at the SECOND boot. A header/extra_data encoding
-    /// change that did not round-trip losslessly would compile clean but crash a
-    /// restarted node. This pins that `digest() == commitment() == block_hash()`
-    /// survives the round-trip, including non-empty `extra_data` (genesis carries
-    /// it via `OutbeBlockArtifacts`).
+    /// marshal-2: the marshal genesis anchor is a `ConsensusBlock`. The marshal
+    /// re-derives its commitment via THIS codec round-trip (RLP encode -> RLP
+    /// decode -> `seal_slow`) and compares it in `ensure_genesis_anchor`. That
+    /// function panics on mismatch at the SECOND boot. A header/extra_data
+    /// encoding change that did not round-trip losslessly would compile clean but
+    /// crash a restarted node. This test pins that
+    /// `digest() == commitment() == block_hash()` survives the round-trip,
+    /// including non-empty `extra_data` (genesis carries it via
+    /// `OutbeBlockArtifacts`).
     #[test]
     fn consensus_block_codec_round_trip_preserves_commitment() {
         for (number, extra) in [
@@ -252,9 +252,9 @@ mod tests {
         }
     }
 
-    /// cloning a `ConsensusBlock` must be a cheap `Arc` refcount bump, not
-    /// a deep block copy, while keeping value semantics (equality, digest, and
-    /// byte-identical encoding) identical to the previous by-value wrapper.
+    /// Cloning a `ConsensusBlock` must be a cheap `Arc` refcount bump, not
+    /// a deep block copy. Value semantics (equality, digest, and byte-identical
+    /// encoding) must stay identical to the previous by-value wrapper.
     #[test]
     fn clone_is_arc_shared_and_preserves_value_semantics() {
         let original = sample_block(42, b"arc-backed");

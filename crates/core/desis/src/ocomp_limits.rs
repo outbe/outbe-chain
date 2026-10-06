@@ -2,8 +2,7 @@
 //!
 //! The legacy cross-module API is deliberately best-effort because it is used
 //! from a block hook. OCOMP request application instead needs an atomic,
-//! fail-closed owner write whose exact input can be committed by the request
-//! receipt.
+//! fail-closed owner write whose exact input the request receipt can commit.
 
 use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::receipts::desis_request_brief_hash;
@@ -30,7 +29,7 @@ pub fn apply_request_desis_limit(
         logical_anchor,
     )
     .map_err(|error| PrecompileError::Revert(format!("invalid OCOMP Desis brief hash: {error}")))?;
-    // Same door as the settlement paths; only the overflow policy differs,
+    // Same door as the settlement paths. Only the overflow policy differs,
     // because this receipt commits a hash a rejection could not fill.
     crate::api::dispatch_auction_brief(
         storage,

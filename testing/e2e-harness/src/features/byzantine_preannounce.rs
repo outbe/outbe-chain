@@ -3,7 +3,7 @@
 //! finalized history and FullNodes only ever carry the genuine committee.
 //!
 //! Validators inherit `OUTBE_TEST_BYZANTINE_PREANNOUNCE` from the harness
-//! process; the node hook exists only in E2E builds with protocol overrides.
+//! process. The node hook exists only in E2E builds with protocol overrides.
 
 use std::collections::BTreeMap;
 use std::thread::sleep;

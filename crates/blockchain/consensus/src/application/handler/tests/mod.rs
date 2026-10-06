@@ -11,7 +11,6 @@ use commonware_cryptography::{
     Hasher, Sha256, Signer as _,
 };
 use commonware_parallel::Sequential;
-use commonware_utils::ordered::Quorum as _;
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use outbe_primitives::reshare_artifact::ConsensusHeaderArtifact;
 

@@ -3,8 +3,8 @@ pragma solidity ^0.8.30;
 
 /// @title IUpdate
 /// @notice Protocol update / hardfork precompile at 0x000000000000000000000000000000000000EE0B
-/// @dev This precompile is managed by vote; the proposal
-/// is handled by inner cross-module API after approval. (see: /crates/system/update/)
+/// @dev Vote manages this precompile. After approval, the inner cross-module API
+/// handles the proposal. (see: /crates/system/update/)
 interface IUpdate {
     enum ScheduledUpdateStatus {
         Scheduled,
@@ -26,7 +26,7 @@ interface IUpdate {
     /// @notice Emitted when a scheduled update is canceled and dropped from activation.
     event UpgradeCanceled(uint256 indexed proposalId, uint32 version, uint64 activationHeight);
 
-    /// @notice Emitted when a new update was accepted by vote.
+    /// @notice Emitted when vote accepts a new update.
     event ScheduledUpdateCreated(uint256 indexed proposalId, uint32 version, uint64 activationHeight, bytes info);
 
     /// @notice Returns the active protocol version.

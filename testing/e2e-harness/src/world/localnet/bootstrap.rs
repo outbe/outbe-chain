@@ -1,6 +1,6 @@
 //! Bootstrap glue (ported `bootstrap-testnet.sh`): keys/DKG + genesis. The heavy
 //! lifting stays one-shot subprocesses (`outbe-chain dkg bootstrap` and
-//! `python3 seed_genesis.py`); the genesis skeleton, port rewrite, and dev felony
+//! `python3 seed_genesis.py`). The genesis skeleton, port rewrite, and dev felony
 //! patch are native Rust.
 
 use std::collections::HashSet;
@@ -35,7 +35,7 @@ use super::{worldwide_day, Localnet};
 /// 10000 COEN (`10000 * 10^18`) as hex - the per-validator liquid balance.
 const VALIDATOR_BALANCE_HEX: &str = "0x21e19e0c9bab2400000";
 /// Dev felony threshold (blocks) so downtime slashing is observable on the short
-/// localnet epoch; must stay `<` the epoch length (`bootstrap-testnet.sh:234`).
+/// localnet epoch. It must stay `<` the epoch length (`bootstrap-testnet.sh:234`).
 const DEV_FELONY_THRESHOLD: u64 = 30;
 const PROPOSER_FELONY_SLOT: u64 = 1;
 const VOTER_FELONY_SLOT: u64 = 12;
@@ -53,11 +53,11 @@ const RADICLE_MAX_REPOSITORIES_SLOT: &str =
 
 /// Valid, scenario-local genesis choices used by lifecycle E2E tests.
 ///
-/// The fields are deliberately private: callers use the checked builders, and
+/// The fields are deliberately private. Callers use the checked builders, and
 /// [`Localnet::bootstrap_with_profile`] validates the values again against the
 /// actual committee size before generating any files. ValidatorSet and Staking
-/// overrides are written to a scenario-local seed copy consumed by the normal
-/// genesis seeder; they are never installed through raw storage writes.
+/// overrides are written to a scenario-local seed copy that the normal genesis
+/// seeder consumes. They are never installed through raw storage writes.
 #[derive(Debug, Clone)]
 pub struct BootstrapProfile {
     chain_id: Option<NonZeroU64>,
@@ -346,7 +346,7 @@ impl Localnet {
     /// mutating genesis. The DCAP lane binds the exact test SIGSTRUCT into a
     /// `DcapRequired` policy. SGX without DCAP and the non-hardware lanes use an
     /// explicit `GramineDirectDev` policy. The product binary constructs and
-    /// validates the policy bytes; the harness never reimplements its codec.
+    /// validates the policy bytes. The harness never reimplements its codec.
     pub(crate) fn bind_tee_genesis(&self) -> Result<()> {
         self.ensure_ocomp_genesis()?;
         let genesis = self.cfg.dir.join("genesis.json");
@@ -445,7 +445,7 @@ impl Localnet {
 
     /// The current node binary requires a genesis-active OCOMP install for
     /// every network. Build that independent prerequisite with the product
-    /// tooling before binding the hardware TEE policy; the DCAP harness does
+    /// tooling before binding the hardware TEE policy. The DCAP harness does
     /// not reproduce either OCOMP's canonical codec or its signatures.
     fn ensure_ocomp_genesis(&self) -> Result<()> {
         eyre::ensure!(
@@ -597,8 +597,8 @@ impl Localnet {
     }
     /// Keep a debug-only logical-clock E2E internally consistent by shifting the
     /// genesis header by the same signed number of seconds passed to every node.
-    /// Without this, block 1 is correctly rejected by the testnet max-drift
-    /// validator before a day-boundary scenario can exercise ZeroFee.
+    /// Without this, the testnet max-drift validator correctly rejects block 1
+    /// before a day-boundary scenario can exercise ZeroFee.
     pub(crate) fn shift_genesis_timestamp(&self, offset_secs: i64) -> Result<()> {
         let path = self.cfg.dir.join("genesis.json");
         let bytes = fs::read(&path)?;
@@ -618,9 +618,9 @@ impl Localnet {
 
     /// Bootstrap an N-validator set (keys, DKG, genesis). Runs unprivileged.
     /// `outbe-chain dkg bootstrap` and `seed_genesis.py` stay one-shot
-    /// subprocesses; the genesis skeleton, port rewrite, and felony patch are
+    /// subprocesses. The genesis skeleton, port rewrite, and felony patch are
     /// native. `tuning` strictly maps the legacy `TESTNET_*` knobs used by
-    /// existing flows into a [`BootstrapProfile`]; pass `&[]` for defaults.
+    /// existing flows into a [`BootstrapProfile`]. Pass `&[]` for defaults.
     pub fn bootstrap(&self, n: usize, tuning: &[(&str, String)]) -> Result<()> {
         let profile = BootstrapProfile::from_tuning(tuning)?;
         self.bootstrap_with_profile(n, &profile)
@@ -850,9 +850,9 @@ impl Localnet {
             "gasLimit": "0x1c9c380",
             // Start at the EIP-1559 floor. Omitting this takes reth's 1 Gwei
             // Ethereum default. Every harness transaction is priced at the
-            // chain's MIN_PROTOCOL_BASE_FEE, and the base fee only sheds
-            // 12.5% per under-target block - about 140 blocks before the floor
-            // is reachable, while the localnet starts issuing work at block 2.
+            // chain's MIN_PROTOCOL_BASE_FEE. The base fee only sheds 12.5% per
+            // under-target block. That is about 140 blocks before the floor is
+            // reachable, while the localnet starts issuing work at block 2.
             "baseFeePerGas": format!("0x{MIN_PROTOCOL_BASE_FEE:x}"),
             "difficulty": "0x0",
             "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
@@ -862,7 +862,7 @@ impl Localnet {
         // Four real enclaves intentionally share one SGX host in this lane.
         // EPC scheduling can make one validator's otherwise ~100-200 ms offer
         // re-execution take just over five seconds. The testnet defaults
-        // assume one enclave per validator host; widen only this co-located
+        // assume one enclave per validator host. Widen only this co-located
         // hardware test network so a local resource stall does not cancel the
         // execution-read budget before the deterministic retry completes.
         apply_co_located_sgx_timing(&mut genesis, self.cfg.tee_mode)?;
@@ -1279,8 +1279,8 @@ fn address_has_suffix(key: &str, suffix: &str) -> bool {
 
 fn localnet_forming_period_seconds(_now: u64) -> Result<u64> {
     // A generic localnet is not an economic-calendar acceleration fixture.
-    // In particular, real SGX setup can consume several minutes before block 1;
-    // shortening Forming relative to genesis-generation wall time can therefore
+    // In particular, real SGX setup can consume several minutes before block 1.
+    // Shortening Forming relative to genesis-generation wall time can therefore
     // skip directly to MissedOffering before Cycle has formed the immutable day
     // limit. Scenarios that need a near-term edge use the checked profile tuning
     // or a typed pre-start WorldwideDay fixture instead.

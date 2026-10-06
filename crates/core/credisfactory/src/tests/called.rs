@@ -2,8 +2,8 @@
 //! lapsed settlement window.
 //!
 //! Every test drives [`crate::called::scan_and_call`] through the `scan` harness
-//! helper against a seeded finalized daily series, which is the only price source
-//! the production trigger reads.
+//! helper against a seeded finalized daily series. This series is the only price
+//! source the production trigger reads.
 
 use alloy_primitives::{Address, U256};
 
@@ -59,14 +59,14 @@ fn reterm(
 ) {
     let credis = CredisContract::new(storage.clone());
     let mut position = credis.get_position(position_id).unwrap();
-    position.call_window = window_days * SECS_PER_DAY;
-    position.call_threshold = threshold_days * SECS_PER_DAY;
-    position.call_notice_period = notice_days * SECS_PER_DAY;
+    position.call_window_seconds = window_days * SECS_PER_DAY;
+    position.call_threshold_seconds = threshold_days * SECS_PER_DAY;
+    position.call_notice_period_seconds = notice_days * SECS_PER_DAY;
     credis.positions.update(&position).unwrap();
-    if position.call_window > credis.max_call_window.read(&REFERENCE_ISO).unwrap() {
+    if position.call_window_seconds > credis.max_call_window_seconds.read(&REFERENCE_ISO).unwrap() {
         credis
-            .max_call_window
-            .write(&REFERENCE_ISO, position.call_window)
+            .max_call_window_seconds
+            .write(&REFERENCE_ISO, position.call_window_seconds)
             .unwrap();
     }
 }
@@ -140,7 +140,7 @@ fn a_position_with_zero_call_terms_is_never_called() {
 
 /// A position whose sealed window outruns the current constant still gets its
 /// whole span collected: the scan sizes the shared per-currency window off the
-/// `max_call_window` high-water mark, not off the constant.
+/// `max_call_window_seconds` high-water mark, not off the constant.
 #[test]
 fn a_window_wider_than_the_constant_is_collected_in_full() {
     let mut storage = env();
@@ -156,6 +156,33 @@ fn a_window_wider_than_the_constant_is_collected_in_full() {
         reterm(&storage, position_id, WIDE_DAYS, 35, 7);
         assert_eq!(scan(&storage, at), 1);
         assert_eq!(state_of(&storage, position_id), CredisState::Called);
+    });
+    teardown();
+}
+
+#[test]
+fn a_node_local_failure_while_calling_a_position_fails_the_scan() {
+    let mut storage = env();
+    let at = CREATED_AT + AFTER_WINDOW;
+    let position_id = StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        open_with_series(&storage, at, CALL_LOOKBACK_DAYS, above_call())
+    });
+    storage.fail_after_mutation_at(0);
+    let result = StorageHandle::enter(&mut storage, |storage| {
+        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(BLOCK_NUMBER, at, CHAIN_ID),
+            storage.clone(),
+        );
+        crate::called::scan_and_call(&ctx)
+    });
+    storage.clear_mutation_failure();
+    assert!(matches!(
+        result,
+        Err(outbe_primitives::error::PrecompileError::Storage(_))
+    ));
+    StorageHandle::enter(&mut storage, |storage| {
+        assert_eq!(state_of(&storage, position_id), CredisState::Open);
     });
     teardown();
 }
@@ -242,8 +269,8 @@ fn the_window_absorbs_below_call_days_up_to_the_slack() {
         for i in 0..slack {
             let offset = i * stride + 1;
             // Guards the boundary: a below-call day placed past the window would
-            // silently leave more than `CALL_THRESHOLD_DAYS` breaches standing and
-            // make this test stop probing the threshold.
+            // silently leave more than `CALL_THRESHOLD_DAYS` breaches standing.
+            // Then this test would stop probing the threshold.
             assert!(
                 offset < CALL_LOOKBACK_DAYS,
                 "below-call day {offset} falls outside the lookback window"
@@ -292,7 +319,7 @@ fn missing_days_do_not_count_as_breaches() {
         advance_to(&storage, at);
 
         // Publish one day short of the threshold and leave the rest of the window
-        // unpublished. section 11.3's placeholder: a day with no reference price is not
+        // unpublished. Section 11.3's placeholder: a day with no reference price is not
         // a breach, so it can only delay a call.
         for i in 0..CALL_THRESHOLD_DAYS - 1 {
             set_vwap(&storage, day_back(at, i), above_call());
@@ -385,7 +412,7 @@ fn the_call_and_the_void_compose_across_runs() {
         assert_eq!(scan(&storage, at), 1);
         assert_eq!(state_of(&storage, position_id), CredisState::Called);
 
-        // A position called in this same run can never be voided by it: the
+        // This same run can never void a position that it called: the
         // window opens at `called_at = now`.
         assert_eq!(scan(&storage, at), 0);
 
@@ -396,14 +423,17 @@ fn the_call_and_the_void_compose_across_runs() {
         assert_eq!(scan(&storage, inside), 0);
         assert_eq!(state_of(&storage, position_id), CredisState::Called);
 
-        // The window lapses with the whole principal outstanding: the entire
-        // collateral is burned and credited to the Promis Reserve.
+        // The window lapses with the whole principal outstanding: the void burns
+        // the entire collateral and credits it to the Promis Reserve.
         let lapsed = at + NOTICE + 1;
         advance_to(&storage, lapsed);
         finalize_through(&storage, lapsed);
         assert_eq!(scan(&storage, lapsed), 1);
         assert_eq!(state_of(&storage, position_id), CredisState::Void);
-        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        assert_eq!(
+            view_balance(&storage, outbe_primitives::addresses::CREDIS_ADDRESS),
+            U256::ZERO
+        );
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(storage.clone())
                 .get_total_unallocated()
@@ -460,9 +490,9 @@ fn each_reference_currency_prices_off_its_own_daily_series() {
 }
 
 /// The call is anchored to the reference currency, never to the issuance currency
-/// the position is denominated in. Both directions, because getting the anchor
-/// wrong fails silently in one of them: with the two series moving together an
-/// issuance-keyed scan still reaches the right verdict by coincidence.
+/// the position is denominated in. This test checks both directions, because a
+/// wrong anchor fails silently in one of them. With the two series moving
+/// together, an issuance-keyed scan still reaches the right verdict by coincidence.
 #[test]
 fn the_call_follows_the_reference_series_and_ignores_the_issuance_one() {
     // Breach published only on the reference series -> the position is called.
@@ -585,7 +615,7 @@ fn a_resumed_pass_starts_at_the_cursor_and_walks_down() {
             above_call(),
         );
 
-        // Only indices 1 and 0 are visited; the position at index 2 is untouched.
+        // The run visits only indices 1 and 0. The position at index 2 is untouched.
         assert_eq!(scan(&storage, at), 2);
         assert_eq!(state_of(&storage, ids[0]), CredisState::Called);
         assert_eq!(state_of(&storage, ids[1]), CredisState::Called);
@@ -655,7 +685,7 @@ fn the_void_budget_bounds_one_run_without_starving_the_call_arm() {
         .collect();
     StorageHandle::enter(&mut provider, |storage| {
         // `ids[0]` sits at active index 0, so the descending walk reaches it
-        // LAST - after the void budget is already spent. Leave it Open; the rest
+        // LAST, after the void budget is already spent. Leave it Open. The rest
         // become called-and-lapsed.
         let called_at = CREATED_AT;
         {
@@ -677,8 +707,8 @@ fn the_void_budget_bounds_one_run_without_starving_the_call_arm() {
         );
 
         // A void costs two enclave round-trips, so the run stops voiding at the
-        // budget - but it must keep walking. The Open position behind the
-        // exhausted budget is still called in this same run.
+        // budget. But it must keep walking. This same run still calls the Open
+        // position behind the exhausted budget.
         assert_eq!(scan(&storage, lapsed), budget + 1, "64 voids plus the call");
         assert_eq!(
             state_of(&storage, ids[0]),

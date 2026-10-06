@@ -53,9 +53,9 @@ fn deploy_origin_venue(world: &mut World) {
     let chain_id = world.rpc.chain_id(port).expect("committee chain id");
     // Genesis funds validators and Tribute owners, so the deploy account starts
     // empty on this chain and cannot even pay for its own scripts.
-    // One owner's balance does not cover the whole deploy, so several chip in.
-    // Taken from the tail: the scenario's Tribute submitters are the head of the
-    // same list, and they still need their own gas.
+    // One owner's balance does not cover the whole deploy, so several owners
+    // contribute. They come from the tail of the list. The scenario's Tribute
+    // submitters are the head of the same list, and they still need their own gas.
     let fallback_operator_key = world
         .validators
         .get(0)
@@ -74,8 +74,8 @@ fn deploy_origin_venue(world: &mut World) {
         )
         .expect("fund the deploy account on the committee chain");
     }
-    // The committee is always a target of its own day; a started second chain
-    // joins it, so the day fans out to both.
+    // The committee is always a target of its own day. A started second chain
+    // joins it, so the day goes to both.
     let targets: Vec<u64> = std::iter::once(chain_id)
         .chain(
             world
@@ -173,7 +173,7 @@ fn advance_past_window_to_stage(world: &mut World, target_stage: u8) {
     }
 }
 
-/// Jump the committee to the end of the window a stage waits on instead of sitting it out.
+/// Jump the committee to the end of the window a stage waits on instead of waiting for that end.
 /// The e2e windows lie inside one day, so the jump crosses nothing the wait would not.
 #[cfg(feature = "ocomp-integration")]
 fn jump_committee_past_window(world: &mut World, target_stage: u8) {
@@ -260,8 +260,8 @@ fn advance_one_venue_to_stage(world: &World, venue: &VenueSide, target_stage: u8
     }
 }
 
-/// Where the venue actually lives. With a second chain started the auction runs
-/// there and its messages ride the relay home; without one the committee is its
+/// Where the venue actually lives. With a second chain started, the auction runs
+/// there and its messages ride the relay home. Without one, the committee is its
 /// own target and everything stays on one chain.
 #[cfg(feature = "ocomp-integration")]
 pub(super) struct VenueSide {
@@ -415,7 +415,7 @@ fn auction_opened_on(world: &World, venue: &VenueSide) {
 }
 
 /// After a logical-time jump the ratchet lets each block carry up to an hour, so
-/// a minute-long auction window would burn out in seconds. Wait for blocks that
+/// a minute-long auction window would end in seconds. Wait for blocks that
 /// carry ordinary time: a chain that has not resumed yet looks identical to a
 /// settled one if only the clock is sampled.
 #[cfg(feature = "ocomp-integration")]
@@ -452,7 +452,8 @@ fn committee_clock_settles(world: &mut World) {
 }
 
 /// A loopback delivery runs inside the sending transaction on the gas its message type budgets
-/// for it, so a park means a wrong budget or a reverting handler - the run's to report, not retry.
+/// for it. So a park means a wrong budget or a reverting handler. The run must report it, not
+/// retry it.
 #[cfg(feature = "ocomp-integration")]
 fn assert_no_parked_deliveries(world: &World) {
     let url = world.rpc.url(world.validators.primary_port());
@@ -481,8 +482,8 @@ fn flush_parked_bid_relays(world: &mut World, worldwide_day: u32) {
     }
 }
 
-/// A relay that stopped part way carries on from the chunk it left, and the routers share an address
-/// across chains - so the push has to be asked of the chain that is relaying.
+/// A relay that stopped part way continues from the chunk it left. The routers share an address
+/// across chains. So the push request has to go to the chain that is relaying.
 #[cfg(feature = "ocomp-integration")]
 fn push_one_venue_bid_relay(venue: &VenueSide, worldwide_day: u32) {
     let progress = eth::read_call(
@@ -530,7 +531,7 @@ const BIDS: [(u16, u32); 2] = [(30, 800_000), (40, 700_000)];
 fn bidders_commit(world: &mut World) {
     let worldwide_day = settled_day(world);
     // The same two bidders trade on every chain the day opened on: one keypair
-    // funded on each, so clearing has to fan their bids in from both.
+    // funded on each, so clearing has to collect their bids from both.
     let bidders = bidders::derive(&BIDS).expect("derive the bidders");
     for side in venue_sides(world) {
         for bidder in &bidders {
@@ -654,7 +655,7 @@ fn cleared_day_issues_intex(world: &mut World) {
     assert_ne!(
         venue_probes::cleared_empty(&home, worldwide_day),
         Some(true),
-        "day {worldwide_day} cleared empty: the day's supply bought no whole Intex, so there is \
+        "day {worldwide_day} cleared empty: the day's Desis Limit bought no whole Intex, so there is \
          nothing to issue and this scenario cannot cover minting"
     );
     // The day issues to every chain it opened on, so every chain has to show the
@@ -718,7 +719,7 @@ fn issuances_landed_on(side: &VenueSide, bidders: &[bidders::Bidder], worldwide_
 #[cfg(feature = "ocomp-integration")]
 #[then("each escrow settles the day and returns what the bids did not buy")]
 fn escrow_refunds_the_rest(world: &mut World) {
-    // Each chain settled its own bids, so each has to give back what it did
+    // Each chain settled its own bids, so each has to return what it did
     // not buy, and each bidder collects it.
     for side in venue_sides(world) {
         refunds_landed_on(world, &side);
@@ -801,7 +802,7 @@ fn refunds_landed_on(world: &World, side: &VenueSide) {
         sleep(Duration::from_secs(2));
     }
 
-    // Settlement either pays a bid or gives it back, so the day leaves nothing behind.
+    // Settlement either pays a bid or returns it, so the day leaves nothing behind.
     let held = eth::read_call(
         &url,
         side.payment_token,

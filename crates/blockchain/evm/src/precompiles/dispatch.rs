@@ -15,7 +15,7 @@ use crate::{
     tee_attestation_activation::TeeAttestationChainSpecStateV1,
 };
 use alloy_evm::eth::EthEvmContext;
-use alloy_primitives::{Bytes, B256};
+use alloy_primitives::{Bytes, B256, U256};
 use core::fmt::Debug;
 use outbe_compressed_entities::ExecutionScope;
 use outbe_metadosis::{api::OcompFinalizedIntentAuthority, config::OcompForkInstallV1};
@@ -46,6 +46,28 @@ pub(super) struct OutbeDispatchRuntime<'a> {
     pub(super) ocomp_fork_install: Option<Arc<OcompForkInstallV1>>,
 }
 
+/// Captures the frame and consensus inputs before borrowing the context for storage.
+struct DispatchCall<'a> {
+    inputs: &'a CallInputs,
+    route: precompile_routes::Route,
+    data: Bytes,
+    block_number: u64,
+    chain_id: u64,
+    timestamp: u64,
+    base_gas: u64,
+}
+
+struct CallAdmission {
+    value: U256,
+    result_vote: ResultVoteCall,
+    protocol_cycle_call: bool,
+}
+
+struct DispatchOutcome {
+    result: DomainResult<Bytes>,
+    actual_gas: u64,
+}
+
 /// Dispatch one outbe precompile call with full context access.
 pub(super) fn outbe_ctx_dispatch<DB>(
     ctx: &mut EthEvmContext<DB>,
@@ -56,76 +78,62 @@ where
     DB: Database + Debug,
     DB::Error: Debug,
 {
-    let OutbeDispatchRuntime {
-        spec,
-        genesis_hash,
-        tee_attestation_v1,
-        runtime_body_readers,
-        execution_scope,
-        ocomp_finality_authority,
-        ocomp_activation_block_meter,
-        ocomp_lifecycle_active,
-        ocomp_fork_install,
-    } = runtime;
-
     use revm::context_interface::{Block as _, ContextTr};
 
-    let address = inputs.bytecode_address;
-    let Some(route) = precompile_routes::resolve(&address) else {
+    let Some(route) = precompile_routes::resolve(&inputs.bytecode_address) else {
         return Ok(None);
     };
     let block_number = ctx.block().number().saturating_to::<u64>();
     let chain_id = ctx.cfg().chain_id;
     let timestamp = ctx.block().timestamp().saturating_to::<u64>();
-
     // Materialize the exact calldata before choosing the consensus gas charge.
-    // Contract -> precompile calls arrive as SharedBuffer and must pay the same
-    // activation charge as top-level Bytes calls.
+    // SharedBuffer and top-level Bytes calls must pay the same activation charge.
     let data: Bytes = inputs.input.bytes_local(ctx.local());
-
-    // Per-precompile base gas, floored at PRECOMPILE_BASE_GAS so the
-    // existing flat-cost contract still holds for default precompiles.
     let base_gas = route.base_gas(data.as_ref()).max(PRECOMPILE_BASE_GAS);
-    let mut actual_gas = base_gas;
-    // Keep all admission failures typed until the single REVM translation below.
-    // A user-controlled error must never escape through the fatal string channel.
-    let result = (|| -> DomainResult<Bytes> {
-        if inputs.gas_limit < base_gas {
+    let call = DispatchCall {
+        inputs,
+        route,
+        data,
+        block_number,
+        chain_id,
+        timestamp,
+        base_gas,
+    };
+    let outcome = call.execute(ctx, &runtime);
+    translate_outcome(
+        outcome,
+        runtime.runtime_body_readers,
+        runtime.execution_scope.is_rpc_read_only(),
+        inputs.gas_limit,
+    )
+    .map(Some)
+}
+
+impl DispatchCall<'_> {
+    fn check_frame(&self) -> DomainResult<()> {
+        if self.inputs.gas_limit < self.base_gas {
             return Err(PrecompileError::OutOfGas);
         }
-
-        // A precompile's state is keyed by its own address, so a `DELEGATECALL` or
-        // `CALLCODE` frame cannot give it the borrowed-code semantics those opcodes
-        // promise: dispatch would read and write the precompile's own storage while
-        // `caller` stays the frame's inherited caller. Any contract could then take
-        // caller-authenticated actions - unstaking, voting, spending - as whoever
-        // called it. Refuse the frame instead of executing it under a caller it does
-        // not belong to.
-        //
-        // Matching the scheme rather than comparing addresses states the rule the
-        // opcodes define; the address divergence those two produce is a consequence
-        // of it, and one that a self-referential frame would not exhibit.
+        // Borrowed-code frames cannot use precompile storage with an inherited
+        // caller: that would allow caller-authenticated actions on its behalf.
+        // Match the opcode scheme, including self-referential borrowed frames.
         if matches!(
-            inputs.scheme,
+            self.inputs.scheme,
             CallScheme::DelegateCall | CallScheme::CallCode
         ) {
             return Err(PrecompileError::Revert(
                 "outbe precompile: delegated call frame cannot execute a precompile".to_string(),
             ));
         }
+        Ok(())
+    }
 
-        // Reentrancy guard: refuse re-entry into the same outbe address on the
-        // active thread's call chain.
-        let Some(_reentrancy) = ReentrancyStack::try_enter(address) else {
-            return Err(PrecompileError::Revert(
-                "outbe precompile reentrancy denied".to_string(),
-            ));
-        };
-
-        let is_static = inputs.is_static;
-        let caller = inputs.caller;
+    fn admit_value(&self, ocomp_lifecycle_active: bool) -> DomainResult<CallAdmission> {
+        let address = self.inputs.bytecode_address;
+        let caller = self.inputs.caller;
+        let block_number = self.block_number;
         if caller == METADOSIS_ADDRESS && matches!(address, FIDELITY_ADDRESS | ORACLE_ADDRESS) {
-            let selector = data.get(..4).map(alloy_primitives::hex::encode);
+            let selector = self.data.get(..4).map(alloy_primitives::hex::encode);
             tracing::warn!(
                 target: "outbe::ocomp::trace",
                 "OCOMP_TRACE_V1 kind=forbidden_calculation_entry block={block_number} \
@@ -133,7 +141,7 @@ where
                 selector.as_deref().unwrap_or("missing")
             );
         }
-        let value = match classify_boundary_value(route.value_policy(), &inputs.value) {
+        let value = match classify_boundary_value(self.route.value_policy(), &self.inputs.value) {
             BoundaryValue::Credited(v) => v,
             BoundaryValue::Rejected(reason) => {
                 return Err(PrecompileError::Revert(reason.to_string()));
@@ -141,183 +149,215 @@ where
         };
         let result_vote = ResultVoteCall::classify(
             address,
-            data.as_ref(),
-            is_static,
+            self.data.as_ref(),
+            self.inputs.is_static,
             value,
             ocomp_lifecycle_active,
         );
         if result_vote == ResultVoteCall::WrongMode {
             return Err(outbe_metadosis::errors::result_vote_call_mode_rejection());
         }
-        let gas_budget = inputs.gas_limit - base_gas;
-        let gas_meter = SubcallGasMeter::new(gas_budget);
-        let protocol_cycle_call = is_protocol_cycle_call(address, caller, data.as_ref());
+        Ok(CallAdmission {
+            value,
+            result_vote,
+            protocol_cycle_call: is_protocol_cycle_call(address, caller, self.data.as_ref()),
+        })
+    }
 
-        tracing::debug!(
-            target: "outbe::precompile::gas",
-            ?address,
-            gas_limit = inputs.gas_limit,
-            base_gas,
-            gas_budget,
-            "precompile dispatch entry"
-        );
+    fn mutation_call<'a>(
+        &'a self,
+        runtime: &'a OutbeDispatchRuntime<'_>,
+        admission: &CallAdmission,
+        cycle_active_utc_day: Option<u32>,
+    ) -> MetadosisMutationCall<'a> {
+        MetadosisMutationCall {
+            address: self.inputs.bytecode_address,
+            data: self.data.as_ref(),
+            caller: self.inputs.caller,
+            is_static: self.inputs.is_static,
+            value: admission.value,
+            ocomp_lifecycle_active: runtime.ocomp_lifecycle_active,
+            result_vote: admission.result_vote,
+            chain_id: self.chain_id,
+            block_number: self.block_number,
+            timestamp: self.timestamp,
+            cycle_active_utc_day,
+            preloaded_certified_state_root:
+                crate::begin_block_precompile::preloaded_certified_parent_state_root(),
+            ocomp_fork_install: runtime.ocomp_fork_install.as_deref(),
+        }
+    }
 
-        let mut provider = CtxStorageProvider::new(
-            ctx,
-            gas_meter,
-            CtxStorageProviderConfig {
-                is_static,
-                self_address: address,
-                reentrancy_stack: ReentrancyStack,
-                spec,
-                genesis_hash,
-                runtime_body_readers: runtime_body_readers.cloned(),
-                execution_scope: execution_scope.clone(),
-                ocomp_finality_authority: ocomp_finality_authority.clone(),
-                ocomp_activation_block_meter: ocomp_activation_block_meter.clone(),
-                ocomp_lifecycle_active,
-                lysis_activation_entitled: result_vote == ResultVoteCall::Entitled,
-                metadosis_mutation_entitlements: metadosis_mutation_entitlements(
-                    MetadosisMutationCall {
-                        address,
-                        data: data.as_ref(),
-                        caller,
-                        is_static,
-                        value,
-                        ocomp_lifecycle_active,
-                        result_vote,
-                        chain_id,
-                        block_number,
-                        timestamp,
-                        cycle_active_utc_day: None,
-                        preloaded_certified_state_root:
-                            crate::begin_block_precompile::preloaded_certified_parent_state_root(),
-                        ocomp_fork_install: ocomp_fork_install.as_deref(),
-                    },
-                ),
-            },
-        );
-        // Probe failures must still settle the provider's consumed gas and reach
-        // the same error reporting and outcome mapping as command failures.
+    fn provider_config(
+        &self,
+        runtime: &OutbeDispatchRuntime<'_>,
+        admission: &CallAdmission,
+    ) -> CtxStorageProviderConfig {
+        let address = self.inputs.bytecode_address;
+        CtxStorageProviderConfig {
+            is_static: self.inputs.is_static,
+            self_address: address,
+            reentrancy_stack: ReentrancyStack,
+            spec: runtime.spec,
+            genesis_hash: runtime.genesis_hash,
+            runtime_body_readers: runtime.runtime_body_readers.cloned(),
+            execution_scope: runtime.execution_scope.clone(),
+            ocomp_finality_authority: runtime.ocomp_finality_authority.clone(),
+            ocomp_activation_block_meter: runtime.ocomp_activation_block_meter.clone(),
+            ocomp_lifecycle_active: runtime.ocomp_lifecycle_active,
+            lysis_activation_entitled: admission.result_vote == ResultVoteCall::Entitled,
+            metadosis_mutation_entitlements: metadosis_mutation_entitlements(
+                self.mutation_call(runtime, admission, None),
+            ),
+        }
+    }
+
+    fn execute<DB>(
+        &self,
+        ctx: &mut EthEvmContext<DB>,
+        runtime: &OutbeDispatchRuntime<'_>,
+    ) -> DispatchOutcome
+    where
+        DB: Database + Debug,
+        DB::Error: Debug,
+    {
+        let mut actual_gas = self.base_gas;
+        // Keep admission failures typed and retain the guard through execution
+        // and gas settlement. Reporting and REVM translation happen afterwards.
         let result = (|| -> DomainResult<Bytes> {
-            if protocol_cycle_call {
-                let active_utc_day = {
-                    let storage = StorageHandle::new(&mut provider);
-                    storage
-                        .contract::<outbe_cycle::schema::Cycle<'_>>()
-                        .active_utc_day
-                        .read()?
-                };
-                provider.replace_metadosis_mutation_entitlements(metadosis_mutation_entitlements(
-                    MetadosisMutationCall {
-                        address,
-                        data: data.as_ref(),
-                        caller,
-                        is_static,
-                        value,
-                        ocomp_lifecycle_active,
-                        result_vote,
-                        chain_id,
-                        block_number,
-                        timestamp,
-                        cycle_active_utc_day: Some(active_utc_day),
-                        preloaded_certified_state_root:
-                            crate::begin_block_precompile::preloaded_certified_parent_state_root(),
-                        ocomp_fork_install: ocomp_fork_install.as_deref(),
-                    },
+            self.check_frame()?;
+            let address = self.inputs.bytecode_address;
+            let Some(_reentrancy) = ReentrancyStack::try_enter(address) else {
+                return Err(PrecompileError::Revert(
+                    "outbe precompile reentrancy denied".to_string(),
                 ));
-            }
-            let storage = StorageHandle::new(&mut provider);
-            if result_vote == ResultVoteCall::Entitled {
-                outbe_metadosis::commands::submit_verified_result_vote(
-                    storage,
-                    execution_scope.as_ref(),
-                    data.as_ref(),
-                    value,
-                    is_static,
-                )
-            } else if address == OUTBE_SYSTEM_TX_ADDRESS {
-                if let Some(readers) = runtime_body_readers {
-                    crate::begin_block_precompile::dispatch_with_readers_and_ocomp_install(
-                        storage,
-                        crate::begin_block_precompile::SystemTxRuntime {
-                            scope: execution_scope.as_ref(),
-                            parent: readers,
-                            ocomp_fork_install: ocomp_fork_install.as_deref(),
-                            tee_attestation_v1,
-                        },
-                        data.as_ref(),
-                        caller,
-                        value,
-                    )
-                } else {
-                    crate::begin_block_precompile::dispatch_with_tee_attestation(
-                        storage,
-                        tee_attestation_v1,
-                        data.as_ref(),
-                        caller,
-                        value,
-                    )
-                }
-            } else {
-                route.dispatch(
-                    storage,
-                    execution_scope.as_ref(),
-                    runtime_body_readers,
-                    precompile_routes::RouteCall {
-                        callee: address,
-                        data: data.as_ref(),
-                        caller,
-                        value,
-                    },
-                )
-            }
-        })();
-        if result.is_ok() && result_vote == ResultVoteCall::Entitled {
-            tracing::info!(
-                target: "outbe::ocomp::trace",
-                "OCOMP_TRACE_V1 kind=result_vote_committed block={block_number} caller={caller:#x}"
+            };
+            let admission = self.admit_value(runtime.ocomp_lifecycle_active)?;
+            let gas_budget = self.inputs.gas_limit - self.base_gas;
+            let gas_meter = SubcallGasMeter::new(gas_budget);
+            let base_gas = self.base_gas;
+            tracing::debug!(
+                target: "outbe::precompile::gas",
+                ?address,
+                gas_limit = self.inputs.gas_limit,
+                base_gas,
+                gas_budget,
+                "precompile dispatch entry"
             );
-        }
-
-        let storage_gas = gas_budget.saturating_sub(provider.gas.remaining());
-        actual_gas = base_gas + storage_gas;
-
-        tracing::debug!(
-            target: "outbe::precompile::gas",
-            ?address,
-            storage_gas,
-            actual_gas,
-            gas_remaining = provider.gas.remaining(),
-            is_err = result.is_err(),
-            "precompile dispatch exit"
-        );
-
-        result
-    })();
-
-    let result = match result {
-        Err(error) if execution_scope.is_rpc_read_only() => Err(rpc_read_error(error)),
-        result => {
-            if let (Some(readers), Err(error)) = (runtime_body_readers, &result) {
-                readers.report_precompile_error(error);
+            let mut provider =
+                CtxStorageProvider::new(ctx, gas_meter, self.provider_config(runtime, &admission));
+            // A failing probe or command must still settle consumed provider gas.
+            let result = self.dispatch_with_provider(&mut provider, runtime, &admission);
+            if result.is_ok() && admission.result_vote == ResultVoteCall::Entitled {
+                let block_number = self.block_number;
+                let caller = self.inputs.caller;
+                tracing::info!(
+                    target: "outbe::ocomp::trace",
+                    "OCOMP_TRACE_V1 kind=result_vote_committed block={block_number} caller={caller:#x}"
+                );
             }
+            let storage_gas = gas_budget.saturating_sub(provider.gas.remaining());
+            actual_gas = base_gas + storage_gas;
+            tracing::debug!(
+                target: "outbe::precompile::gas",
+                ?address,
+                storage_gas,
+                actual_gas,
+                gas_remaining = provider.gas.remaining(),
+                is_err = result.is_err(),
+                "precompile dispatch exit"
+            );
             result
+        })();
+        DispatchOutcome { result, actual_gas }
+    }
+
+    fn dispatch_with_provider<DB>(
+        &self,
+        provider: &mut CtxStorageProvider<'_, DB>,
+        runtime: &OutbeDispatchRuntime<'_>,
+        admission: &CallAdmission,
+    ) -> DomainResult<Bytes>
+    where
+        DB: Database + Debug,
+        DB::Error: Debug,
+    {
+        if admission.protocol_cycle_call {
+            let active_utc_day = {
+                let storage = StorageHandle::new(provider);
+                storage
+                    .contract::<outbe_cycle::schema::Cycle<'_>>()
+                    .active_utc_day
+                    .read()?
+            };
+            provider.replace_metadosis_mutation_entitlements(metadosis_mutation_entitlements(
+                self.mutation_call(runtime, admission, Some(active_utc_day)),
+            ));
         }
-    };
-
-    let precompile_result = map_outbe_precompile_result(result, actual_gas);
-
-    let interp_result = match precompile_result {
-        Ok(precompile_output) => {
-            precompile_output_to_interpreter_result(precompile_output, inputs.gas_limit)
+        let storage = StorageHandle::new(provider);
+        if admission.result_vote == ResultVoteCall::Entitled {
+            outbe_metadosis::commands::submit_verified_result_vote(
+                storage,
+                runtime.execution_scope.as_ref(),
+                self.data.as_ref(),
+                admission.value,
+                self.inputs.is_static,
+            )
+        } else if self.inputs.bytecode_address == OUTBE_SYSTEM_TX_ADDRESS {
+            if let Some(readers) = runtime.runtime_body_readers {
+                crate::begin_block_precompile::dispatch_with_readers_and_ocomp_install(
+                    storage,
+                    crate::begin_block_precompile::SystemTxRuntime {
+                        scope: runtime.execution_scope.as_ref(),
+                        parent: readers,
+                        ocomp_fork_install: runtime.ocomp_fork_install.as_deref(),
+                        tee_attestation_v1: runtime.tee_attestation_v1,
+                    },
+                    self.data.as_ref(),
+                    self.inputs.caller,
+                    admission.value,
+                )
+            } else {
+                crate::begin_block_precompile::dispatch_with_tee_attestation(
+                    storage,
+                    runtime.tee_attestation_v1,
+                    self.data.as_ref(),
+                    self.inputs.caller,
+                    admission.value,
+                )
+            }
+        } else {
+            self.route.dispatch(
+                storage,
+                runtime.execution_scope.as_ref(),
+                runtime.runtime_body_readers,
+                precompile_routes::RouteCall {
+                    callee: self.inputs.bytecode_address,
+                    data: self.data.as_ref(),
+                    caller: self.inputs.caller,
+                    value: admission.value,
+                },
+            )
         }
-        // Both Fatal(String) and FatalAny(_) propagate as Err(String). At
-        // revm 38 these are the only variants; the wildcard is defensive.
-        Err(other) => return Err(other.to_string()),
-    };
+    }
+}
 
-    Ok(Some(interp_result))
+fn translate_outcome(
+    mut outcome: DispatchOutcome,
+    readers: Option<&RuntimeBodyReaders>,
+    rpc_read_only: bool,
+    gas_limit: u64,
+) -> Result<InterpreterResult, String> {
+    if rpc_read_only {
+        outcome.result = outcome.result.map_err(rpc_read_error);
+    } else if let (Some(readers), Err(error)) = (readers, &outcome.result) {
+        readers.report_precompile_error(error);
+    }
+    match map_outbe_precompile_result(outcome.result, outcome.actual_gas) {
+        Ok(output) => Ok(precompile_output_to_interpreter_result(output, gas_limit)),
+        // Fatal(String) and FatalAny(_) remain the only fatal string channel.
+        Err(other) => Err(other.to_string()),
+    }
 }
 
 /// An RPC read pairs a tree and a body projection that advance separately, so its body

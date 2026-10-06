@@ -36,9 +36,10 @@ interface IERC7786TokenBridge {
 
 /// @title TargetChainVaultRouter
 /// @notice Fixed target-chain adapter for the Outbe cross-chain WCOEN vault.
-/// @dev Tokens arrive through ERC7786TokenBridge.sendAndCall, are deposited into one immutable
-///      1:1 vault, and the resulting real vault shares remain in this contract. Outbe stores only
-///      the mirrored receipt balance. This contract has no vault/source/target management registry.
+/// @dev Tokens arrive through ERC7786TokenBridge.sendAndCall. This contract deposits them into one
+///      immutable 1:1 vault, and the resulting real vault shares remain in this contract. Outbe
+///      stores only the mirrored receipt balance. This contract has no registry to manage vaults,
+///      sources, or targets.
 contract TargetChainVaultRouter is IERC7786Recipient, IERC7786TokenReceiver, Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -130,8 +131,10 @@ contract TargetChainVaultRouter is IERC7786Recipient, IERC7786TokenReceiver, Own
         return InteroperableAddress.formatEvmV1(outbeDomain, outbeRouter);
     }
 
-    /// @notice Called by the BNB WCOEN token bridge after synthetic WCOEN is minted to this adapter.
-    /// @dev A revert rolls back both the mint and the vault deposit, leaving the transport delivery retryable.
+    /// @notice The BNB WCOEN token bridge calls this function after synthetic WCOEN is minted to
+    ///         this adapter.
+    /// @dev A revert rolls back both the mint and the vault deposit. The transport delivery stays
+    ///      retryable.
     function onCrosschainTokensReceived(
         uint32 sourceDomain,
         bytes calldata from,
@@ -166,7 +169,8 @@ contract TargetChainVaultRouter is IERC7786Recipient, IERC7786TokenReceiver, Own
     }
 
     /// @notice Receives an authenticated withdrawal request from the Outbe VaultRouter.
-    /// @dev Withdrawn BNB WCOEN is burned by the token bridge and returned to Outbe with a completion hook.
+    /// @dev The token bridge burns the withdrawn BNB WCOEN and returns it to Outbe with a
+    ///      completion hook.
     function receiveMessage(bytes32, bytes calldata sender, bytes calldata payload)
         external
         payable

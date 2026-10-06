@@ -83,7 +83,7 @@ pub fn log2(x: U256) -> Result<I256> {
 
 /// Mirrors `Uint128x128Math.pow(uint256, int256)` (Uint128x128Math.sol L91-159).
 /// Computes `x^y` in 128.128 fixed-point. `y` is a signed plain integer
-/// (no decimals); LB constrains `|y| < 2^20`. Returns
+/// (no decimals). LB constrains `|y| < 2^20`. Returns
 /// `Err(PrecompileError::Revert)` for `result == 0` (matches LB underflow)
 /// or for `|y| >= 2^20` (LB skips the assembly block, leaving `result == 0`,
 /// then reverts with `PowUnderflow`).
@@ -94,7 +94,7 @@ pub fn pow(x: U256, y: i32) -> Result<U256> {
     let mut invert = false;
     let abs_y: u32 = if y < 0 {
         invert = true;
-        // y is i32; -y can overflow only when y == i32::MIN. For our use
+        // y is i32. -y can overflow only when y == i32::MIN. For our use
         // case |y| < 2^23, so this is safe.
         y.unsigned_abs()
     } else {
@@ -124,7 +124,7 @@ pub fn pow(x: U256, y: i32) -> Result<U256> {
     for bit in 0..20u32 {
         if (abs_y >> bit) & 1 == 1 {
             // result = (result * squared) >> 128. Multiplication in U256
-            // wraps mod 2^256; we then take the upper 128 bits via >> 128.
+            // wraps mod 2^256. We then take the upper 128 bits via >> 128.
             result = result.wrapping_mul(squared) >> 128;
         }
         // squared = (squared * squared) >> 128 - for next bit.

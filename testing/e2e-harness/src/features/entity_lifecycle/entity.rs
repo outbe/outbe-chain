@@ -61,21 +61,22 @@ impl FromStr for Phase {
     }
 }
 
+/// Who pays for a holding by ERC20: its owner, or a third party that is not.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Parameter)]
-#[param(name = "rail", regex = "ERC20|PayNote")]
-pub(crate) enum Rail {
-    Erc20,
-    PayNote,
+#[param(name = "payer", regex = "its owner|a third party")]
+pub(crate) enum Payer {
+    Owner,
+    ThirdParty,
 }
 
-impl FromStr for Rail {
+impl FromStr for Payer {
     type Err = String;
 
     fn from_str(name: &str) -> Result<Self, Self::Err> {
         match name {
-            "ERC20" => Ok(Self::Erc20),
-            "PayNote" => Ok(Self::PayNote),
-            other => Err(format!("unknown payment rail {other:?}")),
+            "its owner" => Ok(Self::Owner),
+            "a third party" => Ok(Self::ThirdParty),
+            other => Err(format!("unknown payer {other:?}")),
         }
     }
 }

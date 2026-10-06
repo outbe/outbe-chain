@@ -1,9 +1,8 @@
 //! Real offline validate CLI coverage using stopped native files and conventional placement.
 //!
-//! The shared task01 fixture
-//! intentionally contains incomplete EVM progress and opaque unfinished OCOMP
-//! bytes. Only prepare_evm_authority below establishes a valid current-E fixture;
-//! these tests do not claim CE/body/OCOMP all-check acceptance or node startup.
+//! The shared task01 fixture intentionally contains incomplete EVM progress and opaque
+//! unfinished OCOMP bytes. Only prepare_evm_authority below establishes a valid current-E
+//! fixture. These tests do not claim CE/body/OCOMP all-check acceptance or node startup.
 
 use std::{
     fs,
@@ -78,8 +77,8 @@ fn create_archive(fixture: &StoppedFixture, archive: &Path) {
 }
 
 // Match the existing snapshot/tests/evm.rs current-state fixture. This setup is
-// local to the integration test: no historical replay, fake validator, or runtime
-// behavior is introduced. State is nonempty and authoritative v2 tables are used.
+// local to the integration test. It introduces no historical replay, fake validator, or
+// runtime behavior. State is nonempty, and the setup uses authoritative v2 tables.
 fn prepare_evm_authority(fixture: &mut StoppedFixture, corrupt_after_binding: bool) -> B256 {
     let address = Address::repeat_byte(0x11);
     let slot = B256::repeat_byte(0x22);
@@ -123,8 +122,8 @@ fn prepare_evm_authority(fixture: &mut StoppedFixture, corrupt_after_binding: bo
     }
     tx.delete::<tables::Metadata>("partial_state_trie_unwind".into(), None)
         .unwrap();
-    // The archive below will be freshly generated and signed AFTER corruption:
-    // file equality and valid provenance must not override this stale state root.
+    // The test later generates and signs a fresh archive AFTER this corruption.
+    // File equality and valid provenance must not override this stale state root.
     if corrupt_after_binding {
         tx.put::<tables::HashedAccounts>(
             keccak256(address),
@@ -164,7 +163,7 @@ fn validate_help_is_available_without_node_startup_and_restore_is_not_a_command(
 #[cfg(feature = "test-protocol-overrides")]
 #[test]
 fn report_and_native_checks_parse_the_genesis_once() {
-    let root = tempfile::tempdir().unwrap();
+    let root = snapshot::physical_tempdir();
     let fixture = stopped_fixture(&root.path().join("donor"));
     let report_path = root.path().join("headers-report.json");
     let mut command = binary();
@@ -181,7 +180,7 @@ fn report_and_native_checks_parse_the_genesis_once() {
 
 #[test]
 fn missing_artifact_reports_on_stdout_when_report_roots_cannot_be_resolved() {
-    let root = tempfile::tempdir().unwrap();
+    let root = snapshot::physical_tempdir();
     let target = root.path().join("missing.json");
     let output = run(binary()
         .args([
@@ -223,7 +222,7 @@ fn missing_artifact_reports_on_stdout_when_report_roots_cannot_be_resolved() {
 #[test]
 fn report_output_preserves_existing_files_and_rejects_native_roots_even_with_bad_projection_config()
 {
-    let root = tempfile::tempdir().unwrap();
+    let root = snapshot::physical_tempdir();
     let fixture = stopped_fixture(&root.path().join("donor"));
     let existing = root.path().join("existing-report.json");
     fs::write(&existing, b"operator-owned existing bytes").unwrap();
@@ -300,16 +299,20 @@ impl Placed {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "snapshot creation requires Linux openat2"
+)]
 fn signed_transfer_and_conventional_placement_do_not_mask_semantic_state_corruption() {
     for corrupt in [false, true] {
-        let producer = tempfile::tempdir().unwrap();
+        let producer = snapshot::physical_tempdir();
         let mut fixture = stopped_fixture(&producer.path().join("donor"));
         let expected_root = prepare_evm_authority(&mut fixture, corrupt);
         assert_ne!(expected_root, B256::ZERO);
         let archive = producer.path().join("snapshot.tar");
         create_archive(&fixture, &archive);
 
-        let receiver = tempfile::tempdir().unwrap();
+        let receiver = snapshot::physical_tempdir();
         let incoming = receiver.path().join("incoming");
         fs::create_dir(&incoming).unwrap();
         let transferred = incoming.join("received.tar");
@@ -357,7 +360,7 @@ fn signed_transfer_and_conventional_placement_do_not_mask_semantic_state_corrupt
         let recipient_key = placed.root(NativeRoot::Chain).join("keys/recipient.hex");
         fs::create_dir_all(recipient_key.parent().unwrap()).unwrap();
         fs::write(&recipient_key, b"independent recipient authority").unwrap();
-        // Opaque task01 OCOMP input remains copied; no claim that OCOMP is valid.
+        // Opaque task01 OCOMP input remains copied. This makes no claim that OCOMP is valid.
         assert!(placed
             .root(NativeRoot::Ocomp)
             .join(&fixture.pending_result)

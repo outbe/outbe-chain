@@ -2,18 +2,17 @@
 //!
 //! Exposes the read-only and write entrypoints that other modules
 //! (EmissionLimit, AgentReward) call as part of the daily Cycle dispatch
-//! chain (`Cycle -> EmissionLimit -> AgentReward -> Rewards`). Until this
-//! refactor lands, day-boundary settle was owned by `RewardsLifecycle`
-//! and triggered from `on_finalized_metadata`; with Phase 3
-//! that responsibility moves out of Rewards and Rewards becomes a pure
-//! storage + accounting layer that exposes the data the new orchestrator
-//! needs:
+//! chain (`Cycle -> EmissionLimit -> AgentReward -> Rewards`). Before this
+//! refactor, `RewardsLifecycle` owned the day-boundary settle, and
+//! `on_finalized_metadata` triggered it. With Phase 3, that responsibility
+//! moves out of Rewards. Rewards becomes a pure storage + accounting layer.
+//! It exposes the data that the new orchestrator needs:
 //!
-//! * [`read_daily_fee_sum_raw`] - locked-in raw fee total per UTC day,
-//!   used by AgentReward to choose between forwarding the validator
-//!   pool to Metadosis or emitting a topup.
+//! * [`read_daily_fee_sum_raw`] - locked-in raw fee total per UTC day.
+//!   AgentReward uses it to choose between two actions: forward the validator
+//!   pool to Metadosis, or emit a topup.
 //! * [`read_voters_for_day`] - ordered (Address, participation count)
-//!   pairs for a UTC day; first-seen-on-day order is deterministic.
+//!   pairs for a UTC day. The first-seen-on-day order is deterministic.
 //! * [`prepare_daily_validator_gem_batch`] - freezes the exact validator Gem
 //!   obligations for a UTC day without consulting Oracle state.
 //! * [`deliver_oldest_reward_gem_batch`] - delivers one complete FIFO batch
@@ -41,14 +40,14 @@ pub fn read_daily_fee_sum_raw(ctx: &BlockRuntimeContext, day: u32) -> Result<U25
 
 /// Returns the deterministic, first-seen-on-day list of voter
 /// participations for `day`. The vector length matches
-/// `daily_voter_count[day]`; entries are ordered by the index recorded
-/// in `daily_voter_at[day][i]` (i.e., the order in which the voter's
-/// first finalized-block bit was observed for that day).
+/// `daily_voter_count[day]`. The index recorded in `daily_voter_at[day][i]`
+/// sets the order of the entries. This is the order in which the module first
+/// observed a finalized-block bit of each voter for that day.
 ///
-/// Each entry is `(voter_address, participation_count)` where the count
+/// Each entry is `(voter_address, participation_count)`. The count
 /// is the number of finalized blocks from `day` in which the voter
-/// participated. Returns an empty vector if no voters have been
-/// recorded for `day`.
+/// participated. Returns an empty vector if the module recorded no voters
+/// for `day`.
 pub fn read_voters_for_day(ctx: &BlockRuntimeContext, day: u32) -> Result<Vec<(Address, u64)>> {
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
     let count = rewards.daily_voter_count.read(&day)?;
@@ -109,8 +108,8 @@ fn reward_gem_retryable_error(message: impl Into<String>) -> PrecompileError {
 }
 
 /// Whether every known block's participation window for a UTC day has closed.
-/// Cycle executes before LateFinalizeCredits, so equality is still too early:
-/// the final admissible votes at the close height have not executed yet.
+/// Cycle executes before LateFinalizeCredits, so equality is still too early.
+/// The final admissible votes at the close height did not execute yet.
 pub fn day_participation_complete(ctx: &BlockRuntimeContext, utc_day: u32) -> Result<bool> {
     let last_close = ctx
         .storage
@@ -122,7 +121,7 @@ pub fn day_participation_complete(ctx: &BlockRuntimeContext, utc_day: u32) -> Re
 
 /// Calculates and stores one exact validator reward Gem obligation without
 /// consulting a live Oracle price or minting a Gem. The first preparation owns
-/// the immutable FIFO append; an exact replay returns the stored summary.
+/// the immutable FIFO append. An exact replay returns the stored summary.
 pub fn prepare_daily_validator_gem_batch(
     ctx: &BlockRuntimeContext,
     utc_day: u32,
@@ -605,20 +604,19 @@ fn reward_gem_batch_digest(
 }
 
 /// Marks `day` as fully settled so `on_finalized_metadata` rejects any
-/// late finalized metadata for that day. Owned by the daily Cycle
-/// orchestrator: once the orchestrator has finished
-/// dispatching the day's pools (validator topup, AgentReward pools,
-/// Metadosis terminal credit), it calls this to flip the late-after-
-/// settle guard. Idempotent.
+/// late finalized metadata for that day. The daily Cycle orchestrator owns
+/// this call. When the orchestrator finishes dispatching the pools of the day
+/// (validator topup, AgentReward pools, Metadosis terminal credit), it calls
+/// this to flip the late-after-settle guard. Idempotent.
 pub fn mark_day_settled(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
     rewards.daily_settled.write(&day, true)
 }
 
-/// Whether `day` has already been fully settled by the daily Cycle
-/// orchestrator (counterpart to [`mark_day_settled`]). The orchestrator reads
-/// this before doing any minting so a re-fire for an already-settled day is a
-/// no-op rather than a double-mint (idempotency).
+/// Whether the daily Cycle orchestrator already settled `day` fully
+/// (counterpart to [`mark_day_settled`]). The orchestrator reads
+/// this before it mints anything. Thus a re-fire for an already-settled day is a
+/// no-op, not a double-mint (idempotency).
 pub fn is_day_settled(ctx: &BlockRuntimeContext, day: u32) -> Result<bool> {
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
     rewards.daily_settled.read(&day)
@@ -681,7 +679,7 @@ mod tests {
             .unwrap();
     }
 
-    /// Seeds COEN/840 oracle pair at `rate_6`. Required because
+    /// Seeds COEN/840 oracle pair at `rate_6`. This is necessary because
     /// `deliver_oldest_reward_gem_batch` -> `issue_gem` resolves `coen_rate` for floor
     /// price + entry_price at mint time.
     fn seed_oracle(ctx: &BlockRuntimeContext, rate_6: U256) {

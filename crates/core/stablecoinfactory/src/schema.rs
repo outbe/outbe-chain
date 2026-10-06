@@ -24,10 +24,10 @@ pub struct ReservationRecord {
 
 /// Stable V1 layout:
 ///
-/// - slot 0: schema version (`0` is pristine; the first write installs V1);
-/// - slots 1..=2: permanent token address set;
-/// - slots 3..=5: permanent id/ticker/reverse indexes;
-/// - slots 6..=8: pending token-id/ticker/address reservations;
+/// - slot 0: schema version. `0` is pristine. The first write installs V1.
+/// - slots 1..=2: permanent token address set.
+/// - slots 3..=5: permanent id/ticker/reverse indexes.
+/// - slots 6..=8: pending token-id/ticker/address reservations.
 /// - slots 9..=12: proposal reservation record fields.
 #[storage_schema]
 #[contract(addr = STABLECOIN_FACTORY_ADDRESS)]

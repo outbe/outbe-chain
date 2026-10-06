@@ -255,12 +255,16 @@ fn chain_finalized_replay_rejects_non_committee_dealer() {
 }
 
 /// The canonical state machine is a deterministic, replayable fold over the
-/// chain-finalized dealer logs: feeding the *same* finalized-log order into two
-/// fresh managers yields the same canonical output (crash-replay safety),
-/// reconstruction is frozen once it first succeeds, and a duplicate finalized
-/// log is idempotent. (Cross-order is intentionally NOT asserted: DKG completes
-/// on threshold participation, so a different freeze-time subset is a different
-/// group key - determinism comes from canonical chain order.)
+/// chain-finalized dealer logs. This test checks that:
+///
+/// - two fresh managers fed the *same* finalized-log order yield the same
+///   canonical output (crash-replay safety).
+/// - reconstruction is frozen once it first succeeds.
+/// - a duplicate finalized log is idempotent.
+///
+/// The test intentionally does NOT assert cross-order. DKG completes on
+/// threshold participation, so a different freeze-time subset is a different
+/// group key. Determinism comes from canonical chain order.
 #[test]
 fn canonical_reconstruction_is_replay_deterministic_and_frozen() {
     let mut keys: Vec<bls12381::PrivateKey> = (0..4)

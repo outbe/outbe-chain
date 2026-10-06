@@ -3,8 +3,8 @@
 //! Outbe represents runtime system transactions as ordinary signed Ethereum
 //! legacy transaction artifacts so standard `eth_*` RPC methods can expose their
 //! receipts and logs. The artifacts are consensus inputs only: execution uses
-//! `transact_system_call` with `SYSTEM_ADDRESS` as the EVM caller, while the
-//! signed transaction authenticates the proposer and fixes receipt/tx ordering.
+//! `transact_system_call` with `SYSTEM_ADDRESS` as the EVM caller. The signed
+//! transaction authenticates the proposer and fixes receipt/tx ordering.
 //!
 //! Begin-zone system transactions run before user transactions in this order:
 //!
@@ -20,7 +20,7 @@
 //! 7. [`SystemTxKind::TeeBootstrap`] in the one-time bootstrap block.
 //! 8. [`SystemTxKind::OracleSlashWindow`] for block `>= 1`.
 //! 9. [`SystemTxKind::HookEvents`] for block `>= 1` (receipt container for
-//!    whitelisted pre-exec hook logs; no lifecycle re-execution).
+//!    whitelisted pre-exec hook logs, with no lifecycle re-execution).
 //!
 //! Once active, [`SystemTxKind::OcompTerminalRequest`] is the sole end-zone
 //! transaction. It follows every user transaction and the compressed-entity
@@ -28,16 +28,17 @@
 //!
 //! ## V2 codec
 //!
-//! This module ships the V2 wire codec exclusively. V1 system-tx input bytes
-//! (selectors `OSF1`/`OSC1`/`OSB1`/`OSO1` with version byte `1`) are rejected
-//! at every height. Rewards adds `OSG2`; OCOMP adds `OSE2` and `OSR2`, all
-//! without changing the V2 version byte. Greenfield rollout.
+//! This module ships the V2 wire codec exclusively. It rejects V1 system-tx
+//! input bytes (selectors `OSF1`/`OSC1`/`OSB1`/`OSO1` with version byte `1`)
+//! at every height. Rewards adds `OSG2`. OCOMP adds `OSE2` and `OSR2`. None of
+//! them changes the V2 version byte. Greenfield rollout.
 //!
-//! The split helper below is structural-only: it rejects reserved-address
-//! transactions outside the contiguous system zones and rejects wrong-zone or
-//! out-of-order system tx kinds. [`validate_active_system_tx_set`] performs the
-//! separate membership check for a concrete block number and BoundaryOutcome
-//! presence.
+//! The split helper below is structural-only. It rejects:
+//! - reserved-address transactions outside the contiguous system zones
+//! - wrong-zone or out-of-order system tx kinds
+//!
+//! [`validate_active_system_tx_set`] performs the separate membership check for
+//! a concrete block number and BoundaryOutcome presence.
 
 use crate::error::PrecompileError;
 
@@ -45,6 +46,8 @@ pub use crate::addresses::OUTBE_SYSTEM_TX_ADDRESS;
 pub use outbe_ocomp_protocol::abi::{
     OCOMP_LIFECYCLE_BEGIN_SELECTOR, OCOMP_TERMINAL_REQUEST_SELECTOR,
 };
+
+pub mod binding;
 
 mod envelope;
 mod gas;
@@ -73,6 +76,7 @@ pub use gas::{system_tx_intrinsic_gas, system_tx_visible_gas_limit, SystemTxVisi
 
 pub use envelope::{
     build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit, system_tx_nonce,
+    SystemTxEnvelopeInput,
 };
 
 pub use witness::{recover_phase1_proposer, validate_phase1_witness_against};
@@ -109,8 +113,8 @@ pub const MAX_SYSTEM_TXS_PER_BLOCK: u8 = 16;
 
 /// Highest block number that bootstraps the chain without Phase 1
 /// (`CertifiedParentAccounting`). Block `n` runs Phase 1 in pre-execution iff
-/// `n >= GENESIS_BOOTSTRAP_BLOCK_NUMBER + 1`. sets this to `1` so
-/// Phase 1 begins at block `2` while block `1` still carries the genesis
+/// `n >= GENESIS_BOOTSTRAP_BLOCK_NUMBER + 1`. This constant is `1`, so
+/// Phase 1 begins at block `2`. Block `1` still carries the genesis
 /// `BoundaryOutcome` as its first begin-zone system transaction.
 pub const GENESIS_BOOTSTRAP_BLOCK_NUMBER: u64 = 1;
 
@@ -130,7 +134,7 @@ pub const fn protocol_block_gas_limit(block_number: u64) -> u64 {
 
 /// Internal execution gas limit used by the Outbe-aware system-call path.
 /// This value is never used as the visible `gas_limit` of the signed
-/// transaction envelope; visible envelopes use their Ethereum intrinsic gas so
+/// transaction envelope. Visible envelopes use their Ethereum intrinsic gas so
 /// generic block replay/import tools do not reject them as exceeding the
 /// block gas limit.
 pub const SYSTEM_TX_ARTIFACT_GAS_LIMIT: u64 = 10_000_000_000;
@@ -138,7 +142,7 @@ pub const SYSTEM_TX_ARTIFACT_GAS_LIMIT: u64 = 10_000_000_000;
 /// Visible compressed-entity gas reserved for the OCOMP lifecycle phase.
 ///
 /// Terminal expiry can request the first Tribute-partition retirement in the
-/// block. Its current cleanup precharge is 15,000 gas; the additional 5,000
+/// block. Its current cleanup precharge is 15,000 gas. The additional 5,000
 /// keeps the mandatory phase from sitting exactly on that boundary.
 pub const OCOMP_LIFECYCLE_CE_GAS_RESERVE: u64 = 20_000;
 

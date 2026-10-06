@@ -26,7 +26,7 @@ impl Default for CeAuditLimits {
 }
 
 /// An exclusively created operation directory. Only this directory is removed
-/// on drop; installed native files are never cleanup targets.
+/// on drop. Installed native files are never cleanup targets.
 pub struct CeAuditWork {
     root: PathBuf,
     limits: CeAuditLimits,

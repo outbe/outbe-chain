@@ -30,8 +30,9 @@ sol!(
 
 // A gem is stamped live, so only a throwaway build can move its issuance back
 // behind the closed days a scenario seeds for the call sweep. The forfeit sweep
-// opens a bucket only once its hour has closed, so `closeCallNoticeForTest` moves
-// a deadline that has already lapsed into one the sweep will open on the next block.
+// opens a bucket only once its hour has closed. For that reason,
+// `closeCallNoticeForTest` moves a deadline that already lapsed into one that the
+// sweep will open on the next block.
 #[cfg(feature = "e2e-test")]
 sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
@@ -118,7 +119,13 @@ pub fn dispatch(
             }),
             getGemStatus(c) => view(c, |c| {
                 let item = gem.get_gem(c.gemId)?.ok_or(GemError::GemNotFound)?;
-                Ok(to_abi_data(&item))
+                let mut data = to_abi_data(&item, storage.timestamp()?.to::<u64>());
+                if data.state == crate::schema::GemState::Issued as u8
+                    && crate::api::is_qualified(&storage, &item)?
+                {
+                    data.state = 1;
+                }
+                Ok(data)
             }),
             isQualified(c) => view(c, |c| {
                 let item = gem.get_gem(c.gemId)?.ok_or(GemError::GemNotFound)?;
@@ -145,20 +152,28 @@ pub fn dispatch(
     })
 }
 
-fn to_abi_data(item: &GemData) -> IGem::GemData {
+fn to_abi_data(item: &GemData, now: u64) -> IGem::GemData {
     IGem::GemData {
         gemId: item.gem_id,
         owner: item.owner,
         gemType: item.gem_type,
-        state: item.state,
-        promisLoad: item.promis_load_minor,
-        entryPrice: item.entry_price_minor,
-        floorPrice: item.floor_price_minor,
+        state: item.effective_state(now),
+        promisLoadMinor: item.promis_load_minor,
+        entryPriceMinor: item.entry_price_minor,
+        floorPriceMinor: item.floor_price_minor,
         issuanceCurrency: item.issuance_currency,
         referenceCurrency: item.reference_currency,
         issuedAt: item.issued_at,
-        callPrice: item.call_price_minor,
+        callPriceMinor: item.call_price_minor,
         calledAt: item.called_at,
         callNoticePeriod: item.call_notice_period_seconds,
+        callWindow: item.call_window_seconds,
+        callThreshold: item.call_threshold_seconds,
+        settlementDeadline: if item.called_at == 0 {
+            0
+        } else {
+            item.called_at
+                .saturating_add(u64::from(item.call_notice_period_seconds))
+        },
     }
 }

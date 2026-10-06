@@ -1,11 +1,11 @@
 //! Localnet: the whole network in one handle - bootstrap plus every owned node
 //! (committee validators, joiner, followers) and their enclaves.
 //!
-//! A localnet *is* its set of nodes, so adding/removing a validator, attaching a
+//! A localnet *is* its set of nodes. Adding/removing a validator, attaching a
 //! joiner, or launching a follower are all node operations on this one handle
 //! rather than a separate object. Every launched process is **owned** via the
 //! guards in [`crate::internal::proc`] (nodes killed on drop, enclave containers
-//! `docker rm -f`ed on drop); a dropped `World` tears everything down, with a
+//! `docker rm -f`ed on drop). A dropped `World` tears everything down, with a
 //! stateless datadir/run-tag sweep as the SIGINT backstop. The distinct
 //! lifecycles live in submodules over this one struct:
 //!
@@ -47,17 +47,17 @@ use crate::internal::shell::Sh;
 use crate::world::state::DkgExpiryExpectedExit;
 
 /// Per-node execution cache for validators co-located by the devnet harness.
-/// The upstream 4 GiB default is a single-node deployment default; applying it
+/// The upstream 4 GiB default is a single-node deployment default. Applying it
 /// to every local validator would consume the process budget before OCOMP begins.
 const CO_LOCATED_DEVNET_CROSS_BLOCK_CACHE_MIB: u64 = 512;
 
-/// Test-provided knobs for a localnet start. The **enclave mode** is NOT here -
-/// it's an environment decision read from [`Config::tee_mode`]. Only per-scenario
+/// Test-provided knobs for a localnet start. The **enclave mode** is NOT here.
+/// It is an environment decision read from [`Config::tee_mode`]. Only per-scenario
 /// parameters live on this struct.
 #[derive(Debug, Clone, Default)]
 pub struct StartOpts {
     /// Expected governance voting window in the already materialized genesis.
-    /// Startup rejects a mismatch; this option never changes chain parameters.
+    /// Startup rejects a mismatch. This option never changes chain parameters.
     pub voting_window: Option<u64>,
     /// Signed wall-clock offset used only by debug-node day-boundary E2E.
     pub unix_time_offset_secs: Option<i64>,
@@ -328,7 +328,7 @@ impl Localnet {
 
     fn ensure_enclave_image_once(&mut self) -> Result<()> {
         // The native profile runs no container, so it must not build, resolve or
-        // retain an image identity: `enclave_image_id()` stays `None` and the
+        // retain an image identity. `enclave_image_id()` stays `None`, and the
         // evidence records no Gramine image for a run that never used one.
         if self.cfg.tee_mode.runs_native_host_enclave() {
             return Ok(());
@@ -393,7 +393,7 @@ impl Localnet {
     /// Five-second RPC polls allowed for block-1 TEE bootstrap. Consecutive
     /// four-enclave real-SGX evidence exceeded the production-oriented node and
     /// per-request deadlines. A host with 187.5 MiB EPC needed more than ten
-    /// minutes while all enclave calls still made progress, so keep the harness
+    /// minutes while all enclave calls still made progress. So keep the harness
     /// outside its thirty-minute co-located-EPC allowance and let it observe the
     /// node's verdict.
     pub fn tee_bootstrap_wait_attempts(&self) -> u32 {
@@ -405,7 +405,7 @@ impl Localnet {
     }
 
     /// OS pid of one owned committee validator. Used only for runtime process
-    /// boundary evidence; callers cannot mutate the process through this API.
+    /// boundary evidence. Callers cannot mutate the process through this API.
     pub fn validator_pid(&self, validator_index: usize) -> Result<u32> {
         self.validators
             .get(&validator_index)
@@ -449,8 +449,8 @@ impl Localnet {
     }
 
     /// Co-located hardware enclaves have an E2E-only startup allowance. The
-    /// node's production/testnet default remains unchanged and must be chosen
-    /// for the deployment topology by its operator.
+    /// node's production/testnet default remains unchanged. The node's operator
+    /// must choose that value for the deployment topology.
     fn extend_real_sgx_startup_timeout(&self, args: &mut Vec<String>) {
         if self.cfg.tee_mode.passes_sgx_devices() {
             args.extend(args![
@@ -528,9 +528,9 @@ impl Localnet {
     }
 
     /// Run a one-shot setup subprocess (`dkg bootstrap`, `seed_genesis.py`).
-    /// Quiet by default - stdout/stderr are captured and only surfaced when the
-    /// command fails; under `--debug` it streams live so the full DKG/seed
-    /// progress (`balance: ... entries`, `Total storage entries: ...`, ...) is shown.
+    /// Quiet by default: this method captures stdout/stderr and surfaces them only
+    /// when the command fails. Under `--debug` it streams live and shows the full
+    /// DKG/seed progress (`balance: ... entries`, `Total storage entries: ...`, ...).
     fn run_setup(&self, cmd: &mut Command, label: &str) -> Result<()> {
         if self.cfg.debug {
             let status = cmd.status().wrap_err_with(|| format!("run {label}"))?;
@@ -547,10 +547,11 @@ impl Localnet {
     }
 
     /// Spawn an owned node process, logging its launch **metadata** (command,
-    /// PID, log path) under `--debug`. The node's own runtime stdout/stderr are
-    /// already attached to `<node_dir>/node.log` by the caller (via
-    /// [`attach_log`](crate::internal::proc::attach_log)) - we don't stream those
-    /// live, since interleaving several running nodes would be unreadable.
+    /// PID, log path) under `--debug`. The caller already attaches the node's own
+    /// runtime stdout/stderr to `<node_dir>/node.log` (via
+    /// [`attach_log`](crate::internal::proc::attach_log)). This method does not
+    /// stream those live, since interleaving several running nodes would be
+    /// unreadable.
     fn spawn_node(
         &mut self,
         label: &str,
@@ -696,8 +697,9 @@ impl Localnet {
         })
     }
 
-    /// Replay this stopped process's actual command. Native stores, keys, enclave,
-    /// arguments and explicit environment are reused; no provisioning runs here.
+    /// Replay this stopped process's actual command. The replay reuses native
+    /// stores, keys, enclave, arguments and explicit environment. No provisioning
+    /// runs here.
     #[cfg(feature = "ocomp-integration")]
     pub(crate) fn resume_snapshot_node(
         &mut self,
@@ -821,7 +823,7 @@ impl Localnet {
                 }
                 // An intentional protocol rejection must have happened before
                 // cleanup. The after-hook independently requires its exact
-                // cause in both runtime log sinks; this is not a log waiver.
+                // cause in both runtime log sinks. This is not a log waiver.
                 eyre::ensure!(
                     status.success() || (expected && before.is_some() && status.code() == Some(1)),
                     "owned node PID {pid} exited with {status}"
@@ -856,9 +858,9 @@ impl Localnet {
         self.radicle_sidecars.clear();
         self.user_radicle = None;
         self.enclaves.clear();
-        // No settle needed here: clearing the maps dropped every guard, which
-        // synchronously `kill()`s + `wait()`s the owned nodes/enclaves, and the
-        // sweep below is a fire-and-forget backstop.
+        // No settle is needed here. Clearing the maps dropped every guard, which
+        // synchronously `kill()`s + `wait()`s the owned nodes/enclaves. The sweep
+        // below is a fire-and-forget backstop.
 
         let nodes = format!("outbe-chain node.*{}", self.dir());
         self.sh().sudo_best_effort("pkill", &["-9", "-f", &nodes]);
@@ -887,7 +889,7 @@ impl Localnet {
     ///
     /// `validator-<i>/tee` is the enclave container's only writable mount
     /// (`proc::spawn_enclave`), so under `--sudo` it is the only thing this user
-    /// can't unlink - drop those with `sudo rm` first. Everything else the
+    /// can't unlink. Drop those with `sudo rm` first. Everything else the
     /// harness created itself, and a failure to remove it is a real error.
     pub fn wipe(&self) -> Result<()> {
         self.cleanup_radicle_runtime()?;
@@ -911,7 +913,7 @@ impl Localnet {
         self.shutdown()
     }
 
-    /// Expected exit-1 slots still require the after-hook's exact fault audit;
+    /// Expected exit-1 slots still require the after-hook's exact fault audit.
     /// DKG expiry additionally requires its retained slot/PID halt evidence.
     pub(crate) fn teardown_with_expected_exits(
         &mut self,
@@ -939,9 +941,9 @@ fn ensure_manual_tee_lease_node_args(args: &[String]) -> Result<()> {
 }
 
 /// Co-located real enclaves share one physical EPC. A request can therefore
-/// complete in the enclave after the production-oriented 30-second host timeout:
-/// the enclave then observes a broken pipe even though it produced and sealed the
-/// result. Widen only the hardware E2E lane; production/testnet retain their
+/// complete in the enclave after the production-oriented 30-second host timeout.
+/// The enclave then observes a broken pipe even though it produced and sealed the
+/// result. Widen only the hardware E2E lane. Production/testnet retain their
 /// explicit operator-selected/default deadline.
 fn extend_real_sgx_process_environment(mode: crate::env::TeeMode, cmd: &mut Command) {
     if mode.passes_sgx_devices() {
@@ -954,7 +956,7 @@ fn extend_real_sgx_process_environment(mode: crate::env::TeeMode, cmd: &mut Comm
 
 /// The sealed-state dirs under `root` - the only paths the (root) enclave
 /// container writes. `root` is either a scenario dir (`validator-<i>/tee`) or a
-/// run dir (`scenario-<n>/validator-<i>/tee`); both shapes are checked.
+/// run dir (`scenario-<n>/validator-<i>/tee`). This function checks both shapes.
 ///
 /// Deliberately not a recursive walk: `validator-<i>/data` holds the reth MDBX
 /// store, and descending into it would cost far more than the two `read_dir`s
@@ -1107,7 +1109,7 @@ mod tests {
         let mut command = Command::new("sh");
         command.args(["-c", script]);
         proc::attach_log(&mut command, &node_dir).unwrap();
-        // attach_log defaults stdin to null; this fixture must keep `read`
+        // attach_log defaults stdin to null. This fixture must keep `read`
         // blocked until cleanup signals it instead of exiting on immediate EOF.
         command.stdin(std::process::Stdio::piped());
         let mut child = localnet

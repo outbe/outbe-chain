@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_fixtures::marshal::MarshalArchiveFixture;
 
 // Unique partition prefix per backfill-test marshal so the immutable
 // archives never collide between concurrent test runs.
@@ -71,9 +72,9 @@ impl commonware_consensus::Reporter for AckingBackfillReporter {
 }
 
 /// Resolver that never fetches anything. Mirrors the `NoopResolver` used by
-/// the other marshal harnesses; required because `get_block` is local-only
-/// (it never triggers a network fetch) and the resolver only exists so the
-/// marshal actor can start.
+/// the other marshal harnesses. The test needs it because `get_block` is
+/// local-only (it never triggers a network fetch), and the resolver only exists
+/// so the marshal actor can start.
 #[derive(Clone, Default)]
 struct NoopBackfillResolver;
 
@@ -135,8 +136,8 @@ fn backfill_genesis_block() -> ConsensusBlock {
 ///
 /// `get_block(h)` on this mailbox resolves `None` for every height, because
 /// the immutable archive is empty and `get_block` is a local-only lookup
-/// (it never asks the network). The actor handle and the resolver handler
-/// keepalive are returned so the caller keeps them alive for the test.
+/// (it never asks the network). The function returns the actor handle and the
+/// resolver handler keepalive so the caller keeps them alive for the test.
 async fn start_empty_marshal(
     context: commonware_runtime::deterministic::Context,
 ) -> (
@@ -144,12 +145,11 @@ async fn start_empty_marshal(
     commonware_consensus::marshal::resolver::handler::Handler<Digest>,
     commonware_runtime::Handle<()>,
 ) {
-    use commonware_cryptography::{bls12381::primitives::variant::MinSig, certificate::Verifier};
+    use commonware_cryptography::bls12381::primitives::variant::MinSig;
     use commonware_runtime::buffer::paged::CacheRef;
-    use commonware_storage::archive::immutable;
     use std::num::{NonZeroU16, NonZeroU64, NonZeroUsize};
 
-    use crate::hybrid::{HybridScheme, HybridSchemeProvider};
+    use crate::hybrid::HybridSchemeProvider;
 
     let page_cache = CacheRef::from_pooler(
         &context,
@@ -162,55 +162,18 @@ async fn start_empty_marshal(
     let replay_buffer = NonZeroUsize::new(1024).expect("non-zero replay buffer");
     let write_buffer = NonZeroUsize::new(1024).expect("non-zero write buffer");
 
-    let finalizations_archive = immutable::Archive::init(
-        context.child("marshal_finalizations"),
-        immutable::Config {
-            metadata_partition: format!("{partition_prefix}-finalizations-metadata"),
-            freezer_table_partition: format!("{partition_prefix}-finalizations-freezer-table"),
-            freezer_table_initial_size: 64,
-            freezer_table_resize_frequency: 10,
-            freezer_table_resize_chunk_size: 10,
-            freezer_key_partition: format!("{partition_prefix}-finalizations-freezer-key"),
-            freezer_key_page_cache: page_cache.clone(),
-            freezer_value_partition: format!("{partition_prefix}-finalizations-freezer-value"),
-            freezer_value_target_size: 1024,
-            freezer_value_compression: None,
-            ordinal_partition: format!("{partition_prefix}-finalizations-ordinal"),
-            items_per_section,
-            codec_config: HybridScheme::<MinSig>::certificate_codec_config_unbounded(),
-            replay_buffer,
-            freezer_key_write_buffer: write_buffer,
-            freezer_value_write_buffer: write_buffer,
-            ordinal_write_buffer: write_buffer,
-        },
-    )
-    .await
-    .expect("finalizations archive should initialize");
+    let archive_fixture = MarshalArchiveFixture {
+        partition_prefix: &partition_prefix,
+        page_cache: &page_cache,
+        items_per_section,
+        replay_buffer,
+        write_buffer,
+    };
 
-    let blocks_archive = immutable::Archive::init(
-        context.child("marshal_blocks"),
-        immutable::Config {
-            metadata_partition: format!("{partition_prefix}-blocks-metadata"),
-            freezer_table_partition: format!("{partition_prefix}-blocks-freezer-table"),
-            freezer_table_initial_size: 64,
-            freezer_table_resize_frequency: 10,
-            freezer_table_resize_chunk_size: 10,
-            freezer_key_partition: format!("{partition_prefix}-blocks-freezer-key"),
-            freezer_key_page_cache: page_cache.clone(),
-            freezer_value_partition: format!("{partition_prefix}-blocks-freezer-value"),
-            freezer_value_target_size: 1024,
-            freezer_value_compression: None,
-            ordinal_partition: format!("{partition_prefix}-blocks-ordinal"),
-            items_per_section,
-            codec_config: (),
-            replay_buffer,
-            freezer_key_write_buffer: write_buffer,
-            freezer_value_write_buffer: write_buffer,
-            ordinal_write_buffer: write_buffer,
-        },
-    )
-    .await
-    .expect("blocks archive should initialize");
+    let (finalizations_archive, blocks_archive) = archive_fixture
+        .open(&context)
+        .await
+        .expect("marshal archives should initialize");
 
     let (actor, mailbox, _) = commonware_consensus::marshal::core::Actor::init(
         context.child("marshal"),
@@ -239,7 +202,7 @@ async fn start_empty_marshal(
     .await;
 
     // The resolver receiver/handler pair: the marshal actor consumes the
-    // receiver; the `Handler` is the keepalive (dropping it shuts the actor
+    // receiver. The `Handler` is the keepalive (dropping it shuts the actor
     // down). The actor never fetches because `get_block` is local-only.
     let (resolver_rx, resolver_handler) =
         commonware_consensus::marshal::resolver::handler::init::<Digest>(
@@ -257,26 +220,26 @@ async fn start_empty_marshal(
 // TC-2 regression (finding TC-2 / F1 fix): the executor STARTUP BACKFILL must
 // FAIL FAST when marshal cannot serve a finalized block at or below its own
 // reported finalized height. `run()` walks `(execution_height,
-// last_consensus_finalized]` calling `marshal.get_block(h)`; an empty marshal
+// last_consensus_finalized]` and calls `marshal.get_block(h)`. An empty marshal
 // returns `None` for height 1, which means marshal's archive is inconsistent
 // (claims finalized to N but cannot serve M <= N). The F1 fix makes that
-// branch `error! + return Err(...)`. If it were reverted to the old
+// branch `error! + return Err(...)`. If someone reverted it to the old
 // `warn! + skip`, the backfill loop would fall through every height and then
-// enter the infinite `run_live_loop`, so `run().await` would NOT return an
+// enter the infinite `run_live_loop`. Then `run().await` would NOT return an
 // `Err` (this test would hang on the wrapping timeout and then fail the
-// "must return Err" assertion) - i.e. this test genuinely guards the fix.
+// "must return Err" assertion). Thus this test genuinely guards the fix.
 #[test]
 fn run_backfill_fails_fast_when_marshal_missing_finalized_block() {
     // The `Runner::timed` wedge guard replaces the previous outer
     // 20s wall-clock timeout safety net: `run()` must return promptly via
     // the backfill fail-fast branch. A hang here means the missing-block branch
-    // fell through to `run_live_loop` (i.e. the F1 fix was reverted to
-    // warn! + skip); the wedge guard aborts the test in that case.
+    // fell through to `run_live_loop` (i.e. someone reverted the F1 fix to
+    // warn! + skip). In that case, the wedge guard aborts the test.
     commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(60)).start(
         |context| async move {
             let genesis = B256::repeat_byte(0x01);
-            // Dummy engine: branch (A) returns before any engine call, so the
-            // receiver is simply never read.
+            // Dummy engine: branch (A) returns before any engine call, so
+            // nothing ever reads the receiver.
             let (engine_tx, _engine_rx) = tokio::sync::mpsc::unbounded_channel();
             let engine = ConsensusEngineHandle::new(engine_tx);
 
@@ -292,9 +255,11 @@ fn run_backfill_fails_fast_when_marshal_missing_finalized_block() {
             let (actor, _mailbox) = super::ExecutorActor::new(
                 context.child("exec"),
                 engine,
-                genesis,
-                0,
-                genesis,
+                crate::executor::actor::RecoveredFinalizedState {
+                    genesis_hash: genesis,
+                    last_finalized_height: 0,
+                    last_finalized_hash: genesis,
+                },
                 projection_readiness,
                 None,
             );

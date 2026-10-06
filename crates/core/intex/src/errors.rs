@@ -1,8 +1,8 @@
 //! Module-local error types for the Intex runtime module.
 //!
 //! Errors that are not registry-specific come from
-//! `outbe_primitives::error::PrecompileError`. Duplicate-series rejection is
-//! handled by the storage DSL's record-level `create`, not a local variant.
+//! `outbe_primitives::error::PrecompileError`. The storage DSL's record-level
+//! `create` rejects a duplicate series, so no local variant exists for it.
 
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;

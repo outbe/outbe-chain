@@ -157,7 +157,7 @@ fn step_promis_load(
     // A stored zero is "never set": no rate reaches the rung it would stand for.
     let stored = contract.promis_load_exponent.read()?;
     let current = (stored != 0).then_some(stored);
-    // Without the anchor currency the ladder holds; nothing is captured, since the
+    // Without the anchor currency, the ladder holds. Nothing is captured, since the
     // launch pair needs a rate to be a pair.
     let Some(rate) = reference_prices
         .iter()
@@ -189,7 +189,7 @@ fn step_promis_load(
             })?;
             contract.promis_load_exponent.write(exponent)?;
         }
-        // Taking the first position is not a step; the config and START message carry it.
+        // Taking the first position is not a step. The config and START message carry it.
         None => contract.promis_load_exponent.write(exponent)?,
     }
     Ok(load)
@@ -269,9 +269,9 @@ fn fold_profile(
     let iparams = outbe_intexfactory::read_params(storage)?;
     config.min_intex_bid_quantity = min_bid_qty;
     config.call_trigger = crate::schema::IntexCallTrigger {
-        call_window: iparams.call_window_seconds,
-        call_threshold: iparams.call_threshold_seconds,
-        call_notice_period: iparams.call_notice_period_seconds,
+        call_window_seconds: iparams.call_window_seconds,
+        call_threshold_seconds: iparams.call_threshold_seconds,
+        call_notice_period_seconds: iparams.call_notice_period_seconds,
     };
     config.commit_bond_minor = iparams.commit_bond_minor;
     Ok(iparams)
@@ -333,7 +333,7 @@ fn send_stage_start(
 // ---------------------------------------------------------------------------
 
 /// Cycle `auction_advance` trigger: advance every scheduled auction. Each day
-/// runs in its own checkpoint - an Err rolls that day back (retried next slot).
+/// runs in its own checkpoint. An Err reverts that day (retried next slot).
 pub fn tick_schedule(ctx: &BlockRuntimeContext) -> Result<()> {
     schedule_tick(&ctx.storage, ctx.block.timestamp)
 }
@@ -388,7 +388,7 @@ fn advance_day(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u6
                 return contract.remove_sched_active(worldwide_day);
             }
             _ if now >= issuance_end => {
-                // A day that never started goes out as a late start while the router takes it.
+                // A day that never started is sent as a late start while the router accepts it.
                 if stage == AuctionStage::Briefed
                     && storage
                         .with_checkpoint(|| {
@@ -447,9 +447,9 @@ fn ts32(ts: u64) -> Result<u32> {
 }
 
 enum StartOutcome {
-    /// Auction started; the schedule loop continues from `Started`.
+    /// Auction started. The schedule loop continues from `Started`.
     Started,
-    /// Day was cancelled and retired; the schedule loop stops.
+    /// Day was cancelled and retired. The schedule loop stops.
     Retired,
 }
 
@@ -482,8 +482,8 @@ fn start_auction(
     contract.write_auction_config(worldwide_day, &config)?;
     let (commit, reveal, issuance) = (ts32(commit_end)?, ts32(reveal_end)?, ts32(issuance_end)?);
 
-    // A day nobody could price cannot hold an auction, and ends as a red day does - but
-    // unlike a red day it was briefed with a limit, which has to go back.
+    // A day nobody could price cannot hold an auction, and ends as a red day does. But
+    // unlike a red day, it was briefed with a limit, which has to be returned.
     let unpriced = config.reference_prices.is_empty();
     let red = contract.brief_green.read(&worldwide_day)? == 0;
     let desis_limit_minor = contract.pending_desis_limit_minor.read(&worldwide_day)?;
@@ -543,8 +543,9 @@ fn start_auction(
     Ok(StartOutcome::Started)
 }
 
-/// Return a retiring day's unused Desis Limit to PromisLimit. No-op once the
-/// limit was consumed at clearing (or for a red day, which briefs zero).
+/// Return a retiring day's unused Desis Limit to PromisLimit, recording its
+/// Desis Allocation as zero. No-op once the limit was consumed at clearing (or
+/// for a red day, which briefs zero).
 fn refund_unused_desis_limit(
     storage: &StorageHandle<'_>,
     contract: &mut DesisContract<'_>,
@@ -557,9 +558,14 @@ fn refund_unused_desis_limit(
     contract
         .pending_desis_limit_minor
         .write(&worldwide_day, U256::ZERO)?;
-    contract.emit(IDesis::UnusedSupplyReported {
+    contract.emit(IDesis::DesisAllocationRecorded {
         worldwideDay: worldwide_day.into(),
-        unusedPromis: unused,
+        desisLimitMinor: unused,
+        desisAllocationMinor: U256::ZERO,
+    })?;
+    contract.emit(IDesis::UnusedDesisLimitReported {
+        worldwideDay: worldwide_day.into(),
+        unusedDesisLimitMinor: unused,
     })?;
     PromisLimitContract::new(storage.clone()).add_to_total_unallocated(unused)?;
     Ok(())
@@ -576,21 +582,21 @@ fn arm_clearing(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u
     let desis_limit_minor =
         u128::try_from(contract.pending_desis_limit_minor.read(&worldwide_day)?)
             .map_err(|_| DesisError::InvalidWorldwideDay(worldwide_day))?;
-    let supply_intex =
+    let desis_limit_units =
         (desis_limit_minor / config.promis_load_minor).min(u128::from(u32::MAX)) as u32;
 
     contract.clearing_initiated.write(&worldwide_day, 1u8)?;
     contract
-        .pending_supply_intex
-        .write(&worldwide_day, supply_intex)?;
+        .pending_desis_limit_units
+        .write(&worldwide_day, desis_limit_units)?;
     contract
         .clearing_deadline
         .write(&worldwide_day, now.saturating_add(BIDS_FANIN_TIMEOUT_SECS))?;
     contract.push_gate_active(worldwide_day)?;
     contract.write_stage(worldwide_day, AuctionStage::Clearing)?;
 
-    // Per chain, each in its own checkpoint: a chain whose send fails takes neither the day's arming
-    // nor the other chains' rounds with it, and the fan-in deadline covers the one left behind.
+    // Per chain, each in its own checkpoint. A chain whose send fails takes neither the day's
+    // arming nor the other chains' rounds with it. The fan-in deadline covers the one left behind.
     for chain_id in fetch_targets(storage, worldwide_day)? {
         let sent = storage.with_checkpoint(|| {
             let gas = clearing_round_gas(storage, worldwide_day, chain_id)?;
@@ -624,8 +630,10 @@ fn arm_clearing(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u
 // Bid ingestion
 // ---------------------------------------------------------------------------
 
-/// `Open` while `Revealing`/`Clearing`; `Closed` past clearing and `UnknownDay` for an unbriefed day
-/// (both acknowledged, nothing can make them applicable); `Err` before reveal so the transport redelivers.
+/// - `Open` while `Revealing`/`Clearing`.
+/// - `Closed` past clearing, and `UnknownDay` for an unbriefed day. Both are acknowledged, since
+///   nothing can make them applicable.
+/// - `Err` before reveal, so the transport redelivers.
 fn intake_state(stage: AuctionStage) -> Result<Intake> {
     match stage {
         AuctionStage::Revealing | AuctionStage::Clearing => Ok(Intake::Open),
@@ -656,8 +664,8 @@ fn emit_inbound_ignored(
 }
 
 /// Accept a relayed bid batch. Bids accumulate per source chain while the stage is `Revealing`.
-/// Batches may arrive in any order over the unordered bridge, so completeness is tracked by a
-/// per-chain bitmap of `batch_index`; the chain finalizes once its BIDS_DONE marker and every batch
+/// Batches may arrive in any order over the unordered bridge, so a per-chain bitmap of
+/// `batch_index` tracks completeness. The chain finalizes once its BIDS_DONE marker and every batch
 /// have arrived (see `try_finalize_chain`). The first batch fixes the chain's `total_batches` and
 /// every later one must agree. A redelivered batch (its bit already set) is an idempotent no-op, so
 /// the transport may safely re-deliver. A batch past clearing, or for a day this chain never
@@ -735,7 +743,7 @@ pub fn process_bids_batch(
     let bit = U256::from(1u8) << (batch_index as usize);
     let mask = contract.chain_arrived_mask.read(&chain_key)?;
     if !(mask & bit).is_zero() {
-        // This batch was already applied; redelivery is idempotent.
+        // This batch was already applied. Redelivery is idempotent.
         return Ok(());
     }
 
@@ -748,7 +756,7 @@ pub fn process_bids_batch(
 }
 
 /// Accept a chain's BIDS_DONE completeness marker: the source relayed `total_batches` batches with
-/// `total_bids` bids for this day. Stage semantics mirror `process_bids_batch`; a marker may land
+/// `total_bids` bids for this day. Stage semantics mirror `process_bids_batch`. A marker may land
 /// before the batches it counts, which finalize the chain as they arrive. A marker the chain already
 /// recorded is a no-op when it agrees and is acknowledged with `InboundIgnored` when it does not: the
 /// first marker stands.
@@ -809,7 +817,7 @@ pub fn process_bids_done(
 }
 
 /// Mark the chain done once its BIDS_DONE marker and every batch have arrived with matching totals.
-/// Invoked from both arrival paths - either side may land last over the unordered bridge. An
+/// Invoked from both arrival paths. Either side may land last over the unordered bridge. An
 /// integrity mismatch (batch totals vs marker claims) keeps the chain not-done, so the deadline
 /// skip excludes it.
 fn try_finalize_chain(
@@ -867,8 +875,8 @@ pub fn force_clear(
 }
 
 /// Cycle `auction_clearing` trigger: attempt to clear every day awaiting the
-/// fan-in gate. Each day runs in its own checkpoint - an Err rolls that day
-/// back (retried next slot) and never escapes into the trigger chain.
+/// fan-in gate. Each day runs in its own checkpoint. An Err reverts that day
+/// (retried next slot) and never escapes into the trigger chain.
 pub fn tick_gate(ctx: &BlockRuntimeContext) -> Result<()> {
     let storage = ctx.storage.clone();
     let count = {
@@ -955,9 +963,12 @@ fn partition_chains(
     Ok((included, skipped))
 }
 
-/// Run the clearing algorithm over the included chains' bids, transition to
-/// `Cleared`, hand issuance to IntexFactory, return the unused limit to PromisLimit
-/// and send the per-chain AUCTION_RESULT / REFUND_INSTRUCTIONS messages.
+/// Clear the day:
+/// - Run the clearing algorithm over the included chains' bids.
+/// - Transition to `Cleared`.
+/// - Hand issuance to IntexFactory.
+/// - Return the unused limit to PromisLimit.
+/// - Send the per-chain AUCTION_RESULT / REFUND_INSTRUCTIONS messages.
 fn clear_inner(
     storage: StorageHandle<'_>,
     worldwide_day: WorldwideDay,
@@ -968,22 +979,22 @@ fn clear_inner(
     let mut contract = storage.contract::<DesisContract>();
     require_stage(&contract, worldwide_day, AuctionStage::Clearing)?;
 
-    let supply = contract.pending_supply_intex.read(&worldwide_day)?;
+    let desis_limit_units = contract.pending_desis_limit_units.read(&worldwide_day)?;
     if contract.clearing_initiated.read(&worldwide_day)? == 0 {
         return Err(DesisError::PendingClearingDataMissing(worldwide_day).into());
     }
 
     let config = contract.read_auction_config(worldwide_day)?;
     let min_bid_qty = contract.config_min_bid_quantity.read(&worldwide_day)? as u16;
-    // Zero bids are valid here: `calculate_clearing` yields 0 issued, the full limit returns
-    // to PromisLimit, and a no-sale AuctionResult(0,0,0) is reported to every snapshot chain.
+    // Zero bids are valid here. `calculate_clearing` yields 0 issued, and the full limit returns
+    // to PromisLimit. A no-sale AuctionResult(0,0,0) is reported to every snapshot chain.
     let bids = contract.read_chains_bids(worldwide_day, included)?;
 
     let total_demand: u64 = bids.iter().map(|(_, b)| u64::from(b.intex_quantity)).sum();
     let mut sorted = bids;
     sort_bids(&mut sorted);
 
-    let result = calculate_clearing(&sorted, &config, supply, min_bid_qty);
+    let result = calculate_clearing(&sorted, &config, desis_limit_units, min_bid_qty);
 
     // Persist clearing outcome and transition.
     contract.write_stage(worldwide_day, AuctionStage::Cleared)?;
@@ -996,7 +1007,9 @@ fn clear_inner(
         contract.reset_chain_intake(worldwide_day, chain_id)?;
     }
     contract.day_bid_count.write(&worldwide_day, 0)?;
-    contract.pending_supply_intex.write(&worldwide_day, 0)?;
+    contract
+        .pending_desis_limit_units
+        .write(&worldwide_day, 0)?;
     contract
         .pending_desis_limit_minor
         .write(&worldwide_day, U256::ZERO)?;
@@ -1035,10 +1048,15 @@ fn clear_inner(
             allocation: desis_allocation_minor,
             limit: desis_limit_minor,
         })?;
+    contract.emit(IDesis::DesisAllocationRecorded {
+        worldwideDay: worldwide_day.into(),
+        desisLimitMinor: desis_limit_minor,
+        desisAllocationMinor: desis_allocation_minor,
+    })?;
     if !unused_desis_limit_minor.is_zero() {
-        contract.emit(IDesis::UnusedSupplyReported {
+        contract.emit(IDesis::UnusedDesisLimitReported {
             worldwideDay: worldwide_day.into(),
-            unusedPromis: unused_desis_limit_minor,
+            unusedDesisLimitMinor: unused_desis_limit_minor,
         })?;
         PromisLimitContract::new(storage.clone())
             .add_to_total_unallocated(unused_desis_limit_minor)?;
@@ -1115,7 +1133,7 @@ fn clear_inner(
 // ---------------------------------------------------------------------------
 
 /// Sort chain-tagged bids: descending rate, ascending timestamp on tie. The sort is
-/// stable, so remaining ties keep the snapshot's chain order - deterministic.
+/// stable, so remaining ties keep the snapshot's chain order. The order is deterministic.
 fn sort_bids(bids: &mut [(u32, BidData)]) {
     bids.sort_by(|(_, a), (_, b)| {
         b.intex_bid_rate
@@ -1136,12 +1154,12 @@ pub(crate) fn rate_lock(qty: u64, basis: u128, rate: u32) -> u128 {
     u128::try_from(amount).unwrap_or(u128::MAX)
 }
 
-/// Uniform-rate clearing: allocate sorted bids until `supply` runs out; the
+/// Uniform-rate clearing: allocate sorted bids until no `desis_limit_units` remain. The
 /// clearing rate is the last allocated bid's. lock/pay uses the shared scale-1e6 denominator.
 fn calculate_clearing(
     bids: &[(u32, BidData)],
     config: &AuctionConfig,
-    supply: u32,
+    desis_limit_units: u32,
     min_qty: u16,
 ) -> ClearingResult {
     let len = bids.len();
@@ -1157,7 +1175,7 @@ fn calculate_clearing(
     let mut clearing_rate: u32 = config.min_intex_bid_rate;
 
     for (i, (chain_id, bid)) in bids.iter().enumerate() {
-        if total_allocated >= supply {
+        if total_allocated >= desis_limit_units {
             break;
         }
         if bid.intex_bid_rate < config.min_intex_bid_rate {
@@ -1167,7 +1185,7 @@ fn calculate_clearing(
             continue;
         }
 
-        let allocatable = supply - total_allocated;
+        let allocatable = desis_limit_units - total_allocated;
         let allocated = (bid.intex_quantity as u32).min(allocatable);
 
         if allocated > 0 {
@@ -1202,7 +1220,7 @@ fn calculate_clearing(
 
         let won = won_by_index[i];
         if won > 0 {
-            // Uniform clearing: winners pay at the clearing rate; refund the rest.
+            // Uniform clearing: winners pay at the clearing rate. Refund the rest.
             let paid = rate_lock(u64::from(won), escrow_basis, clearing_rate);
             let refunded = locked.saturating_sub(paid);
             paid_amounts.push(paid);
@@ -1322,7 +1340,7 @@ fn issuance_groups(
                     issuance_currency,
                     reference_currency,
                     recipients: Vec::new(),
-                    quantities: Vec::new(),
+                    units: Vec::new(),
                     recipient_chains: Vec::new(),
                     snapshot_chains: snapshot.to_vec(),
                 });
@@ -1330,11 +1348,11 @@ fn issuance_groups(
             }
         };
 
-        let quantity = result.winner_quantities[i];
+        let units = result.winner_quantities[i];
         let group = &mut groups[at];
-        group.issued_units += quantity.saturating_to::<u32>();
+        group.issued_units += units.saturating_to::<u32>();
         group.recipients.push(result.winners[i]);
-        group.quantities.push(quantity);
+        group.units.push(units);
         group.recipient_chains.push(result.winner_chains[i]);
     }
     Ok(groups)

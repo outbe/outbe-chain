@@ -1,7 +1,7 @@
 //! Prometheus metrics for Outbe consensus.
 //!
-//! These metrics are exposed via reth's `--metrics` endpoint and use the global
-//! `metrics` crate recorder. No additional setup is needed beyond reth's built-in
+//! Reth's `--metrics` endpoint exposes these metrics. They use the global
+//! `metrics` crate recorder. They need no setup other than reth's built-in
 //! Prometheus exporter.
 
 use metrics::{counter, gauge, histogram};
@@ -32,22 +32,23 @@ pub fn record_views_skipped(count: u64) {
 /// Record the highest Simplex view this node has observed activity for.
 ///
 /// Unlike `outbe_finalized_view` (which freezes during a stall), this gauge
-/// advances on every view-bearing activity - notarize/certify/finalize votes and
-/// nullification certificates - so it keeps moving while a view-timeout storm
+/// advances on every view-bearing activity: notarize/certify/finalize votes and
+/// nullification certificates. Thus it keeps moving while a view-timeout storm
 /// nullifies views without finalizing any. The gap
 /// `outbe_current_view - outbe_finalized_view` is the primary consensus-stall
-/// signal: a sustained non-zero gap means views are advancing but nothing is
-/// finalizing. Cheap (one atomic gauge set); safe to call on the voter task.
+/// signal. A sustained non-zero gap means views are advancing but nothing is
+/// finalizing. The call is cheap (one atomic gauge set). It is safe to call on the
+/// voter task.
 pub fn record_current_view(view: u64) {
     gauge!("outbe_current_view").set(view as f64);
 }
 
 /// Record a nullified (view-timed-out / skipped) Simplex view.
 ///
-/// Incremented when a `Nullification` certificate is observed. A rising rate
-/// means leaders are repeatedly failing to deliver proposals in time
-/// (network turbulence, an offline/byzantine leader run, or a liveness fault),
-/// which `outbe_finalized_view` alone cannot show.
+/// The counter increments when a `Nullification` certificate is observed. A rising
+/// rate means leaders repeatedly fail to deliver proposals in time (network
+/// turbulence, an offline/byzantine leader run, or a liveness fault).
+/// `outbe_finalized_view` alone cannot show this.
 pub fn record_view_nullified() {
     counter!("outbe_views_nullified_total").increment(1);
 }
@@ -60,18 +61,18 @@ pub fn record_finalization_dropped(reason: FinalizationDropReason) {
 /// Record a full marshal-resolution retry cycle that exhausted without
 /// resolving a finalized block.
 ///
-/// A finalized block is fetchable from any honest peer, so the actor keeps
-/// retrying rather than downing a healthy validator on a transient all-peers
-/// P2P stall. A SUSTAINED non-zero rate is the operator alarm: the block is
-/// unavailable network-wide or local state has diverged - investigate, because
-/// the actor (correctly) cannot advance finalization past an unresolved block.
+/// Any honest peer can serve a finalized block. Thus the actor keeps retrying
+/// instead of downing a healthy validator on a transient all-peers P2P stall.
+/// A SUSTAINED non-zero rate is the operator alarm: the block is unavailable
+/// network-wide or local state has diverged. Investigate it, because the actor
+/// (correctly) cannot advance finalization past an unresolved block.
 pub fn record_finalization_resolution_stalled() {
     counter!("outbe_finalization_resolution_stalled_total").increment(1);
 }
 
 /// Record a pre-finalization canonical-head reorg at the same height.
 ///
-/// Expected on view timeout / leader rotation; a sustained non-zero rate
+/// This is expected on view timeout / leader rotation. A sustained non-zero rate
 /// indicates network turbulence (frequent view changes near the tip).
 pub fn record_executor_head_flip() {
     counter!("outbe_executor_head_flip_total").increment(1);
@@ -90,16 +91,15 @@ pub fn record_executor_head_rollback() {
 }
 
 /// Record an attempted finalized rewrite at the current finalized height
-/// with a different digest. Always ignored by the executor's monotonic
-/// guard; a non-zero value is a protocol-invariant alarm and must be
-/// investigated.
+/// with a different digest. The executor's monotonic guard always ignores it.
+/// A non-zero value is a protocol-invariant alarm and must be investigated.
 pub fn record_executor_finalized_conflict() {
     counter!("outbe_executor_finalized_conflict_total").increment(1);
 }
 
 /// Record a stale finalize delivery below the committed finalized height.
-/// Always ignored; non-zero indicates duplicate or out-of-order marshal
-/// delivery and is mostly informational.
+/// It is always ignored. A non-zero value indicates duplicate or out-of-order
+/// marshal delivery and is mostly informational.
 pub fn record_executor_finalized_stale() {
     counter!("outbe_executor_finalized_stale_total").increment(1);
 }
@@ -111,11 +111,11 @@ pub fn record_epoch(epoch: u64) {
 
 /// Record the Commonware P2P peer-manager *tracked peer-set* size.
 ///
-/// This is the number of peers the peer-manager has registered/tracked for the
-/// current set (primary + secondary tiers), NOT the count of live TCP
-/// connections - the commonware network layer does not expose a live-connection
-/// count at this seam. Operators must read it as membership, not connectivity:
-/// it does not drop when peers disconnect, so it is not a stall/partition
+/// This is the number of peers that the peer-manager registered/tracked for the
+/// current set (primary + secondary tiers). It is NOT the count of live TCP
+/// connections. The commonware network layer does not expose a live-connection
+/// count at this seam. Operators must read it as membership, not connectivity.
+/// It does not drop when peers disconnect, so it is not a stall/partition
 /// signal on its own. Pair it with `outbe_current_view` vs `outbe_finalized_view`
 /// for liveness diagnosis.
 pub fn record_commonware_p2p_active_peers(count: usize) {
@@ -189,13 +189,13 @@ pub fn record_reshare_completed() {
 /// during the ceremony.
 ///
 /// A validator offline during its DKG/reshare has its share evaluation revealed
-/// in plaintext (the `feldman_desmedt` construction reveals a non-acking
-/// player's share so the ceremony can still complete), permanently committed
-/// on-chain in the `DealerLog` artifacts. A revealed share makes that
-/// validator's VRF threshold partial publicly forgeable. This is bounded - VRF
-/// drives leader election / fairness, not BFT safety (the BLS individual
-/// aggregate vote stays authoritative, and the group secret is safe up to `2f`
-/// reveals) - but a non-zero value is the operator's signal to rotate the
+/// in plaintext. The `feldman_desmedt` construction reveals a non-acking
+/// player's share so the ceremony can still complete. The revealed share stays
+/// permanently committed on-chain in the `DealerLog` artifacts. A revealed share
+/// makes that validator's VRF threshold partial publicly forgeable. This is
+/// bounded: VRF drives leader election / fairness, not BFT safety. The BLS
+/// individual aggregate vote stays authoritative, and the group secret is safe up
+/// to `2f` reveals. But a non-zero value is the operator's signal to rotate the
 /// affected validator's consensus key. The per-validator identities are logged
 /// at `WARN` on the `outbe::dkg` target.
 pub fn record_dkg_revealed_shares(count: usize) {
@@ -211,8 +211,8 @@ pub fn record_vrf_degraded_leader_selection() {
 /// The closed set of byzantine-equivocation kinds. Each carries its own telemetry
 /// label, so the `outbe_byzantine_evidence_total{type=...}` metric and the
 /// `outbe::slashing::equivocation` warn! field can only ever take one of these
-/// three values - closing the unbounded label-cardinality hole that a free `&str`
-/// parameter left open on a slashing-path counter.
+/// three values. This closes the unbounded label-cardinality hole that a free
+/// `&str` parameter left open on a slashing-path counter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EquivocationKind {
     ConflictingNotarize,
@@ -222,7 +222,7 @@ pub enum EquivocationKind {
 
 impl EquivocationKind {
     /// The stable telemetry label (metric `type` value and warn! field). These
-    /// strings are an external, operator-facing surface - do not change them.
+    /// strings are an external, operator-facing surface. Do not change them.
     pub const fn label(self) -> &'static str {
         match self {
             Self::ConflictingNotarize => "conflicting_notarize",
@@ -248,7 +248,7 @@ pub enum FinalizationDropReason {
 }
 
 impl FinalizationDropReason {
-    /// Stable telemetry label - operator-facing surface, do not change.
+    /// Stable telemetry label. It is an operator-facing surface. Do not change it.
     pub const fn label(self) -> &'static str {
         match self {
             Self::MailboxClosed => "mailbox_closed",
@@ -259,7 +259,7 @@ impl FinalizationDropReason {
     }
 }
 
-/// Reason an `Activity::Certification` was dropped by the reporter before
+/// Reason the reporter dropped an `Activity::Certification` before
 /// persistence. Closed set behind `outbe_certification_dropped_total{reason=...}`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CertificationDropReason {
@@ -270,7 +270,7 @@ pub enum CertificationDropReason {
 }
 
 impl CertificationDropReason {
-    /// Stable telemetry label - operator-facing surface, do not change.
+    /// Stable telemetry label. It is an operator-facing surface. Do not change it.
     pub const fn label(self) -> &'static str {
         match self {
             Self::VerifyFailed => "verify_failed",
@@ -291,7 +291,7 @@ pub enum DkgBoundaryDecision {
 }
 
 impl DkgBoundaryDecision {
-    /// Stable telemetry label - operator-facing surface, do not change.
+    /// Stable telemetry label. It is an operator-facing surface. Do not change it.
     pub const fn label(self) -> &'static str {
         match self {
             Self::AlreadyCommitted => "already_committed",
@@ -311,7 +311,7 @@ pub enum DkgBoundaryUnavailableReason {
 }
 
 impl DkgBoundaryUnavailableReason {
-    /// Stable telemetry label - operator-facing surface, do not change.
+    /// Stable telemetry label. It is an operator-facing surface. Do not change it.
     pub const fn label(self) -> &'static str {
         match self {
             Self::GenesisBoundaryNotReady => "genesis_boundary_not_ready",
@@ -320,19 +320,19 @@ impl DkgBoundaryUnavailableReason {
     }
 }
 
-/// Record an invalid threshold-VRF seed partial that was excluded from
-/// recovery during attestation verification AND is identity-attributable to its
-/// author (the rider identity signature verified). A non-zero value means a
-/// committee member deliberately emitted a garbage `bls_seed_partial` on the
-/// expected material version (byzantine); the verifier dropped the complete
-/// attestation so it cannot poison `recover_proof`, and buffered slashable evidence for an external
-/// watcher to submit.
+/// Record an invalid threshold-VRF seed partial that attestation verification
+/// excluded from recovery AND that is identity-attributable to its author (the
+/// rider identity signature verified). A non-zero value means a committee member
+/// deliberately emitted a garbage `bls_seed_partial` on the expected material
+/// version (byzantine). The verifier dropped the complete attestation so it
+/// cannot poison `recover_proof`. The verifier also buffered slashable evidence
+/// for an external watcher to submit.
 pub fn record_invalid_vrf_partial() {
     counter!("outbe_invalid_vrf_partial_total").increment(1);
 }
 
 /// Record an invalid threshold-VRF seed partial whose rider identity signature
-/// did NOT verify, so it cannot be attributed to the claimed signer - a
+/// did NOT verify, so it cannot be attributed to the claimed signer. It is a
 /// probable in-transit relay forgery. Its complete attestation is dropped before
 /// quorum admission but never slashed.
 pub fn record_forged_seed_partial() {
@@ -350,10 +350,10 @@ pub fn record_vrf_partial_drop(verdict: &'static str, signer: u32) {
 }
 
 /// Record a finalized certificate whose embedded threshold-VRF proof did not
-/// verify against the committee group key for its own round. Under the
-/// atomic vote-plus-partial admission in attestation verification this must be zero; a
-/// non-zero value is a hard alarm that an unverifiable proof reached the
-/// finalized certificate and will fail the next height's mandatory V2 verify.
+/// verify against the committee group key for its own round. Under the atomic
+/// vote-plus-partial admission in attestation verification, this must be zero.
+/// A non-zero value is a hard alarm: an unverifiable proof reached the finalized
+/// certificate and will fail the next height's mandatory V2 verify.
 pub fn record_finalized_cert_invalid_vrf_proof() {
     counter!("outbe_finalized_cert_invalid_vrf_proof_total").increment(1);
 }
@@ -373,8 +373,8 @@ pub fn record_parent_cert_store_size(size: usize) {
     gauge!("outbe_parent_cert_store_size").set(size as f64);
 }
 
-/// Current `block_cache` entry count. Sampled on every bounded insert
-/// so operators can verify the cap is enforced and alert on cache
+/// Current `block_cache` entry count. Sampled on every bounded insert.
+/// This lets operators verify that the cap is enforced and alert on cache
 /// growth that approaches `BLOCK_CACHE_MAX_ENTRIES`.
 pub fn record_block_cache_size(size: usize) {
     gauge!("outbe_block_cache_size").set(size as f64);
@@ -406,7 +406,7 @@ pub fn record_certification_dropped(reason: CertificationDropReason) {
     counter!("outbe_certification_dropped_total", "reason" => reason.label()).increment(1);
 }
 
-/// deterministic proposer-forfeit metric. See
+/// Deterministic proposer-forfeit metric. See
 /// [`crate::forfeit::ProposerForfeitReason`] for the closed reason set.
 pub fn record_proposer_forfeit(reason: crate::forfeit::ProposerForfeitReason) {
     counter!("outbe_proposer_forfeit_total", "reason" => reason.label().to_string()).increment(1);
@@ -424,9 +424,9 @@ pub fn record_phase1_parent_proof_unavailable() {
     counter!("outbe_phase1_parent_proof_unavailable_total").increment(1);
 }
 
-/// the proposer's in-process selection store missed the direct-parent
-/// proof but it was recovered from marshal's durable finalization archive,
-/// avoiding a slot forfeit (post-restart / late-join / finalization lag).
+/// The proposer's in-process selection store missed the direct-parent
+/// proof, but it was recovered from marshal's durable finalization archive.
+/// This avoided a slot forfeit (post-restart / late-join / finalization lag).
 pub fn record_parent_proof_recovered_from_marshal() {
     counter!("outbe_parent_proof_recovered_from_marshal_total").increment(1);
 }
@@ -471,15 +471,15 @@ pub fn record_dkg_boundary_duplicate_rejected() {
     counter!("outbe_dkg_boundary_duplicate_rejected_total").increment(1);
 }
 
-/// block-1 proposal cannot be built
+/// The block-1 proposal cannot be built
 /// because the DKG boundary artifact for epoch 0 is not ready.
 pub fn record_genesis_dkg_boundary_not_ready_forfeit() {
     record_proposer_forfeit(crate::forfeit::ProposerForfeitReason::GenesisDkgBoundaryNotReady);
 }
 
 /// `HybridScheme::recover_proof`
-/// returned `None` while quorum was met. Proposer forfeits the slot rather
-/// than stalling Simplex or emitting proof-less metadata.
+/// returned `None` while quorum was met. The proposer forfeits the slot instead
+/// of stalling Simplex or emitting proof-less metadata.
 pub fn record_vrf_recover_failed_under_quorum() {
     record_proposer_forfeit(crate::forfeit::ProposerForfeitReason::VrfRecoverFailedUnderQuorum);
 }
@@ -490,9 +490,9 @@ pub fn record_block_build_time(duration: Duration) {
     histogram!("outbe_block_build_time_ms").record(duration.as_secs_f64() * 1000.0);
 }
 
-/// Floor pad the proposer sleeps to reach `min_block_time` (the intended pad;
-/// `0` on the case-C / floor-already-met no-wait path). Lets operators see, per
-/// block, how much of the cadence is real build vs. liveness pacing.
+/// Floor pad the proposer sleeps to reach `min_block_time` (the intended pad, or
+/// `0` on the case-C / floor-already-met no-wait path). This lets operators see,
+/// per block, how much of the cadence is real build vs. liveness pacing.
 pub fn record_block_wait_time(duration: Duration) {
     histogram!("outbe_block_wait_time_ms").record(duration.as_secs_f64() * 1000.0);
 }
@@ -506,8 +506,8 @@ mod tests {
 
     /// Pins the byzantine-evidence telemetry labels. These strings are an external,
     /// operator-facing surface (the `outbe_byzantine_evidence_total{type=...}` metric
-    /// and the `outbe::slashing::equivocation` warn! field) shared with dashboards,
-    /// so a change must be deliberate, not an accidental rename.
+    /// and the `outbe::slashing::equivocation` warn! field). They are shared with
+    /// dashboards, so a change must be deliberate, not an accidental rename.
     #[test]
     fn equivocation_kind_labels_are_stable() {
         assert_eq!(
@@ -524,8 +524,8 @@ mod tests {
         );
     }
 
-    /// Pins the drop/decision telemetry labels - external operator-facing surface
-    /// (`outbe_finalization_dropped_total`, `outbe_certification_dropped_total`,
+    /// Pins the drop/decision telemetry labels. They are an external operator-facing
+    /// surface (`outbe_finalization_dropped_total`, `outbe_certification_dropped_total`,
     /// `outbe_dkg_boundary_requirement_total`, `outbe_dkg_boundary_unavailable_total`).
     /// A change must be deliberate, not an accidental rename.
     #[test]

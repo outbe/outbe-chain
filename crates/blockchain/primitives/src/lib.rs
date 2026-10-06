@@ -17,6 +17,9 @@ pub mod error;
 pub mod governance_journal;
 pub mod header;
 pub mod hook_events;
+mod journal_writer;
+#[cfg(unix)]
+pub mod local_record;
 pub mod math;
 pub mod participation;
 pub mod payload;
@@ -38,6 +41,8 @@ pub mod tee_registry_abi_v1;
 pub mod tee_signatures;
 #[cfg(feature = "test-utils")]
 pub mod tee_test_utils;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
 pub mod time;
 pub mod units;
 pub mod validators;
@@ -49,5 +54,6 @@ pub use header::{
     OutbeTxType,
 };
 pub use payload::{
-    OutbeBuiltPayload, OutbeExecutionData, OutbePayloadAttributes, OutbePayloadTypes,
+    OutbeBuiltPayload, OutbeExecutionData, OutbePayloadAttributes, OutbePayloadAttributesInput,
+    OutbePayloadTypes,
 };

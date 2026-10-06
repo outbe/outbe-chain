@@ -1,47 +1,21 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
-/// @title IGratisFactory - Gratis orchestration entry point.
 interface IGratisFactory {
-    /// @notice Emitted when `sender` converts protocol-6 gratis to native-18 COEN.
-    /// @param amount Native COEN atomic units minted to `sender`.
-    event CoenMined(address indexed sender, uint256 amount);
-
-    /// @notice Emitted when a user pledges gratis as credis collateral.
-    event GratisPledged(
-        address indexed account, uint256 amountStables, address indexed asset, uint256 gratisAmount, bytes32 pledgeNote
-    );
-
-    /// @notice Emitted when an unspent pledge is returned to the caller.
-    ///         `gratisAmount` is the collateral credited back.
-    event GratisUnpledged(address indexed account, uint256 gratisAmount);
-
-    /// @notice Pledge enough gratis to collateralize `amountStables`.
-    ///         Authorized by the caller's Gratis modify key:
-    ///         `mac = HMAC(modifyKey, op-preimage over amountStables)` where `opNonce`
-    ///         MUST equal the caller's current on-chain gratis op-nonce (fetch via
-    ///         `outbe_deriveKeys` + `opNonceOf`).
-    /// @param amountStables Stablecoin minor units this pledge must cover.
-    /// @param asset         Stablecoin address.
-    /// @param maxGratis     Slippage cap.
-    /// @return pledgeNote The confidential pledge record id. Hand it (and the
-    ///         derived pledge secret) to the CCA to request credis.
-    function pledgeGratis(uint256 amountStables, address asset, uint256 maxGratis, bytes32 mac, uint64 opNonce)
-        external
-        returns (bytes32 pledgeNote);
-
-    /// @notice Directly unpledge an UNSPENT pledge (e.g. credis rejected),
-    ///         releasing the full collateral back to `msg.sender`. Authorized by
-    ///         the caller's modify key. `amountStables` is the figure the pledge was
-    ///         quoted for and must match the one sealed in the ticket.
-    function unpledgeGratis(uint256 amountStables, bytes32 pledgeNote, bytes32 mac, uint64 opNonce) external;
-
-    /// @notice Convert `amount` protocol-6 gratis to the same whole-token amount of
-    ///         native-18 COEN (burns gratis). The return value and
-    ///         `CoenMined.amount` are native COEN atomic units. Authorized by the
-    ///         caller's modify key.
-    function mineCoen(uint256 amount, bytes32 mac, uint64 opNonce) external returns (uint256);
-
-    /// @notice ERC-165 conformance check.
+    struct ModifyAuth {
+        bytes32 mac;
+        uint64 opNonce;
+    }
+    event PledgeNote(bytes32 indexed commitment, uint32 leafIndex, bytes32 rootAfter, uint256 gratisMinor);
+    event PledgeSpent(bytes32 indexed nullifier);
+    event CoenMined(address indexed sender, uint256 coenMinor);
+    /// Debit authenticated Gratis and append a note bound to the source account.
+    function pledgeGratis(uint256 gratisMinor, ModifyAuth calldata auth) external returns (bytes32 commitment);
+    /// Credit the original owner authenticated by the unpledge proof.
+    function unpledgeGratis(bytes calldata proof) external;
+    function pledgeRoot() external view returns (bytes32);
+    function pledgeLeafCount() external view returns (uint64);
+    function pledgeSpent(bytes32 nullifier) external view returns (bool);
+    function mineCoen(uint256 gratisMinor, bytes32 mac, uint64 opNonce) external returns (uint256 coenMinor);
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }

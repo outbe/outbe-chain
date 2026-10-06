@@ -16,7 +16,7 @@ sol!("../../../contracts/precompiles/src/IFidelity.sol");
 /// Dispatches an ABI-encoded call to the Fidelity precompile.
 ///
 /// `getFidelityIndex`/`getFidelityIndexAt` are owner-authorized reads over the
-/// encrypted cohort ledger (the enclave verifies the signed authorization);
+/// encrypted cohort ledger (the enclave verifies the signed authorization).
 /// `maxFidelityIndexAt`/`decimals`/`minLeague`/`maxLeague` are plaintext.
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
@@ -50,11 +50,16 @@ pub fn dispatch(
 }
 
 /// The owner-authorized index query is a read-only `eth_call`, so its failures
-/// (bad or wrong-signer signature, wrong chain, expired auth, enclave sidecar
-/// unavailable / DKG incomplete) are user-facing, not node-fatal. Surface the
-/// reason as a `Revert` so it reaches the caller as `Error(string)`; the enclave
-/// client returns these as `Fatal`, which `eth_call` would otherwise drop as
-/// data-less "missing revert data". Already-`Revert` errors pass through.
+/// are user-facing, not node-fatal:
+/// - bad or wrong-signer signature
+/// - wrong chain
+/// - expired auth
+/// - enclave sidecar unavailable / DKG incomplete
+///
+/// Surface the reason as a `Revert` so it reaches the caller as `Error(string)`.
+/// The enclave client returns these failures as `Fatal`, which `eth_call` would
+/// otherwise drop as data-less "missing revert data". Already-`Revert` errors pass
+/// through.
 fn surface_query_error(e: PrecompileError) -> PrecompileError {
     match e {
         PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => e,

@@ -130,7 +130,11 @@ impl FailNthDurability {
         assert!(fail_on_call > 0, "fault injection call is one-based");
         self.remaining_calls.store(fail_on_call, Ordering::SeqCst);
     }
+}
 
+impl FsyncFailurePolicy for FailNthDurability {
+    const FILE_ERROR: &'static str = "injected numbered file fsync failure";
+    const DIRECTORY_ERROR: &'static str = "injected numbered directory fsync failure";
     fn should_fail(&self, point: FailSync) -> bool {
         if self.point != point {
             return false;
@@ -148,24 +152,6 @@ impl FailNthDurability {
             }
         }
         false
-    }
-}
-
-impl JournalDurability for FailNthDurability {
-    fn sync_file(&self, file: &File) -> io::Result<()> {
-        if self.should_fail(FailSync::File) {
-            return Err(io::Error::other("injected numbered file fsync failure"));
-        }
-        file.sync_all()
-    }
-
-    fn sync_directory(&self, directory: &File) -> io::Result<()> {
-        if self.should_fail(FailSync::Directory) {
-            return Err(io::Error::other(
-                "injected numbered directory fsync failure",
-            ));
-        }
-        directory.sync_all()
     }
 }
 

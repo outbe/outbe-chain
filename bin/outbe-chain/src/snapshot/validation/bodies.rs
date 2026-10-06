@@ -8,7 +8,8 @@ use outbe_compressed_entities::{
 };
 use outbe_nod::NodRepositoryReader;
 use outbe_offchain_data::{read_projection_state, ProjectionCheckpoint, ProjectionConfig};
-use outbe_offchain_storage::{RocksDbReader, StorageReaderHandle};
+use outbe_offchain_storage::partitioned::adapters::RocksPartitionReadView;
+use outbe_offchain_storage::{PartitionedStorage, StorageReaderHandle};
 use outbe_tribute::{RetainedTributeAuditVisitor, RetainedTributeReader, TributeRepositoryReader};
 
 use super::Incomplete;
@@ -59,7 +60,13 @@ impl ProjectionBodyView {
         let scratch = tempfile::Builder::new()
             .prefix("projection-audit-")
             .tempdir_in(scratch_parent)?;
-        let reader: StorageReaderHandle = Arc::new(RocksDbReader::open(&database, scratch.path())?);
+        let reader: StorageReaderHandle = Arc::new(PartitionedStorage::read_only(
+            Arc::new(RocksPartitionReadView::open(
+                &projection.root,
+                scratch.path(),
+            )?),
+            outbe_offchain_data::entity_partition_routing()?,
+        ));
         let checkpoint = read_projection_state(
             ProjectionConfig {
                 chain_id: layout.chain.chain().id(),
@@ -89,6 +96,7 @@ impl ProjectionBodyView {
         let nod = NodRepositoryReader::new(self.reader.clone());
         tribute.audit_indexes(work)?;
         nod.audit_indexes(work)?;
+        nod.audit_partition_locations(work)?;
         let same_frontier = marker.height == self.checkpoint.block_number
             && marker.block_hash == self.checkpoint.block_hash;
         for domain in [CeDomain::Tribute, CeDomain::NodItem, CeDomain::NodBucket] {
@@ -129,8 +137,8 @@ impl ProjectionBodyView {
         })
     }
 
-    /// Retained rows are a separate population; historical lease/partition
-    /// obligations are authenticated by the task06 caller, never by live CE.
+    /// Retained rows are a separate population. The task06 caller authenticates
+    /// historical lease/partition obligations. Live CE never authenticates them.
     pub(crate) fn audit_retained(
         &self,
         work: &CeAuditWork,

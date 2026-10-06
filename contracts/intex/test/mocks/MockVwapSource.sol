@@ -3,7 +3,8 @@ pragma solidity 0.8.30;
 
 import {IVwapSource} from "@contracts/shared/interfaces/IVwapSource.sol";
 
-/// @dev Answers a price only for the exact day it is asked from, so a caller passing the wrong day reads 0.
+/// @dev Answers a price only for the exact day it is asked from. A caller that passes the wrong day
+///      reads 0.
 contract MockVwapSource is IVwapSource {
     mapping(uint32 fromUtcDay => uint256) public priceFrom;
     bool public reverts;

@@ -1,4 +1,5 @@
 use super::*;
+use crate::v1::VerifiedIntentV1;
 
 #[test]
 fn initial_policy_is_state_authority_and_is_write_once() {
@@ -386,12 +387,14 @@ fn ambiguous_measurement_rules_reject_at_the_registry_boundary() {
         registry.install_initial_policy_v1(&active_policy).unwrap();
         assert!(revert_message(
             registry
-                .register_enclave_after_verifier_for_test(
-                    &intent,
-                    &node_signature,
-                    &enclave_signature,
-                    PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate,)),
-                )
+                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
+                    intent: &intent,
+                    node_signature: &node_signature,
+                    enclave_signature: &enclave_signature,
+                    capability: PostVerifierDcapCapabilityV1::new(verdict(
+                        DcapPlatformTcbStatusV1::UpToDate,
+                    ))
+                })
                 .unwrap_err()
         )
         .contains("exactly one"));

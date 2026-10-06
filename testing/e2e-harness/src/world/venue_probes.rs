@@ -1,9 +1,9 @@
 //! Chain-state probes for the origin venue.
 //!
-//! Every one answers a question a failing step needs to explain itself - which
-//! stage the venue is in, what the router froze, what a parked delivery said -
-//! and returns a human sentence rather than a value, so a panic message reads
-//! as a diagnosis instead of a mismatch.
+//! Every probe answers a question that a failing step needs to explain itself.
+//! Examples: which stage the venue is in, what the router froze, what a parked
+//! delivery said. Every probe returns a human sentence rather than a value, so a panic
+//! message reads as a diagnosis instead of a mismatch.
 
 use alloy_primitives::Address;
 #[cfg(feature = "ocomp-integration")]
@@ -45,7 +45,7 @@ sol! {
             ReferenceCurrencyPrice[] prices; uint128 commitBondMinor;
         }
         struct AuctionResult {
-            uint64 auctionClearingRate; uint32 wonBidsCount; uint32 issuedUnits; uint128 issuedIntexLoadedPromis;
+            uint64 auctionClearingRate; uint32 wonBidsCount; uint32 issuedUnits; uint128 issuedPromisLoadMinor;
         }
         struct AuctionData {
             uint8 worldwideDayState; AuctionSchedule schedule; AuctionParams params; AuctionResult result;
@@ -76,8 +76,8 @@ sol! {
         function isChainDone(uint32 worldwideDay, uint32 srcChainId) external view returns (bool);
     }
 }
-/// Every probe below asks the same question of the chain - "what did this
-/// contract emit for this day?" - so the query shape lives here once.
+/// Every probe below asks the chain the same question: "what did this contract
+/// emit for this day?". The query shape lives here once.
 #[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
 fn logs_of(
     url: &str,
@@ -221,7 +221,7 @@ pub(crate) fn parked_work(
     };
     let relay_note = match relay {
         Some(progress) if !progress.done => {
-            // Carrying an unfinished relay on is permissionless, and its revert carries
+            // Continuing an unfinished relay is permissionless, and its revert carries
             // the reason the venue stopped where it did.
             let push = eth::send_call(
                 venue_url,
@@ -453,7 +453,7 @@ pub(crate) fn relayed_bids(url: &str, worldwide_day: u32, chain_id: u32) -> Stri
         _ => "Desis did not report its relayed bids".to_owned(),
     }
 }
-/// The loopback adapter delivers inside the send and swallows a failure: it
+/// The loopback adapter delivers inside the send and swallows a failure. It
 /// parks the delivery with the revert reason and still reports the send as
 /// done. That reason is the only place a refused message explains itself.
 #[cfg(feature = "ocomp-integration")]
@@ -522,8 +522,8 @@ pub(crate) fn refunds_were_sent(world: &World, worldwide_day: u32) -> bool {
 }
 /// Clearing fires the auction result, the issuance instructions and the refunds
 /// back to back. A router that cannot pay the bridge fee parks the tail of that
-/// burst instead of reverting, so a parked send is the first thing to look at
-/// when a message never lands. Counting only: a run must not need a nudge.
+/// burst instead of reverting. When a message never lands, look at a parked send
+/// first. Counting only: a run must not need a nudge.
 #[cfg(feature = "ocomp-integration")]
 pub(crate) fn parked_origin_sends(world: &World) -> u32 {
     let url = world.rpc.url(world.validators.primary_port());
@@ -712,7 +712,8 @@ pub(crate) fn series_exists(
     .unwrap_or_default()
 }
 
-/// A series' lifecycle state as the collection has it: 0 Issued, 1 Qualified, 2 Called.
+/// A series' lifecycle state as the collection reads it, without the Qualified
+/// overlay: 0 Issued, 2 Called, 3 Expired.
 #[cfg(feature = "ocomp-integration")]
 pub(crate) fn series_state(
     url: &str,
@@ -758,7 +759,8 @@ pub(crate) fn series_call_deadline(
         .map(|data| u64::from(data.calledAt) + u64::from(data.callTrigger.callNoticePeriod))
 }
 
-/// What a series qualifies on: its reference currency, its floor, and the first UTC day it held in full.
+/// What a series qualifies on: its reference currency, its floor, and the first
+/// UTC day it held in full.
 #[cfg(feature = "ocomp-integration")]
 pub(crate) fn series_floor_terms(
     url: &str,

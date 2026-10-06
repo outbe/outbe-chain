@@ -1,6 +1,6 @@
 //! Issue an Intex series straight into the engine, without running an auction.
 //!
-//! The node exposes `issueForTest` only under its `e2e-test` feature; the entry
+//! The node exposes `issueForTest` only under its `e2e-test` feature. The entry
 //! makes the two calls the clearing engine makes, so the series is indexed for
 //! the qualify sweep and its mints travel as real issuance instructions.
 
@@ -10,7 +10,7 @@ use eyre::{eyre, Result};
 
 use crate::internal::eth;
 
-/// Send `call` and prove the receipt says success: a reverted transaction still
+/// Send `call` and prove that the receipt says success. A reverted transaction still
 /// returns a hash, so an unchecked send hides the failure it was meant to catch.
 fn send_checked<C: alloy_sol_types::SolCall>(
     url: &str,
@@ -59,7 +59,7 @@ sol! {
             uint256 entryPriceMinor,
             uint16 referenceCurrency,
             address[] recipients,
-            uint256[] quantities,
+            uint256[] units,
             uint32[] recipientChains,
             uint32[] snapshotChains
         ) external;
@@ -93,23 +93,23 @@ sol! {
     }
 
     interface IPromisMining {
-        function minePromis(bytes14 seriesId, address owner, uint256 amount, uint64 nonce, bytes32 mac, uint64 opNonce)
+        function minePromis(bytes14 seriesId, address owner, uint256 units, uint64 nonce, bytes32 mac, uint64 opNonce)
             external
-            returns (uint256 promisAmount);
+            returns (uint256 promisMinor);
     }
 
     struct SendParam {
         uint32 dstChainId;
         bytes32 to;
         uint256 tokenId;
-        uint256 amount;
+        uint256 units;
     }
 
     struct BatchSendParam {
         uint32 dstChainId;
         bytes32 to;
         uint256[] tokenIds;
-        uint256[] amounts;
+        uint256[] units;
     }
 
     interface IIntexNFT1155Bridge {
@@ -118,12 +118,6 @@ sol! {
         function batchSend(BatchSendParam sendParam) external payable returns (bytes32 sendId);
         function quoteSend(SendParam sendParam) external view returns (uint256 fee);
         function send(SendParam sendParam) external payable returns (bytes32 sendId);
-    }
-
-    interface ITestToken {
-        function mint(address to, uint256 amount) external;
-        function approve(address spender, uint256 amount) external returns (bool);
-        function balanceOf(address account) external view returns (uint256);
     }
 }
 
@@ -174,8 +168,8 @@ pub fn issue_series(
         .map(|spec| series_id(worldwide_day, spec.issuance, reference_byte))
         .collect();
 
-    // One call for the whole day: the engine counts issuance chunks over the legs it
-    // is handed, so a second send would announce a one-chunk day twice.
+    // Send one call for the whole day. The engine counts issuance chunks over the
+    // legs it is handed, so a second send would announce a one-chunk day twice.
     send_checked(
         url,
         INTEX_FACTORY,
@@ -192,7 +186,7 @@ pub fn issue_series(
             // One recipient leg per chain: the owner ends up with units on each,
             // which is what makes bringing them home a real step later.
             recipients: vec![owner; chains.len()],
-            quantities: units_per_chain.iter().copied().map(U256::from).collect(),
+            units: units_per_chain.iter().copied().map(U256::from).collect(),
             recipientChains: chains.to_vec(),
             snapshotChains: chains.to_vec(),
         },
@@ -239,7 +233,7 @@ pub fn mine_promis(
     url: &str,
     owner_key: &str,
     series: FixedBytes<14>,
-    amount: u32,
+    units: u32,
     nonce: u64,
     mac: [u8; 32],
     op_nonce: u64,
@@ -255,7 +249,7 @@ pub fn mine_promis(
         &IPromisMining::minePromisCall {
             seriesId: series,
             owner,
-            amount: U256::from(amount),
+            units: U256::from(units),
             nonce,
             mac: mac.into(),
             opNonce: op_nonce,
@@ -357,9 +351,9 @@ pub fn close_call_notice(
     )
 }
 
-/// Bring `amount` units of `series` home from the chain `bridge` lives on.
+/// Bring `units` of `series` home from the chain `bridge` lives on.
 ///
-/// While a series is tradable the hop may change hands; once it is Called only a
+/// While a series is tradable the hop may change hands. Once it is Called only a
 /// move to the owner's own address is allowed, so `to` is always the owner here.
 pub fn bridge_home(
     url: &str,
@@ -368,13 +362,13 @@ pub fn bridge_home(
     home_chain_id: u32,
     token_id: U256,
     owner: Address,
-    amount: u32,
+    units: u32,
 ) -> Result<()> {
     let params = SendParam {
         dstChainId: home_chain_id,
         to: FixedBytes::<32>::left_padding_from(owner.as_slice()),
         tokenId: token_id,
-        amount: U256::from(amount),
+        units: U256::from(units),
     };
     let fee = eth::read_call(
         url,
@@ -448,10 +442,7 @@ pub fn batch_bridge_home(
         dstChainId: home_chain_id,
         to: FixedBytes::<32>::left_padding_from(owner.as_slice()),
         tokenIds: tokens.iter().map(|(id, _)| *id).collect(),
-        amounts: tokens
-            .iter()
-            .map(|(_, amount)| U256::from(*amount))
-            .collect(),
+        units: tokens.iter().map(|(_, units)| U256::from(*units)).collect(),
     };
     let fee = eth::read_call(
         url,

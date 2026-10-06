@@ -32,7 +32,7 @@ pub(crate) struct NativeLayout {
 }
 
 /// Configuration prerequisites. Other native roots come directly from ordinary
-/// node arguments; only projection inspection needs the separate storage TOML.
+/// node arguments. Only projection inspection needs the separate storage TOML.
 pub(crate) struct NativeReadSelection {
     pub projection: bool,
 }
@@ -53,7 +53,7 @@ pub(crate) struct RequestedLayout {
     pub protected: ProtectedPaths,
 }
 
-/// Parse trailing ordinary node options; never run or configure the parsed command.
+/// Parse trailing ordinary node options. Never run or configure the parsed command.
 pub(crate) fn parse_node_inputs(
     arguments: impl IntoIterator<Item = OsString>,
 ) -> eyre::Result<NodeInputs> {

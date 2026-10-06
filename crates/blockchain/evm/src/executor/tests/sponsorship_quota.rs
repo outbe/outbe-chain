@@ -229,3 +229,74 @@ fn sponsored_declined_commit_does_not_burn_quota() {
     let account = state.basic(signer).expect("account read").expect("account");
     assert_eq!(account.nonce, 0);
 }
+
+#[test]
+fn sponsored_execution_restores_existing_fee_flags_on_every_result_exit() {
+    let config = OutbeEvmConfig::new(test_chain_spec());
+    for flags in 0..8u8 {
+        for outcome in ["included", "declined", "error"] {
+            let recovered = sponsored_tx(0, 200_000, reverting_calldata())
+                .try_into_recovered()
+                .unwrap();
+            let signer = Address::from(*recovered.signer());
+            let initial_nonce = u64::from(outcome == "error");
+            let mut state = delegated_state(signer, U256::from(1), initial_nonce);
+            let expected = (flags & 1 != 0, flags & 2 != 0, flags & 4 != 0);
+            let mut env = pectra_evm_env();
+            env.cfg_env.disable_balance_check = expected.0;
+            env.cfg_env.disable_base_fee = expected.1;
+            env.cfg_env.disable_fee_charge = expected.2;
+            {
+                let evm = config.evm_with_env(&mut state, env);
+                let mut executor =
+                    config.create_executor(evm, execution_ctx(Some(1), Bytes::new()));
+                let result = executor.execute_transaction_with_commit_condition(recovered, |_| {
+                    if outcome == "declined" {
+                        CommitChanges::No
+                    } else {
+                        CommitChanges::Yes
+                    }
+                });
+                match outcome {
+                    "included" => {
+                        assert!(result.unwrap().is_some());
+                        assert_eq!(executor.receipts().len(), 1);
+                        assert!(!executor.receipts()[0].success);
+                    }
+                    "declined" => {
+                        assert!(result.unwrap().is_none());
+                        assert!(executor.receipts().is_empty());
+                    }
+                    "error" => {
+                        assert_invalid_tx(result.unwrap_err(), true);
+                        assert!(executor.receipts().is_empty());
+                    }
+                    _ => unreachable!(),
+                }
+                let cfg = &executor.inner.evm.ctx_mut().cfg;
+                assert_eq!(
+                    (
+                        cfg.disable_balance_check,
+                        cfg.disable_base_fee,
+                        cfg.disable_fee_charge
+                    ),
+                    expected,
+                    "flags={flags}, outcome={outcome}"
+                );
+                assert_eq!(
+                    executor.current_execution_summary().validator_fee_sum,
+                    U256::ZERO
+                );
+            }
+            assert_eq!(
+                live_counter(&mut state, signer),
+                if outcome == "included" {
+                    (TODAY, 1)
+                } else {
+                    (0, 0)
+                }
+            );
+            assert_eq!(signer_balance(&mut state, signer), U256::from(1));
+        }
+    }
+}

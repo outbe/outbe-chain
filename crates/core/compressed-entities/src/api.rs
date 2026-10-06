@@ -27,7 +27,7 @@ pub enum EntityRef {
 }
 
 /// Closed collection-level lifecycle authority. ADR-011 intentionally exposes
-/// only Tribute WWD retirement; singleton domains have no representable request.
+/// only Tribute WWD retirement. Singleton domains have no representable request.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum PartitionRef {
     TributeWwd(WorldwideDay),
@@ -568,8 +568,8 @@ const PHASE_ENDED: u8 = 2;
 
 /// Executor-owned phase capability for one block execution.
 ///
-/// It is deliberately not stored in consensus state: the executor creates one
-/// scope per block, calls [`begin_block`] once, threads the same instance
+/// It is deliberately not stored in consensus state. The executor creates one
+/// scope per block and calls [`begin_block`] once. It threads the same instance
 /// through every execution precompile, then calls [`end_block`] once. This
 /// makes a post-cleanup read/mutation a deterministic ordering error without
 /// adding a protocol storage slot. Finalized RPC readers do not receive this
@@ -741,7 +741,7 @@ impl ExecutionScope {
 
     /// Binds the factory/identity to the scope already captured by this EVM's
     /// precompiles. Live wiring calls this after the block parent is known and
-    /// before begin-block; lifecycle and every nested precompile therefore keep
+    /// before begin-block. Lifecycle and every nested precompile therefore keep
     /// using the same `Arc<ExecutionScope>`.
     pub fn configure_parent_tree_factory(
         &self,
@@ -1079,8 +1079,8 @@ impl ExecutionScope {
         Ok(())
     }
 
-    /// Closes the current executor transaction window. Work remains reserved;
-    /// excluded transactions are restored separately from their checkpoint.
+    /// Closes the current executor transaction window. Work remains reserved.
+    /// Excluded transactions are restored separately from their checkpoint.
     pub fn end_ce_work_transaction(&self) -> Result<()> {
         let mut state = self
             .ce_work

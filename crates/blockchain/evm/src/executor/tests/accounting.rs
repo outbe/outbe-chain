@@ -1,11 +1,11 @@
 use super::*;
 
 /// an unverifiable late-finalize credit carried in
-/// `header.extra_data` is FATAL in **pre-exec** - the block is rejected
-/// before any transaction executes (no receipts), not as a soft receipt.
-/// Phase 1 is disabled (no CPA proof seeded); the late-finalize preflight is
-/// the sole gate under test, enabled via the dedicated
-/// `LATE_FINALIZE_VERIFY_DISABLED` opt-out staying off.
+/// `header.extra_data` is FATAL in **pre-exec**. The executor rejects the
+/// block before any transaction executes (no receipts), not as a soft receipt.
+/// Phase 1 is disabled (no CPA proof seeded). The late-finalize preflight is
+/// the sole gate under test. It stays enabled because the dedicated
+/// `LATE_FINALIZE_VERIFY_DISABLED` opt-out stays off.
 #[test]
 fn bad_late_proof_pre_exec_fatal() {
     use outbe_primitives::reshare_artifact::{LateFinalizeCreditsArtifact, PerBlockCredit};
@@ -106,7 +106,7 @@ fn verifier_rejects_finalization_parent_hash_mismatch() {
 
     let mut executor = config.create_executor(evm, ctx);
     // the rejection now fires in `apply_pre_execution_changes`
-    // (Phase 1 verifier preflight) rather than during the main tx loop -
+    // (Phase 1 verifier preflight) rather than during the main tx loop.
     // `verify_v2_proof` reads the same `parent_hash` mismatch via
     // `begin_block_system_tx_inputs` BEFORE any begin-zone state change.
     let err = executor.apply_pre_execution_changes().expect_err(
@@ -261,11 +261,13 @@ fn validate_finalized_metadata_rejects_signer_bitmap_length_mismatch() {
 // tests close the audit gap by exercising the guard branch directly
 // instead of relying on source-grep substring matches.
 //
-// Construction is minimal: an `OutbeBlockExecutor` with
-// `accounted_parent_artifact_provider = None` (forces the lookup ladder
-// straight to the hint), a synthetic `parent_hash`, an explicit
-// `parent_artifact_hint`, and a `BlockEnv.number` whose `n - 1` matches
-// the metadata's `finalized_block_number` on the happy path.
+// Construction is minimal:
+// - an `OutbeBlockExecutor` with `accounted_parent_artifact_provider = None`
+//   (forces the lookup ladder straight to the hint),
+// - a synthetic `parent_hash`,
+// - an explicit `parent_artifact_hint`,
+// - a `BlockEnv.number` whose `n - 1` matches the metadata's
+//   `finalized_block_number` on the happy path.
 // -----------------------------------------------------------------------
 
 fn hint_test_metadata(
@@ -351,21 +353,11 @@ fn hint_accepted_when_metadata_matches_parent() {
     let evm = config.evm_with_env(&mut state, evm_env);
     let executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, inner_ctx, &chain_spec, &receipt_builder),
-        None,
-        Bytes::new(),
-        None, // accounted_parent_artifact_provider - None forces hint path
-        false,
-        None,
-        parent_hash,
-        None,
-        Vec::new(),
-        Vec::new(),
-        None,
-        None,
-        None,
-        true,
-        None,
-        Some(hint),
+        {
+            let mut inputs = fixtures::empty_executor_inputs(parent_hash);
+            inputs.parent_accounting.parent_artifact_hint = Some(hint);
+            inputs
+        },
     );
 
     let metadata = hint_test_metadata(block_number - 1, parent_hash);
@@ -399,21 +391,13 @@ fn provider_header_not_found_uses_matching_parent_hint() {
     let evm = config.evm_with_env(&mut state, evm_env);
     let executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, inner_ctx, &chain_spec, &receipt_builder),
-        None,
-        Bytes::new(),
-        Some(Arc::new(HeaderNotFoundArtifactProvider)),
-        false,
-        None,
-        parent_hash,
-        None,
-        Vec::new(),
-        Vec::new(),
-        None,
-        None,
-        None,
-        true,
-        None,
-        Some(hint),
+        {
+            let mut inputs = fixtures::empty_executor_inputs(parent_hash);
+            inputs.parent_accounting.accounted_parent_artifact_provider =
+                Some(Arc::new(HeaderNotFoundArtifactProvider));
+            inputs.parent_accounting.parent_artifact_hint = Some(hint);
+            inputs
+        },
     );
 
     let metadata = hint_test_metadata(block_number - 1, parent_hash);
@@ -449,21 +433,11 @@ fn hint_rejected_when_metadata_hash_mismatch() {
     let evm = config.evm_with_env(&mut state, evm_env);
     let executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, inner_ctx, &chain_spec, &receipt_builder),
-        None,
-        Bytes::new(),
-        None,
-        false,
-        None,
-        parent_hash,
-        None,
-        Vec::new(),
-        Vec::new(),
-        None,
-        None,
-        None,
-        true,
-        None,
-        Some(hint_test_artifact()),
+        {
+            let mut inputs = fixtures::empty_executor_inputs(parent_hash);
+            inputs.parent_accounting.parent_artifact_hint = Some(hint_test_artifact());
+            inputs
+        },
     );
 
     let metadata = hint_test_metadata(block_number - 1, foreign_hash);
@@ -498,21 +472,11 @@ fn hint_rejected_when_metadata_number_mismatch() {
     let evm = config.evm_with_env(&mut state, evm_env);
     let executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, inner_ctx, &chain_spec, &receipt_builder),
-        None,
-        Bytes::new(),
-        None,
-        false,
-        None,
-        parent_hash,
-        None,
-        Vec::new(),
-        Vec::new(),
-        None,
-        None,
-        None,
-        true,
-        None,
-        Some(hint_test_artifact()),
+        {
+            let mut inputs = fixtures::empty_executor_inputs(parent_hash);
+            inputs.parent_accounting.parent_artifact_hint = Some(hint_test_artifact());
+            inputs
+        },
     );
 
     // Off-by-one: metadata claims to describe block (block_number - 2)
@@ -549,21 +513,7 @@ fn no_provider_no_hint_returns_missing_artifact_error() {
     let evm = config.evm_with_env(&mut state, evm_env);
     let executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, inner_ctx, &chain_spec, &receipt_builder),
-        None,
-        Bytes::new(),
-        None,
-        false,
-        None,
-        parent_hash,
-        None,
-        Vec::new(),
-        Vec::new(),
-        None,
-        None,
-        None,
-        true,
-        None,
-        None, // no hint
+        fixtures::empty_executor_inputs(parent_hash),
     );
 
     let metadata = hint_test_metadata(block_number - 1, parent_hash);

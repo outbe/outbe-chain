@@ -2,9 +2,11 @@
 //! empty returndata.
 //!
 //! revm's `make_call_frame` short-circuits when the target's bytecode is
-//! empty: commits the journal checkpoint and returns `InstructionResult::Stop`
+//! empty. It commits the journal checkpoint and returns `InstructionResult::Stop`
 //! with empty output. The driver must translate this to
 //! `SubCallStatus::Success` + `returndata = empty`.
+
+mod sub_call_support;
 
 use alloy_primitives::{Address, Bytes, U256};
 use outbe_evm::sub_call;
@@ -27,11 +29,7 @@ fn sub_call_to_eoa_returns_success_empty() {
 
     let result = sub_call::run(
         &mut ctx,
-        CALLER,
-        /* outer_is_static = */ false,
-        SpecId::PRAGUE,
-        None,
-        std::sync::Arc::new(outbe_compressed_entities::ExecutionScope::new()),
+        sub_call_support::fresh_environment(CALLER, SpecId::PRAGUE),
         SubCallInput {
             target: EOA_TARGET,
             value: U256::ZERO,

@@ -12,18 +12,21 @@ import {GasLimitAttribute} from "../libs/GasLimitAttribute.sol";
 /**
  * @dev ERC-7786 gateway adapter for LayerZero V2.
  *
- * Wraps a LayerZero `OApp` behind the ERC-7786 `IERC7786GatewaySource` interface so that a protocol-agnostic facade
- * (e.g. {ERC7786Bridge}) can route messages through LayerZero without knowing anything about endpoint ids or peers.
- * All LayerZero-specific concerns live here:
+ * Wraps a LayerZero `OApp` behind the ERC-7786 `IERC7786GatewaySource` interface. A
+ * protocol-agnostic facade (e.g. {ERC7786Bridge}) can then route messages through LayerZero without
+ * knowing anything about endpoint ids or peers. All LayerZero-specific concerns live here:
  *
  * * chainId <-> LayerZero endpoint id (eid) equivalence,
- * * peer registration (the matching adapter on the remote chain) and the inbound peer check (inherited from OApp),
+ * * peer registration (the matching adapter on the remote chain) and the inbound peer check
+ *   (inherited from OApp),
  * * native fee payment via `msg.value` and destination gas options.
  *
- * Outbound: {sendMessage} resolves the recipient's chainId to an eid and `_lzSend`s the wrapped package. Inbound:
- * {_lzReceive} unwraps the package and forwards it to the ERC-7786 recipient encoded in the message.
+ * Outbound: {sendMessage} resolves the recipient's chainId to an eid and `_lzSend`s the wrapped
+ * package. Inbound: {_lzReceive} unwraps the package and forwards it to the ERC-7786 recipient
+ * encoded in the message.
  *
- * NOTE: EVM chains only. The ERC-7930 recipient is parsed as an EVM v1 interoperable address.
+ * NOTE: EVM chains only. This adapter parses the ERC-7930 recipient as an EVM v1 interoperable
+ * address.
  */
 contract LayerZeroGatewayAdapter is OApp, IERC7786GatewaySource, IGatewayQuote {
     using OptionsBuilder for bytes;
@@ -52,8 +55,9 @@ contract LayerZeroGatewayAdapter is OApp, IERC7786GatewaySource, IGatewayQuote {
     // =================================================== Config ====================================================
 
     /**
-     * @dev Registers the remote adapter (`peer`) for a LayerZero `eid` and binds that `eid` to an EVM `chainId`.
-     * Mirrors LayerZero's peer model while adding the chainId equivalence the ERC-7786 layer needs.
+     * @dev Registers the remote adapter (`peer`) for a LayerZero `eid` and binds that `eid` to an
+     * EVM `chainId`. Mirrors LayerZero's peer model and adds the chainId equivalence that the
+     * ERC-7786 layer needs.
      */
     function setPeerWithChain(uint32 eid, bytes32 peer, uint256 chainId) public virtual onlyOwner {
         _setPeer(eid, peer);
@@ -83,12 +87,13 @@ contract LayerZeroGatewayAdapter is OApp, IERC7786GatewaySource, IGatewayQuote {
     {
         uint32 dstEid = _eidForRecipient(recipient);
 
-        // Carry the source sender and the final recipient so the remote adapter can deliver per ERC-7786.
+        // Carry the source sender and the final recipient so the remote adapter can deliver per
+        // ERC-7786.
         bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
         bytes memory adapterPayload = abi.encode(sender, recipient, payload);
         bytes memory options = _options(GasLimitAttribute.resolve(attributes, defaultGasLimit));
 
-        // msg.value funds the LayerZero native fee; excess is refunded to the caller (the facade).
+        // msg.value funds the LayerZero native fee. Excess is refunded to the caller (the facade).
         _lzSend(dstEid, adapterPayload, options, MessagingFee(msg.value, 0), payable(msg.sender));
 
         emit MessageSent(bytes32(0), sender, recipient, payload, msg.value, attributes);
@@ -101,8 +106,8 @@ contract LayerZeroGatewayAdapter is OApp, IERC7786GatewaySource, IGatewayQuote {
         return _quoteWithGas(recipient, payload, defaultGasLimit);
     }
 
-    /// @dev Quotes the native fee, taking the destination gas from the executionGasLimit attribute (or
-    /// `defaultGasLimit` when absent) so the estimate matches {sendMessage}.
+    /// @dev Quotes the native fee. Takes the destination gas from the executionGasLimit attribute
+    /// (or `defaultGasLimit` when absent), so the estimate matches {sendMessage}.
     function quote(bytes calldata recipient, bytes calldata payload, bytes[] calldata attributes)
         public
         view
@@ -126,7 +131,8 @@ contract LayerZeroGatewayAdapter is OApp, IERC7786GatewaySource, IGatewayQuote {
         virtual
         override
     {
-        // OApp has already verified `origin.sender == peers[origin.srcEid]` (the trusted remote adapter).
+        // OApp already verified `origin.sender == peers[origin.srcEid]` (the trusted remote
+        // adapter).
         emit MessageReceived(origin.srcEid, origin.sender, message);
 
         (bytes memory sender, bytes memory recipient, bytes memory payload) = abi.decode(message, (bytes, bytes, bytes));

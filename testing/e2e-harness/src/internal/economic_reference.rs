@@ -51,7 +51,7 @@ pub(crate) fn single_beneficiary_reward(day: u64) -> U256 {
 }
 
 /// Certified contributor batches can arrive in any order. Every leaf receives
-/// its floored proportional share; the round burns the undistributed remainder.
+/// its floored proportional share. The round burns the undistributed remainder.
 pub(crate) fn contributor_shares(amount: U256, nominal: &[U256]) -> (Vec<U256>, U256) {
     assert!(
         !nominal.is_empty(),
@@ -90,8 +90,8 @@ mod tests {
 
     #[test]
     fn capped_reward_floors_before_native_conversion() {
-        // Independent Decimal day-1 emission = 268480452713195;
-        // floor(4% emission) = 10739218108527; floor(32% pool) = 3436549794728.
+        // Independent Decimal day-1 emission = 268480452713195.
+        // floor(4% emission) = 10739218108527. floor(32% pool) = 3436549794728.
         assert_eq!(
             single_beneficiary_reward(1),
             uint!(3436549794728000000000000_U256)

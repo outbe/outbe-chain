@@ -253,7 +253,7 @@ fn public_measurement_schedule_seeds_consistent_green_day_and_oracle_vwaps() {
             "the hardware-SGX fixture must retain the frozen public offering allowance"
         );
         assert_eq!(day.scheduled_process_time, day.offering_end);
-        assert!(day.metadosis_limit_amount > U256::ZERO);
+        assert!(day.metadosis_limit_minor > U256::ZERO);
         assert!(day.previous_vwap > U256::ZERO);
         assert!(day.current_vwap > day.previous_vwap);
         assert_eq!(
@@ -292,7 +292,7 @@ fn public_measurement_schedule_seeds_consistent_green_day_and_oracle_vwaps() {
         let current_rate = outbe_oracle::api::coen_rate_for(storage, 840).unwrap();
         assert_eq!(current_rate, entry_price * U256::from(2));
         let scale = outbe_primitives::units::SCALE_1E6_U256;
-        assert_eq!(day.metadosis_limit_amount, U256::from(500) * scale);
+        assert_eq!(day.metadosis_limit_minor, U256::from(500) * scale);
         assert_eq!(OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE, "2");
         assert_eq!(OCOMP_PUBLIC_TRIBUTE_AMOUNT_MICRO, "0");
         let amount_base = U256::from(
@@ -318,7 +318,7 @@ fn public_measurement_schedule_seeds_consistent_green_day_and_oracle_vwaps() {
         ] {
             let total_nominal = nominal * U256::from(population);
             let allocation =
-                (total_nominal * U256::from(32) / U256::from(100)).min(day.metadosis_limit_amount);
+                (total_nominal * U256::from(32) / U256::from(100)).min(day.metadosis_limit_minor);
             let fraction = allocation * scale / total_nominal;
             let gratis_load_minor = nominal * fraction / scale;
             assert_eq!(
@@ -396,7 +396,7 @@ fn public_recovery_fixture_seeds_two_empty_ordered_days() {
             days[1].scheduled_process_time > days[0].scheduled_process_time,
             "Job B must be scheduled strictly after Job A"
         );
-        assert!(days[1].metadosis_limit_amount > U256::ZERO);
+        assert!(days[1].metadosis_limit_minor > U256::ZERO);
         assert_ne!(days[1].day_type, WwdDayType::Unknown);
         assert!(
             outbe_oracle::api::day_type_pair_vwap(storage.clone(), second_worldwide_day)
@@ -411,7 +411,7 @@ fn public_recovery_fixture_seeds_two_empty_ordered_days() {
         assert!(totals.initialized);
         assert!(!totals.is_sealed);
         assert_eq!(totals.tribute_count, 0);
-        assert_eq!(totals.tribute_nominal_amount, U256::ZERO);
+        assert_eq!(totals.tribute_nominal_total_minor, U256::ZERO);
     });
     assert_eq!(
         prepared.install.request_profile.genesis_hash,
@@ -618,7 +618,7 @@ fn public_capacity_fixture_funds_every_distinct_tribute_owner_before_genesis_is_
             .unwrap();
         assert_eq!(day.status, WwdStatus::Offering);
         assert_eq!(day.day_type, WwdDayType::Green);
-        assert!(day.metadosis_limit_amount > U256::ZERO);
+        assert!(day.metadosis_limit_minor > U256::ZERO);
         assert_eq!(
             day.offering_end - genesis_timestamp,
             3_600,
@@ -632,9 +632,9 @@ fn public_capacity_fixture_funds_every_distinct_tribute_owner_before_genesis_is_
     });
 
     // The Tribute factory admits an offer only from an operator L2Registry
-    // knows, so the same owners must be registered - with zk verification
-    // enabled under the deterministic fixture key - in the genesis the factory
-    // will read.
+    // knows. So the same owners must be registered in the genesis the factory
+    // will read, with zk verification enabled under the deterministic fixture
+    // key.
     let registry_address = outbe_primitives::addresses::L2_REGISTRY_ADDRESS;
     let registry_key = find_alloc_address_key(alloc, registry_address)
         .unwrap()

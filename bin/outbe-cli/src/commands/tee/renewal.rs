@@ -1,3 +1,4 @@
+use super::args::{RenewArgs, StatusArgs};
 use super::ensure_signer_matches_node_id;
 use super::load_secp256k1_key_file;
 use super::sign_node_hash;
@@ -16,6 +17,7 @@ use outbe_operator::tee::NodeBindingSelectorV1;
 
 use outbe_operator::tee::RenewalOutcomeV1;
 use outbe_operator::tee::RenewalServiceConfigV1;
+use outbe_operator::tee::RenewalServicesV1;
 
 use outbe_operator::tx::RelaySignerV1;
 
@@ -33,10 +35,14 @@ const MANUAL_RENEWAL_RECONCILE_INTERVAL: Duration = Duration::from_secs(2);
 pub(super) async fn renew(
     client: &(impl Rpc + Sync),
     private_key: Option<&str>,
-    enclave_socket: &str,
-    node_data_dir: &std::path::Path,
-    reth_p2p_secret_key: Option<&std::path::Path>,
+    args: &RenewArgs,
 ) -> Result<()> {
+    let RenewArgs {
+        enclave_socket,
+        node_data_dir,
+        reth_p2p_secret_key,
+    } = args;
+    let reth_p2p_secret_key = reth_p2p_secret_key.as_deref();
     let private_key = private_key
         .ok_or_else(|| eyre::eyre!("tee renew requires the global --private-key EVM signer"))?;
     let evm_signer = RelaySignerV1::new(private_key)?;
@@ -73,10 +79,12 @@ pub(super) async fn renew(
     let started = Instant::now();
     loop {
         let outcome = run_renewal_once_v1(
-            &CliFinalityRpc(client),
-            &evm_signer,
-            &mut enclave,
-            &signer,
+            RenewalServicesV1 {
+                rpc: &CliFinalityRpc(client),
+                evm_signer: &evm_signer,
+                enclave: &mut enclave,
+                node_signer: &signer,
+            },
             &config,
         )
         .await?;
@@ -97,12 +105,12 @@ pub(super) async fn renew(
     }
 }
 
-pub(super) async fn renewal_status(
-    client: &(impl Rpc + Sync),
-    node_data_dir: &std::path::Path,
-    warning_blocks: u64,
-    critical_blocks: u64,
-) -> Result<()> {
+pub(super) async fn renewal_status(client: &(impl Rpc + Sync), args: &StatusArgs) -> Result<()> {
+    let StatusArgs {
+        node_data_dir,
+        warning_blocks,
+        critical_blocks,
+    } = args;
     let manifest = load_committed_enclave_manifest_v1(node_data_dir)
         .map_err(|error| eyre::eyre!("load committed NodeHost manifest: {error}"))?;
     let selector = NodeBindingSelectorV1::NodeHost(manifest.node_id.reth_p2p_public);
@@ -110,8 +118,8 @@ pub(super) async fn renewal_status(
         &CliFinalityRpc(client),
         node_data_dir,
         &selector,
-        warning_blocks,
-        critical_blocks,
+        *warning_blocks,
+        *critical_blocks,
     )
     .await?;
     println!("{}", serde_json::to_string_pretty(&status)?);

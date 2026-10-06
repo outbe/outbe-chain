@@ -333,8 +333,8 @@ impl OcompRegistry<'_> {
     }
 
     /// Pins a retry/successor lineage to the exact bundle of its predecessor.
-    /// The predecessor must still be live; absence is fatal and never falls
-    /// back to the current active authority.
+    /// The predecessor must still be live. Its absence is fatal, and the pin
+    /// never uses the current active authority as a fallback.
     pub fn pin_inherited_lineage(
         &mut self,
         lineage: B256,

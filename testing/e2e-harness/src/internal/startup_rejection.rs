@@ -1,6 +1,6 @@
 //! Evidence for one owned negative startup, armed before the child is spawned.
 //! TCP polling can detect a transient listener but cannot prove the absence of
-//! an arbitrarily short one; acceptance also relies on the production guard's
+//! an arbitrarily short one. Acceptance also relies on the production guard's
 //! source ordering before the node's networking launch.
 
 use std::fs::{self, File, OpenOptions};

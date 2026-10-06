@@ -1,11 +1,13 @@
 //! Property-based tests for the EIP-7702 sponsorship policy.
 //!
 //! Targets behaviours that are easy to spec but hard to spot-test
-//! exhaustively - UTC day boundary arithmetic, lazy reset around
-//! midnight, and the determinism contract that a fixed `(signer,
-//! timestamp)` tuple always produces the same
-//! authorization outcome regardless of pre-existing storage history
-//! from a different day.
+//! exhaustively:
+//!
+//! - UTC day boundary arithmetic.
+//! - Lazy reset around midnight.
+//! - The determinism contract: a fixed `(signer, timestamp)` tuple always
+//!   produces the same authorization outcome, regardless of pre-existing
+//!   storage history from a different day.
 
 use alloy_primitives::{address, Address};
 use outbe_primitives::{
@@ -26,10 +28,10 @@ fn with_storage<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
 }
 
 proptest! {
-    /// `current_day` is purely a function of the block timestamp; the
+    /// `current_day` is purely a function of the block timestamp. The
     /// stored state and the signer's account view never influence it.
-    /// This is the deterministic contract executor and txpool both
-    /// rely on to keep their views in sync.
+    /// This is the deterministic contract that the executor and the txpool
+    /// both rely on to keep their views in sync.
     #[test]
     fn current_day_is_deterministic_in_timestamp(
         ts in 0u64..=4_102_444_800u64,
@@ -42,8 +44,8 @@ proptest! {
     }
 
     /// Within a single UTC day, the effective count is whatever was
-    /// written; across day boundaries, it lazily resets. The property
-    /// hold across the full range of stored counts (0..=255) and
+    /// written. Across day boundaries, it lazily resets. The property
+    /// holds across the full range of stored counts (0..=255) and
     /// stored days (genesis..=2099).
     #[test]
     fn effective_count_lazy_reset_property(
@@ -106,7 +108,7 @@ proptest! {
     }
 
     /// Stepping across midnight resets the quota lazily on the first
-    /// authorize of the new day, no matter how many slots had been
+    /// authorize of the new day, no matter how many slots the signer
     /// burned on the previous day.
     #[test]
     fn midnight_lazy_reset_property(

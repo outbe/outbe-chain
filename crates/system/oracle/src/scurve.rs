@@ -1,6 +1,6 @@
 //! S-curve pricing algorithm.
 //!
-//! The curve shape comes from Cosmos SDK `x/oracle/algorithm/scurve.go`; the
+//! The curve shape comes from Cosmos SDK `x/oracle/algorithm/scurve.go`. The
 //! stored coefficients are quantized to the COEN/840 six-decimal contract.
 //! Every 128-day segment applies the same coefficient table. The next segment
 //! starts from `floor(previous_anchor * 0.92)`, forming one continuous chain.
@@ -205,8 +205,8 @@ pub fn compute_scurve_value(peak_price: U256, day_index: usize) -> U256 {
 
 /// Returns the S-curve value for a pair at a given timestamp.
 ///
-/// The public name is retained for ABI compatibility. Fresh state stores at
-/// most one continuous entry per pair.
+/// The function keeps its public name for ABI compatibility. Fresh state stores
+/// at most one continuous entry per pair.
 pub fn get_max_active_scurve_value(
     oracle: &OracleContract,
     pair: AddressPair,
@@ -399,10 +399,10 @@ pub fn evict_expired_scurves(_oracle: &mut OracleContract, _current_timestamp: u
 /// and stores new S-curve entries.
 ///
 /// A peak occurs when: close[D-3] < close[D-2] > close[D-1], i.e. D-2 is the
-/// peak. The current (just-started) day is never used as a close, so the peak
-/// of a day X is confirmed at the start of X+2.
+/// peak. The function never uses the current (just-started) day as a close.
+/// Thus the function confirms the peak of a day X at the start of X+2.
 ///
-/// Called from the daily hook on the first block of each UTC day.
+/// The daily hook calls this function on the first block of each UTC day.
 pub fn process_daily_scurve(
     oracle: &mut OracleContract,
     pair: AddressPair,
@@ -426,7 +426,7 @@ fn process_daily_scurve_inner(
     // The daily hook fires on the first block of `current_day`, so
     // `current_day` itself has no close yet. Detect peaks only over fully
     // CLOSED UTC days. At this point the most recent closed day is D-1, so
-    // the latest peak we can confirm is D-2 - confirming a peak requires the
+    // the latest peak we can confirm is D-2. To confirm a peak, we need the
     // close of the day that follows it.
     //
     //   day_minus_3 (close before peak) < day_minus_2 (peak) > day_minus_1 (close after peak)
@@ -485,7 +485,7 @@ fn get_daily_close(oracle: &OracleContract, pair: AddressPair, day_start: u64) -
             continue;
         }
 
-        // Found a snapshot in this day - look for our pair
+        // This snapshot is in the day. Look for our pair in it.
         let pc = oracle.snapshot_pair_count.read(&idx)?;
         let pair_map = oracle.snapshot_pair.get_nested(&idx);
         let rate_map = oracle.snapshot_rate.get_nested(&idx);
@@ -690,8 +690,8 @@ mod tests {
             let mut oracle = OracleContract::new(storage);
             let pair = register_test_pair(&mut oracle);
 
-            // A lower candidate is compared with the existing chain value at
-            // the candidate day and is ignored.
+            // The store compares a lower candidate with the existing chain
+            // value at the candidate day and ignores the candidate.
             let peak1_day = truncate_to_day(1_000_000);
             let peak1_price = price6(100);
             store_scurve_entry(&mut oracle, pair, peak1_day, peak1_price).unwrap();
@@ -760,8 +760,8 @@ mod tests {
     // The daily hook fires on the FIRST block of the current UTC day, when
     // that day has no close yet. Detection therefore runs over fully-CLOSED
     // days only: D-3 < D-2 > D-1 confirms a peak on D-2. The previous
-    // implementation used the just-started current day as a close, so
-    // `close_d0` was zero at fire time and no runtime peak was ever stored.
+    // implementation used the just-started current day as a close. Thus
+    // `close_d0` was zero at fire time, and the runtime never stored a peak.
     // ===================================================================
 
     /// Writes a single end-of-day snapshot so `get_daily_close` treats `rate`
@@ -810,7 +810,7 @@ mod tests {
             write_daily_close(&mut oracle, pair, d3, price6(100));
             write_daily_close(&mut oracle, pair, d2, price6(120));
             write_daily_close(&mut oracle, pair, d1, price6(110));
-            // intentionally NO D0 data - the fix must not depend on it
+            // Intentionally NO D0 data. The fix must not depend on it.
 
             process_daily_scurve(&mut oracle, pair, d0).unwrap();
 
@@ -822,8 +822,8 @@ mod tests {
 
     #[test]
     fn test_current_day_data_is_irrelevant() {
-        // Whatever the current (incomplete) day shows must not change the
-        // outcome - detection is over closed days only.
+        // The data of the current (incomplete) day must not change the
+        // outcome. Detection uses closed days only.
         use outbe_primitives::storage::hashmap::HashMapStorageProvider;
         use outbe_primitives::storage::StorageHandle;
 

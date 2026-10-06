@@ -2,9 +2,9 @@
 //!
 //! This carries only what must stay confidential: the L2 linkage and the amount.
 //! `worldwide_day` and the issuance currency are cleartext ABI arguments on
-//! [`EncryptedTributeOffer`](outbe_tee::protocol::EncryptedTributeOffer) - the
-//! node needs them to price and admit the offer, and both are written to public
-//! chain state at issuance, so encrypting them protected nothing.
+//! [`EncryptedTributeOffer`](outbe_tee::protocol::EncryptedTributeOffer). The
+//! node needs them to price and admit the offer. Issuance writes both to public
+//! chain state, so encrypting them protected nothing.
 //!
 //! NOTE (Enclave Return Rule): `creator`, `su_hashes`, `wallet_addresses`, and
 //! `sra_addresses` are L2-linking material. The enclave reads them to validate
@@ -18,7 +18,7 @@ pub struct TributeInputPayload {
     pub creator: String,
     pub tribute_draft_id: String,
     pub amount_base: String,
-    /// Fractional remainder in micro-units (0..999999); one whole unit is 10^6.
+    /// Fractional remainder in micro-units (0..999999). One whole unit is 10^6.
     pub amount_micro: String,
     pub su_hashes: Vec<String>,
     #[serde(default)]

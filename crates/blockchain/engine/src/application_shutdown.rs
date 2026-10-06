@@ -8,7 +8,7 @@ use futures::{
     FutureExt as _,
 };
 
-/// Keeps application dependencies alive until their owners have stopped using
+/// Keeps application dependencies alive until their owners stop using
 /// them. Clones observe the same drain, including its failure, exactly once.
 #[derive(Clone)]
 pub struct ApplicationDrain(Shared<BoxFuture<'static, Result<(), Arc<str>>>>);

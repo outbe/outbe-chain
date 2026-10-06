@@ -18,8 +18,7 @@ use outbe_offchain_data::{
     TributeRetentionSelector,
 };
 use outbe_offchain_storage::{
-    AtomicWriteBatch, AtomicWriteOperation, Key, MemoryStorage, Namespace, ScanPage, ScanRequest,
-    StorageError, StorageReader, StorageWriter, StoredValue,
+    AtomicWriteBatch, AtomicWriteOperation, MemoryStorage, StorageError, StorageWriter,
 };
 use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::{canonical_body, precompile::ITribute, RetainedTributePin, TributeData};
@@ -36,31 +35,7 @@ impl RecordingStorage {
     }
 }
 
-impl StorageReader for RecordingStorage {
-    fn get_record(
-        &self,
-        namespace: Namespace,
-        key: &Key,
-    ) -> Result<Option<StoredValue>, StorageError> {
-        self.inner.get_record(namespace, key)
-    }
-
-    fn get_records(
-        &self,
-        namespace: Namespace,
-        keys: &[Key],
-    ) -> Result<Vec<Option<StoredValue>>, StorageError> {
-        self.inner.get_records(namespace, keys)
-    }
-
-    fn scan_prefix(
-        &self,
-        namespace: Namespace,
-        request: ScanRequest<'_>,
-    ) -> Result<ScanPage, StorageError> {
-        self.inner.scan_prefix(namespace, request)
-    }
-}
+outbe_offchain_storage::impl_test_storage_reader!(RecordingStorage, inner);
 
 impl StorageWriter for RecordingStorage {
     fn apply_atomic(&self, batch: &AtomicWriteBatch) -> Result<(), StorageError> {
@@ -197,7 +172,6 @@ pub(crate) fn nod_body(nod_id: WwdEntityId, owner: Address, bucket_key: B256) ->
         gratis_load_minor: U256::from(101),
         worldwide_day: WorldwideDay::new(20260715),
         league_id: 7,
-        floor_price_minor: U256::from(102),
         bucket_key,
         issuance_currency: 840,
         reference_currency: 978,
@@ -238,7 +212,6 @@ pub(crate) fn bucket_body(bucket_key: B256) -> NodBucketState {
         settled_nods: 0,
         bucket_key,
         worldwide_day: WorldwideDay::new(20260715),
-        floor_price_minor: U256::from(102),
         entry_price_minor: U256::from(104),
         reference_currency: 978,
     }
@@ -280,31 +253,7 @@ impl FailOnceStorage {
     }
 }
 
-impl StorageReader for FailOnceStorage {
-    fn get_record(
-        &self,
-        namespace: Namespace,
-        key: &Key,
-    ) -> Result<Option<StoredValue>, StorageError> {
-        self.inner.get_record(namespace, key)
-    }
-
-    fn get_records(
-        &self,
-        namespace: Namespace,
-        keys: &[Key],
-    ) -> Result<Vec<Option<StoredValue>>, StorageError> {
-        self.inner.get_records(namespace, keys)
-    }
-
-    fn scan_prefix(
-        &self,
-        namespace: Namespace,
-        request: ScanRequest<'_>,
-    ) -> Result<ScanPage, StorageError> {
-        self.inner.scan_prefix(namespace, request)
-    }
-}
+outbe_offchain_storage::impl_test_storage_reader!(FailOnceStorage, inner);
 
 impl StorageWriter for FailOnceStorage {
     fn apply_atomic(&self, batch: &AtomicWriteBatch) -> Result<(), StorageError> {

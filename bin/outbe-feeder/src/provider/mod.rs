@@ -23,8 +23,8 @@ use crate::fixed::FixedValue;
 /// Whether an upstream endpoint supplied a volume field.
 ///
 /// `Present(None)` means the field existed but failed deterministic decimal
-/// parsing. It must never be conflated with an endpoint that has no volume in
-/// its contract.
+/// parsing. Never treat it as the same case as an endpoint that has no volume
+/// in its contract.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum VolumeInput {
     Present(Option<FixedValue>),
@@ -58,7 +58,8 @@ impl std::error::Error for ObservationError {}
 pub struct TickerPrice {
     /// Current provider rate at FP18 (pool spot rate for DEX providers).
     pub price: FixedValue,
-    /// 24-hour trading volume at FP18.
+    /// Trailing trading volume at FP18 (exchange ticker window, or the DEX
+    /// rolling window).
     pub volume: FixedValue,
 }
 
@@ -89,9 +90,9 @@ pub struct CandlePrice {
     /// Volume during the candle period at FP18.
     pub volume: FixedValue,
     /// Unix timestamp (seconds) of the candle open.
-    /// Currently unused by the aggregator's TVWAP (which treats all candles as
-    /// equal-duration), but retained for future time-duration weighting where
-    /// each candle's weight is proportional to its actual time span.
+    /// The aggregator's TVWAP does not use it now. The TVWAP treats all candles
+    /// as equal-duration. The field stays for future time-duration weighting,
+    /// where each candle's weight is proportional to its actual time span.
     #[allow(dead_code)]
     pub timestamp: u64,
 }
@@ -156,8 +157,9 @@ pub trait Provider: Send + Sync {
     ) -> Result<HashMap<String, TickerPrice>>;
 
     /// Fetches recent candle data for the given pairs.
-    /// Keys are `"BASE/QUOTE"` strings; values are chronologically ordered candles.
-    /// Default returns empty - providers that don't support candles need not override.
+    /// Keys are `"BASE/QUOTE"` strings. Values are chronologically ordered candles.
+    /// The default returns an empty map. Providers that do not support candles
+    /// do not need to override it.
     async fn get_candle_prices(
         &self,
         pairs: &[(String, String)],

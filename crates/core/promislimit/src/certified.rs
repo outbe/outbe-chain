@@ -72,9 +72,9 @@ pub fn credit_certified_carry_over(
             IPromisLimit::CertifiedCarryOverCredited {
                 activationCallId: input.binding.activation_call_id,
                 sourceWorldwideDay: input.source_wwd,
-                beforeValue: credit.before,
-                creditedUnusedLysis: credit.credited,
-                afterValue: credit.after,
+                promisLimitBeforeMinor: credit.before,
+                unusedLysisLimitMinor: credit.credited,
+                promisLimitAfterMinor: credit.after,
                 stateEventDigest: state_event_digest,
             }
             .encode_log_data(),
@@ -339,8 +339,9 @@ mod tests {
     }
 
     /// Unused Lysis Limit is Limit minus Allocation, and that
-    /// remainder increases Promis Limit exactly once. A conservation mismatch
-    /// is already rejected with no credit (`wrong_binding_or_limit_conservation_is_side_effect_free`).
+    /// remainder increases Promis Limit exactly once. `credit_certified_carry_over` already
+    /// rejects a conservation mismatch with no credit
+    /// (`wrong_binding_or_limit_conservation_is_side_effect_free`).
     #[test]
     fn unused_lysis_plus_allocation_equals_the_limit_and_credits_once() {
         let input = input(37, 8, 2);
@@ -395,9 +396,9 @@ mod tests {
             input.binding.activation_call_id
         );
         assert_eq!(event.data.sourceWorldwideDay, input.source_wwd);
-        assert_eq!(event.data.beforeValue, U256::from(40));
-        assert_eq!(event.data.creditedUnusedLysis, U256::from(2));
-        assert_eq!(event.data.afterValue, U256::from(42));
+        assert_eq!(event.data.promisLimitBeforeMinor, U256::from(40));
+        assert_eq!(event.data.unusedLysisLimitMinor, U256::from(2));
+        assert_eq!(event.data.promisLimitAfterMinor, U256::from(42));
         assert_eq!(event.data.stateEventDigest, receipt.state_event_digest);
         assert!(!receipt
             .receipt_hash(&poc_schema_limits())

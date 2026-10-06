@@ -24,7 +24,7 @@ fn issue_creates_series_in_registry() {
                 call_notice_period_seconds: CALL_NOTICE_PERIOD,
             }
         );
-        // Born Issued; issued_at is the block timestamp.
+        // Born Issued. `issued_at` is the block timestamp.
         assert_eq!(
             r.lifecycle_state().unwrap(),
             outbe_intex::IntexState::Issued
@@ -56,11 +56,11 @@ fn issue_zero_winners_leaves_the_day_untouched() {
 
 #[test]
 fn issuance_legs_route_winners_to_their_own_chain() {
-    // One winner on chain 10, one on chain 20; chain 30 in the snapshot has none.
+    // One winner on chain 10, one on chain 20. Chain 30 in the snapshot has none.
     let other = address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
     let mut p = sample(7);
     p.recipients = vec![owner(), other];
-    p.quantities = vec![U256::from(1), U256::from(2)];
+    p.units = vec![U256::from(1), U256::from(2)];
     p.recipient_chains = vec![10, 20];
     p.snapshot_chains = vec![10, 20, 30];
 
@@ -137,13 +137,13 @@ fn leg(chain_id: u32, series: u32, recipients: usize) -> runtime::IssuanceLeg {
         callThreshold: 0,
         callPriceMinor: 0,
         recipients: Vec::new(),
-        quantities: Vec::new(),
+        units: Vec::new(),
     };
     for i in 0..recipients {
         payload
             .recipients
             .push(Address::from([(i % 250) as u8 + 1; 20]));
-        payload.quantities.push(U256::from(1u64));
+        payload.units.push(U256::from(1u64));
     }
     runtime::IssuanceLeg { chain_id, payload }
 }
@@ -176,8 +176,9 @@ fn a_chains_series_travel_together_up_to_the_message_caps() {
     );
 }
 
-/// The codec enforces this same number on both encode and decode (`BridgeMsgCodec.sol`), and nothing
-/// links the two languages, so the value is pinned here: changing it must be a deliberate act.
+/// The codec enforces this same number on both encode and decode (`BridgeMsgCodec.sol`).
+/// Nothing links the two languages, so the value is pinned here: changing it must be a
+/// deliberate act.
 #[test]
 fn the_recipient_cap_matches_the_wire() {
     assert_eq!(MAX_RECIPIENTS_PER_ISSUANCE, 24);
@@ -295,14 +296,14 @@ fn with_dual_currency_series<R>(iso: u64, f: impl FnOnce(StorageHandle) -> R) ->
 
 /// A payment token that accepts `transferFrom` but never credits the factory, so a
 /// settlement that reaches the payment fails there with `SettlementAmountMismatch`.
-fn stub_token_that_never_credits(storage: &mut HashMapStorageProvider) {
+pub(super) fn stub_token_that_never_credits(storage: &mut HashMapStorageProvider) {
     use crate::sol_ext::IERC20;
     storage.stub_sub_call_at_selector(payment_token(), IERC20::balanceOfCall::SELECTOR, word(0));
     storage.stub_sub_call_at_selector(payment_token(), IERC20::transferFromCall::SELECTOR, word(1));
 }
 
 /// The storage behind [`with_dual_currency_series`], for tests that move the clock.
-fn dual_currency_series(iso: u64) -> HashMapStorageProvider {
+pub(super) fn dual_currency_series(iso: u64) -> HashMapStorageProvider {
     use crate::sol_ext::{IReferenceCurrency, IERC1155, IERC20};
     use outbe_vaultrouter::api::IVaultRouter;
 
@@ -338,7 +339,7 @@ fn dual_currency_series(iso: u64) -> HashMapStorageProvider {
 }
 
 /// Every stablecoin-backed COEN/ISO Oracle rate uses six decimals.
-const COEN_ISO_RATE_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
+pub(super) const COEN_ISO_RATE_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 
 #[test]
 fn the_issuance_currency_settles_through_the_coen_pivot() {

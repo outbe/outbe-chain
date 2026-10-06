@@ -6,8 +6,8 @@
 //! - Per-validator BLS threshold signing shares
 //! - Per-validator BLS individual identity keys (MinPk)
 //!
-//! This is centralized dealing - suitable for testnets and genesis ceremonies.
-//! For production, a distributed DKG protocol should be used.
+//! This is centralized dealing. It is suitable for testnets and genesis ceremonies.
+//! Production should use a distributed DKG protocol.
 
 use commonware_codec::Encode;
 use commonware_cryptography::{bls12381, Signer as _};

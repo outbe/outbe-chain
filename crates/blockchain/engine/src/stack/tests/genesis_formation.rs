@@ -1,5 +1,31 @@
 use super::*;
 
+fn unproven_single_genesis_peer(
+    genesis: B256,
+    is_syncing: bool,
+) -> (StartupDkgContext, RethGenesisPeerEvidence) {
+    let context = StartupDkgContext {
+        last_execution_height: 0,
+        last_consensus_finalized_height: 0,
+        recovered_boundary_finalized: false,
+        recovered_vrf_group_public_key: None,
+        recovered_dkg_output_hash: None,
+        genesis_formation_proven: false,
+    };
+    let evidence = RethGenesisPeerEvidence {
+        connected_peers: 1,
+        is_syncing,
+        is_initially_syncing: false,
+        peer_query_failed: false,
+        peers: vec![RethGenesisPeerStatus {
+            genesis,
+            blockhash: genesis,
+            latest_block: Some(0),
+        }],
+    };
+    (context, evidence)
+}
+
 #[test]
 fn startup_dkg_round_zero_is_only_for_empty_genesis_formation() {
     let empty_without_boundary = StartupDkgContext {
@@ -175,25 +201,7 @@ fn offer_key_gate_defers_exact_comparison_only_for_ready_empty_db_verifier_join(
 #[test]
 fn genesis_formation_gate_waits_without_expected_peers() {
     let genesis = B256::with_last_byte(1);
-    let context = StartupDkgContext {
-        last_execution_height: 0,
-        last_consensus_finalized_height: 0,
-        recovered_boundary_finalized: false,
-        recovered_vrf_group_public_key: None,
-        recovered_dkg_output_hash: None,
-        genesis_formation_proven: false,
-    };
-    let evidence = RethGenesisPeerEvidence {
-        connected_peers: 1,
-        is_syncing: false,
-        is_initially_syncing: false,
-        peer_query_failed: false,
-        peers: vec![RethGenesisPeerStatus {
-            genesis,
-            blockhash: genesis,
-            latest_block: Some(0),
-        }],
-    };
+    let (context, evidence) = unproven_single_genesis_peer(genesis, false);
     assert_eq!(
         genesis_formation_gate_decision(context, genesis, 3, &evidence),
         GenesisFormationGate::WaitForExecutionSync
@@ -300,8 +308,8 @@ fn genesis_formation_gate_accepts_quorum_connected_non_mesh_topology() {
 
     // Four validators need a 3-of-4 BFT quorum, hence two matching remote
     // witnesses per node. Requiring all three remote validators creates a split
-    // startup gate on a healthy non-fully-meshed gossip topology: nodes seeing
-    // 3/3 start all-member DKG while nodes seeing 2/3 never enter it.
+    // startup gate on a healthy gossip topology that is not fully meshed. Nodes
+    // that see 3/3 start all-member DKG. Nodes that see 2/3 never enter it.
     assert_eq!(
         genesis_formation_gate_decision(
             context,
@@ -344,25 +352,7 @@ fn genesis_formation_gate_rejects_remote_chain_progress() {
 #[test]
 fn genesis_formation_gate_waits_while_reth_syncing_without_peer_quorum() {
     let genesis = B256::with_last_byte(1);
-    let context = StartupDkgContext {
-        last_execution_height: 0,
-        last_consensus_finalized_height: 0,
-        recovered_boundary_finalized: false,
-        recovered_vrf_group_public_key: None,
-        recovered_dkg_output_hash: None,
-        genesis_formation_proven: false,
-    };
-    let evidence = RethGenesisPeerEvidence {
-        connected_peers: 1,
-        is_syncing: true,
-        is_initially_syncing: false,
-        peer_query_failed: false,
-        peers: vec![RethGenesisPeerStatus {
-            genesis,
-            blockhash: genesis,
-            latest_block: Some(0),
-        }],
-    };
+    let (context, evidence) = unproven_single_genesis_peer(genesis, true);
     assert_eq!(
         genesis_formation_gate_decision(context, genesis, 2, &evidence),
         GenesisFormationGate::WaitForExecutionSync
