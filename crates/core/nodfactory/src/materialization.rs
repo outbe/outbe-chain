@@ -169,7 +169,7 @@ pub(crate) fn materialize_after_attempt(
             .map_err(|_| PrecompileError::from(NodFactoryError::InvalidMaterializationProof))?;
 
     let worldwide_day = WorldwideDay::new(head.worldwide_day);
-    // Read before the last batch clears it: every Nod carries the certified evaluation time.
+    // Read before the last batch clears it: every Nod carries the certified Lysis freeze instant.
     let issued_at = nod
         .ocomp_certified_generation(worldwide_day)?
         .ok_or_else(|| {

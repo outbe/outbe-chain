@@ -26,7 +26,7 @@ contract RecordingLockEscrow {
 /// @dev The reveal hands the escrow the terms the lock was computed from, not just the amount.
 contract IntexAuctionLockTermsTest is Test {
     bytes32 internal constant REVEAL_BID_TYPEHASH = keccak256(
-        "RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
+        "RevealBid(uint32 worldwideDay,address bidder,uint16 units,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
     );
     uint32 internal constant DAY = 20250115;
     uint128 internal constant PROMIS_LOAD_MINOR = 100_000 * 1e6;
