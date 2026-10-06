@@ -573,55 +573,17 @@ impl GroupIndex<'_> {
 /// Buckets holding a called group whose settlement window has not closed yet.
 pub(crate) struct ExpiryDayTree<'a, 'b>(pub(crate) &'a IntexFactoryContract<'b>);
 
-impl BinTreeStorage for ExpiryDayTree<'_, '_> {
-    fn read_root(&self) -> Result<U256> {
-        self.0.expiry_tree_root.read()
-    }
-    fn write_root(&self, value: U256) -> Result<()> {
-        self.0.expiry_tree_root.write(value)
-    }
-    fn read_mid(&self, key: u32) -> Result<U256> {
-        self.0.expiry_tree_mid.read(&key)
-    }
-    fn write_mid(&self, key: u32, value: U256) -> Result<()> {
-        self.0.expiry_tree_mid.write(&key, value)
-    }
-    fn read_leaf(&self, key: u32) -> Result<U256> {
-        self.0.expiry_tree_leaf.read(&key)
-    }
-    fn write_leaf(&self, key: u32, value: U256) -> Result<()> {
-        self.0.expiry_tree_leaf.write(&key, value)
-    }
-}
+outbe_primitives::impl_bin_tree_storage!(ExpiryDayTree {
+    root: expiry_tree_root,
+    mid: expiry_tree_mid,
+    leaf: expiry_tree_leaf,
+});
 
 /// The call-price trie of one reference currency.
 pub(crate) struct CallBins<'a, 'b>(pub(crate) &'a IntexFactoryContract<'b>, pub(crate) u16);
 
-impl BinTreeStorage for CallBins<'_, '_> {
-    fn read_root(&self) -> Result<U256> {
-        self.0.call_bin_tree_root.read(&self.1)
-    }
-    fn write_root(&self, value: U256) -> Result<()> {
-        self.0.call_bin_tree_root.write(&self.1, value)
-    }
-    fn read_mid(&self, key: u32) -> Result<U256> {
-        self.0
-            .call_bin_tree_mid
-            .read(&IntexFactoryContract::scoped(self.1, key))
-    }
-    fn write_mid(&self, key: u32, value: U256) -> Result<()> {
-        self.0
-            .call_bin_tree_mid
-            .write(&IntexFactoryContract::scoped(self.1, key), value)
-    }
-    fn read_leaf(&self, key: u32) -> Result<U256> {
-        self.0
-            .call_bin_tree_leaf
-            .read(&IntexFactoryContract::scoped(self.1, key))
-    }
-    fn write_leaf(&self, key: u32, value: U256) -> Result<()> {
-        self.0
-            .call_bin_tree_leaf
-            .write(&IntexFactoryContract::scoped(self.1, key), value)
-    }
-}
+outbe_primitives::impl_bin_tree_storage!(CallBins scoped by IntexFactoryContract::scoped {
+    root: call_bin_tree_root,
+    mid: call_bin_tree_mid,
+    leaf: call_bin_tree_leaf,
+});

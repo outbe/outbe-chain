@@ -5,10 +5,7 @@ use outbe_compressed_entities::{
     MAX_ID_PAGE_LIMIT,
 };
 use outbe_primitives::error::Result;
-use outbe_primitives::math::{
-    reference_price,
-    tree_math::{self, BinTreeStorage},
-};
+use outbe_primitives::math::{reference_price, tree_math};
 use outbe_primitives::time::WorldwideDay;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -772,31 +769,8 @@ const fn unpack_bin_slot(packed: u64) -> (u32, u32) {
 /// One currency's call-price trie, like `outbe_gem::state::BucketBins`.
 pub(crate) struct CallBins<'a, 'storage>(pub(crate) &'a NodContract<'storage>, pub(crate) u16);
 
-impl BinTreeStorage for CallBins<'_, '_> {
-    fn read_root(&self) -> Result<U256> {
-        self.0.call_bin_tree_root.read(&self.1)
-    }
-    fn write_root(&self, value: U256) -> Result<()> {
-        self.0.call_bin_tree_root.write(&self.1, value)
-    }
-    fn read_mid(&self, key: u32) -> Result<U256> {
-        self.0
-            .call_bin_tree_mid
-            .read(&NodContract::scoped(self.1, key))
-    }
-    fn write_mid(&self, key: u32, value: U256) -> Result<()> {
-        self.0
-            .call_bin_tree_mid
-            .write(&NodContract::scoped(self.1, key), value)
-    }
-    fn read_leaf(&self, key: u32) -> Result<U256> {
-        self.0
-            .call_bin_tree_leaf
-            .read(&NodContract::scoped(self.1, key))
-    }
-    fn write_leaf(&self, key: u32, value: U256) -> Result<()> {
-        self.0
-            .call_bin_tree_leaf
-            .write(&NodContract::scoped(self.1, key), value)
-    }
-}
+outbe_primitives::impl_bin_tree_storage!(CallBins scoped by NodContract::scoped {
+    root: call_bin_tree_root,
+    mid: call_bin_tree_mid,
+    leaf: call_bin_tree_leaf,
+});
