@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
+use outbe_compressed_entities::{begin_block, ExecutionReaders, ExecutionScope, WwdEntityId};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratisfactory::api::ModifyAuth;
 use outbe_nod::{
@@ -327,8 +327,7 @@ fn public_nod_data(world: &mut World, nod_id: WwdEntityId) -> INod::NodData {
     world.enter(|storage, scope, parent| {
         let bytes = outbe_nod::precompile::dispatch(
             storage,
-            scope,
-            parent,
+            ExecutionReaders { scope, parent },
             &INod::nodDataCall {
                 nodId: nod_id.to_u256(),
             }

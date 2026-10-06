@@ -336,8 +336,7 @@ fn quote_settlement_dispatch() {
         .enter(|storage, scope, parent| {
             crate::precompile::dispatch(
                 storage,
-                scope,
-                parent,
+                ExecutionReaders { scope, parent },
                 &INodFactory::quoteSettlementCall {
                     nodId: nod_id.to_u256(),
                     asset: EUR_ASSET,

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_compressed_entities::WwdEntityId;
-use outbe_compressed_entities::{begin_block, ExecutionScope};
+use outbe_compressed_entities::{begin_block, ExecutionReaders, ExecutionScope};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::time::{
     date_key_to_utc_timestamp, first_full_day, previous_date_key, timestamp_to_date_key,
@@ -395,8 +395,10 @@ fn certified_generation_is_available_through_the_public_nod_abi() {
         .abi_encode();
         let output = crate::precompile::dispatch(
             storage.clone(),
-            &scope,
-            &parent,
+            ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
             &call,
             Address::ZERO,
             U256::ZERO,
@@ -435,9 +437,17 @@ fn absent_certified_generation_has_an_explicit_public_abi_result() {
             worldwideDay: worldwide_day.into(),
         }
         .abi_encode();
-        let output =
-            crate::precompile::dispatch(storage, &scope, &parent, &call, Address::ZERO, U256::ZERO)
-                .unwrap();
+        let output = crate::precompile::dispatch(
+            storage,
+            ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
+            &call,
+            Address::ZERO,
+            U256::ZERO,
+        )
+        .unwrap();
         let actual =
             crate::precompile::INod::certifiedGenerationCall::abi_decode_returns(&output).unwrap();
 

@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
+use outbe_compressed_entities::{begin_block, ExecutionReaders, ExecutionScope, WwdEntityId};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_oracle::{api::AddressPair, schema::OracleContract};
 use outbe_primitives::time::WorldwideDay;
@@ -2124,7 +2124,17 @@ fn token_uri_turns_forfeited_past_the_settlement_deadline() {
                 nodId: item.nod_id.to_u256(),
             }
             .abi_encode();
-            let out = dispatch(storage, &scope, &parent, &data, Address::ZERO, U256::ZERO).unwrap();
+            let out = dispatch(
+                storage,
+                ExecutionReaders {
+                    scope: &scope,
+                    parent: &parent,
+                },
+                &data,
+                Address::ZERO,
+                U256::ZERO,
+            )
+            .unwrap();
             let uri = INod::tokenURICall::abi_decode_returns(&out).unwrap();
             let json = base64::engine::general_purpose::STANDARD
                 .decode(uri.strip_prefix("data:application/json;base64,").unwrap())
