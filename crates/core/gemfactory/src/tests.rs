@@ -2413,3 +2413,5 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_bucket() {
     assert_eq!(opened[0].capacityMinor, sent_capacity(six_decimal_u128()));
     assert_eq!(opened[0].expiresAt, T_NOW + POSITION_VALIDITY_SECONDS);
 }
+
+mod capacity_conservation;
