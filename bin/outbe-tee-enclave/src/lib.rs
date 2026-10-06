@@ -45,6 +45,7 @@ mod sgx_sealing;
 pub mod sgx_sealing;
 pub mod telemetry;
 pub mod transport;
+pub mod tribute_encryption;
 pub mod zk_claim;
 
 /// Fixed dev identity for the in-process test-enclave stand-ins (NOT production).
