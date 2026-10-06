@@ -398,14 +398,17 @@ pub(super) fn seed_capacity_storage(
             parent: tribute_parent,
         },
     )?;
-    let tribute = TributeContract::new(storage.clone());
-    tribute.day_totals.update(&outbe_tribute::DayTotals {
-        worldwide_day: victim,
-        initialized: true,
-        tribute_count: u32::MAX,
-        tribute_nominal_total_minor: U256::MAX,
-        is_sealed: true,
-    })?;
+    let mut tribute = TributeContract::new(storage.clone());
+    outbe_tribute::enclave_client::test_enclave::seed_day_totals(
+        &mut tribute,
+        &outbe_tribute::DayTotals {
+            worldwide_day: victim,
+            initialized: true,
+            tribute_count: u32::MAX,
+            tribute_nominal_total_minor: U256::MAX,
+            is_sealed: true,
+        },
+    )?;
     tribute.total_supply.write(u64::from(u32::MAX))?;
     let protocol_cycle_period = 3_600;
     let fire_at = scheduled.div_ceil(protocol_cycle_period) * protocol_cycle_period;

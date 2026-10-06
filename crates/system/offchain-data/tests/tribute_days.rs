@@ -411,7 +411,7 @@ fn certified_event_alone_does_not_drop() {
             sourceGeneration: 1,
             sealedCollectionRoot: B256::repeat_byte(0x45),
             consumedCount: 0,
-            consumedNominalTotalMinor: U256::ZERO,
+            consumedNominalTotalMinor: Vec::new().into(),
             retiredGeneration: 2,
             stateEventDigest: B256::repeat_byte(0x46),
         }

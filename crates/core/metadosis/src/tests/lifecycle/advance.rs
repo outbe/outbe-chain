@@ -342,6 +342,7 @@ fn test_events_emitted_for_accumulation_and_lifecycle() {
         2,
     );
     outbe_fidelity::enclave_client::test_enclave::install();
+    outbe_tribute::enclave_client::test_enclave::install();
     let contract_addr = outbe_primitives::addresses::METADOSIS_ADDRESS;
 
     StorageHandle::enter(&mut storage, |storage| {

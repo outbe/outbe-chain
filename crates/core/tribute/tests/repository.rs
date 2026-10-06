@@ -266,8 +266,14 @@ fn run_contract(reader: StorageReaderHandle, writer: StorageWriterHandle) {
     let first_id = entity_id(U256::from(1), 7);
     let stored = repository_reader.get(first_id).unwrap().unwrap();
     assert_eq!(stored.tribute_id, first_id);
-    assert_eq!(stored.issuance_amount_minor, U256::MAX);
-    assert_eq!(stored.nominal_amount_minor, U256::ZERO);
+    assert_eq!(
+        stored.calculation_view().unwrap().issuance_amount_minor,
+        U256::MAX
+    );
+    assert_eq!(
+        stored.calculation_view().unwrap().nominal_amount_minor,
+        U256::ZERO
+    );
     assert!(stored.exclude_from_intex_issuance);
 
     let primary = reader

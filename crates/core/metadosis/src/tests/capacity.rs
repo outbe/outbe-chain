@@ -123,11 +123,10 @@ fn seed_empty_waiting_candidate(
         .unwrap();
     tribute
         .day_totals
-        .create(&outbe_tribute::DayTotals {
+        .create(&outbe_tribute::day_schema::StoredDayTotals {
             worldwide_day: wwd,
             initialized: true,
             tribute_count: 0,
-            tribute_nominal_total_minor: U256::ZERO,
             is_sealed: true,
         })
         .unwrap();
@@ -193,16 +192,17 @@ fn seed_capacity_fixture_with_victim_state(
         }
         let victim = outbe_primitives::time::WorldwideDay::new(2099_1231);
         let scheduled = seed_day(&storage, victim, victim_state, U256::from(100));
-        tribute
-            .day_totals
-            .create(&outbe_tribute::DayTotals {
+        outbe_tribute::enclave_client::test_enclave::seed_day_totals(
+            &mut tribute,
+            &outbe_tribute::DayTotals {
                 worldwide_day: victim,
                 initialized: true,
                 tribute_count,
                 tribute_nominal_total_minor: tribute_nominal,
                 is_sealed: victim_state != status::OFFERING,
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
         tribute
             .total_supply
             .write(u64::from(tribute_count))
@@ -495,11 +495,10 @@ fn multiple_due_candidates_advance_exactly_one_per_tick_in_protocol_order() {
             ));
             tribute
                 .day_totals
-                .create(&outbe_tribute::DayTotals {
+                .create(&outbe_tribute::day_schema::StoredDayTotals {
                     worldwide_day: candidate,
                     initialized: true,
                     tribute_count: 0,
-                    tribute_nominal_total_minor: U256::ZERO,
                     is_sealed: true,
                 })
                 .unwrap();
@@ -831,11 +830,10 @@ fn additional_ready_day_preserves_real_pending_ocomp_job_and_indexes_byte_for_by
         let scheduled = seed_day(&storage, victim, status::WAITING, U256::from(100));
         TributeContract::new(storage)
             .day_totals
-            .create(&outbe_tribute::DayTotals {
+            .create(&outbe_tribute::day_schema::StoredDayTotals {
                 worldwide_day: victim,
                 initialized: true,
                 tribute_count: 0,
-                tribute_nominal_total_minor: U256::ZERO,
                 is_sealed: true,
             })
             .unwrap();

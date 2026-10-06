@@ -492,7 +492,7 @@ fn seed_owner_targets(storage: StorageHandle<'_>, seed_targets: bool) {
     nod.ocomp_materialization_tail_sequence.write(1).unwrap();
 
     if seed_targets {
-        let tribute = TributeContract::new(storage.clone());
+        let mut tribute = TributeContract::new(storage.clone());
         tribute.ocomp_profile_ready.write(true).unwrap();
         tribute.total_supply.write(2).unwrap();
         let mut totals = DayTotals::with_key(TEST_WWD);
@@ -500,7 +500,8 @@ fn seed_owner_targets(storage: StorageHandle<'_>, seed_targets: bool) {
         totals.is_sealed = true;
         totals.tribute_count = 2;
         totals.tribute_nominal_total_minor = U256::from(1_000);
-        tribute.day_totals.create(&totals).unwrap();
+        outbe_tribute::enclave_client::test_enclave::seed_day_totals(&mut tribute, &totals)
+            .unwrap();
         let mut admission = DayPreAdmission::with_key(TEST_WWD);
         admission.initialized = true;
         admission.is_sealed = true;
@@ -508,7 +509,8 @@ fn seed_owner_targets(storage: StorageHandle<'_>, seed_targets: bool) {
         admission.sealed_tribute_count = 2;
         admission.sealed_tribute_nominal_total_minor = U256::from(1_000);
         admission.source_generation = 0;
-        tribute.day_pre_admission.create(&admission).unwrap();
+        outbe_tribute::enclave_client::test_enclave::seed_pre_admission(&mut tribute, &admission)
+            .unwrap();
     }
 }
 fn seed_requested_job(

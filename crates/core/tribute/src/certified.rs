@@ -164,10 +164,10 @@ pub fn retire_prepared_certified_partition(
             ));
         }
 
-        let mut admission = tribute
-            .day_pre_admission
-            .get(day)?
-            .ok_or_else(|| revert("certified Tribute pre-admission record is absent"))?;
+        if !tribute.day_pre_admission.exists(day)? {
+            return Err(revert("certified Tribute pre-admission record is absent"));
+        }
+        let mut admission = tribute.read_day_pre_admission(day)?;
         if admission.source_generation != input.input_binding.source_generation {
             return Err(revert(
                 "certified Tribute source generation changed during activation",
@@ -184,7 +184,7 @@ pub fn retire_prepared_certified_partition(
                 sourceGeneration: input.input_binding.source_generation,
                 sealedCollectionRoot: input.input_binding.sealed_collection_root,
                 consumedCount: input.consumed_count,
-                consumedNominalTotalMinor: input.consumed_nominal_total,
+                consumedNominalTotalMinor: tribute.encrypted_day_nominal(day, true)?.into(),
                 retiredGeneration: input.retired_generation,
                 stateEventDigest: state_event_digest,
             }
@@ -477,6 +477,7 @@ mod tests {
             );
             let mut provider = ActivationTestProvider::new();
             StorageHandle::enter(&mut provider, |storage| {
+                let _enclave = crate::enclave_client::test_enclave::scope();
                 storage
                     .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
                     .unwrap();
@@ -502,6 +503,16 @@ mod tests {
                 totals.is_sealed = true;
                 totals.tribute_count = expected.input_binding.exact_count;
                 totals.tribute_nominal_total_minor = expected.input_binding.exact_nominal_total;
+                tribute
+                    .apply_day_amount(
+                        day,
+                        outbe_tee::tribute_day::TributeDayOperationV2::AdjustTransient {
+                            nominal_amount_minor: totals.tribute_nominal_total_minor,
+                            add: true,
+                        },
+                        B256::repeat_byte(0x31),
+                    )
+                    .unwrap();
                 tribute.store_day_totals(&totals).unwrap();
 
                 let mut admission = DayPreAdmission::with_key(day);
@@ -519,6 +530,7 @@ mod tests {
 
         fn run(&mut self, input: &CertifiedTributeRetirementV1) -> Result<TributeReceiptV1> {
             StorageHandle::enter(&mut self.provider, |storage| {
+                let _enclave = crate::enclave_client::test_enclave::scope();
                 storage.with_lysis_activation_frame(
                     input.binding.activation_call_id,
                     |capability| {
@@ -541,6 +553,7 @@ mod tests {
 
         fn state(&mut self, day: WorldwideDay) -> (u64, u32, U256, bool, u64) {
             StorageHandle::enter(&mut self.provider, |storage| {
+                let _enclave = crate::enclave_client::test_enclave::scope();
                 let tribute = TributeContract::new(storage);
                 let generation = tribute
                     .pre_admission_projection(day)
@@ -626,8 +639,14 @@ mod tests {
             input.input_binding.sealed_collection_root
         );
         assert_eq!(certified.data.consumedCount, input.consumed_count);
+        let encrypted: outbe_primitives::tribute_day_encryption::EncryptedTributeDayAmountV2 =
+            postcard::from_bytes(&certified.data.consumedNominalTotalMinor).unwrap();
         assert_eq!(
-            certified.data.consumedNominalTotalMinor,
+            outbe_tee_enclave::tribute_day::read_day_amount(
+                &crate::enclave_client::test_enclave::NETWORK_SECRET,
+                &encrypted
+            )
+            .unwrap(),
             input.consumed_nominal_total
         );
         assert_eq!(certified.data.retiredGeneration, 1);
@@ -736,6 +755,7 @@ mod tests {
             .inner
             .fail_after_mutation_at(final_mutation);
         let receipt = StorageHandle::enter(&mut late_failure.provider, |storage| {
+            let _enclave = crate::enclave_client::test_enclave::scope();
             storage.with_lysis_activation_frame(input.binding.activation_call_id, |capability| {
                 capability.authorize_nod_installation()?;
                 capability.authorize_contributor_installation()?;
@@ -765,6 +785,7 @@ mod tests {
 
         let mut wrong_phase = Fixture::new(&input, ParentMode::Present);
         let receipt = StorageHandle::enter(&mut wrong_phase.provider, |storage| {
+            let _enclave = crate::enclave_client::test_enclave::scope();
             storage.with_lysis_activation_frame(input.binding.activation_call_id, |capability| {
                 capability.authorize_nod_installation()?;
                 assert!(retire_certified_partition(
@@ -814,6 +835,7 @@ mod tests {
         let input = input(27);
         let mut fixture = Fixture::new(&input, ParentMode::Present);
         StorageHandle::enter(&mut fixture.provider, |storage| {
+            let _enclave = crate::enclave_client::test_enclave::scope();
             let mut tribute = TributeContract::new(storage);
             assert!(tribute
                 .consume_lysis_partition(

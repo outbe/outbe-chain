@@ -8,15 +8,22 @@ publish.workspace = true
 [dependencies]
 outbe-macros.workspace = true
 outbe-primitives.workspace = true
+outbe-tee.workspace = true
 outbe-compressed-entities.workspace = true
 outbe-ocomp-protocol.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-sol-types.workspace = true
 outbe-offchain-storage.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+postcard.workspace = true
 thiserror.workspace = true
 
+outbe-tee-enclave = { workspace = true, optional = true }
+
 [dev-dependencies]
+outbe-tribute = { path = ".", features = ["test-enclave"] }
+outbe-tee-enclave.workspace = true
 outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
 alloy-primitives = { workspace = true, features = ["rand"] }
 mongodb.workspace = true
@@ -25,6 +32,7 @@ tempfile.workspace = true
 
 [features]
 default = []
+test-enclave = ["dep:outbe-tee-enclave"]
 test-utils = ["outbe-primitives/test-utils"]
 
 [lints]

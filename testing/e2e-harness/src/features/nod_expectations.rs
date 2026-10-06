@@ -3,8 +3,8 @@
 use alloy_primitives::{Address, U256};
 use cucumber::then;
 use outbe_compressed_entities::{
-    decode_stored_tribute_v1, verify_point_read_v1, PointReadRequestV1, PointReadResultV1,
-    SelectedHeaderV1, TributeBodyV1, VerifiedPointReadV1,
+    verify_point_read_v1, PointReadRequestV1, PointReadResultV1, SelectedHeaderV1, TributeBodyV1,
+    VerifiedPointReadV1,
 };
 use outbe_ocomp_protocol::league_snapshot::league_snapshot_slot;
 
@@ -72,8 +72,12 @@ fn verified_input(
         .projection
         .projected_tribute(0, tx)
         .expect("executed public input Tribute");
-    let body =
-        decode_stored_tribute_v1(&projected.stored_body).expect("canonical public input body");
+    let network = world
+        .rpc
+        .tribute_network_public_key(world.validators.primary_port())
+        .expect("installed network public key");
+    let body = crate::internal::tribute_keys::calculation_view(&projected.stored_body, &network)
+        .expect("creator-local numerical input view");
     assert_eq!(body.owner, owner, "submitted owner");
     let height = super::tribute_expectations::offer_height(world, tx);
     let (nominal, price) =

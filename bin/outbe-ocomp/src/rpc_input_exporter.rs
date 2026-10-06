@@ -3,9 +3,7 @@
 use std::path::PathBuf;
 
 use alloy_primitives::{keccak256, B256};
-use outbe_compressed_entities::{
-    body_commitment, Commitment, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
-};
+use outbe_compressed_entities::{body_commitment, Commitment, ACTIVE_COMMITMENT_SCHEME};
 use outbe_node::ocomp::verify_lysis_openings;
 use outbe_ocomp_protocol::{
     common::BoundedBytes,
@@ -602,22 +600,27 @@ fn verify_replayed_finalized_inputs(
                         continue;
                     }
                     for canonical in verified.chunk.canonical_records_or_openings {
-                        let body = outbe_compressed_entities::decode_tribute_v1(&canonical.0)
+                        let body = outbe_tribute::TributeRecord::decode_canonical(&canonical.0)
                             .map_err(|error| stage("decode replay Tribute", error))?;
                         let commitment = body_commitment(
                             ACTIVE_COMMITMENT_SCHEME,
-                            BODY_SCHEMA_V1,
+                            body.stored_body()
+                                .map_err(|error| stage("encode replay Tribute", error))?
+                                .schema_version(),
                             body.tribute_id,
                             &canonical.0,
                         )
                         .map_err(|error| stage("commit replay Tribute", error))?;
+                        let amounts = body
+                            .calculation_view()
+                            .map_err(|error| stage("read replay Tribute amounts", error))?;
                         builder
                             .push(TributeInventoryRecordV1 {
                                 tribute_id: body.tribute_id,
                                 commitment,
                                 owner: body.owner,
                                 reference_iso: body.reference_currency,
-                                nominal_amount_minor: body.nominal_amount_minor,
+                                nominal_amount_minor: amounts.nominal_amount_minor,
                                 canonical_body: canonical.0,
                             })
                             .map_err(|error| stage("spool replay Tribute inventory", error))?;

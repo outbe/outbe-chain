@@ -15,6 +15,7 @@ pub(in crate::lifecycle) fn prepare_parent(
     genesis_hash: B256,
     fork_install: &outbe_metadosis::config::OcompForkInstallV1,
 ) -> PreparedParent {
+    outbe_tribute::enclave_client::test_enclave::install();
     let directory = tempfile::tempdir().unwrap();
     let db = CeMdbx::open(
         directory.path(),

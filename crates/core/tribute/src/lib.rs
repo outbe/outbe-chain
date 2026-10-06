@@ -1,9 +1,13 @@
 pub mod certified;
 mod day_mark;
+pub mod day_schema;
+mod day_state;
+pub mod enclave_client;
 pub mod errors;
 pub mod partitioning;
 pub mod precompile;
 pub mod projection;
+mod record;
 mod repository;
 mod retention;
 pub mod runtime;
@@ -14,6 +18,7 @@ pub use day_mark::{
     list_tribute_day_marks, read_tribute_day_mark, tribute_day_mark_operation,
     write_tribute_day_mark, TributeDayMark, TRIBUTE_DAY_MARK_NAMESPACE,
 };
+pub use record::{TributeMetadata, TributeRecord};
 pub use repository::{
     canonical_body, from_canonical_body, TributePage, TributePageRequest, TributeRepositoryError,
     TributeRepositoryReader, TributeRepositoryWriter,

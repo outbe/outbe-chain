@@ -17,9 +17,9 @@ use std::{
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{
-    body_commitment, decode_tribute_v1, BoundedTributePartitionVerifier, Commitment,
-    TributePartitionExpectationV1, TributePartitionRetentionStatsV1, TributePartitionWorkConfig,
-    WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+    body_commitment, BoundedTributePartitionVerifier, Commitment, TributePartitionExpectationV1,
+    TributePartitionRetentionStatsV1, TributePartitionWorkConfig, WwdEntityId,
+    ACTIVE_COMMITMENT_SCHEME,
 };
 use outbe_ocomp_protocol::input::CheckpointIdentityV1;
 use outbe_oracle::MAX_OCOMP_REFERENCE_ISOS;
@@ -205,13 +205,12 @@ impl TributeInventoryBuilder {
                 "canonical Tribute stream order",
             ));
         }
-        let decoded = decode_tribute_v1(&record.canonical_body)
+        let decoded = outbe_tribute::TributeRecord::decode_canonical(&record.canonical_body)
             .map_err(|_| TributeInventoryError::Authority("canonical Tribute body"))?;
         if decoded.tribute_id != record.tribute_id
             || decoded.owner != record.owner
             || decoded.worldwide_day != self.subject.worldwide_day
             || decoded.reference_currency != record.reference_iso
-            || decoded.nominal_amount_minor != record.nominal_amount_minor
         {
             return Err(TributeInventoryError::Authority(
                 "canonical Tribute body fields",
@@ -219,7 +218,10 @@ impl TributeInventoryBuilder {
         }
         let body_commitment = body_commitment(
             ACTIVE_COMMITMENT_SCHEME,
-            BODY_SCHEMA_V1,
+            decoded
+                .stored_body()
+                .map_err(|_| TributeInventoryError::Authority("canonical Tribute body schema"))?
+                .schema_version(),
             record.tribute_id,
             &record.canonical_body,
         )
@@ -227,6 +229,11 @@ impl TributeInventoryBuilder {
         if body_commitment != record.commitment {
             return Err(TributeInventoryError::Authority(
                 "canonical Tribute body commitment",
+            ));
+        }
+        if decoded.calculation_view()?.nominal_amount_minor != record.nominal_amount_minor {
+            return Err(TributeInventoryError::Authority(
+                "private Tribute nominal amount",
             ));
         }
         self.root_verifier
@@ -1289,6 +1296,8 @@ impl Drop for InventoryLock {
 
 #[derive(Debug, Error)]
 pub enum TributeInventoryError {
+    #[error("private Tribute amount read failed: {0}")]
+    PrivateTribute(#[from] outbe_tee::TransportError),
     #[error("invalid Tribute inventory work configuration")]
     InvalidWorkConfig,
     #[error("Tribute inventory is already sealed")]

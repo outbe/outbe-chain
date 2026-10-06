@@ -21,3 +21,4 @@ pub(crate) mod ports;
 pub(crate) mod proc;
 pub(crate) mod shell;
 pub(crate) mod startup_rejection;
+pub(crate) mod tribute_keys;

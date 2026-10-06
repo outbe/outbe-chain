@@ -92,7 +92,7 @@ pub(super) fn get_with_metadata(
     tribute_id: WwdEntityId,
 ) -> Result<
     Option<(
-        crate::TributeData,
+        crate::TributeRecord,
         Option<outbe_offchain_storage::StorageMetadata>,
     )>,
     TributeRepositoryError,

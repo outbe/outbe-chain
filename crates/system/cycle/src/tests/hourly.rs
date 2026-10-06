@@ -88,6 +88,7 @@ fn hourly_protocol_cycle_commits_the_same_typed_missed_offering_outcome() {
 
 #[test]
 fn hourly_protocol_cycle_applies_exact_capacity_forfeiture_to_the_new_due_candidate() {
+    let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
     use outbe_metadosis::constants::MAX_RETAINED_WWDS;
     use outbe_primitives::time::WorldwideDay;
 

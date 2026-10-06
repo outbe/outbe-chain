@@ -2,13 +2,13 @@ use std::collections::BTreeSet;
 
 use alloy_primitives::B256;
 use outbe_compressed_entities::{
-    body_commitment, encode_nod_bucket_v1, encode_nod_item_v1, encode_tribute_v1, WwdEntityId,
+    body_commitment, encode_nod_bucket_v1, encode_nod_item_v1, WwdEntityId,
     ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
 use outbe_nod::{NodBucketState, NodItemState, NodRepositoryReader};
 use outbe_offchain_storage::{AtomicWriteBatch, StorageMetadata};
 use outbe_primitives::projection::ProjectionCheckpoint;
-use outbe_tribute::{RetainedTributeReader, TributeData, TributeRepositoryReader};
+use outbe_tribute::{RetainedTributeReader, TributeRecord, TributeRepositoryReader};
 
 use super::decode::{
     decode_event, is_projection_pair, validate_normalized_block, EntityIdentity, ProjectionEvent,
@@ -399,7 +399,7 @@ pub(super) fn validate_existing_record<T>(
 
 pub(super) fn validate_tribute_transition(
     identity: WwdEntityId,
-    old: Option<&TributeData>,
+    old: Option<&TributeRecord>,
     previous: B256,
     first_in_block: bool,
 ) -> Result<(), ProjectionError> {
@@ -408,11 +408,16 @@ pub(super) fn validate_tribute_transition(
     }
     let current = match old {
         Some(body) => {
-            let payload = encode_tribute_v1(&outbe_tribute::canonical_body(body))
+            let stored = body
+                .stored_body()
                 .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
-            let commitment =
-                body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, identity, &payload)
-                    .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
+            let commitment = body_commitment(
+                ACTIVE_COMMITMENT_SCHEME,
+                stored.schema_version(),
+                identity,
+                stored.payload(),
+            )
+            .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
             B256::from(*commitment.as_bytes())
         }
         None => B256::ZERO,

@@ -8,7 +8,7 @@
 use std::collections::BTreeSet;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{decode_tribute_v1, derive_poseidon_entity_id};
+use outbe_compressed_entities::derive_poseidon_entity_id;
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1, PlannedProducerV1,
     PlannedUnitPositionV1, PlannerErrorV1,
@@ -812,7 +812,7 @@ impl LysisPlanAuditCursorV1<'_> {
             .chunk
             .canonical_records_or_openings
             .iter()
-            .map(|record| decode_tribute_v1(&record.0))
+            .map(|record| outbe_tribute::TributeRecord::decode_canonical(&record.0))
             .find_map(|result| match result {
                 Ok(tribute) if tribute.tribute_id.as_slice() == target => Some(Ok(tribute)),
                 Ok(_) => None,
@@ -963,7 +963,8 @@ impl LysisPlanAuditCursorV1<'_> {
     }
 
     fn observe_tribute(&mut self, encoded: &[u8]) -> Result<(), ExactLysisPlanError> {
-        let tribute = decode_tribute_v1(encoded)?;
+        let tribute =
+            outbe_tribute::TributeRecord::decode_canonical(encoded)?.calculation_view()?;
         if tribute.worldwide_day.value() != self.audit.manifest.wwd {
             return Err(ExactLysisPlanError::AuthorityMismatch("Tribute WWD"));
         }
@@ -1151,6 +1152,8 @@ fn exact_pair(producer_ids: &[Option<B256>]) -> Result<[Option<B256>; 2], ExactL
 
 #[derive(Debug, Error)]
 pub enum ExactLysisPlanError {
+    #[error("private Tribute amount read failed: {0}")]
+    PrivateTribute(#[from] outbe_tee::TransportError),
     #[error(transparent)]
     Admission(#[from] AdmissionCatalogError),
     #[error(transparent)]

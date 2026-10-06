@@ -4,9 +4,9 @@ mod day_store;
 
 use alloy_primitives::{Address, B256};
 use outbe_compressed_entities::{
-    decode_stored_tribute_v1, encode_tribute_v1, CanonicalBodyError, CeAuditError, CeAuditWork,
-    EntityRef, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef,
-    StoredBody, StoredBodyPage, TributeBodyV1, WwdEntityId,
+    encode_tribute_v1, CanonicalBodyError, CeAuditError, CeAuditWork, EntityRef, IdPage,
+    IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef, StoredBody, StoredBodyPage,
+    TributeBodyV1, WwdEntityId,
 };
 use std::sync::Arc;
 
@@ -17,7 +17,7 @@ use outbe_offchain_storage::{
 use outbe_primitives::time::WorldwideDay;
 use thiserror::Error;
 
-use crate::TributeData;
+use crate::{TributeData, TributeRecord};
 
 pub(crate) const TRIBUTES_NAMESPACE: &str = "tributes";
 pub(crate) const TRIBUTES_BY_OWNER_NAMESPACE: &str = "tributes_by_owner";
@@ -38,13 +38,13 @@ pub struct TributePageRequest {
 /// One ascending, all-or-error page of Tribute bodies.
 pub struct TributePage {
     /// Decoded Tribute bodies.
-    pub records: Vec<TributeData>,
+    pub records: Vec<TributeRecord>,
     /// Exclusive cursor for the next page, when more records exist.
     pub next_after: Option<WwdEntityId>,
 }
 
 /// One decoded Tribute body and optional primary storage metadata.
-pub type TributeRecordWithMetadata = (TributeData, Option<StorageMetadata>);
+pub type TributeRecordWithMetadata = (TributeRecord, Option<StorageMetadata>);
 
 /// Failure at the typed Tribute persistence boundary.
 #[derive(Debug, Error)]
@@ -310,7 +310,7 @@ impl TributeRepositoryReader {
     pub fn get(
         &self,
         tribute_id: WwdEntityId,
-    ) -> Result<Option<TributeData>, TributeRepositoryError> {
+    ) -> Result<Option<TributeRecord>, TributeRepositoryError> {
         Ok(self
             .get_with_metadata(tribute_id)?
             .map(|(body, _metadata)| body))
@@ -338,7 +338,7 @@ impl TributeRepositoryReader {
     pub fn get_with_metadata(
         &self,
         tribute_id: WwdEntityId,
-    ) -> Result<Option<(TributeData, Option<StorageMetadata>)>, TributeRepositoryError> {
+    ) -> Result<Option<(TributeRecord, Option<StorageMetadata>)>, TributeRepositoryError> {
         if self.route.is_some() {
             return day_store::get_with_metadata(self, tribute_id);
         }
@@ -733,8 +733,8 @@ pub(crate) fn encode_body(tribute: &TributeData) -> Result<Value, TributeReposit
 pub(crate) fn decode_body(
     tribute_id: WwdEntityId,
     bytes: &[u8],
-) -> Result<TributeData, TributeRepositoryError> {
-    let body = from_canonical_body(decode_stored_tribute_v1(bytes)?);
+) -> Result<TributeRecord, TributeRepositoryError> {
+    let body = TributeRecord::decode_stored(bytes)?;
     if body.tribute_id != tribute_id {
         return Err(TributeRepositoryError::PrimaryKeyBodyMismatch {
             expected: tribute_id,
@@ -749,7 +749,7 @@ fn decode_stored_body(
     bytes: &[u8],
 ) -> Result<StoredBody, TributeRepositoryError> {
     let stored = StoredBody::decode(bytes)?;
-    let body = decode_stored_tribute_v1(bytes)?;
+    let body = TributeRecord::decode_stored(bytes)?;
     if body.tribute_id != tribute_id {
         return Err(TributeRepositoryError::PrimaryKeyBodyMismatch {
             expected: tribute_id,
@@ -893,7 +893,7 @@ fn id_page_from_entries(
     Ok(IdPage { ids, next_after })
 }
 
-fn next_cursor(has_more: bool, records: &[TributeData]) -> Option<WwdEntityId> {
+fn next_cursor(has_more: bool, records: &[TributeRecord]) -> Option<WwdEntityId> {
     has_more
         .then(|| records.last().map(|record| record.tribute_id))
         .flatten()

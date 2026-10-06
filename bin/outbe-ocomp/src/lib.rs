@@ -29,6 +29,7 @@ pub mod nod_proof;
 pub mod opening_stage;
 pub mod payout_artifact;
 pub mod payout_submitter;
+pub mod private_tribute_reader;
 pub mod public_rpc;
 pub mod result_attestation;
 pub mod result_signer;

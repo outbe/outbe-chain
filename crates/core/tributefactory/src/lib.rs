@@ -1,5 +1,7 @@
 pub mod enclave_offer;
+mod encrypted_enclave_offer;
 pub mod errors;
+mod offer_result;
 pub mod precompile;
 pub mod runtime;
 pub mod schema;

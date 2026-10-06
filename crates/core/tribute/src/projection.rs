@@ -16,7 +16,7 @@ use crate::{
         RetainedTributePin, RetainedTributeReader, OCOMP_RETAINED_TRIBUTES_BY_DAY_NAMESPACE,
         OCOMP_RETAINED_TRIBUTES_NAMESPACE,
     },
-    TributeData, TributeRepositoryError,
+    TributeRecord, TributeRepositoryError,
 };
 
 /// Code-defined namespaces owned by the Tribute repository.
@@ -38,7 +38,7 @@ pub struct TributeProjectionSession {
 }
 
 struct ProjectionTributeRecord {
-    body: TributeData,
+    body: TributeRecord,
     metadata: Option<StorageMetadata>,
     stored_body: Value,
 }
@@ -75,7 +75,7 @@ impl TributeProjectionSession {
     pub fn current(
         &self,
         tribute_id: WwdEntityId,
-    ) -> Result<Option<&TributeData>, TributeRepositoryError> {
+    ) -> Result<Option<&TributeRecord>, TributeRepositoryError> {
         Ok(self
             .current_with_metadata(tribute_id)?
             .map(|(body, _)| body))
@@ -85,7 +85,7 @@ impl TributeProjectionSession {
     pub fn current_with_metadata(
         &self,
         tribute_id: WwdEntityId,
-    ) -> Result<Option<(&TributeData, Option<&StorageMetadata>)>, TributeRepositoryError> {
+    ) -> Result<Option<(&TributeRecord, Option<&StorageMetadata>)>, TributeRepositoryError> {
         match self
             .records
             .get(&tribute_id)
@@ -184,7 +184,7 @@ enum TributeMutation {
 
 /// Plans all primary and index mutations without reading or writing storage.
 fn plan_tribute_mutation(
-    old: Option<&TributeData>,
+    old: Option<&TributeRecord>,
     mutation: TributeMutation,
 ) -> Result<AtomicWriteBatch, TributeRepositoryError> {
     let tribute_id = match &mutation {
@@ -261,7 +261,7 @@ fn plan_tribute_mutation(
 
 fn validate_identity(
     expected: WwdEntityId,
-    body: &TributeData,
+    body: &TributeRecord,
 ) -> Result<(), TributeRepositoryError> {
     if body.tribute_id != expected {
         return Err(TributeRepositoryError::PrimaryKeyBodyMismatch {

@@ -40,6 +40,7 @@ outbe-oracle.workspace = true
 outbe-nod.workspace = true
 outbe-primitives.workspace = true
 outbe-tribute.workspace = true
+outbe-tee.workspace = true
 outbe-zerofee.workspace = true
 reqwest = { workspace = true, features = ["blocking"] }
 salvo.workspace = true
@@ -53,6 +54,8 @@ zeroize.workspace = true
 zeromq.workspace = true
 
 [dev-dependencies]
+outbe-tribute = { workspace = true, features = ["test-enclave"] }
+outbe-tee-enclave.workspace = true
 outbe-node = { workspace = true, features = ["test-utils"] }
 alloy-rlp.workspace = true
 alloy-sol-types.workspace = true

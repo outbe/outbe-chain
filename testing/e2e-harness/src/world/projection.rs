@@ -8,7 +8,7 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use eyre::{bail, eyre, Result, WrapErr};
-use outbe_compressed_entities::{decode_stored_tribute_v1, WwdEntityId};
+use outbe_compressed_entities::{decode_stored_tribute_v1, decode_stored_tribute_v2, WwdEntityId};
 use outbe_offchain_storage::StorageProvider;
 mod mongo;
 use outbe_offchain_storage::{
@@ -427,17 +427,23 @@ fn primary(reader: &dyn StorageReader, tx_hash: &str) -> Result<ScanEntry> {
 fn snapshot(reader: &dyn StorageReader, tx_hash: &str) -> Result<TributeProjectionSnapshot> {
     let primary = primary(reader, tx_hash)?;
     let raw_id = WwdEntityId::try_from(primary.key.as_bytes())?;
-    let body =
-        decode_stored_tribute_v1(primary.value.as_bytes()).wrap_err("decode projected Tribute")?;
-    if body.tribute_id != raw_id {
+    let (tribute_id, owner, day) = match decode_stored_tribute_v2(primary.value.as_bytes()) {
+        Ok(body) => (
+            body.context.tribute_id,
+            body.context.owner,
+            body.context.worldwide_day,
+        ),
+        Err(_) => {
+            let body = decode_stored_tribute_v1(primary.value.as_bytes())
+                .wrap_err("decode projected Tribute")?;
+            (body.tribute_id, body.owner, body.worldwide_day)
+        }
+    };
+    if tribute_id != raw_id {
         bail!("Tribute primary key does not match its body");
     }
-    let owner_key = [body.owner.as_slice(), raw_id.as_slice()].concat();
-    let day_key = [
-        body.worldwide_day.value().to_be_bytes().as_slice(),
-        raw_id.as_slice(),
-    ]
-    .concat();
+    let owner_key = [owner.as_slice(), raw_id.as_slice()].concat();
+    let day_key = [day.value().to_be_bytes().as_slice(), raw_id.as_slice()].concat();
     let index = |name: &str, key: Vec<u8>| -> Result<ScanEntry> {
         let key = Key::new(key)?;
         let record = reader

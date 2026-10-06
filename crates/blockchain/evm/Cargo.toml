@@ -94,6 +94,7 @@ serde_json.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+outbe-tribute = { workspace = true, features = ["test-enclave"] }
 outbe-chain-constants.workspace = true
 outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
 outbe-node.workspace = true

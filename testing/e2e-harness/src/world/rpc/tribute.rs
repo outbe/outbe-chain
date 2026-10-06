@@ -11,7 +11,68 @@ pub struct TributeZkOffer<'a> {
     pub signature_hex: &'a str,
 }
 
+struct TributeCliOffer<'a> {
+    creator: Address,
+    l2_chain_id: u64,
+    wwd: &'a str,
+    amounts: (&'a str, &'a str),
+    currency: u16,
+    exclude_from_intex_issuance: bool,
+}
+
 impl Rpc {
+    #[cfg(feature = "ocomp-integration")]
+    pub(crate) fn private_tribute_read(
+        &self,
+        index: usize,
+        body: &outbe_primitives::tribute_encryption::EncryptedTributeV2,
+    ) -> Result<outbe_primitives::tribute_encryption::TributeAmountsV2> {
+        use outbe_tee::{
+            protocol::{EnclaveRequest, EnclaveResponse},
+            tribute_v2,
+        };
+        let endpoint = format!("127.0.0.1:{}", self.cfg.tee_port(index));
+        let mut session = outbe_tee::connect_committed_node_host_enclave(
+            &endpoint,
+            &self.cfg.validator_dir(index).join("data"),
+        )?;
+        let input_hash = tribute_v2::tribute_read_inputs_hash(std::slice::from_ref(body))?;
+        let key = session.attestation_pub();
+        let response = session.request(&EnclaveRequest::ReadTributeAmountsV2 {
+            tributes: vec![body.clone()],
+        })?;
+        let EnclaveResponse::TributeAmountsReadV2 {
+            amounts,
+            inputs_canonical_hash,
+            attestation_tag,
+        } = response
+        else {
+            return Err(eyre!("private Tribute read rejected: {response:?}"));
+        };
+        ensure!(
+            inputs_canonical_hash == input_hash && amounts.len() == 1,
+            "private Tribute response differs from request"
+        );
+        tribute_v2::verify_attestation(
+            &key,
+            &tribute_v2::tribute_read_attestation_preimage(input_hash, &amounts)?,
+            &attestation_tag,
+        )?;
+        Ok(amounts
+            .into_iter()
+            .next()
+            .expect("one authenticated amount pair"))
+    }
+
+    pub(crate) fn tribute_network_public_key(&self, port: u16) -> Option<[u8; 32]> {
+        let public: U256 = eth::read_call(
+            &self.url(port),
+            outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
+            &ITeeRegistryV1::tributeOfferPublicKeyCall {},
+        )?;
+        Some(public.to_be_bytes())
+    }
+
     /// Tribute total supply on the node at `port` (decimal, for parity checks).
     pub fn supply(&self, port: u16) -> Option<String> {
         eth::read_call(
@@ -110,6 +171,49 @@ impl Rpc {
         currency: u16,
         exclude_from_intex_issuance: bool,
     ) -> Option<String> {
+        self.submit_tribute_cli(
+            key,
+            TributeCliOffer {
+                creator: eth::address_of(key)?,
+                l2_chain_id,
+                wwd,
+                amounts: (amount_base, amount_micro),
+                currency,
+                exclude_from_intex_issuance,
+            },
+        )
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub(crate) fn tribute_offer_for_creator(
+        &self,
+        key: &str,
+        wwd: &str,
+        creator: Address,
+    ) -> Option<String> {
+        let caller = eth::address_of(key)?;
+        self.submit_tribute_cli(
+            key,
+            TributeCliOffer {
+                creator,
+                l2_chain_id: self.l2_chain_by_l1_address(caller)?,
+                wwd,
+                amounts: ("100", "0"),
+                currency: 840,
+                exclude_from_intex_issuance: false,
+            },
+        )
+    }
+
+    fn submit_tribute_cli(&self, key: &str, input: TributeCliOffer<'_>) -> Option<String> {
+        let TributeCliOffer {
+            creator,
+            l2_chain_id,
+            wwd,
+            amounts: (amount_base, amount_micro),
+            currency,
+            exclude_from_intex_issuance,
+        } = input;
         let started = Instant::now();
         let caller = eth::address_of(key)?;
         let worldwide_day = wwd.parse::<u32>().expect("numeric worldwide day");
@@ -131,6 +235,10 @@ impl Rpc {
             "tribute".to_owned(),
             "offer".to_owned(),
             wwd.to_owned(),
+            "--creator-public-key".to_owned(),
+            crate::internal::tribute_keys::public_hex(creator),
+            "--creator".to_owned(),
+            format!("{creator:#x}"),
             "--amount".to_owned(),
             amount_base.to_owned(),
             "--amount-micro".to_owned(),
@@ -311,6 +419,7 @@ impl Rpc {
         );
         let plaintext = serde_json::to_vec(&serde_json::json!({
             "creator": format!("{creator:?}"),
+            "creator_public_key": crate::internal::tribute_keys::public_hex(creator),
             "tribute_draft_id": format!("{tribute_draft_id:#x}"),
             "amount_base": amount_base,
             "amount_micro": amount_micro,
@@ -458,6 +567,8 @@ impl Rpc {
             "tribute".to_owned(),
             "offer".to_owned(),
             wwd.to_owned(),
+            "--creator-public-key".to_owned(),
+            crate::internal::tribute_keys::public_hex(eth::address_of(key)?),
             "--tribute-draft-id".to_owned(),
             zk.tribute_draft_id_hex.to_owned(),
             "--su-hash".to_owned(),
@@ -545,6 +656,7 @@ pub(in crate::world::rpc) fn encode_reward_bearing_tribute_plaintext(
 ) -> Result<Vec<u8>> {
     serde_json::to_vec(&serde_json::json!({
         "creator": format!("{creator:#x}"),
+        "creator_public_key": crate::internal::tribute_keys::public_hex(creator),
         "tribute_draft_id": format!("{tribute_draft_id:#x}"),
         "amount_base": amount_base,
         "amount_micro": amount_micro,

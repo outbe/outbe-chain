@@ -208,6 +208,7 @@ fn absent_profile_rejects_the_offering_edge_before_any_effect() {
 
 #[test]
 fn absent_profile_rejects_populated_ready_before_failed_state_or_lysis_effects() {
+    let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0804);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let scheduled = StorageHandle::enter(&mut provider, |storage| {

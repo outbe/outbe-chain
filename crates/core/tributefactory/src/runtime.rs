@@ -1,3 +1,4 @@
+use crate::offer_result::ProcessedOffer;
 use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_agentreward::AgentRewardContract;
 use outbe_compressed_entities::{
@@ -8,11 +9,12 @@ use outbe_primitives::stablecoin::validate_currency_code;
 use outbe_primitives::time::timestamp_to_date_key;
 use outbe_primitives::time::WorldwideDay;
 use outbe_protocol::protocol::zkproof::{decode_public_words, read_u64_be_padded};
+#[cfg(any(test, feature = "bench-utils"))]
+use outbe_tee::protocol::TributeOfferResult;
 use outbe_tee::protocol::{
-    EncryptedTributeOffer, TributeOfferResult, TributeOfferStatus, TributePublicInputs,
-    TributeZkContext,
+    EncryptedTributeOffer, TributeOfferStatus, TributePublicInputs, TributeZkContext,
 };
-use outbe_tribute::{TributeContract, TributeData};
+use outbe_tribute::TributeContract;
 use outbe_zk_backend::barretenberg::{Barretenberg, RawVerifier};
 
 use crate::errors::TributeFactoryError;
@@ -35,14 +37,8 @@ pub(crate) struct OfferTributeInput {
 }
 
 impl TributeFactoryContract<'_> {
-    /// Single live offer path: an encrypted offer arrives; the host validates the
-    /// cleartext day and currency, resolves the COEN price for that exact pair and
-    /// day, hands offer + price to the enclave (`ProcessTributeOfferBatch`), and
-    /// issues the Tribute from the returned `TributeOfferResult`. The enclave
-    /// returns only what it computed - the amounts, the draft-derived fields and
-    /// the Poseidon `token_id` - so everything public on the Tribute comes from
-    /// this function's own inputs. The canonical identity is independently
-    /// recomputed and checked before issuance.
+    /// Validates the caller-bound proof and issues the enclave-produced encrypted
+    /// Tribute. The decrypted offer's creator becomes its owner.
     pub(crate) fn offer_tribute(
         &mut self,
         scope: &ExecutionScope,
@@ -50,12 +46,10 @@ impl TributeFactoryContract<'_> {
         input: OfferTributeInput,
     ) -> Result<WwdEntityId> {
         let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&self.storage)?;
-        self.offer_tribute_inner(
-            scope,
-            parent,
-            input,
-            crate::enclave_offer::process_tribute_offer_batch_via_enclave,
-        )
+        self.offer_tribute_inner(scope, parent, input, |chain_id, offers| {
+            crate::encrypted_enclave_offer::process_encrypted_offers(chain_id, offers)
+                .map(|results| results.into_iter().map(ProcessedOffer::from).collect())
+        })
     }
 
     #[cfg(any(test, feature = "bench-utils"))]
@@ -69,7 +63,14 @@ impl TributeFactoryContract<'_> {
         )
             -> core::result::Result<Vec<TributeOfferResult>, PrecompileError>,
     ) -> Result<WwdEntityId> {
-        self.offer_tribute_inner(scope, parent, input, processor)
+        let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
+        self.offer_tribute_inner(scope, parent, input, |_, offers| {
+            processor(offers)?
+                .into_iter()
+                .zip(offers)
+                .map(|(result, offer)| crate::offer_result::legacy_fixture(offer, result))
+                .collect()
+        })
     }
 
     fn offer_tribute_inner(
@@ -78,9 +79,9 @@ impl TributeFactoryContract<'_> {
         parent: &impl ParentBodySource,
         input: OfferTributeInput,
         processor: impl FnOnce(
+            u64,
             &[EncryptedTributeOffer],
-        )
-            -> core::result::Result<Vec<TributeOfferResult>, PrecompileError>,
+        ) -> core::result::Result<Vec<ProcessedOffer>, PrecompileError>,
     ) -> Result<WwdEntityId> {
         let OfferTributeInput {
             caller,
@@ -179,10 +180,8 @@ impl TributeFactoryContract<'_> {
             l2_chain_id: u64::from(l2_chain_id),
         });
 
-        // Hand the encrypted offer + exact public Oracle inputs to the enclave. It
-        // decrypts, computes economics (U256) + Poseidon token_id, and returns
-        // only those. The host does not recompute private economics, but it can
-        // and must verify the public owner/day identity recipe.
+        // The caller remains bound to the proof. The enclave encrypts the
+        // resulting amounts and binds the creator's owner/day identity.
         let offer = EncryptedTributeOffer {
             owner: caller,
             cipher_text: cipher_text.to_vec(),
@@ -200,7 +199,7 @@ impl TributeFactoryContract<'_> {
         // Node-local enclave faults (dead sidecar after the session's bounded
         // reconnect+retry, non-determinism, bad attestation) are Fatal - see
         // `enclave_offer` - never a deterministic revert.
-        let results = processor(&[offer])?;
+        let results = processor(host_chain_id, &[offer])?;
         let result = results.into_iter().next().ok_or_else(|| {
             PrecompileError::Fatal("enclave returned an empty tribute offer result".into())
         })?;
@@ -215,19 +214,17 @@ impl TributeFactoryContract<'_> {
             result.zk_expected_hashes.as_ref(),
         )?;
 
-        // Recomputed from this call's own inputs, so it checks the enclave's
-        // Poseidon rather than the enclave's own consistency with itself.
-        // The identity keeps only the digest tail, so the enclave's token id is
-        // checked against the whole digest rather than against the identity.
-        let expected_digest = derive_poseidon_digest(caller, worldwide_day)
+        let record = result.tribute.as_ref().ok_or_else(|| {
+            PrecompileError::Fatal("created Tribute result has no canonical body".into())
+        })?;
+        let expected_digest = derive_poseidon_digest(record.owner, worldwide_day)
             .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
-        if result.owner != caller || result.token_id != expected_digest {
+        let tribute_id = WwdEntityId::from_day_and_digest(worldwide_day, expected_digest);
+        if result.token_id != expected_digest || record.tribute_id != tribute_id {
             return Err(TributeFactoryError::InvalidCanonicalIdentity.into());
         }
-
-        let tribute_id = WwdEntityId::from_day_and_digest(worldwide_day, expected_digest);
         let tribute = TributeContract::new(self.storage.clone());
-        if tribute.get_tribute(scope, parent, tribute_id)?.is_some() {
+        if tribute.get_record(scope, parent, tribute_id)?.is_some() {
             return Err(TributeFactoryError::TributeAlreadyExists.into());
         }
 
@@ -238,21 +235,22 @@ impl TributeFactoryContract<'_> {
             validate_agent_reward_addresses(&result.wallet_addresses, &result.sra_addresses)?;
 
         let mut tribute = TributeContract::new(self.storage.clone());
-        tribute.issue(
-            scope,
-            parent,
-            &TributeData {
-                tribute_id,
-                owner: caller,
-                worldwide_day,
-                issuance_amount_minor: result.issuance_amount_minor,
-                issuance_currency: tribute_currency,
-                nominal_amount_minor: result.nominal_amount_minor,
-                reference_currency,
-                exclude_from_intex_issuance,
-                tribute_price_minor: result.effective_reference_price_minor,
-            },
-        )?;
+        if let Some(body) = record.encrypted() {
+            tribute.issue_encrypted(scope, parent, body)?;
+        } else {
+            #[cfg(any(test, feature = "bench-utils"))]
+            tribute.issue(
+                scope,
+                parent,
+                &record
+                    .calculation_view()
+                    .map_err(|error| PrecompileError::Fatal(error.to_string()))?,
+            )?;
+            #[cfg(not(any(test, feature = "bench-utils")))]
+            return Err(PrecompileError::Fatal(
+                "encrypted offer returned a legacy body".into(),
+            ));
+        }
 
         self.record_agent_reward_activity(&wallet_addresses, &sra_addresses)?;
 

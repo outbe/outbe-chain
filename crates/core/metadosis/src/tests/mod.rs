@@ -26,6 +26,7 @@ const CHAIN_ID: u64 = 1;
 fn with_contract<R>(f: impl FnOnce(&mut MetadosisContract) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     outbe_fidelity::enclave_client::test_enclave::install();
+    outbe_tribute::enclave_client::test_enclave::install();
     StorageHandle::enter(&mut storage, |storage| {
         let mut contract = MetadosisContract::new(storage.clone());
         f(&mut contract)
@@ -36,6 +37,7 @@ fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 64);
     outbe_fidelity::enclave_client::test_enclave::install();
+    outbe_tribute::enclave_client::test_enclave::install();
     StorageHandle::enter(&mut storage, |storage| f(storage.clone()))
 }
 
@@ -43,6 +45,7 @@ fn arm_genesis_ocomp(storage: &StorageHandle, chain_id: u64) {
     // Fidelity leagues are enclave-computed; every test thread that reaches the
     // OCOMP snapshot path needs the in-process dev enclave (thread-local).
     outbe_fidelity::enclave_client::test_enclave::install();
+    outbe_tribute::enclave_client::test_enclave::install();
     crate::fixture_kernel::seed_registry_authority(
         storage,
         &crate::fixture_kernel::fixture_authority(chain_id),

@@ -31,6 +31,7 @@ tracing.workspace = true
 k256 = { workspace = true, optional = true }
 
 [dev-dependencies]
+outbe-tribute = { workspace = true, features = ["test-enclave"] }
 outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
 k256.workspace = true
 num-bigint.workspace = true
@@ -44,7 +45,7 @@ outbe-fidelity = { workspace = true, features = ["test-enclave"] }
 [features]
 default = []
 bench-utils = []
-test-utils = ["dep:k256", "outbe-validatorset/test-utils"]
+test-utils = ["dep:k256", "outbe-validatorset/test-utils", "outbe-tribute/test-enclave"]
 
 [lints]
 workspace = true

@@ -6,7 +6,7 @@ use std::time::Duration;
 use alloy_primitives::{Address, B256, U256};
 use cucumber::{given, then, when};
 use outbe_compressed_entities::{
-    decode_stored_tribute_v1, verify_point_read_v1, AbsentEvidenceV1, PointReadRequestV1,
+    decode_stored_tribute_v2, verify_point_read_v1, AbsentEvidenceV1, PointReadRequestV1,
     PointReadResultV1, VerifiedPointReadV1, WwdEntityId,
 };
 
@@ -266,8 +266,12 @@ fn projected_cross_currency_golden(world: &mut World) {
         .projection
         .projected_tribute(0, tx_hash)
         .expect("validator-0 projected Tribute body");
-    let body = decode_stored_tribute_v1(&projected.stored_body)
-        .expect("decode canonical projected Tribute body");
+    let network = world
+        .rpc
+        .tribute_network_public_key(world.validators.primary_port())
+        .expect("installed network public key");
+    let body = crate::internal::tribute_keys::calculation_view(&projected.stored_body, &network)
+        .expect("creator-local read of canonical projected Tribute");
     assert_eq!(body.issuance_amount_minor, U256::from(410_000u64));
     assert_eq!(body.issuance_currency, 949);
     assert_eq!(body.reference_currency, 978);
@@ -596,8 +600,9 @@ fn independent_tribute_owner_is_projected(world: &mut World) {
             .projection
             .projected_tribute(index, tx)
             .expect("independent-user canonical Tribute projection");
-        let body = decode_stored_tribute_v1(&projected.stored_body)
-            .expect("canonical independent-user body");
+        let encrypted = decode_stored_tribute_v2(&projected.stored_body)
+            .expect("canonical independent-user encrypted body");
+        let body = encrypted.context;
         assert_eq!(
             body.owner, caller,
             "network administrator must not receive the user's Tribute"

@@ -1,8 +1,8 @@
 use alloy_primitives::{Address, LogData, B256};
 use alloy_sol_types::SolEvent;
 use outbe_compressed_entities::{
-    body_commitment, decode_nod_bucket_v1, decode_nod_item_v1, decode_tribute_v1,
-    derive_poseidon_entity_id, StoredBody, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+    body_commitment, decode_nod_bucket_v1, decode_nod_item_v1, derive_poseidon_entity_id,
+    StoredBody, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
 use outbe_nod::precompile::INod;
 use outbe_offchain_storage::Value;
@@ -94,8 +94,11 @@ pub(super) fn decode_event(
             .map_err(|error| malformed_event(source, error))?;
         validate_versions(source, event.commitmentSchemeVersion, event.schemaVersion)?;
         let tribute_id = WwdEntityId::from(event.tributeId);
-        let canonical = decode_tribute_v1(&event.canonicalPayload)
-            .map_err(|error| malformed_event(source, error))?;
+        let canonical = outbe_tribute::TributeRecord::decode_payload(
+            event.schemaVersion,
+            &event.canonicalPayload,
+        )
+        .map_err(|error| malformed_event(source, error))?;
         if canonical.tribute_id != tribute_id {
             return Err(malformed_event(
                 source,
@@ -115,6 +118,7 @@ pub(super) fn decode_event(
             &event.canonicalPayload,
             event.previousCommitment,
             event.newCommitment,
+            event.schemaVersion,
         )?;
         Some(ProjectionEvent::TributeStored {
             source,
@@ -168,6 +172,7 @@ pub(super) fn decode_event(
             &event.canonicalPayload,
             event.previousCommitment,
             event.newCommitment,
+            event.schemaVersion,
         )?;
         Some(ProjectionEvent::NodStored {
             source,
@@ -206,6 +211,7 @@ pub(super) fn decode_event(
             &event.canonicalPayload,
             event.previousCommitment,
             event.newCommitment,
+            event.schemaVersion,
         )?;
         Some(ProjectionEvent::BucketStored {
             source,
@@ -268,7 +274,10 @@ pub(super) fn validate_versions(
             format!("unsupported commitment scheme {commitment_scheme_version}"),
         ));
     }
-    if schema_version != BODY_SCHEMA_V1 {
+    let encrypted_tribute = source.emitter == TRIBUTE_ADDRESS
+        && source.event_signature == ITribute::TributeBodyStored::SIGNATURE_HASH
+        && schema_version == outbe_compressed_entities::TRIBUTE_BODY_SCHEMA_V2;
+    if schema_version != BODY_SCHEMA_V1 && !encrypted_tribute {
         return Err(malformed_event(
             source,
             format!("unsupported body schema {schema_version}"),
@@ -283,12 +292,13 @@ pub(super) fn validate_stored_commitment(
     payload: &[u8],
     previous: B256,
     new: B256,
+    schema_version: u32,
 ) -> Result<(), ProjectionError> {
     if !previous.is_zero() {
         outbe_compressed_entities::Commitment::try_from(previous.0)
             .map_err(|error| malformed_event(source, error))?;
     }
-    let expected = body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, identity, payload)
+    let expected = body_commitment(ACTIVE_COMMITMENT_SCHEME, schema_version, identity, payload)
         .map_err(|error| malformed_event(source, error))?;
     if new != B256::from(*expected.as_bytes()) {
         return Err(malformed_event(

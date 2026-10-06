@@ -1,7 +1,7 @@
 use std::{collections::BTreeSet, path::Path};
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{decode_tribute_v1, CanonicalBodyError};
+use outbe_compressed_entities::CanonicalBodyError;
 use outbe_lysis::program_v1::planner::PRIMARY_WORK_SHARD_SIZE;
 use outbe_ocomp_protocol::{
     control::CasObjectRefV1,
@@ -100,6 +100,8 @@ pub struct DurableInputArtifactPublisher<'a> {
 
 #[derive(Debug, Error)]
 pub enum InputArtifactError {
+    #[error("private Tribute amount read failed: {0}")]
+    PrivateTribute(#[from] outbe_tee::TransportError),
     #[error(transparent)]
     Cas(#[from] CasError),
     #[error("canonical OCOMP protocol object rejected: {0}")]
@@ -242,7 +244,8 @@ pub fn validate_verified_input_manifest_semantics_observing(
         for record in &verified.chunk.canonical_records_or_openings {
             match verified.reference.kind {
                 InputChunkKind::Tribute => {
-                    let tribute = decode_tribute_v1(&record.0)?;
+                    let tribute = outbe_tribute::TributeRecord::decode_canonical(&record.0)?
+                        .calculation_view()?;
                     require(
                         tribute.worldwide_day.value() == manifest.wwd,
                         "Tribute WWD matches manifest",
@@ -373,7 +376,8 @@ impl<'a> DurableInputArtifactPublisher<'a> {
 
     pub fn publish_tribute(&mut self, canonical: Vec<u8>) -> Result<(), InputArtifactError> {
         require(!self.tributes_finished, "Tribute publication remains open")?;
-        let tribute = decode_tribute_v1(&canonical)?;
+        let tribute =
+            outbe_tribute::TributeRecord::decode_canonical(&canonical)?.calculation_view()?;
         require(
             tribute.worldwide_day.value() == self.identity.wwd,
             "Tribute WWD matches input identity",
@@ -695,7 +699,8 @@ pub fn publish_streaming_input_artifact_set(
     let mut tribute_nominal_total = U256::ZERO;
     let mut tribute_chunk = Vec::with_capacity(tribute_chunk_items);
     while let Some(canonical) = next_tribute()? {
-        let tribute = decode_tribute_v1(&canonical)?;
+        let tribute =
+            outbe_tribute::TributeRecord::decode_canonical(&canonical)?.calculation_view()?;
         require(
             tribute.worldwide_day.value() == identity.wwd,
             "Tribute WWD matches input identity",
@@ -1091,8 +1096,9 @@ fn derive_input_chunk(
     for record in &chunk.canonical_records_or_openings {
         match chunk.kind {
             InputChunkKind::Tribute => {
-                let tribute = decode_tribute_v1(&record.0)?;
-                keys.push(tribute.tribute_id.to_vec());
+                let tribute = outbe_tribute::TributeRecord::decode_canonical(&record.0)?
+                    .calculation_view()?;
+                keys.push(tribute.tribute_id.as_slice().to_vec());
                 tribute_count = tribute_count
                     .checked_add(1)
                     .ok_or(InputArtifactError::CountOverflow)?;

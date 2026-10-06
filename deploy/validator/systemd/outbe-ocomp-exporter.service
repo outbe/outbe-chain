@@ -12,6 +12,8 @@ Group=outbe
 EnvironmentFile=/opt/outbe-chain/validator.env
 Environment=OUTBE_OCOMP_BASE_PATH=/opt/outbe-chain
 Environment=OCOMP_VALIDATOR_INDEX=0
+Environment=OUTBE_OCOMP_TEE_ENDPOINT=127.0.0.1:17000
+Environment=OUTBE_OCOMP_NODE_DATA_DIR=/opt/outbe-chain/validator-0/data
 Environment=OUTBE_OCOMP_RPC_URL=http://127.0.0.1:8545
 Environment=OUTBE_OCOMP_STORAGE_CONFIG=/opt/outbe-chain/offchain-storage.toml
 ExecStart=/opt/outbe-chain/outbe-ocomp snapshot-exporter \

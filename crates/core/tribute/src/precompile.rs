@@ -52,10 +52,14 @@ pub fn dispatch(
                 tribute.token_uri(scope, parent, WwdEntityId::from(c.tributeId))
             }),
             getDayTotals(c) => view(c, |c| {
-                let dt = tribute.get_day_totals(c.worldwideDay.into())?;
+                let day = c.worldwideDay.into();
+                let dt = tribute
+                    .day_totals
+                    .get(day)?
+                    .unwrap_or_else(|| crate::day_schema::StoredDayTotals::with_key(day));
                 Ok((
                     dt.tribute_count,
-                    dt.tribute_nominal_total_minor,
+                    alloy_primitives::Bytes::from(tribute.encrypted_day_nominal(day, false)?),
                     dt.is_sealed,
                 )
                     .into())

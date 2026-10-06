@@ -9,7 +9,8 @@ use outbe_primitives::time::WorldwideDay;
 use crate::errors::TributeError;
 use crate::precompile::ITribute;
 use crate::schema::{TributeContract, TributeData};
-use crate::state::tribute_from_verified;
+use crate::state::{record_from_verified, tribute_from_verified};
+use crate::TributeRecord;
 
 /// A semantic Tribute paired with the exact generic mutation capability that verified it.
 pub struct LoadedTribute {
@@ -88,6 +89,7 @@ impl TributeContract<'_> {
                 )
             })?;
         self.total_supply.write(supply)?;
+        self.reset_day_nominal(&totals)?;
         totals.tribute_count = 0;
         totals.tribute_nominal_total_minor = alloy_primitives::U256::ZERO;
         self.store_day_totals(&totals)
@@ -177,10 +179,7 @@ impl TributeContract<'_> {
             }
             let sealed_root = authenticated_root.unwrap_or(B256::ZERO);
 
-            let mut admission = self
-                .day_pre_admission
-                .get(day)?
-                .unwrap_or_else(|| crate::DayPreAdmission::with_key(day));
+            let mut admission = self.read_day_pre_admission(day)?;
             if admission.source_generation != 0 {
                 return Err(
                     outbe_primitives::error::PrecompileError::BodyReadCorruption(
@@ -221,6 +220,8 @@ impl TributeContract<'_> {
                     )
                 })?;
             self.total_supply.write(supply)?;
+            self.store_day_pre_admission(&admission)?;
+            self.reset_day_nominal(&totals)?;
             totals.tribute_count = 0;
             totals.tribute_nominal_total_minor = U256::ZERO;
             self.store_day_totals(&totals)?;
@@ -317,6 +318,40 @@ impl TributeContract<'_> {
         storage.with_checkpoint(|| self.issue_inner(scope, parent, tribute))
     }
 
+    /// Issues the enclave-produced ciphertext without exposing individual amounts.
+    pub fn issue_encrypted(
+        &mut self,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
+        body: &outbe_primitives::tribute_encryption::EncryptedTributeV2,
+    ) -> Result<()> {
+        if !body.has_valid_encoding() {
+            return Err(
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(
+                    "invalid encrypted Tribute encoding".into(),
+                ),
+            );
+        }
+        if body.context.chain_id != self.storage_handle().chain_id()? {
+            return Err(
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(
+                    "Tribute chain identity mismatch".into(),
+                ),
+            );
+        }
+        let record = TributeRecord::from_encrypted(body.clone());
+        let expected = outbe_compressed_entities::derive_poseidon_entity_id(
+            record.owner,
+            record.worldwide_day,
+        )
+        .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))?;
+        if record.owner.is_zero() || record.tribute_id != expected {
+            return Err(TributeError::InvalidOwner.into());
+        }
+        let storage = self.storage_handle();
+        storage.with_checkpoint(|| self.issue_record_inner(scope, parent, &record))
+    }
+
     fn issue_inner(
         &mut self,
         scope: &ExecutionScope,
@@ -324,35 +359,59 @@ impl TributeContract<'_> {
         tribute: &TributeData,
     ) -> Result<()> {
         self.validate_tribute_for_issue(tribute)?;
-        self.ensure_day_accepts_tributes(tribute.worldwide_day)?;
-        if self
-            .get_tribute(scope, parent, tribute.tribute_id)?
-            .is_some()
-        {
+        self.issue_record_inner(scope, parent, &TributeRecord::from_legacy(tribute.clone()))
+    }
+
+    fn issue_record_inner(
+        &mut self,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
+        record: &TributeRecord,
+    ) -> Result<()> {
+        self.ensure_day_accepts_tributes(record.worldwide_day)?;
+        if self.get_record(scope, parent, record.tribute_id)?.is_some() {
             return Err(TributeError::TributeAlreadyExists.into());
         }
-
-        self.bump_day_bucket(tribute.worldwide_day, 1, tribute.nominal_amount_minor)?;
-        self.update_pre_admission_for_tribute(tribute, true)?;
-
+        self.bump_day_bucket_record(record, true)?;
+        self.update_pre_admission_for_tribute(record, true)?;
         let supply = self.total_supply.read()?.checked_add(1).ok_or_else(|| {
             outbe_primitives::error::PrecompileError::BodyReadCorruption(
                 "Tribute total supply overflow during issuance".into(),
             )
         })?;
         self.total_supply.write(supply)?;
-
-        let canonical = crate::repository::canonical_body(tribute);
-        mint(self.storage_handle(), scope, BodyInput::Tribute(&canonical))?;
+        let (issuance, nominal) = match record.encrypted() {
+            Some(body) => {
+                mint(
+                    self.storage_handle(),
+                    scope,
+                    BodyInput::EncryptedTribute(body),
+                )?;
+                (
+                    body.encrypted_amounts.clone(),
+                    body.encrypted_amounts.clone(),
+                )
+            }
+            None => {
+                let body = record.calculation_view().map_err(|error| {
+                    outbe_primitives::error::PrecompileError::Fatal(error.to_string())
+                })?;
+                let canonical = crate::repository::canonical_body(&body);
+                mint(self.storage_handle(), scope, BodyInput::Tribute(&canonical))?;
+                (
+                    body.issuance_amount_minor.to_be_bytes::<32>().to_vec(),
+                    body.nominal_amount_minor.to_be_bytes::<32>().to_vec(),
+                )
+            }
+        };
         self.emit(ITribute::TributeIssued {
-            owner: tribute.owner,
-            tributeId: tribute.tribute_id.to_u256(),
-            worldwideDay: tribute.worldwide_day.into(),
-            issuanceAmountMinor: tribute.issuance_amount_minor,
-            settlementCurrency: tribute.issuance_currency,
-            nominalAmountMinor: tribute.nominal_amount_minor,
+            owner: record.owner,
+            tributeId: record.tribute_id.to_u256(),
+            worldwideDay: record.worldwide_day.into(),
+            issuanceAmountMinor: issuance.into(),
+            settlementCurrency: record.issuance_currency,
+            nominalAmountMinor: nominal.into(),
         })?;
-
         Ok(())
     }
 
@@ -395,8 +454,9 @@ impl TributeContract<'_> {
         let LoadedTribute { body, current } = loaded;
         let tribute = body;
         self.ensure_day_accepts_tributes(tribute.worldwide_day)?;
-        self.bump_day_bucket(tribute.worldwide_day, -1, tribute.nominal_amount_minor)?;
-        self.update_pre_admission_for_tribute(&tribute, false)?;
+        let record = record_from_verified(&current)?;
+        self.bump_day_bucket_record(&record, false)?;
+        self.update_pre_admission_for_tribute(&record, false)?;
 
         let supply = self.total_supply.read()?.checked_sub(1).ok_or_else(|| {
             outbe_primitives::error::PrecompileError::BodyReadCorruption(
@@ -491,10 +551,7 @@ impl TributeContract<'_> {
             if !totals.initialized || !totals.is_sealed {
                 return Err(TributeError::WorldwideDaySealed.into());
             }
-            let mut admission = self
-                .day_pre_admission
-                .get(day)?
-                .unwrap_or_else(|| crate::DayPreAdmission::with_key(day));
+            let mut admission = self.read_day_pre_admission(day)?;
             if admission.is_sealed {
                 return Err(TributeError::PreAdmissionSealed.into());
             }

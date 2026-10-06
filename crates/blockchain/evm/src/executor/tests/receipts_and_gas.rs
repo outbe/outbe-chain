@@ -412,6 +412,7 @@ fn tee_expiry_worst_case_active_sweep_fits_cycle_tick_budget() {
 
 #[test]
 fn capacity_forfeiture_cycle_tick_keeps_twenty_percent_block_headroom() {
+    let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
     capacity::run();
 }
 

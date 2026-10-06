@@ -8611,6 +8611,7 @@ dependencies = [
  "time",
  "tokio",
  "walkdir",
+ "x25519-dalek 2.0.1",
  "xshell",
 ]
 
@@ -9286,6 +9287,8 @@ dependencies = [
  "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
+ "outbe-tee",
+ "outbe-tee-enclave",
  "outbe-tribute",
  "outbe-validatorset",
  "outbe-zerofee",
@@ -9960,8 +9963,13 @@ dependencies = [
  "outbe-ocomp-protocol",
  "outbe-offchain-storage",
  "outbe-primitives",
+ "outbe-tee",
+ "outbe-tee-enclave",
+ "outbe-tribute",
+ "postcard",
  "revm",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.18",
 ]
@@ -9977,6 +9985,7 @@ dependencies = [
  "commonware-codec",
  "commonware-cryptography",
  "commonware-math",
+ "ed25519-dalek",
  "eyre",
  "hex",
  "outbe-agentreward",

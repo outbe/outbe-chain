@@ -10,8 +10,7 @@ use std::sync::Arc;
 
 use alloy_primitives::B256;
 use outbe_compressed_entities::{
-    body_commitment, decode_stored_tribute_v1, CeAuditError, CeAuditWork, StoredBody, WwdEntityId,
-    ACTIVE_COMMITMENT_SCHEME,
+    body_commitment, CeAuditError, CeAuditWork, StoredBody, WwdEntityId, ACTIVE_COMMITMENT_SCHEME,
 };
 use outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1;
 use outbe_offchain_storage::{
@@ -549,7 +548,7 @@ fn commitment_for_stored_bytes(
     bytes: &[u8],
 ) -> Result<B256, TributeRepositoryError> {
     let stored = StoredBody::decode(bytes)?;
-    let body = decode_stored_tribute_v1(bytes)?;
+    let body = crate::TributeRecord::decode_stored(bytes)?;
     if body.tribute_id != tribute_id {
         return Err(TributeRepositoryError::PrimaryKeyBodyMismatch {
             expected: tribute_id,

@@ -408,6 +408,7 @@ fn outer_history(history: OuterHistory, coverage: &mut Coverage) -> TestCaseResu
 }
 
 fn capacity_history(retained_before: usize, coverage: &mut Coverage) -> TestCaseResult {
+    let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
     prop_assert!(retained_before == MAX_RETAINED_WWDS - 1 || retained_before == MAX_RETAINED_WWDS);
     let mut storage = cycle_storage();
     let victim = WorldwideDay::new(20_260_910);

@@ -199,6 +199,7 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
 
 #[test]
 fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
+    let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
     let proposer = test_evm_signer().address();
     let day = WorldwideDay::new(20_260_716);
     let tribute_owner = Address::repeat_byte(0x31);

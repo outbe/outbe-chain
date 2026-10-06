@@ -317,6 +317,20 @@ impl OcompTopology {
         let mut command = Command::new(&self.cfg.bin_ocomp);
         configure_release_layout(&mut command, &self.cfg.dir, validator_index);
         command
+            .env(
+                "OUTBE_OCOMP_TEE_ENDPOINT",
+                format!(
+                    "127.0.0.1:{}",
+                    self.cfg.tee_port(usize::from(validator_index))
+                ),
+            )
+            .env(
+                "OUTBE_OCOMP_NODE_DATA_DIR",
+                self.cfg
+                    .validator_dir(usize::from(validator_index))
+                    .join("data"),
+            );
+        command
     }
 
     #[cfg(feature = "ocomp-integration")]

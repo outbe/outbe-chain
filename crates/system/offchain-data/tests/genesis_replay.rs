@@ -325,6 +325,7 @@ fn execution_scope(tree: &CompressedTreeService, parent: ExactParentIdentity) ->
 
 #[test]
 fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() {
+    let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
     let projected = Arc::new(MemoryStorage::new());
     let tribute_reader = TributeRepositoryReader::new(projected.clone());
     let nod_reader = NodRepositoryReader::new(projected.clone());
@@ -445,7 +446,7 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
     let projected_nod = nod_reader.get(nod_id).unwrap().unwrap();
     let projected_bucket = nod_reader.get_bucket(bucket_id).unwrap().unwrap();
     assert_eq!(
-        encode_tribute_v1(&canonical_body(&projected_tribute)).unwrap(),
+        projected_tribute.stored_body().unwrap().payload(),
         encode_tribute_v1(&canonical_body(&tribute)).unwrap()
     );
     assert_eq!(

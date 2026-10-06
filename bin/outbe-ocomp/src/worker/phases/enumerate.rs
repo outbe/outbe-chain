@@ -2,8 +2,6 @@ use super::super::require_authenticated_input;
 use super::super::require_lease_active;
 use super::super::WorkerError;
 
-use outbe_compressed_entities::decode_tribute_v1;
-
 use outbe_lysis::program_v1::artifacts::encode_enumerated_run;
 
 use outbe_lysis::program_v1::artifacts::enumerate_tributes;
@@ -61,12 +59,15 @@ pub(in super::super) fn execute_enumerate_unit(
         .map_err(|_| WorkerError::UnitBindingMismatch)?;
     for record in &chunk.canonical_records_or_openings {
         require_lease_active(cancelled)?;
-        let tribute = decode_tribute_v1(&record.0)?;
+        let tribute =
+            outbe_tribute::TributeRecord::decode_canonical(&record.0)?.calculation_view()?;
         let id = *tribute.tribute_id;
         if id < range.start || range.end.is_some_and(|end| id >= end) {
             return Err(WorkerError::UnitBindingMismatch);
         }
-        tributes.push(TributeInputV1::from(&tribute));
+        tributes.push(TributeInputV1::from(&outbe_tribute::canonical_body(
+            &tribute,
+        )));
     }
     if tributes
         .first()

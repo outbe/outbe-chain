@@ -322,7 +322,10 @@ fn durable_finalized_admission_precedes_same_frame_retirement_and_survives_repla
                 .unwrap();
             assert_eq!(current.tribute_id, body.tribute_id);
             assert_eq!(current.owner, body.owner);
-            assert_eq!(current.nominal_amount_minor, body.nominal_amount_minor);
+            assert_eq!(
+                current.calculation_view().unwrap().nominal_amount_minor,
+                body.nominal_amount_minor
+            );
         } else {
             admitted.unwrap();
         }
