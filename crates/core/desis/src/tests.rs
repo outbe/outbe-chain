@@ -314,11 +314,13 @@ fn brief_at_rate_from(
     assert_eq!(
         crate::api::dispatch_auction_brief(
             s.clone(),
-            worldwide_day,
-            U256::from(desis_limit_minor),
-            green,
+            crate::api::AuctionBrief {
+                worldwide_day,
+                desis_limit_minor: U256::from(desis_limit_minor),
+                is_green: green
+            },
             now,
-            crate::api::BriefOverflowPolicy::CarryOver,
+            crate::api::BriefOverflowPolicy::CarryOver
         )
         .unwrap(),
         AuctionBriefReceipt::Accepted
@@ -424,9 +426,11 @@ fn dispatch_auction_brief_records_the_brief() {
     with_storage(|s| {
         let receipt = crate::api::dispatch_auction_brief(
             s.clone(),
-            WORLDWIDE_DAY,
-            U256::from(10 * PROMIS_LOAD_MINOR),
-            true,
+            crate::api::AuctionBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: U256::from(10 * PROMIS_LOAD_MINOR),
+                is_green: true,
+            },
             NOW,
             crate::api::BriefOverflowPolicy::CarryOver,
         )
@@ -468,9 +472,11 @@ fn dispatch_auction_brief_records_a_red_day() {
     with_storage(|s| {
         let receipt = crate::api::dispatch_auction_brief(
             s.clone(),
-            WORLDWIDE_DAY,
-            U256::from(PROMIS_LOAD_MINOR),
-            false,
+            crate::api::AuctionBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: U256::from(PROMIS_LOAD_MINOR),
+                is_green: false,
+            },
             NOW,
             crate::api::BriefOverflowPolicy::CarryOver,
         )
@@ -491,10 +497,12 @@ fn strict_request_desis_limit_commits_the_exact_green_brief() {
         let digest = crate::ocomp_limits::apply_request_desis_limit(
             s.clone(),
             B256::repeat_byte(0x41),
-            WORLDWIDE_DAY,
-            U256::from(7 * PROMIS_LOAD_MINOR),
+            crate::api::AuctionBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
+                is_green: true,
+            },
             NOW,
-            true,
         )
         .expect("strict request brief");
 
@@ -527,20 +535,24 @@ fn strict_request_desis_limit_propagates_duplicate_refusal_without_overwrite() {
         crate::ocomp_limits::apply_request_desis_limit(
             s.clone(),
             B256::repeat_byte(0x41),
-            WORLDWIDE_DAY,
-            U256::from(7 * PROMIS_LOAD_MINOR),
+            crate::api::AuctionBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
+                is_green: true,
+            },
             NOW,
-            true,
         )
         .unwrap();
 
         assert!(crate::ocomp_limits::apply_request_desis_limit(
             s.clone(),
             B256::repeat_byte(0x41),
-            WORLDWIDE_DAY,
-            U256::from(9 * PROMIS_LOAD_MINOR),
-            NOW,
-            true,
+            crate::api::AuctionBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: U256::from(9 * PROMIS_LOAD_MINOR),
+                is_green: true
+            },
+            NOW
         )
         .is_err());
 
@@ -562,10 +574,12 @@ fn strict_request_desis_limit_rejects_an_oversized_limit_without_state() {
         assert!(crate::ocomp_limits::apply_request_desis_limit(
             s.clone(),
             B256::repeat_byte(0x41),
-            WORLDWIDE_DAY,
-            U256::MAX,
-            NOW,
-            true,
+            crate::api::AuctionBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: U256::MAX,
+                is_green: true
+            },
+            NOW
         )
         .is_err());
 
@@ -618,10 +632,12 @@ fn strict_request_desis_limit_rolls_back_every_partial_write_boundary() {
             crate::ocomp_limits::apply_request_desis_limit(
                 storage,
                 B256::repeat_byte(0x41),
-                WORLDWIDE_DAY,
-                U256::from(7 * PROMIS_LOAD_MINOR),
+                crate::api::AuctionBrief {
+                    worldwide_day: WORLDWIDE_DAY,
+                    desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
+                    is_green: true,
+                },
                 NOW,
-                true,
             )
         });
         assert!(result.is_ok());
@@ -639,10 +655,12 @@ fn strict_request_desis_limit_rolls_back_every_partial_write_boundary() {
             crate::ocomp_limits::apply_request_desis_limit(
                 storage,
                 B256::repeat_byte(0x41),
-                WORLDWIDE_DAY,
-                U256::from(7 * PROMIS_LOAD_MINOR),
+                crate::api::AuctionBrief {
+                    worldwide_day: WORLDWIDE_DAY,
+                    desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
+                    is_green: true,
+                },
                 NOW,
-                true,
             )
         });
         assert!(
@@ -663,10 +681,12 @@ fn strict_request_desis_limit_never_tops_up_a_live_auction() {
         crate::ocomp_limits::apply_request_desis_limit(
             storage.clone(),
             B256::repeat_byte(0x41),
-            WORLDWIDE_DAY,
-            U256::from(7 * LOAD_MINOR),
+            crate::api::AuctionBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: U256::from(7 * LOAD_MINOR),
+                is_green: true,
+            },
             NOW,
-            true,
         )
         .unwrap();
         runtime::schedule_tick(&storage, NOW).unwrap();
@@ -682,10 +702,12 @@ fn strict_request_desis_limit_never_tops_up_a_live_auction() {
         assert!(crate::ocomp_limits::apply_request_desis_limit(
             storage.clone(),
             B256::repeat_byte(0x41),
-            WORLDWIDE_DAY,
-            U256::from(9 * LOAD_MINOR),
-            NOW,
-            true,
+            crate::api::AuctionBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: U256::from(9 * LOAD_MINOR),
+                is_green: true
+            },
+            NOW
         )
         .is_err());
 
@@ -726,22 +748,26 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
         assert_eq!(
             crate::api::dispatch_auction_brief(
                 s.clone(),
-                WORLDWIDE_DAY,
-                U256::from(10 * PROMIS_LOAD_MINOR),
-                true,
+                crate::api::AuctionBrief {
+                    worldwide_day: WORLDWIDE_DAY,
+                    desis_limit_minor: U256::from(10 * PROMIS_LOAD_MINOR),
+                    is_green: true
+                },
                 NOW,
-                crate::api::BriefOverflowPolicy::CarryOver,
+                crate::api::BriefOverflowPolicy::CarryOver
             )
             .unwrap(),
             AuctionBriefReceipt::Accepted
         );
         assert!(crate::api::dispatch_auction_brief(
             s.clone(),
-            WORLDWIDE_DAY,
-            U256::from(7 * PROMIS_LOAD_MINOR),
-            true,
+            crate::api::AuctionBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
+                is_green: true
+            },
             NOW,
-            crate::api::BriefOverflowPolicy::CarryOver,
+            crate::api::BriefOverflowPolicy::CarryOver
         )
         .is_err());
         let contract = s.contract::<DesisContract>();
@@ -771,11 +797,13 @@ fn dispatch_auction_brief_oversized_limit_returns_typed_full_carry_over() {
         assert_eq!(
             crate::api::dispatch_auction_brief(
                 s.clone(),
-                WORLDWIDE_DAY,
-                U256::MAX,
-                true,
+                crate::api::AuctionBrief {
+                    worldwide_day: WORLDWIDE_DAY,
+                    desis_limit_minor: U256::MAX,
+                    is_green: true
+                },
                 NOW,
-                crate::api::BriefOverflowPolicy::CarryOver,
+                crate::api::BriefOverflowPolicy::CarryOver
             )
             .unwrap(),
             AuctionBriefReceipt::RejectedToCarryOver {
@@ -811,11 +839,13 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
         assert_eq!(
             crate::api::dispatch_auction_brief(
                 storage.clone(),
-                WORLDWIDE_DAY,
-                U256::from(u128::MAX),
-                true,
+                crate::api::AuctionBrief {
+                    worldwide_day: WORLDWIDE_DAY,
+                    desis_limit_minor: U256::from(u128::MAX),
+                    is_green: true
+                },
                 NOW,
-                crate::api::BriefOverflowPolicy::CarryOver,
+                crate::api::BriefOverflowPolicy::CarryOver
             )
             .unwrap(),
             AuctionBriefReceipt::Accepted
@@ -828,11 +858,13 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
         assert_eq!(
             crate::api::dispatch_auction_brief(
                 storage.clone(),
-                WORLDWIDE_DAY,
-                supply,
-                true,
+                crate::api::AuctionBrief {
+                    worldwide_day: WORLDWIDE_DAY,
+                    desis_limit_minor: supply,
+                    is_green: true
+                },
                 NOW,
-                crate::api::BriefOverflowPolicy::CarryOver,
+                crate::api::BriefOverflowPolicy::CarryOver
             )
             .unwrap(),
             AuctionBriefReceipt::RejectedToCarryOver {
@@ -864,32 +896,38 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
     StorageHandle::enter(&mut provider, |storage| {
         assert!(crate::api::dispatch_auction_brief(
             storage.clone(),
-            WorldwideDay::new(0),
-            U256::MAX,
-            true,
+            crate::api::AuctionBrief {
+                worldwide_day: WorldwideDay::new(0),
+                desis_limit_minor: U256::MAX,
+                is_green: true
+            },
             NOW,
-            crate::api::BriefOverflowPolicy::CarryOver,
+            crate::api::BriefOverflowPolicy::CarryOver
         )
         .is_err());
 
         brief_at(&storage, WORLDWIDE_DAY, 1, true);
         assert!(crate::api::dispatch_auction_brief(
             storage.clone(),
-            WORLDWIDE_DAY,
-            U256::MAX,
-            true,
+            crate::api::AuctionBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: U256::MAX,
+                is_green: true
+            },
             NOW,
-            crate::api::BriefOverflowPolicy::CarryOver,
+            crate::api::BriefOverflowPolicy::CarryOver
         )
         .is_err());
 
         assert!(crate::api::dispatch_auction_brief(
             storage,
-            NEXT_WORLDWIDE_DAY,
-            U256::MAX,
-            true,
+            crate::api::AuctionBrief {
+                worldwide_day: NEXT_WORLDWIDE_DAY,
+                desis_limit_minor: U256::MAX,
+                is_green: true
+            },
             u64::MAX,
-            crate::api::BriefOverflowPolicy::CarryOver,
+            crate::api::BriefOverflowPolicy::CarryOver
         )
         .is_err());
     });
@@ -905,9 +943,11 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
         let result = StorageHandle::enter(&mut provider, |storage| {
             crate::api::dispatch_auction_brief(
                 storage,
-                WORLDWIDE_DAY,
-                U256::from(7 * PROMIS_LOAD_MINOR),
-                true,
+                crate::api::AuctionBrief {
+                    worldwide_day: WORLDWIDE_DAY,
+                    desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
+                    is_green: true,
+                },
                 NOW,
                 crate::api::BriefOverflowPolicy::CarryOver,
             )
@@ -923,9 +963,11 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
         let result = StorageHandle::enter(&mut provider, |storage| {
             crate::api::dispatch_auction_brief(
                 storage,
-                WORLDWIDE_DAY,
-                U256::from(7 * PROMIS_LOAD_MINOR),
-                true,
+                crate::api::AuctionBrief {
+                    worldwide_day: WORLDWIDE_DAY,
+                    desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
+                    is_green: true,
+                },
                 NOW,
                 crate::api::BriefOverflowPolicy::CarryOver,
             )
@@ -943,9 +985,11 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
     let result = StorageHandle::enter(&mut rejection_provider, |storage| {
         crate::api::dispatch_auction_brief(
             storage,
-            WORLDWIDE_DAY,
-            U256::MAX,
-            true,
+            crate::api::AuctionBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: U256::MAX,
+                is_green: true,
+            },
             NOW,
             crate::api::BriefOverflowPolicy::CarryOver,
         )
@@ -965,11 +1009,13 @@ fn brief_anchor_at(now: u64) -> u64 {
         assert_eq!(
             crate::api::dispatch_auction_brief(
                 s.clone(),
-                WORLDWIDE_DAY,
-                U256::from(LOAD_MINOR),
-                true,
+                crate::api::AuctionBrief {
+                    worldwide_day: WORLDWIDE_DAY,
+                    desis_limit_minor: U256::from(LOAD_MINOR),
+                    is_green: true
+                },
                 now,
-                crate::api::BriefOverflowPolicy::CarryOver,
+                crate::api::BriefOverflowPolicy::CarryOver
             )
             .unwrap(),
             AuctionBriefReceipt::Accepted
@@ -1085,10 +1131,12 @@ fn ocomp_brief_at_now(s: &StorageHandle) {
     crate::ocomp_limits::apply_request_desis_limit(
         s.clone(),
         B256::repeat_byte(0x41),
-        WORLDWIDE_DAY,
-        U256::from(10 * LOAD_MINOR),
+        crate::api::AuctionBrief {
+            worldwide_day: WORLDWIDE_DAY,
+            desis_limit_minor: U256::from(10 * LOAD_MINOR),
+            is_green: true,
+        },
         NOW,
-        true,
     )
     .expect("strict request brief");
 }
@@ -2975,9 +3023,11 @@ fn dispatch_auction_brief_oversized_limit_rejects_under_the_reject_policy() {
     StorageHandle::enter(&mut storage, |s| {
         let error = crate::api::dispatch_auction_brief(
             s.clone(),
-            WORLDWIDE_DAY,
-            U256::MAX,
-            true,
+            crate::api::AuctionBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: U256::MAX,
+                is_green: true,
+            },
             NOW,
             crate::api::BriefOverflowPolicy::Reject,
         )

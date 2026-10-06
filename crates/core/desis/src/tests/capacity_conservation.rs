@@ -55,9 +55,11 @@ fn world(sale: bool) -> HashMapStorageProvider {
         }
         crate::api::dispatch_auction_brief(
             s.clone(),
-            DAY,
-            U256::from(LIMIT),
-            true,
+            crate::api::AuctionBrief {
+                worldwide_day: DAY,
+                desis_limit_minor: U256::from(LIMIT),
+                is_green: true,
+            },
             NOW,
             crate::api::BriefOverflowPolicy::CarryOver,
         )
