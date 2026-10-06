@@ -1128,7 +1128,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   // --- Settlement + Promis (outbe IntexFactory, signed) ----------------------
   server.tool(
-    "auction_bid_settle",
+    "intex_settle",
     "Settlement step 1: pay the strike and turn Issued Intexes into Settled (Promis is mined later via " +
       "intex_promis_mine). Pays in `token`, one of the tokens intex_settlement_tokens lists: the tool " +
       "quotes the units, approves IntexFactory for that cost if the allowance is short, and settles at " +
@@ -1168,6 +1168,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         if (allowance < paymentMinor) {
           const approveData = encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [factory, paymentMinor] });
           const ar = await submit(n, asset, approveData, 0n, true); // must be mined before settle
+          if (ar.status !== "success") throw new Error(`approve ${ar.txHash} for IntexFactory reverted`);
           autoApprove = { txHash: ar.txHash, amount: paymentMinor.toString() };
         }
       }
@@ -1196,7 +1197,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "intex_settlement_tokens",
     "Tokens you can settle a series with and what settling `units` of it costs in each; " +
-      "auction_bid_settle pays that cost in the token you pick. The chain floors the whole " +
+      "intex_settle pays that cost in the token you pick. The chain floors the whole " +
       "operation once, so quote the units you will actually settle. An issuance-currency cost holds " +
       "only until the next whole UTC hour (its `snapshotId` changes then), so settle within that hour " +
       "or quote again.",
@@ -1237,7 +1238,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "intex_promis_mine",
-    "Settlement step 2: burn your Settled Intexes and mine Promis to your own wallet (run auction_bid_settle " +
+    "Settlement step 2: burn your Settled Intexes and mine Promis to your own wallet (run intex_settle " +
       "first). The proof-of-work nonce is computed locally; you give only series and units. Requires OUTBE_PRIVATE_KEY.",
     { series: seriesArg, units: unitsArg, network: networkArg.optional(), wait: waitArg },
     handler(async ({ series, units, network, wait }) => {
