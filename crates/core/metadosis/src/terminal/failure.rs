@@ -175,9 +175,10 @@ fn route_failure(
     } = *settlement;
     let storage = metadosis.storage.clone();
     let credit = PromisLimitContract::new(storage.clone()).checked_add_carry_over(unused_limit)?;
-    // Retirement is deliberately the final compressed-entity mutation. This
-    // function prepares all other failure effects first. If retirement or the
-    // final block seal fails, the enclosing checkpoint rolls them back together.
+    // Carry-over credit precedes retirement, the final compressed-entity mutation.
+    // The failure receipt, outer transition, and event follow retirement.
+    // The enclosing checkpoint makes these effects atomic if retirement or the final block seal
+    // fails.
     let tribute = TributeContract::new(storage).forfeit_sealed_partition(scope, worldwide_day)?;
     metadosis.write_metadosis_failure_receipt(MetadosisFailureReceipt {
         worldwide_day,

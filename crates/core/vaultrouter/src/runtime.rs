@@ -107,9 +107,9 @@ fn ensure_no_pending_crosschain_operations(storage: &StorageHandle<'_>) -> Resul
 // vault management (owner-only)
 // ---------------------------------------------------------------------------
 
-/// `addVault`: register an ownerless `vault` for its underlying asset and ISO
-/// 4217 reference currency. Then grant the router an unlimited allowance so
-/// the vault can pull on deposit.
+/// Register an ownerless `vault` for its underlying asset and ISO 4217 reference currency.
+/// The router grants the vault an unlimited allowance so the vault can transfer assets during
+/// deposits.
 pub fn add_vault(storage: StorageHandle<'_>, sender: Address, vault: Address) -> Result<()> {
     ensure_owner(&storage, sender)?;
     if vault.is_zero() {

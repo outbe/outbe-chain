@@ -99,7 +99,7 @@ impl IntexContract<'_> {
     // Creator-reward: proceeds fan-in (awaiting set, dense swap-pop)
     // ---------------------------------------------------------------------
 
-    /// Append a series to the awaiting-proceeds set (idempotent).
+    /// Append a WorldwideDay to the awaiting-proceeds set (idempotent).
     pub(crate) fn push_awaiting_proceeds(&mut self, worldwide_day: WorldwideDay) -> Result<()> {
         if self.awaiting_proceeds_slot.read(&worldwide_day)? != 0 {
             return Ok(());
@@ -114,7 +114,7 @@ impl IntexContract<'_> {
         Ok(())
     }
 
-    /// Remove a series from the awaiting-proceeds set via swap-remove (idempotent).
+    /// Remove a WorldwideDay from the awaiting-proceeds set via swap-remove (idempotent).
     pub(crate) fn remove_awaiting_proceeds(&mut self, worldwide_day: WorldwideDay) -> Result<()> {
         let slot1 = self.awaiting_proceeds_slot.read(&worldwide_day)?;
         if slot1 == 0 {

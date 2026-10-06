@@ -87,16 +87,16 @@ pub struct Rewards {
     /// of truth for the cap-vs-fees formula at settle time. The emission cap is
     /// six-decimal protocol value while this sum stays raw native COEN:
     ///   `topup = floor((cap * 1e12).saturating_sub(daily_fee_sum_raw) / 1e12)`
-    /// Equals `daily_fees_paid + daily_fee_dust` (invariant).
+    /// `daily_fees_paid` and `daily_fee_dust` have no production writer.
+    /// Do not treat this sum as their total.
     pub daily_fee_sum_raw: Mapping<u32, U256>,
 
-    /// Per-day total fees actually transferred to voters today, computed
-    /// as `floor(fees_raw / voters_count) * voters_count`.
+    /// Per-day fee column with no production writer.
+    /// The column stays zero. Fees are escrowed per block and settle at N+K.
     pub daily_fees_paid: Mapping<u32, U256>,
 
-    /// Per-day fee dust accumulated on `REWARDS_ADDRESS` (the residue
-    /// from per-block split). Burned at settle and credited to Metadosis
-    /// terminal limit.
+    /// Per-day fee-dust column with no production writer.
+    /// The column stays zero. Late settlement handles residue on another path.
     pub daily_fee_dust: Mapping<u32, U256>,
 
     /// Per-(utc_day, voter) participation count for the day. Used to
@@ -118,22 +118,19 @@ pub struct Rewards {
     /// `(finalized_block_hash, voter)`, regardless of replay order.
     pub daily_voter_at: Mapping<u32, Mapping<u32, Address>>,
 
-    /// Per-day guard that the day has been settled exactly once.
-    /// Settle is gated on `max_observed_finalized_day > D` so late
-    /// metadata for an already-settled day is rejected as fatal.
+    /// Per-day marker that Cycle settled the day once.
+    /// Settlement is gated by `day_participation_complete`.
+    /// `on_finalized_metadata` does not reject late metadata for a settled day.
     pub daily_settled: Mapping<u32, bool>,
 
     /// Highest UTC day observed among processed finalized blocks
-    /// (yyyymmdd, 0 = uninit). It gates the daily Cycle handler in
-    /// `outbe-cycle`. A day D is settle-eligible only when at least one
-    /// finalized block from a strictly later UTC day was observed. Then we
-    /// are certain that no further metadata for D will arrive.
+    /// (yyyymmdd, 0 = uninit). The hook writes it. No reader uses it as a gate.
+    /// It does not decide whether a day can settle.
     pub max_observed_finalized_day: Slot<u32>,
 
-    /// Last UTC day successfully settled by `RewardsLifecycle`
-    /// (yyyymmdd, 0 = uninit). Initialized lazily on the first observed
-    /// finalized day to `previous_date_key(fb_day)`, so the first
-    /// eligible day is exactly the first observed finalized day.
+    /// UTC day written once on the first finalized day observed
+    /// (yyyymmdd, 0 = uninit). The hook sets it to `previous_date_key(fb_day)`
+    /// and does not advance it again. `RewardsLifecycle` does not settle from it.
     pub last_settled_utc_day: Slot<u32>,
 
     /// Per-finalized-block guard: cap/fees-raw from this block already
@@ -142,17 +139,14 @@ pub struct Rewards {
     pub block_metadata_counted: Mapping<B256, bool>,
 
     /// Per-finalized-block fingerprint guard. The fingerprint is
-    /// `keccak256("OUTBE_METADATA_FINGERPRINT_V1" || canonical-encoded
-    /// metadata economic fields)`. The same fingerprint observed twice for
-    /// the same `fb_hash` is a replay no-op. A different fingerprint for
-    /// the same `fb_hash` is fatal (contradictory metadata for the same
-    /// finalized block is a protocol violation).
+    /// `keccak256("OUTBE_METADATA_FINGERPRINT_V3" || canonical-encoded
+    /// metadata economic fields)`. The same fingerprint twice for the same
+    /// `fb_hash` is a replay no-op. A different fingerprint returns `Revert`.
+    /// CertifiedParentAccounting rejects the block on that revert.
     pub metadata_fingerprint_for_block: Mapping<B256, B256>,
 
-    /// Per-finalized-block guard: fee dust from this block already
-    /// accumulated into `daily_fee_dust`. Separate from
-    /// `block_metadata_counted` so per-voter and per-block dust paths
-    /// have independent short-circuits.
+    /// Per-finalized-block flag with no production writer.
+    /// The prune ring still clears it. It does not guard a dust write.
     pub fee_dust_counted_for_block: Mapping<B256, bool>,
 
     /// Completion guard for actual Gem delivery. A prepared pending batch keeps
@@ -279,7 +273,8 @@ pub struct Rewards {
     pub pending_reward_day: Mapping<B256, u32>,
 
     /// Last inclusion-window close height for each day's finalized blocks.
-    /// Cycle runs before late credits, so preparation requires a later height.
+    /// LateFinalizeCredits runs before CycleTick in the same block.
+    /// Preparation still requires a height above this close.
     pub daily_last_window_close: Mapping<u32, u64>,
 
     /// Native late-settlement residue below one protocol unit, carried to the next settlement.

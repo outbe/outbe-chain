@@ -75,7 +75,7 @@ impl Mailbox {
 
     /// Returns `Err(FinalizationMailboxClosed)` if the actor has exited.
     /// Caller (see `OutbeReporter::handle_finalization`) MUST log and
-    /// increment the `consensus_finalization_dropped{reason="mailbox_closed"}`
+    /// increment the `outbe_finalization_dropped_total{reason="mailbox_closed"}`
     /// metric on Err.
     pub fn notify_finalized(&self, f: Finalized) -> Result<(), FinalizationMailboxClosed> {
         self.inner

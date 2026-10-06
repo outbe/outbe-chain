@@ -11,8 +11,8 @@ use std::fmt;
 
 use crate::errors::IntexError;
 
-/// Series lifecycle state. `Issued -> Called -> Expired`, where `Expired` means
-/// the call window closed.
+/// Series lifecycle state: `Issued -> Called -> Expired`.
+/// A Called series becomes Expired after its notice-period deadline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum IntexState {
@@ -314,7 +314,7 @@ pub struct CertifiedPayoutRound {
     pub active: u8,
 }
 
-/// Constant-size certified contributor authority for one Intex series.
+/// Constant-size certified contributor authority for one WorldwideDay.
 ///
 /// Contributor bodies remain in authenticated result chunks. Activation stores
 /// only the proof root and exact aggregate scalars.

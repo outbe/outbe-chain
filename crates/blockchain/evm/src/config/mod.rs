@@ -105,7 +105,8 @@ impl OutbeEvmConfig {
     /// EVERY `OutbeEvmConfig` constructor calls this function, so the binding is
     /// live no matter which constructor the running node uses. The offline reth
     /// subcommands use `new_with_bridge`. The live validator and full node use
-    /// `new_with_bridge_and_summary_provider` / `new_with_provider_only` via
+    /// `new_with_bridge_and_summary_provider` /
+    /// `new_with_provider_and_runtime_body_readers` via
     /// [`OutbeExecutorBuilder::build_evm`]. Previously only `::new` installed it,
     /// but production never builds via `::new`. As a result, `consensus_chain_id()`
     /// stayed at its default `0`, and the signing namespace collapsed to
@@ -269,10 +270,11 @@ impl OutbeEvmConfig {
     /// Full-node constructor. Installs an
     /// [`AccountedParentArtifactProvider`] backed solely by a Reth
     /// [`reth_provider::HeaderProvider`] (no consensus bridge / proof cache).
-    /// `OutbeExecutorBuilder` uses it when the node runs without a consensus
-    /// bridge, e.g. a full node that syncs the chain. Without this path, the
+    /// It installs no runtime body readers. `OutbeExecutorBuilder` does not use
+    /// it. The no-bridge production path uses
+    /// `new_with_provider_and_runtime_body_readers`. Without a provider, the
     /// executor's Phase 1 lookup would fail with "missing provider" on every
-    /// block. Full nodes would then be unable to re-execute the chain.
+    /// block.
     pub fn new_with_provider_only(
         chain_spec: Arc<ChainSpec<OutbeHeader>>,
         accounted_parent_artifact_provider: Arc<dyn AccountedParentArtifactProvider>,

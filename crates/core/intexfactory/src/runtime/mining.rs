@@ -6,8 +6,8 @@ pub struct MiningProof {
     pub auth: outbe_promisfactory::api::ModifyAuth,
 }
 
-/// minePromis: PoW-gated burn of Settled then mint of Promis. `owner` is the
-/// caller.
+/// Burn Settled Intex and mint Promis with PoW and the owner's modify-key authorization.
+/// `owner` comes from calldata. Any sender can submit the authorized request.
 pub fn mine_promis(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,

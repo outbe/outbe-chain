@@ -5,7 +5,7 @@
 //! - `precompile.rs` - ABI dispatch.
 //! - `api.rs` - public cross-module surface used by the Cycle handler.
 //! - `finalized_metadata_hook.rs` - per-finalized-block hook called from
-//!   the executor's post-exec block.
+//!   the begin-zone CertifiedParentAccounting phase.
 //!
 //! Day-boundary settle was removed from this crate (Phase
 //! 6 of the Cycle epic). Daily emission orchestration now lives in

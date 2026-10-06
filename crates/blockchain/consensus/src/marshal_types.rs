@@ -46,7 +46,8 @@ pub type MarshalActor<E> = marshal::core::Actor<
 
 /// Follower marshal actor. It is identical to [`MarshalActor`] but keyed by
 /// [`FollowerEpocher`](crate::follow::FollowerEpocher), whose epoch boundaries
-/// match outbe's on-chain committee-epoch boundaries (`[E*L+1, (E+1)*L]`). A
+/// match outbe's on-chain committee-epoch boundaries. The epocher takes these
+/// bounds from observed activation heights, not from a fixed formula. A
 /// follower verifies EVERY block through the marshal's resolver-delivery path,
 /// which asserts `finalization.epoch() == epocher.containing(height)`. Only the
 /// follower epocher makes that hold at boundary blocks (see `follow::epocher`).

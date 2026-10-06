@@ -106,7 +106,9 @@ pub enum CanaryTickOutcome {
     /// (pre-DKG) - not a failure.
     OfferKeyNotReady,
     /// The probe failed. `unreachable` = transport-level (connect/socket/session
-    /// revoked) as opposed to a bad answer.
+    /// revoked) as opposed to a bad answer. One stage-dependent exception: an
+    /// `EnclaveError` answer to the `GetPublicKeys` stage also counts as
+    /// `unreachable`. In the canary decrypt stage it does not.
     Failure { unreachable: bool, reason: String },
 }
 
@@ -212,8 +214,8 @@ struct CanaryWorkerState<'a> {
 impl CanaryWorkerState<'_> {
     fn skip_in_flight(&mut self) -> bool {
         if self.in_flight.load(Ordering::Acquire) {
-            // A previous probe is still blocked (wedged enclave holding the
-            // session mutex). Never stack a second one. Degrade by staleness.
+            // A previous probe is still blocked on its own canary connection
+            // (wedged enclave). Never stack a second one. Degrade by staleness.
             *self.skipped = self.skipped.saturating_add(1);
             if *self.skipped >= STUCK_SKIPPED_TICKS {
                 self.snapshot.state = TeeEnclaveHealthState::Unavailable;

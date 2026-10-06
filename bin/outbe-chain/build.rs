@@ -8,7 +8,7 @@
 //! It collects everything at build time and exposes it through
 //! `cargo:rustc-env`.
 //!
-//! Exported `cargo:rustc-env` variables, consumed by `main.rs`:
+//! Exported `cargo:rustc-env` variables, consumed by `cli/version.rs`:
 //!
 //! - `OUTBE_SHORT_VERSION`     `<pkg-version><-dev?> (<sha8>)`
 //! - `OUTBE_LONG_VERSION_<0..>` five-line block: Version / Commit SHA /
@@ -54,9 +54,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let version_suffix = if is_dirty || not_on_tag { "-dev" } else { "" };
 
     // Cargo collapses custom release-like profiles back to "release" in the
-    // `PROFILE` env var. The third-from-last `OUT_DIR` segment preserves the
-    // real profile name (e.g. "maxperf"), which matches the convention used
-    // by reth-node-core and kona-node.
+    // `PROFILE` env var. `OUT_DIR` is `target/<profile>/build/<pkg-hash>/out`.
+    // Its fourth-from-last segment keeps the real profile name (e.g. "maxperf").
+    // reth-node-core and kona-node use the same convention.
     let out_dir = env::var("OUT_DIR")?;
     let profile = out_dir
         .rsplit(std::path::MAIN_SEPARATOR)

@@ -567,8 +567,9 @@ impl OutbeReporter {
 
     /// Handle an `Activity::Certification(notarization)` event from the Simplex
     /// engine: verify the notarization certificate, build a
-    /// [`CertifiedParentProofRecord`] with `proof_type = CertifiedNotarization`,
-    /// and persist it to the certified-parent proof store.
+    /// [`CertifiedParentProofRecord`] with `kind = ProofKind::CertifiedNotarization`,
+    /// and enqueue it to the `FinalizationActor`. The actor writes it to the
+    /// certified-parent proof store.
     ///
     /// Verify-before-write is the test contract
     /// `proof_store_ingestion_verifies_certification_activity_before_write`.
@@ -595,7 +596,7 @@ impl OutbeReporter {
 
         // Step 2 - derive V2 canonical fields. This step populates
         // `committee_set_hash_v2` and `vrf_material_version` here so the V2
-        // selector can read them directly via `get_best_parent_proof` without
+        // selector can read them directly via `get_best_for_parent` without
         // recomputing from the encoded blob.
         //
         // The canonical (PLAN A4) formula binds the **full** committee snapshot
@@ -629,9 +630,9 @@ impl OutbeReporter {
         };
         let signer_bitmap = self.build_signer_bitmap(&notarization.certificate);
         let encoded_proof: Bytes = notarization.encode().into();
-        // The notarization carries no block-number context. Store `0` so this
-        // record can serve as an exact-key local witness. But the Phase 1
-        // selector will not promote it without a real block number. Use the
+        // The notarization carries no block-number context. Thus the record
+        // kind is `ProofKind::CertifiedNotarization`, which has no block number.
+        // `witness_sink` sets the exact-key local witness mark. Use the
         // proposal view as a monotone retention proxy so the age-based prune in
         // `actor.rs` keeps the slot bounded.
         let view = notarization.proposal.round.view().get();
@@ -732,8 +733,9 @@ impl OutbeReporter {
     ///
     /// Important: this is an event list, not a deduplicated validator set.
     /// The same address may appear multiple times if the same proposer missed
-    /// multiple distinct views in a row. Post-execution slashing should
-    /// account for each missed view separately.
+    /// multiple distinct views in a row. No production path reads this list.
+    /// It does not feed the Phase 1 system transaction or slashing. The V2
+    /// verifier requires an empty `missed_proposers` list in Phase 1 metadata.
     fn detect_missed_proposers(&self, current_view: u64) -> Vec<Address> {
         let last_finalized_view = self.view_state.last_finalized_view();
         if last_finalized_view == 0 || current_view <= last_finalized_view + 1 {
@@ -743,8 +745,9 @@ impl OutbeReporter {
         let gap = current_view - last_finalized_view - 1;
 
         // Single source of truth for the view-gap election sequence. The
-        // verify-side recompute in `finalization::util` shares it, so proposer
-        // and validator never disagree on who was the expected leader.
+        // verify-side recompute in
+        // `finalization::attestation::canonical_missed_proposers` shares it, so
+        // both sides elect the same expected leader.
         let leaders = crate::missed_proposers::elected_leaders_for_gap(
             self.epoch,
             &self.elector,

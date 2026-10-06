@@ -106,7 +106,7 @@ pub const PAGE_CACHE_SIZE: usize = 32 * 1024 * 1024;
 // live here and not inside the handler implementation module.
 // ---------------------------------------------------------------------------
 
-/// Maximum retry attempts for marshal block resolution before structured application failure.
+/// Maximum attempts for marshal block resolution in one finalization retry cycle.
 pub const FINALIZE_MAX_RETRIES: u32 = 5;
 /// Delay between retry attempts for marshal block resolution.
 pub const FINALIZE_RETRY_DELAY: Duration = Duration::from_secs(2);
@@ -116,12 +116,11 @@ pub const VERIFY_RESOLUTION_TIMEOUT: Duration = DEFAULT_PEER_RESPONSE_TIMEOUT;
 pub const PROPOSE_RESOLUTION_TIMEOUT: Duration = DEFAULT_PEER_RESPONSE_TIMEOUT;
 /// Per-attempt time budget for marshal block resolution during finalization.
 ///
-/// Without this bound, a `subscribe_by_digest` waiter that never completes can
-/// wedge the serial event loop of the application handler. The wedged loop blocks
-/// propose/verify indefinitely (see `retry_with_backoff` comment for the wedge
-/// mechanism).
-/// Exhaustion is surfaced as a structured application failure, not a direct
-/// process kill from inside the handler.
+/// `FinalizationActor` uses this bound. Without it, a `subscribe_by_digest`
+/// waiter that never completes can hold one attempt forever, and finalization
+/// cannot advance. With the bound, the attempt times out and the next attempt
+/// starts. An exhausted retry cycle records a stall metric, and the actor
+/// starts a new cycle. It does not return a fatal error.
 pub const FINALIZE_RESOLUTION_TIMEOUT: Duration = Duration::from_secs(10);
 
 // ---------------------------------------------------------------------------

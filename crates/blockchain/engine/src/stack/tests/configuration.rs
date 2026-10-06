@@ -241,7 +241,7 @@ fn dotted_label_is_rejected_by_commonware_validate_label() {
 // ---------------------------------------------------------------------------
 
 /// commonware 2026.5.0 `marshal::core::Actor::init` returns `Option<Height>`;
-/// stack.rs maps `None` (no durable consensus finalization) -> `Height::zero()`
+/// `stack::startup` maps `None` (no durable consensus finalization) -> `Height::zero()`
 /// (fresh genesis) and `Some(N)` -> `N`. A mis-mapped `None` (e.g.
 /// `unwrap_or(nonzero)`) would compile clean but reset a restarted node toward
 /// genesis. This pins the mapping contract.

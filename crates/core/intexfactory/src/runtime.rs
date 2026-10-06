@@ -31,11 +31,9 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
     storage.emit_event(INTEX_FACTORY_ADDRESS, event.encode_log_data())
 }
 
-/// Capture series identity in Intex, enroll it in the call-price bin index, and send
-/// ISSUANCE_INSTRUCTIONS to every target chain of the day's snapshot. The
-/// canonical IntexNFT1155 createSeries now arrives per chain via the ISSUANCE
-/// broadcast. This includes a loopback leg on the origin. So there is no
-/// in-process NFT call here.
+/// Record the series identity and call-price bin, then arm the day's proceeds fan-in.
+/// Return issuance legs for the caller to broadcast through `send_issuance`.
+/// The broadcast creates IntexNFT1155 series on each target chain, including the origin.
 pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<IssuanceLeg>> {
     if params.issued_units == 0 {
         // Whether the day distributes is the caller's decision: one empty group

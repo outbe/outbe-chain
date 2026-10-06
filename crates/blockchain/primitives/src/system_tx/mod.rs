@@ -37,8 +37,12 @@
 //! - reserved-address transactions outside the contiguous system zones
 //! - wrong-zone or out-of-order system tx kinds
 //!
-//! [`validate_active_system_tx_set`] performs the separate membership check for
-//! a concrete block number and BoundaryOutcome presence.
+//! [`validate_system_tx_set_for_activation`] performs the separate membership
+//! check for a concrete block number, BoundaryOutcome and TeeBootstrap presence,
+//! and the OCOMP lifecycle activation. The node uses it through
+//! `binding::validate_system_layout`. [`validate_active_system_tx_set`] fixes
+//! the activation to `Disabled`, so it rejects every block that carries the
+//! OCOMP phases.
 
 use crate::error::PrecompileError;
 
@@ -115,7 +119,9 @@ pub const MAX_SYSTEM_TXS_PER_BLOCK: u8 = 16;
 /// (`CertifiedParentAccounting`). Block `n` runs Phase 1 in pre-execution iff
 /// `n >= GENESIS_BOOTSTRAP_BLOCK_NUMBER + 1`. This constant is `1`, so
 /// Phase 1 begins at block `2`. Block `1` still carries the genesis
-/// `BoundaryOutcome` as its first begin-zone system transaction.
+/// `BoundaryOutcome` as a begin-zone system transaction. It comes after
+/// `OcompLifecycleBegin` (when the OCOMP lifecycle is active), `CycleTick`, and
+/// `RewardsGemDelivery`.
 pub const GENESIS_BOOTSTRAP_BLOCK_NUMBER: u64 = 1;
 
 /// Consensus gas limit for the evidence-heavy one-time block-1 bootstrap.

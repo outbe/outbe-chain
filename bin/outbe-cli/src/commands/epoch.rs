@@ -268,7 +268,9 @@ async fn transitions(client: &(impl Rpc + Sync), limit: usize) -> Result<()> {
                 at_height
             );
         }
-        // Skip EpochTransition and ConsensusSetUpdated - those are in `history`
+        // This loop skips all other ValidatorSet events. `history` shows
+        // `EpochTransition`. No command shows `ConsensusSetUpdated`,
+        // `ValidatorJailed` or `ValidatorUnjailed`.
     }
 
     Ok(())

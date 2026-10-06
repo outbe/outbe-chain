@@ -72,8 +72,8 @@ pub fn record_certified_parent_finality(
     Ok(true)
 }
 
-/// Runs the exact begin-zone expiry key. No WorldwideDay or job scan is
-/// permitted on this path.
+/// Process begin-zone expiry, including missed lifecycle boundaries.
+/// This path scans live jobs and validates the bounded WorldwideDay aggregate.
 pub fn run_lifecycle_begin_with_scope(
     ctx: &BlockRuntimeContext<'_>,
     scope: &ExecutionScope,

@@ -1,7 +1,7 @@
 //! ABI dispatch for the Desis precompile at `DESIS_ADDRESS`.
 //!
-//! Routes bid ingestion and clearing calls from OriginRouter to the
-//! runtime. Encoding only. All logic lives in `runtime.rs`.
+//! OriginRouter submits bids through this ABI. The Cycle `tick_gate` hook owns clearing.
+//! The runtime owns the protocol logic.
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};

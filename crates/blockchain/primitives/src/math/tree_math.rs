@@ -12,8 +12,9 @@
 //! Each set leaf bit identifies a non-empty bin. A typical consumer walks
 //! set bits in ascending order via [`find_first_left_inclusive`], processes
 //! the bins at or below some threshold, then clears the bits via [`remove`].
-//! Worst case per traversal step: 3 SLOAD (one per level), no loops at any
-//! level. This is the same big-O as Solidity LB.
+//! Worst case per traversal step: 5 storage reads (leaf, mid, root, then the
+//! mid and the leaf on the descent). There are no loops at any level. This is
+//! the same big-O as Solidity LB.
 
 use alloy_primitives::U256;
 

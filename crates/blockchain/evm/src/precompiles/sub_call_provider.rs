@@ -21,9 +21,14 @@ use std::sync::Arc;
 /// Precompile provider for the borrow-mode sub-call `Evm`
 /// (`CTX = &mut EthEvmContext<DB>`), used by [`crate::sub_call`].
 ///
-/// Mirrors the top-level [`alloy_evm::precompiles::PrecompilesMap`] semantics, so a sub-call to
-/// any outbe precompile behaves exactly like a top-level call. Outbe stateful
-/// precompiles dispatch through [`outbe_ctx_dispatch`]. Everything else
+/// Mirrors the top-level [`alloy_evm::precompiles::PrecompilesMap`] dispatch path.
+/// Outbe stateful precompiles dispatch through [`outbe_ctx_dispatch`]. The
+/// runtime inputs are not identical to a top-level call:
+/// - the nested dispatch carries no OCOMP fork install (`ocomp_fork_install: None`).
+/// - the TEE attestation ChainSpec state comes from the sub-call execution
+///   context. `CtxStorageProvider::sub_call` builds that context as `Unbound`.
+///
+/// Everything else
 /// (Ethereum precompiles `0x01..0x0a`, ordinary contract calls) falls back to
 /// the standard [`EthPrecompiles`].
 pub(crate) struct OutbeSubCallPrecompiles<DB> {

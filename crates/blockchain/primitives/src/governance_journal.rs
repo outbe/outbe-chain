@@ -11,8 +11,9 @@
 //! The journal is **best-effort** observability. A write that fails (disk
 //! full, permission error, file unwritable) emits a `tracing::warn!`, and
 //! the runtime drops it. Failed writes never block the consensus /
-//! state-transition path that produced them. Determinism is unaffected: the journal is a side
-//! effect identical on every node, and absence of the journal does not
+//! state-transition path that produced them. Determinism is unaffected because
+//! the journal is off-chain. Its content is not identical on every node: each
+//! record carries the local wall-clock time. Absence of the journal does not
 //! change the on-chain state.
 //!
 //! ## Initialization

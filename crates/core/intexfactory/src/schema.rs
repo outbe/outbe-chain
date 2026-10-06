@@ -52,8 +52,8 @@ pub struct IntexFactoryContract {
     #[attribute(order = 10)]
     pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
 
-    // Registry index the call scan resumes at, so a currency that exhausts the shared
-    // budget cannot starve the ones behind it.
+    // ISO 4217 code where the call scan resumes. This cursor prevents a currency
+    // that exhausts the shared budget from starving later currencies.
     #[attribute(order = 13)]
     pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
 

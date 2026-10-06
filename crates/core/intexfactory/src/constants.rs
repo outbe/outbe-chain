@@ -19,7 +19,7 @@ pub const PROCEEDS_TEST_SENDER: Address = address!("0xf39Fd6e51aad88F6F4ce6aB882
 /// cases, creators receive a single payment.
 pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 
-/// Bin step (basis points) for the floor-price bin ladder.
+/// Bin step in basis points for the call-price index.
 pub const BIN_STEP_BP: u16 = 25;
 
 /// Work one lifecycle scan may do: a decision reads a group, an action writes one

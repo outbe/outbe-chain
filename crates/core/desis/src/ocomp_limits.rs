@@ -1,8 +1,8 @@
 //! Strict OCOMP request-phase ownership boundary for Desis.
 //!
-//! The legacy cross-module API is deliberately best-effort because it is used
-//! from a block hook. OCOMP request application instead needs an atomic,
-//! fail-closed owner write whose exact input the request receipt can commit.
+//! Both settlement and OCOMP use the checkpointed `dispatch_auction_brief` API.
+//! OCOMP rejects overflow so the request receipt commits the exact accepted input.
+//! Both paths propagate technical and invariant failures.
 
 use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::receipts::desis_request_brief_hash;

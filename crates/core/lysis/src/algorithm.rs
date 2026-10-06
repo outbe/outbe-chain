@@ -13,8 +13,8 @@ pub(crate) const fn u256_from_u128(v: u128) -> U256 {
     U256::from_limbs([v as u64, (v >> 64) as u64, 0, 0])
 }
 
-/// Policy parameters (fixed-point, denominator = 1000).
-/// a=0.2 -> 200/1000, b=0.1 -> 100/1000, c=0.2 -> 200/1000
+/// Policy A selects a fifth root. Policy B selects a tenth root.
+/// Policy C uses the six-decimal `SCALE`.
 const POLICY_A_NUM: u32 = 1;
 const POLICY_A_DEN: u32 = 5; // a = 1/5 -> x^(1/5)
 const POLICY_B_NUM: u32 = 1;
@@ -177,8 +177,8 @@ fn compute_moments_fp(y_fp: &[U256], tau: &[U256]) -> MomentsFp {
     // Ensure last = SCALE
     *y_cum.last_mut().unwrap() = SCALE;
 
-    // E[Y] and E[Y^2]. Intermediates fit in U256: m, y_cum <= SCALE ~= 2^60, so
-    // `m * y * y` <= 2^180 - well under U256::MAX.
+    // E[Y] and E[Y^2]. Each factor is at most SCALE = 10^6.
+    // Thus `m * y * y` is at most 10^18, below 2^60 and U256::MAX.
     let mut ey = U256::ZERO;
     let mut ey2 = U256::ZERO;
     for i in 0..m.len() {
@@ -252,8 +252,8 @@ pub fn calc_fraction_distribution_fp(
 
     // Signed I256 arithmetic throughout - no intermediate scale-down.
     // All unsigned inputs are <= SCALE (10^6), far under I256::MAX (~5.8*10^76),
-    // so try_from conversions cannot fail in practice. We still return a
-    // structured Fatal instead of panicking per CLAUDE.md rules.
+    // so try_from conversions cannot fail in practice. Conversion overflow
+    // returns `PrecompileError::Revert` rather than causing a panic.
     let f_over_fmax = (f_fp * SCALE).checked_div(fmax_fp).unwrap_or(U256::ZERO);
     let scale_i = u256_to_i256(SCALE)?;
     let ey_i = u256_to_i256(moments.ey)?;
@@ -289,13 +289,10 @@ pub fn calc_fraction_distribution_fp(
         };
     }
 
-    // Normalize f1 so weighted expenditure does not exceed f_fp.
-    // Raw algorithm output can have `sum(f1[i] * y_fp[i]) / SCALE > f_fp` because
-    // the per-group distribution doesn't enforce a limit-preserving invariant
-    // on its own. Scale down proportionally (monotone, preserves ratios, never
-    // rounds up). With this scaling, the downstream
-    // `gratis_load = fraction * nominal / SCALE` in `lysis::runtime` cannot
-    // overspend the allocation and silently skip the tail of the tribute list.
+    // Raw output can exceed the allocation: `sum(f1[i] * y_fp[i]) / SCALE > f_fp`.
+    // Proportional normalization preserves ratios and never increases fractions.
+    // `program_v1::execute::calculate_gratis_load` then uses `fraction * nominal / SCALE`.
+    // This bound prevents overspending and omission of the tribute list's tail.
     let weighted_total: U256 = f1
         .iter()
         .zip(y_fp.iter())

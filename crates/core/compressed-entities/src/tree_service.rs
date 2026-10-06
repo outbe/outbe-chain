@@ -314,10 +314,6 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
             if state.catalog_tree.is_some() {
                 self.ensure_collection(&mut state, domain, key)?;
             } else {
-                // `prepare_seal` consumes the mutable catalog session. Root
-                // capabilities are issued only after that point, so verify an
-                // untouched collection through a fresh read-only tree over the
-                // same exact-parent MDBX snapshot.
                 let catalog_root = TreeRoot::from_be_bytes(self.view.catalog_root().0)
                     .map_err(|error| tree_corruption(error.to_string()))?;
                 let catalog_store = StagingCkbStore::new(

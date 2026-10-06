@@ -4,7 +4,7 @@
 //! - `schema.rs` - storage schema and records.
 //! - `state.rs` - proposal/vote CRUD and indexes.
 //! - `runtime.rs` - validator-gated proposal/voting logic.
-//! - `precompile.rs` - ABI boundary placeholder.
+//! - `precompile.rs` - live ABI dispatch for proposals and votes.
 //! - `lifecycle.rs` - begin-block tally entrypoint.
 //! - `events.rs` - domain event payloads used by runtime/precompile wiring.
 

@@ -1,14 +1,14 @@
 //! V2 Phase 1 accounting-progress reader trait.
 //!
-//! Cycle and Rewards both need to observe one value. This value is the highest
-//! block number whose Phase 1 (`CertifiedParentAccounting`) system tx has
-//! successfully committed progress to the `ACCOUNTING_PROGRESS_ADDRESS`
-//! storage slot. This trait is the read-only surface they consume. The writer is
+//! Cycle needs to observe one value. This value is the highest block number
+//! whose Phase 1 (`CertifiedParentAccounting`) system tx has successfully
+//! committed progress to the `ACCOUNTING_PROGRESS_ADDRESS` storage slot. This
+//! trait is the read-only surface that Cycle consumes. The writer is
 //! `outbe_accounting`'s Phase 1 runtime helper, and only the V2 executor path invokes it.
 //!
 //! The trait lives in `outbe-primitives` (not `outbe-accounting`) so Cycle
-//! and Rewards can depend on the contract without taking a dependency edge
-//! on the writer crate.
+//! can depend on the contract without taking a dependency edge on the writer
+//! crate.
 
 use crate::error::Result;
 

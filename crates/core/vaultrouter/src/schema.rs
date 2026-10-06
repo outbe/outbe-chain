@@ -146,7 +146,7 @@ pub struct VaultRouterContract {
     #[attribute(order = 22)]
     pub vault_reference_currencies: outbe_primitives::storage::dsl::Map<Address, u16>,
 
-    /// slot 26: monotonic nonce mixed into reservation ids.
+    /// slot 26: monotonic nonce used directly as the reservation id.
     #[attribute(order = 23)]
     pub reservation_nonce: outbe_primitives::storage::dsl::Value<U256>,
 

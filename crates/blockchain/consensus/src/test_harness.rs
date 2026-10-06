@@ -7,16 +7,18 @@
 //!   peer fabric. It has the same shape as the production authenticated::lookup
 //!   network, as seen from outside the engine.
 //! - Per-node `Muxer::new(...)` over each of three physical channels
-//!   (vote=0, cert=1, res=2). **No `.with_backup()`**. This matches
-//!   production's stack.rs:516-534.
+//!   (vote=0, cert=1, res=2). **No `.with_backup()`**. This matches the
+//!   production muxers that `outbe-engine` creates in
+//!   `stack::epoch::transport::start_transport`.
 //! - `HybridScheme::<MinSig>::signer(...)` from outbe-consensus' own
 //!   `crate::hybrid` module. This is the actual signer construction.
 //! - `simplex::Engine::new(...)` driven by `RoundRobin` elector with
 //!   leader = `(epoch + view) % n`.
 //! - The harness invokes `crate::epoch_subchannels::register_epoch_subchannels`
 //!   and `crate::epoch_subchannels::take_or_register_current`. Production
-//!   calls these exact functions in stack.rs: the first at DKG completion,
-//!   the second at the top of `'epoch_loop`. Toggling
+//!   (`outbe-engine`) calls these exact functions: the first at DKG completion
+//!   (`stack::epoch::completion`), the second at the top of `'epoch_loop`
+//!   (`stack::epoch::supervisor`). Toggling
 //!   `CycleOptions::use_pre_registration` switches between the
 //!   pre-fix lazy path and the post-fix pre-register path.
 //!

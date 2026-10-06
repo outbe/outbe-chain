@@ -39,9 +39,9 @@ pub fn distribute(
     try_settle_proceeds(storage, worldwide_day, now)
 }
 
-/// Open the payout round for a series if its proceeds fan-in is satisfied
-/// (all winning chains in) or its deadline has passed. Idempotent, so repeated
-/// arrivals and the begin-block sweep can both call it safely.
+/// Open one payout round for the WorldwideDay when all winning chains report proceeds or the
+/// deadline passes.
+/// Repeated arrivals and the begin-block sweep can both call this idempotent operation.
 pub(crate) fn try_settle_proceeds(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,
@@ -290,10 +290,9 @@ fn decode_contributor_leaf(
     }
 }
 
-/// Begin-block sweep: settle every series whose proceeds fan-in deadline has
-/// passed. The set holds one entry per day and releases it once its deadline is
-/// out, so a whole pass is a handful of reads. Each series runs in its own
-/// checkpoint so one failure is retried next block instead of halting the block.
+/// Settle each WorldwideDay whose proceeds deadline passes.
+/// Each day has a separate checkpoint. Propagating failures reject the block.
+/// Other failures leave the day for a later sweep.
 pub(crate) fn sweep_proceeds_deadlines(storage: &StorageHandle<'_>, now: u64) -> Result<()> {
     let count = outbe_intex::api::awaiting_proceeds_count(storage)?;
     // Read the set before settling: settling swap-removes from it.
@@ -313,7 +312,7 @@ pub(crate) fn sweep_proceeds_deadlines(storage: &StorageHandle<'_>, now: u64) ->
     Ok(())
 }
 
-/// Burn the ownerless proceeds of a series with no recorded contributors:
+/// Burn the ownerless proceeds of a WorldwideDay with no recorded contributors:
 /// destroy the native COEN held by the factory, reducing total supply.
 fn burn_ownerless_proceeds(
     storage: &StorageHandle<'_>,

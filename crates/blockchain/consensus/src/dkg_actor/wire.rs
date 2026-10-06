@@ -118,7 +118,8 @@ impl From<Error> for DkgMessageReadError {
 /// Three message types:
 /// - `DealerBundle`: dealer sends polynomial commitment + private share to a player
 /// - `Ack`: player sends acknowledgment back to dealer
-/// - `FinalizedLog`: dealer broadcasts finalized log to all (initial ceremony only)
+/// - `FinalizedLog`: dealer broadcasts finalized log to all. The initial ceremony
+///   records it. In a reshare, receivers forward it as a proposal candidate.
 #[derive(Clone, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum DkgMessage {
@@ -133,7 +134,8 @@ pub enum DkgMessage {
         ceremony_id: DkgCeremonyId,
         ack: PlayerAck<bls12381::PublicKey>,
     },
-    /// Dealer -> All: finalized dealer log (broadcast in initial ceremony).
+    /// Dealer -> All: finalized dealer log (broadcast in the initial ceremony
+    /// and in reshares).
     FinalizedLog {
         ceremony_id: DkgCeremonyId,
         signed_log: SignedDealerLog<MinSig, bls12381::PrivateKey>,

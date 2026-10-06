@@ -1,7 +1,8 @@
-/// Vote voting window in blocks.
+/// Compile-time default for the governance voting window, in blocks.
 ///
-/// Current placeholder follows the existing update implementation. This is a
-/// consensus constant and should only change through a hardfork.
+/// Runtime reads `get_governance_voting_window_blocks`.
+/// That getter can override this default.
+/// Tests are the only users of this constant.
 pub const VOTING_WINDOW_BLOCKS: u64 =
     outbe_chain_constants::DEFAULT_GOVERNANCE_VOTING_WINDOW_BLOCKS;
 
