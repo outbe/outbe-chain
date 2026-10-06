@@ -3,7 +3,7 @@ mod support;
 
 use alloy_primitives::U256;
 use outbe_lysis::activation_v1::{
-    verify_receipts, verify_result, LysisApplyPlanV1, LysisOwnerReceiptsV1,
+    verify_receipts, verify_result, LysisApplyPlanV1, LysisOwnerReceiptsV1, LysisResultInputsV1,
 };
 use outbe_ocomp_protocol::{
     intent::DayType,
@@ -21,16 +21,7 @@ use support::{activation_fixture, hash, recommit_result};
 fn structural_verifier_produces_one_closed_four_owner_plan() {
     for day_type in [DayType::Green, DayType::Red] {
         let fixture = activation_fixture(day_type);
-        let plan = verify_result(
-            fixture.intent_id,
-            fixture.job_id,
-            &fixture.intent,
-            &fixture.payload,
-            &fixture.result,
-            &fixture.limits,
-            fixture.nod_issued_at,
-        )
-        .unwrap();
+        let plan = verify_result(inputs(&fixture, &fixture.payload, &fixture.result)).unwrap();
 
         assert_eq!(plan.binding().job_id, fixture.job_id);
         assert_eq!(plan.binding().attempt, fixture.intent.attempt);
@@ -80,32 +71,24 @@ fn structural_verifier_rejects_result_and_completion_rebinding() {
 
     let mut wrong_job = fixture.result.clone();
     wrong_job.job_id = hash(200);
-    assert!(verify_result(
-        fixture.intent_id,
-        fixture.job_id,
-        &fixture.intent,
+    assert!(verify_result(inputs(
+        &fixture,
         &wrong_job.activation_payload(&fixture.limits).unwrap(),
-        &wrong_job,
-        &fixture.limits,
-        fixture.nod_issued_at,
-    )
+        &wrong_job
+    ))
     .is_err());
 
     let mut wrong_completion = fixture.result.clone();
     wrong_completion
         .metadosis_completion_summary
         .logical_evaluation_time += 1;
-    assert!(verify_result(
-        fixture.intent_id,
-        fixture.job_id,
-        &fixture.intent,
+    assert!(verify_result(inputs(
+        &fixture,
         &wrong_completion
             .activation_payload(&fixture.limits)
             .unwrap(),
-        &wrong_completion,
-        &fixture.limits,
-        fixture.nod_issued_at,
-    )
+        &wrong_completion
+    ))
     .is_err());
 
     let mut wrong_contributor_total = fixture.result.clone();
@@ -114,29 +97,11 @@ fn structural_verifier_rejects_result_and_completion_rebinding() {
     let payload = wrong_contributor_total
         .activation_payload(&fixture.limits)
         .unwrap();
-    assert!(verify_result(
-        fixture.intent_id,
-        fixture.job_id,
-        &fixture.intent,
-        &payload,
-        &wrong_contributor_total,
-        &fixture.limits,
-        fixture.nod_issued_at,
-    )
-    .is_err());
+    assert!(verify_result(inputs(&fixture, &payload, &wrong_contributor_total)).is_err());
 
     let mut payload_rebinding = fixture.payload.clone();
     payload_rebinding.roots.nod_root = hash(201);
-    assert!(verify_result(
-        fixture.intent_id,
-        fixture.job_id,
-        &fixture.intent,
-        &payload_rebinding,
-        &fixture.result,
-        &fixture.limits,
-        fixture.nod_issued_at,
-    )
-    .is_err());
+    assert!(verify_result(inputs(&fixture, &payload_rebinding, &fixture.result)).is_err());
 }
 
 #[test]
@@ -210,16 +175,7 @@ fn structural_verifier_rejects_catalog_completion_and_semantic_event_mutations()
 fn receipt_verifier_closes_green_and_red_conservation_equations() {
     for day_type in [DayType::Green, DayType::Red] {
         let fixture = activation_fixture(day_type);
-        let plan = verify_result(
-            fixture.intent_id,
-            fixture.job_id,
-            &fixture.intent,
-            &fixture.payload,
-            &fixture.result,
-            &fixture.limits,
-            fixture.nod_issued_at,
-        )
-        .unwrap();
+        let plan = verify_result(inputs(&fixture, &fixture.payload, &fixture.result)).unwrap();
         let receipts = owner_receipts(&plan, &fixture.limits);
         let verified =
             verify_receipts(&plan, &fixture.request_receipt, &receipts, &fixture.limits).unwrap();
@@ -245,15 +201,7 @@ fn structural_verifier_rejects_nonzero_attempt_or_pending_nonce() {
             .activation_preconditions
             .metadosis
             .pending_nonce = pending_nonce;
-        let result = verify_result(
-            fixture.intent_id,
-            fixture.job_id,
-            &fixture.intent,
-            &fixture.payload,
-            &fixture.result,
-            &fixture.limits,
-            fixture.nod_issued_at,
-        );
+        let result = verify_result(inputs(&fixture, &fixture.payload, &fixture.result));
         assert!(matches!(
             result,
             Err(outbe_ocomp_protocol::ProtocolError::InvalidInvariant(
@@ -278,15 +226,11 @@ fn receipt_verifier_rejects_a_budget_effect_with_a_future_nonce_or_anchor() {
         .intent
         .intent_id(&nonce_fixture.limits)
         .unwrap();
-    let nonce_plan = verify_result(
-        nonce_fixture.intent_id,
-        nonce_fixture.job_id,
-        &nonce_fixture.intent,
+    let nonce_plan = verify_result(inputs(
+        &nonce_fixture,
         &nonce_fixture.payload,
         &nonce_fixture.result,
-        &nonce_fixture.limits,
-        nonce_fixture.nod_issued_at,
-    )
+    ))
     .unwrap();
     assert!(verify_receipts(
         &nonce_plan,
@@ -320,15 +264,11 @@ fn receipt_verifier_rejects_a_budget_effect_with_a_future_nonce_or_anchor() {
         .intent
         .intent_id(&anchor_fixture.limits)
         .unwrap();
-    let anchor_plan = verify_result(
-        anchor_fixture.intent_id,
-        anchor_fixture.job_id,
-        &anchor_fixture.intent,
+    let anchor_plan = verify_result(inputs(
+        &anchor_fixture,
         &anchor_fixture.payload,
         &anchor_fixture.result,
-        &anchor_fixture.limits,
-        anchor_fixture.nod_issued_at,
-    )
+    ))
     .unwrap();
     assert!(verify_receipts(
         &anchor_plan,
@@ -342,16 +282,7 @@ fn receipt_verifier_rejects_a_budget_effect_with_a_future_nonce_or_anchor() {
 #[test]
 fn receipt_verifier_rejects_owner_projection_and_request_mutations() {
     let fixture = activation_fixture(DayType::Green);
-    let plan = verify_result(
-        fixture.intent_id,
-        fixture.job_id,
-        &fixture.intent,
-        &fixture.payload,
-        &fixture.result,
-        &fixture.limits,
-        fixture.nod_issued_at,
-    )
-    .unwrap();
+    let plan = verify_result(inputs(&fixture, &fixture.payload, &fixture.result)).unwrap();
     let receipts = owner_receipts(&plan, &fixture.limits);
 
     let mut wrong_nod = receipts.clone();
@@ -469,16 +400,23 @@ fn assert_result_rejected(
     result: &outbe_ocomp_protocol::result::LysisResultV1,
     payload: &outbe_ocomp_protocol::result::ActivationPayloadV1,
 ) {
-    assert!(verify_result(
-        fixture.intent_id,
-        fixture.job_id,
-        &fixture.intent,
-        payload,
+    assert!(verify_result(inputs(fixture, payload, result)).is_err());
+}
+
+fn inputs<'a>(
+    fixture: &'a support::ActivationFixtureV1,
+    payload: &'a outbe_ocomp_protocol::result::ActivationPayloadV1,
+    result: &'a outbe_ocomp_protocol::result::LysisResultV1,
+) -> LysisResultInputsV1<'a> {
+    LysisResultInputsV1 {
+        intent_id: fixture.intent_id,
+        expected_job_id: fixture.job_id,
+        intent: &fixture.intent,
+        activation_payload: payload,
         result,
-        &fixture.limits,
-        fixture.nod_issued_at,
-    )
-    .is_err());
+        limits: &fixture.limits,
+        nod_issued_at: fixture.nod_issued_at,
+    }
 }
 
 fn owner_receipts(
@@ -571,15 +509,10 @@ fn owner_receipts(
 #[test]
 fn nod_issuance_instant_rejects_zero() {
     let fixture = activation_fixture(DayType::Green);
-    let error = verify_result(
-        fixture.intent_id,
-        fixture.job_id,
-        &fixture.intent,
-        &fixture.payload,
-        &fixture.result,
-        &fixture.limits,
-        0,
-    )
+    let error = verify_result(LysisResultInputsV1 {
+        nod_issued_at: 0,
+        ..inputs(&fixture, &fixture.payload, &fixture.result)
+    })
     .unwrap_err();
     assert!(matches!(
         error,

@@ -281,15 +281,15 @@ fn verify_quorum_structure(
         .activation_payload(limits)
         .map_err(|error| protocol_reject(error, RESULT_STRUCTURE_INVALID))?;
     let nod_issued_at = lysis_freeze_instant(context.storage, record.intent.wwd)?;
-    let plan = activation_v1::verify_result(
+    let plan = activation_v1::verify_result(activation_v1::LysisResultInputsV1 {
         intent_id,
-        finalized.job_id,
-        &record.intent,
-        &activation_payload,
+        expected_job_id: finalized.job_id,
+        intent: &record.intent,
+        activation_payload: &activation_payload,
         result,
         limits,
         nod_issued_at,
-    )
+    })
     .map_err(|error| protocol_reject(error, RESULT_STRUCTURE_INVALID))?;
 
     Ok((plan, result_evidence_hash))
