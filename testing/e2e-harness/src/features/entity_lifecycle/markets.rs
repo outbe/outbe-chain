@@ -33,6 +33,8 @@ const DEPLOY_FUNDING_COEN: u64 = 100;
 /// A pricing window closes on a whole hour. The margin lands the committee inside the next one.
 const WINDOW_CLOSE_MARGIN_SECS: u64 = 60;
 const WINDOW_CLOSE_TIMEOUT: Duration = Duration::from_secs(300);
+/// The clock catch-up and at least ten feeder rounds outlast one window close on a loaded host.
+const COVERED_HOUR_TIMEOUT: Duration = Duration::from_secs(900);
 /// The trailing span a finalized pricing window averages over.
 const PRICE_WINDOW_SECS: u64 = 8 * 3_600;
 /// Feeder rounds the covered hour holds at least.
@@ -203,7 +205,8 @@ pub(crate) fn assert_currency_routes(world: &World, currency: SettlementCurrency
 /// hour's rounds, then moves past it.
 pub(crate) fn close_price_window(world: &mut World, currencies: &[u16]) {
     let head = head_time(world);
-    let covered_hour = head - head % 3_600 + PRICE_WINDOW_SECS;
+    // One spare hour keeps the blocks made while the committee stops out of the window too.
+    let covered_hour = head - head % 3_600 + 3_600 + PRICE_WINDOW_SECS;
     cover_hour(world, covered_hour + WINDOW_CLOSE_MARGIN_SECS);
     let target = covered_hour + 3_600 + WINDOW_CLOSE_MARGIN_SECS;
     let (_, _, _, pending) =
@@ -254,7 +257,7 @@ fn cover_hour(world: &mut World, timestamp: u64) {
     let missed = voted.saturating_sub(first_block);
     let until = voted + (3 * missed).max(COVERED_HOUR_MIN_ROUNDS * vote_period);
     poll_until(
-        WINDOW_CLOSE_TIMEOUT,
+        COVERED_HOUR_TIMEOUT,
         || format!("the committee did not reach block {until} inside the covered hour"),
         || eth::block_number(&url).is_some_and(|block| block >= until),
     );
