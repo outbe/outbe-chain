@@ -370,8 +370,8 @@ fn target_rpc_url(world: &World) -> String {
 }
 
 impl Lifecycle for IntexLifecycle {
-    /// The committee crosses midnight on this localnet before it closes the pricing window,
-    /// so it has closed yesterday on its own feed and sent that close to the target chain.
+    /// The pricing window closes at midnight on this localnet, so the committee has
+    /// closed yesterday on its own feed and sent that close to the target chain.
     fn recorded_close(&self, world: &World) -> Option<U256> {
         use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
         let yesterday = previous_date_key(timestamp_to_date_key(head_time(world)));
