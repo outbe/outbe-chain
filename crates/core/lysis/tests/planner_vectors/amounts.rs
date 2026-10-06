@@ -423,16 +423,20 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
     let mut owner_chunk_sizes = Vec::new();
     let mut previous_merged_owner = None;
     let owner_summary = merge_owner_runs_streaming(
-        CanonicalRunSpanV1 {
-            start_run: 0,
-            end_run: 1,
+        CanonicalRunV1 {
+            span: CanonicalRunSpanV1 {
+                start_run: 0,
+                end_run: 1,
+            },
+            records: owner_left.ordered_contributors.clone(),
         },
-        owner_left.ordered_contributors.clone(),
-        CanonicalRunSpanV1 {
-            start_run: 1,
-            end_run: 2,
+        CanonicalRunV1 {
+            span: CanonicalRunSpanV1 {
+                start_run: 1,
+                end_run: 2,
+            },
+            records: owner_right.ordered_contributors.clone(),
         },
-        owner_right.ordered_contributors.clone(),
         64,
         |_, chunk| {
             owner_chunk_sizes.push(chunk.len());
@@ -454,16 +458,20 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
     let mut bucket_chunk_sizes = Vec::new();
     let mut previous_bucket_key = None;
     let bucket_summary = merge_bucket_runs_streaming(
-        CanonicalRunSpanV1 {
-            start_run: 0,
-            end_run: 1,
+        CanonicalRunV1 {
+            span: CanonicalRunSpanV1 {
+                start_run: 0,
+                end_run: 1,
+            },
+            records: bucket_left.ordered_records.clone(),
         },
-        bucket_left.ordered_records.clone(),
-        CanonicalRunSpanV1 {
-            start_run: 1,
-            end_run: 2,
+        CanonicalRunV1 {
+            span: CanonicalRunSpanV1 {
+                start_run: 1,
+                end_run: 2,
+            },
+            records: bucket_right.ordered_records.clone(),
         },
-        bucket_right.ordered_records.clone(),
         64,
         |_, chunk| {
             bucket_chunk_sizes.push(chunk.len());
@@ -479,32 +487,40 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
     assert_eq!(bucket_summary.record_count, 257);
     assert!(bucket_chunk_sizes.iter().all(|count| *count <= 64));
     assert!(merge_bucket_runs_streaming(
-        CanonicalRunSpanV1 {
-            start_run: 1,
-            end_run: 2,
+        CanonicalRunV1 {
+            span: CanonicalRunSpanV1 {
+                start_run: 1,
+                end_run: 2,
+            },
+            records: bucket_right.ordered_records,
         },
-        bucket_right.ordered_records,
-        CanonicalRunSpanV1 {
-            start_run: 0,
-            end_run: 1,
+        CanonicalRunV1 {
+            span: CanonicalRunSpanV1 {
+                start_run: 0,
+                end_run: 1,
+            },
+            records: bucket_left.ordered_records,
         },
-        bucket_left.ordered_records,
         64,
         |_, _| Ok::<_, ()>(()),
     )
     .is_err());
     assert!(matches!(
         merge_owner_runs_streaming(
-            CanonicalRunSpanV1 {
-                start_run: 0,
-                end_run: 1,
+            CanonicalRunV1 {
+                span: CanonicalRunSpanV1 {
+                    start_run: 0,
+                    end_run: 1,
+                },
+                records: owner_left.ordered_contributors,
             },
-            owner_left.ordered_contributors,
-            CanonicalRunSpanV1 {
-                start_run: 1,
-                end_run: 2,
+            CanonicalRunV1 {
+                span: CanonicalRunSpanV1 {
+                    start_run: 1,
+                    end_run: 2,
+                },
+                records: owner_right.ordered_contributors,
             },
-            owner_right.ordered_contributors,
             64,
             |_, _| Err::<(), _>("persist failed"),
         ),
