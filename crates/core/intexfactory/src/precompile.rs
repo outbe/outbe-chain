@@ -13,7 +13,6 @@ use outbe_primitives::dispatch::{
     view,
 };
 use outbe_primitives::error::Result;
-use outbe_primitives::storage::gas::{PRECOMPILE_BASE_GAS, ZK_VERIFY_GAS};
 use outbe_primitives::storage::StorageHandle;
 
 use crate::runtime;
@@ -27,16 +26,6 @@ sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
     "../../../contracts/precompiles/src/IIntexFactory.sol"
 );
-
-/// Base gas the registry charges before it invokes [`dispatch`]: `settleIntexWithPayNote`
-/// verifies a PayNote spend proof, which is real native work every validator
-/// repeats.
-pub fn base_gas(input: &[u8]) -> u64 {
-    match input.first_chunk::<4>() {
-        Some(&IIntexFactory::settleIntexWithPayNoteCall::SELECTOR) => ZK_VERIFY_GAS,
-        _ => PRECOMPILE_BASE_GAS,
-    }
-}
 
 // Arming the proceeds fan-in is production work of the issuance leg, which a
 // payout e2e never reaches: it runs no auction, so it issues nothing. This
@@ -218,16 +207,6 @@ pub fn dispatch(
                         c.units,
                         c.asset,
                         c.snapshotId,
-                    )
-                }),
-                settleIntexWithPayNote(c) => mutate_void(c, caller, |sender, c| {
-                    runtime::settle_intex_with_paynote(
-                        &storage,
-                        SeriesId::from(c.seriesId),
-                        c.owner,
-                        sender,
-                        c.units,
-                        &c.payNoteProof,
                     )
                 }),
                 quoteSettlement(c) => metadata::<IIntexFactory::quoteSettlementCall>(|| {

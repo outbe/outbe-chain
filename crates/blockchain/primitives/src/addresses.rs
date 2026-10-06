@@ -321,9 +321,6 @@ pub const VAULT_ROUTER_ADDRESS: Address = address!("0x00000000000000000000000000
 /// - diff a proposal against the canon/meta-canon
 pub const GOVERNANCE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001018");
 
-/// PayNote precompile address (stateful). Shielded ERC20 note pool. See `outbe-paynote`.
-pub const PAYNOTE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001019");
-
 /// IntexNFT1155: the Intex ERC-1155 series balance ledger. CREATE3 proxy under
 /// salt "outbe-intex:IntexNFT1155:<version>", not a precompile.
 #[cfg(not(feature = "e2e-test"))]

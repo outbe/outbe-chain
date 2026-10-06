@@ -103,21 +103,6 @@ fn fund_deploy_account(world: &mut World) {
     .expect("fund the deploy account");
 }
 
-#[when("the settlement currency is registered on the committee chain")]
-fn register_settlement_currency(world: &mut World) {
-    let currency = register_currency(world, settlement_currency::USD_ISO);
-    world.state.settlement_currency = Some(currency);
-}
-
-#[then("owners may settle in that currency")]
-fn settlement_currency_is_acceptable(world: &mut World) {
-    let currency = world
-        .state
-        .settlement_currency
-        .expect("settlement currency was registered");
-    assert_currency_routes(world, currency, settlement_currency::USD_ISO);
-}
-
 /// USD, the issuance market and a foreign EUR: every currency a payment names.
 #[when("the settlement currencies are registered on the committee chain")]
 fn register_settlement_currencies(world: &mut World) {

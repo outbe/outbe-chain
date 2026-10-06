@@ -334,7 +334,6 @@ fn erc20_settlement_moves_exact_full_width_cost_and_preserves_mining() {
     assert_eq!(paid.len(), 1);
     assert_eq!(paid[0].owner, OWNER);
     assert_eq!(paid[0].asset, ASSET);
-    assert_eq!(paid[0].nullifier, B256::ZERO);
     assert_eq!(paid[0].paymentMinor, cost);
     let balances = world.balances();
     assert!(!matches!(world.settle().status, SubCallStatus::Success));

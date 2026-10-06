@@ -1,4 +1,4 @@
-//! Shared owner-bound pledge pool. Backing never enters Paynote's ERC20 vault.
+//! Shared owner-bound pledge pool.
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{sol, SolEvent};
 use outbe_macros::{contract, storage_schema};

@@ -35,22 +35,15 @@ fn issue_genesis_pays_like_agents_but_carries_no_floor() {
     });
 }
 
-/// A Genesis gem settles once its first full day closes: a zero floor clears at any price.
+/// A Genesis gem is payable once its first full day closes: a zero floor clears at any price.
 #[test]
-fn a_genesis_gem_settles_once_its_first_day_closes() {
+fn a_genesis_gem_is_payable_once_its_first_day_closes() {
     let rate = U256::from(2u64) * six_decimal_unit();
-    let mut provider = test_storage(Some(rate));
-    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE, |storage| {
+    with_storage(Some(rate), |storage| {
         let load = U256::from(10u64) * six_decimal_unit();
-        issue_at_live_rate(storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap()
-    });
-    StorageHandle::enter(&mut provider, |storage| {
-        seed_qualifying_day(&storage, gem_id);
-        runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
-        assert_eq!(
-            gem_api::get_gem(&storage, gem_id).unwrap().unwrap().state,
-            GemState::Settled as u8
-        );
+        let gem_id = issue_at_live_rate(storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
+        seed_qualifying_day(storage, gem_id);
+        admitted_at_quote(storage, gem_id, STABLE);
     });
 }
 
@@ -221,35 +214,6 @@ fn issue_rejects_a_stale_oracle_rate_before_writing_a_gem() {
                 .read()
                 .unwrap(),
             U256::ZERO
-        );
-    });
-}
-
-#[test]
-fn settle_wallet_settles_with_a_registered_asset() {
-    let rate = U256::from(2u64) * six_decimal_unit();
-    let mut provider = test_storage(Some(rate));
-    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE, |storage| {
-        let gem_id = issue_at_live_rate(
-            storage,
-            ALICE,
-            GemTypes::Wallet,
-            U256::from(10u64) * six_decimal_unit(),
-            840,
-            840,
-        )
-        .unwrap();
-        seed_qualifying_day(storage, gem_id);
-        gem_id
-    });
-    StorageHandle::enter(&mut provider, |storage| {
-        // STABLE reports 840, which is the gem's reference currency, so it
-        // settles on the reference rail. Integration tests cover real vault
-        // interaction. Here the router is stubbed.
-        runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
-        assert_eq!(
-            gem_api::get_gem(&storage, gem_id).unwrap().unwrap().state,
-            GemState::Settled as u8
         );
     });
 }

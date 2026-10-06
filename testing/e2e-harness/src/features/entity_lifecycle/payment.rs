@@ -1,10 +1,11 @@
-//! Paying for a lifecycle holding on either rail, in any currency it accepts.
+//! Paying for a lifecycle holding by ERC20, from its owner or a third party, in any
+//! currency it accepts.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 
 use super::chain::{finalized_checkpoint, verify_checkpoint};
-use super::entity::{Item, Rail, Target, Terms};
+use super::entity::{Item, Payer, Target, Terms};
 use super::markets::{coen_rate, currency};
 use crate::features::settlement::{assert_mined_success, fund_and_approve};
 use crate::internal::{addresses, eth};
@@ -97,18 +98,22 @@ pub(crate) fn third_party_key(world: &World) -> String {
         .expect("validator-1 key pays as a third party")
 }
 
-/// Pay for `target` in `iso` by ERC20 from a third party or by the owner's PayNote, at a
-/// quote that must be exactly what `terms` cost in `iso`.
-pub(crate) fn pay(world: &World, target: &Target, rail: Rail, iso: u16, terms: Terms) -> Payment {
+/// Pay for `target` in `iso` by ERC20 from `payer`, at a quote that must be exactly what
+/// `terms` cost in `iso`.
+pub(crate) fn pay(world: &World, target: &Target, payer: Payer, iso: u16, terms: Terms) -> Payment {
     assert!(
         target.accepts(iso),
         "{:?} pays in USD or its issuance currency {}, not {iso}",
         target.item,
         target.issuance_currency
     );
-    let port = world.validators.primary_port();
-    let url = world.rpc.url(port);
+    let url = world.rpc.url(world.validators.primary_port());
     let vault = currency(world, iso);
+    let payer_key = match payer {
+        Payer::Owner => target.owner_key.clone(),
+        Payer::ThirdParty => third_party_key(world),
+    };
+    let payer_address = eth::address_of(&payer_key).expect("payer address");
     let before = eth::block_number(&url).expect("head before the payment");
     let checked_quote = || {
         let quoted = quote(world, target, vault.asset);
@@ -123,33 +128,15 @@ pub(crate) fn pay(world: &World, target: &Target, rail: Rail, iso: u16, terms: T
     let mut quoted = checked_quote();
     let mut requoted = false;
     let outcome = loop {
-        let outcome = match rail {
-            Rail::Erc20 => {
-                let payer_key = third_party_key(world);
-                let payer = eth::address_of(&payer_key).expect("third-party payer address");
-                fund_and_approve(
-                    world,
-                    vault.asset,
-                    &payer_key,
-                    payer,
-                    factory(target),
-                    quoted.payable,
-                );
-                settle_erc20(&url, target, &payer_key, vault.asset, quoted.snapshot)
-            }
-            Rail::PayNote => {
-                let proof = crate::features::paynote::deposit_and_prove(
-                    world,
-                    port,
-                    &target.owner_key,
-                    target.owner,
-                    vault.asset,
-                    quoted.payable,
-                    note_context(target, quoted.snapshot),
-                );
-                settle_paynote(&url, target, &target.owner_key, proof)
-            }
-        };
+        fund_and_approve(
+            world,
+            vault.asset,
+            &payer_key,
+            payer_address,
+            factory(target),
+            quoted.payable,
+        );
+        let outcome = settle_erc20(&url, target, &payer_key, vault.asset, quoted.snapshot);
         if outcome.success {
             break outcome;
         }
@@ -157,7 +144,7 @@ pub(crate) fn pay(world: &World, target: &Target, rail: Rail, iso: u16, terms: T
         let fresh = checked_quote();
         assert!(
             !requoted && fresh.snapshot != quoted.snapshot,
-            "{rail:?} payment for {:?} reverted: {}",
+            "{payer:?} payment for {:?} reverted: {}",
             target.item,
             outcome.receipt
         );
@@ -165,32 +152,13 @@ pub(crate) fn pay(world: &World, target: &Target, rail: Rail, iso: u16, terms: T
         requoted = true;
     };
     assert_mined_success(&outcome, "lifecycle payment");
-    assert_paid_event(
-        target,
-        rail,
-        vault.asset,
-        iso,
-        quoted.payable,
-        &outcome.receipt,
-    );
+    assert_paid_event(target, vault.asset, iso, quoted.payable, &outcome.receipt);
     Payment {
         target: target.clone(),
         vault,
         payable: quoted.payable,
         before,
         after: receipt_block(&outcome.receipt),
-    }
-}
-
-/// The settlement a PayNote proof is bound to: the holding, its units, and the quote's snapshot.
-pub(crate) fn note_context(target: &Target, snapshot: U256) -> B256 {
-    use crate::features::paynote::{gem_context, intex_context, nod_context};
-    match &target.item {
-        Item::Gem(id) => gem_context(*id, snapshot),
-        Item::Series { id, units } => {
-            intex_context(&id.0, target.owner, U256::from(*units), snapshot)
-        }
-        Item::Nod(id) => nod_context(*id, snapshot),
     }
 }
 
@@ -245,45 +213,6 @@ fn settle_erc20(
     }
 }
 
-fn settle_paynote(
-    url: &str,
-    target: &Target,
-    payer_key: &str,
-    proof: Vec<u8>,
-) -> eth::MinedCallOutcome {
-    match &target.item {
-        Item::Gem(id) => send(
-            url,
-            payer_key,
-            addresses::GEM_FACTORY_ADDR,
-            &eth::IGemFactory::settleGemWithPayNoteCall {
-                gemId: *id,
-                payNoteProof: proof.into(),
-            },
-        ),
-        Item::Series { id, units } => send(
-            url,
-            payer_key,
-            addresses::INTEX_FACTORY_ADDR,
-            &eth::IIntexFactory::settleIntexWithPayNoteCall {
-                seriesId: *id,
-                owner: target.owner,
-                units: U256::from(*units),
-                payNoteProof: proof.into(),
-            },
-        ),
-        Item::Nod(id) => send(
-            url,
-            payer_key,
-            addresses::NOD_FACTORY_ADDR,
-            &eth::INodFactory::settleNodWithPayNoteCall {
-                nodId: *id,
-                payNoteProof: proof.into(),
-            },
-        ),
-    }
-}
-
 fn send<C: SolCall>(url: &str, key: &str, to: Address, call: &C) -> eth::MinedCallOutcome {
     eth::send_call_outcome(url, to, key, call, None)
         .unwrap_or_else(|error| panic!("submit {}: {error:#}", C::SIGNATURE))
@@ -292,7 +221,6 @@ fn send<C: SolCall>(url: &str, key: &str, to: Address, call: &C) -> eth::MinedCa
 /// The factory's own record of the payment names the holding, what it cost and how.
 fn assert_paid_event(
     target: &Target,
-    rail: Rail,
     asset: Address,
     currency: u16,
     payable: U256,
@@ -338,11 +266,6 @@ fn assert_paid_event(
                 (target.owner, *id, asset, payable),
                 "NodPaid does not record this payment"
             );
-            assert_eq!(
-                paid.nullifier == B256::ZERO,
-                rail == Rail::Erc20,
-                "only a PayNote payment spends a nullifier"
-            );
         }
     }
 }
@@ -376,27 +299,6 @@ pub(crate) fn assert_payments_settled(world: &World, payments: &[Payment]) {
         }
     }
     verify_checkpoint(world, checkpoint);
-}
-
-/// The transaction is mined and reverts with gas to spare: a guard refused it.
-pub(crate) fn assert_mined_refusal<C: SolCall>(world: &World, key: &str, to: Address, call: &C) {
-    let url = world.rpc.url(world.validators.primary_port());
-    let outcome = send(&url, key, to, call);
-    assert!(
-        !outcome.success,
-        "{} was not refused: {}",
-        C::SIGNATURE,
-        outcome.transaction_hash
-    );
-    let gas_used = outcome.receipt["gasUsed"]
-        .as_str()
-        .and_then(|hex| u64::from_str_radix(hex.trim_start_matches("0x"), 16).ok())
-        .expect("receipt gas used");
-    assert!(
-        gas_used < eth::REVERT_FRIENDLY_GAS_LIMIT,
-        "{} ran out of gas instead of reverting",
-        C::SIGNATURE
-    );
 }
 
 /// The call reverts with exactly `expected`, the product error's own text.

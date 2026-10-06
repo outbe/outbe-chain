@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
 use outbe_intex::{IntexState, SeriesId};
@@ -38,7 +38,6 @@ pub fn issue_gem(
     if entry_price.is_zero() {
         return Err(GemFactoryError::OracleUnavailable.into());
     }
-    // A zero load makes the cost zero, and a PayNote cannot spend zero.
     if promis_load.is_zero() {
         return Err(GemFactoryError::ZeroPromisLoad.into());
     }
@@ -233,7 +232,6 @@ pub fn issue_merchant_gem(
     if owner.is_zero() {
         return Err(GemFactoryError::InvalidOwner.into());
     }
-    // A zero load makes the cost zero, and a PayNote cannot spend zero.
     if promis_load.is_zero() {
         return Err(GemFactoryError::ZeroPromisLoad.into());
     }
@@ -298,8 +296,9 @@ pub fn issue_merchant_gem(
     Ok(gem_id)
 }
 
-/// Settles a gem paying its cost from `caller` in `asset` by direct ERC20 transfer.
-/// An issuance-currency payment must name the VWAP snapshot required at this block.
+/// Settles a gem paying its cost from `caller` in `asset` by ERC20 transfer. Anyone
+/// may pay for a gem. It stays with its owner. An issuance-currency payment must
+/// name the VWAP snapshot required at this block.
 pub fn settle_gem(
     storage: &StorageHandle<'_>,
     caller: Address,
@@ -307,79 +306,7 @@ pub fn settle_gem(
     asset: Address,
     snapshot_id: U256,
 ) -> Result<()> {
-    let quote = |item: &outbe_gem::GemData| {
-        let currency = accept_payment_asset(storage, asset, item)?;
-        let (amount_paid, snapshot) = cost_in_asset(storage, item, asset, currency)?;
-        require_snapshot(snapshot, snapshot_id)?;
-        Ok((settlement_currency(item, currency), amount_paid))
-    };
-    settle(
-        storage,
-        gem_id,
-        quote,
-        |_, (settlement_currency, amount_paid)| {
-            deposit_payment(storage, caller, asset, amount_paid)?;
-            Ok((asset, settlement_currency, amount_paid))
-        },
-    )
-}
-
-/// Settles a gem by spending a PayNote bound to this gem. Any address may relay it.
-pub fn settle_gem_with_paynote(
-    storage: &StorageHandle<'_>,
-    _caller: Address,
-    gem_id: U256,
-    paynote_proof: &[u8],
-) -> Result<()> {
-    settle(
-        storage,
-        gem_id,
-        |_| Ok(()),
-        |item, ()| {
-            let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
-            let currency = accept_payment_asset(storage, claim.asset, item)?;
-            let (amount_paid, snapshot) = cost_in_asset(storage, item, claim.asset, currency)?;
-            let expected = outbe_paynote::api::settlement_context(
-                outbe_paynote::api::SettlementDomain::Gem,
-                B256::from(gem_id),
-                U256::ONE,
-                snapshot.map_or(U256::ZERO, VwapSnapshotId::to_u256),
-            )?;
-            if claim.context != expected {
-                return Err(GemFactoryError::PayNoteContextMismatch {
-                    expected,
-                    actual: claim.context,
-                }
-                .into());
-            }
-            // Exact: the surplus of an over-spend is already in the reserve vault.
-            if claim.spend_amount != amount_paid {
-                return Err(GemFactoryError::PayNoteCostMismatch {
-                    covered: claim.spend_amount,
-                    required: amount_paid,
-                }
-                .into());
-            }
-            Ok((
-                claim.asset,
-                settlement_currency(item, currency),
-                amount_paid,
-            ))
-        },
-    )
-}
-
-/// `quote` prices and authorizes the payment before any state changes. `pay`
-/// then moves it after the transition and returns the asset, the settlement
-/// currency and the amount it charged.
-fn settle<Q>(
-    storage: &StorageHandle<'_>,
-    gem_id: U256,
-    quote: impl FnOnce(&outbe_gem::GemData) -> Result<Q>,
-    pay: impl FnOnce(&outbe_gem::GemData, Q) -> Result<(Address, u16, U256)>,
-) -> Result<()> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
-    // Anyone may pay for a gem. It stays with its owner.
     // The qualification walk goes last.
     match item.state {
         s if s == GemState::Called as u8 => {
@@ -393,12 +320,14 @@ fn settle<Q>(
         _ => return Err(GemFactoryError::InvalidState.into()),
     }
 
-    let quoted = quote(&item)?;
+    let currency = accept_payment_asset(storage, asset, &item)?;
+    let (amount_paid, snapshot) = cost_in_asset(storage, &item, asset, currency)?;
+    require_snapshot(snapshot, snapshot_id)?;
     storage.clone().with_checkpoint(|| {
         // Settle before payment so a token callback cannot settle the gem twice.
         // A failed payment rolls the state back.
         gem_api::set_state(storage, gem_id, GemState::Settled)?;
-        let (asset, settlement_currency, amount_paid) = pay(&item, quoted)?;
+        deposit_payment(storage, caller, asset, amount_paid)?;
         emit_event(
             storage,
             GemSettled {
@@ -406,7 +335,7 @@ fn settle<Q>(
                 owner: item.owner,
                 asset,
                 paymentMinor: amount_paid,
-                settlementCurrency: settlement_currency,
+                settlementCurrency: settlement_currency(&item, currency),
             },
         )
     })

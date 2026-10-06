@@ -308,7 +308,7 @@ pub async fn run() {
             hook_counters.started.fetch_add(1, Ordering::Relaxed);
             let deadline = before_watchdog.arm(
                 format!("{} :: {}", feature.name, scenario.name),
-                Duration::from_secs(env::scenario_timeout_secs(feature, scenario, &env_hook)),
+                Duration::from_secs(env::scenario_timeout_secs(&env_hook)),
             );
             world.localnet.set_scenario_deadline(deadline);
             #[cfg(feature = "ocomp-integration")]

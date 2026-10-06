@@ -122,24 +122,6 @@
     "stateMutability": "nonpayable"
   },
   {
-    "type": "function",
-    "name": "settleNodWithPayNote",
-    "inputs": [
-      {
-        "name": "nodId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "payNoteProof",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
     "type": "event",
     "name": "CertifiedNodGenerationInstalled",
     "inputs": [
@@ -405,12 +387,6 @@
         "type": "address",
         "indexed": false,
         "internalType": "address"
-      },
-      {
-        "name": "nullifier",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
       },
       {
         "name": "paymentMinor",

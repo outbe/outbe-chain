@@ -19,14 +19,6 @@ interface IGemFactory {
     ///        issuance-currency payment naming any other snapshot reverts. Ignored
     ///        on the reference rail.
     function settleGem(uint256 gemId, address asset, uint256 snapshotId) external;
-    /// @notice Settle a gem by spending a PayNote for its cost. Any caller may
-    ///         pay. The gem stays with its owner.
-    /// @dev Moves no tokens: the underlying assets reached the Reserve when the
-    ///      note was deposited.
-    /// @param payNoteProof `outbe.paynote` spend proof. Must be bound to this gem and
-    ///        the snapshot `quoteSettlement` names (zero on the reference rail),
-    ///        carry a settlement asset the gem accepts, and spend exactly the cost.
-    function settleGemWithPayNote(uint256 gemId, bytes calldata payNoteProof) external;
     /// @notice Burn a settled gem and mint confidential Promis to its owner,
     ///         gated by off-chain proof of work. Any caller may submit. The owner's Promis
     ///         modify key authorizes the call: `mac = HMAC(modifyKey, op-preimage)`.

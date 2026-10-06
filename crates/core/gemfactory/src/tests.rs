@@ -144,71 +144,6 @@ fn with_storage<R>(rate: Option<U256>, f: impl FnOnce(&StorageHandle) -> R) -> R
     StorageHandle::enter(&mut storage, |handle| f(&handle))
 }
 
-/// Nominal, for settlements refused before the cost is ever compared.
-const NOTE_AMOUNT: u128 = 1_000_000_000_000_000_000_000_000_000_000;
-
-/// Non-zero statement for proofs that fail before the context comparison.
-fn unbound_context() -> B256 {
-    B256::from(U256::from(1u64))
-}
-
-fn gem_context(gem_id: U256, snapshot: U256) -> B256 {
-    outbe_paynote::api::settlement_context(
-        outbe_paynote::api::SettlementDomain::Gem,
-        B256::from(gem_id),
-        U256::ONE,
-        snapshot,
-    )
-    .unwrap()
-}
-
-/// Seeds the pool with one note over `asset` and proves a spend of it.
-fn note_proof(
-    provider: &mut HashMapStorageProvider,
-    asset: Address,
-    context: B256,
-    amount: U256,
-) -> Vec<u8> {
-    let fixture =
-        outbe_paynote::test_support::note_and_spend_proof(1, asset, context, amount, amount);
-    outbe_paynote::test_support::seed_pool(provider, 1, &[fixture.commitment]);
-    fixture.proof
-}
-
-/// Builds a gem, quotes what `asset` owes for it, and funds a note bound to that
-/// gem and snapshot. Settlement takes the exact cost, so every test paying this
-/// way also checks that the quote is what settlement charges.
-fn note_for_quoted_cost(
-    provider: &mut HashMapStorageProvider,
-    asset: Address,
-    build: impl FnOnce(&StorageHandle) -> U256,
-) -> (U256, Vec<u8>) {
-    let (gem_id, cost, snapshot) = StorageHandle::enter(provider, |storage| {
-        let gem_id = build(&storage);
-        let (_, cost, snapshot) = runtime::quote_settlement(&storage, gem_id, asset).unwrap();
-        (gem_id, cost, snapshot)
-    });
-    let proof = note_proof(provider, asset, gem_context(gem_id, snapshot), cost);
-    (gem_id, proof)
-}
-
-/// [`with_storage`] plus a nominal note. The statement is unused: these paths
-/// reject the asset before comparing context.
-fn with_storage_paying<R>(
-    rate: Option<U256>,
-    asset: Address,
-    f: impl FnOnce(&StorageHandle, &[u8]) -> R,
-) -> R {
-    let mut storage = test_storage(rate);
-    let proof = note_proof(
-        &mut storage,
-        asset,
-        unbound_context(),
-        U256::from(NOTE_AMOUNT),
-    );
-    StorageHandle::enter(&mut storage, |handle| f(&handle, &proof))
-}
-
 fn six_decimal_unit() -> U256 {
     U256::from(1_000_000u64)
 }
@@ -227,34 +162,6 @@ fn find_valid_nonce(gem_id: U256, owner: Address) -> u64 {
         }
     }
     panic!("no valid nonce found")
-}
-
-/// A qualified wallet gem and a note spending `adjust(quoted cost)` of it.
-fn gem_paid_off_the_quote(
-    adjust: impl FnOnce(U256) -> U256,
-) -> (HashMapStorageProvider, U256, Vec<u8>) {
-    let mut provider = test_storage(Some(U256::from(2u64) * six_decimal_unit()));
-    let (gem_id, cost, snapshot) = StorageHandle::enter(&mut provider, |storage| {
-        let gem_id = issue_at_live_rate(
-            &storage,
-            ALICE,
-            GemTypes::Wallet,
-            U256::from(10u64) * six_decimal_unit(),
-            840,
-            840,
-        )
-        .unwrap();
-        seed_qualifying_day(&storage, gem_id);
-        let (_, cost, snapshot) = runtime::quote_settlement(&storage, gem_id, STABLE).unwrap();
-        (gem_id, cost, snapshot)
-    });
-    let proof = note_proof(
-        &mut provider,
-        STABLE,
-        gem_context(gem_id, snapshot),
-        adjust(cost),
-    );
-    (provider, gem_id, proof)
 }
 
 /// Issues at the fixture's live COEN/reference rate. The production caller
@@ -280,15 +187,17 @@ fn issue_at_live_rate(
     )
 }
 
-/// The single `GemSettled` a settlement emitted.
-fn settled_event(provider: &HashMapStorageProvider) -> crate::precompile::IGemFactory::GemSettled {
-    provider
-        .get_ordered_events()
-        .iter()
-        .filter_map(|log| crate::precompile::IGemFactory::GemSettled::decode_log(log).ok())
-        .next()
-        .expect("settlement emits GemSettled")
-        .data
+/// Pays `gem_id` by ERC20 at `asset`'s quote and returns what it quoted. The
+/// stubbed token moves no balance, so an admitted payment stops at the delta check.
+fn admitted_at_quote(storage: &StorageHandle<'_>, gem_id: U256, asset: Address) -> (u16, U256) {
+    let (currency, amount, snapshot) = runtime::quote_settlement(storage, gem_id, asset).unwrap();
+    let res = runtime::settle_gem(storage, BOB, gem_id, asset, snapshot);
+    assert!(err_msg(res).contains("unexpected amount"));
+    assert_eq!(
+        gem_api::get_gem(storage, gem_id).unwrap().unwrap().state,
+        GemState::Issued as u8
+    );
+    (currency, amount)
 }
 
 /// Close the gem's first full day above its floor, which qualifies it.

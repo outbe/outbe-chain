@@ -49,8 +49,6 @@ pub mod ocomp;
 mod oracle_expectations;
 pub mod origin_venue;
 mod p2p_admission;
-#[cfg(feature = "ocomp-integration")]
-pub mod paynote;
 pub mod price_oracle;
 #[cfg(feature = "ocomp-integration")]
 pub mod radicle;

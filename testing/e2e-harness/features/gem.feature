@@ -11,10 +11,10 @@ Feature: Gem from a parked Intex to Promis and COEN
   #
   # The source Intex is issued in MYR against a USD reference, and the merchant
   # issues one gem to each of five owners. Two are paid while qualified and two
-  # inside the call notice, one on each rail and in each currency; the MYR
-  # payments price off a closed pricing window, so the committee steps past the
-  # next whole hour before the position is parked, whose validity the step would
-  # otherwise spend. The fifth gem is left to forfeit.
+  # inside the call notice, one by its owner and one by a third party, in each
+  # currency; the MYR payments price off a closed pricing window, so the committee
+  # steps past the next whole hour before the position is parked, whose validity
+  # the step would otherwise spend. The fifth gem is left to forfeit.
   #
   # Time is seeded rather than lived through wherever the protocol allows it.
   # Qualification and the call count only days a gem held in full, so the gems
@@ -23,7 +23,7 @@ Feature: Gem from a parked Intex to Promis and COEN
   # validity, both shortened by the DEV parameter profile this scenario runs
   # against.
   @gem-lifecycle @myr-issuance
-  Scenario: Five gems from one position are paid on both rails in both currencies, one forfeits, and the paid ones end in COEN
+  Scenario: Five gems from one position are paid by owners and third parties in both currencies, one forfeits, and the paid ones end in COEN
     Given a fresh localnet with a 20-block voting window
     When the intex engine is deployed on the committee chain
     Then the committee chain hosts the intex engine
@@ -40,13 +40,13 @@ Feature: Gem from a parked Intex to Promis and COEN
     And no gem can be transferred
     When the reference rate stands above the gem floor
     Then every gem qualifies
-    And a gem payment is refused for a stale snapshot, a foreign currency or a note bound to another holding
+    And a gem payment is refused for a stale snapshot or a foreign currency
     And an unpaid gem cannot be mined
-    When a qualified gem is paid in USD by ERC20 and another in MYR by PayNote
+    When a qualified gem is paid in USD by a third party and another in MYR by its owner
     Then each payment settles exactly its quote into its currency's vault
     When the reference rate holds above the gem call price across the call window
     Then every unpaid gem becomes Called while what was paid stays Settled
-    When a called gem is paid in MYR by ERC20 and another in USD by PayNote
+    When a called gem is paid in MYR by a third party and another in USD by its owner
     Then each payment settles exactly its quote into its currency's vault
     When the call notice lapses on the unpaid gem
     Then the unpaid gem is forfeited and its unpaid load returns to the unallocated pool
@@ -58,23 +58,3 @@ Feature: Gem from a parked Intex to Promis and COEN
     Then each owner's native COEN grows by exactly that load
     When the position's validity runs out
     Then the position returns its unissued capacity to the same pool
-
-  @ocomp @price-oracle @paynote-main
-  Scenario: Ten old PayNotes fully settle ten GEMs
-    Given a fresh localnet with a 20-block voting window
-    When the intex engine is deployed on the committee chain
-    Then the committee chain hosts the intex engine
-    When the settlement currency is registered on the committee chain
-    Then owners may settle in that currency
-    And the controlled COEN USD quote is finalized through the real price feeder
-    Then 10 PayNotes deposited before any spend fully settle 10 GEMs on every validator
-
-  @ocomp @price-oracle @paynote-capacity
-  Scenario: One thousand old PayNotes fully settle one thousand GEMs
-    Given a fresh localnet with a 20-block voting window
-    When the intex engine is deployed on the committee chain
-    Then the committee chain hosts the intex engine
-    When the settlement currency is registered on the committee chain
-    Then owners may settle in that currency
-    And the controlled COEN USD quote is finalized through the real price feeder
-    Then 1000 PayNotes deposited before any spend fully settle 1000 GEMs on every validator

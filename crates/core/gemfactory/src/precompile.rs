@@ -3,7 +3,6 @@ use alloy_sol_types::SolInterface;
 use outbe_intex::SeriesId;
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate, mutate_void, view};
 use outbe_primitives::error::Result;
-use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 
 use crate::errors::GemFactoryError;
 use crate::runtime;
@@ -23,12 +22,6 @@ mod abi {
     );
 }
 pub use abi::IGemFactory;
-
-/// Ordinary dispatch charge. Settlement still verifies its PayNote proof but
-/// does not add a separate `ZK_VERIFY_GAS` tariff to calldata and storage gas.
-pub fn base_gas(_input: &[u8]) -> u64 {
-    PRECOMPILE_BASE_GAS
-}
 
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
@@ -59,9 +52,6 @@ pub fn dispatch(
             }),
             settleGem(c) => mutate_void(c, caller, |sender, c| {
                 runtime::settle_gem(&storage, sender, c.gemId, c.asset, c.snapshotId)
-            }),
-            settleGemWithPayNote(c) => mutate_void(c, caller, |sender, c| {
-                runtime::settle_gem_with_paynote(&storage, sender, c.gemId, &c.payNoteProof)
             }),
             minePromis(c) => mutate(c, caller, |_sender, c| {
                 let auth = outbe_promisfactory::api::ModifyAuth {

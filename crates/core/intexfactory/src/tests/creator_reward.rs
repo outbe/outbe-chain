@@ -78,11 +78,12 @@ fn distribute_no_contributors_burns() {
 fn unpublished_selectors_refuse_native_value() {
     use crate::precompile::{dispatch, IIntexFactory};
 
-    let calls = [IIntexFactory::settleIntexWithPayNoteCall {
+    let calls = [IIntexFactory::settleIntexCall {
         seriesId: Default::default(),
         owner: Address::ZERO,
         units: U256::ZERO,
-        payNoteProof: Default::default(),
+        asset: Address::ZERO,
+        snapshotId: U256::ZERO,
     }
     .abi_encode()];
 

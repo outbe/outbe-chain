@@ -55,15 +55,6 @@ pub fn settle_gem(
     runtime::settle_gem(storage, caller, gem_id, asset, snapshot_id)
 }
 
-pub fn settle_gem_with_paynote(
-    storage: &StorageHandle<'_>,
-    caller: Address,
-    gem_id: U256,
-    paynote_proof: &[u8],
-) -> Result<()> {
-    runtime::settle_gem_with_paynote(storage, caller, gem_id, paynote_proof)
-}
-
 pub fn mine_promis(
     storage: &StorageHandle<'_>,
     gem_id: U256,

@@ -119,12 +119,6 @@ sol! {
         function quoteSend(SendParam sendParam) external view returns (uint256 fee);
         function send(SendParam sendParam) external payable returns (bytes32 sendId);
     }
-
-    interface ITestToken {
-        function mint(address to, uint256 amount) external;
-        function approve(address spender, uint256 amount) external returns (bool);
-        function balanceOf(address account) external view returns (uint256);
-    }
 }
 
 /// One series to issue. `issuance` is its three-byte currency code, which with the

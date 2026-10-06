@@ -22,7 +22,7 @@ import {
  *  - WorldwideDay u32 YYYYMMDD .......... crates/core/common/src/worldwideday.rs
  *  - native COEN amounts at 1e18 ........ explicit contract/function boundaries
  *  - protocol monetary amounts at 1e6 ... crates/blockchain/primitives/src/units.rs
- *  - asset-native amounts, raw .......... the asset's own decimals (Credis, settlement, PayNote)
+ *  - asset-native amounts, raw .......... the asset's own decimals (Credis, settlement)
  *  - Credis annual currency rate at 1e6 . Oracle/Credis contract
  *  - generic prices/ratios at 1e18 ...... their owning protocol modules
  *  - status / day_type enums ............ crates/core/metadosis/src/schema.rs
@@ -251,8 +251,8 @@ function formatScalar(
     const v = value as bigint;
     return { raw: v.toString(), value: formatUnits(v, 6) };
   }
-  // Credis principal and interest, settlement payments and PayNote spends are in the
-  // asset's own atomic units, whose decimals vary by asset.
+  // Credis principal and interest and settlement payments are in the asset's own
+  // atomic units, whose decimals vary by asset.
   if (type === "uint256" && ASSET_UNIT_AMOUNT_RE.test(n)) {
     return (value as bigint).toString();
   }
