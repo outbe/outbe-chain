@@ -12,7 +12,7 @@ use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 use outbe_primitives::units::SCALE_1E6_U256;
 
 use outbe_common::pow;
-use outbe_common::settlement::floor_to_asset_units;
+use outbe_common::settlement::{floor_to_asset_units, PaymentCurrency};
 
 use crate::constants::SRA_RATE;
 use crate::errors::GemFactoryError;
@@ -418,13 +418,6 @@ fn read_decimals(storage: &StorageHandle<'_>, asset: Address) -> Result<u8> {
     IERC20::decimalsCall::abi_decode_returns(&ret).map_err(|_| GemFactoryError::InvalidAsset.into())
 }
 
-/// Which of a gem's two currencies a payment asset is denominated in.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PaymentCurrency {
-    Reference,
-    Issuance,
-}
-
 /// Which of the gem's two currencies `asset` is denominated in. The function checks
 /// registration first, so an unregistered asset need not implement `isoCode()` at all.
 /// It matches reference first, so a single-currency gem takes the no-rate branch.
@@ -465,22 +458,19 @@ fn cost_in_asset(
     currency: PaymentCurrency,
 ) -> Result<(U256, Option<VwapSnapshotId>)> {
     let asset_decimals = read_decimals(storage, asset)?;
-    let (rate, snapshot) = match currency {
-        PaymentCurrency::Reference => (None, None),
-        PaymentCurrency::Issuance => {
-            let fx = settlement_fx_rates(
-                storage.clone(),
-                item.issuance_currency,
-                item.reference_currency,
-            )?
-            .ok_or(GemFactoryError::OracleUnavailable)?;
-            let rate = (
-                fx.issuance_currency_vwap_minor,
-                fx.reference_currency_vwap_minor,
-            );
-            (Some(rate), Some(fx.snapshot))
-        }
-    };
+    let (rate, snapshot) = currency.conversion(|| -> Result<_> {
+        let fx = settlement_fx_rates(
+            storage.clone(),
+            item.issuance_currency,
+            item.reference_currency,
+        )?
+        .ok_or(GemFactoryError::OracleUnavailable)?;
+        let rate = (
+            fx.issuance_currency_vwap_minor,
+            fx.reference_currency_vwap_minor,
+        );
+        Ok((rate, fx.snapshot))
+    })?;
     Ok((settlement_units(item, rate, asset_decimals)?, snapshot))
 }
 
