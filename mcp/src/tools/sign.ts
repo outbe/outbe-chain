@@ -107,9 +107,9 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
   ).describe("Amount in raw token units");
   const proof = z.string().regex(HEX).describe("Combined pledge proof generated locally by outbe-cli pledgenote");
   server.tool("credis_reserve", "Reserve exact stablecoin principal and freeze loan terms for 15 minutes.",
-    { smart_account: addr, asset: addr, amount: rawAmount, reference_currency: z.number().int().min(1).max(65535) },
-    handler(async ({ smart_account, asset, amount, reference_currency }) =>
-      submit(ctx, "vaultrouter", "reserveStables", [smart_account, asset, BigInt(amount), reference_currency], GAS_DEFAULT, true)));
+    { smart_account: addr, source: addr.describe("Main account that pledges the Gratis collateral"), asset: addr, amount: rawAmount, reference_currency: z.number().int().min(1).max(65535) },
+    handler(async ({ smart_account, source, asset, amount, reference_currency }) =>
+      submit(ctx, "vaultrouter", "reserveStables", [smart_account, source, asset, BigInt(amount), reference_currency], GAS_DEFAULT, true)));
   server.tool("gratis_pledge", "Fund an owner-bound pledge note. Save the private note locally before submitting.",
     { amount: rawAmount, mac: z.string().regex(HEX32), op_nonce: rawAmount.refine(v => BigInt(v) < (1n << 64n)) },
     handler(async ({ amount, mac, op_nonce }) =>

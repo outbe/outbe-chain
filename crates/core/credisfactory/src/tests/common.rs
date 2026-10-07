@@ -255,6 +255,7 @@ pub fn seed_reservation_at(
             asset_decimals: 6,
             reference_currency: REFERENCE_ISO,
             call_anchor_price_minor: oracle_rate(),
+            source: smart_account,
         })
         .unwrap();
     id

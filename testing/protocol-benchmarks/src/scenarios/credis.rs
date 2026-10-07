@@ -180,6 +180,7 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(Bytes, U256), String> {
             asset_decimals: 6,
             reference_currency: REFERENCE_ISO,
             call_anchor_price_minor: oracle_rate(),
+            source: ALICE,
         })
         .map_err(|error| error.to_string())?;
     let commitment = outbe_gratisfactory::runtime::pledge_gratis(

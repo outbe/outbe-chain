@@ -46,6 +46,9 @@ fn vault() -> Address {
 fn receiver() -> Address {
     address!("0x0000000000000000000000000000000000000999")
 }
+fn pledger() -> Address {
+    address!("0x0000000000000000000000000000000000000501")
+}
 fn bridge() -> Address {
     address!("0x000000000000000000000000000000000000b111")
 }
@@ -2195,6 +2198,7 @@ fn reserve_stables_rejects_an_inactive_caller() {
             storage.clone(),
             stranger(),
             receiver(),
+            pledger(),
             asset(),
             U256::from(10),
             USD_ISO_CODE,
@@ -2209,12 +2213,30 @@ fn reserve_stables_rejects_an_inactive_caller() {
 }
 
 #[test]
+fn reserve_stables_requires_a_pledge_source() {
+    with_reservable_vault(U256::from(100u64), |storage| {
+        let err = runtime::reserve_stables(
+            storage.clone(),
+            cca(),
+            receiver(),
+            Address::ZERO,
+            asset(),
+            U256::from(10),
+            USD_ISO_CODE,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("zero address"), "{err}");
+    });
+}
+
+#[test]
 fn a_reservation_holds_then_releases_once() {
     with_reservable_vault(U256::from(100u64), |storage| {
         let id = runtime::reserve_stables(
             storage.clone(),
             cca(),
             receiver(),
+            pledger(),
             asset(),
             U256::from(10),
             USD_ISO_CODE,
@@ -2225,6 +2247,7 @@ fn a_reservation_holds_then_releases_once() {
         assert_eq!(held.amount, U256::from(10));
         assert_eq!(held.smart_account, receiver());
         assert_eq!(held.cca, cca());
+        assert_eq!(held.source, pledger());
         assert_eq!(held.vault, vault());
         assert_eq!(held.gratis_minor, U256::from(5));
         assert_eq!(held.asset_decimals, 6);
@@ -2268,6 +2291,7 @@ fn release_rejects_a_different_receiver_and_returns_excess_to_the_origin_vault()
             storage.clone(),
             cca(),
             receiver(),
+            pledger(),
             asset(),
             U256::from(50),
             USD_ISO_CODE,
@@ -2315,6 +2339,7 @@ fn an_unspent_reservation_returns_to_the_origin_vault() {
             storage.clone(),
             cca(),
             receiver(),
+            pledger(),
             asset(),
             U256::from(10),
             USD_ISO_CODE,
@@ -2340,6 +2365,7 @@ fn a_stranger_cannot_return_a_live_reservation() {
             storage.clone(),
             cca(),
             receiver(),
+            pledger(),
             asset(),
             U256::from(10),
             USD_ISO_CODE,
@@ -2411,6 +2437,7 @@ fn reservations_are_gated_like_a_withdrawal() {
         let reserve_call = IVaultRouter::reserveStablesCall {
             referenceCurrency: USD_ISO_CODE,
             smartAccount: receiver(),
+            source: pledger(),
             asset: asset(),
             amount: U256::from(10),
         }
@@ -2464,6 +2491,7 @@ fn a_reservation_cannot_exceed_the_vaults_shares() {
             storage.clone(),
             cca(),
             receiver(),
+            pledger(),
             asset(),
             U256::from(10),
             USD_ISO_CODE,
@@ -2498,6 +2526,7 @@ fn reservation_expiry_boundary_and_repeated_permissionless_return() {
             storage.clone(),
             cca(),
             receiver(),
+            pledger(),
             asset(),
             U256::from(10),
             USD_ISO_CODE,

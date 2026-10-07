@@ -32,6 +32,7 @@ interface IVaultRouter {
         uint8 assetDecimals;
         uint16 referenceCurrency;
         uint256 callAnchorPriceMinor;
+        address source;
     }
 
     error TokenOperationFailed();
@@ -96,6 +97,7 @@ interface IVaultRouter {
         uint256 indexed id,
         address indexed smartAccount,
         address indexed cca,
+        address source,
         address asset,
         address vault,
         uint256 amount,
@@ -205,10 +207,15 @@ interface IVaultRouter {
 
     /// @notice Redeems `amount` of `asset` from its origin vault and holds it in this
     ///         router's custody for `smartAccount`, guaranteeing it can later be
-    ///         delivered for 15 minutes. Caller must be an active CCA.
-    function reserveStables(address smartAccount, address asset, uint256 amount, uint16 referenceCurrency)
-        external
-        returns (uint256 reservationId);
+    ///         delivered for 15 minutes. Caller must be an active CCA. Only `source`
+    ///         may pledge the Gratis collateral for this reservation.
+    function reserveStables(
+        address smartAccount,
+        address source,
+        address asset,
+        uint256 amount,
+        uint16 referenceCurrency
+    ) external returns (uint256 reservationId);
 
     /// @notice Validates `receiver` as the reserved smart account, pays `amount` to
     ///         the recorded CCA to cover COEN delivered to that account, and

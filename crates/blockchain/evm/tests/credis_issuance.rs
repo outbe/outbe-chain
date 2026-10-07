@@ -217,6 +217,7 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
         asset_decimals: 6,
         reference_currency: 840,
         call_anchor_price_minor: U256::from(2_000_000),
+        source: OWNER,
     })?;
 
     Ok(())
