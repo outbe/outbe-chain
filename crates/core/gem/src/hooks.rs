@@ -6,7 +6,7 @@ use outbe_primitives::{
     daily_sweep::{Scheduled, SweepDays},
     error::Result,
     math::{constants::MAX_BIN_ID, tree_math},
-    time::{previous_date_key, timestamp_to_date_key},
+    time::previous_date_key,
 };
 
 use crate::constants::{CALL_SWEEP, MAX_BUCKET_VISITS_PER_BLOCK};
@@ -37,15 +37,7 @@ impl BlockLifecycle for GemLifecycle {
 
 /// The most recent fully-closed UTC day, or `None` while its VWAPs are not final.
 fn closed_day(ctx: &BlockRuntimeContext) -> Result<Option<u32>> {
-    let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
-    let finalized = OracleContract::new(ctx.storage.clone())
-        .utc_day_vwap_last_finalized
-        .read()?;
-    if finalized < last_closed_day {
-        tracing::warn!(target: "outbe::gem", last_closed_day, finalized, "utc-day VWAP not finalized yet, skipping the day's sweeps");
-        return Ok(None);
-    }
-    Ok(Some(last_closed_day))
+    outbe_oracle::closed_day::finalized_closed_day(ctx.storage.clone(), ctx.block.timestamp, "gem")
 }
 
 /// Index of the currency the cursor names, or the head when the registry dropped it.

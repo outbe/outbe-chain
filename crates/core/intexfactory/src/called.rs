@@ -16,7 +16,6 @@ use outbe_primitives::{
     error::{Result, SweepFailure},
     math::{constants::MAX_BIN_ID, tree_math},
     storage::StorageHandle,
-    time::{previous_date_key, timestamp_to_date_key},
 };
 
 use crate::constants::{
@@ -69,20 +68,11 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
 
 /// The most recent fully-closed UTC day, or `None` while its VWAPs are not final.
 pub(crate) fn closed_day(ctx: &BlockRuntimeContext) -> Result<Option<u32>> {
-    let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
-
-    // The Oracle begin-block hook finalizes that day earlier in this same
-    // block. A lagging watermark means the ordering broke. Skip loudly
-    // instead of misreading an unfinalized day as empty.
-    // todo use api.rs
-    let finalized = OracleContract::new(ctx.storage.clone())
-        .utc_day_vwap_last_finalized
-        .read()?;
-    if finalized < last_closed_day {
-        tracing::warn!(target: "outbe::intexfactory", last_closed_day, finalized, "utc-day VWAP not finalized yet, skipping the day's sweeps");
-        return Ok(None);
-    }
-    Ok(Some(last_closed_day))
+    outbe_oracle::closed_day::finalized_closed_day(
+        ctx.storage.clone(),
+        ctx.block.timestamp,
+        "intexfactory",
+    )
 }
 
 /// Pin the sweep's current day and walk it from the first currency's lowest bin.

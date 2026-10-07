@@ -1,4 +1,5 @@
 pub mod api;
+pub mod closed_day;
 pub mod constants;
 pub mod errors;
 pub mod genesis;
