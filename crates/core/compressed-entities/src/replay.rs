@@ -94,11 +94,16 @@ pub fn decode_canonical_body_event(
     if emitter == NOD_ADDRESS && signature == NodBodyStored::SIGNATURE_HASH {
         let event = NodBodyStored::decode_log_data(data)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
-        validate_versions(event.commitmentSchemeVersion, event.schemaVersion, false)?;
+        validate_versions(event.commitmentSchemeVersion, event.schemaVersion, true)?;
         let id = WwdEntityId::from(event.nodId);
-        let body = decode_nod_item_v1(&event.canonicalPayload)
-            .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
-        if body.nod_id != id {
+        let body_id = if event.schemaVersion == crate::NOD_BODY_SCHEMA_V2 {
+            crate::decode_nod_item_v2(&event.canonicalPayload)
+                .map(|body| body.encrypted.terms.nod_id)
+        } else {
+            decode_nod_item_v1(&event.canonicalPayload).map(|body| body.nod_id)
+        }
+        .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
+        if body_id != id {
             return Err(ReplayEventError::PayloadIdentityMismatch);
         }
         return stored_event(

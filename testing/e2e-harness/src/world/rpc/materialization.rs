@@ -208,11 +208,15 @@ impl Rpc {
             self.chain_id(port)
                 .ok_or_else(|| eyre!("read chain ID for mineGratis"))?,
         ));
+        let public = self
+            .tribute_network_public_key(port)
+            .ok_or_else(|| eyre!("network encryption public key"))?;
+        let gratis_load = crate::internal::nod_keys::decrypt_with_public(&body, &public);
         let mac = outbe_tee_enclave::gratis::modify_mac(
             &modify_key,
             owner,
             outbe_tee::protocol::GratisOp::Mint,
-            body.gratisLoadMinor,
+            gratis_load,
             op_nonce,
             chain_id,
         );

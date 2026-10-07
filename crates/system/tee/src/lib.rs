@@ -18,11 +18,17 @@ pub mod dcap_protocol;
 #[cfg(feature = "native-dcap")]
 pub mod dcap_v1;
 pub mod errors;
+pub mod fidelity_decrypt;
 pub mod finalized_admission;
+pub mod gratis_decrypt;
 pub mod host_collateral;
 mod metrics;
 #[cfg(feature = "native-dcap")]
 pub mod native_qvl;
+pub mod nod_decrypt;
+pub mod nod_materialization;
+pub mod nod_mine;
+pub mod nod_transport;
 pub mod node_host;
 pub mod offer_encrypt;
 pub mod protocol;

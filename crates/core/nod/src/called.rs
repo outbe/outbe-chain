@@ -610,7 +610,8 @@ fn forfeit_last_member(
         )));
     }
     let owner = item.body().owner;
-    let gratis_load_minor = item.body().gratis_load_minor;
+    let gratis_load_minor = api::calculation_amount(item.body())?;
+    let encrypted_gratis_amount = item.body().encrypted.encrypted_gratis_amount.clone();
     let bucket_id = WwdEntityId::from_day_and_digest(worldwide_day, bucket_key.0);
     let bucket = api::load_bucket(storage, scope, parent, bucket_id)?.ok_or_else(|| {
         outbe_primitives::error::PrecompileError::Revert(format!(
@@ -621,7 +622,7 @@ fn forfeit_last_member(
     nod.emit(INod::NodForfeited {
         owner,
         nodId: nod_id.to_u256(),
-        gratisLoadMinor: gratis_load_minor,
+        encryptedGratisAmount: encrypted_gratis_amount.into(),
     })?;
     Ok(Some(gratis_load_minor))
 }

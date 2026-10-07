@@ -143,6 +143,7 @@ rustix.workspace = true
 # mode, sudo); Gherkin tags define each scenario's requirements.
 [dev-dependencies]
 commonware-parallel.workspace = true
+outbe-nod = { workspace = true, features = ["test-enclave"] }
 
 [[bin]]
 name = "outbe-e2e"

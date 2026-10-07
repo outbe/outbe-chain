@@ -1,11 +1,11 @@
 use super::*;
 use alloy_sol_types::SolCall;
 use outbe_compressed_entities::{
-    begin_block, body_commitment, encode_nod_item_v1, AuthenticatedParentTree,
+    begin_block, body_commitment, encode_nod_item_v2, AuthenticatedParentTree,
     AuthenticatedParentTreeFactory, Commitment, EntityRef, ExactParentIdentity, FinalLeafMutation,
-    PartitionRef, ProvisionalTreeBatch, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+    PartitionRef, ProvisionalTreeBatch, ACTIVE_COMMITMENT_SCHEME, NOD_BODY_SCHEMA_V2,
 };
-use outbe_nod::{precompile::INod, NodItemState, NodRepositoryWriter};
+use outbe_nod::{precompile::INod, NodRepositoryWriter};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
     addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS},
@@ -72,34 +72,57 @@ fn fixture() -> (
     Bytes,
     Address,
 ) {
+    let (evm, calldata, owner, _) = supervised_fixture(false);
+    (evm, calldata, owner)
+}
+
+fn supervised_fixture(
+    mismatch: bool,
+) -> (
+    OutbeEvm<CacheDB<EmptyDB>, NoOpInspector, PrecompilesMap>,
+    Bytes,
+    Address,
+    tokio::sync::watch::Receiver<Option<outbe_offchain_data::RuntimeBodyFailure>>,
+) {
     let owner = Address::repeat_byte(0x11);
     let day = WorldwideDay::new(20261007);
     let id = outbe_nod::NodContract::generate_nod_id(owner, day).unwrap();
-    let item = NodItemState {
-        is_settled: false,
-        nod_id: id,
-        owner,
-        gratis_load_minor: alloy_primitives::U256::from(11),
-        worldwide_day: day,
-        league_id: 3,
-        bucket_key: B256::repeat_byte(0x42),
-        issuance_currency: 840,
-        reference_currency: 978,
-        issued_at: 1_700_000_000,
-    };
+    let item = outbe_nod::test_support::item(
+        outbe_nod::test_support::NodItemFixture {
+            is_settled: false,
+            nod_id: id,
+            owner,
+            gratis_load_minor: alloy_primitives::U256::from(11),
+            worldwide_day: day,
+            league_id: 3,
+            bucket_key: B256::repeat_byte(0x42),
+            issuance_currency: 840,
+            reference_currency: 978,
+            issued_at: 1_700_000_000,
+        },
+        alloy_primitives::U256::ONE,
+    );
     let storage = Arc::new(MemoryStorage::new());
     NodRepositoryWriter::new(storage.clone(), storage.clone())
         .put_nod(&item)
         .unwrap();
-    let payload = encode_nod_item_v1(&outbe_nod::canonical_item(&item)).unwrap();
+    let payload = encode_nod_item_v2(&outbe_nod::canonical_item(&item)).unwrap();
     let parent = Parent {
         root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
         block_hash: B256::ZERO,
         id,
-        commitment: body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, id, &payload)
-            .unwrap(),
+        commitment: body_commitment(
+            ACTIVE_COMMITMENT_SCHEME,
+            NOD_BODY_SCHEMA_V2,
+            id,
+            if mismatch { b"previous body" } else { &payload },
+        )
+        .unwrap(),
     };
-    let factory = OutbeEvmFactory::with_runtime_body_readers(RuntimeBodyReaders::new(storage));
+    let (failure_tx, failure_rx) = tokio::sync::watch::channel(None);
+    let factory = OutbeEvmFactory::with_runtime_body_readers(RuntimeBodyReaders::new_supervised(
+        storage, failure_tx,
+    ));
     let mut evm = factory.create_evm(CacheDB::new(EmptyDB::default()), super::tests::test_env());
     let scope = evm.execution_scope().clone();
     scope
@@ -136,7 +159,49 @@ fn fixture() -> (
         .abi_encode()
         .into(),
         owner,
+        failure_rx,
     )
+}
+
+#[test]
+fn body_mismatch_reverts_real_evm_calls_without_stopping_the_node() {
+    use alloy_sol_types::{Revert, SolError};
+    for system in [false, true] {
+        let (mut evm, calldata, owner, failures) = supervised_fixture(true);
+        let result = if system {
+            evm.transact_system_call(owner, NOD_ADDRESS, calldata)
+        } else {
+            evm.transact_raw(
+                TxEnv::builder()
+                    .caller(owner)
+                    .kind(TxKind::Call(NOD_ADDRESS))
+                    .data(calldata)
+                    .gas_limit(1_000_000)
+                    .build_fill(),
+            )
+        }
+        .expect("body mismatch must return a transaction result, not abort execution");
+        assert!(matches!(
+            result.result,
+            revm::context_interface::result::ExecutionResult::Revert { .. }
+        ));
+        let reason = Revert::abi_decode(result.result.output().unwrap()).unwrap();
+        assert!(
+            reason.reason.contains("commitment mismatch"),
+            "{}",
+            reason.reason
+        );
+        assert!(result.result.tx_gas_used() > 0);
+        assert!(
+            failures.borrow().is_none(),
+            "request failure must not stop the node"
+        );
+        assert!(evm
+            .transact_system_call(owner, Address::repeat_byte(0x77), Bytes::new())
+            .unwrap()
+            .result
+            .is_success());
+    }
 }
 
 #[test]

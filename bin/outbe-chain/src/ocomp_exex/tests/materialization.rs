@@ -184,7 +184,7 @@ mod copied_public_work {
     use super::super::recovery::copied_native;
     use super::*;
     use alloy_primitives::{Address, B256, U256};
-    use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
+    use outbe_compressed_entities::{derive_poseidon_entity_id, TributeBodyV1};
     use outbe_lysis::program_v1::{
         planner::{
             LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1, PlannedUnitPositionV1,
@@ -251,6 +251,7 @@ mod copied_public_work {
         output_manifest_root: B256,
         nod_count: u32,
         result_chunk_refs: Vec<CasObjectRefV1>,
+        protected_sources: outbe_nodfactory::test_support::MaterializationFixture,
     }
     // Protocol-shaped native CAS/planner fixture. Minimal non-root phase payloads
     // support structural/proof tests; this is not real worker-pipeline E2E evidence.
@@ -297,6 +298,7 @@ mod copied_public_work {
         }
     }
     fn fixture(root: &Path, job_seed: u8, day: WorldwideDay, tribute_count: u32) -> Fixture {
+        let _tribute_enclave = outbe_tribute::enclave_client::test_enclave::scope();
         let limits = poc_schema_limits();
         let list_limits = poc_input_list_limits();
         let bundle = protocol_bundle();
@@ -339,6 +341,33 @@ mod copied_public_work {
         contributors_by_owner
             .sort_by_key(|contributor| (contributor.owner, contributor.source_tribute_id));
         let nod_action_tributes = tributes.clone();
+        let source_actions = tributes
+            .iter()
+            .enumerate()
+            .map(|(ordinal, tribute)| NodActionV1 {
+                raw_ordinal: ordinal as u32,
+                tribute_id: *tribute.tribute_id,
+                nod_id: *tribute.tribute_id,
+                owner: tribute.owner,
+                wwd: day.value(),
+                league_id: 1,
+                gratis_load_minor: U256::ONE,
+                entry_price_minor: U256::ZERO,
+                settlement_cost_minor: U256::from(2),
+                issuance_currency: tribute.issuance_currency,
+                reference_currency: tribute.reference_currency,
+            })
+            .collect::<Vec<_>>();
+        let protected_sources =
+            outbe_nodfactory::test_support::MaterializationFixture::new_with_archive(
+                &source_actions,
+                copied_native::chain().chain().id(),
+                &root
+                    .join("exporter-v1/input-refs/.work")
+                    .join(hex::encode(job_id))
+                    .join("inventory/source-proof-archive-v1"),
+            )
+            .unwrap();
         let owners = tributes
             .iter()
             .map(|tribute| tribute.owner)
@@ -423,12 +452,9 @@ mod copied_public_work {
                     },
                     wwd: day.value(),
                     sealed_tribute_collection_key: hash(0x34),
-                    sealed_tribute_collection_root: hash(0x35),
+                    sealed_tribute_collection_root: protected_sources.source_root(),
                 },
-                canonical_tributes: tributes
-                    .iter()
-                    .map(|tribute| encode_tribute_v1(tribute).unwrap())
-                    .collect(),
+                canonical_tributes: protected_sources.canonical_source_bodies().unwrap(),
                 fidelity_openings,
                 oracle_opening: oracle_opening.unwrap(),
             },
@@ -728,6 +754,7 @@ mod copied_public_work {
             output_manifest_root: output_manifest_root.finish().unwrap(),
             nod_count: tribute_count,
             result_chunk_refs,
+            protected_sources,
         }
     }
 
@@ -761,6 +788,7 @@ mod copied_public_work {
             copied_native::chain().genesis_hash(),
         );
         StorageHandle::enter(&mut owner, |storage| {
+            f.protected_sources.seed_source_root(&storage).unwrap();
             let nod = NodContract::new(storage);
             let p = NodCertifiedGenerationProjection {
                 worldwide_day: f.day,
@@ -857,6 +885,7 @@ mod copied_public_work {
         f: &Fixture,
         head: &NodMaterializationHeadV1,
     ) -> eyre::Result<outbe_ocomp::nod_materialization::BuiltNodMaterializationBatchV1> {
+        let _tribute_enclave = outbe_tribute::enclave_client::test_enclave::scope();
         let limits = poc_schema_limits();
         let cas = FilesystemCasReader::open(root.join("cas-v1"), CAS_LIMITS)?;
         let job = hex::encode(f.job_id);
@@ -878,6 +907,25 @@ mod copied_public_work {
         Ok(build_nod_materialization_batch_with_references(
             &audit, head, 3,
         )?)
+    }
+
+    fn protected_batch(
+        f: &Fixture,
+        batch: &outbe_ocomp_protocol::nod_materialization::NodMaterializationBatchV1,
+    ) -> outbe_ocomp_protocol::nod_materialization::ProtectedNodMaterializationV2 {
+        let mut head = pending_head(f);
+        head.next_nod_ordinal = batch.first_nod_ordinal;
+        f.protected_sources
+            .protect(
+                &outbe_tee::nod_materialization::NodMaterializationAuthorityV2 {
+                    chain_id: copied_native::chain().chain().id(),
+                    head: head.encode_canonical(&poc_schema_limits()).unwrap(),
+                    subtree_height: 3,
+                    sealed_tribute_root: f.protected_sources.source_root(),
+                },
+                batch,
+            )
+            .unwrap()
     }
 
     fn reference_root(root: &Path, job: B256, first_nod_ordinal: u32) -> PathBuf {
@@ -1086,7 +1134,9 @@ mod copied_public_work {
             signer,
         )
         .unwrap();
-        submitter.reconcile(f.job_id, &built.batch).unwrap();
+        submitter
+            .reconcile(f.job_id, &protected_batch(&f, &built.batch))
+            .unwrap();
         drop(submitter);
         let original = fs::read(journal.join("submission-v1.json")).unwrap();
         copied_native::copy_tree(&journal, &receiver.path().join("signed-journal"));
@@ -1110,7 +1160,7 @@ mod copied_public_work {
         )
         .unwrap();
         assert!(matches!(
-            reopened.reconcile(f.job_id, &built.batch),
+            reopened.reconcile(f.job_id, &protected_batch(&f, &built.batch)),
             Err(NodMaterializationSubmissionErrorV1::ConflictingReplay)
         ));
         assert_eq!(fs::read(&key_path).unwrap(), key_before);
@@ -1343,7 +1393,9 @@ mod copied_public_work {
             let sent = rpc.sent.clone();
             let mut submitter = submitter(public, f, signer, rpc);
             assert_eq!(
-                submitter.reconcile(f.job_id, batch).unwrap(),
+                submitter
+                    .reconcile(f.job_id, &protected_batch(f, batch))
+                    .unwrap(),
                 NodMaterializationSubmissionOutcomeV1::Pending
             );
             if finalize {
@@ -1351,12 +1403,16 @@ mod copied_public_work {
                 // the public owner. A failed tx leaves the pending NOD unchanged.
                 for _ in 0..2 {
                     assert_eq!(
-                        submitter.reconcile(f.job_id, batch).unwrap(),
+                        submitter
+                            .reconcile(f.job_id, &protected_batch(f, batch))
+                            .unwrap(),
                         NodMaterializationSubmissionOutcomeV1::Pending
                     );
                 }
                 assert_eq!(
-                    submitter.reconcile(f.job_id, batch).unwrap(),
+                    submitter
+                        .reconcile(f.job_id, &protected_batch(f, batch))
+                        .unwrap(),
                     NodMaterializationSubmissionOutcomeV1::Finalized { success: false }
                 );
                 assert_eq!(sent.lock().unwrap().len(), 1);
@@ -1648,7 +1704,9 @@ mod copied_public_work {
                 let no_rpc = rpc(&own_evm, point, false);
                 let mut journal = submitter(&public, &fixture, own_evm, no_rpc);
                 assert_eq!(
-                    journal.reconcile(fixture.job_id, &built.batch).unwrap(),
+                    journal
+                        .reconcile(fixture.job_id, &protected_batch(&fixture, &built.batch))
+                        .unwrap(),
                     NodMaterializationSubmissionOutcomeV1::Finalized { success: false }
                 );
                 drop(journal);
@@ -1681,7 +1739,7 @@ mod copied_public_work {
                 payout_submitter::PayoutTickOutcomeV1,
             };
             use outbe_ocomp_protocol::{
-                abi::{encode_materialize_certified_nods_calldata, NOD_FACTORY_ADDRESS},
+                abi::{encode_protected_materialize_certified_nods_calldata, NOD_FACTORY_ADDRESS},
                 result::ExactCountsV1,
                 state::ActiveGenerationV1,
             };
@@ -1769,6 +1827,7 @@ mod copied_public_work {
             }
 
             fn artifact(public: &Path, f: &Fixture) -> Vec<[u8; CONTRIBUTOR_LEAF_BYTES]> {
+                let _tribute_enclave = outbe_tribute::enclave_client::test_enclave::scope();
                 let limits = poc_schema_limits();
                 let cas = FilesystemCasReader::open(public.join("cas-v1"), CAS_LIMITS).unwrap();
                 let job = hex::encode(f.job_id);
@@ -1872,6 +1931,7 @@ mod copied_public_work {
                 );
                 owner.set_block_number(1);
                 StorageHandle::enter(&mut owner, |storage| {
+                    f.protected_sources.seed_source_root(&storage).unwrap();
                     let nod = NodContract::new(storage.clone());
                     let p = NodCertifiedGenerationProjection {
                         worldwide_day: f.day,
@@ -2495,6 +2555,8 @@ mod copied_public_work {
             }
 
             async fn exercise(validator: bool) {
+                let _tribute_enclave = outbe_tribute::enclave_client::test_enclave::scope();
+                let _enclave = outbe_nodfactory::test_support::enclave_scope();
                 let receiver = tempfile::tempdir().unwrap();
                 let public = receiver.path().join("ocomp");
                 let chain_root = receiver.path().join("chain");
@@ -2549,8 +2611,8 @@ mod copied_public_work {
                 // Existing build_remaining fixture currently uses subtree height 3.
                 // This is the ordinary default, not a production timing override.
                 assert_eq!(subtree, 3);
-                let expected_nod = encode_materialize_certified_nods_calldata(
-                    &build_remaining(&public, &f, &head).unwrap().batch,
+                let expected_nod = encode_protected_materialize_certified_nods_calldata(
+                    &protected_batch(&f, &build_remaining(&public, &f, &head).unwrap().batch),
                     &poc_schema_limits(),
                 )
                 .unwrap();

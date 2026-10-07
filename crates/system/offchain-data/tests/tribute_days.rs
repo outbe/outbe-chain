@@ -164,18 +164,21 @@ fn block(number: u64, logs: Vec<FinalizedLog>) -> FinalizedBlock {
 fn nod(owner: Address, day: u32) -> NodItemState {
     let worldwide_day = WorldwideDay::new(day);
     let entry = U256::from(13u64);
-    NodItemState {
-        is_settled: false,
-        nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
-        owner,
-        gratis_load_minor: U256::from(11u64),
-        worldwide_day,
-        league_id: 4,
-        bucket_key: NodContract::bucket_key(worldwide_day, entry, 840),
-        issuance_currency: 840,
-        reference_currency: 840,
-        issued_at: 1_752_534_000,
-    }
+    outbe_nod::test_support::item(
+        outbe_nod::test_support::NodItemFixture {
+            is_settled: false,
+            nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
+            owner,
+            gratis_load_minor: U256::from(11u64),
+            worldwide_day,
+            league_id: 4,
+            bucket_key: NodContract::bucket_key(worldwide_day, entry, 840),
+            issuance_currency: 840,
+            reference_currency: 840,
+            issued_at: 1_752_534_000,
+        },
+        U256::from(5),
+    )
 }
 
 #[test]

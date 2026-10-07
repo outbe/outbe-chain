@@ -1067,7 +1067,7 @@ fn cold_restart_streams_exact_result_chunks_only_from_root_reduce_leaves() {
 }
 
 #[test]
-fn one_chunk_nod_generation_builds_exact_first_and_final_batch_paths() {
+fn one_chunk_nod_generation_builds_exact_first_adaptive_and_final_batch_paths() {
     let fixture = synthetic_fixture_with_tribute_count(10);
     let reader = FilesystemCasReader::open(&fixture.cas_root, CAS_LIMITS).unwrap();
     let input_refs = VerifiedInputChunkRefCatalog::reopen(
@@ -1122,6 +1122,20 @@ fn one_chunk_nod_generation_builds_exact_first_and_final_batch_paths() {
         &fixture.limits,
     )
     .expect("first compact batch verifies");
+
+    for (cursor, count, path_length) in [(1, 1, 4), (2, 2, 3), (4, 4, 2), (6, 2, 3)] {
+        head.next_nod_ordinal = cursor;
+        let aligned = build_nod_materialization_batch(&audit, &head, 3).unwrap();
+        assert_eq!(aligned.actions.len(), count);
+        assert_eq!(aligned.root_path.len(), path_length);
+        outbe_ocomp_protocol::nod_materialization::verify_nod_materialization_batch(
+            &aligned,
+            &head,
+            3,
+            &fixture.limits,
+        )
+        .expect("a cursor after a smaller batch has an aligned certified subtree");
+    }
 
     head.next_nod_ordinal = 8;
     let final_batch = build_nod_materialization_batch(&audit, &head, 3).unwrap();

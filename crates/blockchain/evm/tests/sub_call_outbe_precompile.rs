@@ -19,12 +19,12 @@ use std::sync::Arc;
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_compressed_entities::{
-    begin_block, body_commitment, encode_nod_item_v1, AuthenticatedParentTree, CeWorkConfig,
+    begin_block, body_commitment, encode_nod_item_v2, AuthenticatedParentTree, CeWorkConfig,
     Commitment, EntityRef, ExecutionScope, FinalLeafMutation, PartitionRef, ProvisionalTreeBatch,
-    ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+    ACTIVE_COMMITMENT_SCHEME,
 };
 use outbe_evm::sub_call;
-use outbe_nod::{precompile::INod, NodBucketState, NodItemState, NodRepositoryWriter};
+use outbe_nod::{precompile::INod, NodBucketState, NodRepositoryWriter};
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
 use outbe_primitives::addresses::{
@@ -268,22 +268,30 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
             reference_currency: 978,
         })
         .unwrap();
-    let item = NodItemState {
-        is_settled: false,
-        nod_id,
-        owner,
-        gratis_load_minor: U256::from(11),
-        worldwide_day: day,
-        league_id: 3,
-        bucket_key,
-        issuance_currency: 840,
-        reference_currency: 978,
-        issued_at: 1_700_000_000,
-    };
+    let item = outbe_nod::test_support::item(
+        outbe_nod::test_support::NodItemFixture {
+            is_settled: false,
+            nod_id,
+            owner,
+            gratis_load_minor: U256::from(11),
+            worldwide_day: day,
+            league_id: 3,
+            bucket_key,
+            issuance_currency: 840,
+            reference_currency: 978,
+            issued_at: 1_700_000_000,
+        },
+        U256::from(9),
+    );
     repository.put_nod(&item).unwrap();
-    let payload = encode_nod_item_v1(&outbe_nod::canonical_item(&item)).unwrap();
-    let commitment =
-        body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, nod_id, &payload).unwrap();
+    let payload = encode_nod_item_v2(&outbe_nod::canonical_item(&item)).unwrap();
+    let commitment = body_commitment(
+        ACTIVE_COMMITMENT_SCHEME,
+        outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
+        nod_id,
+        &payload,
+    )
+    .unwrap();
     let mut database = CacheDB::new(EmptyDB::default());
     let scope = Arc::new(ExecutionScope::with_parent_tree(
         Arc::new(StaticAuthenticatedParent {

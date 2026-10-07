@@ -145,9 +145,9 @@ fn encrypted_inventory_authenticates_ciphertext_then_reads_private_amounts_and_p
     let root =
         tribute_partition_root_from_leaves(day, [(record.tribute_id, record.commitment)]).unwrap();
     let directory = support::tempdir().unwrap();
+    let authority = subject(day, 1, root);
     let mut builder =
-        TributeInventoryBuilder::create(directory.path(), subject(day, 1, root), tiny_work())
-            .unwrap();
+        TributeInventoryBuilder::create(directory.path(), authority.clone(), tiny_work()).unwrap();
     outbe_tribute::enclave_client::test_enclave::uninstall();
     let mut invalid = record.clone();
     invalid.commitment =
@@ -183,6 +183,64 @@ fn encrypted_inventory_authenticates_ciphertext_then_reads_private_amounts_and_p
         record.canonical_body
     );
     assert!(spool.next_body(1_048_576).unwrap().is_none());
+    drop(inventory);
+
+    let reopened = SealedTributeInventory::open(directory.path(), authority).unwrap();
+    let archive = reopened.source_proofs().unwrap();
+    let proof = archive.proof(record.tribute_id).unwrap();
+    let stored_body = outbe_compressed_entities::StoredBody::new(
+        outbe_compressed_entities::TRIBUTE_BODY_SCHEMA_V2,
+        record.canonical_body.clone(),
+    )
+    .unwrap()
+    .encode();
+    outbe_compressed_entities::verify_body_in_collection(
+        root,
+        outbe_compressed_entities::CeDomain::Tribute,
+        record.tribute_id,
+        &stored_body,
+        &proof,
+    )
+    .unwrap();
+    let mut substituted = stored_body;
+    *substituted.last_mut().unwrap() ^= 1;
+    assert!(outbe_compressed_entities::verify_body_in_collection(
+        root,
+        outbe_compressed_entities::CeDomain::Tribute,
+        record.tribute_id,
+        &substituted,
+        &proof,
+    )
+    .is_err());
+}
+
+#[test]
+fn frozen_inventory_retains_membership_proofs_across_external_sort_and_restart() {
+    let (day, records, root) = fixture_records(33);
+    let directory = support::tempdir().unwrap();
+    let authority = subject(day, records.len() as u32, root);
+    let mut builder =
+        TributeInventoryBuilder::create(directory.path(), authority.clone(), tiny_work()).unwrap();
+    for record in records.iter().cloned() {
+        builder.push(record).unwrap();
+    }
+    drop(builder.finish().unwrap());
+    let inventory = SealedTributeInventory::open(directory.path(), authority).unwrap();
+    let archive = inventory.source_proofs().unwrap();
+    for record in records {
+        let stored = outbe_compressed_entities::StoredBody::new_v1(record.canonical_body)
+            .unwrap()
+            .encode();
+        let proof = archive.proof(record.tribute_id).unwrap();
+        outbe_compressed_entities::verify_body_in_collection(
+            root,
+            outbe_compressed_entities::CeDomain::Tribute,
+            record.tribute_id,
+            &stored,
+            &proof,
+        )
+        .unwrap();
+    }
 }
 
 #[test]

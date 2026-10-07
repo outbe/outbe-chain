@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use alloy_primitives::B256;
 use outbe_compressed_entities::{
-    body_commitment, encode_nod_bucket_v1, encode_nod_item_v1, WwdEntityId,
+    body_commitment, encode_nod_bucket_v1, encode_nod_item_v2, WwdEntityId,
     ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
 use outbe_nod::{NodBucketState, NodItemState, NodRepositoryReader};
@@ -436,11 +436,15 @@ pub(super) fn validate_nod_transition(
     }
     let current = match old {
         Some(body) => {
-            let payload = encode_nod_item_v1(&outbe_nod::canonical_item(body))
+            let payload = encode_nod_item_v2(&outbe_nod::canonical_item(body))
                 .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
-            let commitment =
-                body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, identity, &payload)
-                    .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
+            let commitment = body_commitment(
+                ACTIVE_COMMITMENT_SCHEME,
+                outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
+                identity,
+                &payload,
+            )
+            .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
             B256::from(*commitment.as_bytes())
         }
         None => B256::ZERO,

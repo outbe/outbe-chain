@@ -9,17 +9,22 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
     let worldwide_day = WorldwideDay::new(20_241_220);
     let entry_price_minor = U256::from(450_000_000u64);
     let bucket_key = NodContract::bucket_key(worldwide_day, entry_price_minor, 840);
-    let nod_item = || NodItemState {
-        is_settled: false,
-        nod_id: NodContract::generate_nod_id(proposer, worldwide_day).unwrap(),
-        owner: proposer,
-        gratis_load_minor: U256::from(1_000_000u64),
-        worldwide_day,
-        league_id: 1,
-        bucket_key,
-        issuance_currency: 840,
-        reference_currency: 840,
-        issued_at: 1,
+    let nod_item = || {
+        outbe_nod::test_support::item(
+            outbe_nod::test_support::NodItemFixture {
+                is_settled: false,
+                nod_id: NodContract::generate_nod_id(proposer, worldwide_day).unwrap(),
+                owner: proposer,
+                gratis_load_minor: U256::from(1_000_000u64),
+                worldwide_day,
+                league_id: 1,
+                bucket_key,
+                issuance_currency: 840,
+                reference_currency: 840,
+                issued_at: 1,
+            },
+            entry_price_minor,
+        )
     };
     let fixture = NodBodyFixture {
         proposer,
@@ -250,17 +255,22 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
         tribute_price_minor: U256::from(12),
         exclude_from_intex_issuance: false,
     };
-    let nod_fixture = || NodItemState {
-        is_settled: false,
-        nod_id,
-        owner: nod_owner,
-        gratis_load_minor: U256::from(1),
-        worldwide_day: day,
-        league_id: 2,
-        bucket_key,
-        issuance_currency: 840,
-        reference_currency: 978,
-        issued_at: 15,
+    let nod_fixture = || {
+        outbe_nod::test_support::item(
+            outbe_nod::test_support::NodItemFixture {
+                is_settled: false,
+                nod_id,
+                owner: nod_owner,
+                gratis_load_minor: U256::from(1),
+                worldwide_day: day,
+                league_id: 2,
+                bucket_key,
+                issuance_currency: 840,
+                reference_currency: 978,
+                issued_at: 15,
+            },
+            U256::from(16),
+        )
     };
 
     let run = || {

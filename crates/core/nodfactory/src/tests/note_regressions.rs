@@ -231,7 +231,10 @@ fn a_stranger_can_mine_with_the_owners_auth() {
             )
         })
         .unwrap();
-    assert_eq!(minted, input.gratis_load_minor);
+    assert_eq!(
+        decrypt_gratis(input.owner, &minted),
+        input.gratis_load_minor
+    );
     assert!(world
         .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
         .unwrap()

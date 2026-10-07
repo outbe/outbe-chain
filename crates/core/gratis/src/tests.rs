@@ -62,7 +62,6 @@ fn mine_credits_encrypted_balance() {
         .unwrap();
 
         assert_eq!(view_balance(storage.clone(), alice()), amount);
-        assert_eq!(api::total_supply(storage.clone()).unwrap(), amount);
         assert_eq!(api::op_nonce(storage.clone(), alice()).unwrap(), 1);
 
         // Second mine advances the op nonce and accumulates the (hidden) balance.
@@ -75,10 +74,6 @@ fn mine_credits_encrypted_balance() {
         )
         .unwrap();
         assert_eq!(view_balance(storage.clone(), alice()), U256::from(1500u64));
-        assert_eq!(
-            api::total_supply(storage.clone()).unwrap(),
-            U256::from(1500u64)
-        );
     });
 }
 
@@ -95,7 +90,6 @@ fn one_whole_gratis_round_trips_as_one_million_raw_units() {
         .unwrap();
 
         assert_eq!(view_balance(storage.clone(), alice()), one_gratis);
-        assert_eq!(api::total_supply(storage).unwrap(), one_gratis);
     });
 }
 
@@ -121,7 +115,7 @@ fn mine_rejects_forged_auth() {
 }
 
 #[test]
-fn burn_reduces_balance_and_supply() {
+fn burn_reduces_encrypted_balance() {
     with_env(|storage| {
         api::mint(
             storage.clone(),
@@ -130,19 +124,14 @@ fn burn_reduces_balance_and_supply() {
             auth(GratisOp::Mint, alice(), U256::from(1000u64), 0),
         )
         .unwrap();
-        let remaining = api::burn(
+        api::burn(
             storage.clone(),
             alice(),
             U256::from(400u64),
             auth(GratisOp::Burn, alice(), U256::from(400u64), 1),
         )
         .unwrap();
-        assert_eq!(remaining, U256::from(600u64));
         assert_eq!(view_balance(storage.clone(), alice()), U256::from(600u64));
-        assert_eq!(
-            api::total_supply(storage.clone()).unwrap(),
-            U256::from(600u64)
-        );
     });
 }
 
@@ -254,9 +243,8 @@ fn folded_fidelity_section_failure_reverts_the_whole_op() {
             "expected a fidelity-section rejection, got: {err}"
         );
 
-        // Atomic revert: no gratis state was written (balance, supply, op_nonce).
+        // Atomic revert: no gratis state was written (balance, op_nonce).
         assert_eq!(view_balance(storage.clone(), alice()), U256::ZERO);
-        assert_eq!(api::total_supply(storage.clone()).unwrap(), U256::ZERO);
         assert_eq!(api::op_nonce(storage.clone(), alice()).unwrap(), 0);
     });
 }

@@ -1,8 +1,8 @@
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_compressed_entities::{
-    body_commitment, decode_nod_bucket_v1, decode_nod_item_v1, encode_nod_bucket_v1,
-    encode_nod_item_v1, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+    body_commitment, decode_nod_bucket_v1, decode_nod_item_v2, encode_nod_bucket_v1,
+    encode_nod_item_v2, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
 use outbe_nod::{
     canonical_bucket, canonical_bucket_id, canonical_item, from_canonical_bucket,
@@ -15,10 +15,10 @@ fn identity(day: WorldwideDay, seed: U256) -> WwdEntityId {
 }
 
 fn assert_item_roundtrip(record: NodItemState) {
-    let payload = encode_nod_item_v1(&canonical_item(&record)).unwrap();
+    let payload = encode_nod_item_v2(&canonical_item(&record)).unwrap();
     let commitment = body_commitment(
         ACTIVE_COMMITMENT_SCHEME,
-        BODY_SCHEMA_V1,
+        outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
         record.nod_id,
         &payload,
     )
@@ -26,7 +26,7 @@ fn assert_item_roundtrip(record: NodItemState) {
     let event = INod::NodBodyStored {
         nodId: record.nod_id.to_u256(),
         commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-        schemaVersion: BODY_SCHEMA_V1,
+        schemaVersion: outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
         previousCommitment: B256::ZERO,
         newCommitment: B256::from(*commitment.as_bytes()),
         canonicalPayload: Bytes::from(payload.clone()),
@@ -35,18 +35,24 @@ fn assert_item_roundtrip(record: NodItemState) {
     let log = event.encode_log_data();
     let decoded = INod::NodBodyStored::decode_log_data(&log).unwrap();
     let decoded_id = WwdEntityId::from(decoded.nodId);
-    let reconstructed = from_canonical_item(decode_nod_item_v1(&decoded.canonicalPayload).unwrap());
+    let reconstructed = from_canonical_item(decode_nod_item_v2(&decoded.canonicalPayload).unwrap());
 
     assert_eq!(log.topics(), &[INod::NodBodyStored::SIGNATURE_HASH]);
     assert_eq!(decoded_id, record.nod_id);
     assert_eq!(decoded.commitmentSchemeVersion, ACTIVE_COMMITMENT_SCHEME);
-    assert_eq!(decoded.schemaVersion, BODY_SCHEMA_V1);
+    assert_eq!(
+        decoded.schemaVersion,
+        outbe_compressed_entities::NOD_BODY_SCHEMA_V2
+    );
     assert_eq!(decoded.previousCommitment, B256::ZERO);
     assert_eq!(decoded.newCommitment, B256::from(*commitment.as_bytes()));
     assert_eq!(decoded.canonicalPayload.as_ref(), payload);
     assert_eq!(reconstructed.nod_id, record.nod_id);
     assert_eq!(reconstructed.owner, record.owner);
-    assert_eq!(reconstructed.gratis_load_minor, record.gratis_load_minor);
+    assert_eq!(
+        outbe_nod::api::calculation_amount(&reconstructed).unwrap(),
+        outbe_nod::api::calculation_amount(&record).unwrap()
+    );
     assert_eq!(reconstructed.worldwide_day, record.worldwide_day);
     assert_eq!(reconstructed.league_id, record.league_id);
     assert_eq!(reconstructed.bucket_key, record.bucket_key);
@@ -98,31 +104,37 @@ fn assert_bucket_roundtrip(record: NodBucketState) {
 #[test]
 fn stored_events_carry_exact_canonical_nod_bodies_and_commitments() {
     let zero_day = WorldwideDay::new(0);
-    assert_item_roundtrip(NodItemState {
-        is_settled: false,
-        nod_id: identity(zero_day, U256::ZERO),
-        owner: Address::ZERO,
-        gratis_load_minor: U256::ZERO,
-        worldwide_day: zero_day,
-        league_id: 0,
-        bucket_key: B256::ZERO,
-        issuance_currency: 0,
-        reference_currency: 0,
-        issued_at: 0,
-    });
+    assert_item_roundtrip(outbe_nod::test_support::item(
+        outbe_nod::test_support::NodItemFixture {
+            is_settled: false,
+            nod_id: identity(zero_day, U256::ZERO),
+            owner: Address::ZERO,
+            gratis_load_minor: U256::ZERO,
+            worldwide_day: zero_day,
+            league_id: 0,
+            bucket_key: B256::ZERO,
+            issuance_currency: 0,
+            reference_currency: 0,
+            issued_at: 0,
+        },
+        U256::ZERO,
+    ));
     let max_day = WorldwideDay::new(u32::MAX);
-    assert_item_roundtrip(NodItemState {
-        is_settled: true,
-        nod_id: identity(max_day, U256::MAX),
-        owner: Address::repeat_byte(u8::MAX),
-        gratis_load_minor: U256::MAX,
-        worldwide_day: max_day,
-        league_id: u16::MAX,
-        bucket_key: B256::repeat_byte(u8::MAX),
-        issuance_currency: u16::MAX,
-        reference_currency: u16::MAX,
-        issued_at: u64::MAX,
-    });
+    assert_item_roundtrip(outbe_nod::test_support::item(
+        outbe_nod::test_support::NodItemFixture {
+            is_settled: true,
+            nod_id: identity(max_day, U256::MAX),
+            owner: Address::repeat_byte(u8::MAX),
+            gratis_load_minor: U256::MAX,
+            worldwide_day: max_day,
+            league_id: u16::MAX,
+            bucket_key: B256::repeat_byte(u8::MAX),
+            issuance_currency: u16::MAX,
+            reference_currency: u16::MAX,
+            issued_at: u64::MAX,
+        },
+        U256::ZERO,
+    ));
     assert_bucket_roundtrip(NodBucketState {
         settled_nods: 0,
         bucket_key: B256::ZERO,
@@ -204,4 +216,50 @@ fn transition_event_signatures_topics_and_delete_payloads_are_pinned() {
         decoded_bucket.previousCommitment,
         B256::from(*previous_bucket.as_bytes())
     );
+}
+
+#[test]
+fn nod_body_is_self_contained_and_carries_only_encrypted_amounts() {
+    let amount = U256::from_be_bytes([0x39; 32]);
+    let params = outbe_nod::NodIssueParams {
+        owner: Address::repeat_byte(0x81),
+        worldwide_day: WorldwideDay::new(20_261_007),
+        league_id: 4,
+        gratis_load_minor: amount,
+        entry_price_minor: U256::from(17),
+        issuance_currency: 840,
+        reference_currency: 978,
+    };
+    let encrypted = outbe_nod::test_support::encrypted_fixture(&params, 7);
+    let body = outbe_compressed_entities::NodItemBodyV2 {
+        encrypted: encrypted.clone(),
+        bucket_key: B256::repeat_byte(0x74),
+        issued_at: 99,
+        is_settled: false,
+    };
+    let payload = encode_nod_item_v2(&body).unwrap();
+    let creator = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from([0x6b; 32]));
+    assert!(!payload
+        .windows(32)
+        .any(|bytes| bytes == amount.to_be_bytes::<32>()));
+    assert!(!payload.windows(32).any(|bytes| bytes == creator.as_bytes()));
+    let stored = outbe_compressed_entities::StoredBody::new(
+        outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
+        payload,
+    )
+    .unwrap();
+    let decoded = from_canonical_item(
+        outbe_compressed_entities::decode_stored_nod_item_v2(&stored.encode()).unwrap(),
+    );
+    assert_eq!(decoded.encrypted, encrypted);
+    assert_eq!(
+        outbe_nod::api::calculation_amount(&decoded).unwrap(),
+        amount
+    );
+    let mut corrupted = body.clone();
+    corrupted.encrypted.encrypted_gratis_amount.truncate(55);
+    assert!(encode_nod_item_v2(&corrupted).is_err());
+    let legacy =
+        outbe_compressed_entities::StoredBody::new_v1(encode_nod_item_v2(&body).unwrap()).unwrap();
+    assert!(outbe_compressed_entities::decode_stored_nod_item_v2(&legacy.encode()).is_err());
 }

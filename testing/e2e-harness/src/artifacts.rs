@@ -295,17 +295,22 @@ fn build_commands(lane: BuildLane, jobs: usize) -> Vec<Vec<String>> {
     match lane {
         BuildLane::Mock | BuildLane::MockNative => enclave.extend(strings(&[
             "--features",
-            "mock",
+            "mock,e2e-test",
             "--bin",
             "outbe-tee-enclave-mock",
         ])),
         BuildLane::Dcap => enclave.extend(strings(&[
             "--features",
-            "production-dcap-release",
+            "production-dcap-release,e2e-test",
             "--bin",
             "outbe-tee-enclave",
         ])),
-        _ => enclave.extend(strings(&["--bin", "outbe-tee-enclave"])),
+        _ => enclave.extend(strings(&[
+            "--features",
+            "e2e-test",
+            "--bin",
+            "outbe-tee-enclave",
+        ])),
     }
     commands.push(enclave);
 

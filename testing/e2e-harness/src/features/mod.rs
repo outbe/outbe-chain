@@ -36,6 +36,8 @@ pub mod dcap_onboarding;
 pub mod dkg;
 pub mod downtime;
 #[cfg(feature = "ocomp-integration")]
+mod encrypted_nod;
+#[cfg(feature = "ocomp-integration")]
 mod encrypted_tribute;
 pub mod follower;
 mod follower_handoff;

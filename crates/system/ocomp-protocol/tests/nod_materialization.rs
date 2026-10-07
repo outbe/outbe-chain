@@ -1,9 +1,14 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_ocomp_protocol::{
-    abi::{encode_materialize_certified_nods_calldata, NOD_FACTORY_ADDRESS},
+    abi::{
+        encode_materialize_certified_nods_calldata,
+        encode_protected_materialize_certified_nods_calldata, NOD_FACTORY_ADDRESS,
+    },
+    common::BoundedBytes,
     list::{ordered_list_root, streaming_ordered_list_membership_proof, OrderedListLimits},
     nod_materialization::{
         verify_nod_materialization_batch, NodMaterializationBatchV1, NodMaterializationHeadV1,
+        ProtectedNodMaterializationV2,
     },
     profile::poc_schema_limits,
     result::NodActionV1,
@@ -16,6 +21,16 @@ use outbe_ocomp_protocol::{
 };
 
 const WWD: u32 = 20_260_812;
+
+fn protected_batch() -> ProtectedNodMaterializationV2 {
+    ProtectedNodMaterializationV2 {
+        queue_sequence: 1,
+        first_nod_ordinal: 0,
+        encryption_binding: B256::repeat_byte(0x31),
+        encrypted_witness: BoundedBytes(vec![0x71; 64]),
+        encrypted_nods: vec![BoundedBytes(vec![0x81; 96])],
+    }
+}
 
 fn entity_id(seed: u32) -> B256 {
     let mut bytes = [0_u8; 32];
@@ -158,6 +173,55 @@ fn shared_root_path_verifies_a_full_batch_and_a_padded_final_remainder() {
 }
 
 #[test]
+fn configured_height_is_a_ceiling_for_smaller_aligned_certified_subtrees() {
+    let limits = poc_schema_limits();
+    let (actions, root, proofs) = population(10);
+    for (first, count, height) in [(0, 4, 2), (4, 2, 1), (6, 1, 0), (8, 2, 2)] {
+        let smaller = batch(&actions, &proofs, first, count, height);
+        let verified =
+            verify_nod_materialization_batch(&smaller, &head(root, 10, first), 3, &limits).unwrap();
+        assert_eq!(
+            verified.actions(),
+            &actions[first as usize..first as usize + count]
+        );
+    }
+    let (actions, root, proofs) = population(256);
+    verify_nod_materialization_batch(
+        &batch(&actions, &proofs, 0, 256, 8),
+        &head(root, 256, 0),
+        8,
+        &limits,
+    )
+    .expect("the existing maximum remains accepted");
+}
+
+#[test]
+fn smaller_subtrees_still_reject_excess_height_misalignment_count_and_path() {
+    let limits = poc_schema_limits();
+    let (actions, root, proofs) = population(17);
+    for (candidate, cursor, maximum) in [
+        (batch(&actions, &proofs, 0, 8, 3), 0, 2),
+        (batch(&actions, &proofs, 2, 4, 2), 2, 3),
+        (batch(&actions, &proofs, 0, 3, 2), 0, 3),
+        (batch(&actions, &proofs, 0, 5, 2), 0, 3),
+    ] {
+        assert!(verify_nod_materialization_batch(
+            &candidate,
+            &head(root, 17, cursor),
+            maximum,
+            &limits,
+        )
+        .is_err());
+    }
+    let mut candidate = batch(&actions, &proofs, 0, 1, 0);
+    candidate.root_path.push(B256::ZERO);
+    assert!(verify_nod_materialization_batch(&candidate, &head(root, 17, 0), 3, &limits).is_err());
+    let mut candidate = batch(&actions, &proofs, 0, 2, 1);
+    candidate.root_path[0] = B256::ZERO;
+    assert!(verify_nod_materialization_batch(&candidate, &head(root, 17, 0), 3, &limits).is_err());
+}
+
+#[test]
 fn short_nonfinal_misaligned_unordered_and_bad_root_batches_are_rejected() {
     let limits = poc_schema_limits();
     let (actions, root, proofs) = population(17);
@@ -184,9 +248,8 @@ fn short_nonfinal_misaligned_unordered_and_bad_root_batches_are_rejected() {
 #[test]
 fn materialization_uses_the_existing_strict_ocomp_system_carrier_lane() {
     let limits = poc_schema_limits();
-    let (actions, _root, proofs) = population(10);
-    let batch = batch(&actions, &proofs, 0, 8, 3);
-    let input = encode_materialize_certified_nods_calldata(&batch, &limits).unwrap();
+    let input =
+        encode_protected_materialize_certified_nods_calldata(&protected_batch(), &limits).unwrap();
     let candidate = classify_ocomp_system_carrier(
         OcompSystemCarrierView {
             is_eip1559: true,
@@ -214,9 +277,8 @@ fn materialization_uses_the_existing_strict_ocomp_system_carrier_lane() {
 #[test]
 fn materialization_carrier_rejects_every_noncanonical_envelope_field() {
     let limits = poc_schema_limits();
-    let (actions, _root, proofs) = population(8);
-    let batch = batch(&actions, &proofs, 0, 8, 3);
-    let input = encode_materialize_certified_nods_calldata(&batch, &limits).unwrap();
+    let input =
+        encode_protected_materialize_certified_nods_calldata(&protected_batch(), &limits).unwrap();
     let canonical = OcompSystemCarrierView {
         is_eip1559: true,
         to: Some(NOD_FACTORY_ADDRESS),
@@ -284,6 +346,28 @@ fn materialization_carrier_rejects_every_noncanonical_envelope_field() {
             ..canonical
         },
         &limits,
+    )
+    .is_err_and(|error| matches!(error, OcompSystemCarrierError::MalformedMaterialization(_))));
+}
+
+#[test]
+fn plaintext_calculation_batches_are_not_public_materialization_carriers() {
+    let limits = poc_schema_limits();
+    let (actions, _root, proofs) = population(8);
+    let input =
+        encode_materialize_certified_nods_calldata(&batch(&actions, &proofs, 0, 8, 3), &limits)
+            .unwrap();
+    assert!(classify_ocomp_system_carrier(
+        OcompSystemCarrierView {
+            is_eip1559: true,
+            to: Some(NOD_FACTORY_ADDRESS),
+            value: U256::ZERO,
+            input: &input,
+            gas_limit: OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
+            max_fee_per_gas: MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+            max_priority_fee_per_gas: Some(0),
+        },
+        &limits
     )
     .is_err_and(|error| matches!(error, OcompSystemCarrierError::MalformedMaterialization(_))));
 }

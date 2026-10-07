@@ -2,8 +2,10 @@ pub mod api;
 pub mod called;
 pub mod config;
 pub mod constants;
+mod enclave_client;
 pub mod errors;
 pub mod hooks;
+mod issuance;
 mod metadata;
 pub mod openings;
 pub mod partitioning;
@@ -13,6 +15,8 @@ mod repository;
 pub mod runtime;
 pub mod schema;
 pub mod state;
+#[cfg(any(test, feature = "test-enclave"))]
+pub mod test_support;
 
 pub use repository::{
     canonical_bucket, canonical_bucket_id, canonical_item, clear_owner_day, from_canonical_bucket,

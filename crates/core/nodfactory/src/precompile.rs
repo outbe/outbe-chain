@@ -30,6 +30,7 @@ alloy_sol_types::sol! {
     interface INodFactoryTestArming {
         function issueForTest(
             address owner,
+            bytes32 creatorPublicKey,
             uint32 worldwideDay,
             uint256 gratisLoadMinor,
             uint256 entryPriceMinor,
@@ -49,24 +50,26 @@ fn issue_for_test(
     parent: &impl ParentBodySource,
     call: INodFactoryTestArming::issueForTestCall,
 ) -> Result<()> {
-    use outbe_nod::schema::{NodContract, NodIssueParams};
-
-    let params = NodIssueParams {
-        owner: call.owner,
-        worldwide_day: outbe_primitives::time::WorldwideDay::new(call.worldwideDay),
-        league_id: 1,
-        gratis_load_minor: call.gratisLoadMinor,
-        entry_price_minor: call.entryPriceMinor,
-        issuance_currency: call.issuanceCurrency,
-        reference_currency: call.referenceCurrency,
-    };
-    runtime::issue_nod(storage, scope, parent, &params)?;
+    use outbe_nod::schema::NodContract;
+    let day = outbe_primitives::time::WorldwideDay::new(call.worldwideDay);
+    let encrypted = outbe_tee::nod_mine::create_nod_for_test(
+        outbe_primitives::nod_encryption::NodTermsV2 {
+            chain_id: storage.chain_id()?,
+            nod_id: NodContract::generate_nod_id(call.owner, day)?,
+            owner: call.owner,
+            worldwide_day: day,
+            league_id: 1,
+            entry_price_minor: call.entryPriceMinor,
+            issuance_currency: call.issuanceCurrency,
+            reference_currency: call.referenceCurrency,
+        },
+        call.creatorPublicKey.0,
+        call.gratisLoadMinor,
+    )
+    .map_err(|e| PrecompileError::Revert(e.to_string()))?;
+    runtime::issue_nod(storage, scope, parent, &encrypted)?;
     if call.issuedAt != 0 {
-        let bucket_key = NodContract::bucket_key(
-            params.worldwide_day,
-            call.entryPriceMinor,
-            params.reference_currency,
-        );
+        let bucket_key = NodContract::bucket_key(day, call.entryPriceMinor, call.referenceCurrency);
         NodContract::new(storage.clone())
             .callable_bucket_issued_at
             .write(&bucket_key, call.issuedAt)?;
@@ -147,7 +150,7 @@ pub fn dispatch(
                     mac: c.mac.0,
                     op_nonce: c.opNonce,
                 };
-                runtime::mine_gratis(
+                let encrypted_balance = runtime::mine_gratis(
                     &storage,
                     scope,
                     parent,
@@ -157,7 +160,8 @@ pub fn dispatch(
                         nonce: c.nonce,
                         auth,
                     },
-                )
+                )?;
+                Ok(encrypted_balance)
             }),
             materializationHead(c) => view(c, |_| {
                 let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
@@ -198,14 +202,23 @@ fn dispatch_materialization(
         crate::materialization::consume_materialization_attempt(&storage, profile)
             .map_err(crate::materialization::typed_materialization_error)?;
         let batch =
-            outbe_ocomp_protocol::abi::decode_materialize_certified_nods_calldata(data, &limits)
-                .map_err(|_| {
-                    crate::materialization::typed_materialization_error(PrecompileError::from(
-                        crate::errors::NodFactoryError::InvalidMaterializationBatchShape,
-                    ))
-                })?;
-        crate::materialization::materialize_after_attempt(
-            &storage, scope, parent, &batch, profile, &limits,
+            outbe_ocomp_protocol::abi::decode_protected_materialize_certified_nods_calldata(
+                data, &limits,
+            )
+            .map_err(|_| {
+                crate::materialization::typed_materialization_error(PrecompileError::from(
+                    crate::errors::NodFactoryError::InvalidMaterializationBatchShape,
+                ))
+            })?;
+        crate::materialization::materialize_protected_after_attempt(
+            &storage,
+            scope,
+            parent,
+            &batch,
+            crate::materialization::MaterializationRules {
+                profile,
+                limits: &limits,
+            },
         )
         .map_err(crate::materialization::typed_materialization_error)?;
         Ok(Bytes::new())

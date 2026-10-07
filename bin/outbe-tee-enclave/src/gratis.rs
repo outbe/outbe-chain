@@ -52,18 +52,7 @@ fn read_amount(
     field: u8,
     blob: &[u8],
 ) -> Result<(u64, U256)> {
-    GRATIS.read_amount(view_key, account, field, blob)
-}
-
-/// Encrypt `amount` into a fresh `version+1 || ct` blob.
-fn write_amount(
-    view_key: &[u8; 32],
-    account: Address,
-    field: u8,
-    prev_version: u64,
-    amount: U256,
-) -> Result<Vec<u8>> {
-    GRATIS.write_amount(view_key, account, field, prev_version, amount)
+    crate::gratis_cipher::read_amount(view_key, account, field, blob)
 }
 
 /// Client-side helper: decrypt an account's balance blob with its view key (the
@@ -182,7 +171,16 @@ fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
     let Some(next) = next else {
         return Ok(reject("insufficient balance or balance overflow"));
     };
-    r.new_balance = write_amount(&view, req.account, FIELD_BALANCE, version, next)?;
+    r.new_balance = crate::gratis_cipher::write_amount(
+        &view,
+        crate::gratis_cipher::BalanceTransition {
+            account: req.account,
+            field: FIELD_BALANCE,
+            previous_version: version,
+            amount: next,
+            input_hash: outbe_tee::protocol::gratis_op_canonical_hash(req),
+        },
+    )?;
     r.event_amount = req.amount;
     Ok(r)
 }
@@ -228,10 +226,24 @@ mod tests {
             "ee0bcead11e31dbafbf16c5b7fb2aa659045c38a7259db9002aa66bc9d9b08b3"
         );
         let vk = derive_view_key(&sk, alice()).unwrap();
-        let blob = write_amount(&vk, alice(), FIELD_BALANCE, 0, U256::from(1000u64)).unwrap();
+        let blob = crate::gratis_cipher::write_amount(
+            &vk,
+            crate::gratis_cipher::BalanceTransition {
+                account: alice(),
+                field: FIELD_BALANCE,
+                previous_version: 0,
+                amount: U256::from(1000u64),
+                input_hash: B256::ZERO,
+            },
+        )
+        .unwrap();
         assert_eq!(
             alloy_primitives::hex::encode(&blob),
-            "0000000000000001186436dfe4774b400beaa3115d0ab9abae57d6defa6f80943ec703ede5ea855d8823cdeb05b2de5491aaf6829c5b213b"
+            "00000000000000014752413246232be65ee469056f27d81bd908bab2cd61705404526e19acfa103c5f924bfb368f1a38d1b119051b1b5fb22425659291417af423d4475f231b154efb71e9de9e128688bc118a0bf920c64f413581a4"
+        );
+        assert_eq!(
+            outbe_tee::gratis_decrypt::decrypt_gratis_balance(&vk, alice(), &blob).unwrap(),
+            U256::from(1000u64),
         );
         let mk = derive_modify_key(&sk, alice()).unwrap();
         let mac = modify_mac(&mk, alice(), GratisOp::Mint, U256::from(1000u64), 0, CHAIN);

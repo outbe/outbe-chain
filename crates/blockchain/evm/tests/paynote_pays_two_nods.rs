@@ -240,8 +240,13 @@ fn fixture_with_cost(
         DAYS.map(|day| {
             let mut params = nod_params(day);
             params.entry_price_minor = U256::from(cost * 1_000_000 / GRATIS_LOAD);
-            let nod_id =
-                outbe_nodfactory::api::issue_nod(&storage, &scope, &parent, &params).unwrap();
+            let nod_id = outbe_nodfactory::api::issue_nod(
+                &storage,
+                &scope,
+                &parent,
+                &outbe_nod::test_support::encrypted_fixture(&params, CHAIN_ID),
+            )
+            .unwrap();
             let floor_price_minor =
                 NodContract::floor_price_minor(params.entry_price_minor).unwrap();
             let bucket_key = NodContract::bucket_key(
@@ -438,7 +443,11 @@ fn assert_mined(out: &outbe_primitives::storage::SubCallOutput, what: &str) -> U
         out.status,
         alloy_primitives::hex::encode(&out.returndata),
     );
-    INodFactory::mineGratisCall::abi_decode_returns(&out.returndata).expect("minted amount")
+    let encrypted = INodFactory::mineGratisCall::abi_decode_returns(&out.returndata)
+        .expect("encrypted balance");
+    let key =
+        outbe_tee_enclave::gratis::derive_view_key(&test_enclave::state_key(), ALICE1).unwrap();
+    outbe_tee::gratis_decrypt::decrypt_gratis_balance(&key, ALICE1, &encrypted).unwrap()
 }
 
 /// Deposits `note` into the pool through the real `deposit` path, paid for by
@@ -554,7 +563,7 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
         &settle_and_mine(&mut ctx, &scope, &readers, nods[1], &change_proof),
         "mine the second Nod with the change note",
     );
-    assert_eq!(minted, U256::from(GRATIS_LOAD));
+    assert_eq!(minted, U256::from(2 * GRATIS_LOAD));
     assert!(
         is_spent(&mut ctx, &scope, word(change.nullifier)),
         "the change note must be burnt once it has paid"

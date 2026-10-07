@@ -5,7 +5,9 @@ use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_nod::{NodContract, NodIssueParams};
 use outbe_ocomp_protocol::{
     list::{ordered_list_root, streaming_ordered_list_membership_proof, OrderedListLimits},
-    nod_materialization::NodMaterializationBatchV1,
+    nod_materialization::{
+        NodMaterializationBatchV1, NodMaterializationHeadV1, ProtectedNodMaterializationV2,
+    },
     profile::poc_schema_limits,
     result::NodActionV1,
     ListKind,
@@ -53,13 +55,14 @@ impl NodScenario {
 
 pub struct PreparedNod {
     provider: HashMapStorageProvider,
-    params: Vec<NodIssueParams>,
+    encrypted: Vec<outbe_primitives::nod_encryption::EncryptedNodV2>,
     certified: Option<CertifiedFixture>,
 }
 
 struct CertifiedFixture {
     actions: Vec<NodActionV1>,
-    batches: Vec<NodMaterializationBatchV1>,
+    batches: Vec<ProtectedNodMaterializationV2>,
+    sources: outbe_nodfactory::test_support::MaterializationFixture,
 }
 
 fn item_count(profile: Profile) -> usize {
@@ -86,8 +89,8 @@ fn certified_action(index: usize) -> NodActionV1 {
     let ordinal = u32::try_from(index).expect("benchmark cardinality fits u32");
     let owner = Address::from_word(B256::from(U256::from(ordinal + 1)));
     let entry_price_minor = U256::from(510);
-    let tribute_id =
-        WwdEntityId::from_day_and_digest(TARGET_WWD, B256::from(U256::from(ordinal + 1_000)));
+    let tribute_id = outbe_compressed_entities::derive_poseidon_entity_id(owner, TARGET_WWD)
+        .expect("fixture identity");
     let nod_id = NodContract::generate_nod_id(owner, TARGET_WWD)
         .expect("benchmark owner and worldwide day form a Nod id");
     NodActionV1 {
@@ -143,7 +146,7 @@ fn certified_fixture(count: usize) -> Result<CertifiedFixture, String> {
         .try_into()
         .map_err(|_| "materialization tree height does not fit usize".to_owned())?;
     let effective_subtree_height = SUBTREE_HEIGHT.min(tree_height);
-    let batches = (0..count)
+    let batches: Vec<NodMaterializationBatchV1> = (0..count)
         .step_by(BATCH_CAPACITY)
         .map(|first| {
             let end = (first + BATCH_CAPACITY).min(count);
@@ -156,7 +159,38 @@ fn certified_fixture(count: usize) -> Result<CertifiedFixture, String> {
         })
         .collect();
 
-    let fixture = CertifiedFixture { actions, batches };
+    let sources = outbe_nodfactory::test_support::MaterializationFixture::new(&actions, CHAIN_ID)?;
+    let batches = batches
+        .into_iter()
+        .enumerate()
+        .map(|(index, batch)| {
+            let head = NodMaterializationHeadV1 {
+                queue_sequence: 1,
+                job_id: B256::repeat_byte(0x11),
+                program_semantics_hash: B256::repeat_byte(0x22),
+                worldwide_day: TARGET_WWD.value(),
+                generation: 1,
+                nod_root: root,
+                nod_count: count as u32,
+                next_nod_ordinal: batch.first_nod_ordinal,
+                last_progress_height: (index.max(1)) as u64,
+            };
+            sources.protect(
+                &outbe_tee::nod_materialization::NodMaterializationAuthorityV2 {
+                    chain_id: CHAIN_ID,
+                    head: head.encode_canonical(&limits).map_err(|e| e.to_string())?,
+                    subtree_height: SUBTREE_HEIGHT as u8,
+                    sealed_tribute_root: sources.source_root(),
+                },
+                &batch,
+            )
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let fixture = CertifiedFixture {
+        actions,
+        batches,
+        sources,
+    };
     if fixture.actions.is_empty() {
         return Err("certified Nod benchmark population must not be empty".to_owned());
     }
@@ -172,6 +206,7 @@ fn seed_certified_world(
     storage: &StorageHandle<'_>,
     fixture: &CertifiedFixture,
 ) -> Result<(), String> {
+    fixture.sources.seed_source_root(storage)?;
     let limits = poc_schema_limits();
     let encoded = fixture
         .actions
@@ -327,10 +362,12 @@ impl BenchmarkScenario for NodScenario {
             }
             Ok::<_, String>(())
         })?;
-        let params = (0..count).map(issue_params).collect();
+        let encrypted = (0..count)
+            .map(|index| outbe_nod::test_support::encrypted_fixture(&issue_params(index), CHAIN_ID))
+            .collect();
         Ok(PreparedNod {
             provider,
-            params,
+            encrypted,
             certified,
         })
     }
@@ -344,6 +381,7 @@ impl BenchmarkScenario for NodScenario {
 }
 
 fn measure_certified(prepared: &PreparedNod) -> Result<Observation, String> {
+    let _enclave = outbe_nodfactory::test_support::enclave_scope();
     let fixture = prepared
         .certified
         .as_ref()
@@ -364,13 +402,15 @@ fn measure_certified(prepared: &PreparedNod) -> Result<Observation, String> {
     for (batch_index, batch) in fixture.batches.iter().enumerate() {
         provider.set_block_number((batch_index + 1) as u64);
         completed = StorageHandle::enter(&mut provider, |storage| {
-            outbe_nodfactory::api::materialize_certified_nods(
+            outbe_nodfactory::api::materialize_encrypted_certified_nods(
                 &storage,
                 &scope,
                 &EmptyParentBodies,
                 Address::repeat_byte(0x42),
-                batch,
-                &poc_schema_limits(),
+                outbe_nodfactory::api::ProtectedMaterializationRequest {
+                    carrier: batch,
+                    limits: &poc_schema_limits(),
+                },
             )
             .map(|outcome| outcome.completed)
             .map_err(|error| error.to_string())
@@ -434,10 +474,10 @@ fn measure_direct(prepared: &PreparedNod) -> Result<Observation, String> {
 
     let started = Instant::now();
     let (ids, runtime_gas) = StorageHandle::enter(&mut provider, |storage| {
-        let mut ids = Vec::with_capacity(prepared.params.len());
-        for params in &prepared.params {
+        let mut ids = Vec::with_capacity(prepared.encrypted.len());
+        for encrypted in &prepared.encrypted {
             ids.push(
-                outbe_nodfactory::api::issue_nod(&storage, &scope, &EmptyParentBodies, params)
+                outbe_nodfactory::api::issue_nod(&storage, &scope, &EmptyParentBodies, encrypted)
                     .map_err(|error| error.to_string())?,
             );
         }

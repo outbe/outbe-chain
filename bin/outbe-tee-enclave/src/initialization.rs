@@ -744,7 +744,19 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         | EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 { .. } => {
             CommandClass::KeylessOnboardingArtifact
         }
+        #[cfg(feature = "e2e-test")]
+        EnclaveRequest::CreateNodForTestV2 { .. } => CommandClass::Ready,
+        #[cfg(not(feature = "e2e-test"))]
+        EnclaveRequest::CreateNodForTestV2 { .. } => CommandClass::Never,
         EnclaveRequest::ProcessTributeOfferBatch { .. }
+        | EnclaveRequest::PrepareEncryptedNodsV2 { .. }
+        | EnclaveRequest::OpenEncryptedNodsV2 { .. }
+        | EnclaveRequest::MineEncryptedNodV2 { .. }
+        | EnclaveRequest::ReadNodAmountV2 { .. }
+        | EnclaveRequest::NodTransferChunkV2 { .. }
+        | EnclaveRequest::ExecuteNodTransferV2 { .. }
+        | EnclaveRequest::ReadNodTransferV2 { .. }
+        | EnclaveRequest::DiscardNodTransferV2 { .. }
         | EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 { .. }
         | EnclaveRequest::ReadTributeAmountsV2 { .. }
         | EnclaveRequest::ApplyTributeDayOpV2 { .. }

@@ -388,6 +388,7 @@ pub enum BodyInput<'a> {
     Tribute(&'a TributeBodyV1),
     EncryptedTribute(&'a outbe_primitives::tribute_encryption::EncryptedTributeV2),
     NodItem(&'a NodItemBodyV1),
+    EncryptedNodItem(&'a crate::NodItemBodyV2),
     NodBucket(&'a NodBucketBodyV1),
 }
 
@@ -471,6 +472,7 @@ enum PayloadInner {
     Tribute(TributeBodyV1),
     EncryptedTribute(outbe_primitives::tribute_encryption::EncryptedTributeV2),
     NodItem(NodItemBodyV1),
+    EncryptedNodItem(crate::NodItemBodyV2),
     NodBucket(NodBucketBodyV1),
 }
 
@@ -493,6 +495,14 @@ impl VerifiedPayload {
     pub fn as_tribute(&self) -> Option<&TributeBodyV1> {
         match &self.0 {
             PayloadInner::Tribute(body) => Some(body),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn as_encrypted_nod_item(&self) -> Option<&crate::NodItemBodyV2> {
+        match &self.0 {
+            PayloadInner::EncryptedNodItem(body) => Some(body),
             _ => None,
         }
     }
@@ -1454,4 +1464,8 @@ pub(crate) fn nod_item_payload(body: NodItemBodyV1) -> VerifiedPayload {
 
 pub(crate) fn nod_bucket_payload(body: NodBucketBodyV1) -> VerifiedPayload {
     VerifiedPayload(PayloadInner::NodBucket(body))
+}
+
+pub(crate) fn encrypted_nod_item_payload(body: crate::NodItemBodyV2) -> VerifiedPayload {
+    VerifiedPayload(PayloadInner::EncryptedNodItem(body))
 }

@@ -253,7 +253,7 @@ fn mine_gratis_burns_promis_mints_gratis_creating_fidelity_cohort() {
         assert_eq!(minted, amount);
 
         // Promis fully burned; gratis minted 1:1 to the account (decrypt both
-        // confidential balances to check; total supplies are public).
+        // confidential balances to check; Promis supply remains public).
         assert_eq!(view_balance(storage.clone(), alice()), U256::ZERO);
         assert_eq!(
             promis_api::total_supply(storage.clone()).unwrap(),
@@ -261,7 +261,7 @@ fn mine_gratis_burns_promis_mints_gratis_creating_fidelity_cohort() {
         );
         assert_eq!(gratis_view_balance(&storage, alice()), amount);
         assert_eq!(
-            outbe_gratis::api::total_supply(storage.clone()).unwrap(),
+            gratis_view_balance(&storage, alice()) + view_balance(storage.clone(), alice()),
             amount
         );
 

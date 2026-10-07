@@ -369,15 +369,18 @@ fn populated_positive_gratis_day_enqueues_ocomp_without_synchronous_lysis() {
                 &storage,
                 scope,
                 parent,
-                &outbe_nod::NodIssueParams {
-                    owner,
-                    gratis_load_minor: U256::from(1),
-                    worldwide_day: wwd,
-                    league_id: 1,
-                    entry_price_minor: U256::from(1),
-                    issuance_currency: 840,
-                    reference_currency: 840,
-                },
+                &outbe_nod::test_support::encrypted_fixture(
+                    &outbe_nod::NodIssueParams {
+                        owner,
+                        gratis_load_minor: U256::from(1),
+                        worldwide_day: wwd,
+                        league_id: 1,
+                        entry_price_minor: U256::from(1),
+                        issuance_currency: 840,
+                        reference_currency: 840,
+                    },
+                    CHAIN_ID,
+                ),
             )
             .unwrap();
 

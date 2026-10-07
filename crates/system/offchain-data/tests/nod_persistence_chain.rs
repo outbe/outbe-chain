@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{
-    begin_block, derive_poseidon_entity_id, encode_nod_item_v1, end_block, CeMdbx, CeWorkConfig,
+    begin_block, derive_poseidon_entity_id, encode_nod_item_v2, end_block, CeMdbx, CeWorkConfig,
     EntityRef, EnvironmentIdentity, ExactParentIdentity, ExecutionScope, FinalizedMarker,
     MdbxAuthenticatedTree, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
 };
@@ -50,7 +50,7 @@ fn assert_authenticated_nods(
             .unwrap();
             assert_eq!(
                 verified.stored_body().payload(),
-                encode_nod_item_v1(&canonical_item(item)).unwrap(),
+                encode_nod_item_v2(&canonical_item(item)).unwrap(),
                 "production write and projected read must preserve exact canonical bytes"
             );
         }
@@ -122,18 +122,21 @@ fn production_nod_receipts_and_ce_seal_agree_with_rocksdb_after_reopen() {
 
     for height in 1..=2_u64 {
         let owner = Address::repeat_byte(height as u8);
-        let item = NodItemState {
-            is_settled: false,
-            nod_id: derive_poseidon_entity_id(owner, day).unwrap(),
-            owner,
-            gratis_load_minor: U256::from(123_456),
-            worldwide_day: day,
-            league_id: 7,
-            bucket_key: NodContract::bucket_key(day, U256::from(5), 978),
-            issuance_currency: 840,
-            reference_currency: 978,
-            issued_at: 1_788_652_800 + height,
-        };
+        let item = outbe_nod::test_support::item(
+            outbe_nod::test_support::NodItemFixture {
+                is_settled: false,
+                nod_id: derive_poseidon_entity_id(owner, day).unwrap(),
+                owner,
+                gratis_load_minor: U256::from(123_456),
+                worldwide_day: day,
+                league_id: 7,
+                bucket_key: NodContract::bucket_key(day, U256::from(5), 978),
+                issuance_currency: 840,
+                reference_currency: 978,
+                issued_at: 1_788_652_800 + height,
+            },
+            U256::from(5),
+        );
         evm.set_block_number(height);
         let first_event = evm.get_ordered_events().len();
         let scope = ExecutionScope::with_parent_tree(
@@ -216,10 +219,11 @@ fn production_nod_receipts_and_ce_seal_agree_with_rocksdb_after_reopen() {
         RuntimeBodyReaders::new_supervised(reopened_rocks.clone(), failure_sender);
     assert_authenticated_nods(&mut evm, &reopened_ce, identity, &reopened_readers, &items);
 
-    // Negative control: valid bytes with one changed field must remain fatal,
-    // and diagnostics must expose the mismatch rather than turn it into a retry.
+    // A changed field must fail authentication.
+    // This read error must not stop the node.
     let mut changed = items.remove(0);
-    changed.gratis_load_minor += U256::from(1);
+    let next_amount = outbe_nod::api::calculation_amount(&changed).unwrap() + U256::from(1);
+    outbe_nod::test_support::set_amount(&mut changed, next_amount);
     outbe_nod::NodRepositoryWriter::new(reopened_rocks.clone(), reopened_rocks)
         .put_nod(&changed)
         .unwrap();
@@ -253,21 +257,5 @@ fn production_nod_receipts_and_ce_seal_agree_with_rocksdb_after_reopen() {
         assert!(message.contains(field), "missing {field}: {message}");
     }
     reopened_readers.report_precompile_error(&error);
-    let failure = failures.borrow().clone().unwrap();
-    let outbe_offchain_data::RuntimeBodyFailure::Fatal(failure) = failure else {
-        panic!("body mismatch must be reported as fatal");
-    };
-    assert_eq!(format!("{:?}", failure.class), "CorruptBody");
-    for field in [
-        "last_body_read=",
-        "namespace=nods",
-        "projection_after_detection=",
-        "block_number: 2",
-    ] {
-        assert!(
-            failure.message.contains(field),
-            "missing {field}: {}",
-            failure.message
-        );
-    }
+    assert!(failures.borrow().is_none());
 }

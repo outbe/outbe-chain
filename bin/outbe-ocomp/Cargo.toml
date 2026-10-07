@@ -8,6 +8,7 @@ publish.workspace = true
 [features]
 default = []
 test-protocol-overrides = []
+test-utils = ["outbe-tee/test-utils", "outbe-tribute/test-enclave"]
 
 [[bin]]
 name = "outbe-ocomp"
@@ -42,6 +43,7 @@ outbe-primitives.workspace = true
 outbe-tribute.workspace = true
 outbe-tee.workspace = true
 outbe-zerofee.workspace = true
+postcard.workspace = true
 reqwest = { workspace = true, features = ["blocking"] }
 salvo.workspace = true
 serde.workspace = true
@@ -54,6 +56,7 @@ zeroize.workspace = true
 zeromq.workspace = true
 
 [dev-dependencies]
+outbe-tee = { workspace = true, features = ["test-utils"] }
 outbe-tribute = { workspace = true, features = ["test-enclave"] }
 outbe-tee-enclave.workspace = true
 outbe-node = { workspace = true, features = ["test-utils"] }

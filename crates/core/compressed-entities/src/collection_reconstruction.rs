@@ -177,15 +177,7 @@ impl BoundedTributePartitionVerifier {
         mut self,
         on_progress: impl Fn(),
     ) -> Result<VerifiedTributePartition, TributePartitionReconstructionError> {
-        if self.pushed_count != self.expectation.exact_leaf_count {
-            return Err(TributePartitionReconstructionError::CountMismatch {
-                expected: self.expectation.exact_leaf_count,
-                actual: self.pushed_count,
-            });
-        }
-        self.flush_run()?;
-        on_progress();
-        let final_run = self.merge_runs(&on_progress)?;
+        let final_run = self.prepare_sorted_run(&on_progress)?;
         let root = self.reduce_sorted_run(final_run.as_deref(), &on_progress)?;
         if root != self.expectation.expected_collection_root {
             return Err(TributePartitionReconstructionError::RootMismatch {
@@ -197,6 +189,70 @@ impl BoundedTributePartitionVerifier {
             collection_root: root,
             exact_leaf_count: self.pushed_count,
         })
+    }
+
+    /// Retains bounded-memory membership evidence from the same authenticated inventory.
+    pub fn finish_with_archive(
+        mut self,
+        on_progress: impl Fn(),
+    ) -> Result<
+        crate::collection_proof_archive::TributeProofArchiveV1,
+        TributePartitionReconstructionError,
+    > {
+        use crate::collection_proof_archive::{ArchiveNodeWriter, TributeProofArchiveV1};
+        let final_run = self.prepare_sorted_run(&on_progress)?;
+        let mut reader = final_run.map(RunReader::open).transpose()?;
+        let mut next = next_archive_record(&mut reader)?;
+        let mut roots = [B256::ZERO; 16];
+        let mut ids = [0; 16];
+        for shard in 0..16 {
+            let writer = ArchiveNodeWriter::create(&self.scratch_root, shard)?;
+            let mut reducer = SortedPoseidonRootReducer::with_observer(writer);
+            while next
+                .as_ref()
+                .is_some_and(|record| record.shard == shard as u32)
+            {
+                let record = next
+                    .take()
+                    .ok_or(TributePartitionReconstructionError::IntegerOverflow)?;
+                if shard_index(record.key, 16).map_err(map_tree)? != shard as u32 {
+                    return Err(TributePartitionReconstructionError::CorruptRun(
+                        self.scratch_root.clone(),
+                    ));
+                }
+                reducer.push(record.key, record.leaf).map_err(map_tree)?;
+                next = next_archive_record(&mut reader)?;
+                on_progress();
+            }
+            let (root, writer, id) = reducer.finish_observing().map_err(map_tree)?;
+            writer.finish()?;
+            roots[shard] = B256::from(root.as_bytes());
+            ids[shard] = id.unwrap_or(0);
+        }
+        if next.is_some() {
+            return Err(TributePartitionReconstructionError::CorruptRun(
+                self.scratch_root.clone(),
+            ));
+        }
+        if let Some(reader) = reader {
+            reader.finish()?;
+        }
+        TributeProofArchiveV1::publish(self.scratch_root, self.expectation, roots, ids)
+    }
+
+    fn prepare_sorted_run(
+        &mut self,
+        on_progress: &impl Fn(),
+    ) -> Result<Option<PathBuf>, TributePartitionReconstructionError> {
+        if self.pushed_count != self.expectation.exact_leaf_count {
+            return Err(TributePartitionReconstructionError::CountMismatch {
+                expected: self.expectation.exact_leaf_count,
+                actual: self.pushed_count,
+            });
+        }
+        self.flush_run()?;
+        on_progress();
+        self.merge_runs(on_progress)
     }
 
     fn flush_run(&mut self) -> Result<(), TributePartitionReconstructionError> {
@@ -369,6 +425,16 @@ impl BoundedTributePartitionVerifier {
         let (_, key) = partition_collection_key(PartitionRef::TributeWwd(self.expectation.day))?;
         collection_root(CeDomain::Tribute, key, shard_top_root).map_err(Into::into)
     }
+}
+
+fn next_archive_record(
+    reader: &mut Option<RunReader>,
+) -> Result<Option<RunRecord>, TributePartitionReconstructionError> {
+    reader
+        .as_mut()
+        .map(RunReader::next_record)
+        .transpose()
+        .map(Option::flatten)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

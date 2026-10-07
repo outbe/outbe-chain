@@ -406,6 +406,7 @@ fn run_owned(
         .max_blocking_threads(2)
         .enable_all()
         .build()?;
+    let mut storage_completion = None;
     let outcome = executor.block_on(async {
         let runtime = Runtime::test();
         let manager = runtime.take_task_manager_handle().expect("fixture manager");
@@ -480,6 +481,7 @@ fn run_owned(
                 provider: provider.clone(),
             };
             let prepared = prepare_offchain_data_projection(projection_config(root))?;
+            storage_completion = Some(prepared.storage_completion());
             let ready = validate_offchain_data_checkpoint(prepared, &provider)?;
             let current = closed(root);
             let (publisher, readiness) = outbe_primitives::projection::projection_readiness(
@@ -623,10 +625,18 @@ fn run_owned(
         (result, shutdown)
     });
     drop(executor);
+    // Session Drop closes native storage on a separate thread. Its completion
+    // acknowledges actual RocksDB lock release before the fixture reopens it.
+    let storage_shutdown = storage_completion.map_or(Ok(()), |completion| {
+        completion
+            .wait_timeout(Duration::from_secs(10))
+            .wrap_err("fixture native projection storage did not close")
+    });
     match outcome {
         (Err(panic), _) => std::panic::resume_unwind(panic),
         (Ok(result), shutdown) => {
             shutdown?;
+            storage_shutdown?;
             result
         }
     }

@@ -2,7 +2,7 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{
     CeAuditLimits, CeAuditWork, IdPageRequest, StoredBody, StoredBodyPage, WwdEntityId,
 };
-use outbe_nod::{NodBucketState, NodItemState, NodRepositoryReader, NodRepositoryWriter};
+use outbe_nod::{NodBucketState, NodRepositoryReader, NodRepositoryWriter};
 use outbe_offchain_storage::{
     AtomicWriteBatch, AtomicWriteOperation, Key, MemoryStorage, Namespace, ScanEntry, ScanPage,
     ScanRequest, StorageError, StorageMetadata, StorageReader, StorageWriter, StoredValue, Value,
@@ -50,18 +50,21 @@ fn fixture() -> Arc<MemoryStorage> {
     let writer = NodRepositoryWriter::new(storage.clone(), storage.clone());
     for seed in [3, 1, 2] {
         writer
-            .put_nod(&NodItemState {
-                is_settled: false,
-                nod_id: id(seed),
-                owner: Address::repeat_byte(seed),
-                gratis_load_minor: U256::from(1),
-                worldwide_day: id(seed).worldwide_day(),
-                league_id: 7,
-                bucket_key: B256::repeat_byte(0x33),
-                issuance_currency: 840,
-                reference_currency: 978,
-                issued_at: 123,
-            })
+            .put_nod(&outbe_nod::test_support::item(
+                outbe_nod::test_support::NodItemFixture {
+                    is_settled: false,
+                    nod_id: id(seed),
+                    owner: Address::repeat_byte(seed),
+                    gratis_load_minor: U256::from(1),
+                    worldwide_day: id(seed).worldwide_day(),
+                    league_id: 7,
+                    bucket_key: B256::repeat_byte(0x33),
+                    issuance_currency: 840,
+                    reference_currency: 978,
+                    issued_at: 123,
+                },
+                U256::ZERO,
+            ))
             .unwrap();
         writer
             .put_bucket(&NodBucketState {
@@ -281,7 +284,7 @@ fn primary_scans_reject_malformed_keys_bodies_id_mismatches_and_schema() {
                 3 => {
                     let stored = StoredBody::decode(original.as_bytes()).unwrap();
                     let value = Value::new(
-                        StoredBody::new(2, stored.payload().to_vec())
+                        StoredBody::new(u32::MAX, stored.payload().to_vec())
                             .unwrap()
                             .encode(),
                     )

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use alloy_primitives::{Address, LogData, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_compressed_entities::{
-    begin_block, body_commitment, encode_nod_bucket_v1, encode_nod_item_v1, encode_tribute_v1,
+    begin_block, body_commitment, encode_nod_bucket_v1, encode_nod_item_v2, encode_tribute_v1,
     end_block, read, update, BodyInput, CandidateCacheLimits, CeMdbx, CeWorkConfig,
     CompressedTreeService, EntityRef, EnvironmentIdentity, ExactParentIdentity, ExecutionScope,
     FinalizedMarker, ParentBodySource, SealOutput, WwdEntityId, ACTIVE_COMMITMENT_SCHEME,
@@ -204,7 +204,7 @@ fn update_nod_item(
         storage.clone(),
         scope,
         current,
-        BodyInput::NodItem(&canonical),
+        BodyInput::EncryptedNodItem(&canonical),
     )
     .unwrap();
 }
@@ -358,18 +358,21 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
     let nod_owner = Address::repeat_byte(0x42);
     let nod_id = outbe_compressed_entities::derive_poseidon_entity_id(nod_owner, day).unwrap();
     let bucket_key = NodContract::bucket_key(day, U256::from(16), 978);
-    let mut nod = NodItemState {
-        is_settled: false,
-        nod_id,
-        owner: nod_owner,
-        gratis_load_minor: U256::from(13),
-        worldwide_day: day,
-        league_id: 7,
-        bucket_key,
-        issuance_currency: 840,
-        reference_currency: 978,
-        issued_at: 1_752_534_000,
-    };
+    let mut nod = outbe_nod::test_support::item(
+        outbe_nod::test_support::NodItemFixture {
+            is_settled: false,
+            nod_id,
+            owner: nod_owner,
+            gratis_load_minor: U256::from(13),
+            worldwide_day: day,
+            league_id: 7,
+            bucket_key,
+            issuance_currency: 840,
+            reference_currency: 978,
+            issued_at: 1_752_534_000,
+        },
+        U256::from(16),
+    );
     let bucket_id = WwdEntityId::from_day_and_digest(day, bucket_key.0);
     let mut execution = HashMapStorageProvider::new(1);
     let empty_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
@@ -419,7 +422,8 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
 
     // Block 2: update each namespace through the generic capability boundary.
     tribute.tribute_price_minor += U256::from(1);
-    nod.gratis_load_minor += U256::from(1);
+    let next_amount = outbe_nod::api::calculation_amount(&nod).unwrap() + U256::from(1);
+    outbe_nod::test_support::set_amount(&mut nod, next_amount);
     let expected_bucket = NodBucketState {
         settled_nods: 0,
         bucket_key,
@@ -450,8 +454,8 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
         encode_tribute_v1(&canonical_body(&tribute)).unwrap()
     );
     assert_eq!(
-        encode_nod_item_v1(&canonical_item(&projected_nod)).unwrap(),
-        encode_nod_item_v1(&canonical_item(&nod)).unwrap()
+        encode_nod_item_v2(&canonical_item(&projected_nod)).unwrap(),
+        encode_nod_item_v2(&canonical_item(&nod)).unwrap()
     );
     assert_eq!(
         encode_nod_bucket_v1(&canonical_bucket(&projected_bucket)).unwrap(),

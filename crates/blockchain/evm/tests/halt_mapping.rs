@@ -8,6 +8,7 @@
 //! - `OutOfGas` -> `Ok(Halt(OOG))` with zero gas reported
 //! - `Revert(msg)` -> `Ok(Revert(Error(string)-encoded msg, actual_gas))`
 //! - `RevertBytes(bytes)` -> `Ok(Revert(bytes, actual_gas))` (no re-encoding)
+//! - `BodyReadCorruption(s)` -> `Ok(Revert(Error(string)-encoded reason, actual_gas))`
 //! - `WriteProtection` -> `Ok(Halt(Other("state change during static call")))`
 //! - `SubCall(_)` -> `Err(Fatal(_))` with sub-call error info
 //! - `Unsupported` -> `Err(Fatal("precompile reported Unsupported"))`
@@ -71,6 +72,17 @@ fn revert_bytes_preserves_raw_payload() {
             .expect("revert-bytes is non-fatal");
     assert!(matches!(result.status, PrecompileStatus::Revert));
     assert_eq!(result.bytes, raw, "RevertBytes must not re-encode");
+    assert_eq!(result.gas_used, ACTUAL_GAS);
+}
+
+#[test]
+fn body_read_mismatch_reverts_with_its_reason_and_consumed_gas() {
+    let error = PrecompileError::BodyReadCorruption("body commitment mismatch".into());
+    let reason = error.to_string();
+    let result = map_outbe_precompile_result(Err(error), ACTUAL_GAS)
+        .expect("body read mismatch must revert without aborting the EVM");
+    assert!(matches!(result.status, PrecompileStatus::Revert));
+    assert_eq!(Revert::abi_decode(&result.bytes).unwrap().reason, reason);
     assert_eq!(result.gas_used, ACTUAL_GAS);
 }
 

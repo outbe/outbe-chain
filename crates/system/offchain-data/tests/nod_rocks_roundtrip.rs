@@ -2,8 +2,8 @@
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{
-    body_commitment, decode_nod_item_v1, encode_nod_item_v1, NodItemBodyV1, StoredBody,
-    WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+    body_commitment, decode_nod_item_v2, encode_nod_item_v2, NodItemBodyV2, StoredBody,
+    ACTIVE_COMMITMENT_SCHEME, NOD_BODY_SCHEMA_V2,
 };
 use outbe_offchain_storage::{Key, Namespace, RocksDbStorage, StorageReader, StorageWriter, Value};
 use outbe_primitives::time::WorldwideDay;
@@ -11,30 +11,39 @@ use outbe_primitives::time::WorldwideDay;
 #[test]
 fn nod_bytes_and_commitment_survive_rocksdb_write_read_and_reopen() {
     let day = WorldwideDay::new(20260906);
-    let nod = NodItemBodyV1 {
-        is_settled: false,
-        nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(0xa5)),
-        owner: Address::repeat_byte(0x73),
-        gratis_load_minor: U256::from_be_bytes([0xa7; 32]),
-        worldwide_day: day,
-        league_id: 257,
+    let encrypted = outbe_nod::test_support::encrypted_fixture(
+        &outbe_nod::NodIssueParams {
+            owner: Address::repeat_byte(0x73),
+            worldwide_day: day,
+            league_id: 257,
+            gratis_load_minor: U256::from_be_bytes([0xa7; 32]),
+            entry_price_minor: U256::from(5),
+            issuance_currency: 840,
+            reference_currency: 978,
+        },
+        7,
+    );
+    let nod_id = encrypted.terms.nod_id;
+    let nod = NodItemBodyV2 {
+        encrypted,
         bucket_key: B256::repeat_byte(0xff),
-        issuance_currency: 840,
-        reference_currency: 978,
         issued_at: 1_788_652_800,
+        is_settled: false,
     };
-    let payload = encode_nod_item_v1(&nod).unwrap();
+    let payload = encode_nod_item_v2(&nod).unwrap();
     let expected_commitment = body_commitment(
         ACTIVE_COMMITMENT_SCHEME,
-        BODY_SCHEMA_V1,
-        nod.nod_id,
+        NOD_BODY_SCHEMA_V2,
+        nod_id,
         &payload,
     )
     .unwrap();
-    let stored_bytes = StoredBody::new_v1(payload.clone()).unwrap().encode();
+    let stored_bytes = StoredBody::new(NOD_BODY_SCHEMA_V2, payload.clone())
+        .unwrap()
+        .encode();
     let value = Value::new(stored_bytes.clone()).unwrap();
     let namespace = Namespace::new("nods").unwrap();
-    let key = Key::new(nod.nod_id.as_slice().to_vec()).unwrap();
+    let key = Key::new(nod_id.as_slice().to_vec()).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("rocksdb");
 
@@ -46,7 +55,7 @@ fn nod_bytes_and_commitment_survive_rocksdb_write_read_and_reopen() {
         let actual_commitment = body_commitment(
             ACTIVE_COMMITMENT_SCHEME,
             read_body.schema_version(),
-            nod.nod_id,
+            nod_id,
             read_body.payload(),
         )
         .unwrap();
@@ -55,7 +64,7 @@ fn nod_bytes_and_commitment_survive_rocksdb_write_read_and_reopen() {
             "commitment: {stage}"
         );
         assert_eq!(
-            decode_nod_item_v1(read_body.payload()).unwrap(),
+            decode_nod_item_v2(read_body.payload()).unwrap(),
             nod,
             "NOD fields: {stage}"
         );

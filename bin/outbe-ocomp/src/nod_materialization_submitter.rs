@@ -11,8 +11,8 @@ use alloy_consensus::TxEip1559;
 use alloy_eips::eip2718::Encodable2718 as _;
 use alloy_primitives::{keccak256, Address, Bytes, TxKind, B256, U256};
 use outbe_ocomp_protocol::{
-    abi::{encode_materialize_certified_nods_calldata, NOD_FACTORY_ADDRESS},
-    nod_materialization::NodMaterializationBatchV1,
+    abi::{encode_protected_materialize_certified_nods_calldata, NOD_FACTORY_ADDRESS},
+    nod_materialization::ProtectedNodMaterializationV2,
     system_carrier::{MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS, OCOMP_SYSTEM_CARRIER_GAS_LIMIT},
     SchemaLimits,
 };
@@ -31,7 +31,10 @@ use crate::vote_submitter::{
 const RECORD_VERSION: u16 = 1;
 const RECORD_FILE: &str = "submission-v1.json";
 const TEMP_FILE: &str = "submission-v1.tmp";
-const MAX_RECORD_BYTES: u64 = 128 * 1024;
+const MAX_RECORD_BYTES: u64 = 4
+    * outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1
+        .max_transaction_rlp_bytes
+    + 16 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -111,7 +114,7 @@ impl<R: VoteSubmissionRpcV1> NodMaterializationSubmitterV1<R> {
     pub fn reconcile(
         &mut self,
         job_id: B256,
-        batch: &NodMaterializationBatchV1,
+        batch: &ProtectedNodMaterializationV2,
     ) -> Result<NodMaterializationSubmissionOutcomeV1, NodMaterializationSubmissionErrorV1> {
         let canonical = batch.encode_canonical(&self.config.limits)?;
         let batch_digest = keccak256(&canonical);
@@ -137,7 +140,7 @@ impl<R: VoteSubmissionRpcV1> NodMaterializationSubmitterV1<R> {
     fn prepare(
         &mut self,
         job_id: B256,
-        batch: &NodMaterializationBatchV1,
+        batch: &ProtectedNodMaterializationV2,
         batch_digest: B256,
     ) -> Result<(), NodMaterializationSubmissionErrorV1> {
         let chain_id = self.rpc.chain_id().map_err(rpc_error)?;
@@ -156,7 +159,8 @@ impl<R: VoteSubmissionRpcV1> NodMaterializationSubmitterV1<R> {
             MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
             MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS,
         );
-        let calldata = encode_materialize_certified_nods_calldata(batch, &self.config.limits)?;
+        let calldata =
+            encode_protected_materialize_certified_nods_calldata(batch, &self.config.limits)?;
         let signed = self.signer.sign_eip1559(TxEip1559 {
             chain_id,
             nonce,
@@ -168,6 +172,12 @@ impl<R: VoteSubmissionRpcV1> NodMaterializationSubmitterV1<R> {
             input: Bytes::from(calldata),
             access_list: Default::default(),
         })?;
+        if signed.encode_2718_len() as u64
+            > outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1
+                .max_transaction_rlp_bytes
+        {
+            return Err(NodMaterializationSubmissionErrorV1::InvalidJournal);
+        }
         let transaction_hash = *signed.hash();
         let mut raw_transaction = Vec::with_capacity(signed.encode_2718_len());
         signed.encode_2718(&mut raw_transaction);
@@ -308,7 +318,7 @@ impl<R: VoteSubmissionRpcV1> NodMaterializationSubmitterV1<R> {
         &self,
         record: &RecordV1,
         job_id: B256,
-        batch: &NodMaterializationBatchV1,
+        batch: &ProtectedNodMaterializationV2,
         batch_digest: B256,
     ) -> Result<(), NodMaterializationSubmissionErrorV1> {
         if record.version != RECORD_VERSION
@@ -515,6 +525,138 @@ mod tests {
     use super::*;
     use crate::nod_materialization::MaterializationReferenceStoreV1;
     use outbe_ocomp_protocol::CasObjectRefV1;
+
+    struct PreparationRpc;
+
+    #[test]
+    fn maximum_protected_carrier_fits_signed_transaction_bound() {
+        use outbe_ocomp_protocol::{common::BoundedBytes, profile::poc_schema_limits};
+        let limits = poc_schema_limits();
+        let mut carrier = ProtectedNodMaterializationV2 {
+            queue_sequence: 1,
+            first_nod_ordinal: 0,
+            encryption_binding: B256::repeat_byte(1),
+            encrypted_witness: BoundedBytes(vec![0xa1]),
+            encrypted_nods: vec![BoundedBytes(vec![0xb1; 100])],
+        };
+        let overhead = carrier.encode_canonical(&limits).unwrap().len() - 1;
+        carrier
+            .encrypted_witness
+            .0
+            .resize(limits.codec.max_body_bytes - overhead, 0xa1);
+        assert_eq!(
+            carrier.encode_canonical(&limits).unwrap().len(),
+            limits.codec.max_body_bytes
+        );
+        let calldata =
+            encode_protected_materialize_certified_nods_calldata(&carrier, &limits).unwrap();
+        let signer = OutbeEvmSigner::from_secret_bytes([1; 32]).unwrap();
+        let signed = signer
+            .sign_eip1559(TxEip1559 {
+                chain_id: u64::MAX,
+                nonce: u64::MAX,
+                gas_limit: OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
+                max_fee_per_gas: u128::MAX,
+                max_priority_fee_per_gas: 0,
+                to: TxKind::Call(NOD_FACTORY_ADDRESS),
+                value: U256::ZERO,
+                input: Bytes::from(calldata),
+                access_list: Default::default(),
+            })
+            .unwrap();
+        assert!(
+            signed.encode_2718_len() as u64
+                <= outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1
+                    .max_transaction_rlp_bytes
+        );
+    }
+
+    impl VoteSubmissionRpcV1 for PreparationRpc {
+        type Error = std::io::Error;
+        fn chain_id(&self) -> Result<u64, Self::Error> {
+            Ok(42)
+        }
+        fn canonical_nonce(&self, _: Address) -> Result<u64, Self::Error> {
+            Ok(9)
+        }
+        fn gas_price(&self) -> Result<u128, Self::Error> {
+            Ok(MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS)
+        }
+        fn send_raw_transaction(&self, _: &[u8], expected: B256) -> Result<B256, Self::Error> {
+            Ok(expected)
+        }
+        fn transaction_receipt(&self, _: B256) -> Result<Option<VoteReceiptV1>, Self::Error> {
+            Ok(None)
+        }
+        fn canonical_block(&self, _: u64) -> Result<Option<VoteBlockV1>, Self::Error> {
+            Ok(None)
+        }
+        fn finalized_block(&self) -> Result<VoteBlockV1, Self::Error> {
+            Err(std::io::Error::other("no finality in preparation fixture"))
+        }
+    }
+
+    #[test]
+    fn signed_preparation_keeps_ciphertexts_across_restart_and_rejects_replacement() {
+        use alloy_consensus::Transaction;
+        use alloy_eips::eip2718::Decodable2718;
+        use outbe_ocomp_protocol::{
+            abi::decode_protected_materialize_certified_nods_calldata, common::BoundedBytes,
+            profile::poc_schema_limits,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let signer = OutbeEvmSigner::from_secret_bytes([1; 32]).unwrap();
+        let config = NodMaterializationSubmissionConfigV1 {
+            journal_root: directory.path().to_owned(),
+            expected_chain_id: 42,
+            sender_address: signer.address(),
+            limits: poc_schema_limits(),
+        };
+        let job_id = B256::repeat_byte(0x11);
+        let batch = ProtectedNodMaterializationV2 {
+            queue_sequence: 7,
+            first_nod_ordinal: 16,
+            encryption_binding: B256::repeat_byte(0x31),
+            encrypted_witness: BoundedBytes(vec![0xa1; 200]),
+            encrypted_nods: vec![BoundedBytes(vec![0xb1; 96])],
+        };
+        let mut submitter =
+            NodMaterializationSubmitterV1::open(config.clone(), PreparationRpc, signer.clone())
+                .unwrap();
+        assert_eq!(
+            submitter.reconcile(job_id, &batch).unwrap(),
+            NodMaterializationSubmissionOutcomeV1::Pending
+        );
+        let prepared = load_record(&directory.path().join(RECORD_FILE))
+            .unwrap()
+            .unwrap();
+        let transaction =
+            alloy_consensus::TxEnvelope::decode_2718(&mut prepared.raw_transaction.as_slice())
+                .unwrap();
+        assert_eq!(
+            decode_protected_materialize_certified_nods_calldata(
+                transaction.input(),
+                &config.limits
+            )
+            .unwrap(),
+            batch
+        );
+        drop(submitter);
+        let mut reopened =
+            NodMaterializationSubmitterV1::open(config, PreparationRpc, signer).unwrap();
+        reopened.reconcile(job_id, &batch).unwrap();
+        let submitted = load_record(&directory.path().join(RECORD_FILE))
+            .unwrap()
+            .unwrap();
+        assert_eq!(submitted.raw_transaction, prepared.raw_transaction);
+        assert_eq!(submitted.transaction_hash, prepared.transaction_hash);
+        let mut replaced = batch;
+        replaced.encrypted_nods[0].0[0] ^= 1;
+        assert!(matches!(
+            reopened.reconcile(job_id, &replaced),
+            Err(NodMaterializationSubmissionErrorV1::ConflictingReplay)
+        ));
+    }
 
     fn record(job_id: B256, stage: StageV1) -> RecordV1 {
         RecordV1 {

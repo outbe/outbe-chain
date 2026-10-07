@@ -64,8 +64,8 @@ pub const PROMIS: Domain = Domain {
 };
 
 /// Fidelity domain separators - keys are independent from Gratis's and
-/// Promis's. Encrypts the per-account cohort ledger (a variable-length record
-/// blob, see [`Domain::write_blob`]), not a single amount. The modify labels
+/// Promis's. Derives the per-account view key used by the variable-length
+/// cohort envelopes in [`crate::fidelity_cipher`]. The modify labels
 /// are reserved but unused: cohort ops are chain-initiated (they ride inside
 /// the co-located Gratis op), so there is no user-held modify capability.
 pub const FIDELITY: Domain = Domain {

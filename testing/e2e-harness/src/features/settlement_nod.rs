@@ -2,8 +2,8 @@
 use super::*;
 use alloy_sol_types::{SolCall as _, SolError as _, SolValue as _};
 use outbe_compressed_entities::{
-    decode_stored_nod_bucket_v1, decode_stored_nod_item_v1, verify_point_read_v1, NodBucketBodyV1,
-    NodItemBodyV1, PointReadRequestV1, PointReadResultV1, SelectedHeaderV1, VerifiedPointReadV1,
+    decode_stored_nod_bucket_v1, decode_stored_nod_item_v2, verify_point_read_v1, NodBucketBodyV1,
+    NodItemBodyV2, PointReadRequestV1, PointReadResultV1, SelectedHeaderV1, VerifiedPointReadV1,
     WwdEntityId,
 };
 
@@ -13,12 +13,22 @@ const PAYER_KEY: &str = "0x77777777777777777777777777777777777777777777777777777
 
 #[then("a third party pays another public Nod in ERC20 and mines Gratis only for its owner")]
 fn third_party_settles_and_mines(world: &mut World) {
+    let day = world
+        .state
+        .ocomp_successor_job_request
+        .as_ref()
+        .expect("successor JobIntent")
+        .worldwide_day;
+    run_relayed_mining(world, 1, day, false);
+}
+
+pub(super) fn run_relayed_mining(world: &mut World, owner_index: usize, day: u32, hardened: bool) {
     let port = world.validators.primary_port();
     let ports = world.validators.committee_ports();
     let url = world.rpc.url(port);
     let owner_key = world
         .validators
-        .get(1)
+        .get(owner_index)
         .evm_key()
         .expect("successor Tribute owner key");
     let owner = eth::address_of(&owner_key).expect("successor owner");
@@ -33,10 +43,7 @@ fn third_party_settles_and_mines(world: &mut World) {
         Instant::now() + Duration::from_secs(MATERIALIZED_NOD_TIMEOUT_SECS);
     let (id_bytes, initial) = loop {
         let observed = stable_live_read(world, port, 0, || {
-            world
-                .rpc
-                .materialized_nod_for_owner(port, owner)
-                .expect("live materialized Nod lookup")
+            world.rpc.materialized_nod_for_owner(port, owner)
         });
         if let Some(nod) = observed {
             break nod;
@@ -48,15 +55,7 @@ fn third_party_settles_and_mines(world: &mut World) {
         sleep(Duration::from_millis(250));
     };
     let id = WwdEntityId::try_from(id_bytes.as_slice()).expect("public Nod identity");
-    assert_eq!(
-        initial.worldwideDay,
-        world
-            .state
-            .ocomp_successor_job_request
-            .as_ref()
-            .expect("retained real successor JobIntent")
-            .worldwide_day
-    );
+    assert_eq!(initial.worldwideDay, day);
     assert_eq!(initial.owner, owner);
     assert!(!initial.isSettled);
     assert!(!initial.settlementCostMinor.is_zero());
@@ -70,6 +69,7 @@ fn third_party_settles_and_mines(world: &mut World) {
     let qualified_bodies = nod_bodies(world, id, head);
     assert_snapshot_bodies(&qualified, &qualified_bodies);
     let body = qualified.body.as_ref().expect("qualified public Nod");
+    let gratis_load = crate::internal::nod_keys::decrypt(world, body);
     assert!(body.isQualified);
     assert!(!body.isSettled);
     let bucket_id = qualified_bodies.1.entity_id();
@@ -184,6 +184,27 @@ fn third_party_settles_and_mines(world: &mut World) {
             "duplicate payment rollback"
         );
     }
+    if hardened {
+        world
+            .localnet
+            .restart_validator_and_enclave(0)
+            .expect("restart paid NOD reader with sealed keys");
+        assert!(world
+            .rpc
+            .wait_bootstrapped(120, || world.localnet.ensure_committee_alive())
+            .unwrap());
+        assert_eq!(
+            nod_bodies(world, id, duplicate_height),
+            paid,
+            "paid encrypted NOD survives restart"
+        );
+        let reopened = nod_snapshot(world, owner, id, duplicate_height);
+        assert_same_snapshot(&paid_indexes, &reopened);
+        assert_eq!(
+            crate::internal::nod_keys::decrypt(world, reopened.body.as_ref().unwrap()),
+            gratis_load
+        );
+    }
     let nonce = eth::read_call(
         &url,
         addresses::GRATIS_ADDR,
@@ -197,7 +218,7 @@ fn third_party_settles_and_mines(world: &mut World) {
         &payer_keys.modify,
         payer,
         GratisOp::Mint,
-        body.gratisLoadMinor,
+        gratis_load,
         nonce,
         pair_chain_id,
     );
@@ -229,6 +250,18 @@ fn third_party_settles_and_mines(world: &mut World) {
         .expect("MAC pair prestate finalized");
     let pair_before = mac_pair_state(world, asset, pair_accounts, pair_height);
     assert_eq!(pair_before.owner_gratis.1, nonce);
+    if hardened {
+        let mut stale_nonce = mine.clone();
+        stale_nonce.opNonce = nonce.checked_add(1).unwrap();
+        let rejected_nonce = assert_mined_nod_rejection(world, &stale_nonce);
+        let height = rejected_nonce.block_number().unwrap();
+        assert_eq!(
+            mac_pair_state(world, asset, pair_accounts, height),
+            pair_before,
+            "wrong nonce must preserve both ledgers including Fidelity"
+        );
+        assert_eq!(nod_bodies(world, id, height), paid);
+    }
     let rejected = assert_mined_nod_rejection(world, &mine);
     let rejected_height = rejected.block_number().expect("wrong MAC receipt block");
     assert_eq!(
@@ -295,7 +328,7 @@ fn third_party_settles_and_mines(world: &mut World) {
         &owner_keys.modify,
         owner,
         GratisOp::Mint,
-        body.gratisLoadMinor,
+        gratis_load,
         nonce,
         pair_chain_id,
     ));
@@ -383,7 +416,7 @@ fn third_party_settles_and_mines(world: &mut World) {
         &eth::INodFactory::NodExercised {
             owner,
             nodId: id.to_u256(),
-            gratisLoadMinor: body.gratisLoadMinor,
+            encryptedGratisAmount: body.encryptedGratisAmount.clone(),
         },
     );
     assert_receipt_event(
@@ -392,14 +425,14 @@ fn third_party_settles_and_mines(world: &mut World) {
         &eth::INodFactory::NodBurned {
             owner,
             nodId: id.to_u256(),
-            gratisLoadMinor: body.gratisLoadMinor,
+            encryptedGratisAmount: body.encryptedGratisAmount.clone(),
         },
     );
     for &peer in &ports {
         let peer_url = world.rpc.url(peer);
         assert_eq!(
             gratis_at(&peer_url, owner, &owner_keys.view, minted_height),
-            gratis_at(&peer_url, owner, &owner_keys.view, minted_height - 1) + body.gratisLoadMinor
+            gratis_at(&peer_url, owner, &owner_keys.view, minted_height - 1) + gratis_load
         );
         assert_eq!(
             gratis_at(&peer_url, payer, &payer_keys.view, minted_height),
@@ -438,6 +471,29 @@ fn third_party_settles_and_mines(world: &mut World) {
             "empty paid bucket must be deleted"
         );
     }
+    if hardened {
+        let stable = mac_pair_state(world, asset, pair_accounts, minted_height);
+        let duplicate_mint = assert_mined_nod_rejection(world, &mine);
+        let height = duplicate_mint.block_number().unwrap();
+        assert_eq!(mac_pair_state(world, asset, pair_accounts, height), stable);
+        world
+            .localnet
+            .restart_validator_and_enclave(0)
+            .expect("restart after encrypted NOD mint");
+        assert!(world
+            .rpc
+            .wait_bootstrapped(120, || world.localnet.ensure_committee_alive())
+            .unwrap());
+        let checkpoint = live_checkpoint(world, port).height;
+        assert_eq!(
+            mac_pair_state(world, asset, pair_accounts, checkpoint),
+            stable
+        );
+        assert!(
+            nod_snapshot(world, owner, id, checkpoint).body.is_none(),
+            "minted NOD resurrected after restart"
+        );
+    }
     eprintln!("settlement_evidence kind=controlled_mac_pair rejected_tx={} accepted_tx={} negative_status=0 positive_status=1 only_call_mac_changed=true guard_state_preserved=true gas_limit={NOD_CALL_GAS_LIMIT}",
         rejected.transaction_hash, minted.transaction_hash);
     eprintln!("settlement_evidence kind=erc20_relayed_nod owner={owner:#x} payer={payer:#x} nod={} settle={} duplicate={} wrong_mac={} mine={}",
@@ -469,6 +525,8 @@ struct MacPairState {
     assets: [U256; 4],
     owner_gratis: (alloy_primitives::Bytes, u64),
     payer_gratis: (alloy_primitives::Bytes, u64),
+    fidelity: [Vec<U256>; 2],
+    first_qualified_start: U256,
 }
 
 /// Ordinary EVM storage remains available at exact receipt boundaries. The
@@ -504,6 +562,16 @@ fn mac_pair_state(
             assets: asset_balances(&url, asset, accounts, height),
             owner_gratis: gratis(accounts[2]),
             payer_gratis: gratis(accounts[0]),
+            fidelity: [
+                fidelity_storage_at(&url, accounts[2], height),
+                fidelity_storage_at(&url, accounts[0], height),
+            ],
+            first_qualified_start: storage_word_at(
+                &url,
+                outbe_primitives::addresses::FIDELITY_ADDRESS,
+                U256::ONE,
+                height,
+            ),
         };
         if let Some(expected) = &expected {
             assert_eq!(expected, &state, "MAC-pair state differs across validators");
@@ -512,6 +580,47 @@ fn mac_pair_state(
         }
     }
     expected.expect("nonempty MAC-pair observer cohort")
+}
+
+fn storage_word_at(url: &str, address: Address, slot: U256, height: u64) -> U256 {
+    let word = eth::raw_json_result(
+        url,
+        "eth_getStorageAt",
+        serde_json::json!([
+            format!("{address:#x}"),
+            format!("{slot:#066x}"),
+            format!("0x{height:x}")
+        ]),
+    )
+    .expect("raw finalized ledger storage");
+    U256::from_str_radix(
+        word.as_str()
+            .expect("storage word")
+            .trim_start_matches("0x"),
+        16,
+    )
+    .expect("hex storage word")
+}
+
+fn fidelity_storage_at(url: &str, owner: Address, height: u64) -> Vec<U256> {
+    let address = outbe_primitives::addresses::FIDELITY_ADDRESS;
+    let slot = owner.mapping_slot(U256::ZERO);
+    let base = storage_word_at(url, address, slot, height);
+    let mut words = vec![base];
+    if base.bit(0) {
+        let len = ((base - U256::ONE) / U256::from(2)).to::<usize>();
+        assert!(len <= 1 << 20, "bounded Fidelity cohort fixture");
+        let start = U256::from_be_bytes(alloy_primitives::keccak256(slot.to_be_bytes::<32>()).0);
+        for offset in 0..len.div_ceil(32) {
+            words.push(storage_word_at(
+                url,
+                address,
+                start + U256::from(offset),
+                height,
+            ));
+        }
+    }
+    words
 }
 
 pub(super) fn qualify_public_nod(
@@ -718,8 +827,8 @@ fn assert_payment_delta(before: [U256; 4], after: [U256; 4], amount: U256) {
 }
 
 fn assert_paid_transition(
-    before: &(NodItemBodyV1, NodBucketBodyV1),
-    after: &(NodItemBodyV1, NodBucketBodyV1),
+    before: &(NodItemBodyV2, NodBucketBodyV1),
+    after: &(NodItemBodyV2, NodBucketBodyV1),
 ) {
     assert!(!before.0.is_settled);
     let mut item = before.0.clone();
@@ -744,40 +853,49 @@ struct NodSnapshot {
     body: Option<eth::INod::NodData>,
 }
 
-/// Read live CE views without mixing blocks. Only successful observations that
-/// straddle a head change are retried; RPC and decoding failures remain fatal.
-fn stable_live_read<T>(world: &World, port: u16, minimum: u64, read: impl Fn() -> T) -> T {
+/// Read live CE views without mixing blocks.
+/// Retry successful reads across head changes and corresponding CE parent races.
+/// Retry other read failures twice. Stop the scenario if all three attempts fail.
+fn stable_live_read<T>(
+    world: &World,
+    port: u16,
+    minimum: u64,
+    read: impl Fn() -> Result<T, String>,
+) -> T {
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {
         assert!(
             Instant::now() < deadline,
             "live Nod checkpoint did not stabilize on {port}"
         );
-        let before = live_checkpoint(world, port);
-        if before.height < minimum {
+        let observation = crate::features::entity_lifecycle::chain::settlement_read(|| {
+            let before = live_checkpoint(world, port);
+            if before.height < minimum {
+                return Ok(None);
+            }
+            let result = read();
+            let after = live_checkpoint(world, port);
+            crate::internal::live_ce_read::resolve_live_ce_read(result, before != after)
+                .map(|value| value.map(|value| (before, value)))
+        });
+        let Some((before, value)) = observation.expect("live Nod observation failed") else {
             sleep(Duration::from_millis(100));
             continue;
-        }
-        let value = read();
-        let after = live_checkpoint(world, port);
-        if before != after {
-            continue;
-        }
-        let finalized = world
+        };
+        world
             .rpc
             .wait_finalized_checkpoint(&world.validators.committee_ports(), before.height, 120)
             .expect("live Nod observation finalized with cohort parity");
-        assert_eq!(
-            finalized, before,
-            "live Nod observation changed before finality"
-        );
-        assert_eq!(
-            world
-                .rpc
-                .checkpoint_at(port, before.height)
-                .expect("recheck live Nod checkpoint"),
-            before
-        );
+        for peer in world.validators.committee_ports() {
+            assert_eq!(
+                world
+                    .rpc
+                    .checkpoint_at(peer, before.height)
+                    .expect("recheck original live Nod checkpoint"),
+                before,
+                "original live Nod checkpoint differs on peer {peer}"
+            );
+        }
         eprintln!("settlement_evidence kind=live_nod_checkpoint port={port} minimum={minimum} height={} hash={:#x}", before.height, before.block_hash);
         return value;
     }
@@ -810,12 +928,13 @@ fn assert_live_nod_revert<C: alloy_sol_types::SolCall>(
                     alloy_eips::BlockId::latest(),
                     gas_limit,
                 )
-                .expect("live Nod rejection with exact EVM revert data");
+                .map_err(|error| error.to_string())?;
                 assert_eq!(
                     actual.as_ref(),
                     expected.as_slice(),
                     "unexpected live Nod guard on {port}"
                 );
+                Ok(())
             });
         }
     };
@@ -956,13 +1075,12 @@ fn nod_snapshot(world: &World, owner: Address, id: WwdEntityId, minimum: u64) ->
     let mut expected = None;
     for port in world.validators.committee_ports() {
         let url = world.rpc.url(port);
-        let snapshot = stable_live_read(world, port, minimum, || {
+        let snapshot = stable_live_read(world, port, minimum, || -> Result<_, String> {
             let count: usize = eth::read_call_result(
                 &url,
                 addresses::NOD_ADDR,
                 &eth::INod::balanceOfCall { owner },
-            )
-            .expect("live Nod owner count")
+            )?
             .try_into()
             .expect("bounded Nod count");
             assert!(count <= 32, "bounded Nod owner inventory");
@@ -976,9 +1094,8 @@ fn nod_snapshot(world: &World, owner: Address, id: WwdEntityId, minimum: u64) ->
                             index: U256::from(index),
                         },
                     )
-                    .expect("live Nod owner index")
                 })
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>, String>>()?;
             assert_eq!(
                 owner_ids
                     .iter()
@@ -988,28 +1105,28 @@ fn nod_snapshot(world: &World, owner: Address, id: WwdEntityId, minimum: u64) ->
                 "duplicate Nod owner index"
             );
             let total_supply =
-                eth::read_call_result(&url, addresses::NOD_ADDR, &eth::INod::totalSupplyCall {})
-                    .expect("live Nod supply");
-            let body = owner_ids.contains(&id.to_u256()).then(|| {
+                eth::read_call_result(&url, addresses::NOD_ADDR, &eth::INod::totalSupplyCall {})?;
+            let body = if owner_ids.contains(&id.to_u256()) {
                 let body = eth::read_call_result(
                     &url,
                     addresses::NOD_ADDR,
                     &eth::INod::nodDataCall {
                         nodId: id.to_u256(),
                     },
-                )
-                .expect("live Nod body");
+                )?;
                 assert_eq!(body.owner, owner);
                 assert_eq!(body.nodId, id.to_u256());
-                body
-            });
-            NodSnapshot {
+                Some(body)
+            } else {
+                None
+            };
+            Ok(NodSnapshot {
                 index: NodIndexSnapshot {
                     owner_ids,
                     total_supply,
                 },
                 body,
-            }
+            })
         });
         if let Some(expected) = &expected {
             assert_same_snapshot(expected, &snapshot);
@@ -1083,20 +1200,38 @@ fn assert_index_transition(
     }
 }
 
-fn assert_snapshot_bodies(snapshot: &NodSnapshot, bodies: &(NodItemBodyV1, NodBucketBodyV1)) {
+fn assert_snapshot_bodies(snapshot: &NodSnapshot, bodies: &(NodItemBodyV2, NodBucketBodyV1)) {
     let body = snapshot.body.as_ref().expect("live Nod body present");
     let item = &bodies.0;
-    assert_eq!(body.nodId, item.nod_id.to_u256());
-    assert_eq!(body.owner, item.owner);
-    assert_eq!(body.worldwideDay, item.worldwide_day.value());
-    assert_eq!(body.leagueId, item.league_id);
+    assert_eq!(body.nodId, item.encrypted.terms.nod_id.to_u256());
+    assert_eq!(body.owner, item.encrypted.terms.owner);
+    assert_eq!(
+        body.worldwideDay,
+        item.encrypted.terms.worldwide_day.value()
+    );
+    assert_eq!(body.leagueId, item.encrypted.terms.league_id);
     assert_eq!(
         Some(body.floorPriceMinor),
         outbe_nod::NodContract::floor_price_minor(bodies.1.entry_price_minor)
     );
-    assert_eq!(body.gratisLoadMinor, item.gratis_load_minor);
-    assert_eq!(body.issuanceCurrency, item.issuance_currency);
-    assert_eq!(body.referenceCurrency, item.reference_currency);
+    assert_eq!(
+        body.encryptedGratisAmount.as_ref(),
+        item.encrypted.encrypted_gratis_amount
+    );
+    assert_eq!(
+        body.encryptedCreatorPublicKey.as_ref(),
+        item.encrypted.encrypted_creator_public_key
+    );
+    assert_eq!(body.encryptionBinding, item.encrypted.encryption_binding);
+    assert_eq!(body.chainId, item.encrypted.terms.chain_id);
+    assert_eq!(
+        body.issuanceCurrency,
+        item.encrypted.terms.issuance_currency
+    );
+    assert_eq!(
+        body.referenceCurrency,
+        item.encrypted.terms.reference_currency
+    );
     assert_eq!(body.issuedAt, item.issued_at);
     assert_eq!(body.isSettled, item.is_settled);
 }
@@ -1128,14 +1263,15 @@ fn gratis_at(url: &str, owner: Address, view: &[u8; 32], height: u64) -> U256 {
     }
 }
 
-fn nod_bodies(world: &World, id: WwdEntityId, minimum: u64) -> (NodItemBodyV1, NodBucketBodyV1) {
+fn nod_bodies(world: &World, id: WwdEntityId, minimum: u64) -> (NodItemBodyV2, NodBucketBodyV1) {
     let mut expected = None;
     for port in world.validators.committee_ports() {
-        let item = decode_stored_nod_item_v1(
+        let item = decode_stored_nod_item_v2(
             &compressed_body(world, port, 2, id, minimum).expect("Nod body present"),
         )
         .expect("canonical Nod body");
-        let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
+        let bucket_id =
+            WwdEntityId::from_day_and_digest(item.encrypted.terms.worldwide_day, item.bucket_key);
         let bucket = decode_stored_nod_bucket_v1(
             &compressed_body(world, port, 3, bucket_id, minimum).expect("bucket present"),
         )
@@ -1170,15 +1306,20 @@ fn compressed_body(
         "proof predates finalized transaction"
     );
     let height = package.header.block_number;
-    let canonical = eth::block_commitment(&world.rpc.url(world.validators.primary_port()), height)
-        .expect("canonical proof header");
     world
         .rpc
         .wait_finalized_checkpoint(&world.validators.committee_ports(), height, 120)
         .expect("proof header finalized");
+    let primary = world.validators.primary_port();
+    let canonical = eth::block_commitment_result(&world.rpc.url(primary), height)
+        .unwrap_or_else(|error| {
+            panic!("canonical proof header primary={primary} selected={port} height={height} domain={domain_id} hash={:#x}: {error:#}", package.header.block_hash)
+        });
     for peer in world.validators.committee_ports() {
         assert_eq!(
-            eth::block_commitment(&world.rpc.url(peer), height).expect("peer proof header"),
+            eth::block_commitment_result(&world.rpc.url(peer), height).unwrap_or_else(|error| {
+                panic!("peer proof header peer={peer} selected={port} height={height} domain={domain_id} hash={:#x}: {error:#}", package.header.block_hash)
+            }),
             canonical
         );
     }
@@ -1321,15 +1462,23 @@ mod tests {
     fn paid_nod_oracle_rejects_missing_count_and_changed_owner_or_load() {
         let day = outbe_primitives::time::WorldwideDay::new(20260917);
         let bucket_key = B256::repeat_byte(2);
-        let item = NodItemBodyV1 {
-            nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(1)),
-            owner: Address::repeat_byte(3),
-            gratis_load_minor: U256::from(100),
-            worldwide_day: day,
-            league_id: 0,
+        let item = NodItemBodyV2 {
+            encrypted: outbe_primitives::nod_encryption::EncryptedNodV2 {
+                terms: outbe_primitives::nod_encryption::NodTermsV2 {
+                    chain_id: 1,
+                    nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(1)),
+                    owner: Address::repeat_byte(3),
+                    worldwide_day: day,
+                    league_id: 0,
+                    entry_price_minor: U256::from(9),
+                    issuance_currency: 840,
+                    reference_currency: 840,
+                },
+                encryption_binding: B256::repeat_byte(4),
+                encrypted_gratis_amount: vec![0x23; 56],
+                encrypted_creator_public_key: vec![0x24; 56],
+            },
             bucket_key,
-            issuance_currency: 840,
-            reference_currency: 840,
             issued_at: 1,
             is_settled: false,
         };
@@ -1349,8 +1498,8 @@ mod tests {
             let mut bad = paid.clone();
             match mutation {
                 0 => bad.1.settled_nods = 0,
-                1 => bad.0.owner = Address::repeat_byte(9),
-                2 => bad.0.gratis_load_minor += U256::ONE,
+                1 => bad.0.encrypted.terms.owner = Address::repeat_byte(9),
+                2 => bad.0.encrypted.encrypted_gratis_amount[8] ^= 1,
                 _ => bad.0.is_settled = false,
             }
             assert!(std::panic::catch_unwind(|| assert_paid_transition(&before, &bad)).is_err());

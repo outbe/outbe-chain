@@ -28,17 +28,13 @@ impl Gratis<'_> {
 
     // --- Plaintext aggregates (non-attributable) ---
 
-    pub fn total_supply(&self) -> Result<U256> {
-        self.total_supply.read()
-    }
-
     pub fn pledged_total_supply(&self) -> Result<U256> {
         self.pledged_total_supply.read()
     }
 
     // --- Ciphertext reads (returned verbatim; the view-key holder decrypts) ---
 
-    /// Encrypted balance blob for `account` (`version(8) || AEAD-ct`); empty if
+    /// Encrypted balance blob for `account` (`version(8) || GRA2 || binding(32) || AEAD-ct`); empty if
     /// the account has never held a balance.
     pub fn balance_ct_of(&self, account: Address) -> Result<Vec<u8>> {
         self.balance_ct.get_bytes(&account).read()
@@ -58,10 +54,6 @@ impl Gratis<'_> {
 
     pub(crate) fn set_op_nonce(&self, account: Address, nonce: u64) -> Result<()> {
         self.op_nonce.write(&account, nonce)
-    }
-
-    pub(crate) fn set_total_supply(&self, value: U256) -> Result<()> {
-        self.total_supply.write(value)
     }
 
     pub(crate) fn set_pledged_total_supply(&self, value: U256) -> Result<()> {

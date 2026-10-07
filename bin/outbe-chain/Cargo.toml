@@ -81,6 +81,8 @@ tar.workspace = true
 reth-primitives-traits.workspace = true
 
 [dev-dependencies]
+outbe-ocomp = { workspace = true, features = ["test-utils"] }
+outbe-nodfactory = { workspace = true, features = ["test-utils"] }
 outbe-consensus = { workspace = true, features = ["test-utils"] }
 postcard.workspace = true
 outbe-compressed-entities = { workspace = true, features = ["test-utils"] }

@@ -4,6 +4,11 @@ use thiserror::Error;
 
 use crate::WwdEntityId;
 
+mod nod_v2;
+pub use nod_v2::{
+    decode_nod_item_v2, decode_stored_nod_item_v2, encode_nod_item_v2, NodItemBodyV2,
+    NOD_BODY_SCHEMA_V2,
+};
 mod tribute_v2;
 pub use tribute_v2::{
     decode_stored_tribute_v2, decode_tribute_v2, encode_tribute_v2, TRIBUTE_BODY_SCHEMA_V2,
@@ -550,6 +555,8 @@ pub enum CanonicalBodyError {
     IdentityDayMismatch,
     #[error("invalid encrypted Tribute blob or identity/day encoding")]
     InvalidEncryptedTribute,
+    #[error("invalid encrypted NOD blob or identity/day encoding")]
+    InvalidEncryptedNod,
     #[error("input is not the canonical Protobuf representation")]
     NonCanonicalEncoding,
     #[error("unsupported body schema version {actual}")]

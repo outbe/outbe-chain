@@ -100,7 +100,7 @@ outbe-chain-constants.workspace = true
 outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
 outbe-node.workspace = true
 outbe-metadosis = { workspace = true, features = ["test-utils"] }
-outbe-nod = { workspace = true, features = ["test-utils"] }
+outbe-nod = { workspace = true, features = ["test-utils", "test-enclave"] }
 outbe-paynote = { workspace = true, features = ["test-utils"] }
 outbe-gratis = { workspace = true, features = ["test-enclave"] }
 outbe-tee-enclave.workspace = true
@@ -123,6 +123,7 @@ proptest.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 futures.workspace = true
+tokio.workspace = true
 # proposer/validator determinism test: build a real BLS late-finalize
 # credit + committee snapshot to exercise verify+record on both paths.
 commonware-cryptography.workspace = true

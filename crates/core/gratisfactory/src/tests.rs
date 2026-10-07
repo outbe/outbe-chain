@@ -98,11 +98,6 @@ fn mine_mints_gratis_and_records_fidelity_cohort() {
         .unwrap();
 
         assert_eq!(view_balance(&storage, alice()), amount);
-        assert_eq!(
-            outbe_gratis::api::total_supply(storage.clone()).unwrap(),
-            amount
-        );
-
         // The acquisition cohort was recorded: sole holder, no sales -> top league.
         let league_after = outbe_fidelity::api::league_at(storage.clone(), alice(), later).unwrap();
         assert_eq!(league_after, MAX_LEAGUE);
@@ -164,10 +159,6 @@ fn mine_coen_burns_gratis_mints_native_and_records_sale_cohort() {
         assert_eq!(minted, native_amount);
 
         assert_eq!(view_balance(&storage, alice()), U256::ZERO);
-        assert_eq!(
-            outbe_gratis::api::total_supply(storage.clone()).unwrap(),
-            U256::ZERO
-        );
         assert_eq!(storage.balance(alice()).unwrap(), native_amount);
 
         // Fully sold -> efficiency 0 -> league drops to the floor.
@@ -296,5 +287,50 @@ fn pledge_authenticates_amount_and_nonce_without_changing_fidelity() {
             outbe_gratis::api::pledged_total_supply(storage).unwrap(),
             amount
         );
+    });
+}
+
+#[test]
+fn encrypted_nod_mint_preserves_nonce_and_combined_fidelity_state() {
+    with_env(|storage| {
+        use outbe_primitives::{
+            nod_encryption::NodTermsV2, time::WorldwideDay, wwd_entity_id::WwdEntityId,
+        };
+        let day = WorldwideDay::new(20250115);
+        let amount = U256::from(123);
+        let nod = outbe_tee_enclave::nod_encryption::encrypt_nod(
+            &[0x5a; 32],
+            &[9; 32],
+            NodTermsV2 {
+                chain_id: CHAIN_ID,
+                nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(7)),
+                owner: alice(),
+                worldwide_day: day,
+                league_id: 0,
+                entry_price_minor: U256::ONE,
+                issuance_currency: 840,
+                reference_currency: 978,
+            },
+            amount,
+        )
+        .unwrap();
+        let authorization = auth(GratisOp::Mint, alice(), amount, 0);
+        crate::api::mint_encrypted_nod(storage.clone(), &nod, authorization.clone()).unwrap();
+        assert_eq!(view_balance(&storage, alice()), amount);
+        assert_eq!(
+            outbe_gratis::api::op_nonce(storage.clone(), alice()).unwrap(),
+            1
+        );
+        let fidelity = outbe_fidelity::FidelityContract::new(storage.clone());
+        let cohorts = fidelity.cohorts_ct_of(alice()).unwrap();
+        assert!(!cohorts.is_empty());
+        let balance = crate::api::encrypted_balance(storage.clone(), alice()).unwrap();
+        assert!(crate::api::mint_encrypted_nod(storage.clone(), &nod, authorization).is_err());
+        assert_eq!(
+            crate::api::encrypted_balance(storage.clone(), alice()).unwrap(),
+            balance
+        );
+        assert_eq!(fidelity.cohorts_ct_of(alice()).unwrap(), cohorts);
+        assert_eq!(outbe_gratis::api::op_nonce(storage, alice()).unwrap(), 1);
     });
 }

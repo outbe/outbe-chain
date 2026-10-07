@@ -72,18 +72,21 @@ fn bucket_of(
 /// A Nod whose `bucket_key` is derived the way `record_nod_issued` requires.
 fn item(owner: Address, entry: U256, reference_currency: u16) -> NodItemState {
     let worldwide_day = WorldwideDay::new(20_260_715);
-    NodItemState {
-        is_settled: false,
-        nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
-        owner,
-        gratis_load_minor: U256::from(11),
-        worldwide_day,
-        league_id: 4,
-        bucket_key: NodContract::bucket_key(worldwide_day, entry, reference_currency),
-        issuance_currency: 840,
-        reference_currency,
-        issued_at: 1_752_534_000,
-    }
+    crate::test_support::item(
+        crate::test_support::NodItemFixture {
+            is_settled: false,
+            nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
+            owner,
+            gratis_load_minor: U256::from(11),
+            worldwide_day,
+            league_id: 4,
+            bucket_key: NodContract::bucket_key(worldwide_day, entry, reference_currency),
+            issuance_currency: 840,
+            reference_currency,
+            issued_at: 1_752_534_000,
+        },
+        entry,
+    )
 }
 
 /// Dense `order`-packing puts these fields at contiguous offsets 0..=8.
@@ -813,7 +816,7 @@ fn token_uri_renders_the_nod_image_and_metadata() {
     let engine = base64::engine::general_purpose::STANDARD;
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
     let mut body = item(Address::repeat_byte(0x71), U256::from(400_000), USD);
-    body.gratis_load_minor = U256::from(1_250_123_456u64);
+    crate::test_support::set_amount(&mut body, U256::from(1_250_123_456u64));
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
@@ -880,14 +883,19 @@ fn token_uri_renders_the_nod_image_and_metadata() {
         assert_eq!(value(&json, "Entry Price").unwrap(), 0.4);
         assert_eq!(value(&json, "Floor Price").unwrap(), 0.432);
         assert_eq!(value(&json, "Call Price").unwrap(), 1.424);
-        assert_eq!(value(&json, "Gratis Load").unwrap(), 1250.12);
+        assert_eq!(
+            value(&json, "Encrypted Gratis Load").unwrap(),
+            alloy_primitives::hex::encode_prefixed(&body.encrypted.encrypted_gratis_amount)
+        );
+        assert!(!json.to_string().contains("1250.12"));
         assert!(value(&json, "Settlement Deadline").is_none());
 
         assert!(svg.contains(">NOD</text>"));
         assert!(svg.contains(&format!(">{id}</text>")));
         assert!(svg.contains(">QUALIFIED</text>"));
         assert!(svg.contains(">1.424</text>"));
-        assert!(svg.contains(">1,250.12</text>"));
+        assert!(svg.contains(">Encrypted</text>"));
+        assert!(!svg.contains("1,250.12"));
         assert!(!svg.contains("Floor Price"));
     });
 }

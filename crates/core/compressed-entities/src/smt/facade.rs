@@ -184,7 +184,8 @@ pub(crate) struct PoseidonSmt<S = MemoryStore> {
 
 /// Reduces strictly ordered non-zero leaves to the canonical CKB SMT root
 /// while retaining at most one pending subtree per tree level.
-pub(crate) struct SortedPoseidonRootReducer {
+pub(crate) struct SortedPoseidonRootReducer<O = NoSortedNodeObserver> {
+    observer: O,
     frontier: Vec<Option<PendingSortedNode>>,
     current: Option<PendingSortedNode>,
 }
@@ -192,11 +193,49 @@ pub(crate) struct SortedPoseidonRootReducer {
 struct PendingSortedNode {
     key: TreeKey,
     value: MergeValue,
+    archive_id: u64,
+}
+
+/// Observes only real leaves and nonzero forks; zero chains remain compact.
+pub(crate) trait SortedNodeObserver {
+    fn leaf(&mut self, key: TreeKey, leaf: TreeLeaf) -> Result<u64, TreeError>;
+    fn fork(
+        &mut self,
+        height: u8,
+        left: &MergeValue,
+        right: &MergeValue,
+        left_id: u64,
+        right_id: u64,
+    ) -> Result<u64, TreeError>;
+}
+
+pub(crate) struct NoSortedNodeObserver;
+impl SortedNodeObserver for NoSortedNodeObserver {
+    fn leaf(&mut self, _: TreeKey, _: TreeLeaf) -> Result<u64, TreeError> {
+        Ok(0)
+    }
+    fn fork(
+        &mut self,
+        _: u8,
+        _: &MergeValue,
+        _: &MergeValue,
+        _: u64,
+        _: u64,
+    ) -> Result<u64, TreeError> {
+        Ok(0)
+    }
 }
 
 impl SortedPoseidonRootReducer {
     pub(crate) fn new() -> Self {
+        Self::with_observer(NoSortedNodeObserver)
+    }
+}
+
+impl<O: SortedNodeObserver> SortedPoseidonRootReducer<O> {
+    pub(crate) fn with_observer(observer: O) -> Self {
         Self {
+            observer,
             frontier: std::iter::repeat_with(|| None).take(256).collect(),
             current: None,
         }
@@ -237,18 +276,23 @@ impl SortedPoseidonRootReducer {
         self.current = Some(PendingSortedNode {
             key,
             value: MergeValue::from_h256(leaf.ckb()),
+            archive_id: self.observer.leaf(key, leaf)?,
         });
         Ok(())
     }
 
-    pub(crate) fn finish(mut self) -> Result<TreeRoot, TreeError> {
+    pub(crate) fn finish(self) -> Result<TreeRoot, TreeError> {
+        self.finish_observing().map(|(root, _, _)| root)
+    }
+
+    pub(crate) fn finish_observing(mut self) -> Result<(TreeRoot, O, Option<u64>), TreeError> {
         if self.current.is_none() {
             if self.frontier.iter().any(Option::is_some) {
                 return Err(TreeError::ReducerInvariant(
                     "empty reducer retains a pending subtree",
                 ));
             }
-            return Ok(TreeRoot::EMPTY);
+            return Ok((TreeRoot::EMPTY, self.observer, None));
         }
         self.lift_current(u8::MAX)?;
         self.merge_current_level(u8::MAX)?;
@@ -257,13 +301,12 @@ impl SortedPoseidonRootReducer {
                 "finished reducer retains a pending subtree",
             ));
         }
-        let root = self
+        let current = self
             .current
             .take()
-            .ok_or(TreeError::ReducerInvariant("root subtree disappeared"))?
-            .value
-            .hash::<PoseidonCkbHasher>();
-        checked_root(root)
+            .ok_or(TreeError::ReducerInvariant("root subtree disappeared"))?;
+        let root = checked_root(current.value.hash::<PoseidonCkbHasher>())?;
+        Ok((root, self.observer, Some(current.archive_id)))
     }
 
     fn lift_current(&mut self, target_height: u8) -> Result<(), TreeError> {
@@ -291,6 +334,13 @@ impl SortedPoseidonRootReducer {
                     "pending subtrees are not ordered siblings",
                 ));
             }
+            current.archive_id = self.observer.fork(
+                height,
+                &left.value,
+                &current.value,
+                left.archive_id,
+                current.archive_id,
+            )?;
             merge::<PoseidonCkbHasher>(height, &parent_key, &left.value, &current.value)
         } else if ckb_key.is_right(height) {
             merge::<PoseidonCkbHasher>(height, &parent_key, &MergeValue::zero(), &current.value)

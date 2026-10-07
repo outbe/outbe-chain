@@ -98,18 +98,21 @@ fn nod_item_issued(
     issued_at: u64,
 ) -> NodItemState {
     let worldwide_day = WorldwideDay::new(worldwide_day);
-    NodItemState {
-        is_settled: false,
-        nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
-        owner,
-        gratis_load_minor: U256::from(11),
-        worldwide_day,
-        league_id: 4,
-        bucket_key: NodContract::bucket_key(worldwide_day, entry_price_minor, iso),
-        issuance_currency: iso,
-        reference_currency: iso,
-        issued_at,
-    }
+    crate::test_support::item(
+        crate::test_support::NodItemFixture {
+            is_settled: false,
+            nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
+            owner,
+            gratis_load_minor: U256::from(11),
+            worldwide_day,
+            league_id: 4,
+            bucket_key: NodContract::bucket_key(worldwide_day, entry_price_minor, iso),
+            issuance_currency: iso,
+            reference_currency: iso,
+            issued_at,
+        },
+        entry_price_minor,
+    )
 }
 
 /// Registers `COEN/<iso>` and lists `iso` as a reference currency.
@@ -254,7 +257,7 @@ fn arm_lapsed(
         .iter()
         .map(|&(owner, load, _)| {
             let mut item = nod_item(Address::repeat_byte(owner), ISO);
-            item.gratis_load_minor = U256::from(load);
+            crate::test_support::set_amount(&mut item, U256::from(load));
             api::add_nod(storage, scope, parent, &item, entry_price()).unwrap();
             item
         })
@@ -290,12 +293,29 @@ fn arm_lapsed(
 }
 
 fn forfeited_event_loads(provider: &HashMapStorageProvider) -> U256 {
-    provider
-        .get_events(NOD_ADDRESS)
+    let logs = provider.get_events(NOD_ADDRESS);
+    let bodies: std::collections::HashMap<_, _> = logs
         .iter()
+        .filter_map(|log| INod::NodBodyStored::decode_log_data(log).ok())
+        .map(|event| {
+            let body =
+                outbe_compressed_entities::decode_nod_item_v2(&event.canonicalPayload).unwrap();
+            (event.nodId, body)
+        })
+        .collect();
+    let mut seen = std::collections::HashSet::new();
+    logs.iter()
         .filter_map(|log| INod::NodForfeited::decode_log_data(log).ok())
-        .map(|event| event.gratisLoadMinor)
-        .fold(U256::ZERO, |sum, load| sum + load)
+        .map(|event| {
+            assert!(seen.insert(event.nodId));
+            let body = bodies.get(&event.nodId).expect("forfeited NOD was issued");
+            assert_eq!(
+                event.encryptedGratisAmount.as_ref(),
+                body.encrypted.encrypted_gratis_amount
+            );
+            crate::api::calculation_amount(&crate::from_canonical_item(body.clone())).unwrap()
+        })
+        .fold(U256::ZERO, |sum, amount| sum + amount)
 }
 
 // --- Sealed call terms -----------------------------------------------------
@@ -1011,7 +1031,10 @@ fn a_lapsed_bucket_returns_every_forfeited_load_to_the_promis_reserve() {
         finalize_through(storage, past);
         assert_eq!(scan(storage, scope, parent, past), 3);
 
-        let expected: U256 = items.iter().map(|item| item.gratis_load_minor).sum();
+        let expected: U256 = items
+            .iter()
+            .map(|item| crate::api::calculation_amount(&item).unwrap())
+            .sum();
         assert_eq!(reserve(storage), expected);
     });
 }
@@ -1332,7 +1355,8 @@ fn mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exerci
         assert_eq!(reserve(storage), U256::MAX);
         limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
         assert_eq!(scan(storage, scope, parent, past), 2);
-        let expected = items[0].gratis_load_minor + items[2].gratis_load_minor;
+        let expected = crate::api::calculation_amount(&items[0]).unwrap()
+            + crate::api::calculation_amount(&items[2]).unwrap();
         assert_eq!(reserve(storage), expected);
         assert_eq!(scan(storage, scope, parent, past), 0);
         assert_eq!(reserve(storage), expected);
@@ -1671,7 +1695,9 @@ fn forfeit_credits_distinct_unpaid_loads_and_ignores_paid_members() {
         let unpaid: U256 = items
             .iter()
             .zip([(false, 3u64), (true, 7), (false, 11), (false, 20)])
-            .filter_map(|(item, (paid, _))| (!paid).then_some(item.gratis_load_minor))
+            .filter_map(|(item, (paid, _))| {
+                (!paid).then_some(crate::api::calculation_amount(&item).unwrap())
+            })
             .fold(U256::ZERO, |sum, load| sum + load);
         assert_eq!(unpaid, U256::from(34u64));
         assert_eq!(
@@ -1721,7 +1747,7 @@ fn a18_forfeit_slices_credit_the_same_total_as_one_pass() {
         );
         let expected: U256 = items
             .iter()
-            .map(|item| item.gratis_load_minor)
+            .map(|item| crate::api::calculation_amount(&item).unwrap())
             .fold(U256::ZERO, |sum, load| sum + load);
         assert_eq!(
             try_forfeit(storage, scope, parent, bucket_key, 1).unwrap(),
@@ -1828,7 +1854,7 @@ fn a_full_forfeit_budget_burns_in_one_slice_within_the_cycle_tick_gas_window() {
         let items: Vec<NodItemState> = (1..=MAX_NOD_FORFEITS_PER_BLOCK)
             .map(|owner| {
                 let mut item = nod_item(Address::left_padding_from(&owner.to_be_bytes()), ISO);
-                item.gratis_load_minor = U256::from(owner);
+                crate::test_support::set_amount(&mut item, U256::from(owner));
                 api::add_nod(&storage, &scope, &parent, &item, entry_price()).unwrap();
                 item
             })
@@ -1858,7 +1884,7 @@ fn a_full_forfeit_budget_burns_in_one_slice_within_the_cycle_tick_gas_window() {
         assert_eq!(nod.total_supply().unwrap(), 0);
         let expected: U256 = items
             .iter()
-            .map(|item| item.gratis_load_minor)
+            .map(|item| crate::api::calculation_amount(&item).unwrap())
             .fold(U256::ZERO, |sum, load| sum + load);
         assert_eq!(reserve(&storage), expected);
         expected

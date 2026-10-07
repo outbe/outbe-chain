@@ -118,7 +118,14 @@ fn invalid_and_duplicate_issuance_leave_one_canonical_item() {
     let mut world = World::new();
     let mut invalid = params(Address::ZERO);
     let error = world
-        .enter(|storage, scope, parent| api::issue_nod(&storage, scope, parent, &invalid))
+        .enter(|storage, scope, parent| {
+            api::issue_nod(
+                &storage,
+                scope,
+                parent,
+                &outbe_nod::test_support::encrypted_fixture(&invalid, CHAIN_ID),
+            )
+        })
         .unwrap_err();
     assert!(matches!(
         error,
@@ -129,7 +136,12 @@ fn invalid_and_duplicate_issuance_leave_one_canonical_item() {
     invalid.owner = Address::repeat_byte(0x22);
     let nod_id = world.issue(&invalid);
     assert!(world
-        .enter(|storage, scope, parent| api::issue_nod(&storage, scope, parent, &invalid))
+        .enter(|storage, scope, parent| api::issue_nod(
+            &storage,
+            scope,
+            parent,
+            &outbe_nod::test_support::encrypted_fixture(&invalid, CHAIN_ID)
+        ))
         .is_err());
     assert!(world
         .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
@@ -147,7 +159,14 @@ fn direct_issuance_beyond_the_issuable_entry_writes_nothing() {
     let events_before = world.provider.get_ordered_events().len();
 
     let error = world
-        .enter(|storage, scope, parent| api::issue_nod(&storage, scope, parent, &input))
+        .enter(|storage, scope, parent| {
+            api::issue_nod(
+                &storage,
+                scope,
+                parent,
+                &outbe_nod::test_support::encrypted_fixture(&input, CHAIN_ID),
+            )
+        })
         .unwrap_err();
 
     assert!(matches!(

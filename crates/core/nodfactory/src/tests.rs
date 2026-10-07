@@ -68,6 +68,19 @@ fn mine_auth(owner: Address, amount: U256) -> ModifyAuth {
     }
 }
 
+fn decrypt_gratis(owner: Address, encrypted: &[u8]) -> U256 {
+    let key =
+        outbe_tee_enclave::gratis::derive_view_key(&test_enclave::state_key(), owner).unwrap();
+    outbe_tee::gratis_decrypt::decrypt_gratis_balance(&key, owner, encrypted).unwrap()
+}
+
+fn gratis_balance(storage: &StorageHandle<'_>, owner: Address) -> U256 {
+    decrypt_gratis(
+        owner,
+        &outbe_gratis::api::balance_ct(storage.clone(), owner).unwrap(),
+    )
+}
+
 fn seed_production_nod_genesis(storage: &StorageHandle<'_>) {
     seed_compressed_entities_genesis(storage).expect("CE genesis fixture");
     // These tests exercise the production call terms.
@@ -163,12 +176,30 @@ impl World {
     }
 
     fn issue(&mut self, input: &NodIssueParams) -> WwdEntityId {
-        self.enter(|storage, scope, parent| api::issue_nod(&storage, scope, parent, input))
-            .unwrap()
+        self.enter(|storage, scope, parent| {
+            api::issue_nod(
+                &storage,
+                scope,
+                parent,
+                &outbe_nod::test_support::encrypted_fixture(input, CHAIN_ID),
+            )
+        })
+        .unwrap()
     }
 
     fn mine_gratis(&mut self, request: api::MineGratisRequest) -> Result<U256, PrecompileError> {
-        self.enter(|storage, scope, parent| api::mine_gratis(&storage, scope, parent, request))
+        self.enter(|storage, scope, parent| {
+            let owner = nod_api::get_item(&storage, scope, parent, request.nod_id)?
+                .expect("issued Nod")
+                .owner;
+            let before = gratis_balance(&storage, owner);
+            let encrypted = api::mine_gratis(&storage, scope, parent, request)?;
+            assert_eq!(
+                encrypted,
+                outbe_gratis::api::balance_ct(storage.clone(), owner)?
+            );
+            Ok(decrypt_gratis(owner, &encrypted) - before)
+        })
     }
 
     fn pow_nonce(&mut self, nod_id: WwdEntityId) -> u64 {

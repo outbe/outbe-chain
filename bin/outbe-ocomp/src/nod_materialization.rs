@@ -39,6 +39,14 @@ pub struct BuiltNodMaterializationBatchV1 {
     pub dependencies: Vec<CasObjectRefV1>,
 }
 
+pub(crate) fn aligned_subtree_height(cursor: u32, maximum: u8) -> u8 {
+    if cursor == 0 {
+        maximum
+    } else {
+        maximum.min(cursor.trailing_zeros() as u8)
+    }
+}
+
 pub fn build_nod_materialization_batch(
     audit: &LocalLysisPlanAuditV1<'_>,
     head: &NodMaterializationHeadV1,
@@ -70,7 +78,8 @@ pub fn build_nod_materialization_batch_with_references(
                 what: "materialization padded NOD count",
             })?;
     let tree_height = padded_count.trailing_zeros() as u16;
-    let effective_height = configured_subtree_height.min(tree_height as u8);
+    let effective_height = aligned_subtree_height(head.next_nod_ordinal, configured_subtree_height)
+        .min(tree_height as u8);
     let capacity =
         1_u32
             .checked_shl(u32::from(effective_height))
@@ -273,7 +282,7 @@ fn require_action_ordinals(
     Ok(())
 }
 
-fn normalize_dependencies(
+pub(crate) fn normalize_dependencies(
     dependencies: &mut Vec<CasObjectRefV1>,
 ) -> Result<(), NodMaterializationBuildErrorV1> {
     dependencies.sort_by_key(|reference| reference.transport_digest);
@@ -358,7 +367,7 @@ impl MaterializationReferenceReaderV1 {
                 Err(MaterializationReferenceErrorV1::Io { source, .. })
                     if source.kind() == std::io::ErrorKind::NotFound =>
                 {
-                    return Ok(None)
+                    return Ok(None);
                 }
                 result => result?,
             }

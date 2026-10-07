@@ -7,9 +7,9 @@ use std::sync::Arc;
 
 use alloy_primitives::Address;
 use outbe_compressed_entities::{
-    decode_stored_nod_bucket_v1, decode_stored_nod_item_v1, encode_nod_bucket_v1,
-    encode_nod_item_v1, CanonicalBodyError, CeAuditError, CeAuditWork, EntityRef, IdPage,
-    IdPageRequest, NodBucketBodyV1, NodItemBodyV1, ParentBodySource, ParentBodySourceError,
+    decode_stored_nod_bucket_v1, decode_stored_nod_item_v2, encode_nod_bucket_v1,
+    encode_nod_item_v2, CanonicalBodyError, CeAuditError, CeAuditWork, EntityRef, IdPage,
+    IdPageRequest, NodBucketBodyV1, NodItemBodyV2, ParentBodySource, ParentBodySourceError,
     QueryRef, StoredBody, StoredBodyPage, WwdEntityId,
 };
 use outbe_offchain_storage::{
@@ -708,15 +708,17 @@ pub(crate) fn namespace(name: &'static str) -> Result<Namespace, NodRepositoryEr
 }
 
 pub(crate) fn encode_item(nod: &NodItemState) -> Result<Value, NodRepositoryError> {
-    let payload = encode_nod_item_v1(&canonical_item(nod))?;
-    Ok(Value::new(StoredBody::new_v1(payload)?.encode())?)
+    let payload = encode_nod_item_v2(&canonical_item(nod))?;
+    Ok(Value::new(
+        StoredBody::new(outbe_compressed_entities::NOD_BODY_SCHEMA_V2, payload)?.encode(),
+    )?)
 }
 
 pub(crate) fn decode_item(
     nod_id: WwdEntityId,
     bytes: &[u8],
 ) -> Result<NodItemState, NodRepositoryError> {
-    let body = from_canonical_item(decode_stored_nod_item_v1(bytes)?);
+    let body = from_canonical_item(decode_stored_nod_item_v2(bytes)?);
     if body.nod_id != nod_id {
         return Err(NodRepositoryError::PrimaryKeyBodyMismatch {
             expected: nod_id,
@@ -728,11 +730,11 @@ pub(crate) fn decode_item(
 
 fn decode_stored_item(nod_id: WwdEntityId, bytes: &[u8]) -> Result<StoredBody, NodRepositoryError> {
     let stored = StoredBody::decode(bytes)?;
-    let body = decode_stored_nod_item_v1(bytes)?;
-    if body.nod_id != nod_id {
+    let body = decode_stored_nod_item_v2(bytes)?;
+    if body.encrypted.terms.nod_id != nod_id {
         return Err(NodRepositoryError::PrimaryKeyBodyMismatch {
             expected: nod_id,
-            actual: body.nod_id,
+            actual: body.encrypted.terms.nod_id,
         });
     }
     Ok(stored)
@@ -887,19 +889,13 @@ fn next_cursor(has_more: bool, records: &[NodItemState]) -> Option<WwdEntityId> 
         .flatten()
 }
 
-/// Converts one runtime Nod item into its normative v1 payload model.
-pub fn canonical_item(body: &NodItemState) -> NodItemBodyV1 {
-    NodItemBodyV1 {
-        is_settled: body.is_settled,
-        nod_id: body.nod_id,
-        owner: body.owner,
-        gratis_load_minor: body.gratis_load_minor,
-        worldwide_day: body.worldwide_day,
-        league_id: body.league_id,
+/// Converts one runtime Nod item into its normative encrypted v2 payload model.
+pub fn canonical_item(body: &NodItemState) -> NodItemBodyV2 {
+    NodItemBodyV2 {
+        encrypted: body.encrypted.clone(),
         bucket_key: body.bucket_key,
-        issuance_currency: body.issuance_currency,
-        reference_currency: body.reference_currency,
         issued_at: body.issued_at,
+        is_settled: body.is_settled,
     }
 }
 
@@ -919,19 +915,20 @@ pub fn canonical_bucket_id(body: &NodBucketState) -> WwdEntityId {
     canonical_bucket(body).entity_id()
 }
 
-/// Converts a validated normative v1 payload into the runtime item type.
-pub fn from_canonical_item(body: NodItemBodyV1) -> NodItemState {
+/// Converts a validated normative encrypted v2 payload into the runtime item type.
+pub fn from_canonical_item(body: NodItemBodyV2) -> NodItemState {
+    let terms = &body.encrypted.terms;
     NodItemState {
-        is_settled: body.is_settled,
-        nod_id: body.nod_id,
-        owner: body.owner,
-        gratis_load_minor: body.gratis_load_minor,
-        worldwide_day: body.worldwide_day,
-        league_id: body.league_id,
+        nod_id: terms.nod_id,
+        owner: terms.owner,
+        worldwide_day: terms.worldwide_day,
+        league_id: terms.league_id,
+        issuance_currency: terms.issuance_currency,
+        reference_currency: terms.reference_currency,
+        encrypted: body.encrypted,
         bucket_key: body.bucket_key,
-        issuance_currency: body.issuance_currency,
-        reference_currency: body.reference_currency,
         issued_at: body.issued_at,
+        is_settled: body.is_settled,
     }
 }
 

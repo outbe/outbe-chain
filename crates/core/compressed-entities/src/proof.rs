@@ -105,6 +105,38 @@ pub struct PresentEvidenceV1 {
     pub root_catalog_proof: CkbCompiledProofV1,
 }
 
+/// Membership against an independently authenticated frozen collection root.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CollectionBodyProofV1 {
+    pub shard_smt_proof: CkbCompiledProofV1,
+    pub shard_top_siblings: [B256; 4],
+}
+impl From<&PresentEvidenceV1> for CollectionBodyProofV1 {
+    fn from(e: &PresentEvidenceV1) -> Self {
+        Self {
+            shard_smt_proof: e.shard_smt_proof.clone(),
+            shard_top_siblings: e.shard_top_siblings,
+        }
+    }
+}
+pub fn verify_body_in_collection(
+    expected_root: B256,
+    domain: CeDomain,
+    raw_id: WwdEntityId,
+    stored_body: &[u8],
+    evidence: &CollectionBodyProofV1,
+) -> Result<(), PointReadServiceError> {
+    let leaf = canonical_body_leaf(domain, raw_id, stored_body)?;
+    let collection = collection_key(domain, raw_id)
+        .map_err(|_| PointReadServiceError::InvalidPackage("collection derivation"))?;
+    if verify_collection(domain, raw_id, collection, leaf, evidence)? != expected_root {
+        return Err(PointReadServiceError::InvalidPackage(
+            "collection root mismatch",
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AbsentEvidenceV1 {
@@ -423,7 +455,7 @@ pub fn verify_point_read_v1(
                 expected_request.raw_id,
                 collection,
                 expected_leaf,
-                evidence,
+                &CollectionBodyProofV1::from(evidence),
             )?,
             &evidence.root_catalog_proof,
         ),
@@ -442,7 +474,13 @@ pub fn verify_point_read_v1(
                     root_catalog_proof: root_catalog_proof.clone(),
                 };
                 (
-                    verify_collection(domain, expected_request.raw_id, collection, B256::ZERO, &e)?,
+                    verify_collection(
+                        domain,
+                        expected_request.raw_id,
+                        collection,
+                        B256::ZERO,
+                        &CollectionBodyProofV1::from(&e),
+                    )?,
                     root_catalog_proof,
                 )
             }
@@ -472,7 +510,7 @@ fn verify_collection(
     raw_id: WwdEntityId,
     collection: crate::CollectionKey,
     leaf: B256,
-    evidence: &PresentEvidenceV1,
+    evidence: &CollectionBodyProofV1,
 ) -> Result<B256, PointReadServiceError> {
     let key = derive_tree_key(collection_for_domain(domain), raw_id)
         .map_err(|_| PointReadServiceError::InvalidPackage("tree key"))?;
@@ -574,6 +612,11 @@ pub(crate) fn canonical_body_leaf(
         CeDomain::Tribute => decode_stored_tribute_v1(bytes)
             .map(|b| b.tribute_id)
             .map_err(|_| PointReadServiceError::InvalidPackage("tribute body"))?,
+        CeDomain::NodItem if stored.schema_version() == crate::NOD_BODY_SCHEMA_V2 => {
+            crate::decode_stored_nod_item_v2(bytes)
+                .map(|body| body.encrypted.terms.nod_id)
+                .map_err(|_| PointReadServiceError::InvalidPackage("encrypted nod body"))?
+        }
         CeDomain::NodItem => decode_stored_nod_item_v1(bytes)
             .map(|b| b.nod_id)
             .map_err(|_| PointReadServiceError::InvalidPackage("nod item body"))?,
@@ -594,7 +637,52 @@ pub(crate) fn canonical_body_leaf(
     .map_err(|_| PointReadServiceError::InvalidPackage("body commitment"))
 }
 
-fn top_siblings(roots: &[B256], selected: u32) -> Result<[B256; 4], PointReadServiceError> {
+/// Single-leaf fixture using the production Poseidon/CKB proof implementation.
+#[cfg(feature = "test-utils")]
+pub(crate) fn single_body_proof(
+    domain: CeDomain,
+    id: WwdEntityId,
+    body: &[u8],
+) -> Result<(B256, CollectionBodyProofV1), PointReadServiceError> {
+    let leaf = canonical_body_leaf(domain, id, body)?;
+    let key = derive_tree_key(collection_for_domain(domain), id)
+        .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
+    let shard = shard_index(key, domain.shard_count())
+        .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
+    let mut tree = PoseidonSmt::empty();
+    tree.update(
+        key,
+        TreeLeaf::from_be_bytes(leaf.0)
+            .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?,
+    )
+    .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
+    let root = tree
+        .root()
+        .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
+    let mut roots = vec![B256::ZERO; domain.shard_count() as usize];
+    roots[shard as usize] = B256::from(root.as_bytes());
+    let top = aggregate_b256_shard_roots(&roots)
+        .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
+    let collection = collection_key(domain, id)
+        .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
+    let collection_root = collection_root(domain, collection, top)
+        .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
+    let proof = tree
+        .prove(vec![key])
+        .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
+    Ok((
+        collection_root,
+        CollectionBodyProofV1 {
+            shard_smt_proof: CkbCompiledProofV1::from_tree(&proof)?,
+            shard_top_siblings: top_siblings(&roots, shard)?,
+        },
+    ))
+}
+
+pub(crate) fn top_siblings(
+    roots: &[B256],
+    selected: u32,
+) -> Result<[B256; 4], PointReadServiceError> {
     let mut level_roots: Vec<[u8; 32]> = roots.iter().map(|r| r.0).collect();
     let mut position = selected as usize;
     let mut siblings = Vec::with_capacity(roots.len().trailing_zeros() as usize);
@@ -882,6 +970,113 @@ mod tests {
             .unwrap()
             .to_vec(),
         }
+    }
+
+    #[test]
+    fn frozen_collection_proof_binds_encrypted_creator_key_and_body() {
+        let _guard = proof_test_guard();
+        let (_dir, service, genesis_hash) = service();
+        let day = WorldwideDay::new(20_260_717);
+        let id = WwdEntityId::from_day_and_digest(day, [0x23; 32]);
+        let mut blob =
+            vec![0x91; outbe_primitives::tribute_encryption::TRIBUTE_PUBLIC_KEY_BLOB_LEN];
+        blob[..8].copy_from_slice(&1u64.to_be_bytes());
+        let mut amounts =
+            vec![0x74; outbe_primitives::tribute_encryption::TRIBUTE_AMOUNTS_BLOB_LEN];
+        amounts[..8].copy_from_slice(&1u64.to_be_bytes());
+        let mut body = outbe_primitives::tribute_encryption::EncryptedTributeV2 {
+            context: outbe_primitives::tribute_encryption::TributeContextV2 {
+                chain_id: 7,
+                tribute_id: id,
+                owner: Address::repeat_byte(0x12),
+                worldwide_day: day,
+                issuance_currency: 840,
+                reference_currency: 978,
+                tribute_price_minor: U256::from(99),
+                exclude_from_intex_issuance: false,
+                offer_input_hash: B256::repeat_byte(0x42),
+            },
+            encrypted_creator_public_key: blob,
+            encrypted_amounts: amounts,
+        };
+        let stored = StoredBody::new(
+            crate::TRIBUTE_BODY_SCHEMA_V2,
+            crate::encode_tribute_v2(&body).unwrap(),
+        )
+        .unwrap();
+        let leaf = body_commitment(
+            ACTIVE_COMMITMENT_SCHEME,
+            stored.schema_version(),
+            id,
+            stored.payload(),
+        )
+        .unwrap();
+        let (_, header) = finalize_one(&service, genesis_hash, EntityRef::Tribute(id), leaf);
+        let request = PointReadRequestV1 {
+            domain_id: 1,
+            raw_id: id,
+        };
+        let response = service
+            .serve_point_read_v1(
+                7,
+                request,
+                |_, _| Some(header.clone()),
+                |_, _| Some(stored.encode()),
+            )
+            .unwrap();
+        assert_eq!(
+            verify_point_read_v1(7, request, &header, &response).unwrap(),
+            VerifiedPointReadV1::Present
+        );
+        let PointReadResultV1::Present { evidence, .. } = response else {
+            panic!("present proof")
+        };
+        let proof = CollectionBodyProofV1::from(&evidence);
+        let collection = collection_key(CeDomain::Tribute, id).unwrap();
+        let root = verify_collection(
+            CeDomain::Tribute,
+            id,
+            collection,
+            B256::from(*leaf.as_bytes()),
+            &proof,
+        )
+        .unwrap();
+        drop(service);
+        assert!(
+            verify_body_in_collection(root, CeDomain::Tribute, id, &stored.encode(), &proof)
+                .is_ok()
+        );
+        assert!(verify_body_in_collection(
+            B256::ZERO,
+            CeDomain::Tribute,
+            id,
+            &stored.encode(),
+            &proof
+        )
+        .is_err());
+        let other = WwdEntityId::from_day_and_digest(day, [0x24; 32]);
+        assert!(verify_body_in_collection(
+            root,
+            CeDomain::Tribute,
+            other,
+            &stored.encode(),
+            &proof
+        )
+        .is_err());
+        body.encrypted_creator_public_key[12] ^= 1;
+        let substituted = StoredBody::new(
+            crate::TRIBUTE_BODY_SCHEMA_V2,
+            crate::encode_tribute_v2(&body).unwrap(),
+        )
+        .unwrap();
+        assert!(verify_body_in_collection(
+            root,
+            CeDomain::Tribute,
+            id,
+            &substituted.encode(),
+            &proof
+        )
+        .is_err());
     }
 
     #[test]

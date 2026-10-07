@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{derive_poseidon_entity_id, WwdEntityId};
-use outbe_macros::{contract, storage_record, storage_schema};
+use outbe_macros::{contract, storage_schema};
 use outbe_ocomp_protocol::nod_materialization::NodMaterializationHeadV1;
 use outbe_primitives::addresses::NOD_ADDRESS;
 use outbe_primitives::storage::types::Mapping;
@@ -19,11 +19,9 @@ pub enum EffectiveState {
     Forfeited = 4,
 }
 
-/// Input for `NodContract::issue`. `nod_id` is derived inside the contract via
-/// `NodContract::nod_id(owner, worldwide_day)`; the floor from `entry_price_minor` (see
-/// [`NodContract::floor_price_minor`]); the cost from `entry_price_minor` and
-/// `gratis_load_minor` (see [`crate::api::settlement_cost_minor`]). `issued_at` is not part of caller
-/// inputs: it is the block timestamp, or the certified generation time for a materialized Nod.
+/// Plain calculation inputs. Production issuance stores an authenticated encrypted NOD.
+/// The identity is derived from owner and day; settlement uses the entry price and load.
+/// `issued_at` comes from the block or the certified generation rather than these inputs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NodIssueParams {
     pub owner: Address,
@@ -37,37 +35,27 @@ pub struct NodIssueParams {
     pub reference_currency: u16,
 }
 
-#[derive(Serialize, Deserialize)]
-#[storage_record(exists_field = owner)]
+/// Runtime view of one self-contained encrypted canonical NOD body.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NodItemState {
-    #[key]
     pub nod_id: WwdEntityId,
 
-    #[attribute(order = 0)]
     pub owner: Address,
 
-    #[attribute(order = 1)]
-    pub gratis_load_minor: U256,
+    pub encrypted: outbe_primitives::nod_encryption::EncryptedNodV2,
 
-    #[attribute(order = 2)]
     pub worldwide_day: WorldwideDay,
 
-    #[attribute(order = 3)]
     pub league_id: u16,
 
-    #[attribute(order = 5)]
     pub bucket_key: B256,
 
-    #[attribute(order = 6)]
     pub issuance_currency: u16,
 
-    #[attribute(order = 7)]
     pub reference_currency: u16,
 
-    #[attribute(order = 8)]
     pub issued_at: u64,
 
-    #[attribute(order = 9)]
     #[serde(default)]
     pub is_settled: bool,
 }

@@ -10,8 +10,8 @@ use std::{
 use alloy_primitives::{Address, B256, U256};
 use mongodb::sync::Client;
 use outbe_compressed_entities::{
-    decode_stored_nod_bucket_v1, decode_stored_nod_item_v1, encode_nod_bucket_v1,
-    encode_nod_item_v1, IdPageRequest, StoredBody, WwdEntityId,
+    decode_stored_nod_bucket_v1, decode_stored_nod_item_v2, encode_nod_bucket_v1,
+    encode_nod_item_v2, IdPageRequest, StoredBody, WwdEntityId,
 };
 use outbe_nod::{
     canonical_bucket, canonical_item, from_canonical_bucket, from_canonical_item, NodBucketState,
@@ -37,18 +37,21 @@ fn bucket_id(key: B256, worldwide_day: WorldwideDay) -> WwdEntityId {
 }
 
 fn nod(nod_id: WwdEntityId, owner: Address) -> NodItemState {
-    NodItemState {
-        is_settled: false,
-        nod_id,
-        owner,
-        gratis_load_minor: U256::MAX,
-        worldwide_day: nod_id.worldwide_day(),
-        league_id: u16::MAX,
-        bucket_key: B256::repeat_byte(0x33),
-        issuance_currency: 0,
-        reference_currency: u16::MAX,
-        issued_at: u64::MAX,
-    }
+    outbe_nod::test_support::item(
+        outbe_nod::test_support::NodItemFixture {
+            is_settled: false,
+            nod_id,
+            owner,
+            gratis_load_minor: U256::MAX,
+            worldwide_day: nod_id.worldwide_day(),
+            league_id: u16::MAX,
+            bucket_key: B256::repeat_byte(0x33),
+            issuance_currency: 0,
+            reference_currency: u16::MAX,
+            issued_at: u64::MAX,
+        },
+        U256::ZERO,
+    )
 }
 
 /// `NodBucketBodyV1::entity_id` derives the identity as `wwd ++ key[4..]`, so
@@ -87,9 +90,12 @@ fn owner_key(owner: Address, id: WwdEntityId) -> Key {
 }
 
 fn stored_nod(body: &NodItemState) -> Vec<u8> {
-    StoredBody::new_v1(encode_nod_item_v1(&canonical_item(body)).unwrap())
-        .unwrap()
-        .encode()
+    StoredBody::new(
+        outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
+        encode_nod_item_v2(&canonical_item(body)).unwrap(),
+    )
+    .unwrap()
+    .encode()
 }
 
 fn stored_bucket(body: &NodBucketState) -> Vec<u8> {
@@ -275,36 +281,45 @@ fn the_bucket_reference_currency_only_appends_to_the_canonical_payload() {
 #[test]
 fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
     for body in [
-        NodItemState {
-            is_settled: false,
-            nod_id: entity(U256::ZERO, WorldwideDay::new(0)),
-            owner: Address::ZERO,
-            gratis_load_minor: U256::ZERO,
-            worldwide_day: WorldwideDay::new(0),
-            league_id: 0,
-            bucket_key: B256::ZERO,
-            issuance_currency: 0,
-            reference_currency: 0,
-            issued_at: 0,
-        },
-        NodItemState {
-            is_settled: false,
-            nod_id: entity(U256::MAX, WorldwideDay::new(u32::MAX)),
-            owner: Address::repeat_byte(u8::MAX),
-            gratis_load_minor: U256::MAX,
-            worldwide_day: WorldwideDay::new(u32::MAX),
-            league_id: u16::MAX,
-            bucket_key: B256::repeat_byte(u8::MAX),
-            issuance_currency: u16::MAX,
-            reference_currency: u16::MAX,
-            issued_at: u64::MAX,
-        },
+        outbe_nod::test_support::item(
+            outbe_nod::test_support::NodItemFixture {
+                is_settled: false,
+                nod_id: entity(U256::ZERO, WorldwideDay::new(0)),
+                owner: Address::ZERO,
+                gratis_load_minor: U256::ZERO,
+                worldwide_day: WorldwideDay::new(0),
+                league_id: 0,
+                bucket_key: B256::ZERO,
+                issuance_currency: 0,
+                reference_currency: 0,
+                issued_at: 0,
+            },
+            U256::ZERO,
+        ),
+        outbe_nod::test_support::item(
+            outbe_nod::test_support::NodItemFixture {
+                is_settled: false,
+                nod_id: entity(U256::MAX, WorldwideDay::new(u32::MAX)),
+                owner: Address::repeat_byte(u8::MAX),
+                gratis_load_minor: U256::MAX,
+                worldwide_day: WorldwideDay::new(u32::MAX),
+                league_id: u16::MAX,
+                bucket_key: B256::repeat_byte(u8::MAX),
+                issuance_currency: u16::MAX,
+                reference_currency: u16::MAX,
+                issued_at: u64::MAX,
+            },
+            U256::ZERO,
+        ),
     ] {
         let stored = stored_nod(&body);
-        let decoded = from_canonical_item(decode_stored_nod_item_v1(&stored).unwrap());
+        let decoded = from_canonical_item(decode_stored_nod_item_v2(&stored).unwrap());
         assert_eq!(decoded.nod_id, body.nod_id);
         assert_eq!(decoded.owner, body.owner);
-        assert_eq!(decoded.gratis_load_minor, body.gratis_load_minor);
+        assert_eq!(
+            outbe_nod::api::calculation_amount(&decoded).unwrap(),
+            outbe_nod::api::calculation_amount(&body).unwrap()
+        );
         assert_eq!(decoded.worldwide_day, body.worldwide_day);
         assert_eq!(decoded.league_id, body.league_id);
         assert_eq!(decoded.bucket_key, body.bucket_key);
@@ -364,7 +379,10 @@ fn run_contract(reader: StorageReaderHandle, writer: StorageWriterHandle) {
 
     let stored = repository_reader.get(nod_id(1)).unwrap().unwrap();
     assert_eq!(stored.nod_id, nod_id(1));
-    assert_eq!(stored.gratis_load_minor, U256::MAX);
+    assert_eq!(
+        outbe_nod::api::calculation_amount(&stored).unwrap(),
+        U256::MAX
+    );
     assert_eq!(stored.issued_at, u64::MAX);
     assert_eq!(
         repository_reader
@@ -380,8 +398,10 @@ fn run_contract(reader: StorageReaderHandle, writer: StorageWriterHandle) {
         .unwrap()
         .unwrap();
     assert_eq!(
-        decode_stored_nod_item_v1(primary.as_bytes())
+        decode_stored_nod_item_v2(primary.as_bytes())
             .unwrap()
+            .encrypted
+            .terms
             .nod_id,
         nod_id(1)
     );

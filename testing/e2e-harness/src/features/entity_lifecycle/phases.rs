@@ -105,7 +105,7 @@ fn pay_two(
         (first_target, first, first_rail),
         (second_target, second, second_rail),
     ] {
-        let terms = lifecycle.terms(world, &target.item);
+        let terms = lifecycle.settlement_terms(world, &target, phase);
         let paid = payment::pay(world, &target, rail, currency.0, terms);
         world.state.entity_lifecycle.payments.push(paid);
     }

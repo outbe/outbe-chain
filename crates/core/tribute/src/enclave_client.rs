@@ -62,12 +62,26 @@ pub mod test_enclave {
             INSTALLED.set(self.previous);
         }
     }
-    pub fn scope() -> Guard {
-        let previous = INSTALLED.replace(true);
-        Guard {
-            previous,
-            _thread: std::marker::PhantomData,
+    /// Captures only the test routing flag, without moving secret material.
+    #[derive(Clone, Copy)]
+    pub struct Context {
+        installed: bool,
+    }
+    pub fn capture() -> Context {
+        Context {
+            installed: INSTALLED.get(),
         }
+    }
+    impl Context {
+        pub fn install(self) -> Guard {
+            Guard {
+                previous: INSTALLED.replace(self.installed),
+                _thread: std::marker::PhantomData,
+            }
+        }
+    }
+    pub fn scope() -> Guard {
+        Context { installed: true }.install()
     }
     pub fn install() {
         INSTALLED.set(true);

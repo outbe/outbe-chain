@@ -64,6 +64,44 @@ impl Rpc {
             .expect("one authenticated amount pair"))
     }
 
+    #[cfg(feature = "ocomp-integration")]
+    pub(crate) fn private_nod_read(
+        &self,
+        index: usize,
+        nod: &outbe_primitives::nod_encryption::EncryptedNodV2,
+    ) -> Result<U256> {
+        use outbe_tee::{
+            nod_mine,
+            protocol::{EnclaveRequest, EnclaveResponse},
+        };
+        let endpoint = format!("127.0.0.1:{}", self.cfg.tee_port(index));
+        let mut session = outbe_tee::connect_committed_node_host_enclave(
+            &endpoint,
+            &self.cfg.validator_dir(index).join("data"),
+        )?;
+        let expected = nod_mine::nod_read_hash(nod)?;
+        let key = session.attestation_pub();
+        let response = session.request(&EnclaveRequest::ReadNodAmountV2 { nod: nod.clone() })?;
+        let EnclaveResponse::NodAmountReadV2 {
+            amount,
+            inputs_canonical_hash,
+            attestation_tag,
+        } = response
+        else {
+            return Err(eyre!("private NOD read rejected: {response:?}"));
+        };
+        ensure!(
+            inputs_canonical_hash == expected,
+            "private NOD response binding mismatch"
+        );
+        outbe_tee::tribute_v2::verify_attestation(
+            &key,
+            &nod_mine::nod_read_preimage(expected, amount),
+            &attestation_tag,
+        )?;
+        Ok(amount)
+    }
+
     pub(crate) fn tribute_network_public_key(&self, port: u16) -> Option<[u8; 32]> {
         let public: U256 = eth::read_call(
             &self.url(port),

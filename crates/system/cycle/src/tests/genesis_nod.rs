@@ -62,7 +62,7 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
 
 #[test]
 fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
-    use outbe_nod::{api, NodContract, NodItemState, NodRepositoryReader};
+    use outbe_nod::{api, NodContract, NodRepositoryReader};
     use outbe_oracle::{api::AddressPair, schema::OracleContract};
     use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 
@@ -93,18 +93,21 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
             }
             let issue = |owner, entry| {
                 let worldwide_day = WorldwideDay::from_timestamp(GENESIS_TS);
-                let body = NodItemState {
-                    is_settled: false,
-                    nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
-                    owner,
-                    gratis_load_minor: U256::from(11),
-                    worldwide_day,
-                    league_id: 4,
-                    bucket_key: NodContract::bucket_key(worldwide_day, U256::from(entry), 840),
-                    issuance_currency: 840,
-                    reference_currency: 840,
-                    issued_at: GENESIS_TS,
-                };
+                let body = outbe_nod::test_support::item(
+                    outbe_nod::test_support::NodItemFixture {
+                        is_settled: false,
+                        nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
+                        owner,
+                        gratis_load_minor: U256::from(11),
+                        worldwide_day,
+                        league_id: 4,
+                        bucket_key: NodContract::bucket_key(worldwide_day, U256::from(entry), 840),
+                        issuance_currency: 840,
+                        reference_currency: 840,
+                        issued_at: GENESIS_TS,
+                    },
+                    U256::from(entry),
+                );
                 api::add_nod(&storage, scope, &parent, &body, U256::from(entry)).unwrap();
                 body.bucket_key
             };

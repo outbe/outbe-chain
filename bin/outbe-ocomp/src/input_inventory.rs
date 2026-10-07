@@ -18,8 +18,8 @@ use std::{
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{
     body_commitment, BoundedTributePartitionVerifier, Commitment, TributePartitionExpectationV1,
-    TributePartitionRetentionStatsV1, TributePartitionWorkConfig, WwdEntityId,
-    ACTIVE_COMMITMENT_SCHEME,
+    TributePartitionRetentionStatsV1, TributePartitionWorkConfig, TributeProofArchiveV1,
+    WwdEntityId, ACTIVE_COMMITMENT_SCHEME,
 };
 use outbe_ocomp_protocol::input::CheckpointIdentityV1;
 use outbe_oracle::MAX_OCOMP_REFERENCE_ISOS;
@@ -35,6 +35,7 @@ const BODY_MAGIC: [u8; 8] = *b"OUTBTIB1";
 const HEADER_FILE: &str = "inventory.header";
 const OWNERS_FILE: &str = "owners.sorted";
 const BODIES_FILE: &str = "tributes.spool";
+pub const SOURCE_PROOF_ARCHIVE_DIRECTORY: &str = "source-proof-archive-v1";
 const ISOS_FILE: &str = "reference-isos.bitmap";
 const LOCK_FILE: &str = "inventory.lock";
 const BUILD_DIRECTORY: &str = "building";
@@ -309,10 +310,7 @@ impl TributeInventoryBuilder {
                 actual: reference_iso_count,
             });
         }
-        self.root_verifier
-            .take()
-            .expect("root verifier exists until inventory finish")
-            .finish_observing(&on_progress)?;
+        self.install_source_proofs(&on_progress)?;
         let body_summary = self
             .body_writer
             .take()
@@ -360,6 +358,30 @@ impl TributeInventoryBuilder {
             header,
             isos: self.iso_bitmap,
             _lock: self._lock,
+        })
+    }
+
+    fn install_source_proofs(
+        &mut self,
+        on_progress: &impl Fn(),
+    ) -> Result<(), TributeInventoryError> {
+        let proof_archive = self
+            .root_verifier
+            .take()
+            .expect("root verifier exists until inventory finish")
+            .finish_with_archive(on_progress)?;
+        let proof_archive_path = proof_archive.path().to_path_buf();
+        drop(proof_archive);
+        fs::rename(
+            &proof_archive_path,
+            self.root.join(SOURCE_PROOF_ARCHIVE_DIRECTORY),
+        )
+        .map_err(|source| {
+            io_error(
+                "install Tribute source proof archive",
+                &proof_archive_path,
+                source,
+            )
         })
     }
 
@@ -515,6 +537,18 @@ impl SealedTributeInventory {
             self.header.subject.expected_tribute_count,
             self.header.exact_body_bytes,
         )
+    }
+
+    pub fn source_proofs(&self) -> Result<TributeProofArchiveV1, TributeInventoryError> {
+        Ok(TributeProofArchiveV1::open(
+            self.root.join(SOURCE_PROOF_ARCHIVE_DIRECTORY),
+            TributePartitionExpectationV1 {
+                day: self.header.subject.worldwide_day,
+                exact_leaf_count: self.header.subject.expected_tribute_count,
+                expected_collection_root: self.header.subject.sealed_tribute_collection_root,
+                commitment_scheme: ACTIVE_COMMITMENT_SCHEME,
+            },
+        )?)
     }
 }
 
@@ -1213,6 +1247,7 @@ fn remove_owned_build_directory(path: &Path) -> Result<(), TributeInventoryError
 }
 
 fn recover_unsealed_inventory(root: &Path) -> Result<(), TributeInventoryError> {
+    remove_owned_build_directory(&root.join(SOURCE_PROOF_ARCHIVE_DIRECTORY))?;
     let mut removed = false;
     for path in [
         root.join(OWNERS_FILE),
@@ -1235,7 +1270,7 @@ fn recover_unsealed_inventory(root: &Path) -> Result<(), TributeInventoryError> 
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(source) => {
-                return Err(io_error("inspect incomplete inventory file", &path, source))
+                return Err(io_error("inspect incomplete inventory file", &path, source));
             }
         }
     }

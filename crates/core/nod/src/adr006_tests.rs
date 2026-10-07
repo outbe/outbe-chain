@@ -28,20 +28,23 @@ const NOW: u64 = 1_752_534_000;
 
 fn item(owner: Address) -> NodItemState {
     let worldwide_day = WorldwideDay::new(20_260_715);
-    NodItemState {
-        is_settled: false,
-        nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
-        owner,
-        gratis_load_minor: U256::from(11),
-        worldwide_day,
-        league_id: 4,
-        bucket_key: NodContract::bucket_key(worldwide_day, U256::from(5), 978),
-        issuance_currency: 840,
-        reference_currency: 978,
-        // Midnight of the last UTC day closed at `NOW`, so a bucket issued in
-        // these fixtures can qualify on that day's VWAP.
-        issued_at: date_key_to_utc_timestamp(previous_date_key(timestamp_to_date_key(NOW))),
-    }
+    crate::test_support::item(
+        crate::test_support::NodItemFixture {
+            is_settled: false,
+            nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
+            owner,
+            gratis_load_minor: U256::from(11),
+            worldwide_day,
+            league_id: 4,
+            bucket_key: NodContract::bucket_key(worldwide_day, U256::from(5), 978),
+            issuance_currency: 840,
+            reference_currency: 978,
+            // Midnight of the last UTC day closed at `NOW`, so a bucket issued in
+            // these fixtures can qualify on that day's VWAP.
+            issued_at: date_key_to_utc_timestamp(previous_date_key(timestamp_to_date_key(NOW))),
+        },
+        U256::from(5),
+    )
 }
 
 #[test]
@@ -491,6 +494,7 @@ fn seed_bucket_issued(
     let entry = U256::from(5);
     let mut body = item(issuance.owner);
     body.reference_currency = issuance.reference_currency;
+    crate::test_support::set_terms(&mut body);
     body.issued_at = issuance.issued_at;
     body.bucket_key =
         NodContract::bucket_key(body.worldwide_day, entry, issuance.reference_currency);

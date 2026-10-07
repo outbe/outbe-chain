@@ -13,6 +13,7 @@ required-features = ["dcap-fixture-tool"]
 [dependencies]
 alloy-primitives = { workspace = true, features = ["serde"] }
 outbe-primitives = { workspace = true, features = ["tee-attestation-v1"] }
+outbe-ocomp-protocol.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["raw_value"] }
 metrics.workspace = true
@@ -34,6 +35,9 @@ sha2.workspace = true
 time = { workspace = true, features = ["parsing"], optional = true }
 
 [features]
+# Scoped real-engine callbacks for downstream test fixtures; absent from release.
+test-utils = []
+e2e-test = []
 # Consensus V1 path: links the exact-pinned Intel native QVL into the Gramine
 # enclave.
 native-dcap = [

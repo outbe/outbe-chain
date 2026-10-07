@@ -143,7 +143,13 @@ impl World {
                 issuance_currency: 840,
                 reference_currency: 840,
             };
-            let nod = outbe_nodfactory::api::issue_nod(&storage, &scope, &parent, &params).unwrap();
+            let nod = outbe_nodfactory::api::issue_nod(
+                &storage,
+                &scope,
+                &parent,
+                &outbe_nod::test_support::encrypted_fixture(&params, CHAIN_ID),
+            )
+            .unwrap();
             let floor_price_minor =
                 NodContract::floor_price_minor(params.entry_price_minor).unwrap();
             let bucket =
@@ -362,7 +368,12 @@ fn erc20_settlement_moves_exact_full_width_cost_and_preserves_mining() {
             opNonce: 0,
         },
     );
-    assert_eq!(minted, U256::from(GRATIS_LOAD));
+    let view_key =
+        outbe_tee_enclave::gratis::derive_view_key(&test_enclave::state_key(), OWNER).unwrap();
+    assert_eq!(
+        outbe_tee::gratis_decrypt::decrypt_gratis_balance(&view_key, OWNER, &minted).unwrap(),
+        U256::from(GRATIS_LOAD)
+    );
 }
 
 #[test]

@@ -4136,7 +4136,10 @@ fn snapshot_public_effects(
     use alloy_sol_types::{SolCall, SolValue};
     use eyre::{ensure, eyre};
     use outbe_ocomp_protocol::{
-        abi::{decode_materialize_certified_nods_calldata, MATERIALIZE_CERTIFIED_NODS_SELECTOR},
+        abi::{
+            decode_protected_materialize_certified_nods_calldata,
+            MATERIALIZE_CERTIFIED_NODS_SELECTOR,
+        },
         list::streaming_ordered_list_membership_proof,
         profile::poc_schema_limits,
         result::{ActiveNodSetV1, NodMembershipProofV1},
@@ -4323,7 +4326,8 @@ fn snapshot_public_effects(
                     continue;
                 }
                 if materialization
-                    && decode_materialize_certified_nods_calldata(&input, &limits)?.queue_sequence
+                    && decode_protected_materialize_certified_nods_calldata(&input, &limits)?
+                        .queue_sequence
                         != copied_queue_sequence
                 {
                     continue;

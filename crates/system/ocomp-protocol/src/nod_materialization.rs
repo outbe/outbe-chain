@@ -1,5 +1,8 @@
 //! Canonical proof-backed batches for materializing certified NOD generations.
 
+mod protected;
+pub use protected::ProtectedNodMaterializationV2;
+
 use alloy_primitives::B256;
 
 use crate::{
@@ -135,12 +138,20 @@ pub fn verify_nod_materialization_batch(
             what: "materialization tree height",
         }
     })?;
-    let effective_subtree_height = configured_subtree_height.min(tree_height as u8);
-    let capacity = 1_u32
-        .checked_shl(u32::from(effective_subtree_height))
-        .ok_or(ProtocolError::IntegerOverflow {
+    let actual_subtree_height = tree_height
+        .checked_sub(batch.root_path.len() as u16)
+        .ok_or(ProtocolError::InvalidInvariant(
+            "materialization root path exceeds tree height",
+        ))?;
+    require(
+        actual_subtree_height <= u16::from(configured_subtree_height),
+        "materialization subtree exceeds configured height",
+    )?;
+    let capacity = 1_u32.checked_shl(u32::from(actual_subtree_height)).ok_or(
+        ProtocolError::IntegerOverflow {
             what: "materialization batch capacity",
-        })?;
+        },
+    )?;
     require(
         capacity <= MAX_NOD_MATERIALIZATION_ACTIONS as u32,
         "materialization configured capacity",
@@ -156,11 +167,6 @@ pub fn verify_nod_materialization_batch(
     require(
         batch.actions.len() == expected_actions as usize,
         "materialization exact batch action count",
-    )?;
-    require(
-        batch.root_path.len()
-            == usize::from(tree_height.saturating_sub(u16::from(effective_subtree_height))),
-        "materialization exact root path length",
     )?;
 
     let mut nodes = Vec::with_capacity(capacity as usize);
@@ -216,9 +222,9 @@ pub fn verify_nod_materialization_batch(
     }
 
     let mut hash = nodes[0];
-    let mut position = batch.first_nod_ordinal >> effective_subtree_height;
+    let mut position = batch.first_nod_ordinal >> actual_subtree_height;
     for (offset, sibling) in batch.root_path.iter().enumerate() {
-        let child_level = u16::from(effective_subtree_height)
+        let child_level = actual_subtree_height
             .checked_add(
                 u16::try_from(offset).map_err(|_| ProtocolError::IntegerOverflow {
                     what: "materialization root path level",

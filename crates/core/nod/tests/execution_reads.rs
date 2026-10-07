@@ -20,18 +20,21 @@ use outbe_primitives::{
 
 fn item(owner: Address, day: WorldwideDay) -> NodItemState {
     let nod_id = NodContract::generate_nod_id(owner, day).unwrap();
-    NodItemState {
-        is_settled: false,
-        nod_id,
-        owner,
-        gratis_load_minor: U256::from(11),
-        worldwide_day: day,
-        league_id: 4,
-        bucket_key: NodContract::bucket_key(day, U256::from(5), 978),
-        issuance_currency: 840,
-        reference_currency: 978,
-        issued_at: 1_752_534_000,
-    }
+    outbe_nod::test_support::item(
+        outbe_nod::test_support::NodItemFixture {
+            is_settled: false,
+            nod_id,
+            owner,
+            gratis_load_minor: U256::from(11),
+            worldwide_day: day,
+            league_id: 4,
+            bucket_key: NodContract::bucket_key(day, U256::from(5), 978),
+            issuance_currency: 840,
+            reference_currency: 978,
+            issued_at: 1_752_534_000,
+        },
+        U256::from(5),
+    )
 }
 
 fn active_world() -> (HashMapStorageProvider, ExecutionScope, NodRepositoryReader) {
@@ -186,6 +189,8 @@ fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
                 let entry = U256::from(entry);
                 let mut body = item(Address::repeat_byte(owner_byte), day);
                 body.reference_currency = currency;
+                outbe_nod::test_support::set_entry_price(&mut body, entry);
+                outbe_nod::test_support::set_terms(&mut body);
                 body.bucket_key = NodContract::bucket_key(day, entry, currency);
                 api::add_nod(&storage, &scope, &parent, &body, entry).unwrap();
                 WwdEntityId::from_day_and_digest(day, body.bucket_key.0)
@@ -278,6 +283,7 @@ fn idle_daily_scans_do_not_write_storage() {
             let entry = U256::from(entry);
             let mut body = item(Address::repeat_byte(owner), WorldwideDay::new(20260715));
             body.bucket_key = NodContract::bucket_key(body.worldwide_day, entry, 978);
+            outbe_nod::test_support::set_entry_price(&mut body, entry);
             api::add_nod(&storage, &scope, &parent, &body, entry).unwrap();
         }
         let ctx = BlockRuntimeContext::new(

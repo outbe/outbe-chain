@@ -3,6 +3,10 @@
 #[path = "settlement_nod.rs"]
 mod erc20_nod;
 
+pub(crate) fn exercise_encrypted_nod(world: &mut crate::world::World, day: u32) {
+    erc20_nod::run_relayed_mining(world, 0, day, true);
+}
+
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -1056,7 +1060,8 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         !body.settlementCostMinor.is_zero(),
         "settlement E2E requires a Nod with a nonzero cost"
     );
-    assert!(!body.gratisLoadMinor.is_zero());
+    let gratis_load = crate::internal::nod_keys::decrypt(world, &body);
+    assert!(!gratis_load.is_zero());
 
     assert!(body.isQualified, "the Nod must be qualified to be mineable");
 
@@ -1123,7 +1128,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         &keys.modify,
         owner,
         GratisOp::Mint,
-        body.gratisLoadMinor,
+        gratis_load,
         mint_nonce,
         chain_id,
     );
@@ -1148,7 +1153,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     assert_mined_success(&mine_gratis, "exercise the paid Nod");
     assert_eq!(
         gratis_balance(&url, owner, &keys.view),
-        gratis_before + body.gratisLoadMinor,
+        gratis_before + gratis_load,
         "Nod load was not minted exactly into owner Gratis"
     );
 
@@ -1162,7 +1167,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         &keys.modify,
         owner,
         GratisOp::Burn,
-        body.gratisLoadMinor,
+        gratis_load,
         burn_nonce,
         chain_id,
     );
@@ -1172,7 +1177,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         addresses::GRATIS_FACTORY_ADDR,
         &key,
         &eth::IGratisFactory::mineCoenCall {
-            gratisMinor: body.gratisLoadMinor,
+            gratisMinor: gratis_load,
             mac: B256::from(burn_mac),
             opNonce: burn_nonce,
         },
@@ -1191,13 +1196,12 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     assert_eq!(
         native_after + fee,
         native_before
-            + checked_protocol_to_native(body.gratisLoadMinor)
-                .expect("Gratis load fits native COEN")
+            + checked_protocol_to_native(gratis_load).expect("Gratis load fits native COEN")
     );
     eprintln!(
         "settlement_evidence kind=nod_to_coen owner={owner:#x} nod_id=0x{} asset={:#x} vault={:#x} cost={} gratis={} tx={} native_before={} native_after={} gas={fee}",
         hex::encode(&nod_id), fixture.asset, fixture.vault, body.settlementCostMinor,
-        body.gratisLoadMinor, mine_coen.transaction_hash, native_before, native_after
+        gratis_load, mine_coen.transaction_hash, native_before, native_after
     );
 }
 

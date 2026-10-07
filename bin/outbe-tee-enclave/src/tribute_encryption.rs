@@ -88,6 +88,25 @@ pub fn decrypt_tribute(
     Ok(TributeAmountsV2::from_be_bytes(amounts))
 }
 
+pub(crate) fn read_creator_public_key(
+    network_secret: &[u8; 32],
+    tribute: &EncryptedTributeV2,
+) -> Result<[u8; 32]> {
+    if !tribute.has_valid_encoding() {
+        return Err(TeeError::DecryptFailed);
+    }
+    let (_, bytes) = CREATOR_PUBLIC_KEY.read_blob(
+        network_secret,
+        tribute.context.crypto_slot(),
+        0,
+        &tribute.encrypted_creator_public_key,
+    )?;
+    bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| TeeError::DecryptFailed)
+}
+
 fn derive_amount_key(
     network_secret: &[u8; 32],
     creator_public: &[u8; 32],

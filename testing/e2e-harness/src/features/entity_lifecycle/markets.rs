@@ -4,13 +4,14 @@ use std::time::Duration;
 
 use alloy_primitives::U256;
 use cucumber::{given, then, when};
-use outbe_primitives::addresses::ORACLE_ADDRESS;
 
-use super::chain::{finalized_checkpoint, head_time, poll_until, verify_checkpoint};
+use super::chain::{finalized_checkpoint, poll_until, verify_checkpoint};
 use crate::env::environment;
 use crate::internal::eth;
 use crate::world::settlement_currency::{self, SettlementCurrency};
 use crate::world::World;
+
+mod pricing_window;
 
 alloy_sol_types::sol! {
     interface ISettlementTokenDecimals {
@@ -208,44 +209,35 @@ pub(crate) fn assert_currency_routes(world: &World, currency: SettlementCurrency
 /// Move the committee past the next whole hour, so every quote published so far lies in
 /// a closed pricing window, and wait until that window prices each of `currencies`.
 pub(crate) fn close_price_window(world: &mut World, currencies: &[u16]) {
-    let head = head_time(world);
-    let target = head - head % 3_600 + 3_600 + WINDOW_CLOSE_MARGIN_SECS;
-    let (_, _, _, pending) =
-        crate::features::ocomp::restart_committee_at_logical_time(world, target);
-    let port = world.validators.primary_port();
-    let url = world.rpc.url(port);
-    let mut price_ready = pending.is_none();
-    poll_until(
-        WINDOW_CLOSE_TIMEOUT,
-        || format!("the closed pricing window never priced COEN in {currencies:?}"),
-        || {
-            // The committee has just restarted, so a head read may briefly fail.
-            let time_ready = world
-                .rpc
-                .latest_block_timestamp(port)
-                .is_some_and(|now| now >= target);
-            price_ready = price_ready
-                || pending.as_ref().is_some_and(|pending| {
-                    crate::features::price_oracle::observe_pending_publication(world, pending)
-                });
-            time_ready
-                && price_ready
-                && currencies.iter().all(|&currency| {
-                    window_vwap(&url, currency).is_some_and(|vwap| !vwap.is_zero())
-                })
-        },
-    );
-}
-
-/// The finalized pricing-window VWAP of COEN in `currency` at the current snapshot.
-pub(crate) fn window_vwap(url: &str, currency: u16) -> Option<U256> {
-    let snapshot = eth::read_call(url, ORACLE_ADDRESS, &eth::IOracle::getVwapSnapshotIdCall {})?;
-    eth::read_call(
-        url,
-        ORACLE_ADDRESS,
-        &eth::IOracle::getFinalizedWindowVwapCall {
-            currency,
-            snapshotId: snapshot,
-        },
-    )
+    for attempt in 0..3 {
+        let cutoff = pricing_window::wait_for_coverage(world, currencies)
+            .expect("pinned public pricing coverage observations");
+        let target = cutoff + WINDOW_CLOSE_MARGIN_SECS;
+        let (_, _, _, pending) =
+            crate::features::ocomp::restart_committee_at_logical_time(world, target);
+        let port = world.validators.primary_port();
+        let mut publication_ready = pending.is_none();
+        poll_until(
+            WINDOW_CLOSE_TIMEOUT,
+            || format!("pricing restart did not publish after cutoff {cutoff}"),
+            || {
+                publication_ready = publication_ready
+                    || pending.as_ref().is_some_and(|pending| {
+                        crate::features::price_oracle::observe_pending_publication(world, pending)
+                    });
+                world
+                    .rpc
+                    .latest_block_timestamp(port)
+                    .is_some_and(|time| time >= target)
+                    && publication_ready
+            },
+        );
+        if pricing_window::closed_window_is_priced(world, currencies)
+            .expect("closed production Oracle prices")
+        {
+            return;
+        }
+        eprintln!("pricing_window evidence=insufficient_closed_coverage cutoff={cutoff} attempt={attempt}");
+    }
+    panic!("three closed pricing windows failed coverage for {currencies:?}");
 }

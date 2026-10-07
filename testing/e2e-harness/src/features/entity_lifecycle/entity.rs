@@ -140,6 +140,10 @@ pub(crate) trait Lifecycle: Sync {
     fn call_price(&self, world: &World) -> U256;
     /// The terms `item` is priced on, as the holding records them.
     fn terms(&self, world: &World, item: &Item) -> Terms;
+    /// Read the holding's terms after the holding reaches the requested payment phase.
+    fn settlement_terms(&self, world: &World, target: &Target, _phase: Phase) -> Terms {
+        self.terms(world, &target.item)
+    }
     fn assert_issued(&self, world: &World);
     fn qualified(&self, world: &World) -> bool;
     /// The two holdings paid in `phase`, in the order the scenario names their payments.

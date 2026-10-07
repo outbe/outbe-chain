@@ -1,8 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{
-    delete, derive_poseidon_entity_id, list, mint, read, update, BodyInput, EntityRef,
-    ExecutionScope, IdPageRequest, ParentBodySource, QueryRef, VerifiedBody, WwdEntityId,
-    MAX_ID_PAGE_LIMIT,
+    delete, list, mint, read, update, BodyInput, EntityRef, ExecutionScope, IdPageRequest,
+    ParentBodySource, QueryRef, VerifiedBody, WwdEntityId, MAX_ID_PAGE_LIMIT,
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::math::{
@@ -216,38 +215,7 @@ impl NodContract<'_> {
         item: &NodItemState,
         entry_price_minor: U256,
     ) -> Result<()> {
-        let canonical_id = derive_poseidon_entity_id(item.owner, item.worldwide_day)
-            .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))?;
-        if item.nod_id != canonical_id {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
-                "Nod item canonical identity mismatch: expected {canonical_id}, found {}",
-                item.nod_id
-            )));
-        }
-        if item.is_settled {
-            return Err(outbe_primitives::error::PrecompileError::Revert(
-                "cannot issue a settled Nod".into(),
-            ));
-        }
-        // ISO 0 is not a currency, and its bin namespace aliases the
-        // un-namespaced key while never appearing in the oracle's
-        // reference-currency registry — a bucket parked there would be
-        // invisible to the call scan forever.
-        if item.reference_currency == 0 {
-            return Err(NodError::ZeroReferenceCurrency.into());
-        }
-
-        let canonical_bucket_key = Self::bucket_key(
-            item.worldwide_day,
-            entry_price_minor,
-            item.reference_currency,
-        );
-        if item.bucket_key != canonical_bucket_key {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
-                "Nod bucket identity mismatch: expected {canonical_bucket_key}, found {}",
-                item.bucket_key
-            )));
-        }
+        crate::issuance::validate_item(item, entry_price_minor)?;
         if self
             .get_item_verified(scope, parent, item.nod_id)?
             .is_some()
@@ -306,7 +274,7 @@ impl NodContract<'_> {
         mint(
             self.storage_handle(),
             scope,
-            BodyInput::NodItem(&canonical_item),
+            BodyInput::EncryptedNodItem(&canonical_item),
         )?;
         if let Some(bucket) = new_bucket {
             let canonical_bucket = crate::repository::canonical_bucket(&bucket);
@@ -396,7 +364,7 @@ impl NodContract<'_> {
             self.storage_handle(),
             scope,
             current_item,
-            BodyInput::NodItem(&crate::repository::canonical_item(&item)),
+            BodyInput::EncryptedNodItem(&crate::repository::canonical_item(&item)),
         )?;
         update(
             self.storage_handle(),
@@ -726,7 +694,7 @@ impl NodContract<'_> {
 }
 
 pub(crate) fn nod_item_from_verified(body: &VerifiedBody) -> Result<NodItemState> {
-    let payload = body.payload().as_nod_item().ok_or_else(|| {
+    let payload = body.payload().as_encrypted_nod_item().ok_or_else(|| {
         outbe_primitives::error::PrecompileError::Fatal(
             "compressed-entity read returned a non-Nod-item payload".into(),
         )

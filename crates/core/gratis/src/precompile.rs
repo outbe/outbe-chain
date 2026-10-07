@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
-use outbe_primitives::erc::{ERC165_INTERFACE_ID, ERC20_INTERFACE_ID};
+use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::schema::Gratis;
@@ -36,7 +36,6 @@ pub fn dispatch(
             name(_) => metadata::<IGratis::nameCall>(|| Ok(gratis.name().to_string())),
             symbol(_) => metadata::<IGratis::symbolCall>(|| Ok(gratis.symbol().to_string())),
             decimals(_) => metadata::<IGratis::decimalsCall>(|| Ok(gratis.decimals())),
-            totalSupply(_) => metadata::<IGratis::totalSupplyCall>(|| gratis.total_supply()),
             pledgedTotalSupply(_) => {
                 metadata::<IGratis::pledgedTotalSupplyCall>(|| gratis.pledged_total_supply())
             }
@@ -53,7 +52,7 @@ pub fn dispatch(
 
             supportsInterface(c) => view(c, |c| {
                 let id: [u8; 4] = c.interfaceId.0;
-                Ok(id == ERC165_INTERFACE_ID || id == ERC20_INTERFACE_ID)
+                Ok(id == ERC165_INTERFACE_ID)
             }),
         }
     })

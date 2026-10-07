@@ -70,3 +70,12 @@ pub fn open_empty_ce_database(
         },
     )
 }
+
+/// Authenticates one canonical stored body in a one-leaf collection fixture.
+pub fn single_collection_body_proof(
+    domain: crate::CeDomain,
+    id: crate::WwdEntityId,
+    stored_body: &[u8],
+) -> Result<(B256, crate::CollectionBodyProofV1), crate::PointReadServiceError> {
+    crate::proof::single_body_proof(domain, id, stored_body)
+}

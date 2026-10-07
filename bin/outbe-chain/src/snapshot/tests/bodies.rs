@@ -10,7 +10,7 @@ use outbe_compressed_entities::{
     MdbxAuthenticatedTree, StoredBody, WwdEntityId, ACTIVE_COMMITMENT_SCHEME,
     LOCAL_STORAGE_SCHEMA_VERSION,
 };
-use outbe_nod::{NodBucketState, NodItemState, NodRepositoryWriter};
+use outbe_nod::{NodBucketState, NodRepositoryWriter};
 use outbe_offchain_data::{ProjectionCheckpoint, ProjectionState, STORAGE_SCHEMA_VERSION};
 use outbe_offchain_storage::{Key, Namespace, StorageWriter, Value};
 use outbe_primitives::{
@@ -130,24 +130,28 @@ impl Fixture {
                 bodies.push((EntityRef::Tribute(body.tribute_id), body.tribute_id, stored));
             }
             let day = WorldwideDay::new(20260905);
-            let item = NodItemState {
-                is_settled: false,
-                nod_id: WwdEntityId::from_day_and_digest(day, [3; 32]),
-                owner: Address::repeat_byte(3),
-                gratis_load_minor: U256::from(1),
-                worldwide_day: day,
-                league_id: 7,
-                bucket_key: B256::repeat_byte(4),
-                issuance_currency: 840,
-                reference_currency: 978,
-                issued_at: 123,
-            };
+            let item = outbe_nod::test_support::item(
+                outbe_nod::test_support::NodItemFixture {
+                    is_settled: false,
+                    nod_id: WwdEntityId::from_day_and_digest(day, [3; 32]),
+                    owner: Address::repeat_byte(3),
+                    gratis_load_minor: U256::from(1),
+                    worldwide_day: day,
+                    league_id: 7,
+                    bucket_key: B256::repeat_byte(4),
+                    issuance_currency: 840,
+                    reference_currency: 978,
+                    issued_at: 123,
+                },
+                U256::from(3),
+            );
             nod_writer.put_nod(&item).unwrap();
             bodies.push((
                 EntityRef::NodItem(item.nod_id),
                 item.nod_id,
-                StoredBody::new_v1(
-                    outbe_compressed_entities::encode_nod_item_v1(&outbe_nod::canonical_item(
+                StoredBody::new(
+                    outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
+                    outbe_compressed_entities::encode_nod_item_v2(&outbe_nod::canonical_item(
                         &item,
                     ))
                     .unwrap(),

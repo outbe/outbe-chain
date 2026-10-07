@@ -30,23 +30,27 @@ fn open() -> Store {
 fn item(owner: Address, day: u32) -> NodItemState {
     let worldwide_day = WorldwideDay::new(day);
     let entry = U256::from(13u64);
-    NodItemState {
-        is_settled: false,
-        nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
-        owner,
-        gratis_load_minor: U256::from(11u64),
-        worldwide_day,
-        league_id: 4,
-        bucket_key: NodContract::bucket_key(worldwide_day, entry, 840),
-        issuance_currency: 840,
-        reference_currency: 840,
-        issued_at: 1_752_534_000,
-    }
+    outbe_nod::test_support::item(
+        outbe_nod::test_support::NodItemFixture {
+            is_settled: false,
+            nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
+            owner,
+            gratis_load_minor: U256::from(11u64),
+            worldwide_day,
+            league_id: 4,
+            bucket_key: NodContract::bucket_key(worldwide_day, entry, 840),
+            issuance_currency: 840,
+            reference_currency: 840,
+            issued_at: 1_752_534_000,
+        },
+        U256::ZERO,
+    )
 }
 
 fn item_with_digest(owner: Address, day: u32, digest_byte: u8) -> NodItemState {
     let mut nod = item(owner, day);
     nod.nod_id = WwdEntityId::from_day_and_digest(WorldwideDay::new(day), [digest_byte; 32]);
+    outbe_nod::test_support::set_terms(&mut nod);
     nod
 }
 
@@ -117,7 +121,10 @@ fn legacy_keys_move_once_and_read_from_the_day() {
 
     let reader = routed_reader(&store);
     let loaded = reader.get(nod.nod_id).unwrap().unwrap();
-    assert_eq!(loaded.gratis_load_minor, nod.gratis_load_minor);
+    assert_eq!(
+        outbe_nod::api::calculation_amount(&loaded).unwrap(),
+        outbe_nod::api::calculation_amount(&nod).unwrap()
+    );
 
     let key = Key::new(nod.nod_id.as_slice().to_vec()).unwrap();
     let namespace = Namespace::new("nods").unwrap();
@@ -128,12 +135,14 @@ fn legacy_keys_move_once_and_read_from_the_day() {
     );
     let day = store.databases.nod_if_present(7).unwrap().unwrap();
     assert_eq!(
-        NodRepositoryReader::new(day)
-            .get(nod.nod_id)
-            .unwrap()
-            .unwrap()
-            .gratis_load_minor,
-        nod.gratis_load_minor
+        outbe_nod::api::calculation_amount(
+            &NodRepositoryReader::new(day)
+                .get(nod.nod_id)
+                .unwrap()
+                .unwrap()
+        )
+        .unwrap(),
+        outbe_nod::api::calculation_amount(&nod).unwrap()
     );
 
     StorageWriter::put(
@@ -144,7 +153,10 @@ fn legacy_keys_move_once_and_read_from_the_day() {
     )
     .unwrap();
     let again = reader.get(nod.nod_id).unwrap().unwrap();
-    assert_eq!(again.gratis_load_minor, nod.gratis_load_minor);
+    assert_eq!(
+        outbe_nod::api::calculation_amount(&again).unwrap(),
+        outbe_nod::api::calculation_amount(&nod).unwrap()
+    );
     assert_eq!(
         StorageReader::get(store.shared.as_ref(), namespace, &key)
             .unwrap()
@@ -275,6 +287,7 @@ fn owner_change_clears_the_previous_owner_day() {
     let writer = routed_writer(&store);
     writer.put_nod(&nod).unwrap();
     nod.owner = next_owner;
+    outbe_nod::test_support::set_terms(&mut nod);
     writer.put_nod(&nod).unwrap();
 
     let reader = routed_reader(&store);

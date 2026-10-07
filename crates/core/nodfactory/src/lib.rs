@@ -1,6 +1,6 @@
 //! NodFactory precompile crate.
 //!
-//! Owns Nod issuance (called from Lysis through [`api::issue_nod`]) and
+//! Owns encrypted Nod materialization and
 //! the user-triggered `settleNod`, `settleNodWithPayNote`, and `mineGratis` ABI methods. Persistent Nod entity state
 //! lives in the Nod entity store at [`outbe_primitives::addresses::NOD_ADDRESS`];
 //! NodFactory carries no storage of its own.
@@ -16,3 +16,6 @@ pub mod sol_ext;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_support;

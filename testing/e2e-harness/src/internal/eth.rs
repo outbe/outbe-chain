@@ -364,6 +364,48 @@ where
     })
 }
 
+/// A decoded return or canonical EVM Error(string) from one view request.
+pub(crate) enum ViewCallOutcome<T> {
+    Value(T),
+    Reverted(String),
+}
+
+/// Preserve a canonical Error(string) revert from the same pinned request.
+/// Transport, non-revert RPC, and malformed payload errors remain failures.
+pub(crate) fn read_call_at_with_revert_reason<C: SolCall>(
+    url: &str,
+    to: Address,
+    call: &C,
+    height: u64,
+) -> Result<ViewCallOutcome<C::Return>>
+where
+    C::Return: Send + 'static,
+{
+    let url = url.to_string();
+    let data = call.abi_encode();
+    block_on(async move {
+        let provider = ProviderBuilder::new().connect_http(url.parse()?);
+        let tx = TransactionRequest::default()
+            .to(to)
+            .input(Bytes::from(data).into());
+        match provider.call(tx).block(BlockId::number(height)).await {
+            Ok(bytes) => Ok(ViewCallOutcome::Value(C::abi_decode_returns(&bytes)?)),
+            Err(error) => {
+                let payload = error
+                    .as_error_resp()
+                    .ok_or_else(|| eyre!("view transport failure: {error}"))?;
+                let data = payload
+                    .try_data_as::<Bytes>()
+                    .ok_or_else(|| eyre!("RPC omitted view revert data: {payload}"))??;
+                Ok(ViewCallOutcome::Reverted(decode_evm_revert_reason(
+                    payload.code,
+                    &data,
+                )?))
+            }
+        }
+    })
+}
+
 /// Execute a typed view against the exact canonical state at `height`, or
 /// return `None` on transport, execution, or decoding failure.
 pub(crate) fn read_call_at<C: SolCall>(

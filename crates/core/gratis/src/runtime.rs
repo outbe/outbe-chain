@@ -81,6 +81,36 @@ fn write_account_blobs(
     Ok(())
 }
 
+/// Apply an owner-authorized balance movement and publish its matching event.
+fn apply_owner_movement(
+    storage: StorageHandle<'_>,
+    mut request: GratisOpRequest,
+) -> Result<Option<FidelityOpOutcome>> {
+    let gratis = Gratis::new(storage.clone());
+    let account = request.account;
+    check_op_nonce(&gratis, account, request.modify_auth.op_nonce)?;
+    request.current_balance = gratis.balance_ct_of(account)?;
+    let operation = request.op;
+    let _scope = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
+    let result = apply_gratis_op(request)?;
+    ensure_applied(&result)?;
+    write_account_blobs(&gratis, account, &result)?;
+    gratis.set_op_nonce(account, result.next_op_nonce)?;
+    let event = match operation {
+        GratisOp::Mint => SolEvent::encode_log_data(&IGratis::GratisMinted {
+            account,
+            amount: result.event_amount,
+        }),
+        GratisOp::Burn => SolEvent::encode_log_data(&IGratis::GratisBurned {
+            account,
+            amount: result.event_amount,
+        }),
+        _ => return Err(PrecompileError::Fatal("invalid owner movement".into())),
+    };
+    storage.emit_event(GRATIS_ADDRESS, event)?;
+    Ok(result.fidelity)
+}
+
 /// Mint `amount` gratis to `caller` (owner-authorized), optionally carrying a
 /// co-located fidelity cohort section applied in the SAME enclave round-trip.
 fn mint_impl(
@@ -90,31 +120,10 @@ fn mint_impl(
     auth: ModifyAuth,
     fidelity: Option<FidelityOpSection>,
 ) -> Result<Option<FidelityOpOutcome>> {
-    let gratis = Gratis::new(storage.clone());
-    check_op_nonce(&gratis, caller, auth.op_nonce)?;
-    let mut req = base_request(GratisOp::Mint, chain_id_b256(&storage)?, caller, amount);
-    req.current_balance = gratis.balance_ct_of(caller)?;
-    req.modify_auth = auth;
-    req.fidelity = fidelity;
-    let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
-    let result = apply_gratis_op(req)?;
-    ensure_applied(&result)?;
-    write_account_blobs(&gratis, caller, &result)?;
-    gratis.set_op_nonce(caller, result.next_op_nonce)?;
-    let new_supply = gratis
-        .total_supply()?
-        .checked_add(result.event_amount)
-        .ok_or_else(|| PrecompileError::Fatal("gratis total_supply overflow".to_string()))?;
-    gratis.set_total_supply(new_supply)?;
-    storage.emit_event(
-        GRATIS_ADDRESS,
-        SolEvent::encode_log_data(&IGratis::GratisMinted {
-            account: caller,
-            amount: result.event_amount,
-            newTotalSupply: new_supply,
-        }),
-    )?;
-    Ok(result.fidelity)
+    let mut request = base_request(GratisOp::Mint, chain_id_b256(&storage)?, caller, amount);
+    request.modify_auth = auth;
+    request.fidelity = fidelity;
+    apply_owner_movement(storage, request)
 }
 
 /// Mint `amount` gratis to `caller` (owner-authorized).
@@ -140,49 +149,28 @@ pub(crate) fn mint_with_fidelity(
 }
 
 /// Burn `amount` gratis from `caller` (owner-authorized), optionally carrying a
-/// co-located fidelity cohort section. Returns remaining supply + the outcome.
+/// co-located fidelity cohort section. Returns the Fidelity outcome.
 fn burn_impl(
     storage: StorageHandle<'_>,
     caller: Address,
     amount: U256,
     auth: ModifyAuth,
     fidelity: Option<FidelityOpSection>,
-) -> Result<(U256, Option<FidelityOpOutcome>)> {
-    let gratis = Gratis::new(storage.clone());
-    check_op_nonce(&gratis, caller, auth.op_nonce)?;
-    let mut req = base_request(GratisOp::Burn, chain_id_b256(&storage)?, caller, amount);
-    req.current_balance = gratis.balance_ct_of(caller)?;
-    req.modify_auth = auth;
-    req.fidelity = fidelity;
-    let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
-    let result = apply_gratis_op(req)?;
-    ensure_applied(&result)?;
-    write_account_blobs(&gratis, caller, &result)?;
-    gratis.set_op_nonce(caller, result.next_op_nonce)?;
-    let remaining = gratis
-        .total_supply()?
-        .checked_sub(result.event_amount)
-        .ok_or_else(|| PrecompileError::Fatal("gratis total_supply underflow".to_string()))?;
-    gratis.set_total_supply(remaining)?;
-    storage.emit_event(
-        GRATIS_ADDRESS,
-        SolEvent::encode_log_data(&IGratis::GratisBurned {
-            account: caller,
-            amount: result.event_amount,
-            remainingSupply: remaining,
-        }),
-    )?;
-    Ok((remaining, result.fidelity))
+) -> Result<Option<FidelityOpOutcome>> {
+    let mut request = base_request(GratisOp::Burn, chain_id_b256(&storage)?, caller, amount);
+    request.modify_auth = auth;
+    request.fidelity = fidelity;
+    apply_owner_movement(storage, request)
 }
 
-/// Burn `amount` gratis from `caller` (owner-authorized). Returns remaining supply.
+/// Burn `amount` gratis from `caller` (owner-authorized).
 pub(crate) fn burn(
     storage: StorageHandle<'_>,
     caller: Address,
     amount: U256,
     auth: ModifyAuth,
-) -> Result<U256> {
-    Ok(burn_impl(storage, caller, amount, auth, None)?.0)
+) -> Result<()> {
+    burn_impl(storage, caller, amount, auth, None).map(|_| ())
 }
 
 /// Burn gratis and apply a co-located fidelity cohort sale in one enclave
@@ -194,7 +182,7 @@ pub(crate) fn burn_with_fidelity(
     auth: ModifyAuth,
     fidelity: FidelityOpSection,
 ) -> Result<FidelityOpOutcome> {
-    require_fidelity_outcome(burn_impl(storage, caller, amount, auth, Some(fidelity))?.1)
+    require_fidelity_outcome(burn_impl(storage, caller, amount, auth, Some(fidelity))?)
 }
 
 /// Debit an authenticated Gratis amount and append the enclave's owner-bound note.
@@ -312,12 +300,6 @@ pub(crate) fn forfeit(storage: &StorageHandle<'_>, amount: U256) -> Result<()> {
             GratisOp::BurnPledged,
         )?;
         let gratis = Gratis::new(storage.clone());
-        gratis.set_total_supply(
-            gratis
-                .total_supply()?
-                .checked_sub(amount)
-                .ok_or_else(|| PrecompileError::Fatal("Gratis supply underflow".into()))?,
-        )?;
         gratis.set_pledged_total_supply(
             gratis
                 .pledged_total_supply()?
@@ -326,4 +308,36 @@ pub(crate) fn forfeit(storage: &StorageHandle<'_>, amount: U256) -> Result<()> {
         )?;
         Ok(())
     })
+}
+
+pub(crate) fn mint_encrypted_nod(
+    storage: StorageHandle<'_>,
+    nod: &outbe_primitives::nod_encryption::EncryptedNodV2,
+    auth: ModifyAuth,
+    fidelity: FidelityOpSection,
+) -> Result<FidelityOpOutcome> {
+    if nod.terms.chain_id != storage.chain_id()? {
+        return Err(PrecompileError::Revert("NOD chain mismatch".into()));
+    }
+    let gratis = Gratis::new(storage.clone());
+    check_op_nonce(&gratis, nod.terms.owner, auth.op_nonce)?;
+    let request = outbe_tee::nod_mine::MineEncryptedNodRequestV2 {
+        nod: nod.clone(),
+        current_balance: gratis.balance_ct_of(nod.terms.owner)?,
+        modify_auth: auth,
+        fidelity,
+    };
+    let _context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
+    let result = crate::enclave_client::mine_encrypted_nod(request)?;
+    gratis.write_balance_ct(nod.terms.owner, &result.new_balance)?;
+    gratis.set_op_nonce(nod.terms.owner, result.next_op_nonce)?;
+    storage.emit_event(
+        GRATIS_ADDRESS,
+        SolEvent::encode_log_data(&IGratis::GratisMinedFromNod {
+            account: nod.terms.owner,
+            encryptedAmount: nod.encrypted_gratis_amount.clone().into(),
+            encryptedBalance: result.new_balance.into(),
+        }),
+    )?;
+    Ok(result.fidelity)
 }

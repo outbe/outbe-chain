@@ -37,7 +37,6 @@ use outbe_tribute::TributeRepositoryError;
 use thiserror::Error;
 
 use state::{contains_unmanaged_data, state_batch};
-pub(crate) use state::{decode_state, state_key, state_namespace};
 
 /// Backend-neutral finalized log, including its canonical block-global index.
 #[derive(Clone, Debug, Eq, PartialEq)]

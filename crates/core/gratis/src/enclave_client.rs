@@ -110,6 +110,28 @@ pub mod test_enclave {
             .expect("test enclave not installed")
     }
 
+    pub(crate) fn try_mine(
+        request: &outbe_tee::nod_mine::MineEncryptedNodRequestV2,
+    ) -> Option<Result<outbe_tee::nod_mine::MineEncryptedNodResultV2>> {
+        STATE_KEY.with(|key| {
+            key.borrow().map(|state_key| {
+                let fidelity_key = outbe_tee_enclave::fidelity::derive_fidelity_state_key(
+                    outbe_tee_enclave::dev::FIDELITY_GROUP_SIG,
+                    outbe_tee_enclave::dev::fidelity_chain(),
+                    DEV_EPOCH,
+                )
+                .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
+                outbe_tee_enclave::nod_mine::apply(&[0x5a; 32], &state_key, &fidelity_key, request)
+                    .map_err(|error| match error {
+                        outbe_tee_enclave::errors::TeeError::TributeOfferReject(reason) => {
+                            PrecompileError::Revert(reason)
+                        }
+                        other => PrecompileError::Fatal(other.to_string()),
+                    })
+            })
+        })
+    }
+
     pub(crate) fn try_apply(req: &GratisOpRequest) -> Option<GratisOpResult> {
         STATE_KEY.with(|k| {
             k.borrow().map(|key| {
@@ -149,4 +171,17 @@ pub mod test_enclave {
             })
         })
     }
+}
+
+pub(crate) fn mine_encrypted_nod(
+    request: outbe_tee::nod_mine::MineEncryptedNodRequestV2,
+) -> Result<outbe_tee::nod_mine::MineEncryptedNodResultV2> {
+    #[cfg(any(test, feature = "test-enclave"))]
+    if let Some(result) = test_enclave::try_mine(&request) {
+        return result;
+    }
+    outbe_tee::nod_mine::mine_encrypted_nod(request).map_err(|error| match error {
+        outbe_tee::TransportError::NodMintRejected(reason) => PrecompileError::Revert(reason),
+        other => PrecompileError::Fatal(format!("encrypted NOD enclave operation failed: {other}")),
+    })
 }

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use alloy_primitives::{Address, Bytes, LogData, B256};
 use alloy_sol_types::SolEvent;
 use outbe_compressed_entities::{
-    body_commitment, encode_nod_bucket_v1, encode_nod_item_v1, encode_tribute_v1, WwdEntityId,
+    body_commitment, encode_nod_bucket_v1, encode_nod_item_v2, encode_tribute_v1, WwdEntityId,
     ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
 use outbe_nod::{canonical_bucket, canonical_item, precompile::INod};
@@ -211,11 +211,11 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
     let owner = Address::repeat_byte(0x91);
     let nod_id = poseidon_entity(owner, day);
     let nod = nod_body(nod_id, owner, B256::repeat_byte(0xa1));
-    let nod_payload = encode_nod_item_v1(&canonical_item(&nod)).unwrap();
+    let nod_payload = encode_nod_item_v2(&canonical_item(&nod)).unwrap();
     let nod_commitment = B256::from(
         *body_commitment(
             ACTIVE_COMMITMENT_SCHEME,
-            BODY_SCHEMA_V1,
+            outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
             nod_id,
             &nod_payload,
         )
@@ -251,7 +251,7 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
             INod::NodBodyStored {
                 nodId: nod_id.to_u256(),
                 commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME + 1,
-                schemaVersion: BODY_SCHEMA_V1,
+                schemaVersion: outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
                 previousCommitment: B256::ZERO,
                 newCommitment: nod_commitment,
                 canonicalPayload: Bytes::copy_from_slice(&nod_payload),
@@ -263,7 +263,7 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
             INod::NodBodyStored {
                 nodId: nod_id.to_u256(),
                 commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-                schemaVersion: BODY_SCHEMA_V1 + 1,
+                schemaVersion: outbe_compressed_entities::NOD_BODY_SCHEMA_V2 + 1,
                 previousCommitment: B256::ZERO,
                 newCommitment: nod_commitment,
                 canonicalPayload: Bytes::copy_from_slice(&nod_payload),
@@ -275,7 +275,7 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
             INod::NodBodyStored {
                 nodId: nod_id.to_u256(),
                 commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-                schemaVersion: BODY_SCHEMA_V1,
+                schemaVersion: outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
                 previousCommitment: B256::ZERO,
                 newCommitment: nod_commitment,
                 canonicalPayload: Bytes::from(noncanonical_nod),
@@ -287,7 +287,7 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
             INod::NodBodyStored {
                 nodId: entity(0x93, day).to_u256(),
                 commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-                schemaVersion: BODY_SCHEMA_V1,
+                schemaVersion: outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
                 previousCommitment: B256::ZERO,
                 newCommitment: nod_commitment,
                 canonicalPayload: Bytes::copy_from_slice(&nod_payload),
@@ -299,7 +299,7 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
             INod::NodBodyStored {
                 nodId: nod_id.to_u256(),
                 commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-                schemaVersion: BODY_SCHEMA_V1,
+                schemaVersion: outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
                 previousCommitment: B256::ZERO,
                 newCommitment: B256::ZERO,
                 canonicalPayload: Bytes::copy_from_slice(&nod_payload),
@@ -416,7 +416,7 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
             INod::NodBodyStored {
                 nodId: nod_id.to_u256(),
                 commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-                schemaVersion: BODY_SCHEMA_V1,
+                schemaVersion: outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
                 previousCommitment: B256::ZERO,
                 newCommitment: nod_commitment,
                 canonicalPayload: Bytes::copy_from_slice(&nod_payload),
@@ -425,7 +425,7 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
             INod::NodBodyStored {
                 nodId: nod_id.to_u256(),
                 commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-                schemaVersion: BODY_SCHEMA_V1,
+                schemaVersion: outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
                 previousCommitment: bucket_commitment,
                 newCommitment: nod_commitment,
                 canonicalPayload: Bytes::copy_from_slice(&nod_payload),

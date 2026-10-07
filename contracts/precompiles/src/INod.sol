@@ -44,7 +44,7 @@ interface INod {
 
     /// Nod burned by the Call scan because its bucket's settlement deadline
     /// lapsed while the Nod was still unpaid. No Gratis is minted.
-    event NodForfeited(address indexed owner, uint256 nodId, uint256 gratisLoadMinor);
+    event NodForfeited(address indexed owner, uint256 nodId, bytes encryptedGratisAmount);
 
     /// @notice The daily call sweep (`sweep` = 1) fell two days behind: `skippedDay`
     ///         gave its place to a newer day and will not be walked.
@@ -56,8 +56,11 @@ interface INod {
         uint32 worldwideDay;
         uint16 leagueId;
         uint256 floorPriceMinor;
-        /// Gratis entitlement in protocol units (1,000,000 per whole COEN).
-        uint256 gratisLoadMinor;
+        /// Encrypted Gratis entitlement, readable by the owner and enclave.
+        bytes encryptedGratisAmount;
+        bytes encryptedCreatorPublicKey;
+        bytes32 encryptionBinding;
+        uint64 chainId;
         /// Price of one whole COEN in referenceCurrency at six-decimal precision.
         uint256 entryPriceMinor;
         /// floor(entryPriceMinor * gratisLoadMinor / 1,000,000), in referenceCurrency

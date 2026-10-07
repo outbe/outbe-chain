@@ -683,6 +683,7 @@ mod tests {
             .open_writer()
             .unwrap();
         writer.ownership.activate().unwrap();
+        let completion = writer.ownership.completion();
         let ns = Namespace::new("fixture").unwrap();
         let key = Key::new([1]).unwrap();
         writer
@@ -701,5 +702,9 @@ mod tests {
         assert!(fs::read_dir(root.path())
             .unwrap()
             .all(|entry| entry.unwrap().file_name() == "validator-4"));
+        drop(writer);
+        completion
+            .wait_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
     }
 }

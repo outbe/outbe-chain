@@ -30,6 +30,7 @@ pub mod opening_stage;
 pub mod payout_artifact;
 pub mod payout_submitter;
 pub mod private_tribute_reader;
+pub mod protected_nod_materialization;
 pub mod public_rpc;
 pub mod result_attestation;
 pub mod result_signer;

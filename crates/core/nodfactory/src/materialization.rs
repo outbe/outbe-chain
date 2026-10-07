@@ -3,12 +3,18 @@
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::{SolError, SolEvent};
 use outbe_chain_constants::NodMaterializationProfileV1;
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
-use outbe_nod::{NodContract, NodIssueParams};
+#[cfg(any(test, feature = "test-utils"))]
+use outbe_compressed_entities::WwdEntityId;
+use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
+use outbe_nod::NodContract;
+#[cfg(any(test, feature = "test-utils"))]
+use outbe_nod::NodIssueParams;
+#[cfg(any(test, feature = "test-utils"))]
+use outbe_ocomp_protocol::nod_materialization::{
+    verify_nod_materialization_batch, NodMaterializationBatchV1,
+};
 use outbe_ocomp_protocol::{
-    nod_materialization::{
-        verify_nod_materialization_batch, NodMaterializationBatchV1, NodMaterializationHeadV1,
-    },
+    nod_materialization::{NodMaterializationHeadV1, ProtectedNodMaterializationV2},
     SchemaLimits,
 };
 use outbe_primitives::time::WorldwideDay;
@@ -132,6 +138,7 @@ pub fn consume_materialization_attempt(
 }
 
 /// Applies one already-authorized canonical batch atomically.
+#[cfg(any(test, feature = "test-utils"))]
 pub fn materialize_certified_nods_authorized(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
@@ -146,6 +153,7 @@ pub fn materialize_certified_nods_authorized(
     })
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 pub(crate) fn materialize_after_attempt(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
@@ -197,7 +205,8 @@ pub(crate) fn materialize_after_attempt(
             issuance_currency: action.issuance_currency,
             reference_currency: action.reference_currency,
         };
-        if let Err(error) = runtime::issue_nod_at(storage, scope, parent, &params, issued_at) {
+        let encrypted = outbe_nod::test_support::encrypted_fixture(&params, storage.chain_id()?);
+        if let Err(error) = runtime::issue_nod_at(storage, scope, parent, &encrypted, issued_at) {
             if matches!(
                 &error,
                 PrecompileError::Revert(reason)
@@ -209,7 +218,120 @@ pub(crate) fn materialize_after_attempt(
         }
     }
 
-    let action_count = u32::try_from(verified.actions().len()).map_err(|_| {
+    finish_materialization(storage, &head, verified.actions().len())
+}
+
+pub(crate) struct MaterializationRules<'a> {
+    pub profile: NodMaterializationProfileV1,
+    pub limits: &'a SchemaLimits,
+}
+
+/// Verifies the private witness against authority read from this node's chain state.
+pub(crate) fn materialize_protected_after_attempt(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    carrier: &ProtectedNodMaterializationV2,
+    rules: MaterializationRules<'_>,
+) -> Result<NodMaterializationOutcomeV1> {
+    let nod = NodContract::new(storage.clone());
+    let head = nod
+        .ocomp_materialization_head()?
+        .ok_or(NodFactoryError::StaleMaterializationQueue)?;
+    validate_carrier_cursor(carrier, &head)?;
+    let authority = current_materialization_authority(storage, &head, &rules)?;
+    let _context = outbe_tee::call_context::ContextScope::from_storage(storage)?;
+    let encrypted = outbe_tee::nod_materialization::open_encrypted_nods(&authority, carrier)
+        .map_err(materialization_enclave_error)?;
+    validate_encrypted_materialization(&encrypted, carrier, &authority, head.worldwide_day)?;
+    let issued_at = nod
+        .ocomp_certified_generation(WorldwideDay::new(head.worldwide_day))?
+        .ok_or_else(|| {
+            PrecompileError::Fatal("Nod materialization head projection is missing".into())
+        })?
+        .issued_at;
+    for body in &encrypted {
+        runtime::issue_nod_at(storage, scope, parent, body, issued_at).map_err(|error| {
+            if matches!(&error, PrecompileError::Revert(reason) if reason == &NodFactoryError::NodAlreadyExists.to_string()) {
+                NodFactoryError::DuplicateMaterializedNod.into()
+            } else { error }
+        })?;
+    }
+    finish_materialization(storage, &head, encrypted.len())
+}
+
+fn validate_carrier_cursor(
+    carrier: &ProtectedNodMaterializationV2,
+    head: &NodMaterializationHeadV1,
+) -> Result<()> {
+    if carrier.queue_sequence != head.queue_sequence {
+        return Err(NodFactoryError::StaleMaterializationQueue.into());
+    }
+    if carrier.first_nod_ordinal != head.next_nod_ordinal {
+        return Err(NodFactoryError::StaleMaterializationCursor.into());
+    }
+    Ok(())
+}
+
+fn current_materialization_authority(
+    storage: &StorageHandle<'_>,
+    head: &NodMaterializationHeadV1,
+    rules: &MaterializationRules<'_>,
+) -> Result<outbe_tee::nod_materialization::NodMaterializationAuthorityV2> {
+    let source = outbe_tribute::TributeContract::new(storage.clone())
+        .pre_admission_projection(WorldwideDay::new(head.worldwide_day))?;
+    if !source.is_sealed || source.sealed_collection_root.is_zero() {
+        return Err(NodFactoryError::InvalidMaterializationProof.into());
+    }
+    Ok(
+        outbe_tee::nod_materialization::NodMaterializationAuthorityV2 {
+            chain_id: storage.chain_id()?,
+            head: head
+                .encode_canonical(rules.limits)
+                .map_err(|_| PrecompileError::from(NodFactoryError::InvalidMaterializationProof))?,
+            subtree_height: rules.profile.batch_subtree_height,
+            sealed_tribute_root: source.sealed_collection_root,
+        },
+    )
+}
+
+fn materialization_enclave_error(error: outbe_tee::TransportError) -> PrecompileError {
+    match error {
+        outbe_tee::TransportError::NodMaterializationRejected(_) => {
+            NodFactoryError::InvalidMaterializationProof.into()
+        }
+        other => PrecompileError::Fatal(format!("Nod materialization enclave: {other}")),
+    }
+}
+
+fn validate_encrypted_materialization(
+    encrypted: &[outbe_primitives::nod_encryption::EncryptedNodV2],
+    carrier: &ProtectedNodMaterializationV2,
+    authority: &outbe_tee::nod_materialization::NodMaterializationAuthorityV2,
+    day: u32,
+) -> Result<()> {
+    let valid = !encrypted.is_empty()
+        && encrypted.len() == carrier.encrypted_nods.len()
+        && encrypted.iter().all(|body| {
+            let terms = &body.terms;
+            (terms.chain_id, terms.worldwide_day.value()) == (authority.chain_id, day)
+                && !terms.owner.is_zero()
+                && NodContract::is_issuable_entry(terms.entry_price_minor)
+        });
+    if !valid {
+        return Err(NodFactoryError::InvalidMaterializationProof.into());
+    }
+    Ok(())
+}
+
+fn finish_materialization(
+    storage: &StorageHandle<'_>,
+    head: &NodMaterializationHeadV1,
+    count: usize,
+) -> Result<NodMaterializationOutcomeV1> {
+    let nod = NodContract::new(storage.clone());
+    let worldwide_day = WorldwideDay::new(head.worldwide_day);
+    let action_count = u32::try_from(count).map_err(|_| {
         PrecompileError::Fatal("Nod materialization action count does not fit u32".into())
     })?;
     let next_nod_ordinal = head

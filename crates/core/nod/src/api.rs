@@ -301,3 +301,10 @@ mod cost_tests {
         assert!(settlement_cost_minor(U256::MAX, U256::from(2)).is_err());
     }
 }
+
+/// Internal arithmetic boundary; public bodies and projections retain ciphertext.
+pub fn calculation_amount(item: &NodItemState) -> Result<U256> {
+    crate::enclave_client::read_amount(&item.encrypted).map_err(|error| {
+        outbe_primitives::error::PrecompileError::Fatal(format!("NOD amount read failed: {error}"))
+    })
+}

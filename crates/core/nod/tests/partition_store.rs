@@ -10,18 +10,21 @@ use outbe_primitives::time::WorldwideDay;
 use std::sync::Arc;
 
 fn item(owner: Address, day: u32) -> NodItemState {
-    NodItemState {
-        nod_id: WwdEntityId::from_day_and_digest(WorldwideDay::new(day), [day as u8; 32]),
-        owner,
-        gratis_load_minor: U256::from(11),
-        worldwide_day: WorldwideDay::new(day),
-        league_id: 4,
-        bucket_key: [1; 32].into(),
-        issuance_currency: 840,
-        reference_currency: 840,
-        issued_at: 1_752_534_000,
-        is_settled: false,
-    }
+    outbe_nod::test_support::item(
+        outbe_nod::test_support::NodItemFixture {
+            nod_id: WwdEntityId::from_day_and_digest(WorldwideDay::new(day), [day as u8; 32]),
+            owner,
+            gratis_load_minor: U256::from(11),
+            worldwide_day: WorldwideDay::new(day),
+            league_id: 4,
+            bucket_key: [1; 32].into(),
+            issuance_currency: 840,
+            reference_currency: 840,
+            issued_at: 1_752_534_000,
+            is_settled: false,
+        },
+        U256::ZERO,
+    )
 }
 
 #[test]
@@ -59,6 +62,7 @@ fn exercise_repository(source: Arc<dyn outbe_offchain_storage::PartitionDataSour
         2
     );
     first.owner = other;
+    outbe_nod::test_support::set_terms(&mut first);
     writer.put_nod(&first).unwrap();
     assert_eq!(reader.get(first.nod_id).unwrap().unwrap().owner, other);
     assert_eq!(

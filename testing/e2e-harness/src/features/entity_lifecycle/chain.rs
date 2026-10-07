@@ -23,6 +23,18 @@ pub(crate) fn poll_until(
     }
 }
 
+/// Retry a failed settlement read twice while the body projection applies updates.
+pub(crate) fn settlement_read<T>(mut read: impl FnMut() -> Result<T, String>) -> Result<T, String> {
+    let mut result = read();
+    for attempt in 1..=2 {
+        let Err(error) = &result else { return result };
+        eprintln!("settlement preflight attempt {attempt} failed: {error}; retrying");
+        sleep(Duration::from_secs(2));
+        result = read();
+    }
+    result.map_err(|error| format!("settlement preflight failed after 3 attempts: {error}"))
+}
+
 /// The committee head's timestamp, which the lifecycle measures time against.
 pub(crate) fn head_time(world: &World) -> u64 {
     world
@@ -89,4 +101,53 @@ pub(crate) fn assert_single_event<E: SolEvent>(
         "{} amount mismatch",
         E::SIGNATURE
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::settlement_read;
+
+    #[test]
+    fn settlement_preflight_recovers_without_repeating_a_successful_read() {
+        let mut attempts = 0;
+        let value = settlement_read(|| {
+            attempts += 1;
+            if attempts < 3 {
+                Err("body commitment mismatch".into())
+            } else {
+                Ok(42)
+            }
+        })
+        .unwrap();
+        assert_eq!(value, 42);
+        assert_eq!(attempts, 3);
+    }
+
+    #[test]
+    fn settlement_preflight_stops_after_two_retries_and_keeps_the_error() {
+        let mut attempts = 0;
+        let result: Result<(), String> = settlement_read(|| {
+            attempts += 1;
+            Err(format!("read failed on attempt {attempts}"))
+        });
+        assert_eq!(attempts, 3);
+        assert_eq!(
+            result.unwrap_err(),
+            "settlement preflight failed after 3 attempts: read failed on attempt 3"
+        );
+    }
+
+    #[test]
+    fn settlement_preflight_returns_the_first_success_immediately() {
+        let mut attempts = 0;
+        assert_eq!(
+            settlement_read(|| {
+                attempts += 1;
+                Ok(42)
+            })
+            .unwrap(),
+            42
+        );
+        assert_eq!(attempts, 1);
+    }
 }

@@ -52,6 +52,10 @@ use crate::{
         LocalPayoutTransactionPreparerV1, PayoutSubmissionConfigV1, PayoutTickOutcomeV1,
         SupervisorPayoutSubmitterV1,
     },
+    protected_nod_materialization::{
+        materialization_sources, prepare_protected_materialization,
+        PreparedNodMaterializationStoreV2,
+    },
     result_attestation::LocalResultVoteAttesterV1,
     result_signer::OcompSigner,
     sign_once::SignOnceStore,
@@ -788,9 +792,17 @@ impl EmbeddedOcompDomainV1 {
             .materialization_submission_root
             .join(hex::encode(job_id.as_slice()))
             .join(first_nod_ordinal.to_string());
+        #[cfg(any(test, feature = "test-utils"))]
+        let enclave_context = outbe_tee::nod_materialization::test_support::capture();
+        #[cfg(any(test, feature = "test-utils"))]
+        let tribute_context = outbe_tribute::enclave_client::test_enclave::capture();
         thread::Builder::new()
             .name(format!("ocomp-nod-{}", short_job(job_id)))
             .spawn(move || {
+                #[cfg(any(test, feature = "test-utils"))]
+                let _enclave_scope = enclave_context.install();
+                #[cfg(any(test, feature = "test-utils"))]
+                let _tribute_scope = tribute_context.install();
                 let run = || -> Result<bool, EmbeddedOcompRuntimeErrorV1> {
                     let _submission_permit = submission_gate.acquire()?;
                     let reader = FilesystemCasReader::open(&cas_root, cas_limits)
@@ -817,17 +829,47 @@ impl EmbeddedOcompDomainV1 {
                         &limits,
                     )
                     .map_err(|error| stage("audit NOD materialization plan", error))?;
-                    let built = build_nod_materialization_batch_with_references(
+                    let mut built = build_nod_materialization_batch_with_references(
                         &audit,
                         &head,
                         batch_subtree_height,
                     )
                     .map_err(|error| stage("build NOD materialization batch", error))?;
+                    let inventory_root = input_ref_root
+                        .join(".work")
+                        .join(&job_component)
+                        .join("inventory");
+                    let (sources, source_references) =
+                        materialization_sources(&audit, &input_refs, &built, &inventory_root)
+                            .map_err(|error| stage("authenticate NOD encryption sources", error))?;
+                    built.dependencies.extend(source_references);
+                    crate::nod_materialization::normalize_dependencies(&mut built.dependencies)
+                        .map_err(|error| {
+                            stage("normalize NOD materialization references", error)
+                        })?;
                     let references = MaterializationReferenceStoreV1::open(&reference_root)
                         .map_err(|error| stage("open NOD materialization references", error))?;
                     references
                         .pin_exact(job_id, &built.dependencies)
                         .map_err(|error| stage("pin NOD materialization references", error))?;
+                    let preparation =
+                        PreparedNodMaterializationStoreV2::open(&submission_root, limits)
+                            .map_err(|error| stage("open encrypted NOD preparation", error))?;
+                    let protected = prepare_protected_materialization(
+                        outbe_tee::nod_materialization::NodMaterializationAuthorityV2 {
+                            chain_id,
+                            head: head
+                                .encode_canonical(&limits)
+                                .map_err(|error| stage("encode NOD generation authority", error))?,
+                            subtree_height: batch_subtree_height,
+                            sealed_tribute_root: audit.manifest().sealed_tribute_collection_root,
+                        },
+                        &head,
+                        &built,
+                        sources,
+                        &preparation,
+                    )
+                    .map_err(|error| stage("prepare encrypted NOD materialization", error))?;
                     let rpc = PublicVoteRpcClientV1::new(rpc_url, RPC_MAX_RESPONSE_BYTES)
                         .map_err(|error| stage("open NOD materialization RPC", error))?;
                     let mut submitter = NodMaterializationSubmitterV1::open(
@@ -842,7 +884,7 @@ impl EmbeddedOcompDomainV1 {
                     )
                     .map_err(|error| stage("open NOD materialization submitter", error))?;
                     loop {
-                        match submitter.reconcile(job_id, &built.batch) {
+                        match submitter.reconcile(job_id, &protected) {
                             Ok(NodMaterializationSubmissionOutcomeV1::Pending) => {
                                 thread::sleep(RETRY_INTERVAL);
                             }

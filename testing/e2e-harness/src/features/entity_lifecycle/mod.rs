@@ -18,6 +18,8 @@ pub struct LifecycleLedger {
     pub(crate) verified: usize,
     /// The block and unallocated pool the forfeit is measured from.
     pub(crate) pool_before_forfeit: Option<(u64, alloy_primitives::U256)>,
+    /// Original encrypted NOD event bytes, captured before its body is deleted.
+    pub(crate) nod_before_forfeit: Option<(u64, alloy_primitives::U256, alloy_primitives::Bytes)>,
     pub(crate) mined: Vec<redeem::Mined>,
     pub(crate) redeemed: Vec<redeem::Redeemed>,
 }

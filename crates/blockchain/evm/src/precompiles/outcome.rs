@@ -41,6 +41,9 @@ pub fn map_outbe_precompile_result(
             encode_revert_reason(msg),
             0,
         )),
+        Err(error @ outbe_primitives::error::PrecompileError::BodyReadCorruption(_)) => Ok(
+            PrecompileOutput::revert(actual_gas, encode_revert_reason(error.to_string()), 0),
+        ),
         Err(outbe_primitives::error::PrecompileError::RevertBytes(bytes)) => {
             Ok(PrecompileOutput::revert(actual_gas, bytes, 0))
         }

@@ -6,6 +6,7 @@ use outbe_compressed_entities::{
 use outbe_nod::{NodRepositoryError, NodRepositoryReader};
 use std::{
     collections::BTreeMap,
+    error::Error as _,
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex,
@@ -100,17 +101,13 @@ impl Drop for ExecutionReadBudgetGuard {
     }
 }
 
-type BodyReadObservation = (Namespace, Key, Option<StoredValue>);
-
 fn reader_wrap(
     budgets: Arc<ExecutionReadBudgets>,
-    last_body_read: Arc<Mutex<Option<BodyReadObservation>>>,
 ) -> Arc<dyn Fn(StorageReaderHandle) -> StorageReaderHandle + Send + Sync> {
     Arc::new(move |inner| {
         Arc::new(BudgetedStorageReader {
             inner,
             budgets: budgets.clone(),
-            last_body_read: last_body_read.clone(),
         })
     })
 }
@@ -118,55 +115,122 @@ fn reader_wrap(
 struct BudgetedStorageReader {
     inner: StorageReaderHandle,
     budgets: Arc<ExecutionReadBudgets>,
-    last_body_read: Arc<Mutex<Option<BodyReadObservation>>>,
+}
+
+#[derive(Clone, Copy)]
+struct ReadDiagnostic {
+    operation: &'static str,
+    started: Instant,
+}
+
+impl ReadDiagnostic {
+    fn report(self, stage: &'static str, error: &StorageError) {
+        // Backend messages can contain keys or record contents. Inspect only typed causes.
+        let io = std::iter::successors(error.source(), |cause| (*cause).source())
+            .take(8)
+            .find_map(|cause| cause.downcast_ref::<std::io::Error>());
+        tracing::warn!(
+            target: "offchain_read",
+            operation = self.operation,
+            stage,
+            elapsed_ms = self.started.elapsed().as_millis(),
+            error_kind = ?error.kind(),
+            source_io_kind = ?io.map(std::io::Error::kind),
+            source_os_error = ?io.and_then(std::io::Error::raw_os_error),
+            "Runtime body read failed"
+        );
+    }
+
+    fn failure(self, stage: &'static str, error: StorageError) -> StorageError {
+        self.report(stage, &error);
+        error
+    }
 }
 
 impl BudgetedStorageReader {
     fn run<T: Send + 'static>(
         &self,
+        operation_name: &'static str,
         operation: impl FnOnce(StorageReaderHandle) -> Result<T, StorageError> + Send + 'static,
     ) -> Result<T, StorageError> {
+        let diagnostic = ReadDiagnostic {
+            operation: operation_name,
+            started: Instant::now(),
+        };
         if self.budgets.is_cancelled() {
-            return Err(StorageError::RequestDeadline);
+            return Err(diagnostic.failure("request_cancelled", StorageError::RequestDeadline));
         }
-        let permit = ExecutionReadPermit::acquire()?;
+        let permit = ExecutionReadPermit::acquire()
+            .map_err(|error| diagnostic.failure("capacity", error))?;
+        let result_rx = self.spawn_read(diagnostic, permit, operation)?;
+        let started = Instant::now();
+        loop {
+            if self.budgets.is_cancelled() {
+                return Err(diagnostic.failure("request_cancelled", StorageError::RequestDeadline));
+            }
+            let remaining = Duration::from_secs(1).saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return Err(diagnostic.failure(
+                    "operation_timeout",
+                    StorageError::Unavailable {
+                        source: Box::new(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "execution body read exceeded the one-second MongoDB operation limit",
+                        )),
+                    },
+                ));
+            }
+            match result_rx.recv_timeout(remaining.min(Duration::from_millis(10))) {
+                Ok(result) => {
+                    return result.inspect_err(|error| diagnostic.report("backend", error))
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(diagnostic.failure(
+                        "worker_disconnected",
+                        StorageError::Backend {
+                            source: Box::new(std::io::Error::other(
+                                "execution body read worker exited unexpectedly",
+                            )),
+                        },
+                    ));
+                }
+            }
+        }
+    }
+
+    fn spawn_read<T: Send + 'static>(
+        &self,
+        diagnostic: ReadDiagnostic,
+        permit: ExecutionReadPermit,
+        operation: impl FnOnce(StorageReaderHandle) -> Result<T, StorageError> + Send + 'static,
+    ) -> Result<std::sync::mpsc::Receiver<Result<T, StorageError>>, StorageError> {
         let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
         let inner = self.inner.clone();
         std::thread::Builder::new()
             .name("offchain-read".to_owned())
             .spawn(move || {
                 let _permit = permit;
-                let _ = result_tx.send(operation(inner));
-            })
-            .map_err(|error| StorageError::Unavailable {
-                source: Box::new(error),
-            })?;
-        let started = Instant::now();
-        loop {
-            if self.budgets.is_cancelled() {
-                return Err(StorageError::RequestDeadline);
-            }
-            let remaining = Duration::from_secs(1).saturating_sub(started.elapsed());
-            if remaining.is_zero() {
-                return Err(StorageError::Unavailable {
-                    source: Box::new(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut,
-                        "execution body read exceeded the one-second MongoDB operation limit",
-                    )),
-                });
-            }
-            match result_rx.recv_timeout(remaining.min(Duration::from_millis(10))) {
-                Ok(result) => return result,
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err(StorageError::Backend {
-                        source: Box::new(std::io::Error::other(
-                            "execution body read worker exited unexpectedly",
-                        )),
-                    });
+                if let Err(result) = result_tx.send(operation(inner)) {
+                    tracing::warn!(
+                        target: "offchain_read",
+                        operation = diagnostic.operation,
+                        stage = "completed_after_receiver_dropped",
+                        elapsed_ms = diagnostic.started.elapsed().as_millis(),
+                        error_kind = ?result.0.as_ref().err().map(StorageError::kind),
+                        "Runtime body read worker completed after its caller stopped waiting"
+                    );
                 }
-            }
-        }
+            })
+            .map_err(|error| {
+                diagnostic.failure(
+                    "spawn",
+                    StorageError::Unavailable {
+                        source: Box::new(error),
+                    },
+                )
+            })?;
+        Ok(result_rx)
     }
 }
 
@@ -177,18 +241,7 @@ impl StorageReader for BudgetedStorageReader {
         key: &Key,
     ) -> Result<Option<StoredValue>, StorageError> {
         let key = key.clone();
-        let diagnostic = self.last_body_read.clone();
-        self.run(move |inner| {
-            let result = inner.get_record(namespace.clone(), &key);
-            if matches!(namespace.as_str(), "nods" | "nod_buckets" | "tributes") {
-                if let Ok(value) = &result {
-                    if let Ok(mut last) = diagnostic.lock() {
-                        *last = Some((namespace, key, value.clone()));
-                    }
-                }
-            }
-            result
-        })
+        self.run("get_record", move |inner| inner.get_record(namespace, &key))
     }
 
     fn get_records(
@@ -197,7 +250,9 @@ impl StorageReader for BudgetedStorageReader {
         keys: &[Key],
     ) -> Result<Vec<Option<StoredValue>>, StorageError> {
         let keys = keys.to_vec();
-        self.run(move |inner| inner.get_records(namespace, &keys))
+        self.run("get_records", move |inner| {
+            inner.get_records(namespace, &keys)
+        })
     }
 
     fn scan_prefix(
@@ -208,7 +263,7 @@ impl StorageReader for BudgetedStorageReader {
         let prefix = request.prefix().to_vec();
         let after = request.after().cloned();
         let limit = request.limit();
-        self.run(move |inner| {
+        self.run("scan_prefix", move |inner| {
             let request = ScanRequest::new(&prefix, after.as_ref(), limit)?;
             inner.scan_prefix(namespace, request)
         })
@@ -227,7 +282,6 @@ pub struct RuntimeBodyReaders {
     nod: NodRepositoryReader,
     failure_sender: Option<tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>>,
     budgets: Arc<ExecutionReadBudgets>,
-    last_body_read: Arc<Mutex<Option<BodyReadObservation>>>,
     days: Option<DayDatabaseRoute>,
 }
 
@@ -273,14 +327,12 @@ impl RuntimeBodyReaders {
         days: Option<DayDatabaseRoute>,
     ) -> Self {
         let budgets = Arc::new(ExecutionReadBudgets::default());
-        let last_body_read = Arc::new(Mutex::new(None));
         let raw_storage = storage.clone();
         let (tribute, nod) = match &days {
             None => {
                 let budgeted: StorageReaderHandle = Arc::new(BudgetedStorageReader {
                     inner: storage,
                     budgets: budgets.clone(),
-                    last_body_read: last_body_read.clone(),
                 });
                 (
                     TributeRepositoryReader::new(budgeted.clone()),
@@ -288,7 +340,7 @@ impl RuntimeBodyReaders {
                 )
             }
             Some(route) => {
-                let wrap = reader_wrap(budgets.clone(), last_body_read.clone());
+                let wrap = reader_wrap(budgets.clone());
                 (
                     TributeRepositoryReader::with_days(
                         route.durable_reader.clone(),
@@ -311,7 +363,6 @@ impl RuntimeBodyReaders {
             nod,
             failure_sender,
             budgets,
-            last_body_read,
             days,
         }
     }
@@ -392,45 +443,10 @@ impl RuntimeBodyReaders {
                 self.report_unavailable();
             }
             outbe_primitives::error::PrecompileError::BodyReadCorruption(message) => {
-                let body_observation = self.last_body_read.lock().map(|last| {
-                    last.as_ref().map(|(namespace, key, record)| {
-                        format!(
-                            "namespace={} key=0x{} record={:?}",
-                            namespace.as_str(),
-                            alloy_primitives::hex::encode(key.as_bytes()),
-                            record.as_ref().map(|record| (
-                                alloy_primitives::hex::encode(record.value.as_bytes()),
-                                &record.metadata,
-                            )),
-                        )
-                    })
-                });
-                let body_observation = format!("{body_observation:?}");
-                // This is a post-detection observation, not proof of the checkpoint
-                // at the preceding body read. Keep the original failure even if
-                // collecting this bounded diagnostic fails.
-                let diagnostic = BudgetedStorageReader {
-                    inner: self.storage.clone(),
-                    budgets: self.budgets.clone(),
-                    last_body_read: self.last_body_read.clone(),
-                }
-                .run(|storage| {
-                    let namespace = crate::state_namespace()
-                        .map_err(|error| StorageError::Corruption(error.to_string()))?;
-                    let key = crate::state_key()
-                        .map_err(|error| StorageError::Corruption(error.to_string()))?;
-                    Ok(storage.get_record(namespace, &key)?.map(|record| {
-                        format!(
-                            "state={:?} raw_state=0x{} metadata={:?}",
-                            crate::decode_state(record.value.as_bytes()),
-                            alloy_primitives::hex::encode(record.value.as_bytes()),
-                            record.metadata,
-                        )
-                    }))
-                });
-                self.report_fatal(
-                    ProjectionFailureClass::CorruptBody,
-                    format!("{message}; [CE_BODY_DIAGNOSTIC] last_body_read={body_observation} projection_after_detection={diagnostic:?}"),
+                tracing::warn!(
+                    target: "offchain_read",
+                    reason = %message,
+                    "Body read failed. The precompile returns a revert."
                 );
             }
             _ => {}

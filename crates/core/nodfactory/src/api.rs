@@ -1,9 +1,11 @@
 //! Cross-module NodFactory API.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
-use outbe_nod::schema::NodIssueParams;
-use outbe_ocomp_protocol::{nod_materialization::NodMaterializationBatchV1, SchemaLimits};
+#[cfg(any(test, feature = "test-utils"))]
+use outbe_ocomp_protocol::nod_materialization::NodMaterializationBatchV1;
+use outbe_ocomp_protocol::{nod_materialization::ProtectedNodMaterializationV2, SchemaLimits};
+use outbe_primitives::nod_encryption::EncryptedNodV2;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::runtime;
@@ -17,9 +19,9 @@ pub fn issue_nod(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    params: &NodIssueParams,
+    encrypted: &EncryptedNodV2,
 ) -> Result<WwdEntityId> {
-    runtime::issue_nod(storage, scope, parent, params)
+    runtime::issue_nod(storage, scope, parent, encrypted)
 }
 
 pub fn mine_gratis(
@@ -27,11 +29,12 @@ pub fn mine_gratis(
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
     request: MineGratisRequest,
-) -> Result<U256> {
+) -> Result<Bytes> {
     runtime::mine_gratis(storage, scope, parent, request)
 }
 
 /// Authorizes and atomically applies one canonical certified-NOD batch.
+#[cfg(any(test, feature = "test-utils"))]
 pub fn materialize_certified_nods(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
@@ -51,6 +54,41 @@ pub fn materialize_certified_nods(
     crate::materialization::materialize_certified_nods_authorized(
         storage, scope, parent, batch, profile, limits,
     )
+}
+
+/// A protected carrier and the schema limits used to validate it.
+pub struct ProtectedMaterializationRequest<'a> {
+    pub carrier: &'a ProtectedNodMaterializationV2,
+    pub limits: &'a SchemaLimits,
+}
+
+/// Authorizes and atomically materializes a protected encrypted batch.
+pub fn materialize_encrypted_certified_nods(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    caller: Address,
+    request: ProtectedMaterializationRequest<'_>,
+) -> Result<NodMaterializationOutcomeV1> {
+    let ProtectedMaterializationRequest { carrier, limits } = request;
+    crate::materialization::authorize_materializer(storage.clone(), caller)?;
+    let profile = outbe_chain_constants::NodMaterializationProfileV1 {
+        batch_subtree_height: outbe_chain_constants::get_nod_materialization_batch_subtree_height(),
+        retry_interval_blocks: outbe_chain_constants::get_nod_materialization_retry_interval_blocks(
+        ),
+        max_attempts_per_block:
+            outbe_chain_constants::get_nod_materialization_max_attempts_per_block(),
+    };
+    storage.clone().with_checkpoint(|| {
+        crate::materialization::consume_materialization_attempt(storage, profile)?;
+        crate::materialization::materialize_protected_after_attempt(
+            storage,
+            scope,
+            parent,
+            carrier,
+            crate::materialization::MaterializationRules { profile, limits },
+        )
+    })
 }
 
 /// Pays a qualified or called Nod for later mining.
