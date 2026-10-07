@@ -1433,6 +1433,7 @@ mod tests {
             name: "binance".to_owned(),
             rest: String::new(),
             websocket: format!("ws://{address}"),
+            redstone_api_key: String::new(),
         };
         let pairs = vec![("ETH".to_owned(), "840".to_owned())];
         let provider = StreamingProvider::new(

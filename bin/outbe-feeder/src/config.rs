@@ -110,6 +110,10 @@ pub struct ProviderEndpointConfig {
     /// Exchange market-stream endpoint. Empty selects the exchange default.
     #[serde(default)]
     pub websocket: String,
+    /// RedStone authenticated-gateway key; only the `redstone` endpoint
+    /// accepts it and requires it.
+    #[serde(default)]
+    pub redstone_api_key: String,
 }
 
 /// Deviation threshold for outlier filtering.
@@ -152,6 +156,7 @@ impl FeederConfig {
         "mexc",
         "coinbase",
         "mock_http",
+        "redstone",
         "uniswap",
         "pancakeswap",
     ];
@@ -262,6 +267,15 @@ impl FeederConfig {
                     "duplicate provider endpoint '{}'",
                     endpoint.name
                 ));
+            }
+            if !endpoint.redstone_api_key.is_empty() && endpoint.name != "redstone" {
+                return Err(eyre::eyre!(
+                    "provider '{}' does not take redstone_api_key",
+                    endpoint.name
+                ));
+            }
+            if endpoint.name == "redstone" && endpoint.redstone_api_key.trim().is_empty() {
+                return Err(eyre::eyre!("provider 'redstone' requires redstone_api_key"));
             }
             if !endpoint.websocket.is_empty() {
                 if !matches!(
@@ -442,6 +456,7 @@ mod tests {
             name: "mock_http".to_string(),
             rest: "http://localhost:8000".to_string(),
             websocket: String::new(),
+            redstone_api_key: String::new(),
         });
         cfg.currency_pairs.push(CurrencyPairConfig {
             base: "COEN".to_string(),
@@ -458,6 +473,7 @@ mod tests {
             name: "binance".to_string(),
             rest: String::new(),
             websocket: "wss://stream.binance.com:9443/ws".to_string(),
+            redstone_api_key: String::new(),
         });
         assert!(cfg.validate().is_ok());
     }
@@ -469,6 +485,7 @@ mod tests {
             name: "mock_http".to_string(),
             rest: "http://localhost:8000".to_string(),
             websocket: "ws://localhost:8001".to_string(),
+            redstone_api_key: String::new(),
         });
         assert!(cfg
             .validate()
@@ -485,6 +502,7 @@ mod tests {
                 name: "binance".to_string(),
                 rest: String::new(),
                 websocket: String::new(),
+                redstone_api_key: String::new(),
             });
         }
         assert!(cfg

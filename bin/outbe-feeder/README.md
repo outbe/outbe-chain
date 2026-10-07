@@ -88,6 +88,7 @@ threshold = "2.0"
 | `provider_endpoints[].name` | only endpoint-backed providers | Provider endpoint name |
 | `provider_endpoints[].rest` | only endpoint-backed providers | Provider REST base URL |
 | `provider_endpoints[].websocket` | no | Exchange market-stream endpoint override (`ws://`, `wss://`, or a host); omitted uses the exchange default |
+| `provider_endpoints[].redstone_api_key` | only `redstone` | RedStone authenticated-gateway key, one per validator |
 | `dex_providers` | only DEX sources | Explicit RPC, network and pool configuration; see [DEX providers](#dex-providers) |
 | `deviation_thresholds[].base` | no | Asset to apply threshold to |
 | `deviation_thresholds[].threshold` | no | Max sigma deviation as an exact decimal string (default: `"2.0"`) |
@@ -100,7 +101,7 @@ At startup, the feeder validates:
 - `validator_address` is a valid 20-byte hex address
 - Each on-chain pair has at least 1 external source market
 - ISO markets use `COEN/ISO`; reverse `ISO/COEN` configuration is rejected
-- All provider names are known: `mock`, `mock_http`, `pyth`, `chainlink`, `binance`, `kraken`, `okx`, `gate`, `huobi`, `mexc`, `coinbase`, `uniswap`, `pancakeswap`
+- All provider names are known: `mock`, `mock_http`, `pyth`, `chainlink`, `redstone`, `binance`, `kraken`, `okx`, `gate`, `huobi`, `mexc`, `coinbase`, `uniswap`, `pancakeswap`
 - WebSocket endpoints are only accepted for streaming exchange providers
 - Provider endpoint names are unique
 
@@ -120,6 +121,7 @@ volume-weighted mean rounded down.
 | `mock_http` | Working | Configured REST endpoint compatible with the migrated Cosmos test price server |
 | `pyth` | Working | Pyth Hermes REST API for supported BTC/ETH feeds |
 | `chainlink` | Working | CryptoCompare REST API used as the Chainlink-compatible data source |
+| `redstone` | Implemented | RedStone authenticated gateway: USD-quoted feeds, median of the 3 registered signers closest to the median |
 | `binance` | Working | Binance WebSocket ticker/candle streams with REST bootstrap fallback |
 | `kraken` | Working | Kraken WebSocket ticker/candle streams with REST bootstrap fallback |
 | `okx` | Working | OKX WebSocket ticker/candle streams with REST bootstrap fallback |
@@ -137,6 +139,35 @@ their configured pairs, cache the latest ticker and recent candles, answer
 protocol heartbeats, and reconnect with automatic resubscription. Until a
 stream has produced data for a configured pair, its existing REST adapter is
 used as bootstrap fallback.
+
+### RedStone provider
+
+`redstone` reads signed data packages from the RedStone authenticated gateway
+(`/v2/data-packages/latest-by-data-feeds/redstone-primary-prod`). It needs a
+`[[provider_endpoints]]` entry named `redstone` with `redstone_api_key`
+(issued by RedStone, one per validator) and optionally `rest` to override the
+gateway URL. Feeds are USD quoted, so a source must use quote `840` or `USD`;
+the base symbol is the RedStone feed id (`USDC`, `USDT`, `ETH`).
+
+Selection follows the RedStone SDK defaults. For each feed the provider keeps
+the packages that share the newest timestamp and come from a signer registered
+for `redstone-primary-prod` (the registry list is compiled in and dated in
+`provider/redstone.rs`), requires three distinct signers, takes the three
+values closest to the median, and publishes their median. Packages older than
+60 seconds or more than 30 seconds in the future reject the feed. Package
+signatures are not verified; the gateway is trusted like Pyth Hermes.
+RedStone lists no COEN feed.
+
+```toml
+[[provider_endpoints]]
+name = "redstone"
+redstone_api_key = "REPLACE_WITH_REDSTONE_API_KEY"
+
+[[currency_pairs.sources]]
+provider = "redstone"
+base = "USDC"
+quote = "840"
+```
 
 ### DEX providers
 
