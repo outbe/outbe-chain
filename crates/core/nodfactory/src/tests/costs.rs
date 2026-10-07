@@ -79,10 +79,12 @@ fn a_dust_cost_nod_requires_erc20_payment_and_quotes_one_minor_unit() {
                 &storage,
                 scope,
                 parent,
-                input.owner,
-                nod_id,
-                PAYMENT_ASSET,
-                U256::ZERO,
+                api::SettleNodRequest {
+                    caller: input.owner,
+                    nod_id,
+                    asset: PAYMENT_ASSET,
+                    snapshot_id: U256::ZERO,
+                },
             )
         })
         .unwrap_err();

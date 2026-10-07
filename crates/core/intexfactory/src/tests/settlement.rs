@@ -293,10 +293,12 @@ fn erc20_settle_refuses_a_transfer_that_moves_nothing_and_books_no_units() {
             &s,
             sid(7),
             owner(),
-            owner(),
             U256::from(2),
-            payment_token(),
-            U256::ZERO,
+            runtime::SettlementPayment {
+                settler: owner(),
+                asset: payment_token(),
+                snapshot_id: U256::ZERO,
+            },
         )
         .unwrap_err();
         assert!(err.to_string().contains("unexpected amount"), "{err}");
@@ -311,10 +313,12 @@ fn erc20_settle_refuses_a_token_answering_false() {
             &s,
             sid(7),
             owner(),
-            owner(),
             U256::from(2),
-            payment_token(),
-            U256::ZERO,
+            runtime::SettlementPayment {
+                settler: owner(),
+                asset: payment_token(),
+                snapshot_id: U256::ZERO,
+            },
         )
         .unwrap_err();
         assert!(err.to_string().contains("token call failed"), "{err}");
@@ -330,10 +334,12 @@ fn erc20_settle_rejects_an_unaccepted_asset_before_any_transfer() {
             &s,
             sid(7),
             owner(),
-            owner(),
             U256::from(1),
-            foreign,
-            U256::ZERO,
+            runtime::SettlementPayment {
+                settler: owner(),
+                asset: foreign,
+                snapshot_id: U256::ZERO
+            }
         )
         .is_err());
         assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
@@ -351,10 +357,12 @@ fn settle_rejects_zero_amount() {
             &s,
             sid(7),
             owner(),
-            owner(),
             U256::ZERO,
-            payment_token(),
-            U256::ZERO,
+            runtime::SettlementPayment {
+                settler: owner(),
+                asset: payment_token(),
+                snapshot_id: U256::ZERO
+            }
         )
         .is_err());
     });
@@ -367,10 +375,12 @@ fn settle_rejects_missing_series() {
             &s,
             sid(7),
             owner(),
-            owner(),
             U256::from(1),
-            payment_token(),
-            U256::ZERO,
+            runtime::SettlementPayment {
+                settler: owner(),
+                asset: payment_token(),
+                snapshot_id: U256::ZERO
+            }
         )
         .is_err());
     });
@@ -392,10 +402,12 @@ fn settle_rejects_an_unqualified_series() {
             &s,
             sid(7),
             owner(),
-            owner(),
             U256::from(1),
-            payment_token(),
-            U256::ZERO,
+            runtime::SettlementPayment {
+                settler: owner(),
+                asset: payment_token(),
+                snapshot_id: U256::ZERO,
+            },
         )
         .unwrap_err();
         assert!(err.to_string().to_lowercase().contains("settleable"));
@@ -425,10 +437,12 @@ fn settle_rejects_expired_deadline() {
             &s,
             sid(7),
             owner(),
-            owner(),
             U256::from(1),
-            payment_token(),
-            U256::ZERO,
+            runtime::SettlementPayment {
+                settler: owner(),
+                asset: payment_token(),
+                snapshot_id: U256::ZERO,
+            },
         )
         .unwrap_err();
         assert!(err.to_string().to_lowercase().contains("deadline"));
@@ -453,10 +467,12 @@ fn a_qualified_series_called_past_its_deadline_stays_closed() {
             &s,
             sid(7),
             owner(),
-            owner(),
             U256::from(1),
-            payment_token(),
-            U256::ZERO,
+            runtime::SettlementPayment {
+                settler: owner(),
+                asset: payment_token(),
+                snapshot_id: U256::ZERO,
+            },
         )
         .unwrap_err();
         assert!(err.to_string().to_lowercase().contains("deadline"));
@@ -585,14 +601,34 @@ fn no_auth() -> outbe_promisfactory::api::ModifyAuth {
 #[test]
 fn mine_promis_rejects_zero_amount() {
     with_factory(|s| {
-        assert!(runtime::mine_promis(&s, sid(7), owner(), U256::ZERO, 0, no_auth()).is_err());
+        assert!(runtime::mine_promis(
+            &s,
+            sid(7),
+            owner(),
+            U256::ZERO,
+            runtime::MiningProof {
+                nonce: 0,
+                auth: no_auth()
+            }
+        )
+        .is_err());
     });
 }
 
 #[test]
 fn mine_promis_rejects_missing_series() {
     with_factory(|s| {
-        assert!(runtime::mine_promis(&s, sid(7), owner(), U256::from(1), 0, no_auth()).is_err());
+        assert!(runtime::mine_promis(
+            &s,
+            sid(7),
+            owner(),
+            U256::from(1),
+            runtime::MiningProof {
+                nonce: 0,
+                auth: no_auth()
+            }
+        )
+        .is_err());
     });
 }
 
@@ -627,7 +663,16 @@ fn a_mining_that_fails_after_any_write_changes_nothing() {
 
         storage.fail_after_mutation_at(failure_at);
         let mined = StorageHandle::enter(&mut storage, |s| {
-            runtime::mine_promis(&s, sid(7), owner(), U256::ONE, nonce, no_auth())
+            runtime::mine_promis(
+                &s,
+                sid(7),
+                owner(),
+                U256::ONE,
+                runtime::MiningProof {
+                    nonce,
+                    auth: no_auth(),
+                },
+            )
         });
         if mined.is_ok() {
             continue;

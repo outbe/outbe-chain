@@ -1,9 +1,6 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::math::{
-    reference_price,
-    tree_math::{self, BinTreeStorage},
-};
+use outbe_primitives::math::{reference_price, tree_math};
 
 use crate::{
     constants::{BIN_STEP_BP, TOKEN_NAME, TOKEN_SYMBOL},
@@ -218,21 +215,15 @@ impl GemContract<'_> {
         Ok(true)
     }
 
-    fn place_in_expiry_hour(&mut self, gem_id: U256, day: u32) -> Result<()> {
-        let slot = self.expiry_bucket_len.read(&day)?;
-        self.expiry_bucket_at
-            .write(&Self::hour_slot_key(day, slot), gem_id)?;
-        self.expiry_bucket_len.write(&day, slot.saturating_add(1))?;
-        self.called_bucket_slot
-            .write(&gem_id, Self::packed_slot(day, slot))?;
-
-        let live = self.expiry_bucket_live.read(&day)?;
-        self.expiry_bucket_live
-            .write(&day, live.saturating_add(1))?;
-        if live == 0 {
-            tree_math::add(&ExpiryDayTree(&*self), day)?;
-        }
-        Ok(())
+    outbe_common::expiry_queue_placement! {
+        fn place_in_expiry_hour(entry: U256);
+        len: expiry_bucket_len,
+        at: expiry_bucket_at,
+        slot_key: Self::hour_slot_key,
+        slot_of: called_bucket_slot,
+        packed_slot: Self::packed_slot,
+        live: expiry_bucket_live,
+        tree: ExpiryDayTree,
     }
 
     pub(crate) fn remove_called(&mut self, gem_id: U256) -> Result<()> {
@@ -603,58 +594,20 @@ impl GemContract<'_> {
 /// Buckets holding a called gem whose notice period has not closed yet.
 pub(crate) struct ExpiryDayTree<'a, 'storage>(pub(crate) &'a GemContract<'storage>);
 
-impl BinTreeStorage for ExpiryDayTree<'_, '_> {
-    fn read_root(&self) -> Result<U256> {
-        self.0.expiry_tree_root.read()
-    }
-    fn write_root(&self, value: U256) -> Result<()> {
-        self.0.expiry_tree_root.write(value)
-    }
-    fn read_mid(&self, key: u32) -> Result<U256> {
-        self.0.expiry_tree_mid.read(&key)
-    }
-    fn write_mid(&self, key: u32, value: U256) -> Result<()> {
-        self.0.expiry_tree_mid.write(&key, value)
-    }
-    fn read_leaf(&self, key: u32) -> Result<U256> {
-        self.0.expiry_tree_leaf.read(&key)
-    }
-    fn write_leaf(&self, key: u32, value: U256) -> Result<()> {
-        self.0.expiry_tree_leaf.write(&key, value)
-    }
-}
+outbe_primitives::impl_bin_tree_storage!(ExpiryDayTree {
+    root: expiry_tree_root,
+    mid: expiry_tree_mid,
+    leaf: expiry_tree_leaf,
+});
 
 /// The uncalled buckets of one reference currency, by call price.
 pub(crate) struct BucketBins<'a, 'storage>(pub(crate) &'a GemContract<'storage>, pub(crate) u16);
 
-impl BinTreeStorage for BucketBins<'_, '_> {
-    fn read_root(&self) -> Result<U256> {
-        self.0.bucket_bin_tree_root.read(&self.1)
-    }
-    fn write_root(&self, value: U256) -> Result<()> {
-        self.0.bucket_bin_tree_root.write(&self.1, value)
-    }
-    fn read_mid(&self, key: u32) -> Result<U256> {
-        self.0
-            .bucket_bin_tree_mid
-            .read(&GemContract::scoped(self.1, key))
-    }
-    fn write_mid(&self, key: u32, value: U256) -> Result<()> {
-        self.0
-            .bucket_bin_tree_mid
-            .write(&GemContract::scoped(self.1, key), value)
-    }
-    fn read_leaf(&self, key: u32) -> Result<U256> {
-        self.0
-            .bucket_bin_tree_leaf
-            .read(&GemContract::scoped(self.1, key))
-    }
-    fn write_leaf(&self, key: u32, value: U256) -> Result<()> {
-        self.0
-            .bucket_bin_tree_leaf
-            .write(&GemContract::scoped(self.1, key), value)
-    }
-}
+outbe_primitives::impl_bin_tree_storage!(BucketBins scoped by GemContract::scoped {
+    root: bucket_bin_tree_root,
+    mid: bucket_bin_tree_mid,
+    leaf: bucket_bin_tree_leaf,
+});
 
 /// A called bucket's entry in the expiry queue, which otherwise holds gem ids.
 pub(crate) fn bucket_entry(bucket: B256) -> U256 {

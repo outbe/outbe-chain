@@ -30,27 +30,6 @@ impl MetadosisContract<'_> {
     pub fn record_ocomp_finality(
         &mut self,
         intent_id: B256,
-        finalized_request_block_hash: B256,
-        finalized_request_state_root: B256,
-        finality_recorded_height: u64,
-        response_window_blocks: u64,
-        schema_limits: &SchemaLimits,
-    ) -> Result<OcompFinalizedJobV1> {
-        self.record_finality_anchor(
-            intent_id,
-            FinalityAnchor {
-                request_block_hash: finalized_request_block_hash,
-                request_state_root: finalized_request_state_root,
-                recorded_height: finality_recorded_height,
-                response_window_blocks,
-            },
-            schema_limits,
-        )
-    }
-
-    fn record_finality_anchor(
-        &mut self,
-        intent_id: B256,
         anchor: FinalityAnchor,
         schema_limits: &SchemaLimits,
     ) -> Result<OcompFinalizedJobV1> {
@@ -97,11 +76,11 @@ impl MetadosisContract<'_> {
 }
 
 #[derive(Clone, Copy)]
-struct FinalityAnchor {
-    request_block_hash: B256,
-    request_state_root: B256,
-    recorded_height: u64,
-    response_window_blocks: u64,
+pub(crate) struct FinalityAnchor {
+    pub(crate) request_block_hash: B256,
+    pub(crate) request_state_root: B256,
+    pub(crate) recorded_height: u64,
+    pub(crate) response_window_blocks: u64,
 }
 
 fn finalized_binding(

@@ -248,8 +248,7 @@ fn apply(
     world.enter(|storage, scope, parent| {
         crate::materialization::materialize_certified_nods_authorized(
             &storage,
-            scope,
-            parent,
+            ExecutionReaders { scope, parent },
             batch,
             profile(),
             &poc_schema_limits(),
@@ -274,8 +273,7 @@ fn the_public_selector_rejects_a_caller_without_the_active_ocomp_role() {
         .enter(|storage, scope, parent| {
             api::materialize_certified_nods(
                 &storage,
-                scope,
-                parent,
+                ExecutionReaders { scope, parent },
                 Address::repeat_byte(0xee),
                 &batch(&population, 0, 8),
                 &poc_schema_limits(),
@@ -319,8 +317,7 @@ fn the_public_selector_accepts_only_the_delegate_of_an_active_validator() {
         .enter(|storage, scope, parent| {
             api::materialize_certified_nods(
                 &storage,
-                scope,
-                parent,
+                ExecutionReaders { scope, parent },
                 delegate,
                 &batch(&population, 0, 8),
                 &poc_schema_limits(),

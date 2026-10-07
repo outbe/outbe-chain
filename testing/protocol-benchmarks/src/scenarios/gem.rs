@@ -224,14 +224,16 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
     let output = StorageHandle::enter(&mut provider, |storage| match prepared.path {
         PreparedGemPath::Direct(gem_type) => outbe_gemfactory::api::issue_gem(
             &storage,
-            ALICE,
-            gem_type,
-            U256::from(10) * six_decimal_unit(),
-            840,
-            840,
-            // The reward path resolves the price for the gem's own day. The
-            // benchmark measures the mint, so the seeded rate stands in for it.
-            U256::from(2) * six_decimal_unit(),
+            outbe_gemfactory::GemIssueParams {
+                owner: ALICE,
+                gem_type,
+                promis_load: U256::from(10) * six_decimal_unit(),
+                issuance_currency: 840,
+                reference_currency: 840,
+                // The reward path resolves the price for the gem's own day. The
+                // benchmark measures the mint, so the seeded rate stands in for it.
+                entry_price: U256::from(2) * six_decimal_unit(),
+            },
         )
         .map_err(|error| error.to_string()),
         PreparedGemPath::Position => outbe_gemfactory::api::issue_gem_position(

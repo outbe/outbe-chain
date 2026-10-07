@@ -2,13 +2,14 @@
 
 use alloy_primitives::U256;
 use outbe_primitives::error::Result;
+use outbe_primitives::storage::dsl::{Map, Value};
 use outbe_primitives::time::WorldwideDay;
 
 use crate::schema::{
     AuctionConfig, AuctionStage, BidData, DesisContract, IntexCallTrigger, ReferenceCurrencyPrice,
 };
 
-impl DesisContract<'_> {
+impl<'storage> DesisContract<'storage> {
     // --- AuctionStage ---
 
     pub(crate) fn read_stage(&self, worldwide_day: WorldwideDay) -> Result<AuctionStage> {
@@ -194,66 +195,38 @@ impl DesisContract<'_> {
 
     /// Append a day to the gate-active set (idempotent).
     pub(crate) fn push_gate_active(&mut self, worldwide_day: WorldwideDay) -> Result<()> {
-        if self.gate_active_slot.read(&worldwide_day)? != 0 {
-            return Ok(());
-        }
-        let count = self.gate_active_count.read()?;
-        self.gate_active_at.write(&count, worldwide_day.value())?;
-        // store index + 1 so that 0 unambiguously means "absent".
-        self.gate_active_slot.write(&worldwide_day, count + 1)?;
-        self.gate_active_count.write(count + 1)?;
-        Ok(())
+        self.gate_active().push(worldwide_day)
     }
 
     /// Remove a day from the gate-active set via swap-remove (idempotent).
     pub(crate) fn remove_gate_active(&mut self, worldwide_day: WorldwideDay) -> Result<()> {
-        let slot1 = self.gate_active_slot.read(&worldwide_day)?;
-        if slot1 == 0 {
-            return Ok(());
-        }
-        let idx = slot1 - 1;
-        let last = self.gate_active_count.read()? - 1;
-        if idx != last {
-            let last_day: WorldwideDay = self.gate_active_at.read(&last)?.into();
-            self.gate_active_at.write(&idx, last_day.value())?;
-            self.gate_active_slot.write(&last_day, idx + 1)?;
-        }
-        self.gate_active_at.clear(&last)?;
-        self.gate_active_slot.clear(&worldwide_day)?;
-        self.gate_active_count.write(last)?;
-        Ok(())
+        self.gate_active().remove(worldwide_day)
     }
 
     /// Append a day to the schedule-active set (idempotent).
     pub(crate) fn push_sched_active(&mut self, worldwide_day: WorldwideDay) -> Result<()> {
-        if self.sched_active_slot.read(&worldwide_day)? != 0 {
-            return Ok(());
-        }
-        let count = self.sched_active_count.read()?;
-        self.sched_active_at.write(&count, worldwide_day.value())?;
-        // store index + 1 so that 0 unambiguously means "absent".
-        self.sched_active_slot.write(&worldwide_day, count + 1)?;
-        self.sched_active_count.write(count + 1)?;
-        Ok(())
+        self.sched_active().push(worldwide_day)
     }
 
     /// Remove a day from the schedule-active set via swap-remove (idempotent).
     pub(crate) fn remove_sched_active(&mut self, worldwide_day: WorldwideDay) -> Result<()> {
-        let slot1 = self.sched_active_slot.read(&worldwide_day)?;
-        if slot1 == 0 {
-            return Ok(());
+        self.sched_active().remove(worldwide_day)
+    }
+
+    fn gate_active(&self) -> DenseDaySet<'_, 'storage> {
+        DenseDaySet {
+            count: &self.gate_active_count,
+            at: &self.gate_active_at,
+            slot: &self.gate_active_slot,
         }
-        let idx = slot1 - 1;
-        let last = self.sched_active_count.read()? - 1;
-        if idx != last {
-            let last_day: WorldwideDay = self.sched_active_at.read(&last)?.into();
-            self.sched_active_at.write(&idx, last_day.value())?;
-            self.sched_active_slot.write(&last_day, idx + 1)?;
+    }
+
+    fn sched_active(&self) -> DenseDaySet<'_, 'storage> {
+        DenseDaySet {
+            count: &self.sched_active_count,
+            at: &self.sched_active_at,
+            slot: &self.sched_active_slot,
         }
-        self.sched_active_at.clear(&last)?;
-        self.sched_active_slot.clear(&worldwide_day)?;
-        self.sched_active_count.write(last)?;
-        Ok(())
     }
 
     // --- last cleared series ---
@@ -275,5 +248,44 @@ impl DesisContract<'_> {
 
     pub(crate) fn write_last_clearing_issued_count(&self, count: u32) -> Result<()> {
         self.last_clearing_issued_count.write(count)
+    }
+}
+
+/// A dense set of days: `at` lists them by index, `slot` maps a day to its index + 1.
+struct DenseDaySet<'a, 'storage> {
+    count: &'a Value<'storage, u32>,
+    at: &'a Map<'storage, u32, u32>,
+    slot: &'a Map<'storage, WorldwideDay, u32>,
+}
+
+impl DenseDaySet<'_, '_> {
+    fn push(&self, worldwide_day: WorldwideDay) -> Result<()> {
+        if self.slot.read(&worldwide_day)? != 0 {
+            return Ok(());
+        }
+        let count = self.count.read()?;
+        self.at.write(&count, worldwide_day.value())?;
+        // store index + 1 so that 0 unambiguously means "absent".
+        self.slot.write(&worldwide_day, count + 1)?;
+        self.count.write(count + 1)?;
+        Ok(())
+    }
+
+    fn remove(&self, worldwide_day: WorldwideDay) -> Result<()> {
+        let slot1 = self.slot.read(&worldwide_day)?;
+        if slot1 == 0 {
+            return Ok(());
+        }
+        let idx = slot1 - 1;
+        let last = self.count.read()? - 1;
+        if idx != last {
+            let last_day: WorldwideDay = self.at.read(&last)?.into();
+            self.at.write(&idx, last_day.value())?;
+            self.slot.write(&last_day, idx + 1)?;
+        }
+        self.at.clear(&last)?;
+        self.slot.clear(&worldwide_day)?;
+        self.count.write(last)?;
+        Ok(())
     }
 }

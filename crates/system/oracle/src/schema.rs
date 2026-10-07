@@ -10,6 +10,7 @@ pub use outbe_primitives::units::SCALE_1E18;
 /// - the registry's 1-based enumeration index in `pair_by_index`.
 /// - the 0-based entry index in the per-vote and per-snapshot columns,
 ///   where every pair appears once.
+///
 /// Per-day VWAP columns use this 1-based registry index, not that entry index.
 ///
 /// An alias, not a newtype. It labels which of this schema's several `u32`s

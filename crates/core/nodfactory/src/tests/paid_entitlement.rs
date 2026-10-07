@@ -328,7 +328,17 @@ fn erc20_settlement_enforces_eligibility_before_payment_and_accepts_zero_cost() 
     world.register_reference_currency_asset(PAYMENT_ASSET);
     let settle = |world: &mut World, caller, asset| {
         world.enter(|storage, scope, parent| {
-            api::settle_nod(&storage, scope, parent, caller, nod_id, asset, U256::ZERO)
+            api::settle_nod(
+                &storage,
+                scope,
+                parent,
+                api::SettleNodRequest {
+                    caller,
+                    nod_id,
+                    asset,
+                    snapshot_id: U256::ZERO,
+                },
+            )
         })
     };
     let stranger = Address::repeat_byte(0x92);
@@ -394,10 +404,12 @@ fn settlement_over_a_broken_member_index_reverts() {
                 &storage,
                 scope,
                 parent,
-                input.owner,
-                nod_id,
-                PAYMENT_ASSET,
-                U256::ZERO,
+                api::SettleNodRequest {
+                    caller: input.owner,
+                    nod_id,
+                    asset: PAYMENT_ASSET,
+                    snapshot_id: U256::ZERO,
+                },
             )
         })
         .unwrap_err();
@@ -432,10 +444,12 @@ fn erc20_settlement_uses_the_existing_inclusive_deadline() {
                     &storage,
                     scope,
                     parent,
-                    input.owner,
-                    nod_id,
-                    foreign,
-                    U256::ZERO,
+                    api::SettleNodRequest {
+                        caller: input.owner,
+                        nod_id,
+                        asset: foreign,
+                        snapshot_id: U256::ZERO,
+                    },
                 )
             })
             .unwrap_err();
@@ -462,10 +476,12 @@ fn any_asset_registered_for_the_reference_currency_pays_the_nod() {
                 &storage,
                 scope,
                 parent,
-                input.owner,
-                nod_id,
-                second_asset,
-                U256::ZERO,
+                api::SettleNodRequest {
+                    caller: input.owner,
+                    nod_id,
+                    asset: second_asset,
+                    snapshot_id: U256::ZERO,
+                },
             )
         })
         .unwrap();

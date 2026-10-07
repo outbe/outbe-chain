@@ -15,7 +15,7 @@ use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 const POSITION_VALIDITY_SECONDS: u64 = outbe_gem::GemParams::PROD.position_validity;
 use crate::expired;
 use crate::runtime;
-use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
+use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition, GemTypes};
 use crate::sol_ext::{IReferenceCurrency, IERC20};
 use alloy_sol_types::SolCall;
 use outbe_vaultrouter::api::IVaultRouter;
@@ -178,12 +178,14 @@ fn issue_at_live_rate(
     let price = outbe_oracle::api::fresh_coen_rate_for(storage.clone(), reference_currency)?;
     runtime::issue_gem(
         storage,
-        owner,
-        gem_type,
-        promis_load,
-        issuance_currency,
-        reference_currency,
-        price,
+        GemIssueParams {
+            owner,
+            gem_type,
+            promis_load,
+            issuance_currency,
+            reference_currency,
+            entry_price: price,
+        },
     )
 }
 

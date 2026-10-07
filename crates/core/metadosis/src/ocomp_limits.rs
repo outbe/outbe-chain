@@ -162,10 +162,12 @@ pub(crate) fn apply_auction_brief(
         let actual = outbe_desis::ocomp_limits::apply_request_desis_limit(
             storage.clone(),
             receipt.protocol_bundle_hash,
-            receipt.wwd.into(),
-            receipt.desis_limit_minor,
+            outbe_desis::api::AuctionBrief {
+                worldwide_day: receipt.wwd.into(),
+                desis_limit_minor: receipt.desis_limit_minor,
+                is_green: green,
+            },
             receipt.logical_anchor,
-            green,
         )?;
         if receipt.desis_brief_hash != Some(actual) {
             return Err(MetadosisError::OcompDesisBriefHashMismatch.into());

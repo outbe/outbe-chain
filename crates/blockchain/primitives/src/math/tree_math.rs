@@ -75,6 +75,72 @@ pub trait BinTreeStorage {
     fn write_leaf(&self, key: u32, value: U256) -> Result<()>;
 }
 
+/// Implements [`BinTreeStorage`] for `Adapter(&contract)` over three of its columns, or, with
+/// `scoped by`, for `Adapter(&contract, scope)` whose mid and leaf keys are `scoped(scope, key)`.
+#[macro_export]
+macro_rules! impl_bin_tree_storage {
+    ($adapter:ident { root: $root:ident, mid: $mid:ident, leaf: $leaf:ident $(,)? }) => {
+        impl $crate::math::tree_math::BinTreeStorage for $adapter<'_, '_> {
+            fn read_root(&self) -> $crate::error::Result<::alloy_primitives::U256> {
+                self.0.$root.read()
+            }
+            fn write_root(&self, value: ::alloy_primitives::U256) -> $crate::error::Result<()> {
+                self.0.$root.write(value)
+            }
+            fn read_mid(&self, key: u32) -> $crate::error::Result<::alloy_primitives::U256> {
+                self.0.$mid.read(&key)
+            }
+            fn write_mid(
+                &self,
+                key: u32,
+                value: ::alloy_primitives::U256,
+            ) -> $crate::error::Result<()> {
+                self.0.$mid.write(&key, value)
+            }
+            fn read_leaf(&self, key: u32) -> $crate::error::Result<::alloy_primitives::U256> {
+                self.0.$leaf.read(&key)
+            }
+            fn write_leaf(
+                &self,
+                key: u32,
+                value: ::alloy_primitives::U256,
+            ) -> $crate::error::Result<()> {
+                self.0.$leaf.write(&key, value)
+            }
+        }
+    };
+    ($adapter:ident scoped by $scoped:path { root: $root:ident, mid: $mid:ident, leaf: $leaf:ident $(,)? }) => {
+        impl $crate::math::tree_math::BinTreeStorage for $adapter<'_, '_> {
+            fn read_root(&self) -> $crate::error::Result<::alloy_primitives::U256> {
+                self.0.$root.read(&self.1)
+            }
+            fn write_root(&self, value: ::alloy_primitives::U256) -> $crate::error::Result<()> {
+                self.0.$root.write(&self.1, value)
+            }
+            fn read_mid(&self, key: u32) -> $crate::error::Result<::alloy_primitives::U256> {
+                self.0.$mid.read(&$scoped(self.1, key))
+            }
+            fn write_mid(
+                &self,
+                key: u32,
+                value: ::alloy_primitives::U256,
+            ) -> $crate::error::Result<()> {
+                self.0.$mid.write(&$scoped(self.1, key), value)
+            }
+            fn read_leaf(&self, key: u32) -> $crate::error::Result<::alloy_primitives::U256> {
+                self.0.$leaf.read(&$scoped(self.1, key))
+            }
+            fn write_leaf(
+                &self,
+                key: u32,
+                value: ::alloy_primitives::U256,
+            ) -> $crate::error::Result<()> {
+                self.0.$leaf.write(&$scoped(self.1, key), value)
+            }
+        }
+    };
+}
+
 // --- TreeMath port ---------------------------------------------------------
 
 /// Mirrors `TreeMath.contains(level2, id)` (TreeMath.sol L11-14).
