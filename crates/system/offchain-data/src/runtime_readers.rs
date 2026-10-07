@@ -322,6 +322,17 @@ impl RuntimeBodyReaders {
         self.budgets.enter(budget)
     }
 
+    /// Identifies the cancelled request in this execution-local reader scope.
+    pub fn cancelled_read_budget(&self) -> Option<ExecutionReadBudget> {
+        self.budgets
+            .active
+            .lock()
+            .ok()?
+            .values()
+            .find(|budget| budget.is_cancelled())
+            .cloned()
+    }
+
     /// Returns the typed Tribute body reader.
     #[must_use]
     pub const fn tribute(&self) -> &TributeRepositoryReader {

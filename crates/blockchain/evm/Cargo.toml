@@ -92,6 +92,7 @@ eyre.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+parking_lot.workspace = true
 
 [dev-dependencies]
 outbe-tribute = { workspace = true, features = ["test-enclave"] }

@@ -1,6 +1,7 @@
 //! Independent Nod body stores and commitment namespaces yield identical full-block state, receipts and balances on both execution roles.
 
 use super::*;
+use outbe_primitives::projection::{ExecutionReadBudget, ExecutionReadCancelled};
 
 #[test]
 fn independent_body_stores_produce_identical_full_block_state_receipts_and_balances() {
@@ -27,7 +28,9 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
         bucket_key,
         item: nod_item(),
     };
-    let run = |expected_validator_body: bool, readers: RuntimeBodyReaders| {
+    let run = |expected_validator_body: bool,
+               readers: RuntimeBodyReaders,
+               budget: Option<ExecutionReadBudget>| {
         let signer = test_evm_signer();
         let (mut state, _tree_directory, tree_service, seed_hash) =
             seed_nod_body_state(&fixture).expect("seed Nod body fixture");
@@ -49,6 +52,7 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
             },
         );
         let visible_envelopes: Vec<u64> = system_txs.iter().map(|tx| tx.tx().gas_limit()).collect();
+        let signed_body = system_txs.clone();
         let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
         let mut execution = execution_ctx(Some(1), Bytes::new());
         execution.inner.parent_hash = seed_hash;
@@ -61,6 +65,7 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
             state_root: Some(B256::repeat_byte(0x91)),
         });
         execution.proposer_evm_address = Some(proposer);
+        execution.execution_read_budget = budget;
         if expected_validator_body {
             execution.expected_begin_system_txs = system_txs.clone();
         }
@@ -71,11 +76,17 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
                 .expect("reader-backed pre-execution hook must succeed");
         });
         for tx in system_txs {
-            executor
-                .execute_transaction(tx)
-                .expect("begin-zone transaction must execute");
+            let result = executor.execute_transaction(tx);
+            if result.is_err() {
+                assert!(
+                    !executor.receipts().is_empty(),
+                    "the cancelled body read must follow earlier block transactions"
+                );
+            }
+            result?;
         }
         let receipts = executor.receipts().to_vec();
+        assert_eq!(receipts.len(), signed_body.len());
         assert!(
             receipts
                 .iter()
@@ -136,7 +147,7 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
             proposer,
         )
         .expect("assert clean ce lifecycle fixture succeeds");
-        (
+        Ok::<_, alloy_evm::block::BlockExecutionError>((
             root,
             bundle,
             receipts,
@@ -145,26 +156,44 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
             block_result.gas_used,
             visible_envelopes,
             cleanup_hook_cleared_slots,
-        )
+            signed_body,
+        ))
     };
 
     let proposer_result = run(
         false,
         independent_nod_readers(&fixture).expect("independent nod readers fixture succeeds"),
-    );
-    let validator_result = run(
+        None,
+    )
+    .expect("proposer block execution succeeds");
+    let validator_readers =
+        independent_nod_readers(&fixture).expect("independent nod readers fixture succeeds");
+    let cancelled_budget = ExecutionReadBudget::new();
+    cancelled_budget.cancel();
+    let aborted = run(
         true,
-        independent_nod_readers(&fixture).expect("independent nod readers fixture succeeds"),
-    );
+        validator_readers.clone(),
+        Some(cancelled_budget.clone()),
+    )
+    .expect_err("cancelled CycleTick must abort the entire block");
+    assert!(matches!(
+        aborted,
+        alloy_evm::block::BlockExecutionError::Internal(_)
+    ));
+    assert!(ExecutionReadCancelled::find(&aborted)
+        .expect("block error must preserve the exact typed cancellation")
+        .budget
+        .same_request(&cancelled_budget));
+    // Reopen the same parent and body backend with a fresh request. Compare the
+    // entire signed body, receipts, root and balances; no transaction may be skipped.
+    let validator_result = run(true, validator_readers, Some(ExecutionReadBudget::new()))
+        .expect("fresh canonical replay after cancellation succeeds");
     assert_eq!(proposer_result, validator_result);
-    assert!(proposer_result.2.iter().any(|receipt| {
-        receipt.logs.iter().any(|log| {
-            log.address == NOD_ADDRESS
-                && log.data.topics().first() == Some(&INod::NodBucketBodyDeleted::SIGNATURE_HASH)
-        })
-    }));
-    let body_receipt_index = proposer_result
-        .2
+    assert_cycle_tick_receipt_gas(&proposer_result.2, proposer_result.5, &proposer_result.6);
+}
+
+fn assert_cycle_tick_receipt_gas(receipts: &[Receipt], gas_used: u64, envelopes: &[u64]) {
+    let body_receipt_index = receipts
         .iter()
         .position(|receipt| {
             receipt.logs.iter().any(|log| {
@@ -176,8 +205,8 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
         .expect("CycleTick body mutation receipt");
     let previous_cumulative = body_receipt_index
         .checked_sub(1)
-        .map_or(0, |index| proposer_result.2[index].cumulative_gas_used);
-    let body_receipt_gas = proposer_result.2[body_receipt_index]
+        .map_or(0, |index| receipts[index].cumulative_gas_used);
+    let body_receipt_gas = receipts[body_receipt_index]
         .cumulative_gas_used
         .saturating_sub(previous_cumulative);
     let cycle_intrinsic_gas =
@@ -187,12 +216,12 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
         "receipt-visible CycleTick gas must add explicit CE work to intrinsic gas"
     );
     assert!(
-        body_receipt_gas <= proposer_result.6[body_receipt_index],
+        body_receipt_gas <= envelopes[body_receipt_index],
         "receipt-visible CycleTick gas must not exceed its signed gas limit"
     );
     assert_eq!(
-        proposer_result.5,
-        proposer_result.2.last().unwrap().cumulative_gas_used,
+        gas_used,
+        receipts.last().unwrap().cumulative_gas_used,
         "header gas_used must equal the final receipt cumulative gas including CE work"
     );
 }

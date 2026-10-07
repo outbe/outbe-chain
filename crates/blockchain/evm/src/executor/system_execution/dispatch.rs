@@ -144,8 +144,10 @@ where
             let reason = format!(
                 "system tx {expected_phase:?} execution failed at body_index={body_index}: {error}"
             );
-            tracing::error!(target: "outbe::executor", %reason);
-            BlockExecutionError::Internal(InternalBlockExecutionError::Other(reason.into()))
+            if outbe_primitives::projection::ExecutionReadCancelled::find(&error).is_none() {
+                tracing::error!(target: "outbe::executor", %reason);
+            }
+            BlockExecutionError::other(error)
         })?;
         let compressed_entities_gas = gas_window.gas_used().map_err(|error| {
             BlockExecutionError::Internal(InternalBlockExecutionError::Other(

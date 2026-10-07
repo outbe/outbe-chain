@@ -11,7 +11,10 @@ use alloy_rpc_types_engine::{PayloadStatus, PayloadStatusEnum};
 use commonware_consensus::types::{Height, Round};
 use commonware_runtime::Clock;
 use futures::{future::BoxFuture, FutureExt};
-use outbe_primitives::{projection::ExecutionReadBudget, OutbeExecutionData};
+use outbe_primitives::{
+    projection::{ExecutionReadBudget, ExecutionReadCancelled},
+    OutbeExecutionData,
+};
 use std::{collections::BTreeMap, sync::Arc, task::Poll};
 
 mod convergence;
@@ -31,10 +34,20 @@ enum Owner {
 }
 
 pub(super) struct Delivery {
+    request: ExecutionRequest,
+    status: eyre::Result<ExecutionStatus>,
+}
+
+struct ExecutionRequest {
     owner: Owner,
     id: u64,
     digest: Digest,
-    status: eyre::Result<PayloadStatus>,
+    budget: ExecutionReadBudget,
+}
+
+enum ExecutionStatus {
+    Completed(PayloadStatus),
+    Cancelled(ExecutionReadCancelled),
 }
 
 pub(super) enum Event {
@@ -217,22 +230,24 @@ impl VerificationWork {
             OutbeExecutionData::new(Arc::new(walk.cursor.as_ref().clone().into_inner()))
                 .with_execution_read_budget(walk.budget.clone());
         let engine = engine.clone();
+        let budget = walk.budget.clone();
         walk.step = Step::InFlight;
         self.execution = Some(
             async move {
                 let status = if crate::test_faults::should_drop_new_payload_for_test(height) {
-                    Ok(PayloadStatus::from_status(PayloadStatusEnum::Valid))
+                    Ok(ExecutionStatus::Completed(PayloadStatus::from_status(
+                        PayloadStatusEnum::Valid,
+                    )))
                 } else {
-                    engine.new_payload(execution_data).await.map_err(|error| {
-                        eyre::eyre!(
-                    "new_payload failed during executor verification: target={digest} error={error}"
-                )
-                    })
+                    ExecutionStatus::from_engine(engine.new_payload(execution_data).await, digest)
                 };
                 Delivery {
-                    owner,
-                    id,
-                    digest,
+                    request: ExecutionRequest {
+                        owner,
+                        id,
+                        digest,
+                        budget,
+                    },
                     status,
                 }
             }
@@ -270,8 +285,10 @@ impl VerificationWork {
 
 impl Verification {
     fn active(&self, finalized: (Height, Digest)) -> bool {
-        !self.response.is_canceled()
-            && self.walk.current()
+        if self.walk.budget.is_cancelled() || self.response.is_canceled() {
+            return false;
+        }
+        self.walk.current()
             && !self.walk.conflicts_with(finalized)
             && !matches!(self.walk.step, Step::Stopped)
     }
@@ -287,5 +304,29 @@ impl Verification {
 impl Event {
     fn from_progress(result: eyre::Result<()>) -> Self {
         result.map_or_else(Event::Failed, |_| Event::Changed)
+    }
+}
+
+impl ExecutionStatus {
+    fn from_engine(
+        result: Result<PayloadStatus, reth_ethereum::node::api::BeaconOnNewPayloadError>,
+        digest: Digest,
+    ) -> eyre::Result<Self> {
+        let error = match result {
+            Ok(status) => return Ok(Self::Completed(status)),
+            Err(error) => error,
+        };
+        let cancelled = match &error {
+            reth_ethereum::node::api::BeaconOnNewPayloadError::Internal(source) => {
+                ExecutionReadCancelled::find(source.as_ref())
+            }
+            _ => None,
+        };
+        if let Some(cancelled) = cancelled {
+            return Ok(Self::Cancelled(cancelled.clone()));
+        }
+        Err(eyre::Report::new(error).wrap_err(format!(
+            "new_payload failed during executor verification: target={digest}"
+        )))
     }
 }

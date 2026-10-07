@@ -119,13 +119,14 @@ pub struct OutbeEvm<DB: Database, I, PRECOMPILE = EthPrecompiles> {
         EthFrame,
     >,
     inspect: bool,
+    abort_bridge: crate::precompiles::ExecutionAbortBridge,
     runtime_body_readers: Option<RuntimeBodyReaders>,
     execution_scope: Arc<ExecutionScope>,
 }
 
 impl<DB: Database, I, PRECOMPILE> OutbeEvm<DB, I, PRECOMPILE> {
     /// Creates a new Outbe EVM instance.
-    pub const fn new(
+    pub fn new(
         evm: RevmEvm<
             EthEvmContext<DB>,
             I,
@@ -140,6 +141,7 @@ impl<DB: Database, I, PRECOMPILE> OutbeEvm<DB, I, PRECOMPILE> {
         Self {
             inner: evm,
             inspect,
+            abort_bridge: crate::precompiles::ExecutionAbortBridge::default(),
             runtime_body_readers,
             execution_scope,
         }
@@ -227,6 +229,7 @@ where
         &mut self,
         tx: Self::Tx,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
+        let call = self.abort_bridge.begin_call();
         self.inner.ctx.set_tx(tx);
         let mut handler: ReservedNamespaceHandler<_, EVMError<DB::Error>> = Default::default();
         let output = if self.inspect {
@@ -235,7 +238,7 @@ where
             handler.run(&mut NativeDelegationEvm(&mut self.inner))
         };
         let state = self.inner.finalize();
-        Ok(ResultAndState::new(output?, state))
+        Ok(ResultAndState::new(call.finish(output)?, state))
     }
 
     fn transact_system_call(
@@ -244,12 +247,14 @@ where
         contract: Address,
         data: Bytes,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
+        let call = self.abort_bridge.begin_call();
         if contract != outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS {
             self.inner
                 .ctx
                 .set_tx(TxEnv::new_system_tx_with_caller(caller, contract, data));
             let mut handler: MainnetHandler<_, EVMError<DB::Error>, EthFrame> = Default::default();
-            let result = handler.run_system_call(&mut NativeDelegationEvm(&mut self.inner))?;
+            let result =
+                call.finish(handler.run_system_call(&mut NativeDelegationEvm(&mut self.inner)))?;
             return Ok(ResultAndState::new(result, self.inner.finalize()));
         }
 
@@ -297,7 +302,8 @@ where
         self.inner.ctx.set_tx(tx);
         let mut handler: MainnetHandler<_, EVMError<DB::Error>, EthFrame> =
             MainnetHandler::default();
-        let result = handler.run_system_call(&mut NativeDelegationEvm(&mut self.inner))?;
+        let result =
+            call.finish(handler.run_system_call(&mut NativeDelegationEvm(&mut self.inner)))?;
         let state = self.inner.finalize();
 
         Ok(ResultAndState::new(result, state))
@@ -525,6 +531,7 @@ impl EvmFactory for OutbeEvmFactory {
             .ok()
             .and_then(|install| install.clone());
 
+        let abort_bridge = crate::precompiles::ExecutionAbortBridge::default();
         // Register Outbe stateful precompiles via dynamic lookup.
         extend_outbe_precompiles::<DB>(
             &mut precompiles,
@@ -535,7 +542,8 @@ impl EvmFactory for OutbeEvmFactory {
                 execution_scope.clone(),
                 ocomp_finality_authority,
                 ocomp_lifecycle_active,
-            ),
+            )
+            .with_abort_bridge(abort_bridge.clone()),
             ocomp_fork_install,
         );
 
@@ -547,7 +555,9 @@ impl EvmFactory for OutbeEvmFactory {
             .with_precompiles(precompiles);
         create_guard::install(&mut evm.instruction);
 
-        OutbeEvm::new(evm, false, runtime_body_readers, execution_scope)
+        let mut evm = OutbeEvm::new(evm, false, runtime_body_readers, execution_scope);
+        evm.abort_bridge = abort_bridge;
+        evm
     }
 
     fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>, EthInterpreter>>(
@@ -559,12 +569,15 @@ impl EvmFactory for OutbeEvmFactory {
         let evm = self.create_evm(db, input);
         let runtime_body_readers = evm.runtime_body_readers().cloned();
         let execution_scope = evm.execution_scope().clone();
-        OutbeEvm::new(
+        let abort_bridge = evm.abort_bridge.clone();
+        let mut evm = OutbeEvm::new(
             evm.into_inner().with_inspector(inspector),
             true,
             runtime_body_readers,
             execution_scope,
-        )
+        );
+        evm.abort_bridge = abort_bridge;
+        evm
     }
 }
 
@@ -581,7 +594,7 @@ mod tests {
 
     const USER_BLOCK_GAS_LIMIT: u64 = 30_000_000;
 
-    fn test_env() -> EvmEnv {
+    pub(super) fn test_env() -> EvmEnv {
         EvmEnv {
             cfg_env: CfgEnv::new()
                 .with_chain_id(1)
@@ -669,3 +682,7 @@ mod tests {
         assert_eq!(evm.ctx().block.gas_limit, USER_BLOCK_GAS_LIMIT);
     }
 }
+
+#[cfg(test)]
+#[path = "factory_cancellation_tests.rs"]
+mod cancellation_tests;

@@ -34,6 +34,7 @@ pub(crate) struct OutbeSubCallPrecompiles<DB> {
     genesis_hash: B256,
     tee_attestation_v1: TeeAttestationChainSpecStateV1,
     runtime_body_readers: Option<RuntimeBodyReaders>,
+    abort_bridge: super::ExecutionAbortBridge,
     execution_scope: Arc<ExecutionScope>,
     ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
     ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
@@ -53,6 +54,7 @@ impl<DB> OutbeSubCallPrecompiles<DB> {
             tee_attestation_v1,
         } = execution_context;
         let OutbePrecompileRuntime {
+            abort_bridge,
             runtime_body_readers,
             execution_scope,
             ocomp_finality_authority,
@@ -64,6 +66,7 @@ impl<DB> OutbeSubCallPrecompiles<DB> {
             genesis_hash,
             tee_attestation_v1,
             runtime_body_readers,
+            abort_bridge,
             execution_scope,
             ocomp_finality_authority,
             ocomp_activation_block_meter,
@@ -100,6 +103,7 @@ where
             &mut **context,
             inputs,
             OutbeDispatchRuntime {
+                abort_bridge: &self.abort_bridge,
                 spec: self.spec,
                 genesis_hash: self.genesis_hash,
                 tee_attestation_v1: &self.tee_attestation_v1,

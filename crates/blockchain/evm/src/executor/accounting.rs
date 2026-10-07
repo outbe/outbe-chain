@@ -436,8 +436,10 @@ where
         });
         let result = transact_outcome.map_err(|error| {
             let reason = format!("Phase 1 commit pre-exec: transact_system_call failed: {error}");
-            tracing::error!(target: "outbe::executor", %reason);
-            BlockExecutionError::Internal(InternalBlockExecutionError::Other(reason.into()))
+            if outbe_primitives::projection::ExecutionReadCancelled::find(&error).is_none() {
+                tracing::error!(target: "outbe::executor", %reason);
+            }
+            BlockExecutionError::other(error)
         })?;
         let compressed_entities_gas = gas_window.gas_used().map_err(|error| {
             BlockExecutionError::Internal(InternalBlockExecutionError::Other(

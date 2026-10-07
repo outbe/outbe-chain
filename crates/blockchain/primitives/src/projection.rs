@@ -42,6 +42,31 @@ impl ExecutionReadBudget {
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
     }
+
+    /// Whether two handles belong to the same local execution request.
+    pub fn same_request(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.cancelled, &other.cancelled)
+    }
+}
+
+/// Positive evidence that a particular execution stopped on a cancelled body read.
+/// This is an internal abort, never a block-validity verdict.
+#[derive(Clone, Debug, thiserror::Error)]
+#[error("execution stopped on a cancelled body read")]
+pub struct ExecutionReadCancelled {
+    pub budget: ExecutionReadBudget,
+}
+
+impl ExecutionReadCancelled {
+    /// Finds the typed abort through adapters without parsing error messages.
+    pub fn find<'a>(mut error: &'a (dyn std::error::Error + 'static)) -> Option<&'a Self> {
+        loop {
+            if let Some(cancelled) = error.downcast_ref::<Self>() {
+                return Some(cancelled);
+            }
+            error = error.source()?;
+        }
+    }
 }
 
 /// Exact block identity through which one projection view has applied all events.

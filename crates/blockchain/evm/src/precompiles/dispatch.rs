@@ -6,7 +6,7 @@ use super::{
     },
     outcome::map_outbe_precompile_result,
     value_policy::{classify_boundary_value, BoundaryValue},
-    OcompActivationBlockMeter,
+    ExecutionAbortBridge, OcompActivationBlockMeter,
 };
 use crate::{
     gas::SubcallGasMeter,
@@ -35,6 +35,7 @@ use std::sync::Arc;
 
 /// Executor-owned runtime authorities carried into one Outbe dispatch.
 pub(super) struct OutbeDispatchRuntime<'a> {
+    pub(super) abort_bridge: &'a ExecutionAbortBridge,
     pub(super) spec: SpecId,
     pub(super) genesis_hash: B256,
     pub(super) tee_attestation_v1: &'a TeeAttestationChainSpecStateV1,
@@ -100,7 +101,7 @@ where
         base_gas,
     };
     let outcome = call.execute(ctx, &runtime);
-    translate_outcome(outcome, runtime.runtime_body_readers, inputs.gas_limit).map(Some)
+    translate_outcome(outcome, &runtime, inputs.gas_limit).map(Some)
 }
 
 impl DispatchCall<'_> {
@@ -195,6 +196,7 @@ impl DispatchCall<'_> {
             spec: runtime.spec,
             genesis_hash: runtime.genesis_hash,
             runtime_body_readers: runtime.runtime_body_readers.cloned(),
+            abort_bridge: runtime.abort_bridge.clone(),
             execution_scope: runtime.execution_scope.clone(),
             ocomp_finality_authority: runtime.ocomp_finality_authority.clone(),
             ocomp_activation_block_meter: runtime.ocomp_activation_block_meter.clone(),
@@ -338,11 +340,14 @@ impl DispatchCall<'_> {
 
 fn translate_outcome(
     outcome: DispatchOutcome,
-    readers: Option<&RuntimeBodyReaders>,
+    runtime: &OutbeDispatchRuntime<'_>,
     gas_limit: u64,
 ) -> Result<InterpreterResult, String> {
-    if let Some(readers) = readers {
-        if let Err(error) = &outcome.result {
+    if let Err(error) = &outcome.result {
+        runtime
+            .abort_bridge
+            .observe(error, runtime.runtime_body_readers);
+        if let Some(readers) = runtime.runtime_body_readers {
             readers.report_precompile_error(error);
         }
     }
