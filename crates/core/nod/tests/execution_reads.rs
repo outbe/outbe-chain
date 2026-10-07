@@ -284,7 +284,7 @@ fn idle_daily_scans_do_not_write_storage() {
             BlockContext::empty_for_tests(1, midnight, 1),
             storage.clone(),
         );
-        hooks::run_daily(&ctx, &scope, &parent).unwrap();
+        hooks::run_daily(&ctx).unwrap();
         assert_eq!(
             NodContract::new(storage).call_sweep_day.read().unwrap(),
             0,

@@ -316,12 +316,14 @@ fn nod_contract_slot_layout_is_pinned() {
         assert_eq!(nod.call_bin_count.base_slot(), U256::from(40));
         assert_eq!(nod.call_bin_buckets.base_slot(), U256::from(41));
         assert_eq!(nod.call_bucket_bin.base_slot(), U256::from(42));
-        // `called_buckets` sits at 43, pinned by its neighbours.
-        assert_eq!(nod.called_bucket_index.base_slot(), U256::from(44));
-        assert_eq!(nod.forfeit_cursor.slot(), U256::from(45));
+        assert_eq!(nod.expiry_tree_root.slot(), U256::from(43));
+        assert_eq!(nod.expiry_tree_leaf.base_slot(), U256::from(45));
         assert_eq!(nod.call_currency_cursor.slot(), U256::from(46));
         assert_eq!(nod.call_bin_cursor.base_slot(), U256::from(47));
         assert_eq!(nod.entry_price_source_day.base_slot(), U256::from(48));
+        assert_eq!(nod.config_profile.slot(), U256::from(49));
+        assert_eq!(nod.expiry_bucket_len.base_slot(), U256::from(50));
+        assert_eq!(nod.expiry_cursor.slot(), U256::from(56));
     });
 }
 

@@ -1,18 +1,12 @@
 //! Daily call scan: force-calls Nod buckets off the Oracle's finalized
-//! per-UTC-day VWAPs, then forfeit-burns the Nods of a bucket whose notice
-//! period lapsed. The Cycle daily trigger pins the closed UTC day and runs the
+//! per-UTC-day VWAPs. The Cycle daily trigger pins the closed UTC day and runs the
 //! first slice. Later CycleTicks continue the same day.
 //!
-//! One pass applies at most one transition per bucket, in lifecycle order, over
-//! two arms sharing one visit budget:
-//!
-//! - *not called* -> *called*, walking each currency's call-price trie, when
-//!   the reference price exceeded the bucket's call price on at least its
-//!   `call_threshold_seconds` of the trailing `call_window_seconds`.
-//! - *called* -> *forfeited*, walking the called-bucket list, when the bucket's
-//!   `call_notice_period_seconds` has lapsed with Nods still unpaid. The two can never
-//!   fire in one pass, since a bucket called now cannot also be a notice period
-//!   past its call.
+//! A bucket is called, walking each currency's call-price trie, when the reference
+//! price exceeded its call price on at least its `call_threshold_seconds` of the
+//! trailing `call_window_seconds`. The call queues it on its deadline, and every
+//! CycleTick forfeit-burns the unpaid Nods of the buckets whose
+//! `call_notice_period_seconds` lapsed ([`sweep_expired`]).
 //!
 //! Issuance seals all four terms onto the bucket, and this scan reads them back
 //! from it. Retuning a constant therefore leaves every issued bucket on the
@@ -33,7 +27,6 @@ mod window;
 use std::collections::BTreeSet;
 
 use alloy_primitives::{B256, U256};
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_oracle::{api::get_all_reference_currencies, schema::OracleContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
@@ -43,12 +36,12 @@ use outbe_primitives::{
 
 use crate::{constants::CALL_SWEEP, precompile::INod, schema::NodContract};
 
+pub(crate) use forfeits::sweep_expired;
+
 #[cfg(test)]
 pub(crate) use calls::{call_currency, CurrencyScan};
 #[cfg(test)]
 pub(crate) use forfeits::{forfeit_members, Bodies};
-
-pub(crate) const CALL_ARM_DONE: u32 = u32::MAX;
 
 /// Trailing finalized daily VWAPs of one `COEN/<iso>` pair, newest first.
 /// `None` marks a day the pair published no reference price.
@@ -61,11 +54,7 @@ type VwapWindow = Vec<(u32, Option<U256>)>;
 /// a handler error out of the `CycleTick` system transaction, which fails the
 /// block. An unregistered pair, an unpriced currency or an unfinalized day
 /// therefore each degrade to "no transition" instead.
-pub fn scan_and_call(
-    ctx: &BlockRuntimeContext,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-) -> Result<u32> {
+pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let Some(last_closed_day) = closed_day(ctx)? else {
         return Ok(0);
     };
@@ -77,7 +66,7 @@ pub fn scan_and_call(
     match scheduled {
         (next, Scheduled::Opened) => {
             start_call_sweep(ctx, &nod, next)?;
-            run_call_slice(ctx, scope, parent)
+            run_call_slice(ctx)
         }
         (next, Scheduled::Replaced { skipped }) => {
             nod.emit(INod::SweepDaySkipped {
@@ -99,9 +88,6 @@ fn pinned_call_day<'a, 'storage>(nod: &'a NodContract<'storage>) -> PinnedDay<'a
 }
 
 fn has_call_work(ctx: &BlockRuntimeContext, nod: &NodContract) -> Result<bool> {
-    if nod.called_buckets.len()? != 0 {
-        return Ok(true);
-    }
     for iso_code in get_all_reference_currencies(ctx)? {
         if !nod.call_bin_tree_root.read(&iso_code)?.is_zero() {
             return Ok(true);
@@ -119,7 +105,6 @@ pub(crate) fn closed_day(ctx: &BlockRuntimeContext) -> Result<Option<u32>> {
 fn start_call_sweep(ctx: &BlockRuntimeContext, nod: &NodContract, days: SweepDays) -> Result<()> {
     pinned_call_day(nod).open(days)?;
     nod.call_currency_cursor.write(0)?;
-    nod.forfeit_cursor.write(0)?;
     for iso_code in get_all_reference_currencies(ctx)? {
         nod.call_bin_cursor.write(&iso_code, 0)?;
     }
@@ -135,12 +120,8 @@ fn finish_call_sweep(ctx: &BlockRuntimeContext, nod: &NodContract, pinned_day: u
 
 /// Advance an open sweep by one slice, pinned to the day it opened on so
 /// later blocks decide against the same prices. Returns how many buckets
-/// were called plus Nods forfeited.
-pub fn run_call_slice(
-    ctx: &BlockRuntimeContext,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-) -> Result<u32> {
+/// were called.
+pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     let mut nod = NodContract::new(ctx.storage.clone());
     let pinned_day = nod.call_sweep_day.read()?;
     if pinned_day == 0 {
@@ -159,25 +140,15 @@ pub fn run_call_slice(
     }
 
     let mut visits: u32 = 0;
-    let mut mutated: u32 = 0;
-    if nod.call_currency_cursor.read()? != CALL_ARM_DONE {
-        let mut called_days = BTreeSet::new();
-        let mut windows = window::VwapWindows::new(&oracle, pinned_day);
-        let (called, finished) =
-            calls::call_arm(ctx, &mut nod, &mut windows, &mut visits, &mut called_days)?;
-        nod.emit_days_metadata_update(&called_days)?;
-        mutated = mutated.saturating_add(called);
-        if !finished {
-            return Ok(mutated);
-        }
-        nod.call_currency_cursor.write(CALL_ARM_DONE)?;
-    }
-    let (forfeited, finished) = forfeits::forfeit_arm(ctx, scope, parent, &mut nod, &mut visits)?;
-    mutated = mutated.saturating_add(forfeited);
+    let mut called_days = BTreeSet::new();
+    let mut windows = window::VwapWindows::new(&oracle, pinned_day);
+    let (called, finished) =
+        calls::call_arm(ctx, &mut nod, &mut windows, &mut visits, &mut called_days)?;
+    nod.emit_days_metadata_update(&called_days)?;
     if finished {
         finish_call_sweep(ctx, &nod, pinned_day)?;
     }
-    Ok(mutated)
+    Ok(called)
 }
 
 /// Nod's own index checks revert, so a body corruption reaching a sweep is this

@@ -1,8 +1,8 @@
 //! Daily call-scan tests: the 21-of-28 breach rule and the seven-day forfeit.
 //!
-//! Every test drives the real [`crate::called::scan_and_call`] through [`scan`]
-//! against seeded oracle history, so the breach count is recomputed from the
-//! finalized daily VWAP series exactly as it is in a block.
+//! Every test drives the real [`crate::called::scan_and_call`] and the forfeit
+//! queue through [`scan`] against seeded oracle history, so the breach count is
+//! recomputed from the finalized daily VWAP series exactly as it is in a block.
 
 use outbe_compressed_entities::test_support::seed_compressed_entities_genesis;
 use std::sync::Arc;
@@ -38,6 +38,8 @@ const DAY: u64 = 86_400;
 /// The notice period a bucket seals at issuance, in the width these tests
 /// do timestamp arithmetic in.
 const NOTICE: u64 = CALL_NOTICE_PERIOD as u64;
+/// Past a deadline by enough that the hour it falls in has closed.
+const HOUR: u64 = 3_600;
 const ISO: u16 = 840;
 const OTHER_ISO: u16 = 978;
 /// Issuance instant, 2027-01-15 08:00 UTC.
@@ -194,11 +196,24 @@ fn scan(
     parent: &NodRepositoryReader,
     timestamp: u64,
 ) -> u32 {
-    let ctx = BlockRuntimeContext::new(
+    let ctx = block_at(storage, timestamp);
+    crate::called::scan_and_call(&ctx).unwrap()
+        + crate::called::sweep_expired(&ctx, scope, parent).unwrap()
+}
+
+fn block_at<'s>(storage: &StorageHandle<'s>, timestamp: u64) -> BlockRuntimeContext<'s> {
+    BlockRuntimeContext::new(
         BlockContext::empty_for_tests(BLOCK_NUMBER, timestamp, CHAIN_ID),
         storage.clone(),
-    );
-    crate::called::scan_and_call(&ctx, scope, parent).unwrap()
+    )
+}
+
+fn is_queued(storage: &StorageHandle<'_>, bucket_key: B256) -> bool {
+    NodContract::new(storage.clone())
+        .called_bucket_slot
+        .read(&bucket_key)
+        .unwrap()
+        != 0
 }
 
 /// Promis Reserve balance - what a forfeited `gratis_load_minor` returns to.
@@ -290,7 +305,7 @@ fn arm_lapsed(
         above_call(),
     );
     assert_eq!(scan(storage, scope, parent, at), 1);
-    finalize_through(storage, at + NOTICE + 1);
+    finalize_through(storage, at + NOTICE + HOUR);
     (bucket_key, items)
 }
 
@@ -508,9 +523,9 @@ fn the_scan_follows_the_terms_sealed_on_the_bucket_not_the_constants() {
             at + DAY,
             "the deadline follows the sealed notice period"
         );
-        finalize_through(storage, at + DAY + 1);
+        finalize_through(storage, at + DAY + HOUR);
         assert_eq!(scan(storage, scope, parent, at + DAY), 0, "not past it yet");
-        assert_eq!(scan(storage, scope, parent, at + DAY + 1), 1);
+        assert_eq!(scan(storage, scope, parent, at + DAY + HOUR), 1);
         assert!(api::get_item(storage, scope, parent, item.nod_id)
             .unwrap()
             .is_none());
@@ -812,22 +827,24 @@ fn call_bucket(
 }
 
 #[test]
-fn the_notice_period_expires_strictly_after_the_deadline() {
+fn the_notice_period_burns_once_the_hour_of_its_deadline_closes() {
     harness(|storage, scope, parent| {
         let at = START + 30 * DAY;
         let item = call_bucket(storage, scope, parent, Address::repeat_byte(0x11), at);
         let deadline = at + NOTICE;
 
-        // Exactly at the deadline the Nod survives.
-        finalize_through(storage, deadline);
-        assert_eq!(scan(storage, scope, parent, deadline), 0);
-        assert!(api::get_item(storage, scope, parent, item.nod_id)
-            .unwrap()
-            .is_some());
+        // At the deadline and through the rest of its hour the Nod survives.
+        for now in [deadline, deadline + HOUR - 1] {
+            finalize_through(storage, now);
+            assert_eq!(scan(storage, scope, parent, now), 0);
+            assert!(api::get_item(storage, scope, parent, item.nod_id)
+                .unwrap()
+                .is_some());
+        }
 
-        // One second past it, the Nod is forfeit-burned.
-        finalize_through(storage, deadline + 1);
-        assert_eq!(scan(storage, scope, parent, deadline + 1), 1);
+        // Once the hour closes, the Nod is forfeit-burned.
+        finalize_through(storage, deadline + HOUR);
+        assert_eq!(scan(storage, scope, parent, deadline + HOUR), 1);
         assert!(api::get_item(storage, scope, parent, item.nod_id)
             .unwrap()
             .is_none());
@@ -840,18 +857,18 @@ fn forfeiting_the_last_member_drops_the_bucket_from_the_call_index() {
         let at = START + 30 * DAY;
         let item = call_bucket(storage, scope, parent, Address::repeat_byte(0x11), at);
         let nod = NodContract::new(storage.clone());
-        assert_eq!(nod.called_buckets.len().unwrap(), 1);
+        assert!(is_queued(storage, item.bucket_key));
         assert_eq!(
             nod.call_bucket_bin.read(&item.bucket_key).unwrap(),
             0,
             "the call moved the bucket out of its bin"
         );
 
-        let past = at + NOTICE + 1;
+        let past = at + NOTICE + HOUR;
         finalize_through(storage, past);
         assert_eq!(scan(storage, scope, parent, past), 1);
 
-        assert_eq!(nod.called_buckets.len().unwrap(), 0);
+        assert!(!is_queued(storage, item.bucket_key));
         assert_eq!(nod.bucket_called_at.read(&item.bucket_key).unwrap(), 0);
         assert_eq!(nod.bucket_nod_count.read(&item.bucket_key).unwrap(), 0);
         assert_eq!(nod.total_supply().unwrap(), 0);
@@ -971,7 +988,7 @@ fn every_member_of_a_lapsed_bucket_burns_in_one_pass() {
         );
         assert_eq!(scan(storage, scope, parent, at), 1);
 
-        let past = at + NOTICE + 1;
+        let past = at + NOTICE + HOUR;
         finalize_through(storage, past);
         assert_eq!(scan(storage, scope, parent, past), 3, "all three burn");
 
@@ -1013,7 +1030,7 @@ fn a_lapsed_bucket_returns_every_forfeited_load_to_the_promis_reserve() {
         // The call alone forfeits nothing, so nothing is returned yet.
         assert_eq!(reserve(storage), U256::ZERO);
 
-        let past = at + NOTICE + 1;
+        let past = at + NOTICE + HOUR;
         finalize_through(storage, past);
         assert_eq!(scan(storage, scope, parent, past), 3);
 
@@ -1023,7 +1040,7 @@ fn a_lapsed_bucket_returns_every_forfeited_load_to_the_promis_reserve() {
 }
 
 #[test]
-fn forfeiting_a_bucket_mid_list_does_not_skip_its_neighbours() {
+fn a_bucket_inside_its_notice_waits_while_its_neighbours_burn() {
     harness(|storage, scope, parent| {
         // Three distinct buckets: distinct entry prices on one worldwide day.
         let items: Vec<NodItemState> = [11u64, 22, 33]
@@ -1045,16 +1062,12 @@ fn forfeiting_a_bucket_mid_list_does_not_skip_its_neighbours() {
         );
         assert_eq!(scan(storage, scope, parent, at), 3, "all three call");
 
-        // Keep the one on top of the called list inside its notice. The walk then
-        // swap-pops it down into each hole that the two lapsed ones leave below it.
-        let nod = NodContract::new(storage.clone());
-        let top = nod
-            .called_buckets
-            .get(nod.called_buckets.len().unwrap() - 1)
-            .unwrap()
-            .unwrap();
-        let past = at + NOTICE + 1;
-        nod.bucket_called_at.write(&top, past).unwrap();
+        // Keep the middle bucket inside its notice. The sweep burns the two around it.
+        let mut nod = NodContract::new(storage.clone());
+        let kept = items[1].bucket_key;
+        let past = at + NOTICE + HOUR;
+        nod.remove_called_bucket(kept).unwrap();
+        nod.push_called_bucket(kept, past + NOTICE).unwrap();
         finalize_through(storage, past);
         assert_eq!(scan(storage, scope, parent, past), 2);
 
@@ -1063,12 +1076,11 @@ fn forfeiting_a_bucket_mid_list_does_not_skip_its_neighbours() {
                 api::get_item(storage, scope, parent, item.nod_id)
                     .unwrap()
                     .is_some(),
-                item.bucket_key == top,
+                item.bucket_key == kept,
                 "only the bucket still inside its notice survives"
             );
+            assert_eq!(is_queued(storage, item.bucket_key), item.bucket_key == kept);
         }
-        assert_eq!(nod.called_buckets.len().unwrap(), 1);
-        assert_eq!(nod.called_buckets.get(0).unwrap(), Some(top));
     });
 }
 
@@ -1174,11 +1186,9 @@ fn slice(
     parent: &NodRepositoryReader,
     timestamp: u64,
 ) -> u32 {
-    let ctx = BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(BLOCK_NUMBER, timestamp, CHAIN_ID),
-        storage.clone(),
-    );
-    crate::called::run_call_slice(&ctx, scope, parent).unwrap()
+    let ctx = block_at(storage, timestamp);
+    crate::called::run_call_slice(&ctx).unwrap()
+        + crate::called::sweep_expired(&ctx, scope, parent).unwrap()
 }
 
 #[test]
@@ -1201,7 +1211,7 @@ fn a_bucket_over_the_forfeit_budget_burns_across_slices_of_one_sweep() {
         );
         assert_eq!(scan(storage, scope, parent, at), 1);
 
-        let past = at + NOTICE + 1;
+        let past = at + NOTICE + HOUR;
         finalize_through(storage, past);
         assert_eq!(
             scan(storage, scope, parent, past),
@@ -1216,7 +1226,7 @@ fn a_bucket_over_the_forfeit_budget_burns_across_slices_of_one_sweep() {
 }
 
 #[test]
-fn a_call_arm_out_of_visits_resumes_on_its_currency_before_any_forfeit() {
+fn a_call_slice_out_of_visits_resumes_on_its_currency_without_holding_back_forfeits() {
     harness(|storage, scope, parent| {
         register(storage, OTHER_ISO);
         let at = START + 30 * DAY;
@@ -1242,22 +1252,25 @@ fn a_call_arm_out_of_visits_resumes_on_its_currency_before_any_forfeit() {
         }
         let fresh = nod_item(Address::repeat_byte(0x22), OTHER_ISO);
         api::add_nod(storage, scope, parent, &fresh, entry_price()).unwrap();
-        let past = at + NOTICE + 1;
+        let past = at + NOTICE + HOUR;
         let latest = last_closed_day(past);
         fill_days(storage, latest, CALL_LOOKBACK_DAYS, above_call());
         fill_days_for(storage, OTHER_ISO, latest, CALL_LOOKBACK_DAYS, above_call());
 
-        assert_eq!(scan(storage, scope, parent, past), 0);
+        assert_eq!(
+            scan(storage, scope, parent, past),
+            1,
+            "the forfeit does not wait"
+        );
         assert_eq!(
             nod.call_currency_cursor.read().unwrap(),
             u32::from(OTHER_ISO)
         );
         assert_eq!(called_at(storage, fresh.bucket_key), 0);
-        assert_eq!(nod.bucket_nod_count.read(&lapsed.bucket_key).unwrap(), 1);
-
-        assert_eq!(slice(storage, scope, parent, past), 2);
-        assert_eq!(called_at(storage, fresh.bucket_key), past);
         assert_eq!(nod.bucket_nod_count.read(&lapsed.bucket_key).unwrap(), 0);
+
+        assert_eq!(slice(storage, scope, parent, past), 1);
+        assert_eq!(called_at(storage, fresh.bucket_key), past);
         assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
     });
 }
@@ -1324,7 +1337,7 @@ fn mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exerci
             above_call(),
         );
         assert_eq!(scan(storage, scope, parent, at), 1);
-        let past = at + NOTICE + 1;
+        let past = at + NOTICE + HOUR;
         finalize_through(storage, past);
         // A failed Promis credit must restore every unpaid body and index before retry.
         let mut limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
@@ -1341,10 +1354,13 @@ fn mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exerci
             .is_some());
         assert_eq!(reserve(storage), U256::MAX);
         limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
-        assert_eq!(scan(storage, scope, parent, past), 2);
+        // The failed bucket retries once the next hour closes.
+        let retry = past + 2 * HOUR;
+        assert_eq!(scan(storage, scope, parent, retry), 2);
         let expected = items[0].gratis_load_minor + items[2].gratis_load_minor;
         assert_eq!(reserve(storage), expected);
-        assert_eq!(scan(storage, scope, parent, past), 0);
+        assert!(!is_queued(storage, key), "no unpaid member is left to burn");
+        assert_eq!(scan(storage, scope, parent, retry), 0);
         assert_eq!(reserve(storage), expected);
         let bucket = api::get_bucket(storage, scope, parent, id)
             .unwrap()
@@ -1372,7 +1388,7 @@ fn mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exerci
             .unwrap()
             .is_none());
         assert_eq!(nod.total_supply().unwrap(), 0);
-        assert_eq!(nod.called_buckets.len().unwrap(), 0);
+        assert!(!is_queued(storage, key));
         assert_eq!(reserve(storage), expected);
     });
 }
@@ -1443,7 +1459,7 @@ fn a_fully_paid_bucket_is_not_called_and_corrupt_paid_membership_is_not_forfeite
                 item.nod_id,
             )
             .unwrap();
-        let past = at + NOTICE + 1;
+        let past = at + NOTICE + HOUR;
         finalize_through(storage, past);
         assert_eq!(scan(storage, scope, parent, past), 0);
         assert!(
@@ -1479,7 +1495,7 @@ fn a_running_call_sweep_keeps_its_day() {
             BlockContext::empty_for_tests(BLOCK_NUMBER, later, CHAIN_ID),
             storage.clone(),
         );
-        crate::called::run_call_slice(&ctx, scope, parent).unwrap();
+        crate::called::run_call_slice(&ctx).unwrap();
         assert_eq!(called_at(storage, item.bucket_key), later);
         assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
     });
@@ -1519,6 +1535,25 @@ fn a_bucket_is_not_called_while_its_generation_is_materializing() {
 }
 
 #[test]
+fn every_cycle_tick_forfeits_without_the_daily_trigger() {
+    harness(|storage, scope, parent| {
+        let (bucket_key, _) = arm_lapsed(storage, scope, parent, &[(0x97, 3, false)]);
+        let nod = NodContract::new(storage.clone());
+        assert_eq!(
+            nod.call_sweep_day.read().unwrap(),
+            0,
+            "no call sweep in flight"
+        );
+
+        let past = START + 30 * DAY + NOTICE + HOUR;
+        crate::hooks::continue_sweeps(&block_at(storage, past), scope, parent).unwrap();
+        assert_eq!(nod.bucket_nod_count.read(&bucket_key).unwrap(), 0);
+        assert!(!is_queued(storage, bucket_key));
+        assert_eq!(reserve(storage), U256::from(3u64));
+    });
+}
+
+#[test]
 fn a_lapsed_bucket_waits_for_its_generation_to_materialize_before_forfeiting() {
     harness(|storage, scope, parent| {
         let (bucket_key, items) = arm_lapsed(
@@ -1532,10 +1567,10 @@ fn a_lapsed_bucket_waits_for_its_generation_to_materialize_before_forfeiting() {
         nod.ocomp_target_generation
             .write(&worldwide_day, 1)
             .unwrap();
-        let past = START + 30 * DAY + NOTICE + 1;
+        let past = START + 30 * DAY + NOTICE + HOUR;
         assert_eq!(scan(storage, scope, parent, past), 0);
         assert_eq!(nod.bucket_nod_count.read(&bucket_key).unwrap(), 2);
-        assert_eq!(nod.called_buckets.len().unwrap(), 1);
+        assert!(is_queued(storage, bucket_key));
         assert_eq!(reserve(storage), U256::ZERO);
 
         nod.ocomp_target_generation
@@ -1578,7 +1613,7 @@ fn a_node_local_failure_while_calling_a_bucket_fails_the_slice() {
             BlockContext::empty_for_tests(BLOCK_NUMBER, at, CHAIN_ID),
             storage.clone(),
         );
-        crate::called::run_call_slice(&ctx, &scope, &parent)
+        crate::called::run_call_slice(&ctx)
     });
     provider.clear_mutation_failure();
     assert!(matches!(
@@ -1615,23 +1650,15 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
         nod.call_sweep_day.write(closed[0]).unwrap();
         nod.call_bin_cursor.write(&ISO, 1).unwrap();
 
-        crate::called::scan_and_call(
-            &BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(BLOCK_NUMBER, at + DAY, CHAIN_ID),
-                storage.clone(),
-            ),
-            &scope,
-            &parent,
-        )
+        crate::called::scan_and_call(&BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(BLOCK_NUMBER, at + DAY, CHAIN_ID),
+            storage.clone(),
+        ))
         .unwrap();
-        crate::called::scan_and_call(
-            &BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(BLOCK_NUMBER, at + 2 * DAY, CHAIN_ID),
-                storage.clone(),
-            ),
-            &scope,
-            &parent,
-        )
+        crate::called::scan_and_call(&BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(BLOCK_NUMBER, at + 2 * DAY, CHAIN_ID),
+            storage.clone(),
+        ))
         .unwrap();
         assert_eq!(nod.call_sweep_day.read().unwrap(), closed[0]);
         assert_eq!(nod.call_pending_day.read().unwrap(), closed[2]);
@@ -1758,7 +1785,7 @@ fn a18_forfeit_slices_credit_the_same_total_as_one_pass() {
 fn a_forfeit_out_of_gas_keeps_what_it_burned_and_resumes_on_the_bucket() {
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
     let specs = [(0x71u8, 3u64, false), (0x72, 5, false), (0x73, 8, false)];
-    let past = START + 30 * DAY + NOTICE + 1;
+    let past = START + 30 * DAY + NOTICE + HOUR;
     let arm = |provider: &mut HashMapStorageProvider, scope: &ExecutionScope| {
         StorageHandle::enter(provider, |storage| {
             seed_production_nod_genesis(&storage);
@@ -1788,12 +1815,12 @@ fn a_forfeit_out_of_gas_keeps_what_it_burned_and_resumes_on_the_bucket() {
         }
         assert_eq!(nod.bucket_nod_count.read(&bucket_key).unwrap(), 1);
         assert_eq!(reserve(&storage), U256::from(13u64));
-        assert_ne!(nod.call_sweep_day.read().unwrap(), 0);
+        assert!(is_queued(&storage, bucket_key));
 
         assert_eq!(slice(&storage, &scope, &parent, past), 1);
         assert_eq!(nod.bucket_nod_count.read(&bucket_key).unwrap(), 0);
         assert_eq!(reserve(&storage), U256::from(16u64));
-        assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
+        assert!(!is_queued(&storage, bucket_key));
     });
     assert_eq!(forfeited_event_loads(&provider), U256::from(16u64));
 }
@@ -1830,7 +1857,7 @@ fn a_full_forfeit_budget_burns_in_one_slice_within_the_cycle_tick_gas_window() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let scope = ExecutionScope::new();
     let at = START + 30 * DAY;
-    let past = at + NOTICE + 1;
+    let past = at + NOTICE + HOUR;
     let expected = StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
@@ -1899,26 +1926,16 @@ fn a_node_local_failure_while_forfeiting_fails_the_slice() {
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let scope = ExecutionScope::new();
-    let past = START + 30 * DAY + NOTICE + 1;
+    let past = START + 30 * DAY + NOTICE + HOUR;
     let bucket_key = StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         register(&storage, ISO);
-        let bucket_key = arm_lapsed(&storage, &scope, &parent, &[(0x81, 3, false)]).0;
-        let nod = NodContract::new(storage.clone());
-        nod.call_sweep_day.write(last_closed_day(past)).unwrap();
-        nod.call_currency_cursor
-            .write(crate::called::CALL_ARM_DONE)
-            .unwrap();
-        bucket_key
+        arm_lapsed(&storage, &scope, &parent, &[(0x81, 3, false)]).0
     });
     provider.fail_after_mutation_at(0);
     let result = StorageHandle::enter(&mut provider, |storage| {
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(BLOCK_NUMBER, past, CHAIN_ID),
-            storage.clone(),
-        );
-        crate::called::run_call_slice(&ctx, &scope, &parent)
+        crate::called::sweep_expired(&block_at(&storage, past), &scope, &parent)
     });
     provider.clear_mutation_failure();
     assert!(matches!(

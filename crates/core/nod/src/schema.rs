@@ -366,15 +366,15 @@ pub struct NodContract {
     #[attribute(order = 66)]
     pub call_bucket_bin: outbe_primitives::storage::dsl::Map<B256, u64>,
 
+    // Called buckets, queued by the hour their notice period closes in. The trie
+    // sits here and the bucket columns follow `config_profile`, whose slot genesis pins.
     #[attribute(order = 67)]
-    pub called_buckets: outbe_primitives::storage::dsl::List<B256>,
+    pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 68)]
-    pub called_bucket_index: outbe_primitives::storage::dsl::Map<B256, u32>,
-
-    /// `index + 1` in `called_buckets`. 0 starts from the top.
+    pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 69)]
-    pub forfeit_cursor: outbe_primitives::storage::dsl::Value<u32>,
-    /// ISO the call arm resumes at, or `CALL_ARM_DONE`.
+    pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    /// ISO the call sweep resumes at.
     #[attribute(order = 70)]
     pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
     /// `(bin << 32) | entries left`. 0 left walks the bin from the top.
@@ -389,6 +389,21 @@ pub struct NodContract {
     /// Call-term profile selector seeded from genesis. See `crate::config`.
     #[attribute(order = 73)]
     pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
+
+    #[attribute(order = 74)]
+    pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 75)]
+    pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 76)]
+    pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    #[attribute(order = 77)]
+    pub called_bucket_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
+    #[attribute(order = 78)]
+    pub called_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
+    #[attribute(order = 79)]
+    pub expiry_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 80)]
+    pub expiry_cursor: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl<'storage> NodContract<'storage> {

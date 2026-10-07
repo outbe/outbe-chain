@@ -195,12 +195,13 @@ fn mark_called(
     now: u64,
     notice_period: u32,
 ) -> Result<()> {
+    let deadline = api::settlement_deadline_of(now, notice_period);
     nod.remove_call_bin(bucket_key)?;
-    nod.push_called_bucket(bucket_key)?;
+    nod.push_called_bucket(bucket_key, deadline)?;
     nod.bucket_called_at.write(&bucket_key, now)?;
     nod.emit(INod::NodBucketCalled {
         bucketKey: bucket_key,
         calledAt: now,
-        settlementDeadline: api::settlement_deadline_of(now, notice_period),
+        settlementDeadline: deadline,
     })
 }

@@ -425,11 +425,17 @@ fn seed_called_nod(
         &fixture.item,
         fixture.entry_price_minor,
     )?;
-    // The daily Nod trigger forfeits a lapsed called bucket and deletes both bodies.
+    // CycleTick forfeits a lapsed called bucket and deletes both bodies.
     let nod = NodContract::new(storage.clone());
     nod.bucket_called_at.write(&bucket_key, 1)?;
-    nod.called_bucket_index.write(&bucket_key, 0)?;
-    nod.called_buckets.push(bucket_key)?;
+    let notice = nod
+        .callable_bucket_call_notice_period_seconds
+        .read(&bucket_key)?;
+    outbe_primitives::expiry_queue::push(
+        &outbe_nod::state::ExpiryHours(&nod),
+        bucket_key,
+        outbe_nod::api::settlement_deadline_of(1, notice),
+    )?;
     seed_nod_daily_trigger(storage, fixture)?;
 
     Ok(())

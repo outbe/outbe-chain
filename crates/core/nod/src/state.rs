@@ -5,6 +5,7 @@ use outbe_compressed_entities::{
     MAX_ID_PAGE_LIMIT,
 };
 use outbe_primitives::error::Result;
+use outbe_primitives::expiry_queue;
 use outbe_primitives::math::{reference_price, tree_math};
 use outbe_primitives::time::WorldwideDay;
 use std::collections::{BTreeMap, BTreeSet};
@@ -653,11 +654,9 @@ impl NodContract<'_> {
         self.widen_max_call_window(terms.reference_currency, terms.call_window_seconds)
     }
 
-    /// Puts a called bucket on the list the forfeit arm walks.
-    pub(crate) fn push_called_bucket(&mut self, bucket_key: B256) -> Result<()> {
-        let index = self.called_buckets.len()?;
-        self.called_buckets.push(bucket_key)?;
-        self.called_bucket_index.write(&bucket_key, index)
+    /// Queues a called bucket on the deadline its notice period closes at.
+    pub(crate) fn push_called_bucket(&mut self, bucket_key: B256, deadline: u64) -> Result<()> {
+        expiry_queue::push(&ExpiryHours(self), bucket_key, deadline)
     }
 
     /// Reads back the terms [`Self::seal_bucket_call_terms`] sealed at issuance.
@@ -692,33 +691,9 @@ impl NodContract<'_> {
         Ok(())
     }
 
-    /// Swap-removes a bucket from the called list. No-op for a bucket it does not hold.
-    fn remove_called_bucket(&mut self, bucket_key: B256) -> Result<()> {
-        let len = self.called_buckets.len()?;
-        let index = self.called_bucket_index.read(&bucket_key)?;
-        let listed = index < len
-            && self
-                .called_buckets
-                .get(index)?
-                .is_some_and(|listed| listed == bucket_key);
-        if listed {
-            let last = len.checked_sub(1).ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::Revert(format!(
-                    "Nod called list underflow removing bucket {bucket_key}"
-                ))
-            })?;
-            if index != last {
-                let moved = self.called_buckets.get(last)?.ok_or_else(|| {
-                    outbe_primitives::error::PrecompileError::Revert(format!(
-                        "Nod called list slot {last} is empty during removal"
-                    ))
-                })?;
-                self.called_buckets.set(index, moved)?;
-                self.called_bucket_index.write(&moved, index)?;
-            }
-            self.called_buckets.pop()?;
-        }
-        self.called_bucket_index.clear(&bucket_key)
+    /// No-op for a bucket the queue does not hold.
+    pub(crate) fn remove_called_bucket(&mut self, bucket_key: B256) -> Result<()> {
+        expiry_queue::remove(&ExpiryHours(self), bucket_key)
     }
 
     /// No-op for a bucket the call index never held, so the removal funnel can call it
@@ -774,4 +749,20 @@ outbe_primitives::impl_bin_tree_storage!(CallBins scoped by NodContract::scoped 
     root: call_bin_tree_root,
     mid: call_bin_tree_mid,
     leaf: call_bin_tree_leaf,
+});
+
+/// Called buckets, queued by the hour their notice period closes in.
+pub struct ExpiryHours<'a, 'storage>(pub &'a NodContract<'storage>);
+
+outbe_primitives::impl_expiry_queue!(ExpiryHours<B256> {
+    root: expiry_tree_root,
+    mid: expiry_tree_mid,
+    leaf: expiry_tree_leaf,
+    len: expiry_bucket_len,
+    live: expiry_bucket_live,
+    at: expiry_bucket_at,
+    slot: called_bucket_slot,
+    deadline: called_deadline,
+    sweep_bucket: expiry_sweep_hour,
+    cursor: expiry_cursor,
 });
