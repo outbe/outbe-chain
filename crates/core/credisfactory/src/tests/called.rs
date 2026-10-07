@@ -1,9 +1,9 @@
 //! Daily price-path scan: the multi-week breach-count call and the void of a
 //! lapsed settlement window.
 //!
-//! Every test drives [`crate::called::scan_and_call`] through the `scan` harness
-//! helper against a seeded finalized daily series. This series is the only price
-//! source the production trigger reads.
+//! Tests drive [`crate::called::scan_and_call`] through the `scan` harness helper,
+//! and later blocks' slices through `slice`, against a seeded finalized daily
+//! series. This series is the only price source the production trigger reads.
 
 use alloy_primitives::{Address, U256};
 
@@ -596,10 +596,7 @@ fn open_three(storage: &StorageHandle<'_>) -> Vec<U256> {
 }
 
 fn cursor_of(storage: &StorageHandle<'_>) -> u32 {
-    crate::schema::CredisFactoryContract::new(storage.clone())
-        .call_scan_cursor
-        .read()
-        .unwrap()
+    factory(storage).call_scan_cursor.read().unwrap()
 }
 
 #[test]
@@ -630,19 +627,32 @@ fn a_completed_pass_resets_the_cursor() {
     teardown();
 }
 
+fn factory<'storage>(
+    storage: &StorageHandle<'storage>,
+) -> crate::schema::CredisFactoryContract<'storage> {
+    crate::schema::CredisFactoryContract::new(storage.clone())
+}
+
+/// Pins `day` as the sweep in flight, stopped before active index `cursor - 1`.
+fn pin_sweep(storage: &StorageHandle<'_>, day: u32, cursor: u32) {
+    let factory = factory(storage);
+    factory.call_sweep_day.write(day).unwrap();
+    factory.call_scan_cursor.write(cursor).unwrap();
+}
+
+fn sweep_days(storage: &StorageHandle<'_>) -> (u32, u32) {
+    let factory = factory(storage);
+    (
+        factory.call_sweep_day.read().unwrap(),
+        factory.call_pending_day.read().unwrap(),
+    )
+}
+
 #[test]
 fn a_resumed_pass_starts_at_the_cursor_and_walks_down() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         let ids = open_three(&storage);
-
-        // Pretend the previous run stopped after index 2: the stored cursor is
-        // `index + 1`, so 2 means "resume at index 1".
-        crate::schema::CredisFactoryContract::new(storage.clone())
-            .call_scan_cursor
-            .write(2)
-            .unwrap();
-
         let at = CREATED_AT + AFTER_WINDOW;
         advance_to(&storage, at);
         fill_days(
@@ -651,9 +661,10 @@ fn a_resumed_pass_starts_at_the_cursor_and_walks_down() {
             CALL_LOOKBACK_DAYS,
             above_call(),
         );
+        // The stored cursor is `index + 1`, so 2 resumes at index 1.
+        pin_sweep(&storage, last_closed_day(at), 2);
 
-        // The run visits only indices 1 and 0. The position at index 2 is untouched.
-        assert_eq!(scan(&storage, at), 2);
+        assert_eq!(slice(&storage, at), 2);
         assert_eq!(state_of(&storage, ids[0]), CredisState::Called);
         assert_eq!(state_of(&storage, ids[1]), CredisState::Called);
         assert_eq!(
@@ -662,10 +673,123 @@ fn a_resumed_pass_starts_at_the_cursor_and_walks_down() {
             "the entry above the resume point waits for the next pass"
         );
         assert_eq!(cursor_of(&storage), 0);
+        assert_eq!(sweep_days(&storage), (0, 0), "the pass ended");
 
         // The next pass starts fresh from the top and picks it up.
         assert_eq!(scan(&storage, at), 1);
         assert_eq!(state_of(&storage, ids[2]), CredisState::Called);
+    });
+    teardown();
+}
+
+#[test]
+fn a_newer_closed_day_waits_for_the_pass_in_flight() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        let ids = open_three(&storage);
+        let at = CREATED_AT + AFTER_WINDOW;
+        let next = at + DAY;
+        advance_to(&storage, next);
+        fill_days(
+            &storage,
+            last_closed_day(next),
+            CALL_LOOKBACK_DAYS + 1,
+            above_call(),
+        );
+        pin_sweep(&storage, last_closed_day(at), 2);
+
+        assert_eq!(scan(&storage, next), 0, "the newer day only queues");
+        assert_eq!(
+            sweep_days(&storage),
+            (last_closed_day(at), last_closed_day(next))
+        );
+        assert_eq!(state_of(&storage, ids[2]), CredisState::Open);
+
+        assert_eq!(slice(&storage, next), 2, "the pinned day finishes first");
+        assert_eq!(state_of(&storage, ids[2]), CredisState::Open);
+        assert_eq!(sweep_days(&storage), (last_closed_day(next), 0));
+        assert_eq!(cursor_of(&storage), 0);
+
+        assert_eq!(slice(&storage, next), 1);
+        assert_eq!(state_of(&storage, ids[2]), CredisState::Called);
+        assert_eq!(sweep_days(&storage), (0, 0));
+    });
+    teardown();
+}
+
+#[test]
+fn a_third_closed_day_replaces_the_waiting_one_and_names_it() {
+    use alloy_sol_types::SolEvent;
+
+    let mut provider = env();
+    let (in_flight, skipped) = StorageHandle::enter(&mut provider, |storage| {
+        open_three(&storage);
+        let at = CREATED_AT + AFTER_WINDOW;
+        let later = at + 2 * DAY;
+        advance_to(&storage, later);
+        fill_days(
+            &storage,
+            last_closed_day(later),
+            CALL_LOOKBACK_DAYS + 2,
+            above_call(),
+        );
+        pin_sweep(&storage, last_closed_day(at), 2);
+        factory(&storage)
+            .call_pending_day
+            .write(last_closed_day(at + DAY))
+            .unwrap();
+
+        assert_eq!(scan(&storage, later), 0);
+        assert_eq!(
+            sweep_days(&storage),
+            (last_closed_day(at), last_closed_day(later))
+        );
+        assert_eq!(cursor_of(&storage), 2, "the pass in flight keeps its place");
+        (last_closed_day(at), last_closed_day(at + DAY))
+    });
+    teardown();
+
+    let events: Vec<_> = provider
+        .get_events(outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS)
+        .iter()
+        .filter_map(|log| {
+            crate::precompile::ICredisFactory::SweepDaySkipped::decode_log_data(log).ok()
+        })
+        .collect();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].sweep, 1);
+    assert_eq!(events[0].skippedDay, skipped);
+    assert_eq!(events[0].inFlightDay, in_flight);
+}
+
+#[test]
+fn an_empty_book_opens_no_sweep() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        let at = CREATED_AT + AFTER_WINDOW;
+        advance_to(&storage, at);
+        finalize_through(&storage, at);
+
+        assert_eq!(scan(&storage, at), 0);
+        assert_eq!(sweep_days(&storage), (0, 0));
+    });
+    teardown();
+}
+
+#[test]
+fn a_pinned_day_the_oracle_has_not_finalized_holds_the_sweep() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        let ids = open_three(&storage);
+        let at = CREATED_AT + AFTER_WINDOW;
+        advance_to(&storage, at);
+        fill_days(&storage, day_back(at, 1), CALL_LOOKBACK_DAYS, above_call());
+        pin_sweep(&storage, last_closed_day(at), 2);
+
+        assert_eq!(slice(&storage, at), 0);
+        assert_eq!(state_of(&storage, ids[1]), CredisState::Open);
+        assert_eq!(sweep_days(&storage), (last_closed_day(at), 0));
+        assert_eq!(cursor_of(&storage), 2);
     });
     teardown();
 }

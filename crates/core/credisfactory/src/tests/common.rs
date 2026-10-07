@@ -398,12 +398,23 @@ fn bump_watermark(storage: &StorageHandle<'_>, utc_day: u32) {
 
 /// Runs the daily price-path scan at `timestamp`, returning how many positions
 /// it moved.
-pub fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
-    let ctx = BlockRuntimeContext::new(
+fn block_at<'storage>(
+    storage: &StorageHandle<'storage>,
+    timestamp: u64,
+) -> BlockRuntimeContext<'storage> {
+    BlockRuntimeContext::new(
         BlockContext::empty_for_tests(BLOCK_NUMBER, timestamp, CHAIN_ID),
         storage.clone(),
-    );
-    crate::called::scan_and_call(&ctx).unwrap()
+    )
+}
+
+pub fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
+    crate::called::scan_and_call(&block_at(storage, timestamp)).unwrap()
+}
+
+/// One later block's slice of the call sweep in flight.
+pub fn slice(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
+    crate::called::run_call_slice(&block_at(storage, timestamp)).unwrap()
 }
 
 pub fn now_of(storage: &StorageHandle<'_>) -> u64 {

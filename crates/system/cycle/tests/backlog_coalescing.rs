@@ -60,6 +60,7 @@ fn only_current_state_scans_and_calendar_owned_protocol_cycle_coalesce() {
             || spec.id == TriggerId::AuctionAdvance.as_u32()
             || spec.id == TriggerId::ProtocolCycle.as_u32()
             || spec.id == TriggerId::NodCallDaily.as_u32()
+            || spec.id == TriggerId::CredisCallDaily.as_u32()
             || spec.id == TriggerId::IntexDaily.as_u32()
             || spec.id == TriggerId::GemDaily.as_u32()
             || spec.id == TriggerId::IntexDrainParked.as_u32()

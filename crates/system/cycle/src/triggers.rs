@@ -140,6 +140,12 @@ const NOD_DAILY_PERIOD_SECONDS: u64 = 86_400;
 #[cfg(feature = "e2e-test")]
 const NOD_DAILY_PERIOD_SECONDS: u64 = 60;
 
+/// The Credis call sweep is daily in production. An e2e run seeds the days it reads.
+#[cfg(not(feature = "e2e-test"))]
+const CREDIS_DAILY_PERIOD_SECONDS: u64 = 86_400;
+#[cfg(feature = "e2e-test")]
+const CREDIS_DAILY_PERIOD_SECONDS: u64 = 60;
+
 /// Cadence of the auction clearing poll, shortened for the same reason.
 #[cfg(not(feature = "e2e-test"))]
 const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 600;
@@ -249,13 +255,15 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
         TriggerSpec {
             id: TriggerId::CredisCallDaily.as_u32(),
             label: "credis_call_daily",
-            period_seconds: 86_400,
+            period_seconds: CREDIS_DAILY_PERIOD_SECONDS,
             start_offset_seconds: 0,
-            // Reads finalized oracle VWAP history to latch, call and void credis
+            // Reads finalized oracle VWAP history to call and void credis
             // positions. It has no dependency on the parent block's settlement
             // accounting.
             requires_accounting_window: false,
-            coalesces_backlog: false,
+            // The sweep takes its day from the block clock, so a missed slot
+            // would only schedule the same day again.
+            coalesces_backlog: true,
             handler: TriggerHandler::CredisCallDaily,
         },
         TriggerSpec {
@@ -374,7 +382,7 @@ mod protocol_parameter_tests {
             configured[5].handler,
             TriggerHandler::IntexDrainNotices
         ));
-        assert_eq!(configured[6].period_seconds, 86_400);
+        assert_eq!(configured[6].period_seconds, CREDIS_DAILY_PERIOD_SECONDS);
         assert_eq!(configured[6].start_offset_seconds, 0);
         assert!(matches!(
             configured[6].handler,
