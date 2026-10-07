@@ -262,6 +262,17 @@ fn cover_hour(world: &mut World, covered_hour: u64, currencies: &[u16]) {
         .oracle_vote_period(port)
         .expect("Oracle vote period")
         .max(1);
+    // The chain closes the clock gap one hour per block, so the hour's blocks come later.
+    poll_until(
+        COVERED_HOUR_TIMEOUT,
+        || format!("the committee never reached the covered hour {covered_hour}"),
+        || {
+            world
+                .rpc
+                .latest_block_timestamp(port)
+                .is_some_and(|now| now >= covered_hour)
+        },
+    );
     let window_start = covered_hour + 3_600 - PRICE_WINDOW_SECS;
     let window_first = first_block_at(world, port, first_block, window_start);
     let hour_first = first_block_at(world, port, window_first, covered_hour);
