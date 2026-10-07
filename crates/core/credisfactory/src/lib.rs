@@ -5,12 +5,13 @@
 //!   credits aggregate Credis collateral and stores the authenticated return serial.
 //! - `settleCredis` applies interest-first payments and appends notes for released collateral.
 //! - [`called`] is the daily Cycle-triggered price-path scan. It calls positions
-//!   whose breach window filled. It also voids the remainder of called positions
-//!   whose settlement window has lapsed, and burns the unpaid share of the
-//!   collateral into the Promis Reserve.
+//!   whose breach window filled.
+//! - [`expired`] voids the remainder of called positions whose settlement window
+//!   has lapsed, and burns the unpaid share of the collateral into the Promis Reserve.
 
 pub mod called;
 pub mod errors;
+pub mod expired;
 pub mod precompile;
 pub mod runtime;
 pub mod schema;

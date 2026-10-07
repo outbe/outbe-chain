@@ -225,6 +225,28 @@ pub struct CredisContract {
     /// position whose sealed window outruns the current constant.
     #[attribute(order = 8)]
     pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
+
+    // Called positions, queued by the hour their settlement deadline falls in.
+    #[attribute(order = 9)]
+    pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    #[attribute(order = 10)]
+    pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    #[attribute(order = 11)]
+    pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    #[attribute(order = 12)]
+    pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 13)]
+    pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 14)]
+    pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, U256>,
+    #[attribute(order = 15)]
+    pub called_slot: outbe_primitives::storage::dsl::Map<U256, u64>,
+    #[attribute(order = 16)]
+    pub called_deadline: outbe_primitives::storage::dsl::Map<U256, u64>,
+    #[attribute(order = 17)]
+    pub expiry_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 18)]
+    pub expiry_cursor: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl CredisContract<'_> {

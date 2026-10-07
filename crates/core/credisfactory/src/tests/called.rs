@@ -1,5 +1,5 @@
-//! Daily price-path scan: the multi-week breach-count call and the void of a
-//! lapsed settlement window.
+//! Daily price-path scan: the multi-week breach-count call, and the void of a
+//! lapsed settlement window from the deadline queue.
 //!
 //! Tests drive [`crate::called::scan_and_call`] through the `scan` harness helper,
 //! and later blocks' slices through `slice`, against a seeded finalized daily
@@ -107,10 +107,9 @@ fn the_scan_follows_the_terms_sealed_on_the_position_not_the_constants() {
             at + DAY,
             "the deadline follows the sealed notice period"
         );
-        let lapsed = at + DAY + 1;
+        let lapsed = at + DAY + HOUR;
         advance_to(&storage, lapsed);
-        finalize_through(&storage, lapsed);
-        assert_eq!(scan(&storage, lapsed), 1);
+        assert_eq!(expire(&storage, lapsed), 1);
         assert_eq!(state_of(&storage, position_id), CredisState::Void);
     });
     teardown();
@@ -449,23 +448,21 @@ fn the_call_and_the_void_compose_across_runs() {
         assert_eq!(scan(&storage, at), 1);
         assert_eq!(state_of(&storage, position_id), CredisState::Called);
 
-        // This same run can never void a position that it called: the
+        // The same block can never void a position that it called: the
         // window opens at `called_at = now`.
-        assert_eq!(scan(&storage, at), 0);
+        assert_eq!(expire(&storage, at), 0);
 
         // Inside the window, nothing happens.
         let inside = at + NOTICE - DAY;
         advance_to(&storage, inside);
-        finalize_through(&storage, inside);
-        assert_eq!(scan(&storage, inside), 0);
+        assert_eq!(expire(&storage, inside), 0);
         assert_eq!(state_of(&storage, position_id), CredisState::Called);
 
         // The window lapses with the whole principal outstanding: the void burns
         // the entire collateral and credits it to the Promis Reserve.
-        let lapsed = at + NOTICE + 1;
+        let lapsed = at + NOTICE + HOUR;
         advance_to(&storage, lapsed);
-        finalize_through(&storage, lapsed);
-        assert_eq!(scan(&storage, lapsed), 1);
+        assert_eq!(expire(&storage, lapsed), 1);
         assert_eq!(state_of(&storage, position_id), CredisState::Void);
         assert_eq!(
             view_balance(&storage, outbe_primitives::addresses::CREDIS_ADDRESS),
@@ -794,30 +791,35 @@ fn a_pinned_day_the_oracle_has_not_finalized_holds_the_sweep() {
     teardown();
 }
 
+/// Calls `ids` by hand at `called_at`, which queues them on their deadline.
+fn call_by_hand(storage: &StorageHandle<'_>, ids: &[U256], called_at: u64) {
+    let mut credis = CredisContract::new(storage.clone());
+    for id in ids {
+        assert!(credis.mark_called(*id, called_at).unwrap());
+    }
+}
+
+fn queued_at(storage: &StorageHandle<'_>, position_id: U256) -> u64 {
+    CredisContract::new(storage.clone())
+        .called_slot
+        .read(&position_id)
+        .unwrap()
+}
+
 #[test]
-fn voiding_several_positions_in_one_pass_skips_none() {
+fn voiding_several_positions_in_one_block_skips_none() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         let ids = open_three(&storage);
+        call_by_hand(&storage, &ids, CREATED_AT);
 
-        // Call all three by hand, then let the window lapse. The point
-        // of the test is the traversal: each void swap-pops the active list, and
-        // the descending walk must still visit every entry exactly once.
-        let called_at = CREATED_AT;
-        {
-            let mut credis = CredisContract::new(storage.clone());
-            for id in &ids {
-                assert!(credis.mark_called(*id, called_at).unwrap());
-            }
-        }
-
-        let lapsed = called_at + NOTICE + 1;
+        let lapsed = CREATED_AT + NOTICE + HOUR;
         advance_to(&storage, lapsed);
-        finalize_through(&storage, lapsed);
-        assert_eq!(scan(&storage, lapsed), 3, "all three voided in one pass");
+        assert_eq!(expire(&storage, lapsed), 3, "all three voided in one block");
 
         for id in &ids {
             assert_eq!(state_of(&storage, *id), CredisState::Void);
+            assert_eq!(queued_at(&storage, *id), 0);
         }
         assert_eq!(
             CredisContract::new(storage.clone()).active_len().unwrap(),
@@ -828,12 +830,86 @@ fn voiding_several_positions_in_one_pass_skips_none() {
 }
 
 #[test]
-fn the_void_budget_bounds_one_run_without_starving_the_call_arm() {
+fn a_void_waits_for_the_hour_its_deadline_falls_in_to_close() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        let ids = open_three(&storage);
+        call_by_hand(&storage, &ids[..1], CREATED_AT);
+        let deadline = CREATED_AT + NOTICE;
+        let hour_end = (deadline / HOUR + 1) * HOUR;
+        assert!(
+            hour_end > deadline + 1,
+            "the fixture deadline sits inside its hour"
+        );
+
+        advance_to(&storage, deadline + 1);
+        assert_eq!(expire(&storage, deadline + 1), 0);
+        assert_eq!(state_of(&storage, ids[0]), CredisState::Called);
+
+        advance_to(&storage, hour_end);
+        assert_eq!(expire(&storage, hour_end), 1);
+        assert_eq!(state_of(&storage, ids[0]), CredisState::Void);
+    });
+    teardown();
+}
+
+#[test]
+fn every_cycle_tick_voids_without_the_daily_trigger() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        let ids = open_three(&storage);
+        call_by_hand(&storage, &ids[..1], CREATED_AT);
+
+        let lapsed = CREATED_AT + NOTICE + HOUR;
+        advance_to(&storage, lapsed);
+        tick(&storage, lapsed);
+        assert_eq!(state_of(&storage, ids[0]), CredisState::Void);
+        assert_eq!(state_of(&storage, ids[1]), CredisState::Open);
+    });
+    teardown();
+}
+
+#[test]
+fn settling_a_called_position_in_full_leaves_the_queue() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let position_id = open(&storage, 1);
+        call_by_hand(&storage, &[position_id], CREATED_AT);
+        assert_ne!(
+            queued_at(&storage, position_id),
+            0,
+            "a call queues the position"
+        );
+
+        let outstanding = CredisContract::new(storage.clone())
+            .get_position(position_id)
+            .unwrap()
+            .outstanding_principal_minor;
+        settle_principal(&storage, alice(), position_id, outstanding);
+        assert_eq!(state_of(&storage, position_id), CredisState::Settled);
+        assert_eq!(queued_at(&storage, position_id), 0);
+
+        let lapsed = CREATED_AT + NOTICE + HOUR;
+        advance_to(&storage, lapsed);
+        assert_eq!(expire(&storage, lapsed), 0);
+        assert_eq!(
+            CredisContract::new(storage.clone())
+                .expiry_tree_root
+                .read()
+                .unwrap(),
+            U256::ZERO,
+            "no hour is left waiting"
+        );
+    });
+    teardown();
+}
+
+#[test]
+fn the_void_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
     let mut provider = env();
-    let budget = crate::called::MAX_CREDIS_VOIDS_PER_RUN;
-    // One Open position plus one more voidable position than the budget, so
-    // a void is genuinely declined and the run still has to walk past it.
-    let total = budget + 2;
+    let budget = crate::expired::MAX_CREDIS_VOIDS_PER_BLOCK;
+    let total = budget + 1;
     StorageHandle::enter(&mut provider, |storage| {
         bootstrap_for(&storage, alice(), pledge_cost() * U256::from(total));
     });
@@ -845,49 +921,40 @@ fn the_void_budget_bounds_one_run_without_starving_the_call_arm() {
         })
         .collect();
     StorageHandle::enter(&mut provider, |storage| {
-        // `ids[0]` sits at active index 0, so the descending walk reaches it
-        // LAST, after the void budget is already spent. Leave it Open. The rest
-        // become called-and-lapsed.
-        let called_at = CREATED_AT;
-        {
-            let mut credis = CredisContract::new(storage.clone());
-            for id in &ids[1..] {
-                assert!(credis.mark_called(*id, called_at).unwrap());
-            }
-        }
-
-        // Far enough past the call that the window has lapsed AND a full breach
-        // window sits entirely after the positions' origination day.
-        let lapsed = called_at + AFTER_WINDOW;
+        call_by_hand(&storage, &ids, CREATED_AT);
+        let lapsed = CREATED_AT + NOTICE + HOUR;
         advance_to(&storage, lapsed);
-        fill_days(
-            &storage,
-            last_closed_day(lapsed),
-            CALL_LOOKBACK_DAYS,
-            above_call(),
-        );
 
-        // A void costs two enclave round-trips, so the run stops voiding at the
-        // budget. But it must keep walking. This same run still calls the Open
-        // position behind the exhausted budget.
-        assert_eq!(scan(&storage, lapsed), budget + 1, "64 voids plus the call");
-        assert_eq!(
-            state_of(&storage, ids[0]),
-            CredisState::Called,
-            "a void backlog must not throttle the call arm"
-        );
+        assert_eq!(expire(&storage, lapsed), budget);
         assert_eq!(
             CredisContract::new(storage.clone()).active_len().unwrap(),
-            2,
-            "the newly called position plus the one void the budget declined"
+            1
         );
-        assert_eq!(cursor_of(&storage), 0, "the pass completed despite the cap");
-
-        // The next run drains the remainder.
-        assert_eq!(scan(&storage, lapsed), 1);
-        for id in &ids[1..] {
+        assert_eq!(expire(&storage, lapsed), 1);
+        for id in &ids {
             assert_eq!(state_of(&storage, *id), CredisState::Void);
         }
+    });
+    teardown();
+}
+
+#[test]
+fn a_failed_void_fails_the_block_and_keeps_the_position_queued() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        let ids = open_three(&storage);
+        call_by_hand(&storage, &ids[..1], CREATED_AT);
+        let lapsed = CREATED_AT + NOTICE + HOUR;
+        advance_to(&storage, lapsed);
+
+        outbe_gratis::enclave_client::test_enclave::uninstall();
+        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(BLOCK_NUMBER, lapsed, CHAIN_ID),
+            storage.clone(),
+        );
+        assert!(crate::expired::sweep_expired(&ctx).is_err());
+        assert_eq!(state_of(&storage, ids[0]), CredisState::Called);
+        assert_ne!(queued_at(&storage, ids[0]), 0);
     });
     teardown();
 }

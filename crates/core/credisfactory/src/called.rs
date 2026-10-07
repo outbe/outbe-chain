@@ -1,16 +1,12 @@
-//! Daily price-path scan: calls and voids positions off the Oracle's finalized
-//! per-UTC-day VWAPs. The Cycle daily trigger pins the closed UTC day and runs the
-//! first slice. Later CycleTicks continue the same day through [`continue_sweeps`].
+//! Daily price-path scan: calls positions off the Oracle's finalized per-UTC-day
+//! VWAPs. The Cycle daily trigger pins the closed UTC day and runs the first slice.
+//! Later CycleTicks continue the same day through [`continue_sweeps`], which also
+//! voids the lapsed called positions through [`crate::expired`].
 //!
-//! One pass over the dense active-position index applies up to two transitions
-//! per position, in lifecycle order:
-//!
-//! - `Open -> Called` when the COEN price in the position's REFERENCE currency sat
-//!   strictly above the call price on `call_threshold_seconds` of the trailing
-//!   `call_window_seconds`. Both terms are sealed onto the position at opening. The
-//!   issuance currency the position is denominated in never enters the threshold.
-//! - `Called -> Void` when the settlement window has lapsed with principal still
-//!   outstanding.
+//! A position moves `Open -> Called` when the COEN price in its REFERENCE currency
+//! sat strictly above the call price on `call_threshold_seconds` of the trailing
+//! `call_window_seconds`. Both terms are sealed onto the position at opening. The
+//! issuance currency the position is denominated in never enters the threshold.
 //!
 //! The breach rule needs no per-position streak state. The daily series is
 //! global per currency, so one trailing window per reference currency decides
@@ -33,16 +29,11 @@ use outbe_primitives::{
 };
 
 use crate::precompile::ICredisFactory::SweepDaySkipped;
-use crate::runtime;
 use crate::schema::CredisFactoryContract;
 
 /// Max positions one block's slice visits. The rest of the pass continues on the
 /// next block, pinned to the same day.
 pub(crate) const MAX_CREDIS_CALL_VISITS_PER_BLOCK: u32 = 4096;
-
-/// Max positions voided per slice. A void is far more expensive than a call: it
-/// makes a blocking TEE round-trip to burn aggregate Credis collateral.
-pub(crate) const MAX_CREDIS_VOIDS_PER_RUN: u32 = 64;
 
 /// `SweepDaySkipped.sweep` for the call sweep.
 const CALL_SWEEP: u8 = 1;
@@ -60,6 +51,7 @@ pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
 /// Runs from CycleTick every block, before the daily trigger can queue a newer day.
 pub fn continue_sweeps(ctx: &BlockRuntimeContext) -> Result<()> {
     run_call_slice(ctx)?;
+    crate::expired::sweep_expired(ctx)?;
     Ok(())
 }
 
@@ -147,7 +139,6 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
             cache: Vec::new(),
         },
         mutated: 0,
-        voided: 0,
     };
     if slice.walk(&factory)? {
         // The next day starts on the next block, so no slice mixes two days' prices.
@@ -164,7 +155,6 @@ struct CallSlice<'a, 'storage> {
     credis: CredisContract<'storage>,
     windows: VwapWindows<'a, 'storage>,
     mutated: u32,
-    voided: u32,
 }
 
 impl CallSlice<'_, '_> {
@@ -211,14 +201,15 @@ impl CallSlice<'_, '_> {
             .window(&self.credis, position.reference_currency)?;
         let now = self.ctx.block.timestamp;
         let credis = &mut self.credis;
-        // The price-path arms are pure storage and arithmetic. A deterministic error is
-        // isolated to this position. A node-local error fails the block.
+        // The call is pure storage and arithmetic. A deterministic error is isolated
+        // to this position. A node-local error fails the block.
         let outcome = self
             .ctx
             .storage
-            .with_checkpoint(|| visit_price_path(credis, window, &position, now));
+            .with_checkpoint(|| call_if_breached(credis, window, &position, now));
         match outcome {
-            Ok(visit) => self.apply(position_id, visit)?,
+            Ok(true) => self.mutated = self.mutated.saturating_add(1),
+            Ok(false) => {}
             Err(error) => match error.sweep_failure() {
                 SweepFailure::Propagate => return Err(error),
                 SweepFailure::Stop => return Ok(false),
@@ -232,58 +223,18 @@ impl CallSlice<'_, '_> {
         }
         Ok(true)
     }
-
-    /// Runs the void the visit found due, within the slice's void budget.
-    ///
-    /// The void is not isolated: its TEE round-trip fails on node-local faults, and
-    /// swallowing one would fork the chain silently. A declined void keeps the
-    /// position in the active index, and a later slice voids it.
-    fn apply(&mut self, position_id: U256, visit: Visit) -> Result<()> {
-        let did_void = visit.void_due && self.voided < MAX_CREDIS_VOIDS_PER_RUN;
-        if did_void {
-            runtime::void_position(self.ctx.storage.clone(), position_id)?;
-            self.voided = self.voided.saturating_add(1);
-        }
-        if visit.moved || did_void {
-            self.mutated = self.mutated.saturating_add(1);
-        }
-        Ok(())
-    }
 }
 
-/// What one position's price-path arms decided.
-struct Visit {
-    /// Whether the call actually transitioned it.
-    moved: bool,
-    /// Whether the caller must now void the remainder.
-    void_due: bool,
-}
-
-/// Applies the call, and reports whether the void is due.
-///
-/// A reference currency this chain cannot price yields an empty window: no call, but
-/// the void arm still runs, so such a position is never stranded.
-fn visit_price_path(
+/// Calls an Open position whose breach window filled. Returns whether it moved.
+fn call_if_breached(
     credis: &mut CredisContract<'_>,
     window: &[(u32, Option<U256>)],
     position: &Position,
     now: u64,
-) -> Result<Visit> {
-    let entry_state = position.lifecycle_state()?;
-    let moved = entry_state == CredisState::Open
+) -> Result<bool> {
+    Ok(position.lifecycle_state()? == CredisState::Open
         && breached_enough(window, position)
-        && credis.mark_called(position.position_id, now)?;
-
-    Ok(Visit {
-        moved,
-        // Gated on the state at entry, not the running one. A call stamped in
-        // this same visit sets `called_at = now`, so its window cannot have
-        // lapsed. Also, a read of the deadline off the record loaded before that
-        // call would compare `now` against `0 + call_notice_period_seconds`.
-        void_due: entry_state == CredisState::Called
-            && !position.outstanding_principal_minor.is_zero()
-            && now > outbe_credis::settlement_deadline(position),
-    })
+        && credis.mark_called(position.position_id, now)?)
 }
 
 /// True when the daily COEN price in the position's reference currency sat
@@ -337,7 +288,7 @@ impl VwapWindows<'_, '_> {
     /// the currencies actually present in the active book.
     ///
     /// An unregistered pair caches an empty window: such a position can never
-    /// register a breach, but it must still reach the void arm.
+    /// register a breach.
     fn window(
         &mut self,
         credis: &CredisContract<'_>,

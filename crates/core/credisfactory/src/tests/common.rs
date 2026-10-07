@@ -43,6 +43,9 @@ pub const REFERENCE_ISO: u16 = 978;
 
 pub const DAY: u64 = 86_400;
 
+/// Past any deadline by enough that the hour it falls in has closed.
+pub const HOUR: u64 = 3_600;
+
 /// The settlement window a position seals at opening. Derived from the constant
 /// rather than written out as a literal: a hard-coded `14 * DAY` is what these
 /// tests used to carry, and it went stale the day the window was retuned.
@@ -415,6 +418,16 @@ pub fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
 /// One later block's slice of the call sweep in flight.
 pub fn slice(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
     crate::called::run_call_slice(&block_at(storage, timestamp)).unwrap()
+}
+
+/// One block's void sweep over the lapsed called positions.
+pub fn expire(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
+    crate::expired::sweep_expired(&block_at(storage, timestamp)).unwrap()
+}
+
+/// What CycleTick runs every block.
+pub fn tick(storage: &StorageHandle<'_>, timestamp: u64) {
+    crate::called::continue_sweeps(&block_at(storage, timestamp)).unwrap()
 }
 
 pub fn now_of(storage: &StorageHandle<'_>) -> u64 {

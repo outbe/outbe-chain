@@ -257,7 +257,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             label: "credis_call_daily",
             period_seconds: CREDIS_DAILY_PERIOD_SECONDS,
             start_offset_seconds: 0,
-            // Reads finalized oracle VWAP history to call and void credis
+            // Reads finalized oracle VWAP history to call credis
             // positions. It has no dependency on the parent block's settlement
             // accounting.
             requires_accounting_window: false,

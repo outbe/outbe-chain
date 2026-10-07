@@ -7,6 +7,7 @@
 use alloy_primitives::{Address, U256};
 
 use outbe_primitives::error::Result;
+use outbe_primitives::expiry_queue;
 
 use crate::errors::CredisError;
 use crate::schema::{CredisContract, Position};
@@ -151,4 +152,32 @@ impl CredisContract<'_> {
         self.called_position_counts
             .write(&account, count.saturating_sub(1))
     }
+
+    // ---------------------------------------------------------------------
+    // Settlement-deadline queue
+    // ---------------------------------------------------------------------
+
+    pub(crate) fn queue_called(&mut self, position_id: U256, deadline: u64) -> Result<()> {
+        expiry_queue::push(&ExpiryHours(self), position_id, deadline)
+    }
+
+    pub(crate) fn unqueue_called(&mut self, position_id: U256) -> Result<()> {
+        expiry_queue::remove(&ExpiryHours(self), position_id)
+    }
 }
+
+/// Called positions, queued by the hour their settlement deadline falls in.
+pub struct ExpiryHours<'a, 'storage>(pub &'a CredisContract<'storage>);
+
+outbe_primitives::impl_expiry_queue!(ExpiryHours<U256> {
+    root: expiry_tree_root,
+    mid: expiry_tree_mid,
+    leaf: expiry_tree_leaf,
+    len: expiry_bucket_len,
+    live: expiry_bucket_live,
+    at: expiry_bucket_at,
+    slot: called_slot,
+    deadline: called_deadline,
+    sweep_bucket: expiry_sweep_hour,
+    cursor: expiry_cursor,
+});

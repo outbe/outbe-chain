@@ -166,12 +166,14 @@ impl CredisContract<'_> {
     pub fn open_position(&mut self, params: OpenPositionParams) -> Result<U256> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
+            let serial = params.return_note_serial;
+            if serial.is_zero() || outbe_protocol::codec::field_from_b256(&serial).is_err() {
+                return Err(CredisError::InvalidAmount.into());
+            }
             if params.principal_minor.is_zero()
                 || params.gratis_minor.is_zero()
                 || params.entry_price_minor.is_zero()
                 || params.call_anchor_price_minor.is_zero()
-                || params.return_note_serial.is_zero()
-                || outbe_protocol::codec::field_from_b256(&params.return_note_serial).is_err()
             {
                 return Err(CredisError::InvalidAmount.into());
             }
@@ -255,6 +257,7 @@ impl CredisContract<'_> {
         position.called_at = now;
         self.update_position_record(&position)?;
         self.bump_called_count(position.smart_account)?;
+        self.queue_called(position_id, settlement_deadline(&position))?;
         self.emit(ICredis::PositionCalled {
             positionId: position_id,
             calledAt: now,
@@ -345,6 +348,7 @@ impl CredisContract<'_> {
             self.remove_active(position_id)?;
             if state_before == CredisState::Called {
                 self.drop_called_count(position.smart_account)?;
+                self.unqueue_called(position_id)?;
             }
         }
 
@@ -422,6 +426,7 @@ impl CredisContract<'_> {
             self.update_position_record(&position)?;
             self.remove_active(position_id)?;
             self.drop_called_count(position.smart_account)?;
+            self.unqueue_called(position_id)?;
 
             self.emit(ICredis::PositionVoided {
                 positionId: position_id,
