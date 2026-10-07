@@ -6,7 +6,7 @@ use outbe_primitives::dispatch::{dispatch_call, mutate, view};
 use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::runtime;
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
+use outbe_compressed_entities::{ExecutionReaders, ExecutionScope, ParentBodySource, WwdEntityId};
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
@@ -78,12 +78,12 @@ fn issue_for_test(
 /// Dispatches NodFactory calls through the block-scoped compressed-body lifecycle.
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
+    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     data: &[u8],
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
+    let ExecutionReaders { scope, parent } = readers;
     outbe_primitives::dispatch::reject_value(&value)?;
     #[cfg(feature = "e2e-test")]
     if let Ok(call) = INodFactoryTestArming::issueForTestCall::abi_decode(data) {
@@ -103,10 +103,12 @@ pub fn dispatch(
                     &storage,
                     scope,
                     parent,
-                    sender,
-                    WwdEntityId::from(c.nodId),
-                    c.asset,
-                    c.snapshotId,
+                    runtime::SettleNodRequest {
+                        caller: sender,
+                        nod_id: WwdEntityId::from(c.nodId),
+                        asset: c.asset,
+                        snapshot_id: c.snapshotId,
+                    },
                 )?;
                 Ok(INodFactory::settleNodReturn {})
             }),
@@ -187,7 +189,11 @@ fn dispatch_materialization(
                     ))
                 })?;
         crate::materialization::materialize_after_attempt(
-            &storage, scope, parent, &batch, profile, &limits,
+            &storage,
+            ExecutionReaders { scope, parent },
+            &batch,
+            profile,
+            &limits,
         )
         .map_err(crate::materialization::typed_materialization_error)?;
         Ok(Bytes::new())

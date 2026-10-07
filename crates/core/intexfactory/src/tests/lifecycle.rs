@@ -1462,10 +1462,12 @@ mod called_pstar {
             };
             assert_eq!(
                 called::try_call_group(
-                    &s,
-                    &mut f,
-                    &oracle,
-                    &mut vwaps,
+                    called::GroupCall {
+                        storage: &s,
+                        factory: &mut f,
+                        oracle: &oracle,
+                        vwaps: &mut vwaps,
+                    },
                     &group,
                     &window,
                     day_start(LAST_DAY) + DAY_SECS

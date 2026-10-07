@@ -3,12 +3,13 @@
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::{SolError, SolEvent};
 use outbe_chain_constants::NodMaterializationProfileV1;
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
+use outbe_compressed_entities::{ExecutionReaders, ParentBodySource, WwdEntityId};
 use outbe_nod::{NodContract, NodIssueParams};
 use outbe_ocomp_protocol::{
     nod_materialization::{
         verify_nod_materialization_batch, NodMaterializationBatchV1, NodMaterializationHeadV1,
     },
+    result::NodActionV1,
     SchemaLimits,
 };
 use outbe_primitives::time::WorldwideDay;
@@ -134,26 +135,25 @@ pub fn consume_materialization_attempt(
 /// Applies one already-authorized canonical batch atomically.
 pub fn materialize_certified_nods_authorized(
     storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
+    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     batch: &NodMaterializationBatchV1,
     profile: NodMaterializationProfileV1,
     limits: &SchemaLimits,
 ) -> Result<NodMaterializationOutcomeV1> {
     storage.clone().with_checkpoint(|| {
         consume_materialization_attempt(storage, profile)?;
-        materialize_after_attempt(storage, scope, parent, batch, profile, limits)
+        materialize_after_attempt(storage, readers, batch, profile, limits)
     })
 }
 
 pub(crate) fn materialize_after_attempt(
     storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
+    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     batch: &NodMaterializationBatchV1,
     profile: NodMaterializationProfileV1,
     limits: &SchemaLimits,
 ) -> Result<NodMaterializationOutcomeV1> {
+    let ExecutionReaders { scope, parent } = readers;
     let nod = NodContract::new(storage.clone());
     let head = nod
         .ocomp_materialization_head()?
@@ -176,16 +176,7 @@ pub(crate) fn materialize_after_attempt(
             PrecompileError::Fatal("Nod materialization head projection is missing".into())
         })?
         .issued_at;
-    for action in verified.actions() {
-        let derived_nod_id = NodContract::generate_nod_id(action.owner, worldwide_day)?;
-        let supplied_nod_id = WwdEntityId::try_from(action.nod_id.0.as_slice())
-            .map_err(|_| PrecompileError::from(NodFactoryError::InvalidMaterializationProof))?;
-        if supplied_nod_id != derived_nod_id
-            || !NodContract::is_issuable_entry(action.entry_price_minor)
-        {
-            return Err(NodFactoryError::InvalidMaterializationProof.into());
-        }
-    }
+    require_derived_nod_ids(verified.actions(), worldwide_day)?;
 
     for action in verified.actions() {
         let params = NodIssueParams {
@@ -197,16 +188,8 @@ pub(crate) fn materialize_after_attempt(
             issuance_currency: action.issuance_currency,
             reference_currency: action.reference_currency,
         };
-        if let Err(error) = runtime::issue_nod_at(storage, scope, parent, &params, issued_at) {
-            if matches!(
-                &error,
-                PrecompileError::Revert(reason)
-                    if reason == &NodFactoryError::NodAlreadyExists.to_string()
-            ) {
-                return Err(NodFactoryError::DuplicateMaterializedNod.into());
-            }
-            return Err(error);
-        }
+        runtime::issue_nod_at(storage, scope, parent, &params, issued_at)
+            .map_err(duplicate_materialized_nod)?;
     }
 
     let action_count = u32::try_from(verified.actions().len()).map_err(|_| {
@@ -266,6 +249,32 @@ pub(crate) fn materialize_after_attempt(
         next_nod_ordinal,
         completed,
     })
+}
+
+fn require_derived_nod_ids(actions: &[NodActionV1], worldwide_day: WorldwideDay) -> Result<()> {
+    for action in actions {
+        let derived_nod_id = NodContract::generate_nod_id(action.owner, worldwide_day)?;
+        let supplied_nod_id = WwdEntityId::try_from(action.nod_id.0.as_slice())
+            .map_err(|_| PrecompileError::from(NodFactoryError::InvalidMaterializationProof))?;
+        if supplied_nod_id != derived_nod_id
+            || !NodContract::is_issuable_entry(action.entry_price_minor)
+        {
+            return Err(NodFactoryError::InvalidMaterializationProof.into());
+        }
+    }
+    Ok(())
+}
+
+fn duplicate_materialized_nod(error: PrecompileError) -> PrecompileError {
+    if matches!(
+        &error,
+        PrecompileError::Revert(reason)
+            if reason == &NodFactoryError::NodAlreadyExists.to_string()
+    ) {
+        NodFactoryError::DuplicateMaterializedNod.into()
+    } else {
+        error
+    }
 }
 
 /// Encodes the exact current public head response.

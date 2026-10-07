@@ -14,7 +14,8 @@ use outbe_compressed_entities::{
 };
 use outbe_offchain_storage::{
     AtomicWriteOperation, DayDatabases, Key, Namespace, ScanEntry, ScanRequest, StorageError,
-    StorageMetadata, StorageReaderHandle, StorageWriterHandle, Value, MAX_SCAN_ENTRIES,
+    StorageMetadata, StorageReaderHandle, StorageWriterHandle, StoredValue, Value,
+    MAX_SCAN_ENTRIES,
 };
 use thiserror::Error;
 
@@ -241,11 +242,9 @@ impl NodRepositoryReader {
         if self.route.is_some() {
             return day_store::get_stored_item(self, nod_id);
         }
-        let key = item_key(nod_id)?;
-        let Some(record) = self.storage.get_record(namespace(NODS_NAMESPACE)?, &key)? else {
-            return Ok(None);
-        };
-        decode_stored_item(nod_id, record.value.as_bytes()).map(Some)
+        self.primary_record(NODS_NAMESPACE, item_key(nod_id)?)?
+            .map(|record| decode_stored_item(nod_id, record.value.as_bytes()))
+            .transpose()
     }
 
     /// Loads one Nod item together with optional primary provenance.
@@ -256,11 +255,9 @@ impl NodRepositoryReader {
         if self.route.is_some() {
             return day_store::get_with_metadata(self, nod_id);
         }
-        let key = item_key(nod_id)?;
-        let Some(record) = self.storage.get_record(namespace(NODS_NAMESPACE)?, &key)? else {
-            return Ok(None);
-        };
-        decode_item(nod_id, record.value.as_bytes()).map(|body| Some((body, record.metadata)))
+        self.primary_record(NODS_NAMESPACE, item_key(nod_id)?)?
+            .map(|record| decode_record(nod_id, record, decode_item))
+            .transpose()
     }
 
     /// Batch-loads Nod items and metadata in the same order as the supplied identities.
@@ -268,24 +265,7 @@ impl NodRepositoryReader {
         &self,
         nod_ids: &[WwdEntityId],
     ) -> Result<Vec<Option<NodItemRecordWithMetadata>>, NodRepositoryError> {
-        let keys = nod_ids
-            .iter()
-            .copied()
-            .map(item_key)
-            .collect::<Result<Vec<_>, _>>()?;
-        self.storage
-            .get_records(namespace(NODS_NAMESPACE)?, &keys)?
-            .into_iter()
-            .zip(nod_ids.iter().copied())
-            .map(|(record, nod_id)| {
-                record
-                    .map(|record| {
-                        decode_item(nod_id, record.value.as_bytes())
-                            .map(|body| (body, record.metadata))
-                    })
-                    .transpose()
-            })
-            .collect()
+        self.primary_records(NODS_NAMESPACE, nod_ids, item_key, decode_item)
     }
 
     /// Loads one Nod bucket and verifies its embedded key.
@@ -306,14 +286,9 @@ impl NodRepositoryReader {
         if self.route.is_some() {
             return day_store::get_stored_bucket(self, bucket_id);
         }
-        let key = bucket_storage_key(bucket_id)?;
-        let Some(record) = self
-            .storage
-            .get_record(namespace(NOD_BUCKETS_NAMESPACE)?, &key)?
-        else {
-            return Ok(None);
-        };
-        decode_stored_bucket(bucket_id, record.value.as_bytes()).map(Some)
+        self.primary_record(NOD_BUCKETS_NAMESPACE, bucket_storage_key(bucket_id)?)?
+            .map(|record| decode_stored_bucket(bucket_id, record.value.as_bytes()))
+            .transpose()
     }
 
     /// Loads one Nod bucket together with optional primary provenance.
@@ -324,14 +299,9 @@ impl NodRepositoryReader {
         if self.route.is_some() {
             return day_store::get_bucket_with_metadata(self, bucket_id);
         }
-        let key = bucket_storage_key(bucket_id)?;
-        let Some(record) = self
-            .storage
-            .get_record(namespace(NOD_BUCKETS_NAMESPACE)?, &key)?
-        else {
-            return Ok(None);
-        };
-        decode_bucket(bucket_id, record.value.as_bytes()).map(|body| Some((body, record.metadata)))
+        self.primary_record(NOD_BUCKETS_NAMESPACE, bucket_storage_key(bucket_id)?)?
+            .map(|record| decode_record(bucket_id, record, decode_bucket))
+            .transpose()
     }
 
     /// Batch-loads Nod buckets and metadata in the supplied key order.
@@ -339,24 +309,56 @@ impl NodRepositoryReader {
         &self,
         bucket_ids: &[WwdEntityId],
     ) -> Result<Vec<Option<NodBucketRecordWithMetadata>>, NodRepositoryError> {
-        let keys = bucket_ids
+        self.primary_records(
+            NOD_BUCKETS_NAMESPACE,
+            bucket_ids,
+            bucket_storage_key,
+            decode_bucket,
+        )
+    }
+
+    fn primary_record(
+        &self,
+        name: &'static str,
+        key: Key,
+    ) -> Result<Option<StoredValue>, NodRepositoryError> {
+        Ok(self.storage.get_record(namespace(name)?, &key)?)
+    }
+
+    /// Batch-loads primary records in `ids` order and decodes each one present.
+    fn primary_records<T>(
+        &self,
+        name: &'static str,
+        ids: &[WwdEntityId],
+        key: fn(WwdEntityId) -> Result<Key, NodRepositoryError>,
+        decode: BodyDecoder<T>,
+    ) -> Result<Vec<Option<RecordWithMetadata<T>>>, NodRepositoryError> {
+        let keys = ids
             .iter()
             .copied()
-            .map(bucket_storage_key)
+            .map(key)
             .collect::<Result<Vec<_>, _>>()?;
-        self.storage
-            .get_records(namespace(NOD_BUCKETS_NAMESPACE)?, &keys)?
+        let records = self.storage.get_records(namespace(name)?, &keys)?;
+        records
             .into_iter()
-            .zip(bucket_ids.iter().copied())
-            .map(|(record, bucket_id)| {
+            .zip(ids.iter().copied())
+            .map(|(record, id)| {
                 record
-                    .map(|record| {
-                        decode_bucket(bucket_id, record.value.as_bytes())
-                            .map(|body| (body, record.metadata))
-                    })
+                    .map(|record| decode_record(id, record, decode))
                     .transpose()
             })
             .collect()
+    }
+
+    fn scan(
+        &self,
+        name: &'static str,
+        prefix: &[u8],
+        after: Option<&Key>,
+        limit: usize,
+    ) -> Result<outbe_offchain_storage::ScanPage, NodRepositoryError> {
+        let request = ScanRequest::new(prefix, after, limit)?;
+        Ok(self.storage.scan_prefix(namespace(name)?, request)?)
     }
 
     /// Loads an opaque repository-owned snapshot for item/bucket planning and in-block overlay.
@@ -382,8 +384,7 @@ impl NodRepositoryReader {
         }
         let limit = validate_id_page_request(request)?;
         let after = request.after.map(item_key).transpose()?;
-        let scan = ScanRequest::new(&[], after.as_ref(), limit)?;
-        let page = self.storage.scan_prefix(namespace(NODS_NAMESPACE)?, scan)?;
+        let page = self.scan(NODS_NAMESPACE, &[], after.as_ref(), limit)?;
         id_page_from_entries(page, request.after, "all", |entry| {
             parse_primary_key(entry.key.as_bytes())
         })
@@ -401,15 +402,16 @@ impl NodRepositoryReader {
             return day_store::list_by_owner(self, owner, request);
         }
         validate_page_limit(request.limit)?;
-        let prefix = owner.as_slice();
         let after = request
             .after
             .map(|id| owner_index_key(owner, id))
             .transpose()?;
-        let scan = ScanRequest::new(prefix, after.as_ref(), request.limit)?;
-        let page = self
-            .storage
-            .scan_prefix(namespace(NODS_BY_OWNER_NAMESPACE)?, scan)?;
+        let page = self.scan(
+            NODS_BY_OWNER_NAMESPACE,
+            owner.as_slice(),
+            after.as_ref(),
+            request.limit,
+        )?;
         let has_more = page.next_after.is_some();
         let mut records = Vec::with_capacity(page.entries.len());
         for entry in page.entries {
@@ -442,10 +444,12 @@ impl NodRepositoryReader {
             .after
             .map(|id| owner_index_key(owner, id))
             .transpose()?;
-        let scan = ScanRequest::new(owner.as_slice(), after.as_ref(), limit)?;
-        let page = self
-            .storage
-            .scan_prefix(namespace(NODS_BY_OWNER_NAMESPACE)?, scan)?;
+        let page = self.scan(
+            NODS_BY_OWNER_NAMESPACE,
+            owner.as_slice(),
+            after.as_ref(),
+            limit,
+        )?;
         id_page_from_entries(page, request.after, "owner", |entry| {
             parse_owner_index(entry, owner)
         })
@@ -512,13 +516,7 @@ fn validate_audit_page(
             StorageError::Corruption(format!("Nod {index} page exceeds requested limit")).into(),
         );
     }
-    if page
-        .next_after
-        .as_ref()
-        .is_some_and(|next| page.entries.last().map(|entry| &entry.key) != Some(next))
-    {
-        return Err(NodRepositoryError::InvalidPageContinuation { index });
-    }
+    check_continuation(page, index)?;
     let mut previous = after;
     for entry in &page.entries {
         if previous.is_some_and(|previous| previous.as_bytes() >= entry.key.as_bytes()) {
@@ -566,23 +564,30 @@ impl<'a> NodAuditEntries<'a> {
         self.entries = page.entries.into_iter();
         Ok(())
     }
+
+    /// Reads the next page and yields its first entry. A read error ends the iteration.
+    fn next_page_entry(&mut self) -> Option<Result<ScanEntry, NodRepositoryError>> {
+        if self.done {
+            return None;
+        }
+        match self.read_page() {
+            Ok(()) => self.entries.next().map(Ok),
+            Err(error) => {
+                self.done = true;
+                Some(Err(error))
+            }
+        }
+    }
 }
 
 impl Iterator for NodAuditEntries<'_> {
     type Item = Result<ScanEntry, NodRepositoryError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(entry) = self.entries.next() {
-            return Some(Ok(entry));
+        match self.entries.next() {
+            Some(entry) => Some(Ok(entry)),
+            None => self.next_page_entry(),
         }
-        if self.done {
-            return None;
-        }
-        if let Err(error) = self.read_page() {
-            self.done = true;
-            return Some(Err(error));
-        }
-        self.entries.next().map(Ok)
     }
 }
 
@@ -774,6 +779,19 @@ fn decode_stored_bucket(
     Ok(stored)
 }
 
+type BodyDecoder<T> = fn(WwdEntityId, &[u8]) -> Result<T, NodRepositoryError>;
+type RecordWithMetadata<T> = (T, Option<StorageMetadata>);
+
+/// Decodes one primary record and keeps its metadata.
+fn decode_record<T>(
+    id: WwdEntityId,
+    record: StoredValue,
+    decode: BodyDecoder<T>,
+) -> Result<RecordWithMetadata<T>, NodRepositoryError> {
+    let body = decode(id, record.value.as_bytes())?;
+    Ok((body, record.metadata))
+}
+
 pub(crate) fn item_key(nod_id: WwdEntityId) -> Result<Key, NodRepositoryError> {
     Ok(Key::new(nod_id.as_slice().to_vec())?)
 }
@@ -828,15 +846,13 @@ fn map_parent_source_error(error: NodRepositoryError) -> ParentBodySourceError {
     use outbe_offchain_storage::StorageErrorKind;
 
     let message = error.to_string();
-    match &error {
-        NodRepositoryError::Storage(storage)
-            if storage.kind() == StorageErrorKind::RequestDeadline =>
-        {
-            ParentBodySourceError::RequestDeadline(message)
-        }
-        NodRepositoryError::Storage(storage) if storage.kind() == StorageErrorKind::Unavailable => {
-            ParentBodySourceError::Unavailable(message)
-        }
+    let kind = match &error {
+        NodRepositoryError::Storage(storage) => Some(storage.kind()),
+        _ => None,
+    };
+    match kind {
+        Some(StorageErrorKind::RequestDeadline) => ParentBodySourceError::RequestDeadline(message),
+        Some(StorageErrorKind::Unavailable) => ParentBodySourceError::Unavailable(message),
         _ => ParentBodySourceError::Corruption(message),
     }
 }
@@ -852,16 +868,46 @@ fn id_page_from_entries(
     page: outbe_offchain_storage::ScanPage,
     after: Option<WwdEntityId>,
     index: &'static str,
-    mut parse: impl FnMut(&ScanEntry) -> Result<WwdEntityId, NodRepositoryError>,
+    parse: impl FnMut(&ScanEntry) -> Result<WwdEntityId, NodRepositoryError>,
 ) -> Result<IdPage, NodRepositoryError> {
-    if let Some(continuation) = &page.next_after {
-        if page.entries.last().map(|entry| &entry.key) != Some(continuation) {
-            return Err(NodRepositoryError::InvalidPageContinuation { index });
-        }
+    check_continuation(&page, index)?;
+    let ids = ascending_ids(&page.entries, after, index, parse)?;
+    let next_after = page
+        .next_after
+        .is_some()
+        .then(|| {
+            ids.last()
+                .copied()
+                .ok_or(NodRepositoryError::InvalidPageContinuation { index })
+        })
+        .transpose()?;
+    Ok(IdPage { ids, next_after })
+}
+
+/// Rejects a continuation that is not the key of the page's last entry.
+fn check_continuation(
+    page: &outbe_offchain_storage::ScanPage,
+    index: &'static str,
+) -> Result<(), NodRepositoryError> {
+    if page
+        .next_after
+        .as_ref()
+        .is_some_and(|next| page.entries.last().map(|entry| &entry.key) != Some(next))
+    {
+        return Err(NodRepositoryError::InvalidPageContinuation { index });
     }
-    let mut ids = Vec::with_capacity(page.entries.len());
+    Ok(())
+}
+
+fn ascending_ids(
+    entries: &[ScanEntry],
+    after: Option<WwdEntityId>,
+    index: &'static str,
+    mut parse: impl FnMut(&ScanEntry) -> Result<WwdEntityId, NodRepositoryError>,
+) -> Result<Vec<WwdEntityId>, NodRepositoryError> {
+    let mut ids = Vec::with_capacity(entries.len());
     let mut previous = after;
-    for entry in &page.entries {
+    for entry in entries {
         let id = parse(entry)?;
         if previous.is_some_and(|previous| id <= previous) {
             return Err(NodRepositoryError::NonAscendingIdPage { index });
@@ -869,16 +915,7 @@ fn id_page_from_entries(
         ids.push(id);
         previous = Some(id);
     }
-    let next_after = if page.next_after.is_some() {
-        Some(
-            ids.last()
-                .copied()
-                .ok_or(NodRepositoryError::InvalidPageContinuation { index })?,
-        )
-    } else {
-        None
-    };
-    Ok(IdPage { ids, next_after })
+    Ok(ids)
 }
 
 fn next_cursor(has_more: bool, records: &[NodItemState]) -> Option<WwdEntityId> {

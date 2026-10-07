@@ -26,3 +26,4 @@ pub(crate) use index::ResponseDeadlineKey;
 pub(crate) use profile::poc_schema_limits;
 #[cfg(test)]
 pub(crate) use terminal_index::terminal_entry_key;
+pub(crate) use transitions::FinalityAnchor;

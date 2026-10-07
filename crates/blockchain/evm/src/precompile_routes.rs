@@ -16,8 +16,6 @@ use outbe_primitives::{
 
 pub(crate) type DispatchFn = fn(StorageHandle, &[u8], Address, U256) -> Result<Bytes>;
 type ReaderDispatchFn =
-    fn(StorageHandle, &ExecutionScope, &RuntimeBodyReaders, &[u8], Address, U256) -> Result<Bytes>;
-type OptionalReaderDispatchFn =
     fn(StorageHandle, BeginBlockReaders<'_, '_>, &[u8], Address, U256) -> Result<Bytes>;
 pub(crate) type BaseGasFn = fn(&[u8]) -> u64;
 
@@ -35,7 +33,7 @@ enum DispatchAdapter {
     ReadersRequired(ReaderDispatchFn),
     ReadersOptional {
         without_readers: DispatchFn,
-        with_readers: OptionalReaderDispatchFn,
+        with_readers: ReaderDispatchFn,
     },
 }
 
@@ -169,13 +167,11 @@ impl ExactRoute {
         )?;
         match (self.dispatch, readers) {
             (DispatchAdapter::Basic(dispatch), _) => dispatch(storage, data, caller, value),
-            (DispatchAdapter::ReadersRequired(dispatch), Some(readers)) => {
-                dispatch(storage, execution_scope, readers, data, caller, value)
-            }
-            (DispatchAdapter::ReadersRequired(_), None) => Err(PrecompileError::Fatal(
-                "execution body read authority was not supplied".into(),
-            )),
-            (DispatchAdapter::ReadersOptional { with_readers, .. }, Some(readers)) => with_readers(
+            (
+                DispatchAdapter::ReadersRequired(with_readers)
+                | DispatchAdapter::ReadersOptional { with_readers, .. },
+                Some(readers),
+            ) => with_readers(
                 storage,
                 BeginBlockReaders {
                     scope: execution_scope,
@@ -185,6 +181,9 @@ impl ExactRoute {
                 caller,
                 value,
             ),
+            (DispatchAdapter::ReadersRequired(_), None) => Err(PrecompileError::Fatal(
+                "execution body read authority was not supplied".into(),
+            )),
             (
                 DispatchAdapter::ReadersOptional {
                     without_readers, ..

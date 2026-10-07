@@ -34,6 +34,40 @@ pub struct NodProjectionSession {
     buckets: BTreeMap<WwdEntityId, Option<NodBucketRecordWithMetadata>>,
 }
 
+type Records<T> = BTreeMap<WwdEntityId, Option<(T, Option<StorageMetadata>)>>;
+
+/// How the session decodes, validates and plans one kind of body.
+struct BodyKind<T> {
+    entity: &'static str,
+    decode: fn(WwdEntityId, &[u8]) -> Result<T, NodRepositoryError>,
+    validate: fn(WwdEntityId, &T) -> Result<(), NodRepositoryError>,
+    plan_store: StorePlanner<T>,
+    plan_delete: fn(Option<&T>, WwdEntityId) -> Result<AtomicWriteBatch, NodRepositoryError>,
+}
+
+type StorePlanner<T> = fn(
+    Option<&T>,
+    WwdEntityId,
+    Value,
+    Option<StorageMetadata>,
+) -> Result<AtomicWriteBatch, NodRepositoryError>;
+
+const ITEMS: BodyKind<NodItemState> = BodyKind {
+    entity: "Nod item",
+    decode: decode_item,
+    validate: validate_item_identity,
+    plan_store: plan_item_store,
+    plan_delete: plan_item_delete,
+};
+
+const BUCKETS: BodyKind<NodBucketState> = BodyKind {
+    entity: "Nod bucket",
+    decode: decode_bucket,
+    validate: validate_bucket_identity,
+    plan_store: plan_bucket_store,
+    plan_delete: plan_bucket_delete,
+};
+
 impl NodProjectionSession {
     pub(crate) fn from_records(
         nod_ids: &[WwdEntityId],
@@ -62,16 +96,7 @@ impl NodProjectionSession {
         &self,
         nod_id: WwdEntityId,
     ) -> Result<Option<(&NodItemState, Option<&StorageMetadata>)>, NodRepositoryError> {
-        match self
-            .items
-            .get(&nod_id)
-            .ok_or(NodRepositoryError::UntrackedProjectionIdentity {
-                entity: "Nod item",
-                identity: nod_id,
-            })? {
-            Some((body, metadata)) => Ok(Some((body, metadata.as_ref()))),
-            None => Ok(None),
-        }
+        tracked(&self.items, ITEMS.entity, nod_id)
     }
 
     /// Returns the current bucket body from the repository snapshot or in-block overlay.
@@ -89,15 +114,7 @@ impl NodProjectionSession {
         &self,
         bucket_id: WwdEntityId,
     ) -> Result<Option<(&NodBucketState, Option<&StorageMetadata>)>, NodRepositoryError> {
-        match self.buckets.get(&bucket_id).ok_or(
-            NodRepositoryError::UntrackedProjectionIdentity {
-                entity: "Nod bucket",
-                identity: bucket_id,
-            },
-        )? {
-            Some((body, metadata)) => Ok(Some((body, metadata.as_ref()))),
-            None => Ok(None),
-        }
+        tracked(&self.buckets, BUCKETS.entity, bucket_id)
     }
 
     /// Plans one canonical item store and advances the overlay after full validation.
@@ -107,18 +124,7 @@ impl NodProjectionSession {
         stored_body: Value,
         metadata: Option<StorageMetadata>,
     ) -> Result<AtomicWriteBatch, NodRepositoryError> {
-        let body = decode_item(nod_id, stored_body.as_bytes())?;
-        let old = self.current_item(nod_id)?;
-        let batch = plan_nod_item_mutation(
-            old,
-            NodItemMutation::Store {
-                nod_id,
-                stored_body,
-                metadata: metadata.clone(),
-            },
-        )?;
-        self.items.insert(nod_id, Some((body, metadata)));
-        Ok(batch)
+        store(&mut self.items, &ITEMS, nod_id, stored_body, metadata)
     }
 
     /// Plans one item delete from the owned prior snapshot and advances overlay to absence.
@@ -126,10 +132,7 @@ impl NodProjectionSession {
         &mut self,
         nod_id: WwdEntityId,
     ) -> Result<AtomicWriteBatch, NodRepositoryError> {
-        let old = self.current_item(nod_id)?;
-        let batch = plan_nod_item_mutation(old, NodItemMutation::Delete { nod_id })?;
-        self.items.insert(nod_id, None);
-        Ok(batch)
+        delete(&mut self.items, &ITEMS, nod_id)
     }
 
     /// Plans one canonical bucket store and advances the overlay after full validation.
@@ -139,18 +142,13 @@ impl NodProjectionSession {
         stored_body: Value,
         metadata: Option<StorageMetadata>,
     ) -> Result<AtomicWriteBatch, NodRepositoryError> {
-        let body = decode_bucket(bucket_id, stored_body.as_bytes())?;
-        let old = self.current_bucket(bucket_id)?;
-        let batch = plan_nod_bucket_mutation(
-            old,
-            NodBucketMutation::Store {
-                bucket_id,
-                stored_body,
-                metadata: metadata.clone(),
-            },
-        )?;
-        self.buckets.insert(bucket_id, Some((body, metadata)));
-        Ok(batch)
+        store(
+            &mut self.buckets,
+            &BUCKETS,
+            bucket_id,
+            stored_body,
+            metadata,
+        )
     }
 
     /// Plans one bucket delete from the owned prior snapshot and advances overlay to absence.
@@ -158,175 +156,179 @@ impl NodProjectionSession {
         &mut self,
         bucket_id: WwdEntityId,
     ) -> Result<AtomicWriteBatch, NodRepositoryError> {
-        let old = self.current_bucket(bucket_id)?;
-        let batch = plan_nod_bucket_mutation(old, NodBucketMutation::Delete { bucket_id })?;
-        self.buckets.insert(bucket_id, None);
-        Ok(batch)
+        delete(&mut self.buckets, &BUCKETS, bucket_id)
     }
 }
 
-/// One complete Nod item projection mutation.
-enum NodItemMutation {
-    /// Store a complete item and its optional primary metadata.
-    Store {
-        /// Indexed event identity.
-        nod_id: WwdEntityId,
-        /// Exact canonical StoredBody bytes. The planner decodes this value and
-        /// derives every semantic index from it.
-        stored_body: Value,
-        /// Metadata attached only to the primary body.
-        metadata: Option<StorageMetadata>,
-    },
-    /// Delete one item identity and its index derivable from the old body.
-    Delete {
-        /// Indexed event identity.
-        nod_id: WwdEntityId,
-    },
+/// Looks up an identity the session loaded, with its provenance.
+fn tracked<'a, T>(
+    records: &'a Records<T>,
+    entity: &'static str,
+    identity: WwdEntityId,
+) -> Result<Option<(&'a T, Option<&'a StorageMetadata>)>, NodRepositoryError> {
+    match records
+        .get(&identity)
+        .ok_or(NodRepositoryError::UntrackedProjectionIdentity { entity, identity })?
+    {
+        Some((body, metadata)) => Ok(Some((body, metadata.as_ref()))),
+        None => Ok(None),
+    }
 }
 
-/// One complete Nod bucket projection mutation.
-enum NodBucketMutation {
-    /// Store a complete bucket and its optional primary metadata.
-    Store {
-        /// Indexed event identity.
-        bucket_id: WwdEntityId,
-        /// Exact canonical StoredBody bytes. The planner decodes this value and
-        /// validates its canonical bucket identity.
-        stored_body: Value,
-        /// Metadata attached only to the primary body.
-        metadata: Option<StorageMetadata>,
-    },
-    /// Delete one bucket identity.
-    Delete {
-        /// Indexed event identity.
-        bucket_id: WwdEntityId,
-    },
+/// The identity's current body, checked against the identity.
+fn validated_current<'a, T>(
+    records: &'a Records<T>,
+    kind: &BodyKind<T>,
+    identity: WwdEntityId,
+) -> Result<Option<&'a T>, NodRepositoryError> {
+    let old = tracked(records, kind.entity, identity)?.map(|(body, _)| body);
+    if let Some(old) = old {
+        (kind.validate)(identity, old)?;
+    }
+    Ok(old)
 }
 
-/// Plans all Nod item primary/index mutations without storage access.
-fn plan_nod_item_mutation(
+/// Plans one store from the exact canonical StoredBody bytes, then advances the overlay.
+fn store<T>(
+    records: &mut Records<T>,
+    kind: &BodyKind<T>,
+    identity: WwdEntityId,
+    stored_body: Value,
+    metadata: Option<StorageMetadata>,
+) -> Result<AtomicWriteBatch, NodRepositoryError> {
+    let body = (kind.decode)(identity, stored_body.as_bytes())?;
+    let old = validated_current(records, kind, identity)?;
+    let batch = (kind.plan_store)(old, identity, stored_body, metadata.clone())?;
+    records.insert(identity, Some((body, metadata)));
+    Ok(batch)
+}
+
+/// Plans one delete from the prior snapshot, then advances the overlay to absence.
+fn delete<T>(
+    records: &mut Records<T>,
+    kind: &BodyKind<T>,
+    identity: WwdEntityId,
+) -> Result<AtomicWriteBatch, NodRepositoryError> {
+    let old = validated_current(records, kind, identity)?;
+    let batch = (kind.plan_delete)(old, identity)?;
+    records.insert(identity, None);
+    Ok(batch)
+}
+
+/// Plans one Nod item primary/index store without storage access. Decodes the
+/// stored body and derives every semantic index from it.
+fn plan_item_store(
     old: Option<&NodItemState>,
-    mutation: NodItemMutation,
+    nod_id: WwdEntityId,
+    stored_body: Value,
+    metadata: Option<StorageMetadata>,
 ) -> Result<AtomicWriteBatch, NodRepositoryError> {
-    let nod_id = match &mutation {
-        NodItemMutation::Store { nod_id, .. } | NodItemMutation::Delete { nod_id } => *nod_id,
-    };
-    if let Some(old) = old {
-        validate_item_identity(nod_id, old)?;
-    }
-
     let mut batch = AtomicWriteBatch::new();
-    match mutation {
-        NodItemMutation::Store {
-            nod_id,
-            stored_body,
-            metadata,
-        } => {
-            let body = decode_item(nod_id, stored_body.as_bytes())?;
-            let primary_record = match metadata {
-                Some(metadata) => StoredValue::with_metadata(stored_body, metadata),
-                None => StoredValue::plain(stored_body),
-            };
-            let scope = crate::partitioning::item_scope(body.owner)?;
-            if let Some(old) = old {
-                let old_scope = crate::partitioning::item_scope(old.owner)?;
-                if old_scope != scope {
-                    batch.push(AtomicWriteOperation::delete(
-                        namespace(NODS_NAMESPACE)?.with_scope(old_scope),
-                        item_key(nod_id)?,
-                    ));
-                }
-            }
-            batch.push(AtomicWriteOperation::put_record(
-                namespace(NODS_NAMESPACE)?.with_scope(scope),
-                item_key(nod_id)?,
-                primary_record,
-            ));
-            batch.push(AtomicWriteOperation::put(
-                namespace(crate::partitioning::NOD_LOCATIONS_NAMESPACE)?,
-                item_key(nod_id)?,
-                Value::new(
-                    crate::partitioning::owner_shard(body.owner)?
-                        .to_be_bytes()
-                        .to_vec(),
-                )?,
-            ));
-            batch.push(AtomicWriteOperation::put(
-                namespace(NODS_BY_OWNER_NAMESPACE)?,
-                owner_index_key(body.owner, nod_id)?,
-                Value::new(Vec::new())?,
-            ));
-            if let Some(old) = old {
-                if old.owner != body.owner {
-                    batch.push(AtomicWriteOperation::delete(
-                        namespace(NODS_BY_OWNER_NAMESPACE)?,
-                        owner_index_key(old.owner, nod_id)?,
-                    ));
-                }
-            }
-        }
-        NodItemMutation::Delete { nod_id } => {
-            if let Some(old) = old {
-                batch.push(AtomicWriteOperation::delete(
-                    namespace(NODS_BY_OWNER_NAMESPACE)?,
-                    owner_index_key(old.owner, nod_id)?,
-                ));
-            }
-            let primary = match old {
-                Some(old) => namespace(NODS_NAMESPACE)?
-                    .with_scope(crate::partitioning::item_scope(old.owner)?),
-                None => namespace(NODS_NAMESPACE)?,
-            };
-            batch.push(AtomicWriteOperation::delete(primary, item_key(nod_id)?));
+    let body = decode_item(nod_id, stored_body.as_bytes())?;
+    let primary_record = primary_record(stored_body, metadata);
+    let scope = crate::partitioning::item_scope(body.owner)?;
+    if let Some(old) = old {
+        let old_scope = crate::partitioning::item_scope(old.owner)?;
+        if old_scope != scope {
             batch.push(AtomicWriteOperation::delete(
-                namespace(crate::partitioning::NOD_LOCATIONS_NAMESPACE)?,
+                namespace(NODS_NAMESPACE)?.with_scope(old_scope),
                 item_key(nod_id)?,
+            ));
+        }
+    }
+    batch.push(AtomicWriteOperation::put_record(
+        namespace(NODS_NAMESPACE)?.with_scope(scope),
+        item_key(nod_id)?,
+        primary_record,
+    ));
+    batch.push(AtomicWriteOperation::put(
+        namespace(crate::partitioning::NOD_LOCATIONS_NAMESPACE)?,
+        item_key(nod_id)?,
+        Value::new(
+            crate::partitioning::owner_shard(body.owner)?
+                .to_be_bytes()
+                .to_vec(),
+        )?,
+    ));
+    batch.push(AtomicWriteOperation::put(
+        namespace(NODS_BY_OWNER_NAMESPACE)?,
+        owner_index_key(body.owner, nod_id)?,
+        Value::new(Vec::new())?,
+    ));
+    if let Some(old) = old {
+        if old.owner != body.owner {
+            batch.push(AtomicWriteOperation::delete(
+                namespace(NODS_BY_OWNER_NAMESPACE)?,
+                owner_index_key(old.owner, nod_id)?,
             ));
         }
     }
     Ok(batch)
 }
 
-/// Plans one Nod bucket primary mutation without storage access.
-fn plan_nod_bucket_mutation(
-    old: Option<&NodBucketState>,
-    mutation: NodBucketMutation,
+/// Plans one Nod item delete, with the index derivable from the old body.
+fn plan_item_delete(
+    old: Option<&NodItemState>,
+    nod_id: WwdEntityId,
 ) -> Result<AtomicWriteBatch, NodRepositoryError> {
-    let bucket_id = match &mutation {
-        NodBucketMutation::Store { bucket_id, .. } | NodBucketMutation::Delete { bucket_id } => {
-            *bucket_id
-        }
-    };
-    if let Some(old) = old {
-        validate_bucket_identity(bucket_id, old)?;
-    }
-
     let mut batch = AtomicWriteBatch::new();
-    match mutation {
-        NodBucketMutation::Store {
-            bucket_id,
-            stored_body,
-            metadata,
-        } => {
-            decode_bucket(bucket_id, stored_body.as_bytes())?;
-            let primary_record = match metadata {
-                Some(metadata) => StoredValue::with_metadata(stored_body, metadata),
-                None => StoredValue::plain(stored_body),
-            };
-            batch.push(AtomicWriteOperation::put_record(
-                namespace(NOD_BUCKETS_NAMESPACE)?,
-                bucket_storage_key(bucket_id)?,
-                primary_record,
-            ));
-        }
-        NodBucketMutation::Delete { bucket_id } => {
-            batch.push(AtomicWriteOperation::delete(
-                namespace(NOD_BUCKETS_NAMESPACE)?,
-                bucket_storage_key(bucket_id)?,
-            ));
-        }
+    if let Some(old) = old {
+        batch.push(AtomicWriteOperation::delete(
+            namespace(NODS_BY_OWNER_NAMESPACE)?,
+            owner_index_key(old.owner, nod_id)?,
+        ));
     }
+    let primary = match old {
+        Some(old) => {
+            namespace(NODS_NAMESPACE)?.with_scope(crate::partitioning::item_scope(old.owner)?)
+        }
+        None => namespace(NODS_NAMESPACE)?,
+    };
+    batch.push(AtomicWriteOperation::delete(primary, item_key(nod_id)?));
+    batch.push(AtomicWriteOperation::delete(
+        namespace(crate::partitioning::NOD_LOCATIONS_NAMESPACE)?,
+        item_key(nod_id)?,
+    ));
     Ok(batch)
+}
+
+/// Plans one Nod bucket primary store without storage access. Decodes the
+/// stored body to validate its canonical bucket identity.
+fn plan_bucket_store(
+    _old: Option<&NodBucketState>,
+    bucket_id: WwdEntityId,
+    stored_body: Value,
+    metadata: Option<StorageMetadata>,
+) -> Result<AtomicWriteBatch, NodRepositoryError> {
+    let mut batch = AtomicWriteBatch::new();
+    decode_bucket(bucket_id, stored_body.as_bytes())?;
+    batch.push(AtomicWriteOperation::put_record(
+        namespace(NOD_BUCKETS_NAMESPACE)?,
+        bucket_storage_key(bucket_id)?,
+        primary_record(stored_body, metadata),
+    ));
+    Ok(batch)
+}
+
+/// Plans one Nod bucket primary delete without storage access.
+fn plan_bucket_delete(
+    _old: Option<&NodBucketState>,
+    bucket_id: WwdEntityId,
+) -> Result<AtomicWriteBatch, NodRepositoryError> {
+    let mut batch = AtomicWriteBatch::new();
+    batch.push(AtomicWriteOperation::delete(
+        namespace(NOD_BUCKETS_NAMESPACE)?,
+        bucket_storage_key(bucket_id)?,
+    ));
+    Ok(batch)
+}
+
+/// The primary body record, carrying `metadata` when present.
+fn primary_record(stored_body: Value, metadata: Option<StorageMetadata>) -> StoredValue {
+    match metadata {
+        Some(metadata) => StoredValue::with_metadata(stored_body, metadata),
+        None => StoredValue::plain(stored_body),
+    }
 }
 
 fn validate_item_identity(

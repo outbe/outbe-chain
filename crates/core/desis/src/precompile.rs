@@ -42,9 +42,11 @@ pub fn dispatch(
                 let bids = bids_from_sol_arrays(&c.bidderAddresses, &c.packedBids)?;
                 runtime::process_bids_batch(
                     storage.clone(),
-                    sender,
-                    c.worldwideDay.into(),
-                    c.srcChainId,
+                    runtime::Inbound {
+                        caller: sender,
+                        worldwide_day: c.worldwideDay.into(),
+                        src_chain_id: c.srcChainId,
+                    },
                     c.batchIndex,
                     c.totalBatches,
                     bids,
@@ -53,9 +55,11 @@ pub fn dispatch(
             processBidsDone(c) => mutate_void(c, caller, |sender, c| {
                 runtime::process_bids_done(
                     storage.clone(),
-                    sender,
-                    c.worldwideDay.into(),
-                    c.srcChainId,
+                    runtime::Inbound {
+                        caller: sender,
+                        worldwide_day: c.worldwideDay.into(),
+                        src_chain_id: c.srcChainId,
+                    },
                     c.totalBatches,
                     c.totalBids,
                 )

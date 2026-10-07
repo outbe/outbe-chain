@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
+use outbe_compressed_entities::{begin_block, ExecutionReaders, ExecutionScope, WwdEntityId};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_oracle::{api::AddressPair, schema::OracleContract};
 use outbe_primitives::time::WorldwideDay;
@@ -238,7 +238,12 @@ fn try_forfeit(
 ) -> outbe_primitives::error::Result<u32> {
     storage.with_checkpoint(|| {
         let mut nod = NodContract::new(storage.clone());
-        crate::called::forfeit_members(storage, &mut nod, scope, parent, bucket_key, budget)
+        let bodies = crate::called::Bodies {
+            storage,
+            scope,
+            parent,
+        };
+        crate::called::forfeit_members(&bodies, &mut nod, bucket_key, budget)
     })
 }
 
@@ -1109,9 +1114,11 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
             crate::called::call_currency(
                 &ctx,
                 &mut nod,
-                ISO,
-                &window,
-                MAX_BIN_ID,
+                crate::called::CurrencyScan {
+                    iso_code: ISO,
+                    window: &window,
+                    ceiling: MAX_BIN_ID,
+                },
                 &mut visits,
                 &mut std::collections::BTreeSet::new(),
             )
@@ -1123,9 +1130,11 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
             crate::called::call_currency(
                 &ctx,
                 &mut nod,
-                ISO,
-                &window,
-                MAX_BIN_ID,
+                crate::called::CurrencyScan {
+                    iso_code: ISO,
+                    window: &window,
+                    ceiling: MAX_BIN_ID,
+                },
                 &mut visits,
                 &mut std::collections::BTreeSet::new(),
             )
@@ -2115,7 +2124,17 @@ fn token_uri_turns_forfeited_past_the_settlement_deadline() {
                 nodId: item.nod_id.to_u256(),
             }
             .abi_encode();
-            let out = dispatch(storage, &scope, &parent, &data, Address::ZERO, U256::ZERO).unwrap();
+            let out = dispatch(
+                storage,
+                ExecutionReaders {
+                    scope: &scope,
+                    parent: &parent,
+                },
+                &data,
+                Address::ZERO,
+                U256::ZERO,
+            )
+            .unwrap();
             let uri = INod::tokenURICall::abi_decode_returns(&out).unwrap();
             let json = base64::engine::general_purpose::STANDARD
                 .decode(uri.strip_prefix("data:application/json;base64,").unwrap())

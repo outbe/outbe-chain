@@ -389,8 +389,7 @@ fn certified_generation_has_no_public_installation_selector() {
     let result = world.enter(|storage, scope, parent| {
         crate::precompile::dispatch(
             storage,
-            scope,
-            parent,
+            ExecutionReaders { scope, parent },
             &calldata,
             Address::repeat_byte(0x91),
             U256::ZERO,

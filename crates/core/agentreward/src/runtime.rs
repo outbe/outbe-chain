@@ -1,8 +1,9 @@
 use crate::precompile::IAgentReward;
 use crate::schema::{AgentRewardContract, RewardPool};
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_gemfactory::schema::GemTypes;
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 use outbe_primitives::units::{checked_protocol_to_native, native_to_protocol_floor};
@@ -164,40 +165,22 @@ impl AgentRewardContract<'_> {
 
     /// Gets all WAA tribute counts for a day as (address, count) pairs.
     pub fn get_all_waa_counts(&self, day: WorldwideDay) -> Result<Vec<(Address, u64)>> {
-        let addr_count = self.waa_address_count.read(&day)?;
-        let mut result = Vec::with_capacity(addr_count as usize);
-        for i in 0..addr_count {
-            let idx_key = AgentRewardContract::address_index_key(day, i);
-            let addr = self.waa_addresses.read(&idx_key)?;
-            if addr.is_zero() {
-                continue;
-            }
-            let count_key = AgentRewardContract::tribute_count_key(day, addr);
-            let count = self.waa_tribute_counts.read(&count_key)?;
-            if count > 0 {
-                result.push((addr, count));
-            }
-        }
-        Ok(result)
+        read_tribute_counts(
+            day,
+            &self.waa_address_count,
+            &self.waa_addresses,
+            &self.waa_tribute_counts,
+        )
     }
 
     /// Gets all SRA tribute counts for a day as (address, count) pairs.
     pub fn get_all_sra_counts(&self, day: WorldwideDay) -> Result<Vec<(Address, u64)>> {
-        let addr_count = self.sra_address_count.read(&day)?;
-        let mut result = Vec::with_capacity(addr_count as usize);
-        for i in 0..addr_count {
-            let idx_key = AgentRewardContract::address_index_key(day, i);
-            let addr = self.sra_addresses.read(&idx_key)?;
-            if addr.is_zero() {
-                continue;
-            }
-            let count_key = AgentRewardContract::tribute_count_key(day, addr);
-            let count = self.sra_tribute_counts.read(&count_key)?;
-            if count > 0 {
-                result.push((addr, count));
-            }
-        }
-        Ok(result)
+        read_tribute_counts(
+            day,
+            &self.sra_address_count,
+            &self.sra_addresses,
+            &self.sra_tribute_counts,
+        )
     }
 
     /// Clears WAA tribute counts and address list for a day. The distribution
@@ -235,6 +218,29 @@ impl AgentRewardContract<'_> {
     }
 }
 
+fn read_tribute_counts(
+    day: WorldwideDay,
+    address_count: &Map<'_, WorldwideDay, u32>,
+    addresses: &Map<'_, B256, Address>,
+    tribute_counts: &Map<'_, B256, u64>,
+) -> Result<Vec<(Address, u64)>> {
+    let addr_count = address_count.read(&day)?;
+    let mut result = Vec::with_capacity(addr_count as usize);
+    for i in 0..addr_count {
+        let idx_key = AgentRewardContract::address_index_key(day, i);
+        let addr = addresses.read(&idx_key)?;
+        if addr.is_zero() {
+            continue;
+        }
+        let count_key = AgentRewardContract::tribute_count_key(day, addr);
+        let count = tribute_counts.read(&count_key)?;
+        if count > 0 {
+            result.push((addr, count));
+        }
+    }
+    Ok(result)
+}
+
 /// Shared issuance economics and claim-day pricing for WAA, SRA and CCA rewards.
 pub(crate) fn issue_reward_gem(
     storage: &StorageHandle<'_>,
@@ -247,12 +253,14 @@ pub(crate) fn issue_reward_gem(
     })?;
     outbe_gemfactory::api::issue_gem(
         storage,
-        owner,
-        gem_type,
-        load,
-        AGENT_GEM_CURRENCY,
-        AGENT_GEM_CURRENCY,
-        entry_price,
+        outbe_gemfactory::GemIssueParams {
+            owner,
+            gem_type,
+            promis_load: load,
+            issuance_currency: AGENT_GEM_CURRENCY,
+            reference_currency: AGENT_GEM_CURRENCY,
+            entry_price,
+        },
     )
 }
 

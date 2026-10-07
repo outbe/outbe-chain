@@ -15,8 +15,7 @@
 //! 5. Enter epoch loop:
 //!    a. Register epoch sub-channels, build HybridScheme + Reporter
 //!    b. Start Simplex engine
-//!    c. Monitor for the reshare trigger (the block-height freeze schedule,
-//!       `freeze_height`)
+//!    c. Monitor for the reshare trigger (the block-height freeze schedule, `freeze_height`)
 //!    d. On reshare: run DKG in parallel, then abort engine + restart at new epoch
 
 use alloy_primitives::{Address as EthAddress, Bytes, B256};

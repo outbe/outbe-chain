@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
+use outbe_compressed_entities::{ExecutionReaders, ParentBodySource};
 use outbe_primitives::dispatch::{dispatch_call, mutate};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
@@ -34,12 +34,12 @@ pub fn base_gas(input: &[u8]) -> u64 {
 /// Dispatch for the tribute factory precompile.
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
+    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     data: &[u8],
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
+    let ExecutionReaders { scope, parent } = readers;
     outbe_primitives::dispatch::reject_value(&value)?;
     dispatch_call(
         data,

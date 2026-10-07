@@ -14,15 +14,28 @@ use super::apply_plan::{
 
 const RETIRED_TRIBUTE_GENERATION_V1: u64 = 1;
 
-pub fn verify_result(
-    intent_id: B256,
-    expected_job_id: B256,
-    intent: &JobIntentV1,
-    activation_payload: &ActivationPayloadV1,
-    result: &LysisResultV1,
-    limits: &SchemaLimits,
-    nod_issued_at: u64,
-) -> Result<LysisApplyPlanV1, ProtocolError> {
+/// Everything [`verify_result`] reads: protocol values only, no storage handle.
+#[derive(Clone, Copy)]
+pub struct LysisResultInputsV1<'a> {
+    pub intent_id: B256,
+    pub expected_job_id: B256,
+    pub intent: &'a JobIntentV1,
+    pub activation_payload: &'a ActivationPayloadV1,
+    pub result: &'a LysisResultV1,
+    pub limits: &'a SchemaLimits,
+    pub nod_issued_at: u64,
+}
+
+pub fn verify_result(inputs: LysisResultInputsV1<'_>) -> Result<LysisApplyPlanV1, ProtocolError> {
+    let LysisResultInputsV1 {
+        intent_id,
+        expected_job_id,
+        intent,
+        activation_payload,
+        result,
+        limits,
+        nod_issued_at,
+    } = inputs;
     ensure(
         intent.intent_id(limits)? == intent_id,
         "Lysis apply intent id",
@@ -39,18 +52,7 @@ pub fn verify_result(
         &reconstructed_payload == activation_payload,
         "Lysis apply activation payload",
     )?;
-    ensure(
-        !result.input_manifest_hash.is_zero()
-            && !result.plan_hash.is_zero()
-            && !result.unit_artifact_root.is_zero()
-            && !result.fidelity_fraction_root.is_zero()
-            && !result.gratis_prefix_root.is_zero()
-            && !result.roots.nod_root.is_zero()
-            && !result.roots.bucket_root.is_zero()
-            && !result.roots.contributor_root.is_zero()
-            && !result.roots.output_manifest_root.is_zero(),
-        "Lysis apply committed roots",
-    )?;
+    ensure(commits_every_root(result), "Lysis apply committed roots")?;
     ensure(
         result.counts.nod_count <= intent.activation_preconditions.nod.max_nod_count
             && result.counts.contributor_count
@@ -133,6 +135,22 @@ pub fn verify_result(
         carry_over: carry_over_apply(intent.wwd, result.conservation.unused_lysis_limit_minor),
     }
     .into())
+}
+
+fn commits_every_root(result: &LysisResultV1) -> bool {
+    [
+        result.input_manifest_hash,
+        result.plan_hash,
+        result.unit_artifact_root,
+        result.fidelity_fraction_root,
+        result.gratis_prefix_root,
+        result.roots.nod_root,
+        result.roots.bucket_root,
+        result.roots.contributor_root,
+        result.roots.output_manifest_root,
+    ]
+    .iter()
+    .all(|root| !root.is_zero())
 }
 
 fn ensure(condition: bool, invariant: &'static str) -> Result<(), ProtocolError> {

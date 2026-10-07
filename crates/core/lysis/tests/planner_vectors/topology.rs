@@ -304,16 +304,20 @@ fn shuffle_topology_is_exact_for_small_boundaries_and_a_billion_tributes() {
 fn owner_merge_preserves_source_span_when_every_contributor_is_excluded() {
     let mut sink_calls = 0_u32;
     let summary = merge_owner_runs_streaming(
-        CanonicalRunSpanV1 {
-            start_run: 0,
-            end_run: 1,
+        CanonicalRunV1 {
+            span: CanonicalRunSpanV1 {
+                start_run: 0,
+                end_run: 1,
+            },
+            records: Vec::new(),
         },
-        Vec::new(),
-        CanonicalRunSpanV1 {
-            start_run: 1,
-            end_run: 2,
+        CanonicalRunV1 {
+            span: CanonicalRunSpanV1 {
+                start_run: 1,
+                end_run: 2,
+            },
+            records: Vec::new(),
         },
-        Vec::new(),
         256,
         |_, _| {
             sink_calls += 1;

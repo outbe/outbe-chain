@@ -483,10 +483,12 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
                 &s,
                 sid(7),
                 owner(),
-                owner(),
                 U256::ONE,
-                payment_token(),
-                snapshot,
+                runtime::SettlementPayment {
+                    settler: owner(),
+                    asset: payment_token(),
+                    snapshot_id: snapshot,
+                },
             )
             .unwrap_err()
             .to_string()
@@ -568,10 +570,12 @@ fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
                 &s,
                 sid(7),
                 owner(),
-                owner(),
                 U256::ONE,
-                payment_token(),
-                snapshot,
+                runtime::SettlementPayment {
+                    settler: owner(),
+                    asset: payment_token(),
+                    snapshot_id: snapshot,
+                },
             )
             .unwrap_err()
             .to_string()
@@ -632,10 +636,12 @@ fn a_reference_payment_ignores_the_snapshot_it_names() {
             &s,
             sid(7),
             owner(),
-            owner(),
             U256::ONE,
-            payment_token(),
-            U256::from(7u64),
+            runtime::SettlementPayment {
+                settler: owner(),
+                asset: payment_token(),
+                snapshot_id: U256::from(7u64),
+            },
         )
         .unwrap_err();
         assert_eq!(

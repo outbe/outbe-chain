@@ -47,10 +47,12 @@ fn a_mining_sequence_at_its_maximum_refuses_the_next_mining_without_writes() {
             sid(7),
             owner(),
             U256::from(1),
-            nonce,
-            outbe_promisfactory::api::ModifyAuth {
-                mac: [0u8; 32],
-                op_nonce: 0,
+            runtime::MiningProof {
+                nonce,
+                auth: outbe_promisfactory::api::ModifyAuth {
+                    mac: [0u8; 32],
+                    op_nonce: 0,
+                },
             },
         )
         .unwrap_err()
