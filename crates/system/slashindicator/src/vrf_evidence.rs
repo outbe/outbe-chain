@@ -37,7 +37,7 @@
 use alloy_primitives::B256;
 use outbe_primitives::error::{PrecompileError, Result};
 
-/// Wire-format magic. The trailing `1` is the version family. A breaking
+/// Wire-format magic. The trailing `2` is the version family. A breaking
 /// wire change bumps both the magic and the `VERSION` byte.
 pub const MAGIC: [u8; 4] = *b"IVE2";
 

@@ -15,7 +15,7 @@
 //! ```
 //!
 //! ```compile_fail
-//! use outbe_metadosis::ocomp::expiry::run_lifecycle_begin;
+//! use outbe_metadosis::ocomp::expiry::run_lifecycle_begin_with_scope;
 //! ```
 //!
 //! ```compile_fail

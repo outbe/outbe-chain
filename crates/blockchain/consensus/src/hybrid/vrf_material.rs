@@ -99,8 +99,9 @@ impl<V: Variant> VrfMaterialProvider<V> {
         })
     }
 
-    /// Partial public key for `index` in the active version's polynomial, or
-    /// `None` if there is no active material or the index is out of range.
+    /// Partial public key for `index` in the polynomial of material `version`,
+    /// or `None` if there is no material for `version` or the index is out of
+    /// range.
     /// Lets callers validate a local share without exposing the state map.
     pub(crate) fn partial_public(&self, version: u64, index: Participant) -> Option<V::Public> {
         self.with_state(|state| {

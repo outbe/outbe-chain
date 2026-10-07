@@ -26,8 +26,8 @@ pub(crate) fn run_node() -> eyre::Result<()> {
     // execution. Tribute admission is consensus-critical, so a node that
     // cannot initialize the verifier must not start. Database and other
     // operator commands never execute proofs and must remain offline.
-    // This still runs before `Cli::run` creates the Tokio runtime because
-    // `setup_srs` uses `reqwest::blocking` internally.
+    // This runs before `run_with_execution_runtime` creates the Tokio runtime
+    // because `init_crs` uses `reqwest::blocking` internally.
     initialize_crs_for_command(&cli.command, || {
         let srs_path = std::env::var("OUTBE_BB_SRS_PATH").ok();
         outbe_zk_backend::barretenberg::init_crs().map_err(eyre::Report::from)?;
@@ -41,8 +41,8 @@ pub(crate) fn run_node() -> eyre::Result<()> {
 
     let bridge = ConsensusExecutionBridge::new();
 
-    // Channels for validator-mode consensus thread.
-    // For full-node mode, no thread is spawned and these are unused.
+    // Channels for the consensus thread in validator or follower mode.
+    // In other full-node mode, the launcher spawns no thread and these stay unused.
     let (node_tx, node_rx) = oneshot::channel::<consensus::ConsensusLaunch>();
     let (consensus_dead_tx, mut consensus_dead_rx) = oneshot::channel::<()>();
     let shutdown_token = tokio_util::sync::CancellationToken::new();
@@ -50,8 +50,9 @@ pub(crate) fn run_node() -> eyre::Result<()> {
     // signal branch into aborting the stack before it returns its primary error.
     let radicle_shutdown_token = shutdown_token.child_token();
 
-    // The launcher spawns the consensus thread conditionally. See inside
-    // run_with_components, where `args.is_validator` is known. For now, prepare the closure.
+    // The launcher spawns the consensus thread only in validator or follower
+    // (`--upstream`) mode. The `with_runner_and_components` closure makes this
+    // decision because it knows `args`. Here we only prepare the thread closure.
     let shutdown_token_clone = shutdown_token.clone();
     let radicle_shutdown_for_consensus = radicle_shutdown_token.clone();
     let bridge_for_consensus = bridge.clone();

@@ -235,8 +235,8 @@ impl<'storage> StorageHandle<'storage> {
     ///
     /// Honors the STATICCALL static gate: returns
     /// [`PrecompileError::WriteProtection`] if the provider is in a
-    /// static context. Providers that do not support code deployment return
-    /// [`PrecompileError::Unsupported`].
+    /// static context. A provider that does not support code deployment
+    /// returns an error (the read-only provider returns `Fatal`).
     pub fn set_code(&self, address: Address, code: Bytecode) -> Result<()> {
         self.with_provider(|provider| {
             if provider.is_static() {
@@ -323,11 +323,13 @@ impl<'storage> StorageHandle<'storage> {
         self.with_provider(|provider| Ok(provider.is_static()))
     }
 
-    // === Sub-call API stubs ===
+    // === Sub-call API ===
     //
-    // STUB until T4/T6 lands real behavior. Returns Ok(empty). Signatures
-    // here are the public contract. T4 (STATICCALL) and T6 (CALL) MUST swap
-    // bodies only, never types.
+    // These methods forward to the provider's `sub_call`. A provider wired to
+    // the sub-call driver (`outbe_evm::storage::CtxStorageProvider`) runs a
+    // real child frame. The test provider (`HashMapStorageProvider`) can return
+    // stub outputs. Other providers keep the default and return
+    // `SubCallError::NotAvailable`. The signatures here are the public contract.
 
     /// Invokes a child CALL frame and returns the raw returndata.
     ///
@@ -434,9 +436,10 @@ impl<'storage> StorageHandle<'storage> {
     /// Re-entry into `do_sub_call` during the dispatch closure (i.e. the
     /// callback already holds the inner borrow) returns
     /// `SubCallError::ProviderBorrowed` rather than panicking. In practice,
-    /// the production [`crate::storage::evm::EvmStorageProvider`] and
-    /// `outbe_evm::storage::CtxStorageProvider` provider impls only release
-    /// the borrow after `sub_call` returns. As a result, a hostile re-entry
+    /// the production sub-call provider (`outbe_evm::storage::CtxStorageProvider`)
+    /// releases the borrow only after `sub_call` returns.
+    /// [`crate::storage::evm::EvmStorageProvider`] does not override `sub_call`
+    /// and returns `SubCallError::NotAvailable`. As a result, a hostile re-entry
     /// from inside the child frame is observable as a structured error.
     fn do_sub_call(&self, input: SubCallInput) -> std::result::Result<SubCallOutput, SubCallError> {
         let mut guard = self

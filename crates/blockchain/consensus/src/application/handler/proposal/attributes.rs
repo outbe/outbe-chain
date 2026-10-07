@@ -58,14 +58,17 @@ impl ApplicationShared {
             ControlFlow::Continue(artifact) => artifact,
             ControlFlow::Break(outcome) => return Ok(ControlFlow::Break(outcome)),
         };
-        // Non-blocking direct-parent proof selection
+        // Direct-parent proof selection
         // (finalization first -> certified-notarization -> marshal-archive
         // recovery -> forfeit). The request budget does not gate this lookup.
-        // The selector returns synchronously. On a selection-store
-        // miss the None branch recovers the parent's finalization from marshal's
-        // durable archive (`recover_parent_proof_from_marshal`). Only if
-        // that also misses does the slot forfeit deterministically with the
-        // parent-proof-unavailable metric.
+        // The lookup can wait. When the store holds only a certified-notarization
+        // record, the selector waits a bounded time for a finalization record.
+        // The wait starts at `PHASE1_FINALIZATION_WAIT_DEFAULT`, and the default
+        // leader timeout caps it. On a selection-store miss, the None branch
+        // recovers the parent's finalization from marshal's durable archive
+        // (`recover_parent_proof_from_marshal`). Only if that also misses does
+        // the slot forfeit deterministically with the parent-proof-unavailable
+        // metric.
         let parent_proof_record = match self
             .select_parent_proof_for_proposal(
                 clock,
@@ -88,8 +91,8 @@ impl ApplicationShared {
         // `CertifiedParentAccountingMetadata` directly from the proof record
         // via [`CertifiedParentProofRecord::to_v2_metadata`]. Both
         // finalization and certified-notarization records project into V2
-        // metadata. `ParentProofSelector::select_direct_parent_proof`
-        // is the upstream caller that decides which record (if any) to feed
+        // metadata. `ParentProofSelector::select_direct_parent_proof_by_key_with_wait`
+        // is the upstream selector that decides which record (if any) to feed
         // into Phase 1.
         // The selector guarantees the chosen record's height resolves to
         // `parent_height`. A Finalization record is validated to match. A

@@ -84,9 +84,9 @@ pub fn ensure_genesis_anchor(ctx: &BlockRuntimeContext) -> Result<u32> {
     Ok(init_day)
 }
 
-/// Reads the locked-in genesis UTC day. Returns `Fatal` if the slot is
-/// uninitialized (which can only happen if `ensure_genesis_anchor` has
-/// not yet run for this chain - i.e., the lifecycle is misconfigured).
+/// Reads the locked-in genesis UTC day. Returns `Revert` if the slot is
+/// uninitialized. That happens only when `ensure_genesis_anchor` has not
+/// run for this chain, so the lifecycle is misconfigured.
 pub fn genesis_utc_day(ctx: &BlockRuntimeContext) -> Result<u32> {
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
     let day = rewards.genesis_utc_day.read()?;
@@ -104,8 +104,8 @@ pub fn genesis_utc_day(ctx: &BlockRuntimeContext) -> Result<u32> {
 /// genesis day. Returns:
 /// - `Ok(0)` for the genesis day itself.
 /// - `Ok(n)` for `n` days after genesis.
-/// - `Fatal` for a `utc_day` strictly before genesis (a finalized block
-///   predating genesis is a protocol violation).
+/// - `Revert` for a `utc_day` strictly before genesis. A finalized block
+///   that predates genesis is a protocol violation.
 pub fn day_number_since_genesis(ctx: &BlockRuntimeContext, utc_day: u32) -> Result<u32> {
     let genesis = genesis_utc_day(ctx)?;
     day_number_between(genesis, utc_day).map_err(|e| match e {
@@ -116,8 +116,8 @@ pub fn day_number_since_genesis(ctx: &BlockRuntimeContext, utc_day: u32) -> Resu
             "finalized block predates genesis: utc_day={utc_day}, \
              genesis_utc_day={genesis_utc_day}"
         )),
-        // TimeError is #[non_exhaustive]. Unknown variants surface as a
-        // generic fatal so future additions don't silently degrade.
+        // TimeError is #[non_exhaustive]. Unknown variants return `Revert`
+        // so a future variant does not pass silently.
         _ => PrecompileError::Revert(format!("time helper error: {e}")),
     })
 }
@@ -126,7 +126,7 @@ pub fn day_number_since_genesis(ctx: &BlockRuntimeContext, utc_day: u32) -> Resu
 /// fingerprint and then does one of these:
 /// - On first sight, persists it (returns `Fresh`).
 /// - On identical replay, short-circuits (returns `IdenticalReplay`).
-/// - On contradictory metadata for the same `fb_hash`, rejects it as `Fatal`.
+/// - On contradictory metadata for the same `fb_hash`, returns `Revert`.
 ///
 /// The fingerprint is the **single source of truth** for "same
 /// participation proof identity" under V2 Certified-Parent Accounting.
@@ -182,9 +182,9 @@ pub fn check_and_record_metadata_fingerprint(
     if prev == fp {
         return Ok(MetadataFingerprintOutcome::IdenticalReplay);
     }
-    // Same fb_hash, different fingerprint: contradictory metadata for
-    // the same finalized block. Protocol violation. It is fatal so post-exec
-    // module hooks never observe contradictory inputs.
+    // Same fb_hash, different fingerprint: contradictory metadata.
+    // The error is `Revert`. CertifiedParentAccounting rejects the block
+    // because that phase fails the block on revert.
     Err(PrecompileError::Revert(format!(
         "contradictory consensus metadata for fb_hash={fb_hash}: \
          stored fingerprint={prev}, new fingerprint={fp}"

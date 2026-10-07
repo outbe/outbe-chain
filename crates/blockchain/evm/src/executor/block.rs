@@ -4,8 +4,12 @@ use super::*;
 ///
 /// Wraps the standard [`EthBlockExecutor`] and routes Outbe system transactions
 /// through the same ordered transaction/receipt path as user transactions.
-/// `apply_pre_execution_changes()` only performs pre-block setup. Begin-zone
-/// phases execute when their reserved-address body transaction reaches the loop.
+/// `apply_pre_execution_changes()` performs pre-block setup. On blocks with
+/// Phase 1, it also verifies, executes, and commits the Phase 1
+/// (`CertifiedParentAccounting`) system tx. Then it runs the begin-block storage
+/// hooks. In the main loop, the executor validates `body[0]` against that witness
+/// and does not execute it again. The other begin-zone phases execute when their
+/// reserved-address body transaction reaches the loop.
 pub struct OutbeBlockExecutor<'a, Evm> {
     /// Inner Ethereum execution strategy.
     pub inner: EthBlockExecutor<'a, Evm, &'a Arc<ChainSpec<OutbeHeader>>, &'a RethReceiptBuilder>,
@@ -36,8 +40,9 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// Priority/coinbase fees collected by user transactions in this block.
     pub(super) current_block_validator_fees: U256,
     /// Internal gas consumed by begin-zone system transactions under the
-    /// Outbe-only 100M execution lane. The Ethereum-visible block counters use
-    /// each system tx envelope's visible intrinsic gas instead.
+    /// Outbe-only execution lane (`SYSTEM_TX_ARTIFACT_GAS_LIMIT`, 10B gas). The
+    /// Ethereum-visible block counters use each system tx envelope's visible
+    /// intrinsic gas instead.
     pub(super) system_tx_execution_gas: u64,
     /// Validator-mode signer used by proposer path to sign system-tx artifacts.
     pub(super) evm_signer: Option<SharedOutbeEvmSigner>,
@@ -70,7 +75,7 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// [`Self::accounted_parent_artifact_for_metadata`] consumes it when the
     /// [`AccountedParentArtifactProvider`] returns `None`. That function accepts
     /// the hint only if the metadata's `(finalized_block_number, finalized_block_hash)`
-    /// matches `(self.parent_block_number(), self.parent_hash)`.
+    /// matches `(block_number - 1, self.parent_hash)`.
     pub(super) parent_artifact_hint: Option<AccountedParentArtifact>,
     /// Canonical VRF proof hash that `verify_phase1_in_preexec` captures from
     /// the verified parent certificate

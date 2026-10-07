@@ -26,9 +26,8 @@ where
     ///
     /// Both proposer (its own gathered credits) and validator (proposer-
     /// supplied) verify, so a buggy proposer or a forged batch is rejected
-    /// identically. Block 0 / block 1 (genesis bootstrap) and the test-only
-    /// `PHASE1_VERIFY_DISABLED` opt-out skip verification. A `None` or empty
-    /// artifact is a no-op.
+    /// identically. Block 0 / block 1 (genesis bootstrap) skip verification.
+    /// A `None` or empty artifact is a no-op. There is no test opt-out.
     pub(in crate::executor) fn verify_late_finalize_credits_in_preexec(
         &mut self,
         block_number: u64,
@@ -84,8 +83,9 @@ where
             // NOTE: the canonical-binding authentication (fb_number/epoch/
             // committee_set_hash vs the escrow) is intentionally NOT done here.
             // THIS block's CPA writes the escrow for the closest in-window target
-            // (block N-1). The CPA runs in the body AFTER this pre-exec gate, so
-            // the binding is not yet present at pre-exec. The
+            // (block N-1). The CPA executes in pre-execution AFTER this gate
+            // (`apply_phase1_commit_in_preexec`), so the binding is not yet
+            // present when this gate runs. The
             // authentication therefore lives in the begin-zone body
             // (`run_late_finalize_credits`, after the CPA), where a mismatch is
             // FATAL and aborts the block. This pre-exec gate covers the BLS proof

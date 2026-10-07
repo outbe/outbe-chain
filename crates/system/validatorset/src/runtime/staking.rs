@@ -8,9 +8,9 @@ impl ValidatorSet<'_> {
     /// Records a successful stake increase from Staking and performs the
     /// REGISTERED -> PENDING threshold transition when required.
     ///
-    /// Staking owns the authoritative balance. This method is the only
-    /// production write seam for the ValidatorSet mirror and its coupled
-    /// lifecycle fields.
+    /// Staking owns the authoritative balance.
+    /// `record_unstake`, `record_stake_slash`, `record_ocomp_bonded_slash`,
+    /// and `complete_unbonding` also write the mirror and its lifecycle fields.
     pub fn record_stake_increase(
         &mut self,
         addr: Address,

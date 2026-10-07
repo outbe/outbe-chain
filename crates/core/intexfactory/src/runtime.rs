@@ -31,11 +31,9 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
     storage.emit_event(INTEX_FACTORY_ADDRESS, event.encode_log_data())
 }
 
-/// Capture series identity in Intex, enroll it in the call-price bin index, and send
-/// ISSUANCE_INSTRUCTIONS to every target chain of the day's snapshot. The
-/// canonical IntexNFT1155 createSeries now arrives per chain via the ISSUANCE
-/// broadcast. This includes a loopback leg on the origin. So there is no
-/// in-process NFT call here.
+/// Record the series identity and call-price bin, then arm the day's proceeds fan-in.
+/// Return issuance legs for the caller to broadcast through `send_issuance`.
+/// The broadcast creates IntexNFT1155 series on each target chain, including the origin.
 pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<IssuanceLeg>> {
     if params.issued_units == 0 {
         // Whether the day distributes is the caller's decision: one empty group
@@ -324,9 +322,9 @@ pub fn distribute(
     try_settle_proceeds(storage, worldwide_day, now)
 }
 
-/// Open the payout round for a series if its proceeds fan-in is satisfied
-/// (all winning chains in) or its deadline has passed. Idempotent, so repeated
-/// arrivals and the begin-block sweep can both call it safely.
+/// Open one payout round for the WorldwideDay when all winning chains report proceeds or the
+/// deadline passes.
+/// Repeated arrivals and the begin-block sweep can both call this idempotent operation.
 pub(crate) fn try_settle_proceeds(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,
@@ -610,10 +608,9 @@ fn decode_contributor_leaf(
     }
 }
 
-/// Begin-block sweep: settle every series whose proceeds fan-in deadline has
-/// passed. The set holds one entry per day and releases it once its deadline is
-/// out, so a whole pass is a handful of reads. Each series runs in its own
-/// checkpoint so one failure is retried next block instead of halting the block.
+/// Settle each WorldwideDay whose proceeds deadline passes.
+/// Each day has a separate checkpoint. Propagating failures reject the block.
+/// Other failures leave the day for a later sweep.
 pub(crate) fn sweep_proceeds_deadlines(storage: &StorageHandle<'_>, now: u64) -> Result<()> {
     let count = outbe_intex::api::awaiting_proceeds_count(storage)?;
     // Read the set before settling: settling swap-removes from it.
@@ -633,7 +630,7 @@ pub(crate) fn sweep_proceeds_deadlines(storage: &StorageHandle<'_>, now: u64) ->
     Ok(())
 }
 
-/// Burn the ownerless proceeds of a series with no recorded contributors:
+/// Burn the ownerless proceeds of a WorldwideDay with no recorded contributors:
 /// destroy the native COEN held by the factory, reducing total supply.
 fn burn_ownerless_proceeds(
     storage: &StorageHandle<'_>,

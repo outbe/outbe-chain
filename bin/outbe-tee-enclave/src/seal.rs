@@ -1,6 +1,15 @@
 //! Sealed-blob format + seal/unseal.
 //!
-//! On-disk layout (`<node_datadir>/tee/sealed_root.bin`):
+//! The file is `<tee-dir>/sealed_root.bin`. A production SGX seal (see the
+//! `sgx_sealing` module) wraps the `TSEAL` blob:
+//!
+//! ```text
+//! magic    "TSGX1" (5B)
+//! request  canonical SGX KEYREQUEST (512B)
+//! payload  the TSEAL blob below
+//! ```
+//!
+//! A mock seal and old read-only operator state hold the `TSEAL` blob directly:
 //!
 //! ```text
 //! magic   "TSEAL" (5B)
@@ -16,10 +25,12 @@
 //! signature is also the enclave-only input to deterministic registry onboarding.
 //! It is never a peer recovery or key-replacement capability.
 //!
-//! The sealing key comes from SGX `EGETKEY` with `KEYPOLICY=MRSIGNER` (so a new
-//! enclave of the same signer can unseal across updates). In mock mode it is a
-//! fixed key that is stable across rebuilds (simulating MRSIGNER). The mock key
-//! is feature/test gated so it never links into the production binary.
+//! New production seals use an SGX `EGETKEY` key with
+//! `KEYPOLICY=MRENCLAVE|MRSIGNER`. Thus a rebuilt enclave cannot unseal them, even
+//! from the same signer. The explicit upgrade key-transfer path moves the key
+//! across an enclave update. The MRSIGNER-only key stays only to read old state.
+//! In mock mode the key is fixed and stable across rebuilds. The mock key is
+//! feature/test gated so it never links into the production binary.
 
 use std::path::PathBuf;
 

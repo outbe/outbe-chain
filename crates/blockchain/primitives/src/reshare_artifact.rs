@@ -166,7 +166,7 @@ pub struct FinalizedParentAttestation {
 }
 
 /// Wire payload kept inside `header.extra_data` (tag 0x01) under the
-/// `OART` v0x04 envelope. Holds the only piece of execution-side data
+/// `OART` v0x0B envelope (`VERSION`). Holds the only piece of execution-side data
 /// the consensus path needs: the validator fee sum that
 /// `on_finalized_metadata` distributes to voters and accumulates into
 /// `daily_fee_sum_raw`. The previous `total_emission_limit` field was

@@ -242,8 +242,9 @@ pub fn sealing_key_raw(mrsigner_policy: bool) -> Result<Vec<u8>, String> {
 }
 
 /// 256-bit sealing key for the `TSEAL` blob, HKDF-expanded from the real 128-bit
-/// EGETKEY key. This is the production sealing-key source: it ties the sealed
-/// root seed to MRSIGNER (survives a same-signer enclave update). Returns `Err`
+/// EGETKEY key. New production seals do not use it. They use the combined
+/// MRENCLAVE|MRSIGNER key of the `sgx_sealing` module. This key reads old
+/// MRSIGNER seals and probes for hardware sealing support. Returns `Err`
 /// when no SGX hardware is present (gramine-direct/bare). There is no
 /// confidential at-rest persistence there, so the caller must not silently
 /// substitute a fixed key.

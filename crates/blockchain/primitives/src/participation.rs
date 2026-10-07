@@ -1,7 +1,11 @@
-//! Participation bitmap encoding/decoding for block `extra_data`.
+//! Legacy participation bitmap codec (the "OUTB" format).
 //!
-//! Encodes which validators participated in the previous block's finalization
-//! as a compact bitmap in the current block's `extra_data` field.
+//! The codec encodes which validators participated in a block's finalization
+//! as a compact bitmap. No production path writes this format into block
+//! `extra_data`. Participation travels in the Phase 1
+//! [`crate::consensus_metadata::CertifiedParentAccountingMetadata`] system tx,
+//! and `extra_data` carries `OutbeBlockArtifacts`. Tests and the fuzz target
+//! use this codec.
 //!
 //! # Format
 //!
@@ -12,9 +16,11 @@
 //! [ceil(validator_count / 8) bytes: signer bitmap]
 //! [1 byte:  missed_proposer_count]
 //! [20 * missed_proposer_count bytes: missed proposer addresses]
+//! [1 byte:  byzantine_count]
+//! [20 * byzantine_count bytes: byzantine validator addresses]
 //! ```
 //!
-//! For 128 validators with 0 missed: 4 + 1 + 2 + 16 + 1 = 24 bytes.
+//! For 128 validators with 0 missed and 0 byzantine: 4 + 1 + 2 + 16 + 1 + 1 = 25 bytes.
 
 use alloy_primitives::{Address, Bytes};
 

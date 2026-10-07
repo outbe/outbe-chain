@@ -8,7 +8,9 @@ use super::{SystemTxKind, GENESIS_BOOTSTRAP_BLOCK_NUMBER};
 /// `apply_pre_execution_changes` (pre-execution) and not in the main tx loop.
 ///
 /// Invariants:
-/// - On block `1` (genesis bootstrap), cursor starts at `CycleTick { body_index: 0 }`.
+/// - On block `1` (genesis bootstrap), cursor starts at
+///   `OcompLifecycleBegin { body_index: 0 }` when the OCOMP lifecycle is active,
+///   and at `CycleTick { body_index: 0 }` when it is not.
 /// - On block `n >= GENESIS_BOOTSTRAP_BLOCK_NUMBER + 1`, cursor starts at
 ///   `Phase1Preexecuted { body_index: 0, tx_hash, receipt_index: 0 }` after
 ///   the executor has pre-built and committed the Phase 1 system tx.

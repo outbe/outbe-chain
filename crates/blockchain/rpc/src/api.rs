@@ -317,11 +317,8 @@ pub struct RadicleRepositoryInfo {
     pub repo_id: String,
     pub state: RadicleRepositoryStateInfo,
 }
-/// Outbe custom RPC namespace.
-///
-/// Provides read-only access to validator infrastructure state.
-/// Enable with `--http.api outbe`.
-/// Sealed Gratis view + modify keys returned by `outbe_deriveGratisKeys`.
+/// Sealed view + modify keys returned by `outbe_deriveKeys` and
+/// `outbe_deriveGratisKeys`.
 ///
 /// The enclave derives the account's keys and seals them to the requester's
 /// ephemeral X25519 key: `sealed = AEAD(ECDHE(enclaveEphemeral, requesterEphemeral),
@@ -335,6 +332,9 @@ pub struct GratisKeysSealed {
     pub enclave_ephemeral_pubkey: B256,
 }
 
+/// Outbe custom RPC namespace.
+///
+/// Enable with `--http.api outbe`.
 #[rpc(server, namespace = "outbe")]
 pub trait OutbeApi {
     /// Export the network key only for a finalized upgrade candidate.
@@ -367,8 +367,8 @@ pub trait OutbeApi {
     #[method(name = "getValidators")]
     async fn get_validators(&self) -> jsonrpsee::core::RpcResult<Vec<ValidatorInfo>>;
 
-    /// Derive the account's confidential view + modify keys for `ledger` (`Gratis`
-    /// or `Promis`) inside the enclave and return them sealed to `ephemeralPubkey`
+    /// Derive the account's confidential view + modify keys for `ledger` (`Gratis`,
+    /// `Promis`, or `Fidelity`) inside the enclave and return them sealed to `ephemeralPubkey`
     /// (a client X25519 public key). This is off-chain key delivery. It never
     /// touches consensus state.
     ///

@@ -19,12 +19,13 @@ pub enum EffectiveState {
     Forfeited = 4,
 }
 
-/// Input for `NodContract::issue`. The contract derives `nod_id` via
-/// `NodContract::nod_id(owner, worldwide_day)`. It derives the floor from `entry_price_minor`
-/// (see [`NodContract::floor_price_minor`]). It derives the cost from `entry_price_minor` and
-/// `gratis_load_minor` (see [`crate::api::settlement_cost_minor`]). `issued_at` is not part of
-/// caller inputs: it is the block timestamp, or the certified generation time for a materialized
-/// Nod.
+/// Input for NodFactory issuance. [`NodContract::generate_nod_id`] derives the identity from owner
+/// and WorldwideDay.
+/// [`NodContract::floor_price_minor`] derives the floor from `entry_price_minor`.
+/// [`crate::api::settlement_cost_minor`] derives the cost from `entry_price_minor` and
+/// `gratis_load_minor`.
+/// The caller does not supply `issued_at`.
+/// Issuance uses the block timestamp or the certified generation time for a materialized Nod.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NodIssueParams {
     pub owner: Address,
@@ -180,10 +181,10 @@ impl NodCertifiedGenerationProjection {
 ///
 /// Uncalled buckets wait in a per-currency bitmap trie by call price, see `state::CallBins`.
 ///
-/// Field offsets are dense in `order` sequence, so this struct occupies slots
-/// 0..=48 in declaration order, with the genesis-seeded materialization FIFO
-/// counters at slots 13 and 14.
-/// `adr006_tests::nod_contract_slot_layout_is_pinned` is the tripwire.
+/// Field offsets are dense in `order` sequence, so this struct occupies slots 0..=49.
+/// Genesis seeds the materialization FIFO counters at slots 13 and 14.
+/// `adr006_tests::nod_contract_slot_layout_is_pinned` checks slots through 48.
+/// The profile selector occupies slot 49.
 #[storage_schema]
 #[contract(addr = NOD_ADDRESS)]
 pub struct NodContract {
@@ -282,8 +283,8 @@ pub struct NodContract {
     #[attribute(order = 37)]
     pub bucket_nod_index: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
 
-    /// `entry_price_minor x (100 + CALL_RATE_PCT) / 100`, snapshotted at issuance so
-    /// the daily scan never loads a bucket body just to decide.
+    /// `entry_price_minor * (100 + call_rate) / 100`, using the genesis-selected profile.
+    /// Issuance pins this price so the daily scan need not read a bucket body to decide.
     #[attribute(order = 40)]
     pub callable_bucket_call_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
 

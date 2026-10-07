@@ -18,7 +18,7 @@
 //!   * the recovered proposer is byte-equal to the EVM address derived
 //!     from the test's `PrivateKeySigner`.
 //!   * the felony helper credits the submitter with 10% of the slashed
-//!     amount and force-exits the proposer.
+//!     amount and jails the proposer.
 //!
 //! The tests use `submit_invalid_vrf_evidence_with_schedule`. This
 //! `#[doc(hidden)]` test-seam lets us pass relaxed evidence limits

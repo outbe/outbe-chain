@@ -777,7 +777,7 @@ mod tests {
         let share_path = dir.path().join("dkg_share.hex");
         let poly_path = dir.path().join("dkg_polynomial.hex");
 
-        // Save (same calls as save_dkg_state in stack.rs).
+        // Save (same calls as `save_dkg_state` in `outbe-engine` `stack::dkg::persistence`).
         save_signing_share(&share_path, &result.shares[0], &backend).unwrap();
         save_public_polynomial(&poly_path, &result.polynomial, &backend).unwrap();
 
@@ -790,7 +790,8 @@ mod tests {
             "polynomial must be encrypted"
         );
 
-        // Load (same calls as obtain_threshold_material Path 2 in stack.rs).
+        // Load (same calls as `obtain_threshold_material` Path 2 in
+        // `outbe-engine` `stack::dkg::startup`).
         let loaded_share = load_signing_share(&share_path, &backend).unwrap();
         let loaded_poly = load_public_polynomial(&poly_path, &backend).unwrap();
 

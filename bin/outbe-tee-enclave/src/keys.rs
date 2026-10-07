@@ -120,7 +120,8 @@ pub struct EnclaveKeys {
 
 impl EnclaveKeys {
     /// Derive the complete persistent enclave identity from one seed. On SGX
-    /// `run::resolve_enclave_identity_seed` generates the seed once and seals it.
+    /// `run::resolve_enclave_identity_seed` generates the seed once or restores it.
+    /// Initialization seals the seed later, with the signed network binding.
     /// Mock and direct tests pass an explicit seed. `seed` is only the fallback when
     /// no persistent seed is available and is never a production authority.
     pub fn new(seed: [u8; 32], identity_seed_override: Option<[u8; 32]>) -> Result<Self, String> {
@@ -357,8 +358,8 @@ impl EnclaveKeys {
         &self.attest_type
     }
 
-    /// Build the SGX quote response. The `quote_body` is the real DCAP quote
-    /// generated at startup (empty when unattested). `nonce` is unused for
+    /// Build the unattested quote response for the mock/test transport. The
+    /// `quote_body` is always empty, also on SGX hardware. `nonce` is unused for
     /// freshness here. The channel's freshness comes from the Noise-IK handshake
     /// that pins the attested static key.
     pub fn quote(&self, _nonce: [u8; 32]) -> EnclaveResponse {

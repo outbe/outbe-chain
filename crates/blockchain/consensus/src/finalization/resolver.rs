@@ -22,9 +22,9 @@
 //! Binding: a remote `Request::Notarized` response NEVER produces a
 //! `CertifiedParentProofRecord` write without a local witness. This node must
 //! already have locally observed `Activity::Certification` for the same
-//! `(epoch, view, block_hash)`. The check is that
-//! [`CertifiedParentProofStore::get_certified_notarization`] is non-empty for
-//! the requested parent hash.
+//! `(epoch, view, block_hash)`. The check is
+//! [`FinalizedParentCertStore::has_local_certification_witness`] for the exact
+//! key. It reads the in-memory witness index, not the persistent CN record slot.
 
 use std::{future::Future, time::Duration};
 
@@ -206,8 +206,9 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
                 return outcome;
             }
 
-            // Build the record and persist it. The gate above makes the witness
-            // flag true. `committee_set_hash_v2` matches the reporter's canonical
+            // Build the record and persist it. The gate above proves that this
+            // node observed the local certification witness for this key.
+            // `committee_set_hash_v2` matches the reporter's canonical
             // fingerprint, so the V2 selector sees a consistent value.
             //
             // PLAN A4 requires the full canonical snapshot (address +
@@ -233,9 +234,11 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
             };
             let encoded_proof: Bytes = notarization.encode().into();
             let view = notarization.view().get();
-            // The notarization carries no block-number context. Store `0` so
-            // this record can serve as the exact-key local witness, but the
-            // Phase 1 selector will not promote it without a real block number.
+            // The notarization carries no block-number context. Thus the record
+            // kind is `ProofKind::CertifiedNotarization`, which has no block
+            // number. The Phase 1 selector resolves its height to the known
+            // parent block number. `stored_at_height` holds the view as the
+            // retention key.
             let record = CertifiedParentProofRecord {
                 format_version: CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
                 kind: ProofKind::CertifiedNotarization,

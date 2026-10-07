@@ -53,7 +53,7 @@ use crate::vrf_safety::VrfSafetyGate;
 use crate::finalization::block_cache::BlockCache;
 
 /// Constructor inputs for the finalization actor. One struct holds them
-/// so the spawn site in `stack.rs` stays ergonomic.
+/// so the spawn site in `outbe-engine` (`stack::epoch::run`) stays ergonomic.
 pub struct FinalizationActorDeps {
     pub view: FinalizationViewHandle,
     pub block_cache: BlockCache,
@@ -75,16 +75,17 @@ pub struct FinalizationActorDeps {
     /// `vrf_group_public_key_hash` for the signer set of the finalized epoch.
     /// Thus the finalization-slot record carries the same canonical fields that
     /// `OutbeReporter::handle_certification` writes on the certified-notarization
-    /// slot. Without this, `get_best_parent_proof` would hand Phase 1 a record
+    /// slot. Without this, `get_best_for_parent` would hand Phase 1 a record
     /// with `committee_set_hash = ZERO`, and snapshot lookup would miss.
     pub certificate_scheme_provider: crate::hybrid::HybridSchemeProvider<
         commonware_cryptography::bls12381::primitives::variant::MinSig,
     >,
     /// Shared late-finalize signature store. On each finalization
-    /// the actor rekeys the reporter-buffered (view-keyed) votes to the now-known
-    /// block number and prunes targets that have left the inclusion window. The
-    /// reporter records into it. The application handler reads it to pack the
-    /// proposer artifact. Best-effort and process-local. It is never consensus state.
+    /// the actor rekeys the buffered (`fb_hash`-keyed) votes to the now-known
+    /// block number and prunes targets that have left the inclusion window.
+    /// `FinalizeVerifyActor` records verified votes into it. The application
+    /// handler reads it to pack the proposer artifact. Best-effort and
+    /// process-local. It is never consensus state.
     pub late_sig_store: crate::finalization::late_sig_store::SharedLateFinalizeStore,
 }
 
@@ -99,7 +100,7 @@ pub struct FinalizationActor {
 
 impl FinalizationActor {
     /// Construct an actor + paired mailbox. The function returns both halves
-    /// so the caller (typically `stack.rs`) can hand the mailbox to
+    /// so the caller (`stack::epoch::run` in `outbe-engine`) can hand the mailbox to
     /// the reporter and spawn the actor onto the supervisor's runtime.
     pub fn new(deps: FinalizationActorDeps) -> (Self, Mailbox) {
         let (tx, rx) = mpsc::unbounded::<Message>();
@@ -108,9 +109,10 @@ impl FinalizationActor {
     }
 
     /// Run the actor's event loop. Returns `Err` on a fatal
-    /// finalization error (same-round / same-height inconsistency, or
-    /// marshal resolution exhaustion). Returns `Ok(())` if the mailbox
-    /// closes cleanly during graceful shutdown.
+    /// finalization error (same-round / same-height inconsistency, or a
+    /// missing marshal mailbox). An exhausted marshal resolution cycle is not
+    /// fatal. The actor records a stall metric and retries. Returns `Ok(())`
+    /// if the mailbox closes cleanly during graceful shutdown.
     pub async fn run<E>(mut self, ctx: E) -> Result<()>
     where
         E: Spawner + Clock + Send + Sync + 'static,
@@ -421,9 +423,10 @@ impl FinalizationActor {
         // the same canonical fields that the certified-notarization writer
         // (`OutbeReporter::handle_certification`) writes via
         // `outbe_consensus::proof::committee_set_hash_v2`.
-        // `ParentProofStore::get_best_parent_proof` returns the finalization
-        // record first. If `committee_set_hash` here defaulted to `ZERO`, Phase
-        // 1's snapshot lookup `committee_snapshot_key(epoch, ZERO)` would miss
+        // `ParentProofSelector` reads through `get_best_for_parent`, which
+        // returns the finalization record first. If `committee_set_hash` here
+        // defaulted to `ZERO`, Phase 1's snapshot lookup
+        // `committee_snapshot_key(epoch, ZERO)` would miss
         // the snapshot that `apply_boundary_outcome` wrote under the canonical
         // hash. This miss occurs even when the certified-notarization slot has the
         // right value.
@@ -436,7 +439,7 @@ impl FinalizationActor {
         let (committee_set_hash, committee_size) =
             self.persist_finalization_record(&finalized, &consensus_data, digest, block_number)?;
 
-        // Rekey the reporter's view-buffered late-finalize votes to this block
+        // Rekey the `fb_hash`-buffered late-finalize votes to this block
         // number and prune those outside the K-block inclusion window. No `view`
         // access.
         self.rekey_late_finalize_votes(

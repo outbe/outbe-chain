@@ -218,7 +218,11 @@ impl OffchainDataProjection {
         &self.state
     }
 
-    /// Applies every receipt mutation and the checkpoint in one backend transaction.
+    /// Applies every receipt mutation and the checkpoint.
+    /// With no day route, one backend transaction commits them.
+    /// With a day route, each day database commits first.
+    /// The shared batch and the checkpoint commit after those day writes.
+    /// A crash between those commits can leave a day database ahead of the checkpoint.
     pub fn apply_prepared(
         &mut self,
         prepared: PreparedBlock,

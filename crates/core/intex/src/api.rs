@@ -102,7 +102,7 @@ pub fn mark_called(storage: &StorageHandle<'_>, series_id: SeriesId, called_at: 
     registry.update_series_record(&record)
 }
 
-/// What a series forfeited when its call window closed.
+/// What a series forfeited after its notice-period deadline.
 pub struct Forfeited {
     pub units: u32,
     pub promis_load_minor: U256,
@@ -408,7 +408,7 @@ pub fn ocomp_contributor_target_projection(
     })
 }
 
-/// Reads the constant-size certified contributor proof authority for a series.
+/// Read the constant-size certified contributor proof authority for a WorldwideDay.
 pub fn certified_contributor_generation(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,
@@ -584,9 +584,9 @@ pub fn arm_proceeds(
     registry.push_awaiting_proceeds(worldwide_day)
 }
 
-/// Credit a chain's proceeds into the series pot. The function counts the chain
-/// toward the fan-in once (dedup). Thus a chain that routes its proceeds in parts
-/// is idempotent for completeness, and the pot still sums every amount.
+/// Credit a chain's proceeds into the WorldwideDay pot.
+/// Each chain counts once toward completeness, while every amount contributes to the pot.
+/// This rule permits a chain to deliver proceeds in multiple parts.
 pub fn credit_proceeds(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,
@@ -618,7 +618,7 @@ pub fn proceeds_ready(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) 
     Ok(expected > 0 && registry.proceeds_arrived_count.read(&worldwide_day)? == expected)
 }
 
-/// Fan-in deadline for a series (0 if never armed).
+/// Fan-in deadline for a WorldwideDay (0 if never armed).
 pub fn proceeds_deadline(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<u64> {
     IntexContract::new(storage.clone())
         .proceeds_deadline
@@ -633,10 +633,8 @@ pub fn take_proceeds_pot(storage: &StorageHandle<'_>, worldwide_day: WorldwideDa
     Ok(pot)
 }
 
-/// Finalize proceeds aggregation for a series. Clear the pot/deadline/counters
-/// and remove the series from the awaiting set. The function leaves the
-/// per-(series, chain) flags as harmless dead entries, because a series id
-/// (the worldwide day) never recurs.
+/// Finalize proceeds aggregation for a WorldwideDay across all its series.
+/// The per-(day, chain) flags remain harmless dead entries because a WorldwideDay never recurs.
 pub fn finalize_proceeds(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<()> {
     let mut registry = IntexContract::new(storage.clone());
     registry.proceeds_pot.clear(&worldwide_day)?;
@@ -646,7 +644,7 @@ pub fn finalize_proceeds(storage: &StorageHandle<'_>, worldwide_day: WorldwideDa
     registry.remove_awaiting_proceeds(worldwide_day)
 }
 
-/// Number of series awaiting proceeds fan-in (for the begin-block deadline sweep).
+/// Number of WorldwideDays awaiting proceeds fan-in for the begin-block deadline sweep.
 pub fn awaiting_proceeds_count(storage: &StorageHandle<'_>) -> Result<u32> {
     IntexContract::new(storage.clone())
         .awaiting_proceeds_count

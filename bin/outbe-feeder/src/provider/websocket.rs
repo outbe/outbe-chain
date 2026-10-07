@@ -232,8 +232,10 @@ struct MarketCache {
 
 type SharedCache = Arc<RwLock<MarketCache>>;
 
-/// A provider facade backed by live WebSocket data with its REST adapter used
-/// only until a requested market has appeared in the stream.
+/// A provider facade backed by live WebSocket data. It uses its REST adapter
+/// for each requested market that has no fresh stream value. This includes a
+/// market that has not appeared in the stream yet. It also includes a value
+/// older than `STALE_CONNECTION_AFTER` and a value cleared after a disconnect.
 pub(crate) struct StreamingProvider {
     kind: ExchangeKind,
     fallback: Box<dyn Provider>,

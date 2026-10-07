@@ -1,13 +1,16 @@
 //! Canonical view-gap leader election for missed-proposer attribution.
 //!
-//! Both the proposer side (`reporter::detect_missed_proposers`, which feeds the
-//! Phase 1 system transaction) and the verify side
-//! (`finalization::attestation::canonical_missed_proposers`, which recomputes and
-//! validates that metadata) must elect the *same* leader for every skipped
-//! view. Otherwise validators would reject a proposer's `missed_proposers` list
-//! and consensus would diverge. This module is the single source of truth for
-//! that election sequence. Callers keep their own guards, index -> address
-//! mapping, out-of-bounds policy, logging, and metrics.
+//! Two callers use this election: the reporter
+//! (`reporter::detect_missed_proposers`) and the legacy verify-side recompute
+//! (`finalization::attestation::canonical_missed_proposers`). Both must elect the
+//! *same* leader for every skipped view. This module is the single source of
+//! truth for that election sequence. Callers keep their own guards,
+//! index -> address mapping, out-of-bounds policy, logging, and metrics.
+//!
+//! In V2, the reporter's list does not feed the Phase 1 system transaction or
+//! slashing. No production path reads `ConsensusData.missed_proposers`. The V2
+//! verifier rejects Phase 1 metadata with a non-empty `missed_proposers` list.
+//! Thus proposer-downtime attribution from view gaps is dormant.
 
 use commonware_consensus::simplex::elector::Elector as _;
 use commonware_consensus::types::{Epoch, Round, View};

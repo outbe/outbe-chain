@@ -4,10 +4,10 @@
 //! answers everything else, and the paid-leaf bitmap is the only progress.
 //! A day is refused unless the artifact's root, count and total match the
 //! certified values. Payouts share the role-delegated key with result votes.
-//! Thus the caller must not run a tick while vote work is pending, and one tick
-//! drives its batch to finality before it yields the nonce. The gate is
-//! best-effort across a restart. The nonce self-heal on both machines closes
-//! the residual overlap.
+//! Thus the caller must not run a tick while vote work is pending. One tick
+//! waits up to `FINALITY_WAIT` for its batch to reach finality before it yields
+//! the nonce. The gate is best-effort, also across a restart. The nonce
+//! self-heal on both machines closes the residual overlap.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -49,14 +49,16 @@ use crate::vote_submitter::{
 const JOURNAL_MAGIC: [u8; 8] = *b"OUTBPAY1";
 const JOURNAL_VERSION: u16 = 1;
 const JOURNAL_LOCK_FILE: &str = "payout-submissions.lock";
-/// One full 256-leaf batch is ~34 KiB of calldata before the envelope.
+/// One full 256-leaf batch is about 25.5 KiB of calldata before the envelope.
+/// Each `ContributorLeaf` is a static three-word ABI tuple (96 bytes).
 const MAX_RAW_PAYOUT_TRANSACTION_BYTES: usize = 64 * 1024;
 const JOURNAL_FIXED_BYTES_WITHOUT_RAW: usize = 8 + 2 + 8 + 1 + 4 + 4 + 4 + 20 + 8 + 16 + 32 + 4 + 1;
 const INCLUSION_BYTES: usize = 8 + 32 + 1;
 const JOURNAL_CHECKSUM_BYTES: usize = 32;
 const REVERT_BACKOFF_CAP: Duration = Duration::from_secs(600);
-/// One tick drives its batch to finality so the shared nonce is never left
-/// pinned under a pending payout when vote work arrives.
+/// One tick waits this long for its batch to reach finality. This usually frees
+/// the shared nonce before vote work arrives. After the timeout, the tick
+/// returns `InFlight`, and vote work can run while the payout is still pending.
 const FINALITY_WAIT: Duration = Duration::from_secs(30);
 const FINALITY_POLL: Duration = Duration::from_millis(500);
 

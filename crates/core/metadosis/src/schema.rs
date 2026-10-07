@@ -110,7 +110,7 @@ pub struct DayLimitFormationReceiptState {
     pub block_number: u64,
 }
 
-/// Fork-initialized OCOMP state owned by Metadosis for one WorldwideDay.
+/// OCOMP state that Metadosis initializes when it prepares a READY WorldwideDay.
 ///
 /// The detailed pre-admission values remain owned by Tribute, Fidelity and
 /// Oracle. Metadosis commits their terminal canonical envelope and advances a
@@ -152,7 +152,7 @@ pub struct MetadosisContract {
     #[attribute(order = 4)]
     pub closed_wwd: outbe_primitives::storage::dsl::Deque<WorldwideDayKey>,
 
-    /// Inert before the OCOMP fresh-devnet fork initializes an entry.
+    /// Empty for a day until READY-day processing initializes its entry.
     #[attribute(order = 5)]
     pub ocomp_pre_admission:
         outbe_primitives::storage::dsl::Map<WorldwideDayKey, OcompPreAdmissionState>,

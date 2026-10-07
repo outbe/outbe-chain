@@ -1,6 +1,7 @@
 //! Mock price provider for local development and testing.
 //!
-//! Returns deterministic prices with slight random variation.
+//! Returns fixed prices with no randomness. Tickers return the hardcoded base
+//! price. Candles use fixed 0.99x, 1.01x and 1.00x multiples of that price.
 
 use async_trait::async_trait;
 use eyre::Result;

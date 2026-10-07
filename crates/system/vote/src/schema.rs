@@ -13,8 +13,9 @@ use outbe_primitives::storage::{Storable, StorableType};
 /// 2. On deadline (`begin_block`): `Pending` -> `Approved` | `Expired` | `Error`.
 /// 3. For `Approved`, vote dispatches to the target-module handler. Further
 ///    state (e.g. scheduled update, activation) lives in that module, not here.
-/// 4. `Error` means deterministic target execution failure. It remains unsettled
-///    and is not retried automatically.
+/// 4. `Error` means deterministic target execution failure.
+///    The proposal is terminal and leaves the pending index.
+///    The same pass refunds its bond. The module does not retry it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ProposalStatus {
@@ -172,7 +173,9 @@ pub struct Vote {
     #[attribute(order = 0)]
     pub proposal_count: outbe_primitives::storage::dsl::Value<U256>,
 
-    /// Bounded list of unsettled proposal ids (`Pending` or `Error`).
+    /// Bounded list of proposal ids that are not terminal.
+    /// A new `Error` id leaves this list. `Error` is terminal.
+    /// `process_begin_block` drains a legacy `Error` id from an older binary.
     #[attribute(order = 1)]
     pub pending_proposal_ids: outbe_primitives::storage::dsl::List<U256>,
 

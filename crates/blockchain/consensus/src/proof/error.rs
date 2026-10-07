@@ -1,7 +1,9 @@
 //! V2 verifier error taxonomy.
 //!
-//! Each variant maps to a specific A4 validation-rule failure. Operators
-//! depend on the variant names + Display strings for alerting. The verifier's
+//! Most variants map to a specific A4 validation-rule failure. The verifier
+//! does not construct five variants: `NonHybridEncoding`, `MalformedVrfProof`,
+//! `WrongVrfNamespace`, `WrongVrfSeedRound`, and `WrongAccountedNumber`.
+//! Operators depend on the variant names + Display strings for alerting. The verifier's
 //! structured logs also expose the `Debug` form.
 //!
 //! `#[non_exhaustive]`: callers must always include a wildcard arm. Thus a
@@ -10,9 +12,9 @@
 
 use alloy_primitives::B256;
 
-/// Failure modes surfaced by [`crate::verify_v2_proof`].
+/// Failure modes surfaced by [`crate::proof::verify_v2_proof`].
 ///
-/// Each variant corresponds to a specific validation rule. The set
+/// Each constructed variant corresponds to a specific validation rule. The set
 /// is intentionally narrow so reviewers and downstream evidence wrappers
 /// can branch on the exact failure class.
 #[derive(Debug, thiserror::Error)]
@@ -29,7 +31,8 @@ pub enum V2VerifyError {
     TrailingBytes,
     /// Encoded proof is not a `HybridCertificate` - for example, a bare
     /// `Notarization` wire envelope or a threshold-only certificate. The
-    /// V2 verifier accepts only the Hybrid form.
+    /// V2 verifier accepts only the Hybrid form. The verifier does not
+    /// construct this variant.
     #[error("proof is not a HybridCertificate: {reason}")]
     NonHybridEncoding { reason: &'static str },
 
@@ -57,7 +60,8 @@ pub enum V2VerifyError {
 
     // -- VRF threshold proof -----------------------------------------------
     /// `VrfProof` decoded but is structurally malformed (e.g., zero
-    /// signature length, version-byte rejection in the payload).
+    /// signature length, version-byte rejection in the payload). The verifier
+    /// does not construct this variant.
     #[error("VRF proof structurally malformed")]
     MalformedVrfProof,
     /// `cert.vrf_proof.material_version` differs from
@@ -68,14 +72,15 @@ pub enum V2VerifyError {
     /// `keccak256(snapshot.vrf_group_public_key_bytes)`.
     #[error("VRF group public key hash mismatch: expected {expected}, got {actual}")]
     WrongVrfGroupKeyHash { expected: B256, actual: B256 },
-    /// VRF verification was attempted under a namespace other than
-    /// [`crate::hybrid_seed_namespace`]. This is defence-in-depth: the
-    /// verifier hard-codes the namespace, so this only triggers if an
-    /// upstream caller smuggled a different one.
+    /// VRF verification under a namespace other than
+    /// [`crate::proof::hybrid_seed_namespace`]. The verifier hard-codes the
+    /// namespace and does not construct this variant.
     #[error("VRF namespace differs from hybrid_seed_namespace")]
     WrongVrfNamespace,
     /// VRF seed round (`Round(epoch, view).encode()`) differs from the
-    /// `(metadata.epoch, metadata.view)` round the verifier expected.
+    /// `(metadata.epoch, metadata.view)` round. The verifier does not construct
+    /// this variant. It reports a proposal round that differs from the metadata
+    /// as `WrongProofDomain`.
     #[error(
         "VRF seed round mismatch: expected Round(epoch={expected_epoch}, view={expected_view})"
     )]
@@ -84,13 +89,14 @@ pub enum V2VerifyError {
         expected_view: u64,
     },
     /// Threshold VRF proof failed verification against the active VRF
-    /// group public key under [`crate::hybrid_seed_namespace`].
+    /// group public key under [`crate::proof::hybrid_seed_namespace`].
     #[error("VRF threshold signature failed verification")]
     InvalidVrfSignature,
 
     // -- Exact-parent / accounting binding ---------------------------------
     /// `metadata.finalized_block_number` differs from the expected accounted
-    /// parent block number (derived from `header_parent_hash` + chain state).
+    /// parent block number. The verifier does not construct this variant. The
+    /// EVM executor checks the parent block number with its own error.
     #[error("accounted parent block number mismatch: expected {expected}, got {actual}")]
     WrongAccountedNumber { expected: u64, actual: u64 },
     /// `metadata.finalized_block_hash` differs from `header_parent_hash`.
@@ -100,9 +106,10 @@ pub enum V2VerifyError {
     WrongAccountedHash { expected: B256, actual: B256 },
 
     // -- Proof binding to metadata / committee snapshot --------------------
-    /// The certificate's embedded `proposal.payload` differs from
-    /// `metadata.finalized_block_hash` - the proof attests a different
-    /// payload than the metadata claims.
+    /// The certificate's embedded proposal differs from the metadata: the
+    /// `payload`, the round `(epoch, view)`, or the parent view. The proof then
+    /// attests a different proposal than the metadata claims. The verifier also
+    /// returns this variant when the proof bytes differ from `metadata.proof`.
     #[error("proof domain mismatch: cert payload {actual}, metadata hash {expected}")]
     WrongProofDomain { expected: B256, actual: B256 },
     /// Caller passed no committee snapshot (or an empty one) for the

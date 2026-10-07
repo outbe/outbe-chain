@@ -46,8 +46,8 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
     Ok(gem_id)
 }
 
-/// Burn a settled gem (promis mining). The daily scan does forfeit burns of Called gems
-/// through the internal `GemContract::burn`, not through this entry point.
+/// Burn a settled gem for Promis mining.
+/// The begin-block expiry sweep forfeits Called gems through `GemContract::forfeit`.
 pub fn burn(storage: &StorageHandle<'_>, gem_id: U256) -> Result<()> {
     let mut gem = GemContract::new(storage.clone());
     let item = gem.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;

@@ -49,8 +49,7 @@ where
         // `self.inner.receipts.len()` derivation. The cursor was
         // initialised in `apply_pre_execution_changes` and advances
         // exactly once per consumed begin-zone system tx (see the
-        // `advance_after_commit` call below). This is the only
-        // production reader of `self.system_tx_phase_cursor`.
+        // `advance_after_commit` call below).
         let ValidatedReservedSystemTx {
             body_index,
             expected_phase,
@@ -92,8 +91,10 @@ where
             // path entering Phase 1 in production).
             canonical_vrf_proof_hash: self.verified_phase1_vrf_proof_hash.unwrap_or(B256::ZERO),
         };
-        // Phase 1-4 EVM result failures (`Revert` / `Halt`) are converted
-        // into a `status=0` synthetic receipt with one `OutbeFailure(code, reason)`
+        // An EVM result failure (`Revert` / `Halt`) in a phase where
+        // `revert_fails_block()` is true fails the whole block. In a soft phase
+        // (RewardsGemDelivery, OracleSlashWindow), the failure becomes a
+        // `status=0` synthetic receipt with one `OutbeFailure(code, reason)`
         // log emitted from `OUTBE_SYSTEM_TX_ADDRESS`. revm did not commit the call, so
         // no state change leaks. Raw `Err` from the system-call engine remains fatal
         // because upstream revm documents that the journal may be inconsistent on that
@@ -175,8 +176,8 @@ where
             // emission/reshare, unrecorded parent accounting). The revert is a
             // deterministic function of committed chain state, so every
             // validator rejects the same block identically. There is no
-            // state-root split. Non-critical phases (OracleSlashWindow, HookEvents)
-            // keep the soft-receipt skip for failures that fit within the
+            // state-root split. Non-critical phases (RewardsGemDelivery,
+            // OracleSlashWindow) keep the soft-receipt skip for failures that fit within the
             // aggregate internal-work budget. An OOG consumes the full
             // system-call gas limit and therefore remains a hard aggregate
             // budget failure once earlier mandatory phases have run.
@@ -278,7 +279,8 @@ where
                     ),
                 ));
                 }
-                // Advance cursor past Phase 1. CycleTick body_index=1 is next.
+                // Advance cursor past Phase 1. The mandatory LateFinalizeCredits
+                // phase (body_index=1) is next.
                 let has_boundary_outcome = matches!(
                     block_artifacts.consensus_header_artifact,
                     Some(ConsensusHeaderArtifact::BoundaryOutcome(_))

@@ -624,8 +624,8 @@ impl Drop for ExplicitGasWindow<'_> {
 impl ExecutionScope {
     #[must_use]
     pub fn new() -> Self {
-        // This constructor is retained for empty-tree harnesses. Production
-        // execution installs an exact finalized parent with `with_parent_tree`.
+        // Empty-tree harnesses use this constructor. Production starts with `for_finalized_rpc`.
+        // `configure_parent_tree_factory` binds the parent for lazy access during begin-block.
         Self {
             phase: AtomicU8::new(PHASE_BEFORE_BEGIN),
             explicit_gas_charged: AtomicU64::new(0),

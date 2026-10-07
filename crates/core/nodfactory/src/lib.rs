@@ -1,7 +1,7 @@
 //! NodFactory precompile crate.
 //!
-//! Owns Nod issuance (Lysis calls it through [`api::issue_nod`]) and the
-//! user-triggered `settleNod` and `mineGratis` ABI methods. Persistent Nod
+//! Owns Nod issuance through certified generation installation and proof-backed materialization.
+//! It also owns the user-triggered `settleNod` and `mineGratis` ABI methods. Persistent Nod
 //! entity state lives in the Nod entity store at
 //! [`outbe_primitives::addresses::NOD_ADDRESS`]. NodFactory carries no storage
 //! of its own.
