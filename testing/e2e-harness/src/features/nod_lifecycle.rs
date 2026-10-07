@@ -60,6 +60,8 @@ const FORFEIT_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_DEV_NOTICE_SECS: u32 = 3_600;
 /// Slack past the deadline so the sweep has a block to run in.
 const NOTICE_MARGIN_SECS: u64 = 5;
+/// Width of a forfeit-queue bucket. The sweep opens one only once its hour has closed.
+const EXPIRY_BUCKET_SECS: u64 = 3_600;
 
 pub(crate) struct NodLifecycle;
 
@@ -226,6 +228,22 @@ impl Lifecycle for NodLifecycle {
             || format!("the chain never passed the Nod settlement deadline {deadline}"),
             || head_time(world) > deadline,
         );
+        let bucket_key = outbe_nod::NodContract::bucket_key(
+            outbe_primitives::time::WorldwideDay::new(called.worldwideDay),
+            called.entryPriceMinor,
+            called.referenceCurrency,
+        );
+        eth::send_call(
+            &url,
+            addresses::NOD_ADDR,
+            DEPLOYER_KEY,
+            &INodTestArming::closeCallNoticeForTestCall {
+                bucketKey: bucket_key,
+                deadline: head_time(world).saturating_sub(EXPIRY_BUCKET_SECS),
+            },
+            None,
+        )
+        .expect("close the expiry bucket the Nod bucket sits in");
     }
 
     fn assert_forfeited(&self, world: &World) {
@@ -389,4 +407,10 @@ fn wait_for_nod_of(url: &str, owner: Address) -> U256 {
         },
     );
     id.expect("owner's Nod id")
+}
+
+alloy_sol_types::sol! {
+    interface INodTestArming {
+        function closeCallNoticeForTest(bytes32 bucketKey, uint64 deadline) external;
+    }
 }
