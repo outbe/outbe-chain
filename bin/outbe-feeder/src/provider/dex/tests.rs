@@ -140,7 +140,8 @@ fn dex_config(market: DexMarketConfig, endpoint: String) -> DexProviderConfig {
         rpc_endpoint: endpoint,
         poll_interval_secs: 1,
         log_chunk_blocks: 2_000,
-        max_finalized_age_secs: 1800,
+        confirmations: 0,
+        max_block_age_secs: 1800,
         markets: vec![market],
     }
 }
@@ -261,7 +262,7 @@ impl Fixture {
             )),
             "eth_getBlockByNumber" => {
                 let tag = params[0].as_str().unwrap();
-                let number = if tag == "finalized" {
+                let number = if tag == "latest" {
                     self.head.load(Ordering::Relaxed)
                 } else {
                     super::rpc::quantity(tag).unwrap()
@@ -440,7 +441,7 @@ impl Server {
 }
 
 #[tokio::test]
-async fn all_protocols_read_finalized_spot_and_base_volume_in_both_orientations() {
+async fn all_protocols_read_spot_and_base_volume_in_both_orientations() {
     for pool in protocols() {
         for reversed in [false, true] {
             let bin = matches!(pool, PoolConfig::InfinityBin { .. });
@@ -464,13 +465,54 @@ async fn all_protocols_read_finalized_spot_and_base_volume_in_both_orientations(
                 .lock()
                 .unwrap()
                 .iter()
-                .any(|r| r["params"][0] == "finalized"));
+                .any(|r| r["params"][0] == "latest"));
         }
     }
 }
 
+#[test]
+fn legacy_max_finalized_age_key_is_still_accepted() {
+    let text = include_str!("../../../dex.example.toml").replace(
+        "confirmations = 3\nmax_block_age_secs = 1800",
+        "max_finalized_age_secs = 900",
+    );
+    let config: FeederConfig = toml::from_str(&text).unwrap();
+    let dex = &config.dex_providers[0];
+    assert_eq!(dex.confirmations, 3);
+    assert_eq!(dex.max_block_age_secs, 900);
+}
+
 #[tokio::test]
-async fn volume_window_retries_restart_and_finalized_history_changes() {
+async fn confirmations_read_behind_the_head_by_number_and_hash() {
+    let server = Server::start(market(
+        PoolConfig::UniswapV3 {
+            address: address(9),
+        },
+        false,
+    ))
+    .await;
+    server.fixture.head.store(6, Ordering::Relaxed);
+    let mut config = dex_config(server.fixture.market.clone(), server.endpoint.clone());
+    config.confirmations = 2;
+    let mut worker = MarketWorker::new(
+        config,
+        server.fixture.market.clone(),
+        Rpc::new(&server.endpoint).unwrap(),
+    );
+    let (block, ticker) = worker.refresh().await.unwrap();
+    assert_eq!(block.number, 4);
+    assert_eq!(ticker.volume, fp("300"));
+    let expected_hash = serde_json::to_value(server.fixture.block_hash(4)).unwrap();
+    let calls = server.fixture.calls.lock().unwrap();
+    assert!(calls.iter().any(|r| r["params"][0] == "latest"));
+    assert!(calls
+        .iter()
+        .filter(|r| r["method"] == "eth_call")
+        .all(|r| r["params"][1]["blockHash"] == expected_hash));
+}
+
+#[tokio::test]
+async fn volume_window_retries_restart_and_chain_history_changes() {
     let server = Server::start(market(protocols()[0].clone(), false)).await;
     let mut worker = server.worker();
     assert_eq!(worker.refresh().await.unwrap().1.volume, fp("300"));
