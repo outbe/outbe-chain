@@ -1,5 +1,6 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::expiry_queue;
 use outbe_primitives::math::{reference_price, tree_math};
 
 use crate::{
@@ -178,8 +179,7 @@ impl GemContract<'_> {
     }
 
     pub(crate) fn push_called(&mut self, gem_id: U256, deadline: u64) -> Result<()> {
-        self.place_in_expiry_hour(gem_id, Self::deadline_hour(deadline))?;
-        self.called_deadline.write(&gem_id, deadline)
+        expiry_queue::push(&ExpiryHours(self), gem_id, deadline)
     }
 
     /// Put a called bucket or Called gem back in the queue at its own deadline, never
@@ -199,8 +199,9 @@ impl GemContract<'_> {
             return Ok(false);
         };
         let day = Self::deadline_hour(deadline).max(Self::deadline_hour(now) + 1);
-        self.place_in_expiry_hour(entry, day)?;
-        self.called_deadline.write(&entry, deadline)?;
+        let queue = ExpiryHours(self);
+        expiry_queue::place(&queue, entry, day)?;
+        queue.0.called_deadline.write(&entry, deadline)?;
         let retry_at = Self::hour_end(day);
         match bucket {
             Some(bucket) => self.emit(IGem::GemBucketExpiryDeferred {
@@ -215,113 +216,27 @@ impl GemContract<'_> {
         Ok(true)
     }
 
-    outbe_common::expiry_queue_placement! {
-        fn place_in_expiry_hour(entry: U256);
-        len: expiry_bucket_len,
-        at: expiry_bucket_at,
-        slot_key: Self::hour_slot_key,
-        slot_of: called_bucket_slot,
-        packed_slot: Self::packed_slot,
-        live: expiry_bucket_live,
-        tree: ExpiryDayTree,
-    }
-
     pub(crate) fn remove_called(&mut self, gem_id: U256) -> Result<()> {
-        let packed = self.called_bucket_slot.read(&gem_id)?;
-        self.called_bucket_slot.clear(&gem_id)?;
-        self.called_deadline.clear(&gem_id)?;
-        if packed == 0 {
-            return Ok(());
-        }
-        let (day, slot) = Self::unpack_slot(packed);
-        self.release_expiry_slot(day, slot, gem_id)
-    }
-
-    /// Free one bucket slot, retiring the bucket once nothing waits in it.
-    pub(crate) fn release_expiry_slot(&mut self, day: u32, slot: u32, gem_id: U256) -> Result<()> {
-        let slot_key = Self::hour_slot_key(day, slot);
-        if self.expiry_bucket_at.read(&slot_key)? != gem_id {
-            return Ok(());
-        }
-        self.expiry_bucket_at.clear(&slot_key)?;
-
-        let live = self.expiry_bucket_live.read(&day)?.saturating_sub(1);
-        self.expiry_bucket_live.write(&day, live)?;
-        if live == 0 {
-            self.expiry_bucket_len.clear(&day)?;
-            self.expiry_bucket_live.clear(&day)?;
-            tree_math::remove(&ExpiryDayTree(&*self), day)?;
-            // The cursor names a slot in a length that no longer exists. Otherwise, a
-            // refill of this day would resume past its new end.
-            if self.expiry_sweep_day.read()? == day {
-                self.expiry_sweep_day.write(0)?;
-                self.expiry_cursor.write(0)?;
-            }
-        }
-        Ok(())
+        expiry_queue::remove(&ExpiryHours(self), gem_id)
     }
 
     /// Hour since the epoch a deadline falls in: plain UTC, not a WorldwideDay.
     pub(crate) const fn deadline_hour(deadline: u64) -> u32 {
-        (deadline / 3_600) as u32
+        expiry_queue::bucket_of(deadline)
     }
 
     pub(crate) const fn hour_end(day: u32) -> u64 {
-        (day as u64 + 1) * 3_600
+        expiry_queue::bucket_end(day)
     }
 
-    const fn packed_slot(day: u32, slot: u32) -> u64 {
-        ((day as u64) << 32) | slot as u64
-    }
-
-    const fn unpack_slot(packed: u64) -> (u32, u32) {
-        ((packed >> 32) as u32, (packed & 0xffff_ffff) as u32)
-    }
-
-    pub(crate) fn hour_slot_key(day: u32, slot: u32) -> B256 {
-        let mut buf = [0u8; 8];
-        buf[0..4].copy_from_slice(&day.to_be_bytes());
-        buf[4..8].copy_from_slice(&slot.to_be_bytes());
-        keccak256(buf)
-    }
-
+    #[cfg(test)]
     pub(crate) fn expiry_slot(&self, day: u32, slot: u32) -> Result<Option<U256>> {
-        let id = self
-            .expiry_bucket_at
-            .read(&Self::hour_slot_key(day, slot))?;
-        Ok((!id.is_zero()).then_some(id))
+        expiry_queue::entry_at(&ExpiryHours(self), day, slot)
     }
 
-    /// Retire a bucket the sweep has finished: a Called gem still in it is requeued, and
-    /// a stale entry is dropped. Returns how many were deferred and dropped.
-    pub(crate) fn force_retire_hour(&mut self, day: u32, now: u64) -> Result<(u32, u32)> {
-        let len = self.expiry_bucket_len.read(&day)?;
-        let (mut deferred, mut dropped) = (0u32, 0u32);
-        for slot in 0..len {
-            let gem_id = self
-                .expiry_bucket_at
-                .read(&Self::hour_slot_key(day, slot))?;
-            if gem_id.is_zero() {
-                continue;
-            }
-            if self.requeue_or_drop(gem_id, now)? {
-                deferred += 1;
-            } else {
-                dropped += 1;
-            }
-        }
-        self.expiry_bucket_len.clear(&day)?;
-        self.expiry_bucket_live.clear(&day)?;
-        tree_math::remove(&ExpiryDayTree(&*self), day)?;
-        if self.expiry_sweep_day.read()? == day {
-            self.expiry_sweep_day.write(0)?;
-            self.expiry_cursor.write(0)?;
-        }
-        Ok((deferred, dropped))
-    }
-
+    #[cfg(test)]
     pub(crate) fn first_expiry_day(&self) -> Result<Option<u32>> {
-        tree_math::find_first_left_inclusive(&ExpiryDayTree(self), 0)
+        expiry_queue::first_bucket(&ExpiryHours(self))
     }
 
     fn compact_owner_index(&mut self, owner: Address, gem_id: U256) -> Result<()> {
@@ -591,13 +506,20 @@ impl GemContract<'_> {
     }
 }
 
-/// Buckets holding a called gem whose notice period has not closed yet.
-pub(crate) struct ExpiryDayTree<'a, 'storage>(pub(crate) &'a GemContract<'storage>);
+/// Called buckets and Called gems, queued by the hour their notice period closes in.
+pub(crate) struct ExpiryHours<'a, 'storage>(pub(crate) &'a GemContract<'storage>);
 
-outbe_primitives::impl_bin_tree_storage!(ExpiryDayTree {
+outbe_primitives::impl_expiry_queue!(ExpiryHours<U256> {
     root: expiry_tree_root,
     mid: expiry_tree_mid,
     leaf: expiry_tree_leaf,
+    len: expiry_bucket_len,
+    live: expiry_bucket_live,
+    at: expiry_bucket_at,
+    slot: called_bucket_slot,
+    deadline: called_deadline,
+    sweep_bucket: expiry_sweep_day,
+    cursor: expiry_cursor,
 });
 
 /// The uncalled buckets of one reference currency, by call price.

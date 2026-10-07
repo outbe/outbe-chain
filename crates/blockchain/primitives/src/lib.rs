@@ -14,6 +14,7 @@ pub mod daily_sweep;
 pub mod dispatch;
 pub mod erc;
 pub mod error;
+pub mod expiry_queue;
 pub mod governance_journal;
 pub mod header;
 pub mod hook_events;

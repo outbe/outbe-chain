@@ -4,6 +4,7 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_intex::SeriesId;
 use outbe_primitives::error::Result;
+use outbe_primitives::expiry_queue;
 use outbe_primitives::math::{
     reference_price,
     tree_math::{self, BinTreeStorage},
@@ -194,7 +195,7 @@ impl IntexFactoryContract<'_> {
         }
         self.called_group_count.write(&key, members.len() as u32)?;
         self.called_group_deadline.write(&key, deadline)?;
-        self.place_in_expiry_bucket(key, Self::deadline_bucket(deadline))
+        expiry_queue::place(&ExpiryHours(self), key, Self::deadline_bucket(deadline))
     }
 
     /// Move a group the sweep could not finish into a later bucket. Its members
@@ -206,59 +207,26 @@ impl IntexFactoryContract<'_> {
         day: u32,
     ) -> Result<()> {
         let key = Self::scoped(reference_currency, worldwide_day.value());
-        let packed = self.called_group_slot.read(&key)?;
-        if packed != 0 {
-            let (old_day, old_slot) = Self::unpack_slot(packed);
-            self.release_expiry_slot(old_day, old_slot, key)?;
-        }
-        self.place_in_expiry_bucket(key, day)
-    }
-
-    outbe_common::expiry_queue_placement! {
-        fn place_in_expiry_bucket(entry: u64);
-        len: expiry_bucket_len,
-        at: expiry_bucket_at,
-        slot_key: Self::bucket_slot_key,
-        slot_of: called_group_slot,
-        packed_slot: Self::packed_slot,
-        live: expiry_bucket_live,
-        tree: ExpiryDayTree,
+        expiry_queue::retarget(&ExpiryHours(self), key, day)
     }
 
     /// Hour since the epoch a deadline falls in: plain UTC, not a WorldwideDay.
     pub(crate) const fn deadline_bucket(deadline: u64) -> u32 {
-        (deadline / 3_600) as u32
+        expiry_queue::bucket_of(deadline)
     }
 
     pub(crate) const fn bucket_end(day: u32) -> u64 {
-        (day as u64 + 1) * 3_600
+        expiry_queue::bucket_end(day)
     }
 
-    const fn packed_slot(day: u32, slot: u32) -> u64 {
-        ((day as u64) << 32) | slot as u64
-    }
-
-    const fn unpack_slot(packed: u64) -> (u32, u32) {
-        ((packed >> 32) as u32, (packed & 0xffff_ffff) as u32)
-    }
-
+    #[cfg(test)]
     pub(crate) fn bucket_slot_key(day: u32, slot: u32) -> B256 {
-        let mut buf = [0u8; 8];
-        buf[0..4].copy_from_slice(&day.to_be_bytes());
-        buf[4..8].copy_from_slice(&slot.to_be_bytes());
-        keccak256(buf)
+        expiry_queue::slot_key(day, slot)
     }
 
-    pub(crate) fn expiry_slot(&self, day: u32, slot: u32) -> Result<Option<(u16, WorldwideDay)>> {
-        // `scoped` keeps a non-zero ISO code in the high half, so zero cannot collide.
-        let key = self
-            .expiry_bucket_at
-            .read(&Self::bucket_slot_key(day, slot))?;
-        Ok((key != 0).then(|| Self::unscoped(key)))
-    }
-
+    #[cfg(test)]
     pub(crate) fn first_expiry_day(&self) -> Result<Option<u32>> {
-        tree_math::find_first_left_inclusive(&ExpiryDayTree(self), 0)
+        expiry_queue::first_bucket(&ExpiryHours(self))
     }
 
     pub(crate) fn called_group(
@@ -297,15 +265,7 @@ impl IntexFactoryContract<'_> {
             ))?;
         }
         self.called_group_count.clear(&key)?;
-        self.called_group_deadline.clear(&key)?;
-
-        let packed = self.called_group_slot.read(&key)?;
-        self.called_group_slot.clear(&key)?;
-        if packed == 0 {
-            return Ok(());
-        }
-        let (day, slot) = Self::unpack_slot(packed);
-        self.release_expiry_slot(day, slot, key)
+        expiry_queue::remove(&ExpiryHours(self), key)
     }
 
     /// Keep only `members` in a called group, so a re-walk never meets a series whose
@@ -332,63 +292,6 @@ impl IntexFactoryContract<'_> {
             ))?;
         }
         self.called_group_count.write(&key, members.len() as u32)
-    }
-
-    /// Retire a bucket the sweep has finished. Every group still in it moves to the
-    /// bucket its deadline falls in, never before the next hour. Returns where each went.
-    pub(crate) fn force_retire_bucket(
-        &mut self,
-        day: u32,
-        now: u64,
-    ) -> Result<Vec<(u16, WorldwideDay, u32)>> {
-        let len = self.expiry_bucket_len.read(&day)?;
-        let mut requeued = Vec::new();
-        for slot in 0..len {
-            let slot_key = Self::bucket_slot_key(day, slot);
-            let key = self.expiry_bucket_at.read(&slot_key)?;
-            if key == 0 {
-                continue;
-            }
-            let (iso_code, worldwide_day) = Self::unscoped(key);
-            if self.called_group_count.read(&key)? == 0 {
-                self.remove_called_group(iso_code, worldwide_day)?;
-                continue;
-            }
-            let target = Self::deadline_bucket(self.called_group_deadline.read(&key)?)
-                .max(Self::deadline_bucket(now).saturating_add(1));
-            self.defer_called_group(iso_code, worldwide_day, target)?;
-            requeued.push((iso_code, worldwide_day, target));
-        }
-        self.expiry_bucket_len.clear(&day)?;
-        self.expiry_bucket_live.clear(&day)?;
-        tree_math::remove(&ExpiryDayTree(&*self), day)?;
-        if self.expiry_sweep_day.read()? == day {
-            self.expiry_sweep_day.write(0)?;
-            self.expiry_cursor.write(0)?;
-        }
-        Ok(requeued)
-    }
-
-    /// Free one bucket slot, retiring the bucket once nothing waits in it.
-    pub(crate) fn release_expiry_slot(&mut self, day: u32, slot: u32, key: u64) -> Result<()> {
-        let slot_key = Self::bucket_slot_key(day, slot);
-        if self.expiry_bucket_at.read(&slot_key)? != key {
-            return Ok(());
-        }
-        self.expiry_bucket_at.clear(&slot_key)?;
-
-        let live = self.expiry_bucket_live.read(&day)?.saturating_sub(1);
-        self.expiry_bucket_live.write(&day, live)?;
-        if live == 0 {
-            self.expiry_bucket_len.clear(&day)?;
-            self.expiry_bucket_live.clear(&day)?;
-            tree_math::remove(&ExpiryDayTree(&*self), day)?;
-            if self.expiry_sweep_day.read()? == day {
-                self.expiry_sweep_day.write(0)?;
-                self.expiry_cursor.write(0)?;
-            }
-        }
-        Ok(())
     }
 }
 
@@ -565,12 +468,19 @@ impl GroupIndex<'_> {
 // Construct inline at each `tree_math` call, so it never conflicts with a `&mut` borrow.
 
 /// Buckets holding a called group whose settlement window has not closed yet.
-pub(crate) struct ExpiryDayTree<'a, 'b>(pub(crate) &'a IntexFactoryContract<'b>);
+pub(crate) struct ExpiryHours<'a, 'b>(pub(crate) &'a IntexFactoryContract<'b>);
 
-outbe_primitives::impl_bin_tree_storage!(ExpiryDayTree {
+outbe_primitives::impl_expiry_queue!(ExpiryHours<u64> {
     root: expiry_tree_root,
     mid: expiry_tree_mid,
     leaf: expiry_tree_leaf,
+    len: expiry_bucket_len,
+    live: expiry_bucket_live,
+    at: expiry_bucket_at,
+    slot: called_group_slot,
+    deadline: called_group_deadline,
+    sweep_bucket: expiry_sweep_day,
+    cursor: expiry_cursor,
 });
 
 /// The call-price trie of one reference currency.
