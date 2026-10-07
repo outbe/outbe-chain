@@ -33,20 +33,6 @@ pub fn modify_mac(
     GRATIS.modify_mac(modify_key, account, op as u8, amount, op_nonce, chain_id)
 }
 
-fn verify_modify_auth(
-    modify_key: &[u8; 32],
-    account: Address,
-    op: GratisOp,
-    amount: U256,
-    op_nonce: u64,
-    chain_id: B256,
-    mac: &[u8; 32],
-) -> bool {
-    GRATIS.verify_modify_auth(
-        modify_key, account, op as u8, amount, op_nonce, chain_id, mac,
-    )
-}
-
 /// Decrypt a `version || ct` amount blob. An empty blob is a fresh slot (`0`).
 fn read_amount(
     view_key: &[u8; 32],
@@ -129,10 +115,10 @@ fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
     let mut r = base_result();
     if owner_op {
         let modify_key = derive_modify_key(state_key, req.account)?;
-        if !verify_modify_auth(
+        if !GRATIS.verify_modify_auth(
             &modify_key,
             req.account,
-            req.op,
+            req.op as u8,
             req.amount,
             req.modify_auth.op_nonce,
             req.chain_id,

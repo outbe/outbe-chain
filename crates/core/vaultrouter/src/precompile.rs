@@ -183,15 +183,7 @@ fn dispatch_local(
 
             // --- reservations ---
             reserveStables(c) => mutate(c, caller, |sender, c| {
-                runtime::reserve_stables(
-                    storage.clone(),
-                    sender,
-                    c.smartAccount,
-                    c.source,
-                    c.asset,
-                    c.amount,
-                    c.referenceCurrency,
-                )
+                runtime::reserve_stables(storage.clone(), sender, c)
             }),
             releaseReservation(c) => mutate(c, caller, |sender, c| {
                 if sender != outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS {

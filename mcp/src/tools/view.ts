@@ -29,7 +29,7 @@ function annotateProposal(p: unknown): Record<string, unknown> {
   return r;
 }
 
-export function registerViewTools(server: McpServer, ctx: Ctx): void {
+function registerEntityViews(server: McpServer, ctx: Ctx): void {
   // --- generic escape hatch: any view method of any precompile ---------------
   server.tool(
     "contract_call",
@@ -114,6 +114,9 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
     }),
   );
 
+}
+
+function registerPositionViews(server: McpServer, ctx: Ctx): void {
   // --- Gem -------------------------------------------------------------------
   server.tool(
     "gem_get",
@@ -236,6 +239,9 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
     ),
   );
 
+}
+
+function registerMarketViews(server: McpServer, ctx: Ctx): void {
   // --- Metadosis / WorldwideDay ---------------------------------------------
   server.tool(
     "worldwide_days_offering",
@@ -321,6 +327,9 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
     ),
   );
 
+}
+
+function registerValidatorViews(server: McpServer, ctx: Ctx): void {
   // --- Validators ------------------------------------------------------------
   server.tool(
     "validators",
@@ -358,6 +367,9 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
     }),
   );
 
+}
+
+function registerGovernanceViews(server: McpServer, ctx: Ctx): void {
   // --- Governance (canon, meta-canon, OIP, GIP) - read-only -----------------
   server.tool(
     "metacanon_get",
@@ -452,4 +464,12 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
       return ok({ total, offset, limit, gips: items });
     }),
   );
+}
+
+export function registerViewTools(server: McpServer, ctx: Ctx): void {
+  registerEntityViews(server, ctx);
+  registerPositionViews(server, ctx);
+  registerMarketViews(server, ctx);
+  registerValidatorViews(server, ctx);
+  registerGovernanceViews(server, ctx);
 }

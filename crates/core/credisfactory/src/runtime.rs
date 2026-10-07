@@ -14,9 +14,51 @@ use outbe_primitives::{
     storage::StorageHandle,
     units::checked_protocol_to_native,
 };
+use outbe_vaultrouter::LiquidityReservation;
 
 fn revert(message: &str) -> PrecompileError {
     PrecompileError::Revert(message.into())
+}
+
+/// The caller's live reservation, with a deployed smart account. Returns it with the block time.
+fn live_reservation(
+    storage: &StorageHandle<'_>,
+    caller: Address,
+    reservation_id: U256,
+) -> Result<(LiquidityReservation, u64)> {
+    let r = outbe_vaultrouter::api::reservation_of(storage, reservation_id)?;
+    let now = u64::try_from(storage.timestamp()?).map_err(|_| revert("timestamp exceeds u64"))?;
+    let error = if r.asset.is_zero() {
+        CredisFactoryError::ReservationNotFound
+    } else if r.cca != caller {
+        CredisFactoryError::ReservationCcaMismatch
+    } else if now > r.expires_at {
+        CredisFactoryError::ReservationExpired
+    } else if r.smart_account.is_zero()
+        || storage.with_account_info(r.smart_account, |info| Ok(info.is_empty_code_hash()))?
+    {
+        CredisFactoryError::SmartAccountNotDeployed
+    } else {
+        return Ok((r, now));
+    };
+    Err(error.into())
+}
+
+/// Reject an asset whose decimals or currency changed after the reservation quoted it.
+fn ensure_asset_metadata(storage: &StorageHandle<'_>, r: &LiquidityReservation) -> Result<()> {
+    let decimals = storage.staticcall(r.asset, IERC20::decimalsCall {}.abi_encode().into())?;
+    let decimals = IERC20::decimalsCall::abi_decode_returns_validate(&decimals)
+        .map_err(|_| revert("asset decimals undecodable"))?;
+    let currency = storage.staticcall(
+        r.asset,
+        IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
+    )?;
+    let currency = IReferenceCurrency::isoCodeCall::abi_decode_returns_validate(&currency)
+        .map_err(|_| revert("asset currency undecodable"))?;
+    if currency != r.issuance_currency || decimals != r.asset_decimals {
+        return Err(revert("asset metadata changed"));
+    }
+    Ok(())
 }
 
 pub fn issue_credis(
@@ -27,35 +69,8 @@ pub fn issue_credis(
 ) -> Result<(U256, U256)> {
     storage.with_checkpoint(|| {
         outbe_ccaregistry::api::require_active_cca(&storage, caller)?;
-        let r = outbe_vaultrouter::api::reservation_of(&storage, reservation_id)?;
-        if r.asset.is_zero() {
-            return Err(CredisFactoryError::ReservationNotFound.into());
-        }
-        if r.cca != caller {
-            return Err(CredisFactoryError::ReservationCcaMismatch.into());
-        }
-        let now =
-            u64::try_from(storage.timestamp()?).map_err(|_| revert("timestamp exceeds u64"))?;
-        if now > r.expires_at {
-            return Err(CredisFactoryError::ReservationExpired.into());
-        }
-        if r.smart_account.is_zero()
-            || storage.with_account_info(r.smart_account, |info| Ok(info.is_empty_code_hash()))?
-        {
-            return Err(CredisFactoryError::SmartAccountNotDeployed.into());
-        }
-        let decimals = storage.staticcall(r.asset, IERC20::decimalsCall {}.abi_encode().into())?;
-        let decimals = IERC20::decimalsCall::abi_decode_returns_validate(&decimals)
-            .map_err(|_| revert("asset decimals undecodable"))?;
-        let currency = storage.staticcall(
-            r.asset,
-            IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
-        )?;
-        let currency = IReferenceCurrency::isoCodeCall::abi_decode_returns_validate(&currency)
-            .map_err(|_| revert("asset currency undecodable"))?;
-        if currency != r.issuance_currency || decimals != r.asset_decimals {
-            return Err(revert("asset metadata changed"));
-        }
+        let (r, now) = live_reservation(&storage, caller, reservation_id)?;
+        ensure_asset_metadata(&storage, &r)?;
         let required = checked_protocol_to_native(r.gratis_minor)
             .ok_or_else(|| revert("COEN stake overflow"))?;
         if stake != required {

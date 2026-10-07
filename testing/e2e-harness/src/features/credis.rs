@@ -259,7 +259,6 @@ fn reserve(world: &mut World) {
     let reserved = event::<eth::IVaultRouter::ReservationCreated>(&receipt, VAULT_ROUTER_ADDRESS);
     assert_eq!(reserved.smartAccount, f.account);
     assert_eq!(reserved.cca, f.cca);
-    assert_eq!(reserved.source, f.user);
     assert_eq!(reserved.asset, f.currency.asset);
     assert_eq!(reserved.vault, f.currency.vault);
     assert_eq!(reserved.amount, PRINCIPAL);
@@ -306,6 +305,7 @@ fn pledge(world: &mut World) {
         &eth::IVaultRouter::reservationOfCall { id: f.reservation },
     )
     .expect("reservation");
+    assert_eq!(reservation.source, f.user);
     let nonce = eth::read_call(
         &url,
         addresses::GRATIS_ADDR,

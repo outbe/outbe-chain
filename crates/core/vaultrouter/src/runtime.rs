@@ -408,12 +408,15 @@ pub(crate) fn withdraw(
 pub(crate) fn reserve_stables(
     storage: StorageHandle<'_>,
     caller: Address,
-    smart_account: Address,
-    source: Address,
-    asset: Address,
-    amount: U256,
-    reference_currency: u16,
+    call: IVaultRouter::reserveStablesCall,
 ) -> Result<U256> {
+    let IVaultRouter::reserveStablesCall {
+        smartAccount: smart_account,
+        source,
+        asset,
+        amount,
+        referenceCurrency: reference_currency,
+    } = call;
     storage.with_checkpoint(|| {
         outbe_ccaregistry::api::require_active_cca(&storage, caller)?;
         if smart_account.is_zero() || source.is_zero() || asset.is_zero() {
@@ -457,7 +460,6 @@ pub(crate) fn reserve_stables(
             id,
             smartAccount: smart_account,
             cca: caller,
-            source,
             asset,
             vault,
             amount,

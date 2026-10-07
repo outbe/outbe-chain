@@ -8,12 +8,7 @@ use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
-// Alloy generates event constructors with the Solidity argument lists.
-#[allow(clippy::too_many_arguments)]
-mod abi {
-    alloy_sol_types::sol!("../../../contracts/precompiles/src/IVaultRouter.sol");
-}
-pub use abi::IVaultRouter;
+sol!("../../../contracts/precompiles/src/IVaultRouter.sol");
 sol!("../../../contracts/precompiles/src/IVaultRouterCrosschainExtention.sol");
 
 /// `deposit`: deposit `amount` of `asset` into its reserve vault via an

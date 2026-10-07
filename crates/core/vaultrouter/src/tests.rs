@@ -2197,11 +2197,13 @@ fn reserve_stables_rejects_an_inactive_caller() {
         let err = runtime::reserve_stables(
             storage.clone(),
             stranger(),
-            receiver(),
-            pledger(),
-            asset(),
-            U256::from(10),
-            USD_ISO_CODE,
+            IVaultRouter::reserveStablesCall {
+                smartAccount: receiver(),
+                source: pledger(),
+                asset: asset(),
+                amount: U256::from(10),
+                referenceCurrency: USD_ISO_CODE,
+            },
         )
         .unwrap_err();
         assert!(err.to_string().contains("CCA is not active"), "{err}");
@@ -2218,11 +2220,13 @@ fn reserve_stables_requires_a_pledge_source() {
         let err = runtime::reserve_stables(
             storage.clone(),
             cca(),
-            receiver(),
-            Address::ZERO,
-            asset(),
-            U256::from(10),
-            USD_ISO_CODE,
+            IVaultRouter::reserveStablesCall {
+                smartAccount: receiver(),
+                source: Address::ZERO,
+                asset: asset(),
+                amount: U256::from(10),
+                referenceCurrency: USD_ISO_CODE,
+            },
         )
         .unwrap_err();
         assert!(err.to_string().contains("zero address"), "{err}");
@@ -2235,11 +2239,13 @@ fn a_reservation_holds_then_releases_once() {
         let id = runtime::reserve_stables(
             storage.clone(),
             cca(),
-            receiver(),
-            pledger(),
-            asset(),
-            U256::from(10),
-            USD_ISO_CODE,
+            IVaultRouter::reserveStablesCall {
+                smartAccount: receiver(),
+                source: pledger(),
+                asset: asset(),
+                amount: U256::from(10),
+                referenceCurrency: USD_ISO_CODE,
+            },
         )
         .unwrap();
         let held = runtime::reservation_of(&storage, id).unwrap();
@@ -2290,11 +2296,13 @@ fn release_rejects_a_different_receiver_and_returns_excess_to_the_origin_vault()
         let id = runtime::reserve_stables(
             storage.clone(),
             cca(),
-            receiver(),
-            pledger(),
-            asset(),
-            U256::from(50),
-            USD_ISO_CODE,
+            IVaultRouter::reserveStablesCall {
+                smartAccount: receiver(),
+                source: pledger(),
+                asset: asset(),
+                amount: U256::from(50),
+                referenceCurrency: USD_ISO_CODE,
+            },
         )
         .unwrap();
 
@@ -2338,11 +2346,13 @@ fn an_unspent_reservation_returns_to_the_origin_vault() {
         let id = runtime::reserve_stables(
             storage.clone(),
             cca(),
-            receiver(),
-            pledger(),
-            asset(),
-            U256::from(10),
-            USD_ISO_CODE,
+            IVaultRouter::reserveStablesCall {
+                smartAccount: receiver(),
+                source: pledger(),
+                asset: asset(),
+                amount: U256::from(10),
+                referenceCurrency: USD_ISO_CODE,
+            },
         )
         .unwrap();
         let minted = runtime::return_reservation(storage.clone(), cca(), id).unwrap();
@@ -2364,11 +2374,13 @@ fn a_stranger_cannot_return_a_live_reservation() {
         let id = runtime::reserve_stables(
             storage.clone(),
             cca(),
-            receiver(),
-            pledger(),
-            asset(),
-            U256::from(10),
-            USD_ISO_CODE,
+            IVaultRouter::reserveStablesCall {
+                smartAccount: receiver(),
+                source: pledger(),
+                asset: asset(),
+                amount: U256::from(10),
+                referenceCurrency: USD_ISO_CODE,
+            },
         )
         .unwrap();
         let err = runtime::return_reservation(storage.clone(), stranger(), id).unwrap_err();
@@ -2490,11 +2502,13 @@ fn a_reservation_cannot_exceed_the_vaults_shares() {
         let err = runtime::reserve_stables(
             storage.clone(),
             cca(),
-            receiver(),
-            pledger(),
-            asset(),
-            U256::from(10),
-            USD_ISO_CODE,
+            IVaultRouter::reserveStablesCall {
+                smartAccount: receiver(),
+                source: pledger(),
+                asset: asset(),
+                amount: U256::from(10),
+                referenceCurrency: USD_ISO_CODE,
+            },
         )
         .unwrap_err();
         assert!(err.to_string().contains("insufficient shares"), "{err}");
@@ -2525,11 +2539,13 @@ fn reservation_expiry_boundary_and_repeated_permissionless_return() {
         let id = runtime::reserve_stables(
             storage.clone(),
             cca(),
-            receiver(),
-            pledger(),
-            asset(),
-            U256::from(10),
-            USD_ISO_CODE,
+            IVaultRouter::reserveStablesCall {
+                smartAccount: receiver(),
+                source: pledger(),
+                asset: asset(),
+                amount: U256::from(10),
+                referenceCurrency: USD_ISO_CODE,
+            },
         )
         .unwrap();
         let expiry = runtime::reservation_of(&storage, id).unwrap().expires_at;

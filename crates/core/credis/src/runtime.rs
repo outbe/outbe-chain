@@ -166,12 +166,13 @@ impl CredisContract<'_> {
     pub fn open_position(&mut self, params: OpenPositionParams) -> Result<U256> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
-            if params.principal_minor.is_zero()
-                || params.gratis_minor.is_zero()
-                || params.entry_price_minor.is_zero()
-                || params.call_anchor_price_minor.is_zero()
-                || params.source.is_zero()
-            {
+            let terms = [
+                params.principal_minor,
+                params.gratis_minor,
+                params.entry_price_minor,
+                params.call_anchor_price_minor,
+            ];
+            if terms.iter().any(U256::is_zero) || params.source.is_zero() {
                 return Err(CredisError::InvalidAmount.into());
             }
 

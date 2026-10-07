@@ -97,7 +97,6 @@ interface IVaultRouter {
         uint256 indexed id,
         address indexed smartAccount,
         address indexed cca,
-        address source,
         address asset,
         address vault,
         uint256 amount,
