@@ -26,7 +26,7 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result, SweepFailure},
     storage::StorageHandle,
-    time::{previous_date_key, timestamp_to_date_key},
+    time::{first_full_day, previous_date_key, timestamp_to_date_key},
 };
 
 use crate::runtime;
@@ -254,10 +254,9 @@ fn visit_price_path(
 /// Section 11.3 leaves missing-data days undecided. Treating them as
 /// non-breaches is conservative: it can only delay a call, never trigger one.
 ///
-/// A day that predates the position ends the count. The window is newest-first,
-/// so every remaining entry is older still. A position must never inherit a
-/// breach run from before it existed. Mirrors the issuance guard in
-/// `outbe_gem::runtime::breached_enough`.
+/// A day before the position's first full UTC day ends the count. The window is
+/// newest-first, so every remaining entry is older still. A position never counts
+/// a day it did not exist for in full. Mirrors `outbe_gem::runtime::breached_enough`.
 fn breached_enough(window: &[(u32, Option<U256>)], position: &Position) -> bool {
     let window_days = position.call_window_seconds / SECS_PER_DAY;
     let threshold_days = position.call_threshold_seconds / SECS_PER_DAY;
@@ -267,10 +266,10 @@ fn breached_enough(window: &[(u32, Option<U256>)], position: &Position) -> bool 
     if window_days == 0 || threshold_days == 0 {
         return false;
     }
-    let issued_day = timestamp_to_date_key(position.issued_at);
+    let first_day = first_full_day(position.issued_at);
     let mut breaches: u32 = 0;
     for (day, vwap) in window.iter().take(window_days as usize) {
-        if *day < issued_day {
+        if *day < first_day {
             break;
         }
         if vwap.is_some_and(|value| value > position.call_price_minor) {

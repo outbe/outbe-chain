@@ -379,6 +379,43 @@ fn a_breach_run_that_predates_the_position_does_not_call_it() {
     teardown();
 }
 
+/// A position opened at 00:00 counts its issuance day. One opened at 00:00:01 starts
+/// counting the next day, so the same threshold run falls one day short.
+#[test]
+fn the_issuance_day_counts_only_for_a_position_opened_at_midnight() {
+    for (offset, called_at_threshold) in [(0, true), (1, false)] {
+        let mut storage = env();
+        StorageHandle::enter(&mut storage, |storage| {
+            bootstrap(&storage, pledge_cost());
+            let midnight = (CREATED_AT / DAY + 1) * DAY;
+            advance_to(&storage, midnight + offset);
+            let position_id = open(&storage, 1);
+
+            let at = midnight + u64::from(CALL_THRESHOLD_DAYS) * DAY;
+            advance_to(&storage, at);
+            fill_days(
+                &storage,
+                last_closed_day(at),
+                CALL_THRESHOLD_DAYS,
+                above_call(),
+            );
+            assert_eq!(scan(&storage, at), u32::from(called_at_threshold));
+            if called_at_threshold {
+                assert_eq!(state_of(&storage, position_id), CredisState::Called);
+                return;
+            }
+            assert_eq!(state_of(&storage, position_id), CredisState::Open);
+
+            let next = at + DAY;
+            advance_to(&storage, next);
+            set_vwap(&storage, last_closed_day(next), above_call());
+            assert_eq!(scan(&storage, next), 1);
+            assert_eq!(state_of(&storage, position_id), CredisState::Called);
+        });
+        teardown();
+    }
+}
+
 #[test]
 fn an_unfinalized_day_skips_the_run_without_touching_state() {
     let mut storage = env();
