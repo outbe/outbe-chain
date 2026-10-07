@@ -44,6 +44,11 @@ impl Gratis<'_> {
         self.balance_ct.get_bytes(&account).read()
     }
 
+    /// Encrypted pledged-collateral blob for `account`, in the balance blob format.
+    pub fn pledged_ct_of(&self, account: Address) -> Result<Vec<u8>> {
+        self.pledged_ct.get_bytes(&account).read()
+    }
+
     /// The account's current modify-auth replay counter (the value a client must
     /// bind into its next write authorization).
     pub fn op_nonce_of(&self, account: Address) -> Result<u64> {
@@ -54,6 +59,10 @@ impl Gratis<'_> {
 
     pub(crate) fn write_balance_ct(&self, account: Address, blob: &[u8]) -> Result<()> {
         self.balance_ct.get_bytes(&account).write(blob)
+    }
+
+    pub(crate) fn write_pledged_ct(&self, account: Address, blob: &[u8]) -> Result<()> {
+        self.pledged_ct.get_bytes(&account).write(blob)
     }
 
     pub(crate) fn set_op_nonce(&self, account: Address, nonce: u64) -> Result<()> {

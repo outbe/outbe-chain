@@ -225,6 +225,8 @@ pub enum GratisOp {
     ReleaseCollateral,
     /// Debit Credis collateral at forfeiture. Fidelity is unchanged.
     BurnPledged,
+    /// Move pledged collateral back to the account's liquid balance.
+    ReleasePledged,
 }
 
 /// Proof that the caller holds the account's modify key, without revealing it.
@@ -248,6 +250,7 @@ pub struct GratisOpRequest {
     pub account: Address,
     pub amount: U256,
     pub current_balance: Vec<u8>,
+    pub current_pledged: Vec<u8>,
     pub modify_auth: ModifyAuth,
     pub fidelity: Option<FidelityOpSection>,
 }
@@ -353,6 +356,7 @@ pub enum GratisOpStatus {
 pub struct GratisOpResult {
     pub status: GratisOpStatus,
     pub new_balance: Vec<u8>,
+    pub new_pledged: Vec<u8>,
     /// Owner-bound serial derived inside the enclave on pledge. Zero otherwise.
     pub note_serial: B256,
     pub event_amount: U256,
@@ -1329,6 +1333,7 @@ pub fn gratis_op_canonical_hash(req: &GratisOpRequest) -> B256 {
     buf.extend_from_slice(req.account.as_slice());
     buf.extend_from_slice(&req.amount.to_be_bytes::<32>());
     push_bytes(&mut buf, &req.current_balance);
+    push_bytes(&mut buf, &req.current_pledged);
     buf.extend_from_slice(&req.modify_auth.mac);
     buf.extend_from_slice(&req.modify_auth.op_nonce.to_be_bytes());
     match &req.fidelity {
@@ -1358,9 +1363,9 @@ pub fn gratis_op_attestation_preimage(
     let mut probe = result.clone();
     probe.attestation_tag = Vec::new();
     let result_json = serde_json::to_vec(&probe).unwrap_or_default();
-    // v2: the result JSON now carries the optional Fidelity section outcome.
+    // v3: the result JSON carries the pledged blob.
     let mut buf = Vec::with_capacity(31 + 32 + 4 + result_json.len());
-    buf.extend_from_slice(b"outbe/tee/gratis-attestation/v2");
+    buf.extend_from_slice(b"outbe/tee/gratis-attestation/v3");
     buf.extend_from_slice(inputs_canonical_hash.as_slice());
     buf.extend_from_slice(&(result_json.len() as u32).to_be_bytes());
     buf.extend_from_slice(&result_json);

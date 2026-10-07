@@ -189,11 +189,12 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   // --- Balances --------------------------------------------------------------
   server.tool(
     "gratis_balance",
-    "Encrypted Gratis balance; decrypt locally with the account view key. Pledge notes are tracked privately.",
+    "Encrypted Gratis liquid and pledged balances; decrypt both locally with the account view key.",
     { account: addr },
     handler(async ({ account }) => {
       const balance = await view(ctx, "gratis", "balanceOf", [account]);
-      return ok({ account, balance });
+      const pledged = await view(ctx, "gratis", "pledgedOf", [account]);
+      return ok({ account, balance, pledged });
     }),
   );
 

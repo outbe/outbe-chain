@@ -44,6 +44,7 @@ fn base_request(op: GratisOp, chain_id: B256, account: Address, amount: U256) ->
         account,
         amount,
         current_balance: Vec::new(),
+        current_pledged: Vec::new(),
         modify_auth: no_auth(),
         fidelity: None,
     }
@@ -69,7 +70,7 @@ fn ensure_applied(result: &GratisOpResult) -> Result<()> {
     }
 }
 
-/// Store the updated balance ciphertext returned by the enclave.
+/// Store the updated ciphertexts returned by the enclave.
 fn write_account_blobs(
     gratis: &Gratis<'_>,
     account: Address,
@@ -77,6 +78,9 @@ fn write_account_blobs(
 ) -> Result<()> {
     if !result.new_balance.is_empty() {
         gratis.write_balance_ct(account, &result.new_balance)?;
+    }
+    if !result.new_pledged.is_empty() {
+        gratis.write_pledged_ct(account, &result.new_pledged)?;
     }
     Ok(())
 }

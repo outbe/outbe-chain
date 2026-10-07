@@ -11,4 +11,5 @@ pub struct Gratis {
     pub pledged_total_supply: Slot<U256>,
     pub balance_ct: Mapping<Address, StorageBytes>,
     pub op_nonce: Mapping<Address, u64>,
+    pub pledged_ct: Mapping<Address, StorageBytes>,
 }

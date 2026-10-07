@@ -18,6 +18,11 @@ pub fn balance_ct(storage: StorageHandle<'_>, account: Address) -> Result<Vec<u8
     Gratis::new(storage).balance_ct_of(account)
 }
 
+/// Encrypted pledged-collateral blob for `account`. Decrypt it client-side with the view key.
+pub fn pledged_ct(storage: StorageHandle<'_>, account: Address) -> Result<Vec<u8>> {
+    Gratis::new(storage).pledged_ct_of(account)
+}
+
 /// The account's current modify-auth replay counter (the value the client's next
 /// write authorization must bind).
 pub fn op_nonce(storage: StorageHandle<'_>, account: Address) -> Result<u64> {

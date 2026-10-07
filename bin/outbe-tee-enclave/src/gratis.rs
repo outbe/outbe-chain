@@ -4,6 +4,8 @@ use crate::confidential::{FIELD_BALANCE, GRATIS};
 use crate::errors::Result;
 use alloy_primitives::{Address, B256, U256};
 use outbe_tee::protocol::{GratisOp, GratisOpRequest, GratisOpResult, GratisOpStatus};
+
+const FIELD_PLEDGED: u8 = 1;
 /// Derive the resident Gratis state key from the DKG group signature. See
 /// [`crate::confidential::Domain::derive_state_key`].
 pub fn derive_gratis_state_key(group_sig: &[u8], chain_id: B256, epoch: u64) -> Result<[u8; 32]> {
@@ -74,10 +76,16 @@ pub fn decrypt_balance(view_key: &[u8; 32], account: Address, blob: &[u8]) -> Re
     read_amount(view_key, account, FIELD_BALANCE, blob).map(|(_, v)| v)
 }
 
+/// Client-side helper: decrypt an account's pledged blob with its view key.
+pub fn decrypt_pledged(view_key: &[u8; 32], account: Address, blob: &[u8]) -> Result<U256> {
+    read_amount(view_key, account, FIELD_PLEDGED, blob).map(|(_, v)| v)
+}
+
 fn base_result() -> GratisOpResult {
     GratisOpResult {
         status: GratisOpStatus::Applied,
         new_balance: Vec::new(),
+        new_pledged: Vec::new(),
         note_serial: B256::ZERO,
         event_amount: U256::ZERO,
         next_op_nonce: 0,
@@ -170,6 +178,9 @@ fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
         return Ok(reject("collateral must not change Fidelity"));
     }
     let view = derive_view_key(state_key, req.account)?;
+    if matches!(req.op, GratisOp::ReleasePledged) {
+        return release_pledged(&view, req, r);
+    }
     let (version, balance) = read_amount(&view, req.account, FIELD_BALANCE, &req.current_balance)?;
     let credit = matches!(
         req.op,
@@ -184,6 +195,25 @@ fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
         return Ok(reject("insufficient balance or balance overflow"));
     };
     r.new_balance = write_amount(&view, req.account, FIELD_BALANCE, version, next)?;
+    r.event_amount = req.amount;
+    Ok(r)
+}
+
+fn release_pledged(
+    view: &[u8; 32],
+    req: &GratisOpRequest,
+    mut r: GratisOpResult,
+) -> Result<GratisOpResult> {
+    let (pver, pledged) = read_amount(view, req.account, FIELD_PLEDGED, &req.current_pledged)?;
+    let (bver, balance) = read_amount(view, req.account, FIELD_BALANCE, &req.current_balance)?;
+    let (Some(pledged), Some(balance)) = (
+        pledged.checked_sub(req.amount),
+        balance.checked_add(req.amount),
+    ) else {
+        return Ok(reject("insufficient pledged balance or balance overflow"));
+    };
+    r.new_pledged = write_amount(view, req.account, FIELD_PLEDGED, pver, pledged)?;
+    r.new_balance = write_amount(view, req.account, FIELD_BALANCE, bver, balance)?;
     r.event_amount = req.amount;
     Ok(r)
 }
@@ -213,6 +243,7 @@ mod tests {
             account,
             amount,
             current_balance: Vec::new(),
+            current_pledged: Vec::new(),
             modify_auth: ModifyAuth {
                 mac: [0; 32],
                 op_nonce: nonce,
@@ -270,6 +301,52 @@ mod tests {
         let mut r = req(GratisOp::Mint, alice(), U256::from(1u64), 0);
         r.modify_auth = auth(&sk, alice(), GratisOp::Mint, r.amount, 0);
         r.modify_auth.mac[0] ^= 0xff;
+        assert!(matches!(
+            apply_op(&sk, &r).status,
+            GratisOpStatus::Rejected { .. }
+        ));
+    }
+    fn pledged(sk: &[u8; 32], amount: u64) -> Vec<u8> {
+        let vk = derive_view_key(sk, alice()).unwrap();
+        write_amount(&vk, alice(), FIELD_PLEDGED, 0, U256::from(amount)).unwrap()
+    }
+    #[test]
+    fn release_pledged_moves_collateral_to_the_balance() {
+        let sk = state_key();
+        let vk = derive_view_key(&sk, alice()).unwrap();
+        let mut r = req(GratisOp::ReleasePledged, alice(), U256::from(40u64), 0);
+        r.current_pledged = pledged(&sk, 100);
+        let res = apply_op(&sk, &r);
+        assert_eq!(res.status, GratisOpStatus::Applied);
+        assert_eq!(
+            decrypt_pledged(&vk, alice(), &res.new_pledged).unwrap(),
+            U256::from(60u64)
+        );
+        assert_eq!(
+            decrypt_balance(&vk, alice(), &res.new_balance).unwrap(),
+            U256::from(40u64)
+        );
+        assert_eq!(res.next_op_nonce, 0);
+    }
+    #[test]
+    fn release_pledged_rejects_more_than_pledged() {
+        let sk = state_key();
+        let mut r = req(GratisOp::ReleasePledged, alice(), U256::from(101u64), 0);
+        r.current_pledged = pledged(&sk, 100);
+        assert!(matches!(
+            apply_op(&sk, &r).status,
+            GratisOpStatus::Rejected { .. }
+        ));
+    }
+    #[test]
+    fn pledged_and_balance_blobs_are_not_interchangeable() {
+        let sk = state_key();
+        let vk = derive_view_key(&sk, alice()).unwrap();
+        let blob = pledged(&sk, 100);
+        assert!(decrypt_balance(&vk, alice(), &blob).is_err());
+        let mut r = req(GratisOp::ReleasePledged, alice(), U256::from(1u64), 0);
+        r.current_balance = blob.clone();
+        r.current_pledged = blob;
         assert!(matches!(
             apply_op(&sk, &r).status,
             GratisOpStatus::Rejected { .. }
