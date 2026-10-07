@@ -10,11 +10,13 @@ import type { Abi } from "viem";
  */
 import IAgentReward from "../../contracts/precompiles/abi-export/IAgentReward.json";
 import ICredis from "../../contracts/precompiles/abi-export/ICredis.json";
+import ICredisFactory from "../../contracts/precompiles/abi-export/ICredisFactory.json";
 import IFidelity from "../../contracts/precompiles/abi-export/IFidelity.json";
 import IGem from "../../contracts/precompiles/abi-export/IGem.json";
 import IGemFactory from "../../contracts/precompiles/abi-export/IGemFactory.json";
 import IGovernance from "../../contracts/precompiles/abi-export/IGovernance.json";
 import IGratis from "../../contracts/precompiles/abi-export/IGratis.json";
+import IGratisFactory from "../../contracts/precompiles/abi-export/IGratisFactory.json";
 import IMetadosis from "../../contracts/precompiles/abi-export/IMetadosis.json";
 import INod from "../../contracts/precompiles/abi-export/INod.json";
 import IOracle from "../../contracts/precompiles/abi-export/IOracle.json";
@@ -26,6 +28,7 @@ import ITeeRegistryV1 from "../../contracts/precompiles/abi-export/ITeeRegistryV
 import ITribute from "../../contracts/precompiles/abi-export/ITribute.json";
 import ITributeFactory from "../../contracts/precompiles/abi-export/ITributeFactory.json";
 import IValidatorSet from "../../contracts/precompiles/abi-export/IValidatorSet.json";
+import IVaultRouter from "../../contracts/precompiles/abi-export/IVaultRouter.json";
 import IZeroFee from "../../contracts/precompiles/abi-export/IZeroFee.json";
 
 const asAbi = (json: unknown): Abi => json as Abi;
@@ -33,11 +36,13 @@ const asAbi = (json: unknown): Abi => json as Abi;
 export const PRECOMPILE_ABI = {
   IAgentReward: asAbi(IAgentReward),
   ICredis: asAbi(ICredis),
+  ICredisFactory: asAbi(ICredisFactory),
   IFidelity: asAbi(IFidelity),
   IGem: asAbi(IGem),
   IGemFactory: asAbi(IGemFactory),
   IGovernance: asAbi(IGovernance),
   IGratis: asAbi(IGratis),
+  IGratisFactory: asAbi(IGratisFactory),
   IMetadosis: asAbi(IMetadosis),
   INod: asAbi(INod),
   IOracle: asAbi(IOracle),
@@ -49,5 +54,6 @@ export const PRECOMPILE_ABI = {
   ITribute: asAbi(ITribute),
   ITributeFactory: asAbi(ITributeFactory),
   IValidatorSet: asAbi(IValidatorSet),
+  IVaultRouter: asAbi(IVaultRouter),
   IZeroFee: asAbi(IZeroFee),
 } as const;
