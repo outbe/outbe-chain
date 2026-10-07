@@ -3,10 +3,10 @@
 //
 // The Outbe consensus stack uses `Muxer::new(...)` (no backup) for vote / cert
 // / resolver / dkg sub-channels. It registers a fresh sub-channel for every
-// new epoch (see stack.rs:513-549, 1009-1017). If a peer sends a message on
-// epoch N's sub-channel before the receiver has registered that sub-channel
-// on its end, the receiver muxer drops the message. There is no replay path
-// back into the late registrant.
+// new epoch (see `stack::epoch::transport` and `stack::epoch::supervisor`).
+// If a peer sends a message on epoch N's sub-channel before the receiver has
+// registered that sub-channel on its end, the receiver muxer drops the
+// message. There is no replay path back into the late registrant.
 //
 // These two tests pin the Muxer contract for the pinned commonware-p2p tag
 // (v2026.3.0). The purpose is that any future bump to a tag with different

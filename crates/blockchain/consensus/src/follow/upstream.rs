@@ -72,9 +72,10 @@ pub fn parent_finalization_from_child(
 
 /// A finalized block together with the finalization certificate that proves it.
 ///
-/// The certificate is NOT trusted by the transport; the marshal re-verifies it
-/// against the epoch committee registered by the driver before the block is
-/// accepted.
+/// The certificate is NOT trusted by the transport. The marshal re-verifies it
+/// against the epoch committee before the block is accepted. The resolver
+/// (through `CommitteeChain` admission) and the engine bootstrap register that
+/// committee. The driver does not.
 #[derive(Clone)]
 pub struct CertifiedFinalizedBlock {
     /// The finalization certificate for this height (committee-bound).

@@ -2,17 +2,16 @@
 //!
 //! Two responsibilities for slice 1:
 //!
-//! 1. **Offer decryption primitive** - byte-identical to the host's current
-//!    `outbe-tributefactory` `crypto.rs`: ECDHE(X25519) + HKDF-SHA256 +
+//! 1. **Offer decryption primitive** - the inverse of the client encryption in
+//!    `outbe_tee::offer_encrypt`: ECDHE(X25519) + HKDF-SHA256 +
 //!    ChaCha20Poly1305 with the same `b"tribute-factory-encryption"` info
-//!    label. This is what `crypto.rs` will call into the enclave for once the
-//!    decrypt key is enclave-resident.
+//!    label (`outbe_tee::offer_encrypt::OFFER_HKDF_INFO`).
 //!
 //! 2. **Tribute-offer-key derivation** - DKG group threshold signature -> HKDF ->
 //!    tribute-offer X25519 keypair, resident in each enclave so every validator
 //!    decrypts tribute offers deterministically during block execution.
 //!
-//! `ring` (HKDF + AEAD) and `x25519-dalek` mirror the existing host code, so
+//! The client encryption uses the same X25519 + HKDF + AEAD recipe, so
 //! ciphertext produced by current clients decrypts identically here.
 
 use ring::{
@@ -28,7 +27,7 @@ use outbe_tee::dcap_protocol::{DcapOnboardingArtifactV1, DcapOnboardingContextV1
 use crate::errors::{Result, TeeError};
 
 /// HKDF info label for the offer encryption key. MUST match
-/// `outbe-tributefactory::crypto` for byte-identical decryption.
+/// `outbe_tee::offer_encrypt::OFFER_HKDF_INFO` for byte-identical decryption.
 const OFFER_AEAD_INFO: &[u8] = b"tribute-factory-encryption";
 /// HKDF info label for deriving the offer X25519 secret from the root seed.
 const OFFER_X25519_INFO: &[u8] = b"outbe/tribute/offer-x25519/v1";
@@ -124,9 +123,8 @@ pub fn chacha20poly1305_encrypt(
 /// Offer decryption primitive: ECDHE(static_secret, ephemeral_pubkey) ->
 /// HKDF-SHA256(salt, shared, info) -> ChaCha20Poly1305 decrypt.
 ///
-/// Byte-identical to `outbe-tributefactory::crypto::decrypt_tribute_input`'s
-/// cryptographic core. This function returns raw plaintext. Payload parsing is a
-/// later slice.
+/// This is the inverse of `outbe_tee::offer_encrypt::encrypt_tribute_offer`.
+/// This function returns raw plaintext. Payload parsing is a later slice.
 pub fn ecdhe_tribute_offer_decrypt(
     tribute_offer_private_key: &[u8; 32],
     salt: &[u8; 32],

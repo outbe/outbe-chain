@@ -1,8 +1,13 @@
-//! Node-local OCOMP retention and finalized-input authority.
+//! OCOMP retention, finalized-input authority, and fork-install loading.
 //!
-//! Nothing in this module changes block validity. It decides only whether this
-//! validator has enough durable, authenticated input to advertise, vote for,
-//! export, execute, or sign one PoC job.
+//! Most of this module is node-local. It decides whether this validator has
+//! enough durable, authenticated input to advertise, vote for, export, execute,
+//! or sign one PoC job.
+//!
+//! Two parts are consensus-visible and must stay deterministic across validators:
+//! - [`finality::ProductionOcompFinalizedIntentAuthority`] is the verifier that
+//!   EVM precompile dispatch uses during block execution.
+//! - [`fork`] loads the genesis OCOMP install that sets lifecycle activation.
 
 pub mod finality;
 pub mod fork;

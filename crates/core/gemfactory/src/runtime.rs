@@ -12,26 +12,26 @@ use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 use outbe_primitives::units::SCALE_1E6_U256;
 
 use outbe_common::pow;
-use outbe_common::settlement::floor_to_asset_units;
+use outbe_common::settlement::{floor_to_asset_units, PaymentCurrency};
 
 use crate::constants::SRA_RATE;
 use crate::errors::GemFactoryError;
 use crate::precompile::IGemFactory::{GemExercised, GemIssued, GemPositionIssued, GemSettled};
-use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
+use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition, GemTypes};
 use crate::sol_ext::{IIntexNFT1155, IReferenceCurrency, IERC20};
 use outbe_vaultrouter::api::IVaultRouter;
 
 /// Issues one agent-class gem priced at `entry_price`, the COEN rate in
 /// `reference_currency` that the caller resolved for the gem's own day.
-pub fn issue_gem(
-    storage: &StorageHandle<'_>,
-    owner: Address,
-    gem_type: GemTypes,
-    promis_load: U256,
-    issuance_currency: u16,
-    reference_currency: u16,
-    entry_price: U256,
-) -> Result<U256> {
+pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<U256> {
+    let GemIssueParams {
+        owner,
+        gem_type,
+        promis_load,
+        issuance_currency,
+        reference_currency,
+        entry_price,
+    } = params;
     if owner.is_zero() {
         return Err(GemFactoryError::InvalidOwner.into());
     }
@@ -108,10 +108,10 @@ fn emit_gem_issued(storage: &StorageHandle<'_>, gem_id: U256, position_id: U256)
     )
 }
 
-/// Send a merchant's whole Intex series to the Gem Factory and issue a GemPosition NFT. Burns the
-/// merchant's entire Issued holding on IntexNFT1155 (`sendToGemFactory`, GEM_ROLE)
-/// and records the position with a snapshot of the source entry/floor and the
-/// resulting Promis capacity. Returns the issued `position_id`.
+/// Issue a GemPosition NFT from the merchant's selected `units` of Issued Intex.
+/// The merchant can transfer a partial holding. The position pins the source entry and floor.
+/// Its Promis capacity equals the source load times the burned units.
+/// Return the issued `position_id`.
 pub fn issue_gem_position(
     storage: &StorageHandle<'_>,
     caller: Address,
@@ -418,13 +418,6 @@ fn read_decimals(storage: &StorageHandle<'_>, asset: Address) -> Result<u8> {
     IERC20::decimalsCall::abi_decode_returns(&ret).map_err(|_| GemFactoryError::InvalidAsset.into())
 }
 
-/// Which of a gem's two currencies a payment asset is denominated in.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PaymentCurrency {
-    Reference,
-    Issuance,
-}
-
 /// Which of the gem's two currencies `asset` is denominated in. The function checks
 /// registration first, so an unregistered asset need not implement `isoCode()` at all.
 /// It matches reference first, so a single-currency gem takes the no-rate branch.
@@ -465,22 +458,19 @@ fn cost_in_asset(
     currency: PaymentCurrency,
 ) -> Result<(U256, Option<VwapSnapshotId>)> {
     let asset_decimals = read_decimals(storage, asset)?;
-    let (rate, snapshot) = match currency {
-        PaymentCurrency::Reference => (None, None),
-        PaymentCurrency::Issuance => {
-            let fx = settlement_fx_rates(
-                storage.clone(),
-                item.issuance_currency,
-                item.reference_currency,
-            )?
-            .ok_or(GemFactoryError::OracleUnavailable)?;
-            let rate = (
-                fx.issuance_currency_vwap_minor,
-                fx.reference_currency_vwap_minor,
-            );
-            (Some(rate), Some(fx.snapshot))
-        }
-    };
+    let (rate, snapshot) = currency.conversion(|| -> Result<_> {
+        let fx = settlement_fx_rates(
+            storage.clone(),
+            item.issuance_currency,
+            item.reference_currency,
+        )?
+        .ok_or(GemFactoryError::OracleUnavailable)?;
+        let rate = (
+            fx.issuance_currency_vwap_minor,
+            fx.reference_currency_vwap_minor,
+        );
+        Ok((rate, fx.snapshot))
+    })?;
     Ok((settlement_units(item, rate, asset_decimals)?, snapshot))
 }
 

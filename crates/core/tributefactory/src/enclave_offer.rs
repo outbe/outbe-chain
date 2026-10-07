@@ -12,8 +12,8 @@
 //!
 //! Determinism: every node's enclave holds the same shared offer key, so the same
 //! ciphertext decrypts identically on all validators (re-execution agrees). The
-//! enclave call is a **blocking** UDS round-trip that the precompile path makes
-//! directly. It never holds a `StorageHandle` across an await and never spawns a
+//! enclave call is a **blocking** TCP or Unix domain socket request from the precompile path.
+//! It never holds a `StorageHandle` across an await and never spawns a
 //! thread (the `StorageHandle` `!Send` constraint). A dead sidecar (after the
 //! session's one bounded reconnect + retry) surfaces as `PrecompileError::Fatal`
 //! (`tee_sidecar_unavailable`). This is a node-local fault, never a deterministic
@@ -30,10 +30,10 @@ use outbe_tee::protocol::{
 };
 use outbe_tee::{verify_tribute_offer_attestation, EnclaveClient};
 
-/// True once an enclave client is installed. Offers always route through the
-/// enclave (single path). When no client is configured, `offerTribute` reverts
-/// with a typed `tee_sidecar_unavailable` error. Delegates to the process-global
-/// enclave client in `outbe-tee` (shared with the TEE registry seal).
+/// True once the process-global enclave client is installed.
+/// Offers always use the enclave. A missing client returns `PrecompileError::Fatal` with
+/// `tee_sidecar_unavailable`.
+/// This node-local fault rejects block execution.
 pub fn is_enclave_configured() -> bool {
     outbe_tee::is_enclave_configured()
 }

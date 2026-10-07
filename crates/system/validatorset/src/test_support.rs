@@ -1,5 +1,7 @@
-//! Shared schema assertions and test setup that reaches ACTIVE state only
-//! through the production certified-boundary hook.
+//! Shared schema assertions and test setup.
+//! One path reaches ACTIVE through the production certified-boundary hook.
+//! `test_activate_validator_canonically` persists ACTIVE directly.
+//! That path writes no snapshot, no `pending_set_change`, and no event.
 //!
 //! This module is deliberately feature-gated. Production callers must use the
 //! named lifecycle commands in [`crate::runtime`], while cross-crate tests use

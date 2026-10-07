@@ -590,7 +590,7 @@ fn run_tally_inner(oracle: &mut OracleContract, block_number: u64, timestamp: u6
     Ok(())
 }
 
-/// Processes the slash window: checks vote rates and force-exits underperformers.
+/// Processes the slash window: checks vote rates and jails underperformers.
 pub fn slash_and_reset_counters(oracle: &mut OracleContract, _timestamp: u64) -> Result<()> {
     let min_valid = oracle.config_min_valid_per_window.read()?;
     let allow_protected = oracle.config_allow_protected.read()?;
@@ -631,10 +631,10 @@ pub fn slash_and_reset_counters(oracle: &mut OracleContract, _timestamp: u64) ->
         if valid_rate < min_valid {
             let storage = oracle.storage.clone();
             storage.with_checkpoint(|| {
-                // Force-exit first so validator lifecycle events and status
-                // transitions follow the same ordering as slash indicator.
-                // Keep the cross-module writes under one checkpoint: any later
-                // slash/reset failure must roll back forced-exit state.
+                // Jail first. The penalty is jail plus slash, not a force-exit.
+                // A later failure rolls the jail storage write back with this
+                // checkpoint. `jail_validator` records metrics before that
+                // rollback. Those metrics stay outside the checkpoint.
                 let mut vs_mut =
                     outbe_validatorset::contract::ValidatorSet::new(oracle.storage.clone());
                 // Oracle underperformance felony: JAIL (not force-exit) + slash.

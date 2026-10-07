@@ -392,15 +392,7 @@ pub fn amount_map(
     {
         return Err(ProgramErrorV1::OutputCountMismatch);
     }
-    let mut fraction_by_league = BTreeMap::new();
-    let mut previous_league = None;
-    for fraction in fractions {
-        if previous_league.is_some_and(|previous| previous >= fraction.league) {
-            return Err(ProgramErrorV1::OutputCountMismatch);
-        }
-        previous_league = Some(fraction.league);
-        fraction_by_league.insert(fraction.league, fraction.fraction);
-    }
+    let fraction_by_league = fractions_by_league(fractions)?;
 
     let mut ordered_records = Vec::with_capacity(observed.len());
     let mut checked_segment_gratis_total = U256::ZERO;
@@ -411,87 +403,13 @@ pub fn amount_map(
                 u32::try_from(local_ordinal).map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
             )
             .ok_or(ProgramErrorV1::OutputCountMismatch)?;
-        if fidelity.raw_ordinal != raw_ordinal
-            || fidelity.tribute_id != item.tribute.tribute_id
-            || fidelity.nominal_amount_minor != item.tribute.nominal_amount_minor
-            || fidelity.pre_distribution_league != fidelity.issuance_league
-        {
-            return Err(ProgramErrorV1::OutputCountMismatch);
-        }
-        let first_league =
-            item.first_league
-                .copied()
-                .ok_or(ProgramErrorV1::FidelityUnavailable {
-                    ordinal: raw_ordinal as usize,
-                    phase: FidelityPhaseV1::First,
-                })?;
-        let second_league =
-            item.second_league
-                .copied()
-                .ok_or(ProgramErrorV1::FidelityUnavailable {
-                    ordinal: raw_ordinal as usize,
-                    phase: FidelityPhaseV1::Second,
-                })?;
-        if first_league != second_league {
-            return Err(ProgramErrorV1::FidelityMismatch {
-                ordinal: raw_ordinal as usize,
-                first: first_league,
-                second: second_league,
-            });
-        }
-        if first_league != fidelity.pre_distribution_league
-            || second_league != fidelity.issuance_league
-        {
-            return Err(ProgramErrorV1::OutputCountMismatch);
-        }
-        let fraction = fraction_by_league
-            .get(&first_league)
-            .copied()
-            .unwrap_or(U256::ZERO);
-        let gratis_load_minor = calculate_gratis_load(
-            item.tribute.nominal_amount_minor,
-            fraction,
-            raw_ordinal as usize,
-        )?;
-        let entry_price_minor =
-            item.entry_price_minor
-                .copied()
-                .ok_or(ProgramErrorV1::EntryPriceUnavailable {
-                    ordinal: raw_ordinal as usize,
-                    currency: item.tribute.reference_currency,
-                })?;
-        if !item.nod_target_available || item.tribute.owner.is_zero() {
-            return Err(ProgramErrorV1::InvalidNodTarget {
-                ordinal: raw_ordinal as usize,
-            });
-        }
-        if !NodContract::is_issuable_entry(entry_price_minor) {
-            return Err(ProgramErrorV1::Arithmetic {
-                message: format!("Nod entry price out of bounds at {raw_ordinal}"),
-            });
-        }
-        let settlement_cost_minor =
-            calculate_cost(entry_price_minor, gratis_load_minor, raw_ordinal as usize)?;
+        let record = amount_record(raw_ordinal, item, fidelity, &fraction_by_league)?;
         checked_segment_gratis_total = checked_segment_gratis_total
-            .checked_add(gratis_load_minor)
+            .checked_add(record.gratis_load_minor)
             .ok_or_else(|| ProgramErrorV1::Arithmetic {
                 message: format!("Gratis total overflow at {raw_ordinal}"),
             })?;
-        ordered_records.push(AmountRecordV1 {
-            raw_ordinal,
-            tribute_id: item.tribute.tribute_id,
-            owner: item.tribute.owner,
-            worldwide_day: item.tribute.worldwide_day,
-            league_id: second_league,
-            nominal_amount_minor: item.tribute.nominal_amount_minor,
-            gratis_fraction_fp: fraction,
-            gratis_load_minor,
-            entry_price_minor,
-            settlement_cost_minor,
-            issuance_currency: item.tribute.issuance_currency,
-            reference_currency: item.tribute.reference_currency,
-            exclude_from_intex_issuance: item.tribute.exclude_from_intex_issuance,
-        });
+        ordered_records.push(record);
     }
     let count =
         u32::try_from(ordered_records.len()).map_err(|_| ProgramErrorV1::OutputCountMismatch)?;
@@ -502,6 +420,104 @@ pub fn amount_map(
             .ok_or(ProgramErrorV1::OutputCountMismatch)?,
         ordered_records,
         checked_segment_gratis_total,
+    })
+}
+
+fn fractions_by_league(
+    fractions: &[LeagueFractionV1],
+) -> Result<BTreeMap<u16, U256>, ProgramErrorV1> {
+    let mut fraction_by_league = BTreeMap::new();
+    let mut previous_league = None;
+    for fraction in fractions {
+        if previous_league.is_some_and(|previous| previous >= fraction.league) {
+            return Err(ProgramErrorV1::OutputCountMismatch);
+        }
+        previous_league = Some(fraction.league);
+        fraction_by_league.insert(fraction.league, fraction.fraction);
+    }
+    Ok(fraction_by_league)
+}
+
+fn amount_record(
+    raw_ordinal: u32,
+    item: &ObservedTributeV1,
+    fidelity: &FidelityObservationV1,
+    fraction_by_league: &BTreeMap<u16, U256>,
+) -> Result<AmountRecordV1, ProgramErrorV1> {
+    if fidelity.raw_ordinal != raw_ordinal
+        || fidelity.tribute_id != item.tribute.tribute_id
+        || fidelity.nominal_amount_minor != item.tribute.nominal_amount_minor
+        || fidelity.pre_distribution_league != fidelity.issuance_league
+    {
+        return Err(ProgramErrorV1::OutputCountMismatch);
+    }
+    let first_league = item
+        .first_league
+        .copied()
+        .ok_or(ProgramErrorV1::FidelityUnavailable {
+            ordinal: raw_ordinal as usize,
+            phase: FidelityPhaseV1::First,
+        })?;
+    let second_league = item
+        .second_league
+        .copied()
+        .ok_or(ProgramErrorV1::FidelityUnavailable {
+            ordinal: raw_ordinal as usize,
+            phase: FidelityPhaseV1::Second,
+        })?;
+    if first_league != second_league {
+        return Err(ProgramErrorV1::FidelityMismatch {
+            ordinal: raw_ordinal as usize,
+            first: first_league,
+            second: second_league,
+        });
+    }
+    if first_league != fidelity.pre_distribution_league || second_league != fidelity.issuance_league
+    {
+        return Err(ProgramErrorV1::OutputCountMismatch);
+    }
+    let fraction = fraction_by_league
+        .get(&first_league)
+        .copied()
+        .unwrap_or(U256::ZERO);
+    let gratis_load_minor = calculate_gratis_load(
+        item.tribute.nominal_amount_minor,
+        fraction,
+        raw_ordinal as usize,
+    )?;
+    let entry_price_minor =
+        item.entry_price_minor
+            .copied()
+            .ok_or(ProgramErrorV1::EntryPriceUnavailable {
+                ordinal: raw_ordinal as usize,
+                currency: item.tribute.reference_currency,
+            })?;
+    if !item.nod_target_available || item.tribute.owner.is_zero() {
+        return Err(ProgramErrorV1::InvalidNodTarget {
+            ordinal: raw_ordinal as usize,
+        });
+    }
+    if !NodContract::is_issuable_entry(entry_price_minor) {
+        return Err(ProgramErrorV1::Arithmetic {
+            message: format!("Nod entry price out of bounds at {raw_ordinal}"),
+        });
+    }
+    let settlement_cost_minor =
+        calculate_cost(entry_price_minor, gratis_load_minor, raw_ordinal as usize)?;
+    Ok(AmountRecordV1 {
+        raw_ordinal,
+        tribute_id: item.tribute.tribute_id,
+        owner: item.tribute.owner,
+        worldwide_day: item.tribute.worldwide_day,
+        league_id: second_league,
+        nominal_amount_minor: item.tribute.nominal_amount_minor,
+        gratis_fraction_fp: fraction,
+        gratis_load_minor,
+        entry_price_minor,
+        settlement_cost_minor,
+        issuance_currency: item.tribute.issuance_currency,
+        reference_currency: item.tribute.reference_currency,
+        exclude_from_intex_issuance: item.tribute.exclude_from_intex_issuance,
     })
 }
 

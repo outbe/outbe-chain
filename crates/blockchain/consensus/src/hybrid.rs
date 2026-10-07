@@ -3,16 +3,17 @@
 //! Combines BLS individual signatures (MinPk - attributable, aggregatable) with
 //! BLS12-381 threshold signatures (MinSig - VRF for unpredictable leader election).
 //!
-//! Each validator produces a BLS individual vote signature and, when VRF
-//! material is available, a BLS threshold seed partial. The consensus
+//! Each validator produces a BLS individual vote signature and a BLS threshold
+//! seed partial. Without VRF material, a validator does not sign. The consensus
 //! certificate aggregates individual vote signatures into a single 96-byte
-//! aggregate signature. A recovered threshold seed proof is carried as an
-//! optional sidecar and is not required for finality verification.
+//! aggregate signature. The certificate also carries the recovered threshold
+//! VRF proof. This proof is mandatory: certificate assembly fails without a
+//! VRF quorum, and certificate verification rejects a missing or invalid proof.
 //!
 //! Properties:
 //! - `is_attributable() = true` - signer bitmap provides per-validator evidence
 //! - `is_batchable() = false` - current Outbe path verifies attestations sequentially
-//! - VRF seed extractable from verified certificate sidecars for randomness
+//! - VRF seed extractable from the verified certificate's VRF proof for randomness
 //! - Certificate size: ~162 bytes for any number of validators (vs ~9,300 for ed25519 variant)
 //!
 //! ## Signature Verification Timing
@@ -135,11 +136,10 @@ impl<V: Variant> FixedSize for HybridSignature<V> {
         bls12381::Signature::SIZE + 8 + V::Signature::SIZE + bls12381::Signature::SIZE;
 }
 
-// Wire codec for `VrfProof` and `HybridCertificate` lives in `outbe-consensus-proof`.
+// Wire codec for `VrfProof` and `HybridCertificate` lives in `crate::proof::hybrid_wire`.
 // This module re-exports both types below so existing call sites at
 // `crate::hybrid::{VrfProof, HybridCertificate}` continue to compile and serialize
-// byte-identically. There must be exactly one definition of each in the workspace
-// (enforced by `audit_targets` / `codec_reuse` tests).
+// byte-identically. There must be exactly one definition of each in the workspace.
 pub use crate::proof::hybrid_wire::{HybridCertificate, VrfProof};
 
 /// The committee binding shared by both roles: the ordered participant set, the

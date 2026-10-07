@@ -830,7 +830,7 @@ fn validate_recovered_vrf_material_accepts_matching_boundary_rejects_mismatch() 
 // the restored material does not match the recovered boundary.
 //
 // `select_recovery_participants` is the pure decision the recovery path now
-// uses at stack.rs section 7. The output's `players()` is already a sorted/deduped
+// uses in `stack::epoch::threshold_recovery`. The output's `players()` is already a sorted/deduped
 // `commonware_utils::ordered::Set`, so participant indices derive from it
 // canonically. The test asserts membership and the explicit drift error.
 // =============================================================================

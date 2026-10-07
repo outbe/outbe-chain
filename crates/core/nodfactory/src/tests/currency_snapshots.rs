@@ -223,10 +223,12 @@ fn issuance_erc20_admission_uses_the_quoted_converted_cost() {
                 &storage,
                 scope,
                 parent,
-                input.owner,
-                nod_id,
-                EUR_ASSET,
-                quoted.2,
+                api::SettleNodRequest {
+                    caller: input.owner,
+                    nod_id,
+                    asset: EUR_ASSET,
+                    snapshot_id: quoted.2,
+                },
             )
         })
         .unwrap_err();
@@ -257,10 +259,12 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
                 &storage,
                 scope,
                 parent,
-                input.owner,
-                nod_id,
-                PAYMENT_ASSET,
-                U256::ZERO,
+                api::SettleNodRequest {
+                    caller: input.owner,
+                    nod_id,
+                    asset: PAYMENT_ASSET,
+                    snapshot_id: U256::ZERO,
+                },
             )
         })
         .unwrap_err();
@@ -336,8 +340,7 @@ fn quote_settlement_dispatch() {
         .enter(|storage, scope, parent| {
             crate::precompile::dispatch(
                 storage,
-                scope,
-                parent,
+                ExecutionReaders { scope, parent },
                 &INodFactory::quoteSettlementCall {
                     nodId: nod_id.to_u256(),
                     asset: EUR_ASSET,

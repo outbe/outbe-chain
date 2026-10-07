@@ -24,7 +24,7 @@ use outbe_lysis::program_v1::planner::{
     PRIMARY_WORK_SHARD_SIZE,
 };
 use outbe_lysis::program_v1::reducers::{
-    merge_bucket_runs_streaming, merge_owner_runs_streaming, CanonicalRunSpanV1,
+    merge_bucket_runs_streaming, merge_owner_runs_streaming, CanonicalRunSpanV1, CanonicalRunV1,
     StreamingMergeErrorV1,
 };
 use outbe_lysis::program_v1::result::{

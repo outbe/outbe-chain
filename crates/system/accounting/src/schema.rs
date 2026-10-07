@@ -8,9 +8,10 @@
 //! ```
 //!
 //! Slot 0 is the highest exact-parent block number whose V2 Phase 1 system
-//! tx has successfully committed. Cycle and Rewards
-//! read this slot via [`crate::runtime::read_last_accounted_block_number`]
-//! to gate per-day and per-finalized-block accounting.
+//! tx has successfully committed. Cycle reads this slot through
+//! [`crate::runtime::read_last_accounted_block_number`] to gate per-day
+//! accounting. The begin-block finalization path reads it for per-block
+//! accounting. Rewards does not read this slot.
 //!
 //! Slots 1..=15 are deliberately reserved (no field declared) so future
 //! hard forks can add bounded extra progress / counter fields without

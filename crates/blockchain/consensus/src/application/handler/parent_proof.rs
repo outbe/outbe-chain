@@ -66,8 +66,9 @@ pub(super) fn finalized_parent_attestation_from_phase1_system_tx(
     }))
 }
 
-// Like `BuildBlockOutcome` above, this is an internal direct-parent proof lookup
-// result. `select_parent_proof_for_proposal` produces it once per proposal, and the
+// Like `BuildBlockOutcome` in the `proposal` module, this is an internal
+// direct-parent proof lookup result. `select_parent_proof_for_proposal`
+// produces it once per proposal, and the
 // single match site consumes it immediately. `Found` is the common case, so boxing the
 // record would only add a heap allocation on the hot proposer path for no benefit.
 #[allow(clippy::large_enum_variant)]
@@ -84,9 +85,7 @@ pub(crate) fn parent_round(round: Round, parent_view: View) -> Round {
 }
 
 impl ApplicationShared {
-    /// Canonicalize parent and build a block on top of it.
-    ///
-    /// recover the direct parent's canonical Finalization parent-proof
+    /// Recover the direct parent's canonical Finalization parent-proof
     /// record from marshal's durable finalization archive when the in-process
     /// selection store missed it (restart / late-join / brief finalization lag).
     ///

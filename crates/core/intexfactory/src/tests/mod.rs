@@ -82,10 +82,10 @@ fn sid(worldwide_day: u32) -> SeriesId {
 }
 
 /// Force-call one group against the protocol call window. Returns how many series moved.
-fn call_group(
-    s: &StorageHandle<'_>,
-    f: &mut IntexFactoryContract,
-    oracle: &OracleContract,
+fn call_group<'s>(
+    s: &StorageHandle<'s>,
+    f: &mut IntexFactoryContract<'s>,
+    oracle: &OracleContract<'s>,
     pair: AddressPair,
     group: &Group,
     last_closed_day: u32,
@@ -103,7 +103,13 @@ fn call_group(
     .unwrap() else {
         return 0;
     };
-    called::try_call_group(s, f, oracle, &mut vwaps, group, &window, now_ts).unwrap()
+    let call = called::GroupCall {
+        storage: s,
+        factory: f,
+        oracle,
+        vwaps: &mut vwaps,
+    };
+    called::try_call_group(call, group, &window, now_ts).unwrap()
 }
 
 fn sample(worldwide_day: u32) -> IssuanceParams {

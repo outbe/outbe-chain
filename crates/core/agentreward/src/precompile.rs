@@ -37,8 +37,9 @@ impl AgentRewardContract<'_> {
     #[contract_public("claimReward(uint8,uint256) returns (uint256)")]
     fn _abi_claim_reward(&mut self, sender: Address, pool: u8, amount: U256) -> Result<U256> {
         let pool = RewardPool::from_abi(pool)?;
-        // amount = 0 means claim the whole pool balance. In that case, nothing to
-        // claim is a no-op, not a failure. The pre-Gem claim behaved the same way.
+        // A zero amount claims the whole pool balance. Empty WAA and SRA pools permit no-op
+        // claims.
+        // CCA claims still require registration history and revert when the balance is zero.
         if pool != RewardPool::Cca
             && amount.is_zero()
             && self.get_pool_claimable_reward(pool, sender)?.is_zero()

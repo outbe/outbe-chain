@@ -19,12 +19,13 @@ pub enum EffectiveState {
     Forfeited = 4,
 }
 
-/// Input for `NodContract::issue`. The contract derives `nod_id` via
-/// `NodContract::nod_id(owner, worldwide_day)`. It derives the floor from `entry_price_minor`
-/// (see [`NodContract::floor_price_minor`]). It derives the cost from `entry_price_minor` and
-/// `gratis_load_minor` (see [`crate::api::settlement_cost_minor`]). `issued_at` is not part of
-/// caller inputs: it is the block timestamp, or the certified generation time for a materialized
-/// Nod.
+/// Input for NodFactory issuance. [`NodContract::generate_nod_id`] derives the identity from owner
+/// and WorldwideDay.
+/// [`NodContract::floor_price_minor`] derives the floor from `entry_price_minor`.
+/// [`crate::api::settlement_cost_minor`] derives the cost from `entry_price_minor` and
+/// `gratis_load_minor`.
+/// The caller does not supply `issued_at`.
+/// Issuance uses the block timestamp or the certified generation time for a materialized Nod.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NodIssueParams {
     pub owner: Address,
@@ -180,10 +181,10 @@ impl NodCertifiedGenerationProjection {
 ///
 /// Uncalled buckets wait in a per-currency bitmap trie by call price, see `state::CallBins`.
 ///
-/// Field offsets are dense in `order` sequence, so this struct occupies slots
-/// 0..=48 in declaration order, with the genesis-seeded materialization FIFO
-/// counters at slots 13 and 14.
-/// `adr006_tests::nod_contract_slot_layout_is_pinned` is the tripwire.
+/// Field offsets are dense in `order` sequence, so this struct occupies slots 0..=49.
+/// Genesis seeds the materialization FIFO counters at slots 13 and 14.
+/// `adr006_tests::nod_contract_slot_layout_is_pinned` checks slots through 48.
+/// The profile selector occupies slot 49.
 #[storage_schema]
 #[contract(addr = NOD_ADDRESS)]
 pub struct NodContract {
@@ -282,8 +283,8 @@ pub struct NodContract {
     #[attribute(order = 37)]
     pub bucket_nod_index: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
 
-    /// `entry_price_minor x (100 + CALL_RATE_PCT) / 100`, snapshotted at issuance so
-    /// the daily scan never loads a bucket body just to decide.
+    /// `entry_price_minor * (100 + call_rate) / 100`, using the genesis-selected profile.
+    /// Issuance pins this price so the daily scan need not read a bucket body to decide.
     #[attribute(order = 40)]
     pub callable_bucket_call_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
 
@@ -486,19 +487,20 @@ impl<'storage> NodContract<'storage> {
             .ocomp_materialization_last_progress_height
             .read(&worldwide_day)?;
 
+        let roots_and_binding = [
+            nod_root,
+            bucket_root,
+            output_manifest_root,
+            job_id,
+            protocol_bundle_hash,
+            program_semantics_hash,
+        ];
         if generation == 0 {
-            if !nod_root.is_zero()
-                || !bucket_root.is_zero()
-                || !output_manifest_root.is_zero()
-                || !metadata.is_zero()
-                || !nod_amount_total.is_zero()
-                || !lysis_allocation_minor.is_zero()
-                || !job_id.is_zero()
-                || !protocol_bundle_hash.is_zero()
-                || !program_semantics_hash.is_zero()
-                || next_nod_ordinal != 0
-                || last_progress_height != 0
-            {
+            let words_clear = roots_and_binding.iter().all(B256::is_zero)
+                && [metadata, nod_amount_total, lysis_allocation_minor]
+                    .iter()
+                    .all(U256::is_zero);
+            if !words_clear || next_nod_ordinal != 0 || last_progress_height != 0 {
                 return Err(outbe_primitives::error::PrecompileError::Fatal(
                     "absent Nod OCOMP generation has residual state".into(),
                 ));
@@ -506,14 +508,7 @@ impl<'storage> NodContract<'storage> {
             return Ok(None);
         }
 
-        if nod_root.is_zero()
-            || bucket_root.is_zero()
-            || output_manifest_root.is_zero()
-            || !(metadata >> 160usize).is_zero()
-            || job_id.is_zero()
-            || protocol_bundle_hash.is_zero()
-            || program_semantics_hash.is_zero()
-        {
+        if roots_and_binding.iter().any(B256::is_zero) || !(metadata >> 160usize).is_zero() {
             return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
                 "installed Nod OCOMP generation is malformed: day {} generation {generation} \
                  nod_root {nod_root} bucket_root {bucket_root} manifest {output_manifest_root} \
@@ -525,13 +520,11 @@ impl<'storage> NodContract<'storage> {
         let tribute_count = ((metadata >> 64usize) & U256::from(u32::MAX)).to::<u32>();
         let nod_count = ((metadata >> 96usize) & U256::from(u32::MAX)).to::<u32>();
         let bucket_count = ((metadata >> 128usize) & U256::from(u32::MAX)).to::<u32>();
-        if issued_at == 0
-            || tribute_count == 0
-            || nod_count != tribute_count
-            || bucket_count > nod_count
-            || next_nod_ordinal > nod_count
-            || last_progress_height == 0
-        {
+        let counts_consistent = tribute_count != 0
+            && nod_count == tribute_count
+            && bucket_count <= nod_count
+            && next_nod_ordinal <= nod_count;
+        if issued_at == 0 || last_progress_height == 0 || !counts_consistent {
             return Err(outbe_primitives::error::PrecompileError::Fatal(
                 "installed Nod OCOMP generation metadata is malformed".into(),
             ));

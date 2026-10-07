@@ -148,9 +148,10 @@ where
         self.executor.finalize_compressed_entities()?;
         // finalized-parent metadata travels through payload
         // attributes into the begin-zone Phase 1 system transaction body.
-        // Header `extra_data` here carries only execution summary,
-        // timestamp millis, and DKG/header artifacts. The proposer path does
-        // not produce the legacy header attestation tag.
+        // Header `extra_data` here carries the execution summary, timestamp
+        // millis, the compressed-entities root, and the artifacts kept from
+        // the pre-final bytes (DKG/header artifacts and late-finalize credits).
+        // The proposer path does not produce the legacy header attestation tag.
         let execution_summary = self.executor.current_execution_summary();
         // Sub-second timestamp travels in `extra_data` under tag 0x05 so
         // the block hash stays Ethereum-spec-compliant

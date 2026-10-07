@@ -1,6 +1,7 @@
 //! Host-only Intel collateral acquisition for a freshly generated SGX quote.
 //!
-//! This module runs before consensus starts. It does these steps:
+//! Startup bootstrap, CLI join, lease renewal, and enclave upgrade call this
+//! module. It does these steps:
 //!
 //! 1. It dynamically opens the exact-digest QVL that the project pins.
 //! 2. It lets Intel QPL/PCCS acquire the collateral.

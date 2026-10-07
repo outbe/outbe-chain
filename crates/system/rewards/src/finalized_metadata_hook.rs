@@ -1,13 +1,14 @@
 //! Per-block fee escrow + participation accumulation hook.
 //!
-//! The executor's post-exec block invokes this hook AFTER the top-level
-//! fingerprint check (step 9) and `record_finalized_participation`
-//! run. The hook does the idempotent per-finalized-block work:
+//! The begin-zone CertifiedParentAccounting phase calls this hook.
+//! The call follows the fingerprint check and `record_finalized_participation`.
+//! The hook does the idempotent per-finalized-block work:
 //!
-//! 1. Lazily initialize `last_settled_utc_day` on the first finalized
-//!    day observed (so the day-settle eligibility window opens correctly).
-//! 2. Per-block accumulation: `daily_fee_sum_raw`, `daily_fee_dust`,
-//!    guarded by `block_metadata_counted[fb_hash]`.
+//! 1. On the first finalized day, write `last_settled_utc_day` once.
+//!    The hook does not advance that slot again.
+//! 2. Add `validator_fee_sum` into `daily_fee_sum_raw`, guarded by
+//!    `block_metadata_counted[fb_hash]`. This hook does not write
+//!    `daily_fee_dust`.
 //! 3. Per-block fee ESCROW + participation count, guarded by `fb_hash` /
 //!    `(fb_hash, voter)` composite keys. The hook does NOT pay fees eagerly.
 //!    `late_settlement::escrow_block_fee` escrows the `validator_fee_sum` of the

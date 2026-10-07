@@ -320,8 +320,8 @@ impl EnclaveInitializationManifestV1 {
     }
 
     /// Verify the node proof of possession over the exact canonical manifest.
-    /// Validators authorize with their EVM key. Full nodes authorize with the
-    /// compressed secp256k1 key already used as their Reth P2P identity.
+    /// Every node, validator or full node, authorizes with the compressed
+    /// secp256k1 key that is its Reth P2P identity (`node_id.reth_p2p_public`).
     pub fn verify_node_signature(&self, signature: &[u8; 65]) -> bool {
         let Ok(hash) = self.authorization_hash() else {
             return false;

@@ -8,7 +8,7 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 /// Storage slots:
 ///   0: config_proposer_misdemeanor_threshold - u64 (default 50)
 ///   1: config_proposer_felony_threshold      - u64 (default 150)
-///   2: config_voter_misdemeanor_threshold    - u64 (default 500)
+///   2: config_voter_misdemeanor_threshold    - u64 (default 150)
 ///   3: config_slash_amount_percent           - u64 (default 5)
 ///   4: config_evidence_reward_percent        - u64 (default 10)
 ///   5: proposer_miss_count                   - mapping(address => u64), per-epoch, resets
@@ -18,7 +18,8 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 /// 9: voter_window_slashed - mapping(B256 => bool), per-finalized-block voter slash-window guard
 /// 10: proposer_window_slashed - mapping(B256 => bool), per-finalized-block missed-proposer slash-window guard
 ///  11: invalid_vrf_evidence_processed        - mapping(B256 => bool) dedup keyed by `invalid_vrf_evidence_hash_v2(child_hash, phase1_tx_hash)`
-///  12: config_voter_felony_threshold         - u64 (default 150); appended at the end to preserve the slot 0-11 layout
+///  12: config_voter_felony_threshold         - u64 (default 500).
+///      Appended at the end to preserve the slot 0-11 layout.
 ///  13: seed_partial_equivocation_processed   - mapping(B256 => bool) dedup keyed by `SeedPartialEquivocationEvidence::dedup_hash`
 ///  14: invalid_seed_partial_processed        - mapping(B256 => bool) dedup keyed by `InvalidSeedPartialEvidence::dedup_hash`
 /// 15: slash_guard_ring - mapping(uint64 => B256), prune ring of finalized fb_hashes
@@ -70,8 +71,8 @@ pub struct SlashIndicator {
 
     // Config (late addition, slot 12): voter felony threshold. The schema appends
     // it at the end so existing slots 0-11 keep their layout. `slash_voter`
-    // force-exits and slashes a validator at multiples of this threshold. The
-    // accessor returns the default (150) when the slot is unset (0). This
+    // jails and slashes a validator at multiples of this threshold. The
+    // accessor returns the default (500) when the slot is unset (0). This
     // prevents `count % 0`.
     pub config_voter_felony_threshold: Slot<u64>,
 

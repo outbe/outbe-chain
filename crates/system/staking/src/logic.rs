@@ -64,8 +64,9 @@ impl Staking<'_> {
     /// Stakes `amount` on behalf of `validator`.
     ///
     /// - Adds amount to stake_amount[validator] and total_staked.
-    /// - If the validator is registered in ValidatorSet and the new stake meets
-    ///   min_stake, activates the validator (Phase 1 auto-activation).
+    /// - If the validator is registered and the new stake meets min_stake,
+    ///   moves it to PENDING (`WaitingForReadiness`).
+    ///   ACTIVE comes later, from reshare activation.
     /// - Enforces max_stake_percent if configured.
     /// - Updates val_stake in ValidatorSet.
     pub fn stake(&mut self, caller: Address, validator: Address, amount: U256) -> Result<()> {
@@ -121,10 +122,10 @@ impl Staking<'_> {
         self.total_staked.write(total + amount)?;
 
         // PoS staking: when a REGISTERED validator reaches min_stake it becomes
-        // PENDING (admitted to the validator set, syncing, not yet voting). The next
-        // DKG reshare grants it a share and activate_reshared_set promotes
-        // PENDING->ACTIVE. The ValidatorSet facade also mirrors the authoritative
-        // bonded value and raises pending_set_change when the stake crosses the threshold.
+        // PENDING (`WaitingForReadiness`). It is admitted, not yet voting.
+        // A later reshare activation promotes PENDING to ACTIVE.
+        // The ValidatorSet facade mirrors the bonded value and raises
+        // pending_set_change when the stake crosses the threshold.
         let min_stake = self.config_min_stake.read()?;
         let mut val_set = ValidatorSet::new(self.storage.clone());
         val_set.record_stake_increase(validator, new_stake, min_stake)?;
@@ -337,8 +338,9 @@ impl Staking<'_> {
     /// - Burns slashed tokens from STAKING_ADDRESS native balance.
     /// - Updates val_stake in ValidatorSet.
     /// - Returns the total slashed amount (for evidence reward calculation).
-    /// - Does NOT change validator status. `SlashIndicator::slash_proposer()`
-    ///   handles severe faults via `force_exit_validator()`.
+    /// - Can change lifecycle when the remaining stake falls below the minimum.
+    ///   PENDING moves to `WaitingForStake`. ACTIVE moves to EXITING.
+    ///   SlashIndicator felony paths jail the validator. They do not force-exit it.
     pub fn slash_stake(&mut self, validator: Address, percent: u64) -> Result<U256> {
         if percent > 100 {
             return Err(PrecompileError::Revert(

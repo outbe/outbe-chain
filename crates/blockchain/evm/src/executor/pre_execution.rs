@@ -26,11 +26,12 @@ where
         }
         // Initialise the begin-zone phase cursor for this block
         // BEFORE any pre-exec mutation that could affect routing. Block 1
-        // (genesis bootstrap) skips Phase 1 and starts at CycleTick. Block
-        // `n` with `n > GENESIS_BOOTSTRAP_BLOCK_NUMBER` enters Phase 1 with
-        // a zero placeholder tx_hash. The Phase 1 preflight (Batch 3)
-        // overwrites it once `verify_v2_proof` returns Ok and the system tx
-        // is committed in pre-execution.
+        // (genesis bootstrap) skips Phase 1. It starts at OcompLifecycleBegin
+        // when the OCOMP lifecycle is active, and at CycleTick when it is not.
+        // Block `n` with `n > GENESIS_BOOTSTRAP_BLOCK_NUMBER` enters Phase 1
+        // with a zero placeholder tx_hash. The Phase 1 preflight overwrites it
+        // once `verify_v2_proof` returns Ok and the system tx is committed in
+        // pre-execution.
         self.system_tx_phase_cursor = crate::system_tx::SystemTxPhase::initial_for_block_with_ocomp(
             block_number,
             crate::system_tx::GENESIS_BOOTSTRAP_BLOCK_NUMBER,

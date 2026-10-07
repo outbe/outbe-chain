@@ -16,11 +16,10 @@ use crate::{
     profile::CapacityProfileV1,
 };
 
-/// Runtime CAS quota assigned to one OCOMP validator domain in the PoC.
+/// Benchmark CAS quota for one OCOMP validator domain in the PoC.
 ///
-/// The process launcher and OCM-26 capacity budget share this authority so a
-/// benchmark cannot claim more retained artifact headroom than production
-/// actually grants.
+/// Only the benchmark budget reads this constant.
+/// No process launcher applies it as a production CAS cap.
 pub const OCOMP_POC_CAS_QUOTA_BYTES: u64 = 8_589_934_592;
 
 /// Resource dimensions measured for one maximum-shaped public-path run.
@@ -137,7 +136,8 @@ pub struct ObservedMachineFactsV1 {
 }
 
 impl ObservedMachineFactsV1 {
-    /// Verifies that observed facts meet or exceed every frozen machine literal.
+    /// Checks observed numeric and boolean facts against the frozen profile.
+    /// The check does not compare `enclave_mode` or `init_and_resource_manager`.
     pub fn validate(&self) -> Result<(), CapacityEvidenceError> {
         let required = OCOMP_POC_DEVNET_MACHINE_V1;
         require_machine(self.architecture == required.architecture, "architecture")?;

@@ -8,8 +8,10 @@ pub use outbe_primitives::units::SCALE_1E18;
 
 /// Which pair a parallel-column group is talking about. It labels two indices:
 /// - the registry's 1-based enumeration index in `pair_by_index`.
-/// - the 0-based entry index in the per-vote, per-snapshot and per-day columns,
+/// - the 0-based entry index in the per-vote and per-snapshot columns,
 ///   where every pair appears once.
+///
+/// Per-day VWAP columns use this 1-based registry index, not that entry index.
 ///
 /// An alias, not a newtype. It labels which of this schema's several `u32`s
 /// means "which pair". It does not pretend to stop a `utc_day` being passed as
@@ -82,9 +84,10 @@ pub struct OracleContract {
     // slot 14: mapping(pair_index => last_update_timestamp)
     pub exchange_rate_timestamp: Mapping<PairIndex, u64>,
 
-    // === Feeder Delegation (slot 15) ===
-    // slot 15: mapping(validator_address => feeder_address)
-    // Address::ZERO means self-delegation (validator is its own feeder)
+    // === Retired feeder-delegation field (slot 15) ===
+    // Dead mapping. This crate has no reader or writer for it.
+    // Live feeder delegation is stored in ValidatorSet
+    // under `ValidatorDelegateRole::Oracle`.
     pub feeder_delegation: Mapping<Address, Address>,
 
     // === Vote Penalty Counters (slots 16-18) ===
@@ -200,7 +203,8 @@ pub struct OracleContract {
     // === Reference Currencies (slot 55) ===
     // Dynamic list of ISO 4217 numeric codes considered "reference" currencies
     // for off-chain pricing. Length at the base slot, data at keccak256(slot)
-    // + index. Pre-filled at genesis with [840] (USD).
+    // + index. Genesis pre-fills CNY 156, HKD 344, JPY 392, GBP 826,
+    // USD 840, and EUR 978. USD is the mandatory member.
     pub reference_currencies: StorageVec<u16>,
 
     // === Per-UTC-Day VWAP Snapshots (slots 58-59) ===
@@ -219,9 +223,11 @@ pub struct OracleContract {
     // above. slot 58 - pinned against the retired 56-57 hole.
     #[slot(58)]
     pub(crate) utc_day_vwap_value: Mapping<u32, Mapping<PairIndex, U256>>,
-    // Monotonic watermark: most recent fully-closed UTC day that has been
-    // finalized (yyyymmdd). 0 = nothing finalized yet. Backfill is contiguous,
-    // so every day <= this watermark is considered finalized.
+    // Monotonic watermark: most recent closed UTC day the lifecycle marked
+    // (yyyymmdd). 0 = nothing finalized yet.
+    // A gap wider than the backfill cap skips the oldest days.
+    // The watermark still moves to the most recent closed day.
+    // A day below the watermark can therefore stay unfinalized.
     pub utc_day_vwap_last_finalized: Slot<u32>,
 
     // Slot 60 held annual policy rates while they were incorrectly coupled to
@@ -234,7 +240,7 @@ pub struct OracleContract {
     #[slot(61)]
     pub ocomp_profile_ready: Slot<bool>,
     // Slot 62 (`ocomp_day_type_pair_id`) is a retired hole. The day-type pair is
-    // the compile-time `DAY_TYPE_PAIR_KEY`, so pinning its ordinal in storage
+    // the compile-time `DAY_TYPE_PAIR`, so pinning its ordinal in storage
     // bought nothing once pairs stopped being identified by ordinal.
     // Do not reuse.
     // slot 63: direct O(1) lookup for the single fork-fixed auction-entry pair.

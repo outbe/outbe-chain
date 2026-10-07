@@ -45,7 +45,7 @@ pub struct ExecutorActor<E> {
     state: LastCanonicalized,
     mailbox_rx: futures::channel::mpsc::UnboundedReceiver<Message>,
     // Intentionally `tokio::sync::mpsc`: this height-signal channel is created and
-    // consumed cross-crate by `outbe-engine` (`stack.rs`). It is a plain channel
+    // consumed cross-crate by `outbe-engine` (its `stack` module). It is a plain channel
     // with no timer/spawn dependency. It is runtime-agnostic, so it does not pull
     // the tokio reactor onto the executor's deterministic-capable path.
     execution_finalized_height_tx: Option<tokio::sync::mpsc::UnboundedSender<u64>>,

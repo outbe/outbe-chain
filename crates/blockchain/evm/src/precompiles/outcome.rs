@@ -20,10 +20,12 @@ pub(super) fn encode_revert_reason(msg: String) -> Bytes {
 /// as "consume everything" through `spend_all` in
 /// `revm-handler::precompile_output_to_interpreter_result`.
 ///
-/// The mapping is exhaustive over `PrecompileError`'s declared variants.
-/// The trailing wildcard arm exists only to satisfy `#[non_exhaustive]`
-/// from outbe-primitives. It surfaces unknown variants as `Fatal` rather
-/// than panicking. The `SubCall(_)` arm remains fatal until the adapter has
+/// Explicit arms cover `OutOfGas`, `Revert`, `RevertBytes`, `WriteProtection`,
+/// `SubCall`, and `Unsupported`. The trailing wildcard arm maps every other
+/// variant to `Fatal` rather than panicking. This includes `Storage`, the
+/// body-read and tree errors, the CE work-capacity errors, `Fatal`, and any
+/// variant added later. Thus a new variant does not force a mapping decision
+/// here. The `SubCall(_)` arm remains fatal until the adapter has
 /// a protocol mapping that distinguishes child-frame halts from contract
 /// reverts without changing consensus behavior.
 #[doc(hidden)]

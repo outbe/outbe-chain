@@ -13,9 +13,10 @@ use crate::rpc::Rpc;
 pub enum RewardsCmd {
     /// Show current reward emission parameters
     Emission,
-    /// Show reward distribution history from event logs
+    /// Print a notice that reward history is not available yet. It reads no
+    /// event logs and makes no RPC call.
     History {
-        /// Number of recent events to show (default: 20)
+        /// Accepted and printed back. It does not change the output (default: 20)
         #[arg(long, default_value = "20")]
         limit: usize,
     },

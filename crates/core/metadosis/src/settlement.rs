@@ -335,9 +335,11 @@ fn dispatch_brief(
     };
     let receipt = outbe_desis::api::dispatch_auction_brief(
         ctx.storage.clone(),
-        wwd,
-        briefed_desis_limit_minor,
-        is_green,
+        outbe_desis::api::AuctionBrief {
+            worldwide_day: wwd,
+            desis_limit_minor: briefed_desis_limit_minor,
+            is_green,
+        },
         ctx.block.timestamp,
         outbe_desis::api::BriefOverflowPolicy::CarryOver,
     )?;

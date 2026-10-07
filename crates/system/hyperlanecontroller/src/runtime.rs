@@ -18,8 +18,9 @@ const MAX_VALIDATORS: usize = u8::MAX as usize;
 /// and the feeder time to submit, before the controller considers a lagging
 /// validator behind.
 pub const GRACE_BLOCKS: u64 = 30;
-/// The liveness verdict runs at every block number that is a multiple of
-/// this, the same cadence as the oracle slash window.
+/// The liveness verdict runs when the block number is a multiple of this
+/// value. The oracle slash window is a separate genesis parameter.
+/// Both checks run in the begin zone. They do not share this cadence.
 pub const LIVENESS_WINDOW_BLOCKS: u64 = 150;
 /// Consecutive window misses before a validator is jailed.
 pub const MAX_MISSES: u32 = 3;
@@ -145,7 +146,10 @@ impl HyperlaneControllerContract<'_> {
     }
 
     // ----------------------------------------------------------------------
-    // Owner operations (trigger not wired yet)
+    // Owner operations.
+    // `sync` and begin-block liveness call `set_validators_and_threshold`.
+    // `call_remote`, `call_local`, `add_domain`, and `remove_domain`
+    // have no production caller.
     // ----------------------------------------------------------------------
 
     /// Full rotation: `setValidatorsAndThreshold` on every remote ISM through

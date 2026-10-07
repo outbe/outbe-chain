@@ -106,7 +106,7 @@ pub(crate) struct ApplicationShared {
 
     /// Epoch-scoped leader elector configs. The stateful verify-time elector
     /// use was removed. The field stays on the surface for ctor stability with
-    /// `stack.rs` and for the upcoming V2 verifier hook.
+    /// the `outbe-engine` stack and for the upcoming V2 verifier hook.
     #[allow(dead_code)]
     elector_config_provider: HybridElectorConfigProvider<MinSig>,
 
@@ -184,7 +184,8 @@ pub(crate) struct ApplicationShared {
 /// Replaces a 25-positional-argument constructor, so the single production
 /// caller and the test fixtures cannot transpose arguments. The wiring order
 /// lives in the type system rather than in a call-site convention. It mirrors
-/// `FinalizationActorDeps`, which `stack.rs` uses a few lines later.
+/// `FinalizationActorDeps`, which the same `outbe-engine` call site
+/// (`stack::epoch::run`) uses a few lines later.
 pub struct ApplicationDeps {
     pub unix_time_source: Arc<dyn UnixTimeSource>,
     pub rx: futures::channel::mpsc::Receiver<Message>,
@@ -223,8 +224,8 @@ impl ApplicationHandler {
     /// state lives in the shared [`FinalizationViewHandle`]. The
     /// `FinalizationActor` writes it, and this handler reads it under a
     /// short-lived guard. `new_finalization_view(...)` performs recovery at
-    /// the call site (`stack.rs`). This constructor takes the
-    /// already-initialized handle.
+    /// the call site in `outbe-engine` (`stack::epoch::run`). This constructor
+    /// takes the already-initialized handle.
     pub fn new(deps: ApplicationDeps) -> Self {
         let ApplicationDeps {
             unix_time_source,
@@ -346,20 +347,14 @@ impl ApplicationShared {
     ///   `FinalizationView`. That value is the *continuity anchor*: the
     ///   first block produced in the new epoch must extend it.
     ///
-    /// Commonware Simplex caches the value returned here as the parent of
-    /// `view = 1` for the duration of the engine instance. Returning a stale
-    /// or default value (e.g. `B256::ZERO`) would permanently lock the
-    /// engine on a non-existent parent and cause every proposal to be
-    /// rejected. To avoid that:
-    ///   1. We bound-wait up to `GENESIS_ANCHOR_WAIT_TIMEOUT` for the
-    ///      finalization view to publish the anchor.
-    ///   2. The `stack.rs` pre-restart guard ensures the anchor is already
-    ///      present before `engine.start(...)` runs, so the wait below
-    ///      should resolve immediately in steady-state operation.
-    ///   3. If the wait expires we log `error!` and respond with
-    ///      `B256::ZERO` as a terminal-failure signal. The node operator
-    ///      is expected to investigate. The bounded wait keeps the
-    ///      handler responsive instead of stalling Simplex indefinitely.
+    /// Simplex does not call `Automaton::genesis`. The genesis digest feeds
+    /// `simplex::Config.floor`. No production code sends `Message::Genesis`,
+    /// so only tests reach this handler.
+    ///
+    /// For `epoch > 0`, the handler waits up to `GENESIS_ANCHOR_WAIT_TIMEOUT`
+    /// for the finalization view to publish the anchor. If the wait expires,
+    /// it logs `error!` and responds with `B256::ZERO` as a terminal-failure
+    /// signal. The bounded wait keeps the handler responsive.
     async fn handle_genesis(
         &self,
         clock: &impl commonware_runtime::Clock,

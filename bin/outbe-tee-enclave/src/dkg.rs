@@ -12,7 +12,7 @@
 //! use cases (tribute offers being one), so its identifiers are `tee`, not
 //! `tribute`.
 //!
-//! Seams (mirrors `crates/blockchain/consensus/src/dkg_actor/actor.rs`):
+//! Seams (mirror the consensus `dkg_actor::actor` module):
 //!  - A `start_dealer`        -> `Dealer::start`          (deal + seal per-player shares)
 //!  - B `player_ingest`       -> `Player::dealer_message` (open + verify incoming share)
 //!  - C `dealer_receive_ack`  -> `Dealer::receive_player_ack`
@@ -224,9 +224,8 @@ impl DkgSession {
                 )
             })?;
             // Serialize the protocol-secret share and seal it to the recipient.
-            // The plaintext exists only in this enclave-sidecar process. The host
-            // gets ciphertext. (Process isolation today, not SGX memory
-            // encryption. See audit_tee_bootstrap.md `tee-not-real-sgx`.)
+            // The plaintext exists only in this enclave process. The host gets
+            // ciphertext.
             let plaintext = Zeroizing::new(priv_msg.encode().to_vec());
             let blob = encrypt_share(enc_pub, plaintext.as_ref())?;
             sealed.push((player_pk, blob));
@@ -339,8 +338,9 @@ impl DkgSession {
     /// function decrypts them in-SGX with the resident X25519 share-decryption
     /// secret. Then it derives the shared offer X25519 keypair from the signature
     /// (`HKDF(group_sig)` bound to `chain_id` + `tribute_offer_epoch`). Returns
-    /// `(tribute_offer_secret, tribute_offer_public)`. The caller stores the secret
-    /// in the enclave's resident offer-key slot and never exports it.
+    /// `(tribute_offer_secret, tribute_offer_public, sigma)`, where `sigma` is the
+    /// encoded group signature. The caller stores the secret in the enclave's
+    /// resident offer-key slot and never exports it.
     /// Deterministic: every honest enclave recovers the same group
     /// signature from any valid `2f+1` subset, hence the same offer key. Because
     /// the host only ever holds the ciphertexts, it cannot run this recovery.

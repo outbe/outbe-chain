@@ -439,9 +439,9 @@ pub struct CeremonyCoordinator {
 }
 
 impl CeremonyCoordinator {
-    /// `participants` is each enclave's announced `ParticipantAnnounce` (BLS
-    /// identity + X25519 enc key + the owner's binding signature), obtained from
-    /// each enclave's `GetPublicKeys`, including this node.
+    /// `participants` is each enclave's `ParticipantAnnounce`.
+    /// Each value comes from `DkgParticipantAnnounceV1`, not from `GetPublicKeys`.
+    /// The binding signature is the enclave TEE-BLS signature.
     pub fn new(
         ceremony_id: B256,
         round: u64,

@@ -17,6 +17,17 @@ pub enum GemTypes {
     Merchant = 5,
 }
 
+/// The terms an agent-class gem is issued on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GemIssueParams {
+    pub owner: Address,
+    pub gem_type: GemTypes,
+    pub promis_load: U256,
+    pub issuance_currency: u16,
+    pub reference_currency: u16,
+    pub entry_price: U256,
+}
+
 /// A merchant's Gem Factory position: the pool of Promis capacity from which the
 /// Gem Factory issues Merchant gems. The position is a single-owner, non-transferable
 /// NFT (owner = `merchant`), keyed by `position_id`. `merchant == 0` means "no

@@ -15,8 +15,9 @@ use crate::ICycle;
 
 /// Dispatches every active trigger whose `next_fire_at` is `<=
 /// ctx.block.timestamp`. The dispatcher wraps each fired trigger in its own
-/// storage checkpoint. A handler failure thus rolls back its writes and
-/// leaves `last_executed_at` unchanged for retry on the next block.
+/// storage checkpoint. A handler failure rolls those writes back and returns
+/// the error. CycleTick rejects the block on that error.
+/// The same slot does not wait for the next block.
 ///
 /// The typical case is a slow-running chain that produces blocks every few
 /// seconds. In that case the dispatcher is a near-noop on every block. It

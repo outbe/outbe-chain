@@ -71,17 +71,7 @@ pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
         && messages < MAX_ROUTER_CALLS_PER_FIRING
         && refused_runs < MAX_REFUSED_RUNS_PER_FIRING
     {
-        let entry = factory.notify_at.read(&index)?;
-        let calls_left = MAX_ROUTER_CALLS_PER_FIRING - messages;
-        let (consumed, refused) = drain_called_run(
-            &factory,
-            &storage,
-            index,
-            stop,
-            entry,
-            &mut messages,
-            calls_left,
-        )?;
+        let (consumed, refused) = drain_called_run(&factory, &storage, index, stop, &mut messages)?;
         index += consumed;
         refused_runs = if refused { refused_runs + 1 } else { 0 };
     }
@@ -102,10 +92,10 @@ fn drain_called_run(
     storage: &StorageHandle<'_>,
     at: u32,
     stop: u32,
-    first: U256,
     messages: &mut u32,
-    calls_left: u32,
 ) -> Result<(u32, bool)> {
+    let first = factory.notify_at.read(&at)?;
+    let calls_left = MAX_ROUTER_CALLS_PER_FIRING - *messages;
     let (first_id, called_at) = unpack_called_notice(first);
     let worldwide_day = first_id.worldwide_day();
     let mut run = vec![first_id];

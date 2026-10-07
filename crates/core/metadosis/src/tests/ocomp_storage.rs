@@ -274,10 +274,12 @@ fn open_job(
     let finalized = contract
         .record_ocomp_finality(
             intent_id,
-            B256::repeat_byte(0x46),
-            B256::repeat_byte(0x98),
-            REQUEST_HEIGHT,
-            DEADLINE_HEIGHT - REQUEST_HEIGHT - 4,
+            crate::ocomp::FinalityAnchor {
+                request_block_hash: B256::repeat_byte(0x46),
+                request_state_root: B256::repeat_byte(0x98),
+                recorded_height: REQUEST_HEIGHT,
+                response_window_blocks: DEADLINE_HEIGHT - REQUEST_HEIGHT - 4,
+            },
             limits,
         )
         .unwrap();

@@ -1,14 +1,15 @@
 //! ZeroFee paymaster commands.
 //!
-//! Exposes a connected bootstrap command and an offline-friendly command for
-//! signing an EIP-7702 [`Authorization`] tuple that delegates an EOA to the
+//! Exposes a connected bootstrap command and a command that signs an
+//! EIP-7702 [`Authorization`] tuple. The tuple delegates an EOA to the
 //! protocol ZeroFee paymaster at
 //! [`outbe_primitives::addresses::ZEROFEE_ADDRESS`].
 //!
-//! The signing path is deliberately *offline-friendly*: it does not
-//! contact the RPC node. Thus an operator can pre-sign authorizations
-//! on an air-gapped machine and forward them to a sponsor service
-//! over any transport.
+//! The signing step is local. By default, the command reads the chain id and
+//! the signer nonce from the RPC node. When the operator gives both
+//! `--chain-id` and `--nonce`, the command makes no RPC call. Thus an operator
+//! can pre-sign authorizations on an air-gapped machine and forward them to a
+//! sponsor service over any transport.
 
 use alloy_consensus::TxEip7702;
 use alloy_eips::eip7702::{Authorization, SignedAuthorization};

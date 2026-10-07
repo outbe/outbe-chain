@@ -1,4 +1,5 @@
-//! Application actor - handles propose/verify/finalize via beacon_engine_handle.
+//! Application actor - handles propose/verify/certify and the relay via
+//! beacon_engine_handle. Finalization flows to `FinalizationActor`, not here.
 //!
 //! Implements the consensus `Automaton` and `Relay` traits, bridging
 //! Commonware Simplex with Reth's execution layer.

@@ -55,9 +55,11 @@ fn world(sale: bool) -> HashMapStorageProvider {
         }
         crate::api::dispatch_auction_brief(
             s.clone(),
-            DAY,
-            U256::from(LIMIT),
-            true,
+            crate::api::AuctionBrief {
+                worldwide_day: DAY,
+                desis_limit_minor: U256::from(LIMIT),
+                is_green: true,
+            },
             NOW,
             crate::api::BriefOverflowPolicy::CarryOver,
         )
@@ -80,10 +82,29 @@ fn world(sale: bool) -> HashMapStorageProvider {
         } else {
             vec![]
         };
-        runtime::process_bids_batch(s.clone(), ORIGIN_ROUTER_ADDRESS, DAY, CHAIN, 0, 1, bids)
-            .unwrap();
-        runtime::process_bids_done(s, ORIGIN_ROUTER_ADDRESS, DAY, CHAIN, 1, u32::from(sale))
-            .unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: DAY,
+                src_chain_id: CHAIN,
+            },
+            0,
+            1,
+            bids,
+        )
+        .unwrap();
+        runtime::process_bids_done(
+            s,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: DAY,
+                src_chain_id: CHAIN,
+            },
+            1,
+            u32::from(sale),
+        )
+        .unwrap();
     });
     p.clear_mutation_failure();
     p

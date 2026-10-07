@@ -2,7 +2,8 @@
 //!
 //! This module does not introduce another scheduler or computation interface.
 //! It composes the already verified export, planner, one-unit worker boundary,
-//! admission catalog, finalizer and locally signed result-vote submitter.
+//! admission catalog and finalizer. It also writes the contributor payout
+//! artifact. Result-vote signing and submission happen outside this module.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};

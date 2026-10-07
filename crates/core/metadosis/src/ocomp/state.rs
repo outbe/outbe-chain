@@ -62,8 +62,7 @@ pub const fn transition_rules() -> &'static [JobFsmTransitionRule] {
     &JOB_FSM_TRANSITION_RULES
 }
 
-/// Whether request processing must apply the request-phase limit effect or
-/// only validate the already-authoritative receipt.
+/// A fresh request applies the limit effect. An existing authoritative receipt is corruption.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RequestEffectMode {
     Fresh { effect_nonce: u64 },

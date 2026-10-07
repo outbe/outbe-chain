@@ -5,7 +5,7 @@
 //! layout is hard-fork-equivalent.
 //!
 //! `committee_set_hash_v2` / `committee_snapshot_key` and the
-//! [`CommitteeSnapshot`] type live in [`crate::committee`]. This module
+//! [`CommitteeSnapshot`] type live in [`crate::proof::committee`]. This module
 //! re-exports them so every caller can use `outbe_consensus::proof::*` as the
 //! single public namespace for V2 fingerprint helpers.
 

@@ -76,10 +76,9 @@ pub fn start_metadosis(
         break;
     }
 
-    // Terminal-day cleanup is no longer a per-tick scan. Each COMPLETED/FAILED
-    // transition retires the day into the bounded `closed_wwd` delete-queue
-    // (see `MetadosisContract::mark_wwd_*`). The queue evicts and deletes the
-    // oldest record past `MAX_RECORDS_KEPT`.
+    // `MetadosisContract::commit_retire_terminal_wwd` places terminal days in `closed_wwd`.
+    // The bounded queue deletes the oldest record past `MAX_RECORDS_KEPT`, avoiding a per-tick
+    // scan.
 
     Ok(())
 }

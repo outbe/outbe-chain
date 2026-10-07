@@ -93,8 +93,7 @@ impl MetadosisContract<'_> {
 
     /// Returns only the first exact READY key in canonical due order.
     ///
-    /// Terminal request processing calls this once per block. It never scans
-    /// the active WorldwideDay set.
+    /// The READY index avoids a scan of the active WorldwideDay set.
     pub(crate) fn next_ocomp_ready(
         &self,
         schema_limits: &SchemaLimits,

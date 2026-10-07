@@ -6,8 +6,9 @@
 //! legacy `EnclaveClient` GetQuote flow remains for the separate dev/mock
 //! transport. The production enclave does not accept this flow.
 //!
-//! The client is fully synchronous: the `offerTributeBatch` precompile path is
-//! meant to drive it straight, with a blocking UDS round-trip. It uses no async,
+//! The client is fully synchronous. The `offerTribute` precompile drives it
+//! with a blocking UDS round-trip. The enclave batch request is
+//! `ProcessTributeOfferBatch`. It uses no async,
 //! no `spawn`, and nothing that would capture a `StorageHandle`.
 
 use std::fs::{File, OpenOptions};

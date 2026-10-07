@@ -1,14 +1,15 @@
 //! Strict OCOMP request-phase ownership boundary for Desis.
 //!
-//! The legacy cross-module API is deliberately best-effort because it is used
-//! from a block hook. OCOMP request application instead needs an atomic,
-//! fail-closed owner write whose exact input the request receipt can commit.
+//! Both settlement and OCOMP use the checkpointed `dispatch_auction_brief` API.
+//! OCOMP rejects overflow so the request receipt commits the exact accepted input.
+//! Both paths propagate technical and invariant failures.
 
 use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::receipts::desis_request_brief_hash;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::WorldwideDay;
+
+use crate::api::AuctionBrief;
 
 /// Apply the day's immutable `desis_limit_minor` and return the canonical hash
 /// committed by `RequestLimitSplitReceiptV1`. A red day briefs no limit, but
@@ -16,11 +17,14 @@ use outbe_primitives::time::WorldwideDay;
 pub fn apply_request_desis_limit(
     storage: StorageHandle<'_>,
     protocol_bundle_hash: B256,
-    worldwide_day: WorldwideDay,
-    desis_limit_minor: U256,
+    brief: AuctionBrief,
     logical_anchor: u64,
-    green: bool,
 ) -> Result<B256> {
+    let AuctionBrief {
+        worldwide_day,
+        desis_limit_minor,
+        is_green: green,
+    } = brief;
     let desis_limit_minor = if green { desis_limit_minor } else { U256::ZERO };
     let brief_hash = desis_request_brief_hash(
         protocol_bundle_hash,
@@ -33,9 +37,11 @@ pub fn apply_request_desis_limit(
     // because this receipt commits a hash a rejection could not fill.
     crate::api::dispatch_auction_brief(
         storage,
-        worldwide_day,
-        desis_limit_minor,
-        green,
+        AuctionBrief {
+            worldwide_day,
+            desis_limit_minor,
+            is_green: green,
+        },
         logical_anchor,
         crate::api::BriefOverflowPolicy::Reject,
     )?;
