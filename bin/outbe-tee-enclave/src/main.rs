@@ -1,7 +1,9 @@
 //! `outbe-tee-enclave` binary: framed-UDS + Noise-IK server for the Tribute PoC.
 //!
-//! Usage: `outbe-tee-enclave --socket <path|host:port> [--dkg-seed <hex32>]`
-//!        `--tee-dir <dir> [--chain-id <hex32>]`
+//! Usage: `outbe-tee-enclave --socket <path|host:port> --tee-dir <dir>`
+//!        `[--chain-id <hex32>]`
+//!
+//! `--dkg-seed` is development-only. Production startup fails when it is set.
 //!
 //! Production requires `--tee-dir`. The enclave seals its persistent identity and
 //! its one node-signed `NodeHost` authorization there. `--chain-id` binds the

@@ -6,16 +6,17 @@
 //! Startup flow:
 //! 1. Load signing key and validator set
 //! 2. Configure P2P network (register ALL channels including DKG)
-//! 3. Start P2P network and register peers
+//! 3. Start P2P network, register peers, and create Muxers for epoch-scoped
+//!    consensus channels (all in transport startup)
 //! 4. Obtain threshold material:
 //!    a. From saved DKG state on disk (restart precedence)
 //!    b. From CLI args (`--consensus.signing-share` + `--consensus.public-polynomial`)
 //!    c. Via interactive DKG ceremony during fresh genesis formation
-//! 5. Create Muxers for epoch-scoped consensus channels
-//! 6. Enter epoch loop:
+//! 5. Enter epoch loop:
 //!    a. Register epoch sub-channels, build HybridScheme + Reporter
 //!    b. Start Simplex engine
-//!    c. Monitor for reshare triggers (pending_set_change in EVM state)
+//!    c. Monitor for the reshare trigger (the block-height freeze schedule,
+//!       `freeze_height`)
 //!    d. On reshare: run DKG in parallel, then abort engine + restart at new epoch
 
 use alloy_primitives::{Address as EthAddress, Bytes, B256};

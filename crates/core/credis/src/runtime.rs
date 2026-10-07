@@ -520,8 +520,7 @@ impl CredisContract<'_> {
         Ok(out)
     }
 
-    /// Total positions ever created (length of the global dense index). Used by
-    /// the block sweeps to bound their cursors.
+    /// Total positions ever created, including closed positions. This value backs `totalSupply`.
     pub fn total_positions(&self) -> Result<u64> {
         self.read_total_positions()
     }

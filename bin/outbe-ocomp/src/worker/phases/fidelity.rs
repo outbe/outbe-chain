@@ -157,8 +157,9 @@ pub(in super::super) fn execute_fidelity_map_unit(
                         // Independently re-derive each owner's snapshot slot. Do not
                         // trust slot order. The MPT-proven value is the on-chain
                         // league that Metadosis committed for this day at prepare
-                        // time. An absent (zero) or out-of-range word means that
-                        // the owner was not snapshotted, and the worker rejects the owner.
+                        // time. A slot missing from the opening, a zero word or an
+                        // out-of-range word means that the owner was not snapshotted.
+                        // Any of these fails the whole unit with `UnitBindingMismatch`.
                         let slot = league_snapshot_slot(manifest.wwd, *owner);
                         let word = slot_values
                             .get(&slot)

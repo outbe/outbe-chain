@@ -17,7 +17,11 @@ use tracing::info;
 /// Uses the `blst` crate directly to verify the signature without needing
 /// the full commonware cryptography stack in the EVM precompile crate.
 ///
-/// The signed message is `chain_id (u64 big-endian) || validator address`.
+/// The signed message is 61 bytes.
+/// Byte 0 is the registration version.
+/// Bytes 1..=8 are `chain_id` in big-endian order.
+/// Bytes 9..=28 are the validator address.
+/// Bytes 29..=60 are the Radicle node id.
 fn verify_bls_registration_sig(
     pubkey_bytes: &[u8; 48],
     sig_bytes: &[u8; 96],
@@ -102,8 +106,8 @@ impl ValidatorSet<'_> {
     /// Registers a new validator with BLS proof-of-possession verification.
     ///
     /// When `bls_signature` is `Some`, verifies that the BLS MinPk key signed the
-    /// chain-bound registration message under the "outbe_REGISTER"
-    /// namespace.
+    /// chain-bound registration message under
+    /// `OUTBE_VALIDATOR_REGISTRATION_V2`.
     /// This production API rejects `None`. Genesis is storage-seeded.
     /// Feature-gated tests use [`Self::register_validator`] explicitly.
     ///

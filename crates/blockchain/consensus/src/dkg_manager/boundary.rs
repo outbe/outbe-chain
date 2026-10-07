@@ -25,8 +25,8 @@ pub type BlockLookupFuture<'a> = Pin<Box<dyn Future<Output = Option<ConsensusBlo
 /// Read-only ancestry access used by [`Mailbox::resolve_boundary`] to walk a
 /// proposal/verification parent chain looking for an already-committed DKG
 /// boundary. The production implementation (`MarshalAncestryReader`) lives in
-/// the application handler. `dkg_manager` is the sole consumer and defines the
-/// contract it needs.
+/// `crate::application::ancestry`. `dkg_manager` is the sole consumer and
+/// defines the contract it needs.
 pub trait AncestryReader: Send + Sync {
     fn get_block_by_height<'a>(&'a self, height: u64) -> BlockLookupFuture<'a>;
     fn get_block_by_hash<'a>(&'a self, hash: B256) -> BlockLookupFuture<'a>;
@@ -210,9 +210,10 @@ impl Mailbox {
     /// the resolved verdict. Each cache touch is a discrete `with_state` call.
     /// No lock guard is ever held across an `.await`.
     ///
-    /// Both the propose path (`build_block`) and the verify path
-    /// (`validate_header_consensus_artifacts`) call this, so the result must be
-    /// deterministic for a given `(parent, pending)` pair.
+    /// Both the propose path ([`Mailbox::plan_header_artifact`]) and the verify
+    /// path ([`Mailbox::admit_header_artifact`], from
+    /// `validate_header_consensus_artifacts_for_activation`) call this. Thus the
+    /// result must be deterministic for a given `(parent, pending)` pair.
     pub async fn resolve_boundary<R: AncestryReader>(
         &self,
         parent: Option<&ConsensusBlock>,

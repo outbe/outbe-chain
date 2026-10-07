@@ -250,9 +250,9 @@ fn fatal(message: impl Into<String>) -> outbe_primitives::error::PrecompileError
 /// 38-byte dynamic `bytes` record (three slots - a length word plus two data
 /// words). Now it holds the identity in one word, and slot 13 carries the
 /// collection byte that the record used to include. Repointing a live slot is
-/// normally forbidden. It is admissible here only because that change ships as
-/// a clean break with no migration. The bumped `STORAGE_SCHEMA_VERSION` rejects
-/// any state written under the old layout.
+/// normally forbidden. `ensure_schema` rejects version 3 but accepts version 2
+/// when the body, index, and retirement overlays are empty. It then writes the
+/// current `STORAGE_SCHEMA_VERSION`.
 #[contract(addr = COMPRESSED_ENTITIES_ADDRESS)]
 pub(crate) struct CompressedEntitiesSchema {
     /// Slot 0.

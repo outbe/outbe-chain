@@ -74,7 +74,8 @@ use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes};
 ///   43: val_jailed_at_height     - mapping(address => uint64)
 ///       block height the validator was JAILED. Drives the unjail cooldown.
 ///   44: committee_snapshot_key_ring - mapping(u64 => bytes32)
-///       prune ring bounding the committee-snapshot store (slots 31..40).
+///       prune ring for the committee-snapshot record.
+///       That record spans slots 31..=40, 44, 47, and 52..=58.
 ///   45: finalized_participation_ring - mapping(u64 => bytes32)
 ///       prune ring bounding the participation guard (slot 30).
 ///   46: finalized_participation_ring_seq - u64
@@ -161,7 +162,8 @@ pub struct ValidatorSet {
     // record sets it, so replays do not double-increment `val_missed_votes`.
     pub finalized_participation_recorded: Mapping<B256, bool>,
 
-    // V2 `CommitteeSnapshotStore` (slots 31..40).
+    // V2 `CommitteeSnapshotStore` core columns (slots 31..=40).
+    // The same record also uses slots 44, 47, and 52..=58.
     // Keyed by the canonical `snapshot_key =
     //   keccak256("OUTBE_COMMITTEE_SNAPSHOT_KEY_V2" || epoch_be_u64 || committee_set_hash)`.
     // Writes are field-by-field. `committee_snapshot_exists` is written LAST so
@@ -212,8 +214,9 @@ pub struct ValidatorSet {
 
     /// Slot 44 - committee-snapshot prune ring (`epoch % COMMITTEE_SNAPSHOT_RETAIN_EPOCHS
     /// -> snapshot_key`). `write_committee_snapshot` pushes each new key here and
-    /// clears the snapshot it evicts. This bounds the V2 `CommitteeSnapshotStore`
-    /// (slots 31..40) to the last `COMMITTEE_SNAPSHOT_RETAIN_EPOCHS` epochs. Without
+    /// clears the snapshot it evicts. This bounds the V2 snapshot record
+    /// (slots 31..=40, 44, 47, and 52..=58) to the last
+    /// `COMMITTEE_SNAPSHOT_RETAIN_EPOCHS` epochs. Without
     /// it, the store grows by one full committee per epoch forever. This is safe
     /// because every reader only touches the current finalized epoch (+/- the
     /// K-block late-finalize window). See `state::write_committee_snapshot`.

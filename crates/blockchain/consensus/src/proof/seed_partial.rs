@@ -17,7 +17,8 @@
 //! ```text
 //! Round(epoch, view).encode()  ||  version.to_be_bytes()  ||  partial_bytes
 //! ```
-//! signed under [`OUTBE_SEED_ATTEST_NAMESPACE_V2`]. `Round::encode()` is the
+//! signed under the chain-bound namespace [`seed_attest_namespace`]
+//! (`b"outbe" || chain_id_be || b"_SEEDATTEST"`). `Round::encode()` is the
 //! exact byte string the partial itself commits to (the seed message), so the
 //! identity signature binds the partial to its round.
 
@@ -69,7 +70,7 @@ pub struct SeedPartialAttestation<'a> {
 
 /// Verify a seed-partial identity signature against the author's MinPk identity
 /// key. Returns `true` iff `signature` is `identity_pubkey`'s signature over
-/// [`seed_partial_attest_message`] under [`OUTBE_SEED_ATTEST_NAMESPACE_V2`].
+/// [`seed_partial_attest_message`] under [`seed_attest_namespace`].
 ///
 /// A `true` result is non-repudiable proof that the holder of `identity_pubkey`
 /// deliberately emitted exactly this `(round, version, partial)` triple.
@@ -169,7 +170,7 @@ pub fn verify_seed_partial_against_commitment(
         .ok()?;
 
     // The partial is a MinSig threshold signature over
-    // (OUTBE_HYBRID_SEED_NAMESPACE_V2, Round.encode()).
+    // (hybrid_seed_namespace(), Round.encode()).
     let partial = <<MinSig as Variant>::Signature as DecodeExt<()>>::decode(
         Bytes::copy_from_slice(partial_bytes),
     )

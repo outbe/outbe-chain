@@ -16,7 +16,7 @@ use alloy_primitives::{keccak256, Address, B256, U256};
 ///
 /// The `#[storage_schema]` macro assigns this as the cumulative slot count of
 /// every preceding field. Thus it is a layout fact of the Metadosis contract that
-/// cannot be imported at compile time. The `metadosis::ocomp::league_snapshot`
+/// cannot be imported at compile time. The `metadosis::tests::league_snapshot`
 /// tests pin it: they assert that it equals the live `Mapping::base_slot()`.
 /// If the Metadosis layout ever changes, that test fails loudly rather than
 /// silently opening the wrong slots.
@@ -54,8 +54,9 @@ pub fn league_snapshot_key(wwd: u32, owner: Address) -> B256 {
 ///
 /// The rule is inlined (rather than using `outbe_primitives`'s `StorageKey`)
 /// because this crate is a non-dev dependency of `outbe-primitives`. The
-/// [`league_snapshot_slot_matches_dsl_mapping`] test in `outbe-metadosis` pins
-/// this against the live `Mapping::get(..).slot()`.
+/// `snapshot_base_slot_matches_the_generated_dsl_layout` and
+/// `pure_snapshot_slot_points_at_the_dsl_written_word` tests in
+/// `outbe-metadosis` pin this against the live `Mapping` slot.
 #[must_use]
 pub fn league_snapshot_slot(wwd: u32, owner: Address) -> B256 {
     let key = league_snapshot_key(wwd, owner);

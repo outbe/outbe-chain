@@ -24,10 +24,9 @@
 //!   `block_number <= GENESIS_BOOTSTRAP_BLOCK_NUMBER = 1`).
 //! * `Some(AccountingWindow { start_block, end_inclusive })` otherwise.
 //!   `end_inclusive == block_number - 1` (the parent block, which Phase 1
-//!   must have accounted). `start_block` is informational. It is derived
-//!   deterministically from the period boundary preceding the current
-//!   block's timestamp. The gate currently does NOT consult it.
-//!   It exists for observability, and the proptest pins it.
+//!   must have accounted). `start_block` is informational. It holds the
+//!   period-start timestamp in seconds, not a block number. The gate does
+//!   not read it. The field exists for observability, and the proptest pins it.
 //!
 //! ## Determinism
 //!
@@ -51,9 +50,9 @@ use crate::triggers::TriggerSpec;
 /// >= end_inclusive`. `start_block` is informational.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AccountingWindow {
-    /// First block of the period, computed deterministically from the
-    /// period boundary preceding `block.timestamp`. Informational only:
-    /// the gate inspects `end_inclusive`, not `start_block`.
+    /// Period-start timestamp in seconds, not a block number.
+    /// The resolver stores the period boundary that precedes
+    /// `block.timestamp`. The gate ignores this field.
     pub start_block: u64,
     /// Last block whose Phase 1 accounting must have committed before the
     /// trigger may fire. For all current triggers this equals the parent

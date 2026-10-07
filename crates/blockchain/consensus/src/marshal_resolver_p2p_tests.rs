@@ -16,7 +16,7 @@
 //! Two marshal actors (node A and node B) run on a single `commonware_runtime`
 //! deterministic runtime, connected by an in-process
 //! `commonware_p2p::simulated::Network`. Each node runs the production wiring,
-//! which mirrors `crates/blockchain/engine/src/stack.rs`:
+//! which mirrors the `outbe-engine` `stack::epoch::run` module:
 //!
 //! - a real `marshal::resolver::p2p` resolver (registered on `MARSHAL_CHANNEL`)
 //! - a real `commonware_broadcast::buffered::Engine` buffer (registered on
@@ -159,7 +159,7 @@ fn make_notarization(
 }
 
 /// Start one marshal node with the production resolver + broadcast wiring on the
-/// simulated network. Mirrors `crates/blockchain/engine/src/stack.rs`.
+/// simulated network. Mirrors the `outbe-engine` `stack::epoch::run` module.
 async fn start_marshal_node(
     context: &deterministic::Context,
     oracle: &commonware_p2p::simulated::Oracle<bls12381::PublicKey, deterministic::Context>,
@@ -228,7 +228,7 @@ async fn start_marshal_node(
     )
     .await;
 
-    // Real broadcast buffer (block dissemination), mirroring stack.rs.
+    // Real broadcast buffer (block dissemination), mirroring `stack::epoch::run`.
     let (broadcast_engine, broadcast_mailbox) = buffered::Engine::new(
         context.child("broadcast"),
         buffered::Config {
@@ -243,7 +243,8 @@ async fn start_marshal_node(
     );
     broadcast_engine.start(broadcast_channel);
 
-    // Real P2P resolver (on-demand block resolution / backfill), mirroring stack.rs.
+    // Real P2P resolver (on-demand block resolution / backfill), mirroring
+    // `stack::epoch::run`.
     let resolver = marshal::resolver::p2p::init(
         context.child("marshal_resolver"),
         marshal::resolver::p2p::Config {

@@ -1,11 +1,10 @@
 //! Local storage helpers around [`crate::schema::Accounting`].
 //!
-//! These helpers are the only sanctioned mutation surface for slot 0
-//! (INV4). They are `pub(crate)`-style internals. The crate root exposes
-//! them only through [`crate::runtime`]. External callers must use the
-//! runtime entrypoints. This keeps the V2 Phase 1 commit invariant ("only
-//! the executor Phase 1 path may write slot 0") enforceable from a single
-//! place.
+//! These helpers are the sanctioned mutation surface for slot 0 (INV4).
+//! They stay crate-private. The crate root exposes writes only through
+//! [`crate::runtime`]. The schema field is public.
+//! Another crate can write the slot through that field.
+//! These helpers do not enforce the single-writer rule.
 
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;

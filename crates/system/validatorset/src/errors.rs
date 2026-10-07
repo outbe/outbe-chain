@@ -12,9 +12,10 @@ use outbe_primitives::error::PrecompileError;
 
 /// Deterministic activation-time failures for the validator set.
 ///
-/// The boundary-activation path (`activate_reshared_set`) and the VRF/DKG
-/// material activation path (`stack.rs`) return this error. The consensus stack
-/// can then reject the activation without panicking the node.
+/// `next_vrf_material_version` returns this error on overflow.
+/// `activate_reshared_set` is a test helper and does not return it.
+/// The production boundary hook does not return it either.
+/// The consensus stack can reject the activation without panicking the node.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ActivationError {

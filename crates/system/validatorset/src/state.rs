@@ -18,11 +18,11 @@
 //!   committee hash itself, even when they share the same `(epoch, hash)`
 //!   inputs.
 //!
-//! The store layout is fixed to ValidatorSet storage slots 31..40 (see
-//! [`schema::ValidatorSet`](crate::schema::ValidatorSet)). Writes are
-//! field-by-field and **end with the `exists` flag**. Thus a partial write
-//! observed via a checkpoint-rolled-back transaction is never reachable. The
-//! reader gates every other slot behind `exists`.
+//! A snapshot record spans slots 31..=40, slot 44, slot 47, and slots 52..=58
+//! (see [`schema::ValidatorSet`](crate::schema::ValidatorSet)).
+//! Writes are field-by-field and end with the `exists` flag.
+//! A partial write from a rolled-back checkpoint is not readable.
+//! The reader gates every other slot behind `exists`.
 
 use alloy_primitives::{Address, B256};
 
@@ -36,7 +36,7 @@ use crate::errors::ActivationError;
 use crate::schema::ValidatorSet;
 
 // Canonical V2 committee types and pure-function hashers live in
-// `outbe-consensus-proof` (the wire-codec crate). They are re-exported here so
+// `outbe_consensus::proof`. They are re-exported here so
 // existing `outbe_validatorset::state::{...}` callers keep compiling, and
 // internal storage helpers (`write/read_committee_snapshot`,
 // `snapshot_identity`) reference them through the canonical crate.

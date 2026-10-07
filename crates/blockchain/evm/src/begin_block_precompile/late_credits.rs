@@ -82,10 +82,11 @@ fn authenticate_late_credit_hash(
 /// LateFinalizeCredits system tx: record the verified
 /// late-finalize voters of each in-window batch at their inclusion distance
 /// `k`, then close the window that just matured (`settle_matured` for block
-/// `N - K`). `settle_window` burns the escrow residue for mint/burn parity.
-/// Here we also route that same residue to terminal Metadosis emission headroom
-/// (`emission_sink::apply`). This recycles unpaid fees instead of permanently
-/// destroying them.
+/// `N - K`). `settle_window` burns the escrow residue for mint/burn parity. It
+/// also recycles the same residue to terminal Metadosis emission headroom through
+/// `outbe_emissionlimit::block::dispatch_late_settlement_residue_at`. Only whole
+/// protocol units go through this path. Sub-unit dust stays on Rewards for the
+/// next window. This recycles unpaid fees instead of permanently destroying them.
 ///
 /// Determinism: the executor's pre-exec preflight
 /// (`verify_late_finalize_credits_in_preexec`) already FATAL-verified every
@@ -190,13 +191,15 @@ pub(crate) fn run_late_finalize_credits(
 /// block (`fb_number = block_number - K`). For every committee member that never
 /// voted within `K` - `committee(fb_number) \ credited` - the pass records its
 /// finalized-participation miss and applies `slash_voter`. That causes
-/// force-exit + stake slash once the felony threshold is crossed.
+/// jail + stake slash when the miss count reaches the felony threshold.
 ///
 /// Determinism: the committee snapshot and credited set are committed chain state.
 /// The pass emits absentees in committee order. Idempotent via the per-`fb_hash`
 /// guards inside the validatorset / slashindicator hooks. The committee snapshot
-/// is written at the epoch boundary and never pruned, so it is always present in
-/// production. A missing snapshot fails open (skip) rather than halting the block.
+/// is written at the epoch boundary. The prune ring keeps the snapshots of the
+/// last `COMMITTEE_SNAPSHOT_RETAIN_EPOCHS` epochs, which is much longer than the
+/// `K`-block window. Thus the snapshot is present in production. A missing
+/// snapshot fails open (skip) rather than halting the block.
 ///
 /// Runs BEFORE `settle_matured`, which frees the `late_voter_*` credited set.
 fn record_window_close_absentees(ctx: &BlockRuntimeContext, block_number: u64) -> Result<()> {
@@ -215,8 +218,9 @@ fn record_window_close_absentees(ctx: &BlockRuntimeContext, block_number: u64) -
 
     let snapshot_key = committee_snapshot_key(info.epoch, info.committee_set_hash);
     let Some(snapshot) = read_committee_snapshot(ctx.storage.clone(), snapshot_key)? else {
-        // Always present in production (written at the epoch boundary, never
-        // pruned). Fail open rather than halt the block on a slashing-accounting
+        // Present in production: the prune ring keeps the last
+        // `COMMITTEE_SNAPSHOT_RETAIN_EPOCHS` epochs, and the window is only `K`
+        // blocks. Fail open rather than halt the block on a slashing-accounting
         // input that is missing only in degenerate/under-seeded states.
         tracing::warn!(
             target: "outbe::slashing",

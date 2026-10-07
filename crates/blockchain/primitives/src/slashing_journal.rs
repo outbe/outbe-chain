@@ -22,8 +22,10 @@
 //! full, permission error, file unwritable), the journal emits a
 //! `tracing::warn!` and drops the write. A failed write never blocks the
 //! consensus / state-transition path that produced it. Determinism is
-//! unaffected. The journal is a side effect identical on every node, and the
-//! absence of the journal does not change the on-chain state.
+//! unaffected because the journal is off-chain. Its content is not identical
+//! on every node: each record carries the local wall-clock time, and only a
+//! node that called [`init`] writes records. The absence of the journal does
+//! not change the on-chain state.
 //!
 //! ## Initialization
 //!
@@ -60,8 +62,9 @@ pub enum JournalRecord {
         misdemeanor_threshold: u64,
     },
 
-    /// `slash_proposer` reached `count == felony_threshold`. Validator
-    /// is force-exited and slashed by `slash_percent` of stake.
+    /// `slash_proposer` reached `count % felony_threshold == 0`. Thus the
+    /// event repeats at every multiple of the threshold. The runtime jails the
+    /// validator (JAILED) and slashes `slash_percent` of its stake.
     ProposerFelony {
         wall_clock: String,
         block_number: u64,
@@ -99,8 +102,8 @@ pub enum JournalRecord {
         misdemeanor_threshold: u64,
     },
 
-    /// `slash_voter` reached `count % felony_threshold == 0`. Validator
-    /// is force-exited and slashed by `slash_percent` of stake.
+    /// `slash_voter` reached `count % felony_threshold == 0`. The runtime
+    /// jails the validator (JAILED) and slashes `slash_percent` of its stake.
     VoterFelony {
         wall_clock: String,
         block_number: u64,

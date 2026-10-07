@@ -65,7 +65,8 @@ pub struct AuctionConfig {
     pub call_trigger: IntexCallTrigger,
     /// Minimum acceptable bid rate (1e6 fixed-point, % of the escrow basis). 0 -> no floor.
     pub min_intex_bid_rate: u32,
-    /// Minimum bid quantity (Intex units): 4% of the prior series' issued count.
+    /// Minimum bid quantity in Intex units. The floor rescales 4% of the prior issued count
+    /// by the prior PROMIS load divided by today's load.
     pub min_intex_bid_quantity: u16,
     /// Commit-entry bond in 18-decimal WCOEN units. A value of 0 disables the bond.
     pub commit_bond_minor: u128,

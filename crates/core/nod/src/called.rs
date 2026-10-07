@@ -532,8 +532,9 @@ fn mark_called(
 ///
 /// A bucket holding more members than the budget resumes on the next run. The
 /// resume cannot change an outcome. The deadline has already passed and settlement is
-/// closed, so nothing can rescue the remainder. Removing the last member deletes
-/// the bucket body and drops it from the called list.
+/// closed, so nothing can rescue the remainder.
+/// The bucket body and called-list entry remain while settled members exist.
+/// Removal requires both unpaid and settled member counts to reach zero.
 ///
 /// Each member burns in its own checkpoint, so running out of gas stops the batch
 /// early and keeps the members already burned.

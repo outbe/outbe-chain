@@ -103,8 +103,8 @@ pub fn first_full_day(issued_at: u64) -> u32 {
 /// `Ok(n)` when `utc_day > genesis_utc_day`, and
 /// `Err(TimeError::PreGenesis)` when `utc_day < genesis_utc_day`.
 ///
-/// The function computes `(date_key_to_timestamp(utc_day) -
-/// date_key_to_timestamp(genesis_utc_day)) / SECONDS_PER_DAY`. Direct
+/// The function computes `(date_key_to_utc_timestamp(utc_day) -
+/// date_key_to_utc_timestamp(genesis_utc_day)) / SECONDS_PER_DAY`. Direct
 /// `u32` subtraction of `yyyymmdd` keys is wrong across month/year
 /// boundaries. Do not use it.
 pub fn day_number_between(genesis_utc_day: u32, utc_day: u32) -> Result<u32, TimeError> {

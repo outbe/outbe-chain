@@ -613,7 +613,8 @@ pub enum EnclaveRequest {
     /// 3. builds the ceremony `Info` from the BLS set.
     /// 4. captures the enc keys so that it can seal dealings to recipients.
     ///
-    /// The host only relays values it obtained from each participant's `PublicKeys`.
+    /// The host relays `ParticipantAnnounce` values from
+    /// `DkgParticipantAnnounceV1`. It does not take them from `PublicKeys`.
     DkgOpen {
         ceremony_id: B256,
         round: u64,
@@ -963,10 +964,10 @@ pub struct EnclaveHealthStatusV1 {
 /// index queries until `expiry`:
 /// `"outbe/fidelity/query-auth/v1" || chain_id(32) || account(20) || expiry_be(8)`.
 ///
-/// SHARED by the host precompile (fast reject) and the enclave (the trust
-/// boundary) so the two hash an identical preimage. Deliberately scoped: a
-/// leaked signature authorizes index reads until `expiry`. It is never key
-/// material and cannot decrypt state.
+/// The enclave hashes this preimage and checks `owner_sig`.
+/// The host precompile does not build or check this message.
+/// A leaked signature authorizes index reads until `expiry`.
+/// It is never key material and cannot decrypt state.
 pub fn fidelity_query_auth_message(chain_id: B256, account: Address, expiry: u64) -> Vec<u8> {
     let tag: &[u8] = b"outbe/fidelity/query-auth/v1";
     let mut m = Vec::with_capacity(tag.len() + 32 + 20 + 8);
@@ -1178,10 +1179,9 @@ pub enum EnclaveResponse {
         tee_bls_pub: Vec<u8>,
         /// X25519 share-encryption public key. Dealers seal DKG shares to it.
         dkg_enc_pub: [u8; 32],
-        /// TEE-BLS signature over the `(chain_id, dkg_enc_pub)` binding. It proves
-        /// that this enc key belongs to `tee_bls_pub`. The host relays it into
-        /// peers' `DkgOpen`. Each peer enclave verifies it there before it trusts
-        /// the enc key.
+        /// Retired binding field. The enclave returns this empty.
+        /// Peers trust the share-recipient key through `DkgParticipantAnnounceV1`.
+        /// They do not trust this field.
         dkg_enc_sig: Vec<u8>,
     },
     Initialized {

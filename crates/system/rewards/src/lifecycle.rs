@@ -29,8 +29,8 @@ impl BlockLifecycle for RewardsLifecycle {
         // Record `genesis_utc_day` from block 0's timestamp on the very
         // first invocation of this lifecycle on a fresh chain.
         // Subsequent calls are no-ops because the slot is already
-        // non-zero. This is the single source of truth for the
-        // closed-form daily-emission curve in `crate::emission`.
+        // non-zero. `day_emission_limit` in `outbe_emissionlimit::day_emission`
+        // reads this anchor through `day_number_since_genesis`.
         let _genesis = runtime::ensure_genesis_anchor(ctx)?;
         Ok(())
     }

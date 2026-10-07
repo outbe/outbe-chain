@@ -3,9 +3,9 @@
 //! [`resolve_for_verify`] is the fetch strategy used while verifying a proposal.
 //! It tries the local block cache first. Then it subscribes to the marshal by
 //! digest, with fetch-by-round as the fallback, under a bounded timeout. The
-//! strategy moved out of `handler.rs`. Thus the strategy and its
+//! strategy lives outside the `handler` module. Thus the strategy and its
 //! cache/marshal/timeout/telemetry shape read and test independently of the
-//! verify event loop. It takes the block-cache and marshal seams as explicit
+//! verify path. It takes the block-cache and marshal seams as explicit
 //! parameters instead of `&self`.
 
 use std::time::Instant;

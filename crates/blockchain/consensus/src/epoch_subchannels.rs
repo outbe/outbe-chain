@@ -19,8 +19,8 @@
 //! consumes the stash and hands the (already-receiving) sub-channels
 //! to the new Engine.
 //!
-//! Both production (`stack.rs`) and the multi-node test harness
-//! (`test_harness.rs`) call `register_epoch_subchannels` and
+//! Both production (the `outbe-engine` `stack::epoch` module) and the
+//! multi-node test harness (`test_harness.rs`) call `register_epoch_subchannels` and
 //! `take_or_register_current` from this module. Tests therefore
 //! exercise the same registration code path that production runs.
 //!

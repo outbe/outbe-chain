@@ -77,7 +77,7 @@ impl AddressPair {
 ///
 /// [`Storable`]: crate::storage::types::Storable
 impl StorageKey for AddressPair {
-    /// Sorted, so `quoted(a, b)` and `quoted(b, a)` address the same slot.
+    /// Sorted, so `from_addresses(a, b)` and `from_addresses(b, a)` address the same slot.
     fn key_bytes(&self) -> Vec<u8> {
         self.to_canonical().to_vec()
     }

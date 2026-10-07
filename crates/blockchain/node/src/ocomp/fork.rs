@@ -31,8 +31,9 @@ struct GenesisMetadosisStorageLayoutV1 {
 }
 
 /// Tooling/fixture parser for the immutable fork binding in the selected
-/// chain spec. Production fresh-devnet startup must call
-/// [`require_genesis_active_ocomp_fork_install`] and reject absence.
+/// chain spec. Production startup must call
+/// [`require_startup_ocomp_fork_install`], which rejects absence and accepts a
+/// `Measurement` or a `Final` install.
 pub fn load_ocomp_fork_install(
     chain_spec: &ChainSpec<OutbeHeader>,
 ) -> eyre::Result<Option<Arc<OcompForkInstallV1>>> {

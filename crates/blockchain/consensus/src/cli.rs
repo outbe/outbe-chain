@@ -329,7 +329,7 @@ fn print_validator_identity_outputs(
     }
 }
 
-/// DKG state file names (must match stack.rs constants).
+/// DKG state file names (must match the `outbe-engine` `stack::dkg::persistence` constants).
 const DKG_SHARE_FILE: &str = "dkg_share.hex";
 const DKG_POLYNOMIAL_FILE: &str = "dkg_polynomial.hex";
 const DKG_OUTPUT_FILE: &str = "dkg_output.hex";

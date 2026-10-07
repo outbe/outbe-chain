@@ -108,15 +108,13 @@ pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<(
         ));
     }
 
-    // idempotency guard. This handler issues the CCA agent pool and re-dispatches
-    // terminal Metadosis with no PER-MINT day guard. Only the validator topup is
-    // independently idempotent via `daily_topup_settled`. Thus a second invocation
-    // for an already-settled `prev_day` would double-mint those pools. That re-fire
-    // is reachable whenever more than one CycleTick resolves the same `prev_day`
-    // (e.g. several blocks within one UTC day after a forward timestamp advance).
-    // The C-01 drift band bounds that case but does not eliminate it. Gate the WHOLE
-    // settlement on `daily_settled[prev_day]` so each day settles exactly once,
-    // regardless of how many times the handler fires.
+    // Idempotency guard. This handler mints the CCA agent pool and sends
+    // terminal Metadosis with no per-mint day guard. Only the validator top-up
+    // is idempotent through `daily_topup_settled`. A second call for the same
+    // `prev_day` would mint those pools again. `run_protocol_cycle` advances
+    // `active_utc_day` in the same checkpoint as this settlement. A later
+    // CycleTick does not select that `prev_day` again. `daily_settled[prev_day]`
+    // remains the defensive guard. Each day still settles once.
     let settled = outbe_rewards::api::is_day_settled(ctx, prev_day).map_err(|e| {
         tracing::error!(target: "outbe::cycle", step = "is_day_settled", prev_day, error = ?e, "emission_limit_daily step failed");
         e

@@ -1,10 +1,16 @@
 //! Soft-failure receipt synthesis for the Outbe executor.
 //!
-//! In these cases the executor no longer aborts the block build:
+//! In these cases the executor does not abort the block build:
 //!
 //! - the executor rejects a transaction outside the EVM (zero-fee policy
 //!   classification or stateful authorization).
-//! - a Phase 1-4 begin-zone system transaction fails to execute.
+//! - a soft begin-zone system transaction (`RewardsGemDelivery` or
+//!   `OracleSlashWindow`) fails to execute.
+//!
+//! A revert or halt in the other system-tx phases (for example
+//! `CertifiedParentAccounting`, `LateFinalizeCredits`, `CycleTick`,
+//! `BoundaryOutcome`, `TeeBootstrap`) fails the block. See
+//! `SystemTxKind::revert_fails_block`.
 //!
 //! Instead, it pushes a synthetic receipt with `success=0` and exactly one
 //! log. The log carries a stable `code` plus a free-form `reason` string.
@@ -22,12 +28,12 @@
 //! - zero-fee policy rejections (`outbe-zerofee::ZeroFeePolicyError::code()`):
 //!   100-199, emitted from
 //!   [`outbe_primitives::addresses::ZERO_FEE_POLICY_LOG_ADDRESS`].
-//! - Phase 1-4 system tx failures (`crate::executor::phase_failure_code()`):
+//! - soft system tx failures (`crate::executor::system_tx_failure_code_for_result()`):
 //!   200-299, emitted from
 //!   [`outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS`].
 //!
 //! Determinism of the synthetic log encoding is the contract that keeps
-//! `receipts_root` byte-equal across proposer and validators. See EPIC
+//! `receipts_root` byte-equal across proposer and validators.
 
 use alloy_primitives::{Address, Log, LogData};
 use alloy_sol_types::{sol, SolEvent};

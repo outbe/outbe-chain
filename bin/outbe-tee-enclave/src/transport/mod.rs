@@ -1,10 +1,16 @@
 //! Enclave-side transport: framed UDS server + Noise-IK responder + dispatch.
 //!
-//! Production accepts only initialization discovery, a signed write-once
-//! initialization manifest, or `OpenSession` before Noise IK. The responder
-//! authenticates the persistent NodeHost static key immediately after message 1
-//! and before decoding any encrypted request. The cleartext `GetQuote`
-//! preamble exists only in the separate development/mock mode.
+//! Before Noise IK, production accepts only these requests:
+//!   - initialization discovery,
+//!   - a signed write-once initialization manifest,
+//!   - `OpenSession` for the local NodeHost,
+//!   - `OpenRemoteSessionV1` for a remote node with an admission ticket.
+//!
+//! The responder authenticates the initiator static key immediately after
+//! message 1 and before decoding any encrypted request. For `OpenRemoteSessionV1`
+//! the expected key is the ticket's `initiator_static_x25519`. Otherwise it is the
+//! NodeHost static key. The cleartext `GetQuote` preamble exists
+//! only in the separate development/mock mode.
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};

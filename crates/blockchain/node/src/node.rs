@@ -1,7 +1,7 @@
 //! Outbe node type definition.
 //!
-//! Defines `OutbeNode` which uses standard Ethereum primitives but customizes
-//! the executor (stateful precompiles) and consensus (increased extra_data).
+//! Defines `OutbeNode`. It uses Outbe-specific primitives and node components
+//! on top of the Reth node builder.
 
 use crate::{
     consensus::OutbeConsensusBuilder,
@@ -33,9 +33,16 @@ use reth_transaction_pool::{PoolTransaction, TransactionPool};
 
 /// Outbe node type configuration.
 ///
-/// Uses standard Ethereum primitives, chain spec, storage, and engine types.
-/// Customizes only the executor (stateful precompiles) and consensus
-/// (increased extra_data size for participation bitmap).
+/// Uses Outbe-specific node types: `OutbePrimitives`, a chain spec over
+/// `OutbeHeader`, storage over `OutbeTxEnvelope` and `OutbeHeader`, and
+/// `OutbePayloadTypes`. Customizes these components:
+/// - the txpool (`OutbePoolBuilder`),
+/// - the payload service (`OutbePayloadServiceBuilder`),
+/// - the executor (`OutbeExecutorBuilder`, stateful precompiles),
+/// - consensus (`OutbeConsensusBuilder`),
+/// - the engine validator (`OutbeEngineValidatorBuilder`).
+///
+/// The network and the `eth` RPC API use the standard Ethereum builders.
 #[derive(Clone)]
 pub struct OutbeNode {
     /// Process-owned shutdown observation and payload-event lifetime.

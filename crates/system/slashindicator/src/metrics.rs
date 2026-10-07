@@ -44,7 +44,7 @@ pub fn record_felony_count(addr: Address, count: u64) {
 }
 
 /// One slash event was applied to `addr`. `reason` is one of:
-/// `proposer_felony` | `evidence_felony` | `byzantine` | `oracle_penalty`.
+/// `proposer_felony` | `voter_felony` | `evidence_felony` | `byzantine`.
 pub fn record_validator_slashed(addr: Address, reason: &'static str) {
     counter!(
         "outbe_validator_slashed_total",

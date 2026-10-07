@@ -1,8 +1,10 @@
-//! Inactive V1 DCAP/remote-attestation protocol primitives.
+//! V1 DCAP/remote-attestation protocol primitives.
 //!
-//! This module is compiled only for direct protocol harnesses until the
-//! production activation stage. It deliberately defines no selector, storage
-//! layout, dispatch route, or active ChainSpec field.
+//! This module is always compiled and is on the live consensus path. For
+//! example, the block-1 `TeeBootstrap` system tx precharge uses
+//! [`SystemGasScheduleV1::normative`]. The node, CLI, and enclave binaries also
+//! use these codecs for enclave and registry flows. Changes here must stay
+//! deterministic across validators.
 
 use alloy_primitives::{keccak256, B256};
 
@@ -40,10 +42,8 @@ pub const MAX_TEE_POLICY_SCHEDULE_ENTRIES: usize = 64;
 pub const MAX_TEE_BOOTSTRAP_BYTES: usize = 1_310_720;
 pub use crate::system_tx::{BOOTSTRAP_BLOCK_GAS_LIMIT, STEADY_BLOCK_GAS_LIMIT};
 
-/// The stage-I0 feature exposes codecs to direct harnesses only.
-///
-/// I9 replaces `None` with the ChainSpec-selected production manifest after
-/// all preceding acceptance gates pass.
+/// No production path reads this constant. It stays `None`, and tests assert
+/// that value.
 pub const ACTIVE_TEE_ATTESTATION_V1_MANIFEST: Option<TeeAttestationManifestV1> = None;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
