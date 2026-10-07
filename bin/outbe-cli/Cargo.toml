@@ -14,10 +14,6 @@ name = "outbe-cli"
 path = "src/main.rs"
 
 [dependencies]
-outbe-gratis.workspace = true
-outbe-gratisfactory.workspace = true
-outbe-credisfactory.workspace = true
-outbe-vaultrouter.workspace = true
 # Alloy (ABI encoding + primitives)
 alloy-consensus.workspace = true
 alloy-rlp.workspace = true
@@ -28,7 +24,6 @@ outbe-consensus.workspace = true
 outbe-primitives.workspace = true
 outbe-operator.workspace = true
 outbe-zerofee.workspace = true
-outbe-protocol.workspace = true
 outbe-zk-canonical.workspace = true
 # TEE enclave client + wire protocol (the `tee join` offer-key registration).
 outbe-tee.workspace = true
@@ -44,10 +39,6 @@ serde_json.workspace = true
 
 # Signing
 k256.workspace = true
-
-# Offer encryption (client side; the X25519 ECDHE + HKDF-SHA256 +
-# ChaCha20Poly1305 seal itself lives in outbe-tributefactory).
-ring.workspace = true
 
 # Async
 tokio.workspace = true

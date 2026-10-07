@@ -28,8 +28,6 @@ piolium
 
 # Barretenberg CRS downloaded/generated for local proving and verification.
 /.bb-crs/
-# Local owner-bound pledge-note secrets.
-/pledgenotes/
 /contracts/account-abstraction/lib/kernel/broadcast
 /.ruler
 
