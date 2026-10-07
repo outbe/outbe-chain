@@ -4,7 +4,7 @@
 //! account's view key exactly as a client would.
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
-use alloy_sol_types::{SolCall, SolInterface};
+use alloy_sol_types::{SolCall, SolEvent, SolInterface};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_tee::protocol::{FidelityCohortOp, FidelityOpSection, GratisOp, ModifyAuth};
@@ -396,4 +396,44 @@ fn precompile_pledged_of_returns_ciphertext() {
         let vk = derive_view_key(&test_enclave::state_key(), alice()).unwrap();
         assert_eq!(decrypt_pledged(&vk, alice(), &blob).unwrap(), amount);
     });
+}
+
+#[test]
+fn burning_pledged_collateral_reports_the_supply_drop() {
+    test_enclave::install();
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        let amount = U256::from(100u64);
+        api::mint(
+            storage.clone(),
+            alice(),
+            amount,
+            auth(GratisOp::Mint, alice(), amount, 0),
+        )
+        .unwrap();
+        api::pledge_with_fidelity(
+            storage.clone(),
+            alice(),
+            amount,
+            auth(GratisOp::Pledge, alice(), amount, 1),
+            probe(),
+        )
+        .unwrap();
+        api::burn_pledged(&storage, alice(), U256::from(40u64)).unwrap();
+    });
+    test_enclave::uninstall();
+    let burned: Vec<_> = provider
+        .get_events(outbe_primitives::addresses::GRATIS_ADDRESS)
+        .iter()
+        .filter_map(|log| IGratis::GratisBurned::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(burned.len(), 1);
+    assert_eq!(
+        (
+            burned[0].account,
+            burned[0].amount,
+            burned[0].remainingSupply
+        ),
+        (alice(), U256::from(40u64), U256::from(60u64))
+    );
 }

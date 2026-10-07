@@ -329,6 +329,13 @@ fn only_the_source_pledges_exactly_the_reserved_gratis_once() {
         assert!(err.contains("reservation not found"), "{err}");
         let wrong_amount = auth(GratisOp::Pledge, alice(), U256::from(RESERVED - 1), 1);
         assert!(runtime::create_pledge_note(storage.clone(), alice(), id, wrong_amount).is_err());
+        assert_eq!(view_balance(&storage, alice()), U256::from(1_000u64));
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        assert_eq!(
+            outbe_gratis::api::op_nonce(storage.clone(), alice()).unwrap(),
+            1
+        );
+        assert!(runtime::pledge_of(&storage, id).unwrap().source.is_zero());
 
         pledge(&storage, alice(), id, 1).unwrap();
         assert_eq!(
@@ -430,5 +437,32 @@ fn credis_takes_a_pledge_once_and_cancel_then_fails() {
         let err = runtime::cancel_pledge_note(storage.clone(), alice(), id).unwrap_err();
         assert!(err.to_string().contains("pledge not found"), "{err}");
         assert_eq!(view_pledged(&storage, alice()), U256::from(RESERVED));
+    });
+}
+
+#[test]
+fn a_pledge_is_accepted_up_to_the_reservation_expiry() {
+    with_env(|storage| {
+        let id = fund_and_reserve(&storage, alice());
+        storage
+            .set_block_timestamp(U256::from(CREATED_AT + 900))
+            .unwrap();
+        pledge(&storage, alice(), id, 1).unwrap();
+        assert_eq!(view_pledged(&storage, alice()), U256::from(RESERVED));
+    });
+}
+
+#[test]
+fn a_pledge_outlives_its_returned_reservation_and_can_be_cancelled() {
+    with_env(|storage| {
+        let id = fund_and_reserve(&storage, alice());
+        pledge(&storage, alice(), id, 1).unwrap();
+        outbe_vaultrouter::schema::VaultRouterContract::new(storage.clone())
+            .reservations
+            .delete(id)
+            .unwrap();
+        runtime::cancel_pledge_note(storage.clone(), alice(), id).unwrap();
+        assert_eq!(view_balance(&storage, alice()), U256::from(1_000u64));
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
     });
 }

@@ -234,6 +234,17 @@ fn open_position_rejects_duplicates_and_zero_amounts() {
     });
 }
 
+#[test]
+fn open_position_requires_a_pledge_source() {
+    with_credis(|storage| {
+        let mut no_source = params(alice());
+        no_source.source = Address::ZERO;
+        assert!(CredisContract::new(storage)
+            .open_position(no_source)
+            .is_err());
+    });
+}
+
 // ---------------------------------------------------------------------------
 // The worked example, end to end (section 5)
 // ---------------------------------------------------------------------------
