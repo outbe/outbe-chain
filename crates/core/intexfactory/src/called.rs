@@ -9,7 +9,7 @@ use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use outbe_intex::SeriesId;
 use outbe_oracle::schema::OracleContract;
-use outbe_primitives::daily_sweep::{Scheduled, SweepDays};
+use outbe_primitives::daily_sweep::{PinnedDay, Scheduled, SweepDays};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     block::BlockRuntimeContext,
@@ -37,21 +37,13 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     };
     let factory = IntexFactoryContract::new(ctx.storage.clone());
-    let days = SweepDays {
-        current: factory.call_sweep_day.read()?,
-        pending: factory.call_pending_day.read()?,
-    };
-    match days.schedule(last_closed_day) {
+    let scheduled = pinned_call_day(&factory).schedule(last_closed_day)?;
+    match scheduled {
         (next, Scheduled::Opened) => {
             start_call_sweep(ctx, &factory, next)?;
             run_call_slice(ctx)
         }
-        (next, Scheduled::Queued) => {
-            factory.call_pending_day.write(next.pending)?;
-            Ok(0)
-        }
         (next, Scheduled::Replaced { skipped }) => {
-            factory.call_pending_day.write(next.pending)?;
             crate::runtime::emit_event(
                 &ctx.storage,
                 crate::precompile::IIntexFactory::SweepDaySkipped {
@@ -62,7 +54,16 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
             )?;
             Ok(0)
         }
-        (_, Scheduled::Ignored) => Ok(0),
+        (_, Scheduled::Queued | Scheduled::Ignored) => Ok(0),
+    }
+}
+
+fn pinned_call_day<'a, 'storage>(
+    factory: &'a IntexFactoryContract<'storage>,
+) -> PinnedDay<'a, 'storage> {
+    PinnedDay {
+        current: &factory.call_sweep_day,
+        pending: &factory.call_pending_day,
     }
 }
 
@@ -81,8 +82,7 @@ fn start_call_sweep(
     factory: &IntexFactoryContract,
     days: SweepDays,
 ) -> Result<()> {
-    factory.call_sweep_day.write(days.current)?;
-    factory.call_pending_day.write(days.pending)?;
+    pinned_call_day(factory).open(days)?;
     factory.call_currency_cursor.write(0)?;
     for iso_code in outbe_oracle::api::get_all_reference_currencies(ctx)? {
         factory.call_scan_cursor.write(&iso_code, 0)?;
@@ -121,14 +121,7 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     }
 
     // The next day starts on the next block, so no slice mixes two days' prices.
-    let next = SweepDays {
-        current: pinned_day,
-        pending: factory.call_pending_day.read()?,
-    }
-    .finish();
-    if next.current == 0 {
-        factory.call_sweep_day.write(0)?;
-    } else {
+    if let Some(next) = pinned_call_day(&factory).finish(pinned_day)? {
         start_call_sweep(ctx, &factory, next)?;
     }
     Ok(called)
@@ -350,13 +343,7 @@ pub(crate) fn notify_called(
     Ok(refused)
 }
 
-/// Index of the currency the cursor names, or the head when the registry dropped it.
-pub(crate) fn currency_position(currencies: &[u16], cursor: u32) -> usize {
-    u16::try_from(cursor)
-        .ok()
-        .and_then(|iso| currencies.iter().position(|&code| code == iso))
-        .unwrap_or(0)
-}
+pub(crate) use outbe_primitives::daily_sweep::currency_position;
 
 /// Work one scan may do, split by cost. Deciding a group is a single read.
 /// Applying it writes once per series and queues its notice.

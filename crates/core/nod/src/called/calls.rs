@@ -178,13 +178,7 @@ fn try_call(
     }
 }
 
-/// Index of the currency the cursor names, or the head when the registry dropped it.
-pub(crate) fn currency_position(currencies: &[u16], cursor: u32) -> usize {
-    u16::try_from(cursor)
-        .ok()
-        .and_then(|iso| currencies.iter().position(|&code| code == iso))
-        .unwrap_or(0)
-}
+pub(crate) use outbe_primitives::daily_sweep::currency_position;
 
 const fn pack_cursor(bin_id: u32, remaining: u32) -> u64 {
     ((bin_id as u64) << 32) | remaining as u64

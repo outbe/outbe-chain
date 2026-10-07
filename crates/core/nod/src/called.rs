@@ -37,7 +37,7 @@ use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_oracle::{api::get_all_reference_currencies, schema::OracleContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    daily_sweep::{Scheduled, SweepDays},
+    daily_sweep::{PinnedDay, Scheduled, SweepDays},
     error::{PrecompileError, Result, SweepFailure},
 };
 
@@ -73,21 +73,13 @@ pub fn scan_and_call(
     if nod.call_sweep_day.read()? == 0 && !has_call_work(ctx, &nod)? {
         return Ok(0);
     }
-    let days = SweepDays {
-        current: nod.call_sweep_day.read()?,
-        pending: nod.call_pending_day.read()?,
-    };
-    match days.schedule(last_closed_day) {
+    let scheduled = pinned_call_day(&nod).schedule(last_closed_day)?;
+    match scheduled {
         (next, Scheduled::Opened) => {
             start_call_sweep(ctx, &nod, next)?;
             run_call_slice(ctx, scope, parent)
         }
-        (next, Scheduled::Queued) => {
-            nod.call_pending_day.write(next.pending)?;
-            Ok(0)
-        }
         (next, Scheduled::Replaced { skipped }) => {
-            nod.call_pending_day.write(next.pending)?;
             nod.emit(INod::SweepDaySkipped {
                 sweep: CALL_SWEEP,
                 skippedDay: skipped,
@@ -95,7 +87,14 @@ pub fn scan_and_call(
             })?;
             Ok(0)
         }
-        (_, Scheduled::Ignored) => Ok(0),
+        (_, Scheduled::Queued | Scheduled::Ignored) => Ok(0),
+    }
+}
+
+fn pinned_call_day<'a, 'storage>(nod: &'a NodContract<'storage>) -> PinnedDay<'a, 'storage> {
+    PinnedDay {
+        current: &nod.call_sweep_day,
+        pending: &nod.call_pending_day,
     }
 }
 
@@ -118,8 +117,7 @@ pub(crate) fn closed_day(ctx: &BlockRuntimeContext) -> Result<Option<u32>> {
 
 /// Pin the sweep's current day and walk it from the first currency's lowest bin.
 fn start_call_sweep(ctx: &BlockRuntimeContext, nod: &NodContract, days: SweepDays) -> Result<()> {
-    nod.call_sweep_day.write(days.current)?;
-    nod.call_pending_day.write(days.pending)?;
+    pinned_call_day(nod).open(days)?;
     nod.call_currency_cursor.write(0)?;
     nod.forfeit_cursor.write(0)?;
     for iso_code in get_all_reference_currencies(ctx)? {
@@ -129,15 +127,9 @@ fn start_call_sweep(ctx: &BlockRuntimeContext, nod: &NodContract, days: SweepDay
 }
 
 fn finish_call_sweep(ctx: &BlockRuntimeContext, nod: &NodContract, pinned_day: u32) -> Result<()> {
-    let next = SweepDays {
-        current: pinned_day,
-        pending: nod.call_pending_day.read()?,
-    }
-    .finish();
-    if next.current == 0 {
-        nod.call_sweep_day.write(0)
-    } else {
-        start_call_sweep(ctx, nod, next)
+    match pinned_call_day(nod).finish(pinned_day)? {
+        Some(next) => start_call_sweep(ctx, nod, next),
+        None => Ok(()),
     }
 }
 

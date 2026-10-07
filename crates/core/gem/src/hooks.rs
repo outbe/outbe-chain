@@ -3,7 +3,7 @@ use outbe_oracle::{api::get_all_reference_currencies, schema::OracleContract};
 use outbe_primitives::{
     address_pair::AddressPair,
     block::{BlockLifecycle, BlockRuntimeContext},
-    daily_sweep::{Scheduled, SweepDays},
+    daily_sweep::{PinnedDay, Scheduled, SweepDays},
     error::Result,
     math::{constants::MAX_BIN_ID, tree_math},
     time::previous_date_key,
@@ -40,12 +40,13 @@ fn closed_day(ctx: &BlockRuntimeContext) -> Result<Option<u32>> {
     outbe_oracle::closed_day::finalized_closed_day(ctx.storage.clone(), ctx.block.timestamp, "gem")
 }
 
-/// Index of the currency the cursor names, or the head when the registry dropped it.
-pub(crate) fn currency_position(currencies: &[u16], cursor: u32) -> usize {
-    u16::try_from(cursor)
-        .ok()
-        .and_then(|iso| currencies.iter().position(|&code| code == iso))
-        .unwrap_or(0)
+pub(crate) use outbe_primitives::daily_sweep::currency_position;
+
+fn pinned_call_day<'a, 'storage>(gem: &'a GemContract<'storage>) -> PinnedDay<'a, 'storage> {
+    PinnedDay {
+        current: &gem.call_sweep_day,
+        pending: &gem.call_pending_day,
+    }
 }
 
 /// Trailing finalized daily VWAPs of one pair, newest first. `None` marks a day
@@ -67,21 +68,13 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     };
 
     let mut gem = GemContract::new(ctx.storage.clone());
-    let days = SweepDays {
-        current: gem.call_sweep_day.read()?,
-        pending: gem.call_pending_day.read()?,
-    };
-    match days.schedule(last_closed_day) {
+    let scheduled = pinned_call_day(&gem).schedule(last_closed_day)?;
+    match scheduled {
         (next, Scheduled::Opened) => {
             start_call_sweep(ctx, &gem, next)?;
             run_call_slice(ctx)
         }
-        (next, Scheduled::Queued) => {
-            gem.call_pending_day.write(next.pending)?;
-            Ok(0)
-        }
         (next, Scheduled::Replaced { skipped }) => {
-            gem.call_pending_day.write(next.pending)?;
             gem.emit(SweepDaySkipped {
                 sweep: CALL_SWEEP,
                 skippedDay: skipped,
@@ -89,14 +82,13 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
             })?;
             Ok(0)
         }
-        (_, Scheduled::Ignored) => Ok(0),
+        (_, Scheduled::Queued | Scheduled::Ignored) => Ok(0),
     }
 }
 
 /// Pin the sweep's current day and walk it from the first currency's lowest bin.
 fn start_call_sweep(ctx: &BlockRuntimeContext, gem: &GemContract, days: SweepDays) -> Result<()> {
-    gem.call_sweep_day.write(days.current)?;
-    gem.call_pending_day.write(days.pending)?;
+    pinned_call_day(gem).open(days)?;
     gem.call_currency_cursor.write(0)?;
     for iso_code in get_all_reference_currencies(ctx)? {
         gem.bucket_scan_cursor.write(&iso_code, 0)?;
@@ -207,15 +199,10 @@ impl CallSweep<'_, '_> {
 
     fn finish(&self) -> Result<()> {
         // The next day starts on the next block, so no slice mixes two days' prices.
-        let next = SweepDays {
-            current: self.pinned_day,
-            pending: self.gem.call_pending_day.read()?,
-        }
-        .finish();
-        if next.current == 0 {
-            self.gem.call_sweep_day.write(0)
-        } else {
-            start_call_sweep(self.ctx, &self.gem, next)
+        let next = pinned_call_day(&self.gem).finish(self.pinned_day)?;
+        match next {
+            Some(next) => start_call_sweep(self.ctx, &self.gem, next),
+            None => Ok(()),
         }
     }
 
