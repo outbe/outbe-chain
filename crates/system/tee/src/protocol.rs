@@ -211,8 +211,8 @@ pub struct ParticipantAnnounce {
 /// - which ciphertext account balance the enclave transforms
 ///
 /// Mint, Burn and Pledge need the owner's modify authorization. The runtime
-/// authorizes the collateral ops. The modify MAC binds `op as u8`, so the
-/// existing discriminants never change.
+/// authorizes the collateral ops. The modify MAC binds `op as u8`, so the Mint,
+/// Burn and Pledge discriminants never change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum GratisOp {
     Mint,

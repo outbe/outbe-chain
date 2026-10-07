@@ -1,6 +1,6 @@
 //! Gratisfactory precompile at `0x2003`. This file does ABI dispatch only. The Gratis balance
 //! movement and Fidelity bookkeeping live in [`crate::runtime`]. The caller's Gratis modify key
-//! (`mac` and `opNonce`) authorizes pledge and mining writes.
+//! (`mac` and `opNonce`) authorizes pledge and mining writes. Only a pledge's source may cancel it.
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};

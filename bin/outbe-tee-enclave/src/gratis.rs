@@ -134,26 +134,33 @@ fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
         return Ok(reject("collateral must not change Fidelity"));
     }
     let view = derive_view_key(state_key, req.account)?;
-    let (bver, balance) = read_amount(&view, req.account, FIELD_BALANCE, &req.current_balance)?;
-    let (pver, pledged) = read_amount(&view, req.account, FIELD_PLEDGED, &req.current_pledged)?;
-    let credit = |v: U256| v.checked_add(req.amount);
-    let debit = |v: U256| v.checked_sub(req.amount);
-    let (next_balance, next_pledged) = match req.op {
-        GratisOp::Mint => (Some(credit(balance)), None),
-        GratisOp::Burn => (Some(debit(balance)), None),
-        GratisOp::Pledge => (Some(debit(balance)), Some(credit(pledged))),
-        GratisOp::ReleasePledged => (Some(credit(balance)), Some(debit(pledged))),
-        GratisOp::BurnPledged => (None, Some(debit(pledged))),
+    // `Some(true)` credits the blob, `Some(false)` debits it, `None` leaves it unread.
+    let (balance, pledged) = match req.op {
+        GratisOp::Mint => (Some(true), None),
+        GratisOp::Burn => (Some(false), None),
+        GratisOp::Pledge => (Some(false), Some(true)),
+        GratisOp::ReleasePledged => (Some(true), Some(false)),
+        GratisOp::BurnPledged => (None, Some(false)),
     };
-    if matches!(next_balance, Some(None)) || matches!(next_pledged, Some(None)) {
-        return Ok(reject("insufficient balance or balance overflow"));
+    let moves = [
+        (balance, FIELD_BALANCE, &req.current_balance),
+        (pledged, FIELD_PLEDGED, &req.current_pledged),
+    ];
+    let mut written = [Vec::new(), Vec::new()];
+    for ((credit, field, blob), out) in moves.into_iter().zip(&mut written) {
+        let Some(credit) = credit else { continue };
+        let (version, current) = read_amount(&view, req.account, field, blob)?;
+        let next = if credit {
+            current.checked_add(req.amount)
+        } else {
+            current.checked_sub(req.amount)
+        };
+        let Some(next) = next else {
+            return Ok(reject("insufficient balance or balance overflow"));
+        };
+        *out = write_amount(&view, req.account, field, version, next)?;
     }
-    if let Some(Some(next)) = next_balance {
-        r.new_balance = write_amount(&view, req.account, FIELD_BALANCE, bver, next)?;
-    }
-    if let Some(Some(next)) = next_pledged {
-        r.new_pledged = write_amount(&view, req.account, FIELD_PLEDGED, pver, next)?;
-    }
+    [r.new_balance, r.new_pledged] = written;
     r.event_amount = req.amount;
     Ok(r)
 }
@@ -343,11 +350,46 @@ mod tests {
             decrypt_pledged(&vk, alice(), &res.new_pledged).unwrap(),
             U256::from(60u64)
         );
+        r.current_balance = vec![0xAB; 56];
+        assert_eq!(apply_op(&sk, &r).status, GratisOpStatus::Applied);
         r.amount = U256::from(101u64);
         assert!(matches!(
             apply_op(&sk, &r).status,
             GratisOpStatus::Rejected { .. }
         ));
+    }
+    #[test]
+    fn pledged_blobs_cross_the_wire_and_bind_the_inputs_hash() {
+        use outbe_tee::codec::{decode_request, decode_response, encode_request, encode_response};
+        use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
+        let sk = state_key();
+        let mut r = req(GratisOp::ReleasePledged, alice(), U256::from(1u64), 0);
+        r.current_pledged = pledged(&sk, 100);
+        let result = apply_op(&sk, &r);
+        let mut other = r.clone();
+        other.current_pledged = pledged(&sk, 101);
+        assert_ne!(
+            result.inputs_canonical_hash,
+            outbe_tee::protocol::gratis_op_canonical_hash(&other)
+        );
+        let request = EnclaveRequest::ApplyGratisOp {
+            request: Box::new(r.clone()),
+        };
+        let EnclaveRequest::ApplyGratisOp { request } =
+            decode_request(&encode_request(&request).unwrap()).unwrap()
+        else {
+            panic!("request variant changed");
+        };
+        assert_eq!(*request, r);
+        let response = EnclaveResponse::GratisOpApplied {
+            result: Box::new(result.clone()),
+        };
+        let EnclaveResponse::GratisOpApplied { result: decoded } =
+            decode_response(&encode_response(&response).unwrap()).unwrap()
+        else {
+            panic!("response variant changed");
+        };
+        assert_eq!(*decoded, result);
     }
     #[test]
     fn collateral_ops_reject_a_fidelity_section() {
