@@ -1,12 +1,13 @@
-//! Atomic reservation, note and collateral transitions. Source identities stay private.
+//! Atomic reservation, pledge and collateral transitions.
 use crate::{
     errors::CredisFactoryError,
     precompile::ICredisFactory,
     sol_ext::{IReferenceCurrency, IERC20},
 };
-use alloy_primitives::{keccak256, Address, B256, U256};
-use alloy_sol_types::{SolCall, SolValue};
+use alloy_primitives::{Address, U256};
+use alloy_sol_types::SolCall;
 use outbe_credis::{CredisContract, OpenPositionParams};
+use outbe_gratisfactory::api as pledges;
 use outbe_primitives::{
     addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS},
     error::{PrecompileError, Result},
@@ -14,17 +15,6 @@ use outbe_primitives::{
     units::checked_protocol_to_native,
 };
 
-/// The return serial is deliberately absent: context binds only the complete reservation.
-pub fn reservation_context(
-    chain_id: u64,
-    id: U256,
-    r: &outbe_vaultrouter::api::IVaultRouter::LiquidityReservation,
-) -> Result<B256> {
-    use outbe_gratis::context::{pledge_context, PledgeDomain};
-    let target =
-        keccak256((U256::from(chain_id), CREDIS_FACTORY_ADDRESS, id, r.clone()).abi_encode());
-    pledge_context(PledgeDomain::Issue, target, r.gratisMinor, r.snapshotId)
-}
 fn revert(message: &str) -> PrecompileError {
     PrecompileError::Revert(message.into())
 }
@@ -33,7 +23,6 @@ pub fn issue_credis(
     storage: StorageHandle<'_>,
     caller: Address,
     reservation_id: U256,
-    proof: &[u8],
     stake: U256,
 ) -> Result<(U256, U256)> {
     storage.with_checkpoint(|| {
@@ -72,21 +61,11 @@ pub fn issue_credis(
         if stake != required {
             return Err(CredisFactoryError::CcaStakeMismatch.into());
         }
-        let claim = outbe_gratis::pledge::consume_issue(&storage, proof)?;
-        if claim.context
-            != reservation_context(storage.chain_id()?, reservation_id, &r.clone().into())?
-        {
-            return Err(revert("pledge context mismatch"));
-        }
-        if claim.spend_amount != r.gratis_minor {
-            return Err(revert("collateral mismatch"));
-        }
-        outbe_gratis::api::activate(&storage, r.gratis_minor)?;
         let mut credis = CredisContract::new(storage.clone());
         let id = credis.open_position(OpenPositionParams {
             smart_account: r.smart_account,
             cca: caller,
-            return_note_serial: claim.return_note_serial,
+            source: r.source,
             asset: r.asset,
             issuance_currency: r.issuance_currency,
             reference_currency: r.reference_currency,
@@ -97,6 +76,7 @@ pub fn issue_credis(
             gratis_minor: r.gratis_minor,
             issued_at: now,
         })?;
+        pledges::send_to_credis(&storage, reservation_id, id, r.source, r.gratis_minor)?;
         let opened = credis.get_position(id)?;
         storage.transfer_balance(CREDIS_FACTORY_ADDRESS, r.smart_account, stake)?;
         let paid = outbe_vaultrouter::api::release_reservation(
@@ -120,7 +100,8 @@ pub fn issue_credis(
     })
 }
 
-/// Collect payment first, then mint the original owner's return note. No Fidelity mutation.
+/// Collect payment first, then return the released collateral to the source's
+/// liquid balance. No Fidelity mutation.
 pub fn settle(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -183,23 +164,14 @@ pub fn settle(
             return Err(revert("Credis changed during payment"));
         }
         if !released.is_zero() {
-            let total = before
-                .gratis_minor
-                .checked_sub(after.outstanding_gratis_minor)
-                .ok_or_else(|| revert("collateral underflow"))?;
-            outbe_gratis::api::return_collateral(
-                &storage,
-                position_id,
-                before.return_note_serial,
-                released,
-                total,
-            )?;
+            pledges::return_from_credis(&storage, before.source, released)?;
         }
         Ok((settlement.principal_paid, settlement.interest))
     })
 }
 
-/// Burn only this position's remaining collateral. Fidelity cohorts stay untouched.
+/// Burn only this position's remaining collateral from the source's pledged
+/// balance. Fidelity cohorts stay untouched.
 pub fn void_position(storage: StorageHandle<'_>, position_id: U256) -> Result<()> {
     storage.with_checkpoint(|| {
         let now =
@@ -211,7 +183,7 @@ pub fn void_position(storage: StorageHandle<'_>, position_id: U256) -> Result<()
             return Err(revert("forfeiture collateral mismatch"));
         }
         if !void.gratis_burned_minor.is_zero() {
-            outbe_gratis::api::forfeit(&storage, void.gratis_burned_minor)?;
+            pledges::burn_from_credis(&storage, void.source, void.gratis_burned_minor)?;
             outbe_promislimit::PromisLimitContract::new(storage.clone())
                 .add_to_total_unallocated(void.gratis_burned_minor)?;
         }

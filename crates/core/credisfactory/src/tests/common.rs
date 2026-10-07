@@ -22,7 +22,9 @@ use outbe_primitives::storage::{Bytecode, StorageHandle};
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 use outbe_primitives::units::{checked_protocol_to_native, SCALE_1E6_U256};
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
-use outbe_tee_enclave::gratis::{decrypt_balance, derive_modify_key, derive_view_key, modify_mac};
+use outbe_tee_enclave::gratis::{
+    decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
+};
 use outbe_vaultrouter::{LiquidityReservation, VaultRouterContract};
 
 use crate::runtime;
@@ -113,121 +115,35 @@ pub fn open(storage: &StorageHandle<'_>, nonce: u64) -> U256 {
     open_for(storage, alice(), nonce)
 }
 pub fn open_for(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> U256 {
-    let reservation_id = seed_reservation(storage, who, pledge_stables());
-    let note = pledge_note(storage, who, pledge_cost(), nonce);
-    let r = outbe_vaultrouter::api::reservation_of(storage, reservation_id).unwrap();
-    let context = runtime::reservation_context(CHAIN_ID, reservation_id, &r.into()).unwrap();
-    let proof = prove_latest(storage, &note, pledge_cost(), context);
+    let reservation_id = seed_reservation(storage, who, who, pledge_stables());
+    pledge(storage, who, reservation_id, nonce);
     fund_stake(storage, pledge_stake());
-    runtime::issue_credis(
+    runtime::issue_credis(storage.clone(), cca(), reservation_id, pledge_stake())
+        .unwrap()
+        .0
+}
+
+/// Pledges the reservation's Gratis from `source` through the factory.
+pub fn pledge(storage: &StorageHandle<'_>, source: Address, reservation_id: U256, nonce: u64) {
+    outbe_gratisfactory::runtime::create_pledge_note(
         storage.clone(),
-        cca(),
+        source,
         reservation_id,
-        &proof,
-        pledge_stake(),
-    )
-    .unwrap()
-    .0
-}
-pub fn pledge_note(
-    storage: &StorageHandle<'_>,
-    who: Address,
-    amount: U256,
-    nonce: u64,
-) -> outbe_gratis::client::Note {
-    let key = derive_modify_key(&test_enclave::state_key(), who).unwrap();
-    let note = outbe_gratis::client::Note::initial(CHAIN_ID, who, &key, amount, nonce).unwrap();
-    let commitment = outbe_gratisfactory::runtime::pledge_gratis(
-        storage.clone(),
-        who,
-        amount,
-        auth(GratisOp::Pledge, who, amount, nonce),
+        auth(GratisOp::Pledge, source, pledge_cost(), nonce),
     )
     .unwrap();
-    assert_eq!(commitment, note.commitment().unwrap());
-    note
-}
-pub fn prove_latest(
-    storage: &StorageHandle<'_>,
-    note: &outbe_gratis::client::Note,
-    amount: U256,
-    context: B256,
-) -> Vec<u8> {
-    use outbe_protocol::{codec, protocol::zk::ProofGenerator};
-    use outbe_zk_canonical::{
-        noir::pledgenote_issue::{self, PledgenoteIssue},
-        pledgenote as hash,
-    };
-    let pool = outbe_gratis::pledge::PledgePool::new(storage.clone());
-    let index = u32::try_from(pool.leaf_count.read().unwrap() - 1).unwrap();
-    let zeros = hash::empty_subtrees(CHAIN_ID, 32).unwrap();
-    let auth_path = core::array::from_fn(|i| {
-        if (index >> i) & 1 == 1 {
-            pool.filled_subtrees.read(&(i as u8)).unwrap()
-        } else {
-            codec::field_to_b256(&zeros[i]).unwrap()
-        }
-    });
-    let witness = pledgenote_issue::alloy::Witness {
-        owner: note.owner,
-        note_spend_key: note.secret,
-        note_amount: note.amount,
-        receipt_context: note.receipt_context,
-        leaf_index: index,
-        auth_path,
-    };
-    let public = pledgenote_issue::alloy::PublicInputs {
-        chain_id: CHAIN_ID,
-        root: pool.current_root.read().unwrap(),
-        nullifier: note.nullifier().unwrap(),
-        context,
-        spend_amount: amount,
-        change_commitment: note
-            .change(amount)
-            .unwrap()
-            .map(|n| n.commitment().unwrap())
-            .unwrap_or_default(),
-        return_note_serial: codec::field_to_b256(
-            &hash::note_sn(
-                note.owner,
-                codec::field_from_b256(&note.return_secret(context).unwrap()).unwrap(),
-            )
-            .unwrap(),
-        )
-        .unwrap(),
-    };
-    let public = public.try_into().unwrap();
-    let proof = ProofGenerator::<PledgenoteIssue>::generate(
-        &outbe_zk_backend::barretenberg::Barretenberg::default(),
-        &witness.try_into().unwrap(),
-        &public,
-    )
-    .unwrap();
-    pledgenote_issue::encode_combined_proof(public, proof.proof).unwrap()
 }
 
-/// Parks a live vault reservation for `smart_account` so `issue_credis` can
-/// consume it. This helper writes the hold through VaultRouter storage, not the
-/// ABI, because these tests stub EVM sub-calls into the router.
-pub fn seed_reservation(storage: &StorageHandle<'_>, smart_account: Address, amount: U256) -> U256 {
-    seed_reservation_at(
-        storage,
-        cca(),
-        smart_account,
-        asset(),
-        amount,
-        storage.timestamp().unwrap().to::<u64>() + 15 * 60,
-    )
-}
-
-pub fn seed_reservation_at(
+/// Parks a live vault reservation for `smart_account`, pledged by `source`, so
+/// `issue_credis` can consume it. This helper writes the hold through VaultRouter
+/// storage, not the ABI, because these tests stub EVM sub-calls into the router.
+pub fn seed_reservation(
     storage: &StorageHandle<'_>,
-    originator: Address,
     smart_account: Address,
-    reserved_asset: Address,
+    source: Address,
     amount: U256,
-    expires_at: u64,
 ) -> U256 {
+    let expires_at = storage.timestamp().unwrap().to::<u64>() + 15 * 60;
     let contract = VaultRouterContract::new(storage.clone());
     let nonce = contract
         .reservation_nonce
@@ -240,10 +156,10 @@ pub fn seed_reservation_at(
         .reservations
         .create(&LiquidityReservation {
             id,
-            asset: reserved_asset,
+            asset: asset(),
             amount,
             smart_account,
-            cca: originator,
+            cca: cca(),
             vault: address!("0x0000000000000000000000000000000000000777"),
             expires_at,
             gratis_minor: amount / U256::from(2),
@@ -255,7 +171,7 @@ pub fn seed_reservation_at(
             asset_decimals: 6,
             reference_currency: REFERENCE_ISO,
             call_anchor_price_minor: oracle_rate(),
-            source: smart_account,
+            source,
         })
         .unwrap();
     id
@@ -442,7 +358,7 @@ pub fn zero_word() -> Bytes {
     Bytes::from(vec![0u8; 32])
 }
 
-/// Positive Fidelity so `gratisfactory::pledge_gratis` clears the eligibility gate.
+/// Positive Fidelity so `gratisfactory::create_pledge_note` clears the eligibility gate.
 pub fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
     const ONE_YEAR_SECS: u64 = 365 * 86_400;
     outbe_fidelity::api::cohort_in(
@@ -460,6 +376,15 @@ pub fn auth(op: GratisOp, owner: Address, amount: U256, op_nonce: u64) -> Modify
         mac: modify_mac(&mk, owner, op, amount, op_nonce, chain_b256()),
         op_nonce,
     }
+}
+
+pub fn view_pledged(s: &StorageHandle<'_>, a: Address) -> U256 {
+    let vk = derive_view_key(&test_enclave::state_key(), a).unwrap();
+    let blob = outbe_gratis::api::pledged_ct(s.clone(), a).unwrap();
+    if blob.is_empty() {
+        return U256::ZERO;
+    }
+    decrypt_pledged(&vk, a, &blob).unwrap()
 }
 
 pub fn view_balance(s: &StorageHandle<'_>, a: Address) -> U256 {

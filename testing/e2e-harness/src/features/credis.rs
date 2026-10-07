@@ -1,4 +1,4 @@
-//! Live reserve, confidential pledge, issuance, and interest-bearing repayments.
+//! Live reserve, direct Gratis pledge, issuance, and interest-bearing repayments.
 
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -204,9 +204,6 @@ fn prepare(world: &mut World) {
         currency,
         keys,
         reservation: U256::ZERO,
-        pledge: B256::ZERO,
-        pledge_nonce: 0,
-        issue_context: B256::ZERO,
         gratis_minor: U256::ZERO,
         position_id: U256::ZERO,
         initial_native: U256::ZERO,
@@ -303,6 +300,12 @@ fn reserved(world: &mut World) {
 fn pledge(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     let f = world.state.credis.as_ref().expect("fixture");
+    let reservation = eth::read_call(
+        &url,
+        VAULT_ROUTER_ADDRESS,
+        &eth::IVaultRouter::reservationOfCall { id: f.reservation },
+    )
+    .expect("reservation");
     let nonce = eth::read_call(
         &url,
         addresses::GRATIS_ADDR,
@@ -313,7 +316,7 @@ fn pledge(world: &mut World) {
         &f.keys.modify,
         f.user,
         GratisOp::Pledge,
-        PRINCIPAL,
+        reservation.gratisMinor,
         nonce,
         chain_id_b256(world),
     );
@@ -321,8 +324,8 @@ fn pledge(world: &mut World) {
         &url,
         addresses::GRATIS_FACTORY_ADDR,
         DEPLOYER_KEY,
-        &eth::IGratisFactory::pledgeGratisCall {
-            gratisMinor: PRINCIPAL,
+        &eth::IGratisFactory::createPledgeNoteCall {
+            reservationId: f.reservation,
             auth: eth::IGratisFactory::ModifyAuth {
                 mac: mac.into(),
                 opNonce: nonce,
@@ -331,17 +334,12 @@ fn pledge(world: &mut World) {
         None,
     );
     let pledged =
-        event::<eth::IGratisFactory::PledgeNote>(&receipt, addresses::GRATIS_FACTORY_ADDR);
-    assert_eq!(pledged.gratisMinor, PRINCIPAL);
-    let chain_id = U256::from_be_bytes(chain_id_b256(world).0).to::<u64>();
-    let note =
-        outbe_gratis::client::Note::initial(chain_id, f.user, &f.keys.modify, PRINCIPAL, nonce)
-            .unwrap();
-    assert_eq!(pledged.commitment, note.commitment().unwrap());
-    let f = world.state.credis.as_mut().expect("fixture");
-    f.pledge = pledged.commitment;
-    f.pledge_nonce = nonce;
-    f.gratis_minor = pledged.gratisMinor;
+        event::<eth::IGratisFactory::PledgeNoteCreated>(&receipt, addresses::GRATIS_FACTORY_ADDR);
+    assert_eq!(
+        (pledged.reservationId, pledged.source, pledged.gratisMinor),
+        (f.reservation, f.user, reservation.gratisMinor)
+    );
+    world.state.credis.as_mut().expect("fixture").gratis_minor = pledged.gratisMinor;
     let state = snapshot(world);
     assert_eq!(state.liquid, INITIAL_GRATIS - pledged.gratisMinor);
     assert_eq!(state.pledged, pledged.gratisMinor);
@@ -351,31 +349,6 @@ fn pledge(world: &mut World) {
 fn issue(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     let f = world.state.credis.as_ref().expect("fixture");
-    let chain_id = U256::from_be_bytes(chain_id_b256(world).0).to::<u64>();
-    let note = outbe_gratis::client::Note::initial(
-        chain_id,
-        f.user,
-        &f.keys.modify,
-        f.gratis_minor,
-        f.pledge_nonce,
-    )
-    .unwrap();
-    let reservation = eth::read_call(
-        &url,
-        VAULT_ROUTER_ADDRESS,
-        &outbe_vaultrouter::api::IVaultRouter::reservationOfCall { id: f.reservation },
-    )
-    .unwrap();
-    let context =
-        outbe_credisfactory::runtime::reservation_context(chain_id, f.reservation, &reservation)
-            .unwrap();
-    let proof = outbe_gratis::client::prove_issue(
-        &note,
-        &credis::pledge_tree(&url, chain_id),
-        f.gratis_minor,
-        context,
-    )
-    .unwrap();
     let stake = outbe_primitives::units::checked_protocol_to_native(f.gratis_minor)
         .expect("fixture stake fits native units");
     let receipt = send(
@@ -383,7 +356,6 @@ fn issue(world: &mut World) {
         CREDIS_FACTORY_ADDRESS,
         &f.cca_key,
         &ICredisFactory::issueCredisCall {
-            proof: proof.into(),
             reservationId: f.reservation,
         },
         Some(stake),
@@ -418,8 +390,15 @@ fn issue(world: &mut World) {
             principalMinor: PRINCIPAL,
         },
     );
+    assert_receipt_event(
+        &receipt,
+        addresses::GRATIS_FACTORY_ADDR,
+        &eth::IGratisFactory::PledgeNoteSentToCredis {
+            reservationId: f.reservation,
+            positionId: id,
+        },
+    );
     world.state.credis.as_mut().expect("fixture").position_id = id;
-    world.state.credis.as_mut().expect("fixture").issue_context = context;
 }
 
 #[then("the smart account owns the open Credis position")]
@@ -449,7 +428,7 @@ fn issued(world: &mut World) {
     assert!(p.policyRate > U256::ZERO);
     // Credis currently pins the issuance currency's official rate with a 1x multiplier.
     assert_eq!(p.policyRate, state.policy_rate);
-    assert!(!p.returnNoteSerial.is_zero());
+    assert_eq!(p.source, f.user);
     assert_eq!(
         state.reservation,
         (
@@ -581,39 +560,6 @@ fn repay(world: &mut World) {
                 },
             );
         }
-        let chain_id = U256::from_be_bytes(chain_id_b256(world).0).to::<u64>();
-        let note = outbe_gratis::client::Note::initial(
-            chain_id,
-            f.user,
-            &f.keys.modify,
-            f.gratis_minor,
-            f.pledge_nonce,
-        )
-        .unwrap();
-        let returned = note
-            .returned(
-                f.issue_context,
-                f.position_id,
-                released,
-                p.gratisMinor - p.outstandingGratisMinor + released,
-            )
-            .unwrap();
-        let proof = outbe_gratis::client::prove_unpledge(
-            &returned,
-            &credis::pledge_tree(&url, chain_id),
-            released,
-            outbe_gratis::api::unpledge_context(chain_id, f.user, released).unwrap(),
-        )
-        .unwrap();
-        send(
-            &url,
-            addresses::GRATIS_FACTORY_ADDR,
-            DEPLOYER_KEY,
-            &eth::IGratisFactory::unpledgeGratisCall {
-                proof: proof.into(),
-            },
-            None,
-        );
         let after = snapshot(world);
         let a = after.position.as_ref().expect("position after payment");
         assert_eq!(

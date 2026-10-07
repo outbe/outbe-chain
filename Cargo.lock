@@ -8431,7 +8431,6 @@ dependencies = [
  "outbe-common",
  "outbe-macros",
  "outbe-primitives",
- "outbe-protocol",
  "serde_json",
  "thiserror 2.0.18",
 ]
@@ -8915,9 +8914,11 @@ dependencies = [
  "alloy-sol-types",
  "outbe-fidelity",
  "outbe-gratis",
+ "outbe-macros",
  "outbe-primitives",
  "outbe-tee",
  "outbe-tee-enclave",
+ "outbe-vaultrouter",
  "thiserror 2.0.18",
 ]
 

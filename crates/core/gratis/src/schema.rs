@@ -4,7 +4,7 @@ use outbe_primitives::{
     addresses::GRATIS_ADDRESS,
     storage::types::{Mapping, Slot, StorageBytes},
 };
-/// Fresh-genesis layout. Notes and Credis share the aggregate pledged backing.
+/// Fresh-genesis layout. `pledged_total_supply` sums every account's pledged blob.
 #[contract(addr = GRATIS_ADDRESS)]
 pub struct Gratis {
     pub total_supply: Slot<U256>,

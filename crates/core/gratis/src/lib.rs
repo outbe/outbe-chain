@@ -22,10 +22,7 @@
 //! - `schema` - encrypted storage layout for the [`Gratis`] facade.
 
 pub mod api;
-pub mod client;
-pub mod context;
 pub mod enclave_client;
-pub mod pledge;
 pub mod precompile;
 pub mod schema;
 

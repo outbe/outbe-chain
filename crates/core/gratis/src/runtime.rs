@@ -1,4 +1,4 @@
-//! Stateless balance operations and funded pledge-note transitions.
+//! Stateless balance operations and pledged-collateral transitions.
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::GRATIS_ADDRESS;
@@ -28,7 +28,7 @@ fn chain_id_b256(storage: &StorageHandle<'_>) -> Result<B256> {
     Ok(B256::from(U256::from(storage.chain_id()?)))
 }
 
-/// The runtime authorizes proof-backed and position-backed operations.
+/// The runtime authorizes the collateral operations.
 fn no_auth() -> ModifyAuth {
     ModifyAuth {
         mac: [0u8; 32],
@@ -201,134 +201,110 @@ pub(crate) fn burn_with_fidelity(
     require_fidelity_outcome(burn_impl(storage, caller, amount, auth, Some(fidelity))?.1)
 }
 
-/// Debit an authenticated Gratis amount and append the enclave's owner-bound note.
+/// Move an owner-authorized amount into the pledged balance, with a read-only
+/// Fidelity eligibility probe in the same enclave round-trip.
 pub(crate) fn pledge_with_fidelity(
     storage: StorageHandle<'_>,
     caller: Address,
     amount: U256,
     auth: ModifyAuth,
     fidelity: FidelityOpSection,
-) -> Result<(B256, FidelityOpOutcome)> {
+) -> Result<FidelityOpOutcome> {
     storage.with_checkpoint(|| {
         let gratis = Gratis::new(storage.clone());
         check_op_nonce(&gratis, caller, auth.op_nonce)?;
         let mut req = base_request(GratisOp::Pledge, chain_id_b256(&storage)?, caller, amount);
-        req.current_balance = gratis.balance_ct_of(caller)?;
         req.modify_auth = auth;
         req.fidelity = Some(fidelity);
-        let _scope = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
-        let result = apply_gratis_op(req)?;
-        ensure_applied(&result)?;
-        if result.event_amount != amount {
-            return Err(PrecompileError::Fatal("pledge amount mismatch".into()));
-        }
-        let outcome = require_fidelity_outcome(result.fidelity.clone())?;
-        let commitment = crate::pledge::fund(&storage, result.note_serial, amount, B256::ZERO)?;
-        write_account_blobs(&gratis, caller, &result)?;
+        let result = apply_collateral_op(&storage, req)?;
         gratis.set_op_nonce(caller, result.next_op_nonce)?;
-        gratis.set_pledged_total_supply(
-            gratis
-                .pledged_total_supply()?
-                .checked_add(amount)
-                .ok_or_else(|| PrecompileError::Revert("pledged supply overflow".into()))?,
-        )?;
-        Ok((commitment, outcome))
+        let pledged = gratis
+            .pledged_total_supply()?
+            .checked_add(amount)
+            .ok_or_else(|| PrecompileError::Revert("pledged supply overflow".into()))?;
+        gratis.set_pledged_total_supply(pledged)?;
+        require_fidelity_outcome(result.fidelity)
     })
 }
 
-/// Call this only after runtime proof/position authorization. Never call it through a
-/// public balance-write ABI.
-fn collateral_balance(
+/// Run an op over both of the account's blobs and store the results. The caller
+/// authorizes it and owns the aggregate bookkeeping.
+fn apply_collateral_op(
     storage: &StorageHandle<'_>,
-    account: Address,
-    amount: U256,
-    op: GratisOp,
-) -> Result<()> {
+    mut req: GratisOpRequest,
+) -> Result<GratisOpResult> {
     let gratis = Gratis::new(storage.clone());
-    let mut req = base_request(op, chain_id_b256(storage)?, account, amount);
+    let (account, amount) = (req.account, req.amount);
     req.current_balance = gratis.balance_ct_of(account)?;
+    req.current_pledged = gratis.pledged_ct_of(account)?;
     let _scope = outbe_tee::call_context::ContextScope::from_storage(storage)?;
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
     if result.event_amount != amount {
         return Err(PrecompileError::Fatal("collateral amount mismatch".into()));
     }
-    write_account_blobs(&gratis, account, &result)
+    write_account_blobs(&gratis, account, &result)?;
+    Ok(result)
 }
-pub(crate) fn unpledge(storage: StorageHandle<'_>, proof: &[u8]) -> Result<U256> {
-    storage.with_checkpoint(|| {
-        let claim = crate::pledge::consume_unpledge(&storage, proof)?;
-        if claim.context
-            != crate::api::unpledge_context(storage.chain_id()?, claim.owner, claim.spend_amount)?
-        {
-            return Err(PrecompileError::Revert("pledge context mismatch".into()));
-        }
-        collateral_balance(
-            &storage,
-            claim.owner,
-            claim.spend_amount,
-            GratisOp::Unpledge,
-        )?;
-        let gratis = Gratis::new(storage.clone());
-        gratis.set_pledged_total_supply(
-            gratis
-                .pledged_total_supply()?
-                .checked_sub(claim.spend_amount)
-                .ok_or_else(|| PrecompileError::Fatal("pledged supply underflow".into()))?,
-        )?;
-        Ok(claim.spend_amount)
-    })
-}
-pub(crate) fn activate(storage: &StorageHandle<'_>, amount: U256) -> Result<()> {
-    collateral_balance(
-        storage,
-        outbe_primitives::addresses::CREDIS_ADDRESS,
-        amount,
-        GratisOp::ConsumePledge,
-    )
-}
-pub(crate) fn return_collateral(
+
+/// Return pledged collateral to the account's liquid balance. Only call this
+/// after the caller has authorized the release.
+pub(crate) fn release_pledged(
     storage: &StorageHandle<'_>,
-    position_id: U256,
-    serial: B256,
+    account: Address,
     amount: U256,
-    released_total: U256,
 ) -> Result<()> {
     storage.with_checkpoint(|| {
-        collateral_balance(
-            storage,
-            outbe_primitives::addresses::CREDIS_ADDRESS,
+        let req = base_request(
+            GratisOp::ReleasePledged,
+            chain_id_b256(storage)?,
+            account,
             amount,
-            GratisOp::ReleaseCollateral,
-        )?;
-        let receipt = outbe_zk_canonical::pledgenote::receipt_context(position_id, released_total)
-            .and_then(|field| outbe_protocol::codec::field_to_b256(&field))
-            .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
-        crate::pledge::fund(storage, serial, amount, receipt)?;
-        Ok(())
+        );
+        apply_collateral_op(storage, req)?;
+        let gratis = Gratis::new(storage.clone());
+        gratis.set_pledged_total_supply(
+            gratis
+                .pledged_total_supply()?
+                .checked_sub(amount)
+                .ok_or_else(|| PrecompileError::Fatal("pledged supply underflow".into()))?,
+        )
     })
 }
-pub(crate) fn forfeit(storage: &StorageHandle<'_>, amount: U256) -> Result<()> {
+
+/// Burn pledged collateral of a defaulted position. Fidelity is unchanged.
+pub(crate) fn burn_pledged(
+    storage: &StorageHandle<'_>,
+    account: Address,
+    amount: U256,
+) -> Result<()> {
     storage.with_checkpoint(|| {
-        collateral_balance(
-            storage,
-            outbe_primitives::addresses::CREDIS_ADDRESS,
-            amount,
+        let req = base_request(
             GratisOp::BurnPledged,
-        )?;
+            chain_id_b256(storage)?,
+            account,
+            amount,
+        );
+        apply_collateral_op(storage, req)?;
         let gratis = Gratis::new(storage.clone());
-        gratis.set_total_supply(
-            gratis
-                .total_supply()?
-                .checked_sub(amount)
-                .ok_or_else(|| PrecompileError::Fatal("Gratis supply underflow".into()))?,
-        )?;
+        let remaining = gratis
+            .total_supply()?
+            .checked_sub(amount)
+            .ok_or_else(|| PrecompileError::Fatal("Gratis supply underflow".into()))?;
+        gratis.set_total_supply(remaining)?;
         gratis.set_pledged_total_supply(
             gratis
                 .pledged_total_supply()?
                 .checked_sub(amount)
                 .ok_or_else(|| PrecompileError::Fatal("pledged supply underflow".into()))?,
         )?;
-        Ok(())
+        storage.emit_event(
+            GRATIS_ADDRESS,
+            SolEvent::encode_log_data(&IGratis::GratisBurned {
+                account,
+                amount,
+                remainingSupply: remaining,
+            }),
+        )
     })
 }

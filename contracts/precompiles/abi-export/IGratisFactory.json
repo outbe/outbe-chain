@@ -1,6 +1,49 @@
 [
   {
     "type": "function",
+    "name": "cancelPledgeNote",
+    "inputs": [
+      {
+        "name": "reservationId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "createPledgeNote",
+    "inputs": [
+      {
+        "name": "reservationId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "auth",
+        "type": "tuple",
+        "internalType": "struct IGratisFactory.ModifyAuth",
+        "components": [
+          {
+            "name": "mac",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "opNonce",
+            "type": "uint64",
+            "internalType": "uint64"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "mineCoen",
     "inputs": [
       {
@@ -30,81 +73,24 @@
   },
   {
     "type": "function",
-    "name": "pledgeGratis",
+    "name": "pledgeOf",
     "inputs": [
+      {
+        "name": "reservationId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "source",
+        "type": "address",
+        "internalType": "address"
+      },
       {
         "name": "gratisMinor",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "auth",
-        "type": "tuple",
-        "internalType": "struct IGratisFactory.ModifyAuth",
-        "components": [
-          {
-            "name": "mac",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "opNonce",
-            "type": "uint64",
-            "internalType": "uint64"
-          }
-        ]
-      }
-    ],
-    "outputs": [
-      {
-        "name": "commitment",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "pledgeLeafCount",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "pledgeRoot",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "pledgeSpent",
-    "inputs": [
-      {
-        "name": "nullifier",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -129,19 +115,6 @@
     "stateMutability": "view"
   },
   {
-    "type": "function",
-    "name": "unpledgeGratis",
-    "inputs": [
-      {
-        "name": "proof",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
     "type": "event",
     "name": "CoenMined",
     "inputs": [
@@ -162,25 +135,19 @@
   },
   {
     "type": "event",
-    "name": "PledgeNote",
+    "name": "PledgeNoteCancelled",
     "inputs": [
       {
-        "name": "commitment",
-        "type": "bytes32",
+        "name": "reservationId",
+        "type": "uint256",
         "indexed": true,
-        "internalType": "bytes32"
+        "internalType": "uint256"
       },
       {
-        "name": "leafIndex",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "rootAfter",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
+        "name": "source",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "gratisMinor",
@@ -193,13 +160,44 @@
   },
   {
     "type": "event",
-    "name": "PledgeSpent",
+    "name": "PledgeNoteCreated",
     "inputs": [
       {
-        "name": "nullifier",
-        "type": "bytes32",
+        "name": "reservationId",
+        "type": "uint256",
         "indexed": true,
-        "internalType": "bytes32"
+        "internalType": "uint256"
+      },
+      {
+        "name": "source",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "gratisMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PledgeNoteSentToCredis",
+    "inputs": [
+      {
+        "name": "reservationId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "positionId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false

@@ -1,7 +1,6 @@
 //! Gratisfactory precompile at `0x2003`. This file does ABI dispatch only. The Gratis balance
 //! movement and Fidelity bookkeeping live in [`crate::runtime`]. The caller's Gratis modify key
 //! (`mac` and `opNonce`) authorizes pledge and mining writes.
-//! A pledge-note proof authorizes `unpledgeGratis`.
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
@@ -34,34 +33,26 @@ pub fn dispatch(
         |call| {
             use IGratisFactory::IGratisFactoryCalls::*;
             match call {
-                pledgeGratis(c) => mutate(c, caller, |sender, c| {
-                    runtime::pledge_gratis(
+                createPledgeNote(c) => mutate_void(c, caller, |sender, c| {
+                    runtime::create_pledge_note(
                         storage.clone(),
                         sender,
-                        c.gratisMinor,
+                        c.reservationId,
                         ModifyAuth {
                             mac: c.auth.mac.0,
                             op_nonce: c.auth.opNonce,
                         },
                     )
                 }),
-                unpledgeGratis(c) => mutate_void(c, caller, |_, c| {
-                    runtime::unpledge_gratis(storage.clone(), &c.proof).map(|_| ())
+                cancelPledgeNote(c) => mutate_void(c, caller, |sender, c| {
+                    runtime::cancel_pledge_note(storage.clone(), sender, c.reservationId)
                 }),
-                pledgeRoot(c) => view(c, |_| {
-                    outbe_gratis::pledge::PledgePool::new(storage.clone())
-                        .current_root
-                        .read()
-                }),
-                pledgeLeafCount(c) => view(c, |_| {
-                    outbe_gratis::pledge::PledgePool::new(storage.clone())
-                        .leaf_count
-                        .read()
-                }),
-                pledgeSpent(c) => view(c, |c| {
-                    outbe_gratis::pledge::PledgePool::new(storage.clone())
-                        .spent_nullifiers
-                        .read(&c.nullifier)
+                pledgeOf(c) => view(c, |c| {
+                    let pledge = runtime::pledge_of(&storage, c.reservationId)?;
+                    Ok(IGratisFactory::pledgeOfReturn {
+                        source: pledge.source,
+                        gratisMinor: pledge.gratis_minor,
+                    })
                 }),
                 mineCoen(c) => mutate(c, caller, |sender, c| {
                     let auth = ModifyAuth {

@@ -12,7 +12,9 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::checked_protocol_to_native;
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
-use outbe_tee_enclave::gratis::{decrypt_balance, derive_modify_key, derive_view_key, modify_mac};
+use outbe_tee_enclave::gratis::{
+    decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
+};
 
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_fidelity::{MAX_LEAGUE, MIN_LEAGUE};
@@ -49,7 +51,7 @@ fn view_balance(s: &StorageHandle<'_>, a: Address) -> U256 {
     decrypt_balance(&vk, a, &blob).unwrap()
 }
 
-/// Give `account` a positive Fidelity index so `pledge_gratis` clears the
+/// Give `account` a positive Fidelity index so `create_pledge_note` clears the
 /// eligibility gate.
 fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
     const ONE_YEAR_SECS: u64 = 365 * 86_400;
@@ -241,13 +243,15 @@ fn rejects_msg_value() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let call = Bytes::from(
-            IGratisFactory::IGratisFactoryCalls::pledgeGratis(IGratisFactory::pledgeGratisCall {
-                gratisMinor: U256::from(1u64),
-                auth: IGratisFactory::ModifyAuth {
-                    mac: FixedBytes([0u8; 32]),
-                    opNonce: 0,
+            IGratisFactory::IGratisFactoryCalls::createPledgeNote(
+                IGratisFactory::createPledgeNoteCall {
+                    reservationId: U256::from(1u64),
+                    auth: IGratisFactory::ModifyAuth {
+                        mac: FixedBytes([0u8; 32]),
+                        opNonce: 0,
+                    },
                 },
-            })
+            )
             .abi_encode(),
         );
         let err = dispatch(storage, &call, alice(), U256::from(1u64)).unwrap_err();
@@ -255,46 +259,176 @@ fn rejects_msg_value() {
     });
 }
 
-#[test]
-fn pledge_authenticates_amount_and_nonce_without_changing_fidelity() {
-    with_env(|storage| {
-        let amount = U256::from(100);
-        runtime::mint(
-            storage.clone(),
-            alice(),
-            amount,
-            auth(GratisOp::Mint, alice(), amount, 0),
-        )
+fn bob() -> Address {
+    address!("0x2222222222222222222222222222222222222222")
+}
+
+const RESERVED: u64 = 100;
+
+fn view_pledged(s: &StorageHandle<'_>, a: Address) -> U256 {
+    let vk = derive_view_key(&test_enclave::state_key(), a).unwrap();
+    let blob = outbe_gratis::api::pledged_ct(s.clone(), a).unwrap();
+    if blob.is_empty() {
+        return U256::ZERO;
+    }
+    decrypt_pledged(&vk, a, &blob).unwrap()
+}
+
+/// Mint 1000 Gratis to `source` and reserve `RESERVED` of it for reservation 1.
+fn fund_and_reserve(storage: &StorageHandle<'_>, source: Address) -> U256 {
+    let minted = U256::from(1_000u64);
+    runtime::mint(
+        storage.clone(),
+        source,
+        minted,
+        auth(GratisOp::Mint, source, minted, 0),
+    )
+    .unwrap();
+    seed_fidelity(storage.clone(), source);
+    let id = U256::ONE;
+    outbe_vaultrouter::schema::VaultRouterContract::new(storage.clone())
+        .reservations
+        .create(&outbe_vaultrouter::schema::LiquidityReservation {
+            id,
+            asset: address!("0x0000000000000000000000000000000000000888"),
+            amount: U256::from(2 * RESERVED),
+            gratis_minor: U256::from(RESERVED),
+            expires_at: CREATED_AT + 900,
+            source,
+            ..Default::default()
+        })
         .unwrap();
-        seed_fidelity(storage.clone(), alice());
+    id
+}
+
+fn pledge(
+    storage: &StorageHandle<'_>,
+    caller: Address,
+    id: U256,
+    nonce: u64,
+) -> Result<(), String> {
+    runtime::create_pledge_note(
+        storage.clone(),
+        caller,
+        id,
+        auth(GratisOp::Pledge, caller, U256::from(RESERVED), nonce),
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[test]
+fn only_the_source_pledges_exactly_the_reserved_gratis_once() {
+    with_env(|storage| {
+        let id = fund_and_reserve(&storage, alice());
         let fidelity = outbe_fidelity::schema::FidelityContract::new(storage.clone())
             .cohorts_ct_of(alice())
             .unwrap();
-        let authorization = auth(GratisOp::Pledge, alice(), amount, 1);
-        assert!(runtime::pledge_gratis(
-            storage.clone(),
-            alice(),
-            amount - U256::ONE,
-            authorization.clone()
-        )
-        .is_err());
-        assert_eq!(view_balance(&storage, alice()), amount);
+        let err = pledge(&storage, bob(), id, 0).unwrap_err();
+        assert!(err.contains("not the reservation source"), "{err}");
+        let err = pledge(&storage, alice(), U256::from(2u64), 1).unwrap_err();
+        assert!(err.contains("reservation not found"), "{err}");
+        let wrong_amount = auth(GratisOp::Pledge, alice(), U256::from(RESERVED - 1), 1);
+        assert!(runtime::create_pledge_note(storage.clone(), alice(), id, wrong_amount).is_err());
+
+        pledge(&storage, alice(), id, 1).unwrap();
         assert_eq!(
-            outbe_gratis::api::op_nonce(storage.clone(), alice()).unwrap(),
-            1
+            view_balance(&storage, alice()),
+            U256::from(1_000 - RESERVED)
         );
-        runtime::pledge_gratis(storage.clone(), alice(), amount, authorization.clone()).unwrap();
-        assert!(runtime::pledge_gratis(storage.clone(), alice(), amount, authorization).is_err());
-        assert_eq!(view_balance(&storage, alice()), U256::ZERO);
+        assert_eq!(view_pledged(&storage, alice()), U256::from(RESERVED));
+        assert_eq!(
+            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+            U256::from(RESERVED)
+        );
         assert_eq!(
             outbe_fidelity::schema::FidelityContract::new(storage.clone())
                 .cohorts_ct_of(alice())
                 .unwrap(),
             fidelity
         );
-        assert_eq!(
-            outbe_gratis::api::pledged_total_supply(storage).unwrap(),
-            amount
+        let call = Bytes::from(
+            IGratisFactory::IGratisFactoryCalls::pledgeOf(IGratisFactory::pledgeOfCall {
+                reservationId: id,
+            })
+            .abi_encode(),
         );
+        let out = dispatch(storage.clone(), &call, bob(), U256::ZERO).unwrap();
+        let record = IGratisFactory::pledgeOfCall::abi_decode_returns(&out).unwrap();
+        assert_eq!(
+            (record.source, record.gratisMinor),
+            (alice(), U256::from(RESERVED))
+        );
+
+        let err = pledge(&storage, alice(), id, 2).unwrap_err();
+        assert!(err.contains("already pledged"), "{err}");
+        assert_eq!(view_pledged(&storage, alice()), U256::from(RESERVED));
+    });
+}
+
+#[test]
+fn an_expired_reservation_cannot_be_pledged() {
+    with_env(|storage| {
+        let id = fund_and_reserve(&storage, alice());
+        storage
+            .set_block_timestamp(U256::from(CREATED_AT + 901))
+            .unwrap();
+        let err = pledge(&storage, alice(), id, 1).unwrap_err();
+        assert!(err.contains("reservation expired"), "{err}");
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+    });
+}
+
+#[test]
+fn only_the_source_cancels_an_unused_pledge_even_after_expiry() {
+    with_env(|storage| {
+        let id = fund_and_reserve(&storage, alice());
+        pledge(&storage, alice(), id, 1).unwrap();
+        storage
+            .set_block_timestamp(U256::from(CREATED_AT + 901))
+            .unwrap();
+        let err = runtime::cancel_pledge_note(storage.clone(), bob(), id).unwrap_err();
+        assert!(
+            err.to_string().contains("not the reservation source"),
+            "{err}"
+        );
+        assert_eq!(view_pledged(&storage, alice()), U256::from(RESERVED));
+
+        runtime::cancel_pledge_note(storage.clone(), alice(), id).unwrap();
+        assert_eq!(view_balance(&storage, alice()), U256::from(1_000u64));
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        assert_eq!(
+            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+            U256::ZERO
+        );
+        assert!(runtime::pledge_of(&storage, id).unwrap().source.is_zero());
+        let err = runtime::cancel_pledge_note(storage.clone(), alice(), id).unwrap_err();
+        assert!(err.to_string().contains("pledge not found"), "{err}");
+    });
+}
+
+#[test]
+fn credis_takes_a_pledge_once_and_cancel_then_fails() {
+    with_env(|storage| {
+        let id = fund_and_reserve(&storage, alice());
+        pledge(&storage, alice(), id, 1).unwrap();
+        let position = U256::from(7u64);
+        let err = runtime::send_to_credis(&storage, id, position, bob(), U256::from(RESERVED))
+            .unwrap_err();
+        assert!(err.to_string().contains("does not match"), "{err}");
+        let err = runtime::send_to_credis(&storage, id, position, alice(), U256::ONE).unwrap_err();
+        assert!(err.to_string().contains("does not match"), "{err}");
+
+        runtime::send_to_credis(&storage, id, position, alice(), U256::from(RESERVED)).unwrap();
+        assert_eq!(view_pledged(&storage, alice()), U256::from(RESERVED));
+        assert_eq!(
+            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+            U256::from(RESERVED)
+        );
+        assert!(
+            runtime::send_to_credis(&storage, id, position, alice(), U256::from(RESERVED)).is_err()
+        );
+        let err = runtime::cancel_pledge_note(storage.clone(), alice(), id).unwrap_err();
+        assert!(err.to_string().contains("pledge not found"), "{err}");
+        assert_eq!(view_pledged(&storage, alice()), U256::from(RESERVED));
     });
 }

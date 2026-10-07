@@ -1,5 +1,4 @@
-//! Stateless encrypted Gratis balance transitions. Pledge ownership is committed inside the
-//! enclave.
+//! Stateless encrypted Gratis transitions over an account's liquid and pledged balances.
 use crate::confidential::{FIELD_BALANCE, GRATIS};
 use crate::errors::Result;
 use alloy_primitives::{Address, B256, U256};
@@ -86,7 +85,6 @@ fn base_result() -> GratisOpResult {
         status: GratisOpStatus::Applied,
         new_balance: Vec::new(),
         new_pledged: Vec::new(),
-        note_serial: B256::ZERO,
         event_amount: U256::ZERO,
         next_op_nonce: 0,
         fidelity: None,
@@ -124,9 +122,6 @@ pub fn apply_op(state_key: &[u8; 32], req: &GratisOpRequest) -> GratisOpResult {
 }
 
 fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisOpResult> {
-    use outbe_primitives::addresses::CREDIS_ADDRESS;
-    use outbe_protocol::codec;
-    use outbe_zk_canonical::pledgenote;
     if req.amount.is_zero() || req.account.is_zero() {
         return Ok(reject("amount and account must be nonzero"));
     }
@@ -149,71 +144,30 @@ fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
             return Ok(reject("modify nonce exhausted"));
         };
         r.next_op_nonce = nonce;
-        if matches!(req.op, GratisOp::Pledge) {
-            let entropy = outbe_tee::protocol::initial_pledge_secret(
-                &modify_key,
-                req.amount,
-                req.modify_auth.op_nonce,
-            );
-            let secret = codec::field_from_be_bytes(&entropy);
-            if secret == pledgenote::Field::from(0) {
-                return Ok(reject("zero note secret"));
-            }
-            let serial = pledgenote::note_sn(req.account, secret)
-                .map_err(|_| crate::errors::TeeError::DecryptFailed)?;
-            if serial == pledgenote::Field::from(0) {
-                return Ok(reject("zero note serial"));
-            }
-            r.note_serial = codec::field_to_b256(&serial)
-                .map_err(|_| crate::errors::TeeError::DecryptFailed)?;
-        }
-    } else if matches!(
-        req.op,
-        GratisOp::ConsumePledge | GratisOp::ReleaseCollateral | GratisOp::BurnPledged
-    ) && req.account != CREDIS_ADDRESS
-    {
-        return Ok(reject("collateral operation requires Credis account"));
-    }
-    if req.fidelity.is_some() && !owner_op {
+    } else if req.fidelity.is_some() {
         return Ok(reject("collateral must not change Fidelity"));
     }
     let view = derive_view_key(state_key, req.account)?;
-    if matches!(req.op, GratisOp::ReleasePledged) {
-        return release_pledged(&view, req, r);
-    }
-    let (version, balance) = read_amount(&view, req.account, FIELD_BALANCE, &req.current_balance)?;
-    let credit = matches!(
-        req.op,
-        GratisOp::Mint | GratisOp::Unpledge | GratisOp::ConsumePledge
-    );
-    let next = if credit {
-        balance.checked_add(req.amount)
-    } else {
-        balance.checked_sub(req.amount)
+    let (bver, balance) = read_amount(&view, req.account, FIELD_BALANCE, &req.current_balance)?;
+    let (pver, pledged) = read_amount(&view, req.account, FIELD_PLEDGED, &req.current_pledged)?;
+    let credit = |v: U256| v.checked_add(req.amount);
+    let debit = |v: U256| v.checked_sub(req.amount);
+    let (next_balance, next_pledged) = match req.op {
+        GratisOp::Mint => (Some(credit(balance)), None),
+        GratisOp::Burn => (Some(debit(balance)), None),
+        GratisOp::Pledge => (Some(debit(balance)), Some(credit(pledged))),
+        GratisOp::ReleasePledged => (Some(credit(balance)), Some(debit(pledged))),
+        GratisOp::BurnPledged => (None, Some(debit(pledged))),
     };
-    let Some(next) = next else {
+    if matches!(next_balance, Some(None)) || matches!(next_pledged, Some(None)) {
         return Ok(reject("insufficient balance or balance overflow"));
-    };
-    r.new_balance = write_amount(&view, req.account, FIELD_BALANCE, version, next)?;
-    r.event_amount = req.amount;
-    Ok(r)
-}
-
-fn release_pledged(
-    view: &[u8; 32],
-    req: &GratisOpRequest,
-    mut r: GratisOpResult,
-) -> Result<GratisOpResult> {
-    let (pver, pledged) = read_amount(view, req.account, FIELD_PLEDGED, &req.current_pledged)?;
-    let (bver, balance) = read_amount(view, req.account, FIELD_BALANCE, &req.current_balance)?;
-    let (Some(pledged), Some(balance)) = (
-        pledged.checked_sub(req.amount),
-        balance.checked_add(req.amount),
-    ) else {
-        return Ok(reject("insufficient pledged balance or balance overflow"));
-    };
-    r.new_pledged = write_amount(view, req.account, FIELD_PLEDGED, pver, pledged)?;
-    r.new_balance = write_amount(view, req.account, FIELD_BALANCE, bver, balance)?;
+    }
+    if let Some(Some(next)) = next_balance {
+        r.new_balance = write_amount(&view, req.account, FIELD_BALANCE, bver, next)?;
+    }
+    if let Some(Some(next)) = next_pledged {
+        r.new_pledged = write_amount(&view, req.account, FIELD_PLEDGED, pver, next)?;
+    }
     r.event_amount = req.amount;
     Ok(r)
 }
@@ -351,6 +305,81 @@ mod tests {
             apply_op(&sk, &r).status,
             GratisOpStatus::Rejected { .. }
         ));
+    }
+    #[test]
+    fn pledge_moves_the_authorized_amount_into_the_pledged_balance() {
+        let sk = state_key();
+        let vk = derive_view_key(&sk, alice()).unwrap();
+        let mut m = req(GratisOp::Mint, alice(), U256::from(100u64), 0);
+        m.modify_auth = auth(&sk, alice(), GratisOp::Mint, m.amount, 0);
+        let minted = apply_op(&sk, &m);
+        let mut p = req(GratisOp::Pledge, alice(), U256::from(30u64), 1);
+        p.current_balance = minted.new_balance;
+        p.modify_auth = auth(&sk, alice(), GratisOp::Pledge, p.amount, 1);
+        let res = apply_op(&sk, &p);
+        assert_eq!(res.status, GratisOpStatus::Applied);
+        assert_eq!(
+            decrypt_balance(&vk, alice(), &res.new_balance).unwrap(),
+            U256::from(70u64)
+        );
+        assert_eq!(
+            decrypt_pledged(&vk, alice(), &res.new_pledged).unwrap(),
+            U256::from(30u64)
+        );
+        assert_eq!(res.next_op_nonce, 2);
+        p.modify_auth = auth(&sk, alice(), GratisOp::Mint, p.amount, 1);
+        assert!(matches!(
+            apply_op(&sk, &p).status,
+            GratisOpStatus::Rejected { .. }
+        ));
+    }
+    #[test]
+    fn pledge_requires_sufficient_liquid_balance() {
+        let sk = state_key();
+        let mut p = req(GratisOp::Pledge, alice(), U256::from(1u64), 0);
+        p.current_pledged = pledged(&sk, 100);
+        p.modify_auth = auth(&sk, alice(), GratisOp::Pledge, p.amount, 0);
+        assert!(matches!(
+            apply_op(&sk, &p).status,
+            GratisOpStatus::Rejected { .. }
+        ));
+    }
+    #[test]
+    fn burn_pledged_debits_only_the_pledged_balance() {
+        let sk = state_key();
+        let vk = derive_view_key(&sk, alice()).unwrap();
+        let mut r = req(GratisOp::BurnPledged, alice(), U256::from(40u64), 0);
+        r.current_pledged = pledged(&sk, 100);
+        let res = apply_op(&sk, &r);
+        assert_eq!(res.status, GratisOpStatus::Applied);
+        assert!(res.new_balance.is_empty());
+        assert_eq!(
+            decrypt_pledged(&vk, alice(), &res.new_pledged).unwrap(),
+            U256::from(60u64)
+        );
+        r.amount = U256::from(101u64);
+        assert!(matches!(
+            apply_op(&sk, &r).status,
+            GratisOpStatus::Rejected { .. }
+        ));
+    }
+    #[test]
+    fn collateral_ops_reject_a_fidelity_section() {
+        let sk = state_key();
+        for op in [GratisOp::ReleasePledged, GratisOp::BurnPledged] {
+            let mut r = req(op, alice(), U256::from(1u64), 0);
+            r.current_pledged = pledged(&sk, 100);
+            r.fidelity = Some(outbe_tee::protocol::FidelityOpSection {
+                op: outbe_tee::protocol::FidelityCohortOp::Out,
+                timestamp: 1,
+                first_qualified_start: 0,
+                current_blob: Vec::new(),
+            });
+            assert!(matches!(
+                apply_op(&sk, &r).status,
+                GratisOpStatus::Rejected { .. }
+            ));
+        }
     }
     #[test]
     fn burn_requires_sufficient_balance() {

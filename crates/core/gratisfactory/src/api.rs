@@ -19,3 +19,5 @@ pub fn mint(
 ) -> Result<()> {
     crate::runtime::mint(storage, account, amount, auth)
 }
+
+pub use crate::runtime::{burn_from_credis, pledge_of, return_from_credis, send_to_credis};
