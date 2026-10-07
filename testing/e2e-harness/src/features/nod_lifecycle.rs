@@ -291,23 +291,16 @@ impl Lifecycle for NodLifecycle {
                 let id = nod(world, index);
                 let before = redeem::balance(world, Ledger::Gratis, &key, owner);
                 let (mac, op_nonce) = mint_authorization(world, Ledger::Gratis, &key, owner, load);
-                let outcome = eth::send_call_outcome(
-                    &url,
-                    addresses::NOD_FACTORY_ADDR,
-                    &key,
-                    &eth::INodFactory::mineGratisCall {
-                        nodId: id,
-                        nonce: find_mining_pow_nonce(
-                            outbe_common::pow::MiningDomain::Nod,
-                            id,
-                            owner,
-                        ),
-                        mac,
-                        opNonce: op_nonce,
-                    },
-                    None,
-                )
-                .expect("submit Gratis mining");
+                let nonce = find_mining_pow_nonce(outbe_common::pow::MiningDomain::Nod, id, owner);
+                let mine = eth::INodFactory::mineGratisCall {
+                    nodId: id,
+                    nonce,
+                    mac,
+                    opNonce: op_nonce,
+                };
+                let outcome =
+                    eth::send_call_outcome(&url, addresses::NOD_FACTORY_ADDR, &key, &mine, None)
+                        .expect("submit Gratis mining");
                 assert_mined_success(&outcome, "mine Gratis from the paid Nod");
                 assert_burned(world, owner, id, READ_TIMEOUT);
                 Mined {
