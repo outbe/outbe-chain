@@ -1,8 +1,8 @@
 //! Credis fixtures and observations over the same RPC/deployment path as Intex.
 
-use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
+use alloy_primitives::{keccak256, Address, U256};
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{sol, SolCall, SolEvent};
+use alloy_sol_types::{sol, SolCall};
 use outbe_primitives::addresses::{
     CCA_REGISTRY_ADDRESS, CREDIS_ADDRESS, ORACLE_ADDRESS, VAULT_ROUTER_ADDRESS,
 };

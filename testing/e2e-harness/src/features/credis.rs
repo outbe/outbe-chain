@@ -3,7 +3,7 @@
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{keccak256, Address, U256};
 use cucumber::{given, then, when};
 use outbe_primitives::addresses::{
     CCA_REGISTRY_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS,
